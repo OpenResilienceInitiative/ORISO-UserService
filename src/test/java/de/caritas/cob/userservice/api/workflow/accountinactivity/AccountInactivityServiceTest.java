@@ -832,7 +832,8 @@ class AccountInactivityServiceTest {
             "suspension_body CLOB",
             "suspension_receipt CLOB",
             "access_work_id VARCHAR(36)",
-            "restore_effects_json LONGTEXT"))
+            "restore_effects_json LONGTEXT",
+            "suspension_source_json LONGTEXT"))
       jdbc.execute("ALTER TABLE account_inactivity ADD COLUMN " + column);
     for (String table : java.util.List.of("user", "consultant", "admin")) {
       jdbc.execute("DROP TABLE IF EXISTS `" + table + "`");

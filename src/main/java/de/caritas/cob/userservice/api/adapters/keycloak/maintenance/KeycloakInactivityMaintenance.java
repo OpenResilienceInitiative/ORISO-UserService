@@ -265,7 +265,16 @@ public final class KeycloakInactivityMaintenance implements AccountInactivityIde
     if (exactSealedCustody == null
         || exactSealedCustody.getBytes(StandardCharsets.UTF_8).length > 8192) throw unavailable();
     var value = codec.read(exactSealedCustody, JsonNode.class);
-    fields(value, Set.of("representation", "originalRow", "source", "nativeBody", "nativeReceipt", "phase", "bindingDigest"));
+    fields(
+        value,
+        Set.of(
+            "representation",
+            "originalRow",
+            "source",
+            "nativeBody",
+            "nativeReceipt",
+            "phase",
+            "bindingDigest"));
     if (!exactSealedCustody.equals(codec.canonical(value))
         || !value.path("bindingDigest").isTextual()
         || !value.path("bindingDigest").textValue().matches("[0-9a-f]{64}")) throw unavailable();
@@ -274,7 +283,8 @@ public final class KeycloakInactivityMaintenance implements AccountInactivityIde
     String expected = codec.claimedInactivitySuspensionCustodyDigest(prefix);
     if (!java.security.MessageDigest.isEqual(
         expected.getBytes(StandardCharsets.US_ASCII),
-        value.path("bindingDigest").textValue().getBytes(StandardCharsets.US_ASCII))) throw unavailable();
+        value.path("bindingDigest").textValue().getBytes(StandardCharsets.US_ASCII)))
+      throw unavailable();
     verifyCustodyNative(prefix);
   }
 
@@ -282,12 +292,17 @@ public final class KeycloakInactivityMaintenance implements AccountInactivityIde
     String phase = prefix.path("phase").textValue();
     if ("ACKNOWLEDGED".equals(phase))
       codec.verifyMaintenanceInactivitySuspendReceipt(
-          prefix.path("nativeReceipt").textValue(), realmId,
-          actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), prefix.path("nativeBody"));
+          prefix.path("nativeReceipt").textValue(),
+          realmId,
+          actors.require(TaskPurpose.ACCOUNT_MAINTENANCE),
+          prefix.path("nativeBody"));
     else if ("NO_EFFECT".equals(phase))
       codec.verifyMaintenanceNoEffectReceipt(
-          prefix.path("nativeReceipt").textValue(), realmId,
-          actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), prefix.path("nativeBody"), "deactivate");
+          prefix.path("nativeReceipt").textValue(),
+          realmId,
+          actors.require(TaskPurpose.ACCOUNT_MAINTENANCE),
+          prefix.path("nativeBody"),
+          "deactivate");
     else if (!Set.of("CAPTURED", "FROZEN").contains(phase)) throw unavailable();
   }
 

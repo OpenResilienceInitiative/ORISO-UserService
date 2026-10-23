@@ -9,14 +9,19 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 /** Fixed original-source custody on the existing inactivity row; it issues no work authority. */
 final class InactivitySuspensionSource {
   record Change(String before, String after) {
-    @Override public String toString() { return "Change[source-custody=redacted]"; }
+    @Override
+    public String toString() {
+      return "Change[source-custody=redacted]";
+    }
   }
 
   private final JdbcTemplate jdbc;
   private final InactivityClaimJournal journal;
   private final AccountInactivityIdentityTransport transport;
 
-  InactivitySuspensionSource(JdbcTemplate jdbc, InactivityClaimJournal journal,
+  InactivitySuspensionSource(
+      JdbcTemplate jdbc,
+      InactivityClaimJournal journal,
       AccountInactivityIdentityTransport transport) {
     this.jdbc = jdbc;
     this.journal = journal;
@@ -38,8 +43,12 @@ final class InactivitySuspensionSource {
     String sealed = transport.bindSuspensionCustody(journal.encode(prefix));
     if (sealed == null || sealed.isBlank()) throw invalid();
     transport.verifySuspensionCustody(sealed);
-    if (jdbc.update("update account_inactivity set suspension_source_json=? where identity_id=? and work_id=? and native_phase='CLAIMED' and suspension_source_json is null",
-        sealed, claimed.id(), claimed.work()) != 1) throw invalid();
+    if (jdbc.update(
+            "update account_inactivity set suspension_source_json=? where identity_id=? and work_id=? and native_phase='CLAIMED' and suspension_source_json is null",
+            sealed,
+            claimed.id(),
+            claimed.work())
+        != 1) throw invalid();
     var saved = journal.saved(claimed.id(), true);
     requireBound(saved, saved);
     return saved;
@@ -69,9 +78,14 @@ final class InactivitySuspensionSource {
     var current = journal.saved(original.id(), true);
     requireBound(original, current);
     if (!Objects.equals(change.before(), current.suspensionSource())) throw invalid();
-    if (jdbc.update("update account_inactivity set suspension_source_json=? where identity_id=? and work_id=? and suspension_source_json=? and native_phase=?",
-        change.after(), original.id(), original.work(), change.before(), current.phase()) != 1)
-      throw invalid();
+    if (jdbc.update(
+            "update account_inactivity set suspension_source_json=? where identity_id=? and work_id=? and suspension_source_json=? and native_phase=?",
+            change.after(),
+            original.id(),
+            original.work(),
+            change.before(),
+            current.phase())
+        != 1) throw invalid();
   }
 
   void requireBound(InactivityClaimJournal.Saved original, InactivityClaimJournal.Saved current) {
@@ -86,8 +100,11 @@ final class InactivitySuspensionSource {
       if (current.body() != null || current.receipt() != null) throw invalid();
     } else if (current.body() == null
         || !journal.decode(current.body()).equals(sealed.path("nativeBody"))
-        || !Objects.equals(current.receipt(), sealed.path("nativeReceipt").isNull()
-            ? null : sealed.path("nativeReceipt").textValue())) throw invalid();
+        || !Objects.equals(
+            current.receipt(),
+            sealed.path("nativeReceipt").isNull()
+                ? null
+                : sealed.path("nativeReceipt").textValue())) throw invalid();
   }
 
   void requirePrior(InactivityClaimJournal.Saved current, String suspension) {
@@ -98,8 +115,13 @@ final class InactivitySuspensionSource {
         || !suspension.equals(sealed.path("originalRow").path("workId").textValue())
         || !current.id().equals(sealed.path("originalRow").path("identityId").textValue())
         || !journal.decode(current.source()).equals(sealed.path("source"))) throw invalid();
-    var legacy = jdbc.queryForMap("select suspension_body,suspension_receipt from account_inactivity where identity_id=? and work_id=?", current.id(), current.work());
-    if (legacy.get("suspension_body") == null || legacy.get("suspension_receipt") == null
+    var legacy =
+        jdbc.queryForMap(
+            "select suspension_body,suspension_receipt from account_inactivity where identity_id=? and work_id=?",
+            current.id(),
+            current.work());
+    if (legacy.get("suspension_body") == null
+        || legacy.get("suspension_receipt") == null
         || !journal.decode((String) legacy.get("suspension_body")).equals(sealed.path("nativeBody"))
         || !legacy.get("suspension_receipt").equals(sealed.path("nativeReceipt").textValue()))
       throw invalid();
@@ -110,5 +132,7 @@ final class InactivitySuspensionSource {
         || !TransactionSynchronizationManager.hasResource(jdbc.getDataSource())) throw invalid();
   }
 
-  private static IllegalStateException invalid() { return InactivityClaimJournal.invalid(); }
+  private static IllegalStateException invalid() {
+    return InactivityClaimJournal.invalid();
+  }
 }

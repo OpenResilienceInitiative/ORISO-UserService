@@ -506,12 +506,14 @@ public class AccountInactivityService {
                     ignored -> {
                       previous.requireOwned(true);
                       return new ClaimedWork(
-                          suspensionSource().capture(claimJournal.claim(
-                              locked(previous.identityId()).orElseThrow(),
-                              "SUSPEND",
-                              java.util.Map.of("kind", "SCHEDULED"),
-                              clock.instant(),
-                              null)),
+                          suspensionSource()
+                              .capture(
+                                  claimJournal.claim(
+                                      locked(previous.identityId()).orElseThrow(),
+                                      "SUSPEND",
+                                      java.util.Map.of("kind", "SCHEDULED"),
+                                      clock.instant(),
+                                      null)),
                           null);
                     });
             previous.close();
@@ -671,8 +673,9 @@ public class AccountInactivityService {
     checked.requireCurrent();
     if (checked.terminalOnly || scopedTransport == null || !"RESTORE".equals(checked.action()))
       throw InactivityClaimJournal.invalid();
-    suspensionSource().requirePrior(
-        claimJournal.saved(checked.identityId(), false), checked.suspensionOperationId());
+    suspensionSource()
+        .requirePrior(
+            claimJournal.saved(checked.identityId(), false), checked.suspensionOperationId());
     var prior =
         jdbc.queryForMap(
             "select suspension_body,suspension_receipt from account_inactivity where identity_id=? and work_id=?",
@@ -695,8 +698,10 @@ public class AccountInactivityService {
       var projection = checked.nativeRead();
       var frozen = scopedTransport.freeze(checked, projection, restoreEnabled);
       scopedTransport.verifyFrozen(checked, frozen, restoreEnabled);
-      var sourceChange = "SUSPEND".equals(checked.action())
-          ? suspensionSource().advance(checked.saved, "FROZEN", frozen.body(), null) : null;
+      var sourceChange =
+          "SUSPEND".equals(checked.action())
+              ? suspensionSource().advance(checked.saved, "FROZEN", frozen.body(), null)
+              : null;
       work.executeWithoutResult(
           ignored -> {
             checked.requireOwned(true);
@@ -738,8 +743,11 @@ public class AccountInactivityService {
         de.caritas.cob.userservice.api.port.out.AccountInactivityIdentityTransport.NoEffect
                 refused) {
       var verified = scopedTransport.verifyNoEffect(checked, frozen, refused.receipt());
-      var sourceChange = "SUSPEND".equals(checked.action())
-          ? suspensionSource().advance(checked.saved, "NO_EFFECT", frozen.body(), verified.receipt()) : null;
+      var sourceChange =
+          "SUSPEND".equals(checked.action())
+              ? suspensionSource()
+                  .advance(checked.saved, "NO_EFFECT", frozen.body(), verified.receipt())
+              : null;
       work.executeWithoutResult(
           ignored -> {
             checked.requireOwned(true);
@@ -767,8 +775,10 @@ public class AccountInactivityService {
         de.caritas.cob.userservice.api.port.out.AccountInactivityIdentityTransport.Applied applied))
       throw InactivityClaimJournal.invalid();
     String receipt = scopedTransport.verifyApplied(checked, frozen, applied.receipt());
-    var sourceChange = "SUSPEND".equals(checked.action())
-        ? suspensionSource().advance(checked.saved, "ACKNOWLEDGED", frozen.body(), receipt) : null;
+    var sourceChange =
+        "SUSPEND".equals(checked.action())
+            ? suspensionSource().advance(checked.saved, "ACKNOWLEDGED", frozen.body(), receipt)
+            : null;
     work.executeWithoutResult(
         ignored -> {
           checked.requireOwned(true);
