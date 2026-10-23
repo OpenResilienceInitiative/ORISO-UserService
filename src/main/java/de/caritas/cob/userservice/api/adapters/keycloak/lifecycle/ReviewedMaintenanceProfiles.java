@@ -14,9 +14,10 @@ import java.util.TreeMap;
 
 /** Data-only selectors from the same installation snapshots independently checked by Keycloak. */
 public final class ReviewedMaintenanceProfiles {
-  private static final ObjectMapper JSON = new ObjectMapper()
-      .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
-      .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+  private static final ObjectMapper JSON =
+      new ObjectMapper()
+          .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
+          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
   private static final Set<String> SQL_KINDS =
       Set.of("USER", "CONSULTANT", "AGENCY_ADMIN", "TENANT_ADMIN", "PLATFORM_ADMIN");
 
@@ -42,10 +43,12 @@ public final class ReviewedMaintenanceProfiles {
     try {
       var ordinary = parse(ordinaryJson);
       var protectedPolicy = parse(protectedJson);
-      if (number(ordinary, "version") != 1 || !ordinary.path("native").isObject()
+      if (number(ordinary, "version") != 1
+          || !ordinary.path("native").isObject()
           || !text(protectedPolicy, "realmId", 255).equals(realmId)
           || !text(protectedPolicy, "realmName", 255).equals(realmName)
-          || ordinaryGroups == null || ordinaryGroups.isEmpty()
+          || ordinaryGroups == null
+          || ordinaryGroups.isEmpty()
           || initialProtectedProfiles == null
           || !initialProtectedProfiles.keySet().equals(Set.of("TENANT_ADMIN", "PLATFORM_ADMIN"))
           || new HashSet<>(initialProtectedProfiles.values()).size() != 2) throw invalid();
@@ -56,47 +59,90 @@ public final class ReviewedMaintenanceProfiles {
       var groupIds = new HashSet<String>();
       var ordinaryPaths = new HashSet<String>();
       for (var profile : array(ordinary.path("ordinaryProfiles"), 20)) {
-        fields(profile, Set.of("id", "version", "groupId", "groupPath", "groupParentId",
-            "realmRoles", "clientRoles", "allowUnassignedTenant", "selfOperations"));
+        fields(
+            profile,
+            Set.of(
+                "id",
+                "version",
+                "groupId",
+                "groupPath",
+                "groupParentId",
+                "realmRoles",
+                "clientRoles",
+                "allowUnassignedTenant",
+                "selfOperations"));
         String id = text(profile, "id", 100), path = text(profile, "groupPath", 512);
         String group = text(profile, "groupId", 255), parent = text(profile, "groupParentId", 255);
         var roles = strings(profile.path("realmRoles"), 1, 10, 255);
         var kind = OrdinaryAccountCreation.kind(roles);
-        if (kind == null || !ids.add(id) || !groupIds.add(group) || group.equals(parent)
-            || !path.matches("/human-roles/[a-z0-9-]{1,80}") || !ordinaryPaths.add(path)
-            || !roles.equals(ordinaryGroups.get(path)) || !java.util.Collections.disjoint(roles, technical)
+        if (kind == null
+            || !ids.add(id)
+            || !groupIds.add(group)
+            || group.equals(parent)
+            || !path.matches("/human-roles/[a-z0-9-]{1,80}")
+            || !ordinaryPaths.add(path)
+            || !roles.equals(ordinaryGroups.get(path))
+            || !java.util.Collections.disjoint(roles, technical)
             || !profile.path("allowUnassignedTenant").isBoolean()) throw invalid();
         clientRoles(profile.path("clientRoles"));
         var operations = array(profile.path("selfOperations"), 9);
         var uniqueOperations = new HashSet<String>();
         for (var operation : operations) {
-          if (!operation.isTextual() || !Set.of("account.read", "account.locale", "account.profile", "account.password",
-              "otp.read", "otp.app-setup", "otp.delete", "otp.email-start", "otp.email-finish")
-              .contains(operation.textValue()) || !uniqueOperations.add(operation.textValue())) throw invalid();
+          if (!operation.isTextual()
+              || !Set.of(
+                      "account.read",
+                      "account.locale",
+                      "account.profile",
+                      "account.password",
+                      "otp.read",
+                      "otp.app-setup",
+                      "otp.delete",
+                      "otp.email-start",
+                      "otp.email-finish")
+                  .contains(operation.textValue())
+              || !uniqueOperations.add(operation.textValue())) throw invalid();
         }
-        String sqlKind = "ASKER".equals(kind) ? "USER"
-            : "CONSULTANT_AGENCY_ADMIN".equals(kind) ? "AGENCY_ADMIN" : kind;
+        String sqlKind =
+            "ASKER".equals(kind)
+                ? "USER"
+                : "CONSULTANT_AGENCY_ADMIN".equals(kind) ? "AGENCY_ADMIN" : kind;
         result.get(sqlKind).add(new Profile("ORDINARY", id, number(profile, "version"), roles));
       }
       if (!ordinaryPaths.equals(ordinaryGroups.keySet())) throw invalid();
       ids.clear();
       var protectedKinds = new TreeMap<String, String>();
       for (var profile : array(protectedPolicy.path("profiles"), 100)) {
-        fields(profile, Set.of("id", "version", "kind", "tenantModes", "groupId", "groupPath",
-            "realmRoles", "clientRoles", "usernamePolicy", "firstNamePolicy", "lastNamePolicy"));
+        fields(
+            profile,
+            Set.of(
+                "id",
+                "version",
+                "kind",
+                "tenantModes",
+                "groupId",
+                "groupPath",
+                "realmRoles",
+                "clientRoles",
+                "usernamePolicy",
+                "firstNamePolicy",
+                "lastNamePolicy"));
         String id = text(profile, "id", 255), kind = text(profile, "kind", 30);
         var roles = strings(profile.path("realmRoles"), 1, 100, 255);
         var modes = strings(profile.path("tenantModes"), 1, 2, 20);
-        if (!ids.add(id) || !Set.of("TENANT_ADMIN", "PLATFORM_ADMIN").contains(kind)
+        if (!ids.add(id)
+            || !Set.of("TENANT_ADMIN", "PLATFORM_ADMIN").contains(kind)
             || !Set.of("EXISTING", "RESERVED_NEW").containsAll(modes)
             || "PLATFORM_ADMIN".equals(kind)
-                && (!modes.equals(Set.of("EXISTING")) || !roles.containsAll(Set.of("agency-admin", "tenant-admin")))
+                && (!modes.equals(Set.of("EXISTING"))
+                    || !roles.containsAll(Set.of("agency-admin", "tenant-admin")))
             || "TENANT_ADMIN".equals(kind)
-                && !roles.contains("tenant-admin") && !roles.contains("single-tenant-admin")
+                && !roles.contains("tenant-admin")
+                && !roles.contains("single-tenant-admin")
             || !java.util.Collections.disjoint(roles, technical)
             || !"USERNAME_TRANSCODER_V1".equals(text(profile, "usernamePolicy", 80))
             || !"INVITE_WITH_EMAIL_LOCAL_PART_FALLBACK".equals(text(profile, "firstNamePolicy", 80))
-            || !"INVITE_WITH_ADMIN_FALLBACK".equals(text(profile, "lastNamePolicy", 80))) throw invalid();
+            || !"INVITE_WITH_ADMIN_FALLBACK".equals(text(profile, "lastNamePolicy", 80)))
+          throw invalid();
         text(profile, "groupId", 255);
         text(profile, "groupPath", 512);
         clientRoles(profile.path("clientRoles"));
@@ -104,13 +150,15 @@ public final class ReviewedMaintenanceProfiles {
         protectedKinds.put(id, kind);
         result.get(kind).add(new Profile("PROTECTED", id, number(profile, "version"), roles));
       }
-      initialProtectedProfiles.forEach((kind, id) -> {
-        if (!kind.equals(protectedKinds.get(id))) throw invalid();
-      });
-      result.replaceAll((kind, profiles) -> {
-        if (profiles.isEmpty() || profiles.size() > 20) throw invalid();
-        return List.copyOf(profiles);
-      });
+      initialProtectedProfiles.forEach(
+          (kind, id) -> {
+            if (!kind.equals(protectedKinds.get(id))) throw invalid();
+          });
+      result.replaceAll(
+          (kind, profiles) -> {
+            if (profiles.isEmpty() || profiles.size() > 20) throw invalid();
+            return List.copyOf(profiles);
+          });
       return new ReviewedMaintenanceProfiles(Map.copyOf(result));
     } catch (java.io.IOException | IllegalArgumentException | NullPointerException failure) {
       throw invalid();
@@ -142,14 +190,17 @@ public final class ReviewedMaintenanceProfiles {
 
   private static String text(JsonNode owner, String name, int maximum) {
     var value = owner.path(name);
-    if (!value.isTextual() || value.textValue().isBlank() || value.textValue().length() > maximum
+    if (!value.isTextual()
+        || value.textValue().isBlank()
+        || value.textValue().length() > maximum
         || value.textValue().chars().anyMatch(c -> c < 32 || c == 127)) throw invalid();
     return value.textValue();
   }
 
   private static long number(JsonNode owner, String name) {
     var value = owner.path(name);
-    if (!value.isIntegralNumber() || !value.canConvertToLong() || value.longValue() <= 0) throw invalid();
+    if (!value.isIntegralNumber() || !value.canConvertToLong() || value.longValue() <= 0)
+      throw invalid();
     return value.longValue();
   }
 
@@ -158,7 +209,9 @@ public final class ReviewedMaintenanceProfiles {
     var result = new HashSet<String>();
     String previous = null;
     for (var value : values) {
-      if (!value.isTextual() || value.textValue().isBlank() || value.textValue().length() > length
+      if (!value.isTextual()
+          || value.textValue().isBlank()
+          || value.textValue().length() > length
           || value.textValue().chars().anyMatch(c -> c < 32 || c == 127)
           || previous != null && previous.compareTo(value.textValue()) >= 0) throw invalid();
       previous = value.textValue();
@@ -169,11 +222,15 @@ public final class ReviewedMaintenanceProfiles {
 
   private static void clientRoles(JsonNode value) {
     if (!value.isObject() || value.size() > 30) throw invalid();
-    value.fields().forEachRemaining(entry -> {
-      if (entry.getKey().isBlank() || entry.getKey().length() > 255
-          || entry.getKey().chars().anyMatch(c -> c < 32 || c == 127)) throw invalid();
-      strings(entry.getValue(), 1, 100, 255);
-    });
+    value
+        .fields()
+        .forEachRemaining(
+            entry -> {
+              if (entry.getKey().isBlank()
+                  || entry.getKey().length() > 255
+                  || entry.getKey().chars().anyMatch(c -> c < 32 || c == 127)) throw invalid();
+              strings(entry.getValue(), 1, 100, 255);
+            });
   }
 
   private static IllegalStateException invalid() {

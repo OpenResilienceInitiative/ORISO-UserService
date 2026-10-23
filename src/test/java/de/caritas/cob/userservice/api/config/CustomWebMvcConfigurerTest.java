@@ -58,7 +58,9 @@ class CustomWebMvcConfigurerTest {
       // An unconfigured actual request may reach the application without CORS permission;
       // the browser must first pass this preflight before sending its idempotency header.
       boolean preflight = input.get(0).equals("/service/users/another-operation");
-      var request = new org.springframework.mock.web.MockHttpServletRequest(preflight ? "OPTIONS" : "POST", input.get(0));
+      var request =
+          new org.springframework.mock.web.MockHttpServletRequest(
+              preflight ? "OPTIONS" : "POST", input.get(0));
       if (preflight) {
         request.addHeader("Access-Control-Request-Method", "POST");
         request.addHeader("Access-Control-Request-Headers", "Idempotency-Key");
