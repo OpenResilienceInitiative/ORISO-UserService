@@ -230,11 +230,11 @@ public final class ScheduledConsultantMaintenance {
     ClaimedConsultantDeletion checked = transaction(() -> prepare(lease, account));
     if (checked == null) return;
     FrozenConsultantDeletion frozen;
-    if (checked.intent.frozen != null) {
-      frozen = frozen(checked, checked.intent.frozen);
-    } else {
+    if ("PREPARED".equals(checked.intent.status)) {
       String state = read(checked);
       frozen = transaction(() -> freeze(checked, state));
+    } else {
+      frozen = frozen(checked, checked.intent.frozen);
     }
     if (frozen == null) return;
     if (!"ACKNOWLEDGED".equals(checked.intent.status)) {
@@ -272,6 +272,9 @@ public final class ScheduledConsultantMaintenance {
             account);
     if (rows.size() > 1) throw unavailable();
     Intent intent = rows.isEmpty() ? null : rows.get(0);
+    // Historical unbound rows cannot be given a guessed incarnation on restart.
+    if (intent != null && "PREPARED".equals(intent.status) && intent.frozen == null)
+      throw unavailable();
     if (intent != null && !consultant.getDeleteDate().equals(intent.deletionStarted))
       throw unavailable();
     lifecycle.normalizeConsultantLifecycle(consultant);
@@ -283,7 +286,7 @@ public final class ScheduledConsultantMaintenance {
     if (intent == null) {
       String operation = UUID.randomUUID().toString();
       jdbc.update(
-          "insert into identity_maintenance_intent(operation_id,realm_id,realm_name,subject_type,subject_id,deletion_started_at,tenant_id,claim_token,claim_until,status,owner_client,owner_subject) values(?,?,?,'CONSULTANT',?,?,?,?,?,'PREPARED',?,?)",
+          "insert into identity_maintenance_intent(operation_id,realm_id,realm_name,subject_type,subject_id,deletion_started_at,tenant_id,claim_token,claim_until,status,frozen_body,owner_client,owner_subject) values(?,?,?,'CONSULTANT',?,?,?,?,?,'PREPARED',?,?,?)",
           operation,
           realmId,
           realmName,
@@ -292,6 +295,7 @@ public final class ScheduledConsultantMaintenance {
           consultant.getTenantId(),
           UUID.randomUUID().toString(),
           lease.claimedUntil(),
+          envelope(actual, com.fasterxml.jackson.databind.node.NullNode.instance),
           actor.clientId(),
           actor.serviceSubject());
       intent =
@@ -311,7 +315,8 @@ public final class ScheduledConsultantMaintenance {
         || !consultant.getDeleteDate().equals(intent.deletionStarted)
         || !Set.of("PREPARED", "FROZEN", "ACKNOWLEDGED").contains(intent.status))
       throw unavailable();
-    if ("PREPARED".equals(intent.status) && (intent.frozen != null || intent.receipt != null)
+    if ("PREPARED".equals(intent.status)
+            && (intent.frozen == null || intent.receipt != null || intent.expectedState != null)
         || "FROZEN".equals(intent.status) && (intent.frozen == null || intent.receipt != null)
         || "ACKNOWLEDGED".equals(intent.status)
             && (intent.frozen == null || intent.receipt == null)) throw unavailable();
@@ -327,7 +332,8 @@ public final class ScheduledConsultantMaintenance {
         new ClaimedConsultantDeletion(
             lease, account, consultant.getDeleteDate(), generation, intent, actual);
     if (intent.frozen != null) {
-      var original = frozen(claim, intent.frozen).originalSql;
+      var original = "PREPARED".equals(intent.status)
+          ? preparedOriginal(intent.frozen) : frozen(claim, intent.frozen).originalSql;
       if (!sameSnapshot(original, actual)) throw unavailable();
       claim =
           new ClaimedConsultantDeletion(
@@ -388,8 +394,10 @@ public final class ScheduledConsultantMaintenance {
     if (!current(claim)) return null;
     var intent = requireIntent(claim);
     if (!claim.generation.equals(intent.generation)) return null;
-    if (intent.frozen != null) return frozen(claim, intent.frozen);
-    if (!"PREPARED".equals(intent.status)) throw unavailable();
+    if (!"PREPARED".equals(intent.status) || intent.frozen == null
+        || intent.expectedState != null || intent.receipt != null
+        || !sameSnapshot(claim.originalSql, preparedOriginal(intent.frozen))) throw unavailable();
+    String prepared = intent.frozen;
     String body =
         codec.canonical(
             Map.of(
@@ -404,11 +412,12 @@ public final class ScheduledConsultantMaintenance {
     String envelope = envelope(claim.originalSql, codec.read(body, JsonNode.class));
     if (jdbc.update(
             "update identity_maintenance_intent set expected_state=?,frozen_body=?,status='FROZEN'"
-                + " where operation_id=? and claim_token=? and status='PREPARED' and frozen_body is null and receipt_json is null",
+                + " where operation_id=? and claim_token=? and status='PREPARED' and frozen_body=? and expected_state is null and receipt_json is null",
             state,
             envelope,
             intent.operation,
-            claim.generation)
+            claim.generation,
+            prepared)
         != 1) throw unavailable();
     var saved = requireIntent(claim);
     if (!"FROZEN".equals(saved.status) || !envelope.equals(saved.frozen) || saved.receipt != null)
@@ -604,7 +613,7 @@ public final class ScheduledConsultantMaintenance {
         rs.getString("expected_state"));
   }
 
-  private FrozenConsultantDeletion frozen(ClaimedConsultantDeletion claim, String envelope) {
+  private com.fasterxml.jackson.databind.node.ObjectNode ownedEnvelope(String envelope) {
     var saved = codec.read(envelope, com.fasterxml.jackson.databind.node.ObjectNode.class);
     var all = new java.util.HashSet<String>();
     saved.fieldNames().forEachRemaining(all::add);
@@ -614,6 +623,17 @@ public final class ScheduledConsultantMaintenance {
     String binding = saved.remove("bindingDigest").textValue();
     if (!binding.equals(codec.claimedScheduledConsultantDeletionIntentDigest(saved)))
       throw unavailable();
+    return saved;
+  }
+
+  private JsonNode preparedOriginal(String envelope) {
+    var saved = ownedEnvelope(envelope);
+    if (!saved.path("body").isNull()) throw unavailable();
+    return saved.path("originalSql");
+  }
+
+  private FrozenConsultantDeletion frozen(ClaimedConsultantDeletion claim, String envelope) {
+    var saved = ownedEnvelope(envelope);
     var value = saved.path("body");
     String body = codec.canonical(value);
     var fields = new java.util.HashSet<String>();
@@ -673,7 +693,10 @@ public final class ScheduledConsultantMaintenance {
           if (!current(claim)) throw unavailable();
           var intent = requireIntent(claim);
           if ("read".equals(command)) {
-            if (!"PREPARED".equals(intent.status) || intent.frozen != null) throw unavailable();
+            if (!"PREPARED".equals(intent.status) || intent.frozen == null
+                || intent.expectedState != null || intent.receipt != null
+                || !sameSnapshot(claim.originalSql, preparedOriginal(intent.frozen)))
+              throw unavailable();
           } else if (!"delete".equals(command)
               || !"FROZEN".equals(intent.status)
               || !body.equals(frozen(claim, intent.frozen).body)

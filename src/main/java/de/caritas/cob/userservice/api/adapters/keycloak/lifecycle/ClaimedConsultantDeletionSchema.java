@@ -152,6 +152,8 @@ final class ClaimedConsultantDeletionSchema {
     if (!original.path("matrixUserId").isNull()) text(original.path("matrixUserId"), 255, true);
     if (!text(original.path("rowDigest"), 64, false).matches("[0-9a-f]{64}")) throw invalid();
     var body = value.path("body");
+    // A descriptor is data only. The private journal owner enforces PREPARED before using it.
+    if (body.isNull()) return value;
     keys(body, Set.of("target", "operationId", "expectedState", "change"));
     String operation = uuid(body.path("operationId"));
     if (!text(body.path("expectedState"), 64, false).matches("[0-9a-f]{64}")
