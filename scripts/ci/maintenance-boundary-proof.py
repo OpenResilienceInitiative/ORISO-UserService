@@ -222,6 +222,7 @@ def select_slice(name):
         CASES = {
             "actualJpaCommitPrecedesNativeDispatchEvenWhenReplyIsUnknown",
             "actualJpaFlushFailureRollsBackDomainAndPreventsDispatchableIntent",
+            "anIdenticalSavedImportRowCanNeverResumeAsASelfLocaleOperation",
         }
         COMPILED_CLASSES += [
             "de/caritas/cob/userservice/api/adapters/keycloak/maintenance/SelfLocaleMaintenance",

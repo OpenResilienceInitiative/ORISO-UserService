@@ -308,8 +308,12 @@ class UserSelfLocaleScenarioCBoundaryTest {
       request.addHeader("Idempotency-Key", operation);
       SecurityContextHolder.getContext().setAuthentication(authentication);
       jdbc.execute(
-          "create table user(user_id varchar(36) primary key,tenant_id bigint,delete_date timestamp,language_code varchar(8),encourage2fa boolean,patch_count int)");
-      jdbc.update("insert into user values(?,?,null,'en',false,0)", ACCOUNT, 7L);
+          "create table user(user_id varchar(36) primary key,tenant_id bigint,delete_date timestamp,language_code varchar(8),encourage2fa boolean,patch_count int,email varchar(320),create_date timestamp(6) default '2026-10-20 10:11:12.123456')");
+      jdbc.execute(
+          "create table consultant(consultant_id varchar(36) primary key,tenant_id bigint,delete_date timestamp,email varchar(320),create_date timestamp(6))");
+      jdbc.execute(
+          "create table admin(admin_id varchar(36) primary key,tenant_id bigint,type varchar(32),email varchar(320),create_date timestamp(6))");
+      jdbc.update("insert into user(user_id,tenant_id,delete_date,language_code,encourage2fa,patch_count) values(?,?,null,'en',false,0)", ACCOUNT, 7L);
       new org.springframework.jdbc.datasource.init.ResourceDatabasePopulator(
               new org.springframework.core.io.ClassPathResource(
                   "db/changelog/changeset/20261021_identity_self_locale_367/migrate.sql"),
