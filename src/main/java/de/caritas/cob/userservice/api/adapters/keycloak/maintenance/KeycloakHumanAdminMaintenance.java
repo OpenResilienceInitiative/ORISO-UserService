@@ -219,7 +219,8 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
     binding.put("profile", profile);
     if (account.agencyAdminAddition()) {
       binding.put("publicRoleAddition", codec.read(account.roleAdditionIntent(), JsonNode.class));
-      binding.put("wholeOriginalSql", codec.read(account.roleAdditionOriginalSql(), JsonNode.class));
+      binding.put(
+          "wholeOriginalSql", codec.read(account.roleAdditionOriginalSql(), JsonNode.class));
     } else if (account.reviewedGroup() != null) {
       binding.put("reviewedGroup", account.reviewedGroup());
       binding.put("originalRoles", account.originalRoles());
@@ -406,10 +407,14 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
     change.put("email", profile.email());
     Object completeChange =
         account.agencyAdminAddition()
-            ? Map.of("transition", "ADD_AGENCY_ADMIN_IDENTITY", "group", Objects.requireNonNull(account.reviewedGroup()))
+            ? Map.of(
+                "transition",
+                "ADD_AGENCY_ADMIN_IDENTITY",
+                "group",
+                Objects.requireNonNull(account.reviewedGroup()))
             : account.reviewedGroup() == null
-            ? change
-            : Map.of("group", account.reviewedGroup(), "profile", change);
+                ? change
+                : Map.of("group", account.reviewedGroup(), "profile", change);
     return Map.of(
         "target",
         target(account),
@@ -443,8 +448,8 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
   private String call(CheckedAccount account, String command, String frozen) {
     account.requireCurrent();
     if (TransactionSynchronizationManager.isActualTransactionActive()
-        || !Set.of("read", "profile", "email", "ordinary-profile", "profile-transition").contains(command))
-      throw invalid();
+        || !Set.of("read", "profile", "email", "ordinary-profile", "profile-transition")
+            .contains(command)) throw invalid();
     var actor = actors.require(TaskPurpose.ACCOUNT_MAINTENANCE);
     var token = broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE);
     long now = Instant.now().getEpochSecond();

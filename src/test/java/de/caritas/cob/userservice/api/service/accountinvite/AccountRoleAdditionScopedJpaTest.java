@@ -138,10 +138,12 @@ class AccountRoleAdditionScopedJpaTest {
       throw new AssertionError(invalid);
     }
     jdbc.update("delete from account_inactivity where identity_id=?", ACCOUNT);
-    when(selectedAgency.find(71L)).thenAnswer(ignored -> {
-      assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-      return Optional.of(new AgencyFacts.Agency(71L, 7L, false, List.of()));
-    });
+    when(selectedAgency.find(71L))
+        .thenAnswer(
+            ignored -> {
+              assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+              return Optional.of(new AgencyFacts.Agency(71L, 7L, false, List.of()));
+            });
     new TransactionTemplate(transactions)
         .executeWithoutResult(
             ignored -> {
@@ -238,15 +240,17 @@ class AccountRoleAdditionScopedJpaTest {
               verifyProof(outbound.getHeaders().getFirst("X-ORISO-Task-Context"), command, body);
               if ("read".equals(command)) {
                 if (nativeBody == null) {
-                  var held = jdbc.queryForMap(
-                      "select status,original_json,native_body,native_receipt from general_admin_identity_intent where operation_id=?",
-                      OPERATION);
+                  var held =
+                      jdbc.queryForMap(
+                          "select status,original_json,native_body,native_receipt from general_admin_identity_intent where operation_id=?",
+                          OPERATION);
                   assertEquals("PREPARED", held.get("status"));
                   assertNull(held.get("native_body"));
                   assertNull(held.get("native_receipt"));
                   var source = codec.read((String) held.get("original_json"), JsonNode.class);
                   var tables = codec.read(source.path("sql").textValue(), JsonNode.class);
-                  var row = codec.read(tables.path("consultant").get(0).textValue(), JsonNode.class);
+                  var row =
+                      codec.read(tables.path("consultant").get(0).textValue(), JsonNode.class);
                   assertEquals(ACCOUNT, row.path("consultant_id").textValue());
                   assertNotNull(row.path("create_date").textValue());
                 }
@@ -428,17 +432,24 @@ class AccountRoleAdditionScopedJpaTest {
 
   @Test
   void theActualLocalCallbackCannotChangeUnrequestedConsultantStateAndItsAckRemainsRetryable() {
-    doAnswer(invocation -> {
-      invocation.callRealMethod();
-      jdbc.update("update consultant set is_absent=true where consultant_id=?", ACCOUNT);
-      return null;
-    }).when(localGrant).bindCheckedAgencyAdmin(any(AccountRoleAddition.ScopedAddition.class));
+    doAnswer(
+            invocation -> {
+              invocation.callRealMethod();
+              jdbc.update("update consultant set is_absent=true where consultant_id=?", ACCOUNT);
+              return null;
+            })
+        .when(localGrant)
+        .bindCheckedAgencyAdmin(any(AccountRoleAddition.ScopedAddition.class));
     assertThrows(RuntimeException.class, () -> service.add(ACCOUNT, COMMAND));
     assertEquals(1, effects.get());
     assertEquals("ACKNOWLEDGED", phase());
     assertFalse(admins.existsById(ACCOUNT));
-    assertFalse(jdbc.queryForObject("select is_absent from consultant where consultant_id=?", Boolean.class, ACCOUNT));
-    doCallRealMethod().when(localGrant).bindCheckedAgencyAdmin(any(AccountRoleAddition.ScopedAddition.class));
+    assertFalse(
+        jdbc.queryForObject(
+            "select is_absent from consultant where consultant_id=?", Boolean.class, ACCOUNT));
+    doCallRealMethod()
+        .when(localGrant)
+        .bindCheckedAgencyAdmin(any(AccountRoleAddition.ScopedAddition.class));
     assertDoesNotThrow(() -> service.add(ACCOUNT, COMMAND));
     assertEquals(1, effects.get());
     assertEquals("APPLIED", phase());
@@ -446,19 +457,34 @@ class AccountRoleAdditionScopedJpaTest {
 
   @Test
   void anAlreadyCombinedIdentityCanAddItsNewAgencyWithoutChangingExistingRolesOrAdmin() {
-    new TransactionTemplate(transactions).executeWithoutResult(ignored -> {
-      admins.saveAndFlush(de.caritas.cob.userservice.api.model.Admin.builder()
-          .id(ACCOUNT).tenantId(7L).type(de.caritas.cob.userservice.api.model.Admin.AdminType.AGENCY)
-          .username("owned-counsellor").firstName("Ada").lastName("Lovelace")
-          .email("ada@fixture.invalid").createDate(LocalDateTime.now(ZoneOffset.UTC)).build());
-      entities.clear();
-    });
-    var originalAdmin = new TreeMap<>(jdbc.queryForMap("select * from admin where admin_id=?", ACCOUNT));
+    new TransactionTemplate(transactions)
+        .executeWithoutResult(
+            ignored -> {
+              admins.saveAndFlush(
+                  de.caritas.cob.userservice.api.model.Admin.builder()
+                      .id(ACCOUNT)
+                      .tenantId(7L)
+                      .type(de.caritas.cob.userservice.api.model.Admin.AdminType.AGENCY)
+                      .username("owned-counsellor")
+                      .firstName("Ada")
+                      .lastName("Lovelace")
+                      .email("ada@fixture.invalid")
+                      .createDate(LocalDateTime.now(ZoneOffset.UTC))
+                      .build());
+              entities.clear();
+            });
+    var originalAdmin =
+        new TreeMap<>(jdbc.queryForMap("select * from admin where admin_id=?", ACCOUNT));
     nativeRoles = DESIRED;
     assertDoesNotThrow(() -> service.add(ACCOUNT, COMMAND));
     assertEquals(DESIRED, nativeRoles);
-    assertEquals(originalAdmin, new TreeMap<>(jdbc.queryForMap("select * from admin where admin_id=?", ACCOUNT)));
-    assertEquals(List.of(71L), jdbc.queryForList("select agency_id from admin_agency where admin_id=?", Long.class, ACCOUNT));
+    assertEquals(
+        originalAdmin,
+        new TreeMap<>(jdbc.queryForMap("select * from admin where admin_id=?", ACCOUNT)));
+    assertEquals(
+        List.of(71L),
+        jdbc.queryForList(
+            "select agency_id from admin_agency where admin_id=?", Long.class, ACCOUNT));
     assertEquals("APPLIED", phase());
     verifyNoInteractions(generic);
   }
@@ -470,19 +496,34 @@ class AccountRoleAdditionScopedJpaTest {
     assertEquals("PREPARED", phase());
     assertEquals(1, reads.get());
     assertEquals(0, effects.get());
-    String original = jdbc.queryForObject(
-        "select original_json from general_admin_identity_intent where operation_id=?", String.class, OPERATION);
-    new TransactionTemplate(transactions).executeWithoutResult(ignored -> {
-      jdbc.update("update consultant set create_date=? where consultant_id=?",
-          java.sql.Timestamp.from(Instant.now().plusSeconds(10)), ACCOUNT);
-      entities.clear();
-    });
+    String original =
+        jdbc.queryForObject(
+            "select original_json from general_admin_identity_intent where operation_id=?",
+            String.class,
+            OPERATION);
+    new TransactionTemplate(transactions)
+        .executeWithoutResult(
+            ignored -> {
+              jdbc.update(
+                  "update consultant set create_date=? where consultant_id=?",
+                  java.sql.Timestamp.from(Instant.now().plusSeconds(10)),
+                  ACCOUNT);
+              entities.clear();
+            });
     assertThrows(RuntimeException.class, () -> service.add(ACCOUNT, COMMAND));
     assertEquals(1, reads.get());
     assertEquals(0, calls.get());
-    assertEquals(original, jdbc.queryForObject(
-        "select original_json from general_admin_identity_intent where operation_id=?", String.class, OPERATION));
-    assertNull(jdbc.queryForObject("select native_body from general_admin_identity_intent where operation_id=?", String.class, OPERATION));
+    assertEquals(
+        original,
+        jdbc.queryForObject(
+            "select original_json from general_admin_identity_intent where operation_id=?",
+            String.class,
+            OPERATION));
+    assertNull(
+        jdbc.queryForObject(
+            "select native_body from general_admin_identity_intent where operation_id=?",
+            String.class,
+            OPERATION));
     assertFalse(admins.existsById(ACCOUNT));
     verifyNoInteractions(generic);
   }

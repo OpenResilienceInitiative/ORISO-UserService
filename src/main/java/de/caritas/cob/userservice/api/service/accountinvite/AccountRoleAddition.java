@@ -48,7 +48,9 @@ public class AccountRoleAddition {
   private de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance maintenance;
   private org.springframework.transaction.support.TransactionTemplate localWrites;
   @jakarta.persistence.PersistenceContext private jakarta.persistence.EntityManager entities;
-  @org.springframework.beans.factory.annotation.Autowired(required = false) private AgencyFacts agencyFacts;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  private AgencyFacts agencyFacts;
 
   @org.springframework.beans.factory.annotation.Autowired
   public void setScopedMaintenance(
@@ -76,7 +78,10 @@ public class AccountRoleAddition {
    */
   public AddedRole add(String consultantId, AddRoleCommand command) {
     if (identityMode != null && identityMode.isFiveActorMode()) {
-      if (maintenance == null || !maintenance.isFiveActorMode() || entities == null || agencyFacts == null)
+      if (maintenance == null
+          || !maintenance.isFiveActorMode()
+          || entities == null
+          || agencyFacts == null)
         throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
       try (var addition = new ScopedAddition(consultantId, command)) {
         return maintenance.addAgencyAdmin(addition);
@@ -153,9 +158,17 @@ public class AccountRoleAddition {
       }
     }
 
-    public String accountId() { return account; }
-    public String intentJson() { return intent; }
-    public Long agencyId() { return agency; }
+    public String accountId() {
+      return account;
+    }
+
+    public String intentJson() {
+      return intent;
+    }
+
+    public Long agencyId() {
+      return agency;
+    }
 
     public void requireJpaOwner(jakarta.persistence.EntityManagerFactory factory) {
       if (entities == null || factory == null || entities.getEntityManagerFactory() != factory)
@@ -173,10 +186,12 @@ public class AccountRoleAddition {
 
     public Consultant currentConsultant() {
       requireInput();
-      var row = TenantContext.supplyAcrossTenants(() -> consultantRepository.findById(account))
-          .filter(found -> found.getDeleteDate() == null)
-          .orElseThrow(() -> new NotFoundException("Consultant not found"));
-      if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()
+      var row =
+          TenantContext.supplyAcrossTenants(() -> consultantRepository.findById(account))
+              .filter(found -> found.getDeleteDate() == null)
+              .orElseThrow(() -> new NotFoundException("Consultant not found"));
+      if (org.springframework.transaction.support.TransactionSynchronizationManager
+              .isActualTransactionActive()
           && entities.contains(row)) entities.refresh(row);
       return row;
     }
@@ -184,7 +199,8 @@ public class AccountRoleAddition {
     public void validate() {
       var row = currentConsultant();
       if (!Objects.equals(agency, agencyOf(row, command.agencyId())))
-        throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException("Role source changed");
+        throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(
+            "Role source changed");
       var admin = TenantContext.supplyAcrossTenants(() -> adminRepository.findById(account));
       if (admin.isPresent()
           && (admin.get().getType() != Admin.AdminType.AGENCY
@@ -195,25 +211,37 @@ public class AccountRoleAddition {
     }
 
     private AgencyFacts.Agency checkedAgency() {
-      if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
+      if (org.springframework.transaction.support.TransactionSynchronizationManager
+          .isActualTransactionActive())
         throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
-      var found = agencyFacts.find(agency).filter(value -> !value.deleted()
-          && Objects.equals(value.id(), agency)
-          && Objects.equals(value.tenantId(), currentConsultant().getTenantId()));
-      return found.orElseThrow(() -> new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException(
-          "Role agency is outside the current account tenant"));
+      var found =
+          agencyFacts
+              .find(agency)
+              .filter(
+                  value ->
+                      !value.deleted()
+                          && Objects.equals(value.id(), agency)
+                          && Objects.equals(value.tenantId(), currentConsultant().getTenantId()));
+      return found.orElseThrow(
+          () ->
+              new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException(
+                  "Role agency is outside the current account tenant"));
     }
 
     public void validateOutsideSql() {
       requireInput();
       if (!Objects.equals(agencyTenant, checkedAgency().tenantId()))
-        throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException("Role agency changed");
+        throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(
+            "Role agency changed");
     }
 
     public void requireLocalCurrent() {
       requireInput();
-      if (!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()
-          || org.springframework.transaction.support.TransactionSynchronizationManager.getResource(this) != this
+      if (!org.springframework.transaction.support.TransactionSynchronizationManager
+              .isActualTransactionActive()
+          || org.springframework.transaction.support.TransactionSynchronizationManager.getResource(
+                  this)
+              != this
           || !entities.isJoinedToTransaction())
         throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
     }
@@ -224,15 +252,26 @@ public class AccountRoleAddition {
       agencyAdminGrant.bindCheckedAgencyAdmin(this);
     }
 
-    public void flush() { requireLocalCurrent(); entities.flush(); }
+    public void flush() {
+      requireLocalCurrent();
+      entities.flush();
+    }
 
     public AddedRole currentResult() {
       requireInput();
-      return new AddedRole(account, command.role(), agencyIdsOfAdmin(account).stream().sorted().toList());
+      return new AddedRole(
+          account, command.role(), agencyIdsOfAdmin(account).stream().sorted().toList());
     }
 
-    @Override public void close() { active = false; }
-    @Override public String toString() { return "ScopedAddition[source=redacted]"; }
+    @Override
+    public void close() {
+      active = false;
+    }
+
+    @Override
+    public String toString() {
+      return "ScopedAddition[source=redacted]";
+    }
   }
 
   private Long agencyOf(Consultant consultant, Long requested) {
