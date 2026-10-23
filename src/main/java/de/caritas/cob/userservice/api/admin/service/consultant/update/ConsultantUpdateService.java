@@ -145,21 +145,36 @@ public class ConsultantUpdateService {
     }
 
     public void requireSelfInput() {
-      if (adminEdit) throw new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException("SELF profile requires its owning public edit");
+      if (adminEdit)
+        throw new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException(
+            "SELF profile requires its owning public edit");
       try {
         var values = new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(dto);
-        var allowed = Set.of("firstname", "lastname", "email", "formalLanguage", "absent", "absenceMessage", "languages", "publicSlug", "dataPrivacyConfirmation", "termsAndConditionsConfirmation");
+        var allowed =
+            Set.of(
+                "firstname",
+                "lastname",
+                "email",
+                "formalLanguage",
+                "absent",
+                "absenceMessage",
+                "languages",
+                "publicSlug",
+                "dataPrivacyConfirmation",
+                "termsAndConditionsConfirmation");
         var fields = values.fields();
         while (fields.hasNext()) {
           var field = fields.next();
           if (!allowed.contains(field.getKey()) && !field.getValue().isNull())
-            throw new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException("SELF profile cannot change privileged fields");
+            throw new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException(
+                "SELF profile cannot change privileged fields");
         }
         Consultant row = current();
         if (!Objects.equals(dto.getFormalLanguage(), row.isLanguageFormal())
             || !Objects.equals(dto.getAbsent(), row.isAbsent())
             || !Objects.equals(dto.getAbsenceMessage(), row.getAbsenceMessage()))
-          throw new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException("SELF profile retains the current absence and formal-language fields");
+          throw new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException(
+              "SELF profile retains the current absence and formal-language fields");
       } catch (IllegalArgumentException invalid) {
         throw new BadRequestException("SELF profile edit is invalid");
       }

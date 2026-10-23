@@ -133,15 +133,19 @@ public final class HumanAdminAccountMaintenance {
   }
 
   public de.caritas.cob.userservice.api.model.Consultant updateOwnConsultantProfile(
-      de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService.ScopedEdit edit) {
+      de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService
+              .ScopedEdit
+          edit) {
     Objects.requireNonNull(edit);
     requireOutsideSql();
-    if (!edit.selfService() || !"PUT".equals(request.getMethod())
+    if (!edit.selfService()
+        || !"PUT".equals(request.getMethod())
         || !Set.of("/users/data", "/service/users/data").contains(request.getRequestURI())
         || !currentHuman().subject.equals(edit.accountId())) throw forbidden();
     authorizedRow(edit.accountId(), false, true);
     edit.requireSelfInput();
-    return (de.caritas.cob.userservice.api.model.Consultant) updateProfile(edit.accountId(), edit.profile(), edit, true);
+    return (de.caritas.cob.userservice.api.model.Consultant)
+        updateProfile(edit.accountId(), edit.profile(), edit, true);
   }
 
   private Object updateProfile(
@@ -153,8 +157,12 @@ public final class HumanAdminAccountMaintenance {
     return updateProfile(accountId, profile, edit, false);
   }
 
-  private Object updateProfile(String accountId, IdentityProfileUpdate profile,
-      de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService.ScopedEdit edit,
+  private Object updateProfile(
+      String accountId,
+      IdentityProfileUpdate profile,
+      de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService
+              .ScopedEdit
+          edit,
       boolean self) {
     requireOutsideSql();
     if (!Set.of("PATCH", "PUT").contains(request.getMethod())) throw forbidden();
@@ -361,7 +369,9 @@ public final class HumanAdminAccountMaintenance {
     return transaction(
         () -> {
           requireDesired(
-              authorizedRow(checked.actual.account, true, checked.self), checked.original, checked.profile);
+              authorizedRow(checked.actual.account, true, checked.self),
+              checked.original,
+              checked.profile);
           var found = intent(checked.workflow, true);
           requireConsultantPostcondition(checked, Objects.requireNonNull(found));
           return checked.edit.current();
@@ -398,7 +408,9 @@ public final class HumanAdminAccountMaintenance {
     return transaction(
         () -> {
           requireDesired(
-              authorizedRow(checked.actual.account, true, checked.self), checked.original, checked.profile);
+              authorizedRow(checked.actual.account, true, checked.self),
+              checked.original,
+              checked.profile);
           return jdbc.queryForObject(
               "select admin_id,tenant_id,username,type,first_name,last_name,email,managed_paused,id_old,create_date,update_date from admin where admin_id=?",
               (r, index) ->
@@ -792,13 +804,22 @@ public final class HumanAdminAccountMaintenance {
     if (rows.size() != 1) throw forbidden();
     var row = rows.getFirst();
     if (self) {
-      if (!currentHuman().subject.equals(account) || !Objects.equals(actor.getTenantId(), row.tenant)) throw forbidden();
-      var owner = de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAccountOwner.inspect(jdbc, account, row.tenant);
-      if (!(owner.kind() == de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAccountOwner.Kind.CONSULTANT && "CONSULTANT".equals(row.type)
+      if (!currentHuman().subject.equals(account)
+          || !Objects.equals(actor.getTenantId(), row.tenant)) throw forbidden();
+      var owner =
+          de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAccountOwner.inspect(
+              jdbc, account, row.tenant);
+      if (!(owner.kind()
+                  == de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAccountOwner
+                      .Kind.CONSULTANT
+              && "CONSULTANT".equals(row.type)
           || owner.consultant() && row.secondary != null)) throw forbidden();
       var secondary = row.secondary;
-      if (secondary != null && (secondary.deleted != null || !Objects.equals(row.tenant, secondary.tenant)
-          || !decodedUsername(row.username).equals(decodedUsername(secondary.username)))) throw forbidden();
+      if (secondary != null
+          && (secondary.deleted != null
+              || !Objects.equals(row.tenant, secondary.tenant)
+              || !decodedUsername(row.username).equals(decodedUsername(secondary.username))))
+        throw forbidden();
       return row;
     }
     var authorities = actor.getGrantedAuthorities();
@@ -1126,13 +1147,19 @@ public final class HumanAdminAccountMaintenance {
       return actual.account;
     }
 
-    public boolean selfService() { return self; }
+    public boolean selfService() {
+      return self;
+    }
 
-    public boolean protectedSelf() { return self && Set.of("TENANT", "SUPER").contains(actual.type); }
+    public boolean protectedSelf() {
+      return self && Set.of("TENANT", "SUPER").contains(actual.type);
+    }
 
     public String profileCommand() {
       if (role != null) return "ordinary-profile";
-      return self && profile != null && !Objects.equals(original.email, profile.email()) ? "email" : "profile";
+      return self && profile != null && !Objects.equals(original.email, profile.email())
+          ? "email"
+          : "profile";
     }
 
     public Long tenantId() {

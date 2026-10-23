@@ -743,16 +743,22 @@ class HumanAdminAccountMaintenanceTest {
     var publicEdit =
         (de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService)
             proxy.getProxy();
-    var dto = self
-        ? new de.caritas.cob.userservice.api.adapters.web.mapping.ConsultantDtoMapper().updateAdminConsultantOf(
-            new de.caritas.cob.userservice.api.adapters.web.dto.UpdateConsultantDTO()
-                .firstname("New").lastname("Name").email("new@example.test").publicSlug("requested-self-slug"), localConsultant())
-        : new de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO()
-            .firstname("New")
-            .lastname("Name")
-            .email("new@example.test")
-            .formalLanguage(true)
-            .absent(true);
+    var dto =
+        self
+            ? new de.caritas.cob.userservice.api.adapters.web.mapping.ConsultantDtoMapper()
+                .updateAdminConsultantOf(
+                    new de.caritas.cob.userservice.api.adapters.web.dto.UpdateConsultantDTO()
+                        .firstname("New")
+                        .lastname("Name")
+                        .email("new@example.test")
+                        .publicSlug("requested-self-slug"),
+                    localConsultant())
+            : new de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO()
+                .firstname("New")
+                .lastname("Name")
+                .email("new@example.test")
+                .formalLanguage(true)
+                .absent(true);
     if (roleEdit) dto.setIsGroupchatConsultant(!"roles-remove".equals(scenario));
     if ("self-unchanged".equals(scenario)) dto.setEmail("old@example.test");
     if ("self-roles".equals(scenario)) dto.setIsGroupchatConsultant(true);

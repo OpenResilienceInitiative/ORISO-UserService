@@ -253,12 +253,7 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
     try {
       return new ProfileApplied(
           verifyProfileReceipt(
-              account,
-              frozen,
-              call(
-                  account,
-                  account.profileCommand(),
-                  frozen.body())));
+              account, frozen, call(account, account.profileCommand(), frozen.body())));
     } catch (TerminalProfileNoEffect refused) {
       return verifyProfileNoEffect(account, frozen, refused.reply);
     }
@@ -304,7 +299,8 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
             body.path("target").path("tenantId").isNull()
                 ? null
                 : body.path("target").path("tenantId").textValue())
-        || !(current.selfService() ? "SELF" : "HUMAN_ADMIN").equals(body.path("target").path("origin").path("kind").textValue())
+        || !(current.selfService() ? "SELF" : "HUMAN_ADMIN")
+            .equals(body.path("target").path("origin").path("kind").textValue())
         || !operation
             .toString()
             .equals(body.path("target").path("origin").path("workflowId").textValue())
@@ -323,14 +319,15 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
         // These two fixed SELF commands have the same closed body shape. Neither grants authority;
         // the sole strict verifier must authenticate every original field before either succeeds.
         try {
-          codec.verifyMaintenanceNoEffectReceipt(receipt, realmId, actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), body, "profile");
+          codec.verifyMaintenanceNoEffectReceipt(
+              receipt, realmId, actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), body, "profile");
         } catch (IllegalArgumentException wrongProfileReceipt) {
-          codec.verifyMaintenanceNoEffectReceipt(receipt, realmId, actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), body, "email");
+          codec.verifyMaintenanceNoEffectReceipt(
+              receipt, realmId, actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), body, "email");
         }
         return;
       }
-    }
-    else if (fields.equals(Set.of("group", "profile"))) command = "ordinary-profile";
+    } else if (fields.equals(Set.of("group", "profile"))) command = "ordinary-profile";
     else throw invalid();
     codec.verifyMaintenanceNoEffectReceipt(
         receipt, realmId, actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), body, command);
@@ -341,9 +338,15 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
     JsonNode body = checkedBody(account, frozen);
     try {
       return switch (account.profileCommand()) {
-        case "profile" -> codec.verifyMaintenanceProfileReceipt(receipt, realmId, actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), body);
-        case "email" -> codec.verifyMaintenanceEmailReceipt(receipt, realmId, actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), body);
-        case "ordinary-profile" -> codec.verifyMaintenanceOrdinaryProfileReceipt(receipt, realmId, actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), body);
+        case "profile" ->
+            codec.verifyMaintenanceProfileReceipt(
+                receipt, realmId, actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), body);
+        case "email" ->
+            codec.verifyMaintenanceEmailReceipt(
+                receipt, realmId, actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), body);
+        case "ordinary-profile" ->
+            codec.verifyMaintenanceOrdinaryProfileReceipt(
+                receipt, realmId, actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), body);
         default -> throw invalid();
       };
     } catch (RuntimeException invalid) {
@@ -414,7 +417,11 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
     origin.put("humanSubject", account.humanSubject());
     origin.put("humanIssuer", account.humanIssuer());
     origin.put("humanClient", account.humanClient());
-    origin.put("humanAuthority", !account.selfService() || account.protectedSelf() ? "PROTECTED_ACCOUNT_OPERATIONS_V1" : null);
+    origin.put(
+        "humanAuthority",
+        !account.selfService() || account.protectedSelf()
+            ? "PROTECTED_ACCOUNT_OPERATIONS_V1"
+            : null);
     var target = new TreeMap<String, Object>();
     target.put("accountId", account.accountId());
     target.put("tenantId", account.tenantId() == null ? null : account.tenantId().toString());
@@ -425,7 +432,8 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
   private String call(CheckedAccount account, String command, String frozen) {
     account.requireCurrent();
     if (TransactionSynchronizationManager.isActualTransactionActive()
-        || !Set.of("read", "profile", "email", "ordinary-profile").contains(command)) throw invalid();
+        || !Set.of("read", "profile", "email", "ordinary-profile").contains(command))
+      throw invalid();
     var actor = actors.require(TaskPurpose.ACCOUNT_MAINTENANCE);
     var token = broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE);
     long now = Instant.now().getEpochSecond();
