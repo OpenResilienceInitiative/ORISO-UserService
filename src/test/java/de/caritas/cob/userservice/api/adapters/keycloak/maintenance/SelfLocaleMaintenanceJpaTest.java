@@ -78,7 +78,9 @@ class SelfLocaleMaintenanceJpaTest {
     jdbc.execute("drop table if exists identity_account_operation_intent");
     new ResourceDatabasePopulator(
             new ClassPathResource(
-                "db/changelog/changeset/20261021_identity_self_locale_367/migrate.sql"))
+                "db/changelog/changeset/20261021_identity_self_locale_367/migrate.sql"),
+            new ClassPathResource(
+                "db/changelog/changeset/20261023_existing_import_intent_367/migrate.sql"))
         .execute(dataSource);
     users.findById(ACCOUNT).ifPresent(users::delete);
     var user = new User(ACCOUNT, null, "ordinary-jpa", "ordinary@fixture.invalid", false);
@@ -233,6 +235,51 @@ class SelfLocaleMaintenanceJpaTest {
             Integer.class,
             operation));
     assertEquals(0, nativeMutations.get());
+    server.verify();
+  }
+
+  @Test
+  void anIdenticalSavedImportRowCanNeverResumeAsASelfLocaleOperation() {
+    expectRead();
+    server
+        .expect(requestTo(ENDPOINT + "/locale"))
+        .andRespond(
+            outbound -> {
+              throw new ResourceAccessException("Fixture lost reply");
+            });
+    var patch =
+        Map.<String, Object>of("id", ACCOUNT, "preferredLanguage", "de", "encourage2fa", true);
+    assertThrows(
+        RuntimeException.class,
+        () -> maintenance.patch("de", patch, () -> accounts.patchUser(patch)));
+    assertEquals("FROZEN", status());
+    assertEquals(
+        "SELF_LOCALE",
+        jdbc.queryForObject(
+            "select operation_kind from identity_account_operation_intent where operation_id=?",
+            String.class,
+            operation));
+    jdbc.update(
+        "update identity_account_operation_intent set operation_kind='EXISTING_CONSULTANT_IMPORT',status='ACKNOWLEDGED',receipt='synthetic-other-namespace' where operation_id=?",
+        operation);
+    var frozen =
+        jdbc.queryForMap(
+            "select * from identity_account_operation_intent where operation_id=?", operation);
+    assertThrows(
+        RuntimeException.class,
+        () ->
+            maintenance.patch(
+                "de",
+                patch,
+                () -> {
+                  fail("Foreign operation cannot invoke domain callback");
+                  return java.util.Optional.empty();
+                }));
+    assertEquals(
+        frozen,
+        jdbc.queryForMap(
+            "select * from identity_account_operation_intent where operation_id=?", operation));
+    assertEquals(LanguageCode.de, users.findById(ACCOUNT).orElseThrow().getLanguageCode());
     server.verify();
   }
 
