@@ -68,13 +68,38 @@ public final class ScheduledAskerMaintenance {
   public static final class AcknowledgedDeletion {
     private AcknowledgedDeletion() {}
 
-    public void requireCurrent() { throw unavailable(); }
-    public String accountId() { throw unavailable(); }
-    public Long tenantId() { throw unavailable(); }
-    public boolean hasLocalUser() { throw unavailable(); }
-    public boolean inactivityCause() { throw unavailable(); }
-    public void runOwnedLocal(Runnable action) { throw unavailable(); }
-    public boolean completeOwnedLocalDeletion(Runnable finalDelete) { throw unavailable(); }
+    public void requireCurrent() {
+      throw unavailable();
+    }
+
+    public void requireCurrentUser(User independentlyLoadedOriginal) {
+      throw unavailable();
+    }
+
+    public String accountId() {
+      throw unavailable();
+    }
+
+    public Long tenantId() {
+      throw unavailable();
+    }
+
+    public boolean hasLocalUser() {
+      throw unavailable();
+    }
+
+    public boolean inactivityCause() {
+      throw unavailable();
+    }
+
+    public void runOwnedLocal(Runnable action) {
+      throw unavailable();
+    }
+
+    public boolean completeOwnedLocalDeletion(Runnable finalDelete) {
+      throw unavailable();
+    }
+
   }
 
   public void performDeletionWorkflow() {

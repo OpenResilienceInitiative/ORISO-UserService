@@ -627,7 +627,12 @@ class HumanAdminAccountMaintenanceTest {
 
   @Test
   void actualSelfNativeFullRolesMustMatchTheConfiguredCanonicalSqlKind() {
-    for (String scenario : List.of("self-native-user", "self-native-combined", "self-native-agency-as-protected", "self-missing-catalog")) {
+    for (String scenario :
+        List.of(
+            "self-native-user",
+            "self-native-combined",
+            "self-native-agency-as-protected",
+            "self-missing-catalog")) {
       server.reset();
       actualSchemaAndValidatedHumanFixture();
       runActualConsultantEdit(scenario);
@@ -636,8 +641,15 @@ class HumanAdminAccountMaintenanceTest {
 
   private void runActualConsultantEdit(String scenario) {
     boolean self = scenario.startsWith("self-");
-    if (!Set.of("dual", "foreign-secondary", "self-dual", "self-agency", "self-single-tenant-dual", "self-native-agency-as-protected", "self-platform").contains(scenario))
-      jdbc.update("delete from admin where admin_id=?", ACCOUNT);
+    if (!Set.of(
+            "dual",
+            "foreign-secondary",
+            "self-dual",
+            "self-agency",
+            "self-single-tenant-dual",
+            "self-native-agency-as-protected",
+            "self-platform")
+        .contains(scenario)) jdbc.update("delete from admin where admin_id=?", ACCOUNT);
     jdbc.update(
         "insert into consultant(consultant_id,tenant_id,username,first_name,last_name,email,managed_paused,status) values(?,7,'original-admin','Old','Name','old@example.test',true,'CREATED')",
         ACCOUNT);
@@ -698,11 +710,23 @@ class HumanAdminAccountMaintenanceTest {
             CLOCK,
             ISSUER);
     if (self && !"self-missing-catalog".equals(scenario))
-      service.configureReviewedSelfProfileRoles(Map.of(
-          "CONSULTANT", List.of(Set.of("consultant"), Set.of("consultant", "group-chat-consultant")),
-          "AGENCY_ADMIN", List.of(Set.of("consultant", "restricted-agency-admin", "user-admin"), Set.of("consultant", "group-chat-consultant", "restricted-agency-admin", "user-admin")),
-          "TENANT_ADMIN", List.of(Set.of("consultant", "tenant-admin"), Set.of("consultant", "single-tenant-admin")),
-          "PLATFORM_ADMIN", List.of(Set.of("consultant", "tenant-admin"))));
+      service.configureReviewedSelfProfileRoles(
+          Map.of(
+              "CONSULTANT",
+                  List.of(Set.of("consultant"), Set.of("consultant", "group-chat-consultant")),
+              "AGENCY_ADMIN",
+                  List.of(
+                      Set.of("consultant", "restricted-agency-admin", "user-admin"),
+                      Set.of(
+                          "consultant",
+                          "group-chat-consultant",
+                          "restricted-agency-admin",
+                          "user-admin")),
+              "TENANT_ADMIN",
+                  List.of(
+                      Set.of("consultant", "tenant-admin"),
+                      Set.of("consultant", "single-tenant-admin")),
+              "PLATFORM_ADMIN", List.of(Set.of("consultant", "tenant-admin"))));
     boolean roleEdit = scenario.startsWith("roles-");
     if (roleEdit && !"roles-missing".equals(scenario))
       service.configureReviewedOrdinaryGroups(
@@ -824,9 +848,11 @@ class HumanAdminAccountMaintenanceTest {
     if ("self-native-user".equals(scenario)) originalRoles = List.of("user");
     if (Set.of("self-native-combined", "self-native-agency-as-protected").contains(scenario))
       originalRoles = List.of("consultant", "restricted-agency-admin", "user-admin");
-    if ("self-single-tenant-dual".equals(scenario)) originalRoles = List.of("consultant", "single-tenant-admin");
+    if ("self-single-tenant-dual".equals(scenario))
+      originalRoles = List.of("consultant", "single-tenant-admin");
     final List<String> projectedRoles = originalRoles;
-    boolean coherenceNegative = scenario.startsWith("self-native-") || "self-missing-catalog".equals(scenario);
+    boolean coherenceNegative =
+        scenario.startsWith("self-native-") || "self-missing-catalog".equals(scenario);
     List<String> desiredRoles =
         "roles-remove".equals(scenario)
             ? List.of("consultant")
@@ -835,7 +861,13 @@ class HumanAdminAccountMaintenanceTest {
         self && !"self-unchanged".equals(scenario)
             ? "email"
             : roleEdit ? "ordinary-profile" : "profile";
-    readReply(false, roleEdit || coherenceNegative || "self-single-tenant-dual".equals(scenario) ? projectedRoles : null, self, "self-unchanged".equals(scenario));
+    readReply(
+        false,
+        roleEdit || coherenceNegative || "self-single-tenant-dual".equals(scenario)
+            ? projectedRoles
+            : null,
+        self,
+        "self-unchanged".equals(scenario));
     if ("roles-preserve".equals(scenario)) {
       assertThrows(RuntimeException.class, () -> publicEdit.updateConsultant(ACCOUNT, dto, !self));
       assertEquals(
@@ -876,14 +908,21 @@ class HumanAdminAccountMaintenanceTest {
       int status = scenario.endsWith("409") ? 409 : 403;
       boolean signed = scenario.startsWith("self-signed");
       mutation.andRespond(noEffectReply(status, scenario.substring(5), command));
-      var failure = assertThrows(RuntimeException.class, () -> publicEdit.updateConsultant(ACCOUNT, dto, false));
+      var failure =
+          assertThrows(
+              RuntimeException.class, () -> publicEdit.updateConsultant(ACCOUNT, dto, false));
       assertPublicMutationOutcome(failure, status, signed);
       assertEquals("Old", jdbc.queryForObject("select first_name from consultant", String.class));
-      assertEquals("old@example.test", jdbc.queryForObject("select email from consultant", String.class));
-      assertEquals(signed ? "NO_EFFECT" : "FROZEN", jdbc.queryForObject("select status from general_admin_identity_intent", String.class));
+      assertEquals(
+          "old@example.test", jdbc.queryForObject("select email from consultant", String.class));
+      assertEquals(
+          signed ? "NO_EFFECT" : "FROZEN",
+          jdbc.queryForObject("select status from general_admin_identity_intent", String.class));
       verify(consultants, never()).saveConsultant(any());
       if (signed) {
-        var replay = assertThrows(RuntimeException.class, () -> publicEdit.updateConsultant(ACCOUNT, dto, false));
+        var replay =
+            assertThrows(
+                RuntimeException.class, () -> publicEdit.updateConsultant(ACCOUNT, dto, false));
         assertPublicMutationOutcome(replay, status, true);
       }
       server.verify();
@@ -921,10 +960,23 @@ class HumanAdminAccountMaintenanceTest {
       readReply(true, roleEdit ? desiredRoles : null, self, "self-unchanged".equals(scenario));
     if (coherenceNegative) {
       assertAll(
-          () -> assertThrows(RuntimeException.class, () -> publicEdit.updateConsultant(ACCOUNT, dto, false)),
-          () -> assertEquals(0, mutations.get(), "Wrong or unconfigured SQL/native family must refuse before mutation"),
-          () -> assertEquals("Old", jdbc.queryForObject("select first_name from consultant", String.class)),
-          () -> assertEquals(0, jdbc.queryForObject("select count(*) from general_admin_identity_intent where status<>'PREPARED'", Integer.class)),
+          () ->
+              assertThrows(
+                  RuntimeException.class, () -> publicEdit.updateConsultant(ACCOUNT, dto, false)),
+          () ->
+              assertEquals(
+                  0,
+                  mutations.get(),
+                  "Wrong or unconfigured SQL/native family must refuse before mutation"),
+          () ->
+              assertEquals(
+                  "Old", jdbc.queryForObject("select first_name from consultant", String.class)),
+          () ->
+              assertEquals(
+                  0,
+                  jdbc.queryForObject(
+                      "select count(*) from general_admin_identity_intent where status<>'PREPARED'",
+                      Integer.class)),
           () -> verify(consultants, never()).saveConsultant(any()));
       // The prepared response proves old source would succeed; correct source never dispatches it.
       return;
@@ -997,7 +1049,8 @@ class HumanAdminAccountMaintenanceTest {
             "select applied_json from general_admin_identity_intent where operation_id=?",
             String.class,
             OPERATION));
-    if (Set.of("dual", "self-dual", "self-agency", "self-single-tenant-dual", "self-platform").contains(scenario)) {
+    if (Set.of("dual", "self-dual", "self-agency", "self-single-tenant-dual", "self-platform")
+        .contains(scenario)) {
       assertEquals(
           "New",
           jdbc.queryForObject(
@@ -1802,7 +1855,10 @@ class HumanAdminAccountMaintenanceTest {
                 if (jdbc.queryForObject(
                         "select count(*) from admin where admin_id=?", Integer.class, ACCOUNT)
                     == 1) {
-                  if ("AGENCY".equals(jdbc.queryForObject("select type from admin where admin_id=?", String.class, ACCOUNT)))
+                  if ("AGENCY"
+                      .equals(
+                          jdbc.queryForObject(
+                              "select type from admin where admin_id=?", String.class, ACCOUNT)))
                     selfRoles.add("restricted-agency-admin").add("user-admin");
                   else selfRoles.add("tenant-admin");
                 }
