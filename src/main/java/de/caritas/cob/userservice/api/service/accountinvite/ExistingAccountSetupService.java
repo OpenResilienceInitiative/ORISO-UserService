@@ -305,12 +305,16 @@ public class ExistingAccountSetupService {
               requireSameSavedIdentity(target.saved());
               boolean consultantOwned = passwords.requireExistingSetupCompletionWithinOwner(handle);
               if (consultantOwned) {
-                inTenantOf(target.saved(), () -> {
-                  var current = consultants.findByIdAndDeleteDateIsNull(target.saved().identityId())
-                      .orElseThrow(ScopedIdentityCommandRequiredException::new);
-                  current.setPasswordChangeRequired(false);
-                  consultants.save(current);
-                });
+                inTenantOf(
+                    target.saved(),
+                    () -> {
+                      var current =
+                          consultants
+                              .findByIdAndDeleteDateIsNull(target.saved().identityId())
+                              .orElseThrow(ScopedIdentityCommandRequiredException::new);
+                      current.setPasswordChangeRequired(false);
+                      consultants.save(current);
+                    });
               }
               int completed =
                   invites.completeExistingAccountSetup(

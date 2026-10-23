@@ -561,12 +561,15 @@ class ClaimedPasswordMaintenanceFlowIT {
                   "select status from identity_setup_password_claim where invite_id=11",
                   String.class))
           .isEqualTo("UNKNOWN");
-      assertThatThrownBy(() -> setup.confirm("fixture-original-setup-token", "fixture-new-password!42"))
+      assertThatThrownBy(
+              () -> setup.confirm("fixture-original-setup-token", "fixture-new-password!42"))
           .isInstanceOf(RuntimeException.class);
       assertThat(f.effects).isEqualTo(1);
       assertThat(f.required()).isTrue();
-      assertThat(f.jdbc.queryForObject("select count(*) from identity_claimed_password_intent", Integer.class)).isEqualTo(1);
-
+      assertThat(
+              f.jdbc.queryForObject(
+                  "select count(*) from identity_claimed_password_intent", Integer.class))
+          .isEqualTo(1);
     }
   }
 

@@ -316,7 +316,8 @@ class ExistingAccountSetupCausalClaimsTest {
     }
 
     @Override
-    public boolean requireExistingSetupCompletionWithinOwner(ExistingAccountSetupService.ClaimedSetup handle) {
+    public boolean requireExistingSetupCompletionWithinOwner(
+        ExistingAccountSetupService.ClaimedSetup handle) {
       assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
       assertSame(lastHandle, handle);
       assertTrue(effects.contains(handle.checkedRecoveryClaim().id()));
