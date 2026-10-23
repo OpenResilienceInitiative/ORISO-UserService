@@ -306,6 +306,10 @@ public class OrisoEmailRenderer {
     if (!isUnsubscribable(templateId) || link == null || link.isBlank()) {
       return values;
     }
+    // One template may serve several preferences: keep the producer's explicit selector.
+    if (Pattern.compile("[?&]mail=[^&#]+").matcher(link).find()) {
+      return values;
+    }
     Map<String, String> decorated = new LinkedHashMap<>(values);
     decorated.put("unsubscribeUrl", link + (link.contains("?") ? "&" : "?") + "mail=" + templateId);
     return decorated;

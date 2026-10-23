@@ -23,14 +23,29 @@ public class AccountLoginStatusService {
 
   private final IdentityAccountStatusLookup identityAccountStatusLookup;
   private final LongSupplier nanoTime;
+  private final ManagedAccountStatusService accountStatus;
 
   @Autowired
+  public AccountLoginStatusService(
+      IdentityAccountStatusLookup identityAccountStatusLookup,
+      ManagedAccountStatusService accountStatus) {
+    this(identityAccountStatusLookup, System::nanoTime, accountStatus);
+  }
+
   public AccountLoginStatusService(IdentityAccountStatusLookup identityAccountStatusLookup) {
-    this(identityAccountStatusLookup, System::nanoTime);
+    this(identityAccountStatusLookup, System::nanoTime, null);
   }
 
   AccountLoginStatusService(
       IdentityAccountStatusLookup identityAccountStatusLookup, LongSupplier nanoTime) {
+    this(identityAccountStatusLookup, nanoTime, null);
+  }
+
+  private AccountLoginStatusService(
+      IdentityAccountStatusLookup identityAccountStatusLookup,
+      LongSupplier nanoTime,
+      ManagedAccountStatusService accountStatus) {
+    this.accountStatus = accountStatus;
     this.identityAccountStatusLookup = identityAccountStatusLookup;
     this.nanoTime = nanoTime;
   }
@@ -44,6 +59,7 @@ public class AccountLoginStatusService {
    */
   public Map<String, Boolean> activeByIds(Collection<String> userIds) {
     Map<String, Boolean> result = new HashMap<>();
+    Map<Long, Boolean> tenantStates = new HashMap<>();
     long startedAt = nanoTime.getAsLong();
     int lookups = 0;
     for (String id : new LinkedHashSet<>(userIds)) {
@@ -56,7 +72,12 @@ public class AccountLoginStatusService {
       }
       lookups++;
       try {
-        identityAccountStatusLookup.findEnabledById(id).ifPresent(active -> result.put(id, active));
+        Boolean enabled = identityAccountStatusLookup.findEnabledById(id).orElse(null);
+        Boolean active =
+            accountStatus == null
+                ? enabled
+                : accountStatus.activeForList(id, enabled, tenantStates);
+        if (active != null) result.put(id, active);
       } catch (WebApplicationException failure) {
         if (failure.getResponse().getStatus() < 500) {
           throw failure;
@@ -75,5 +96,42 @@ public class AccountLoginStatusService {
 
   public Boolean activeOf(String userId) {
     return userId == null || userId.isBlank() ? null : activeByIds(List.of(userId)).get(userId);
+  }
+
+  /** Existing filtered/menu DTOs use the same bounded effective status as search rows. */
+  public void appendAdminStatuses(
+      List<de.caritas.cob.userservice.api.adapters.web.dto.AdminResponseDTO> responses) {
+    if (responses == null) return;
+    var rows =
+        responses.stream()
+            .filter(java.util.Objects::nonNull)
+            .map(de.caritas.cob.userservice.api.adapters.web.dto.AdminResponseDTO::getEmbedded)
+            .filter(java.util.Objects::nonNull)
+            .toList();
+    var statuses =
+        activeByIds(
+            rows.stream()
+                .map(de.caritas.cob.userservice.api.adapters.web.dto.AdminDTO::getId)
+                .toList());
+    rows.forEach(row -> row.setActive(statuses.get(row.getId())));
+  }
+
+  public void appendConsultantStatuses(
+      List<de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO> responses) {
+    if (responses == null) return;
+    var rows =
+        responses.stream()
+            .filter(java.util.Objects::nonNull)
+            .map(
+                de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO
+                    ::getEmbedded)
+            .filter(java.util.Objects::nonNull)
+            .toList();
+    var statuses =
+        activeByIds(
+            rows.stream()
+                .map(de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO::getId)
+                .toList());
+    rows.forEach(row -> row.setActive(statuses.get(row.getId())));
   }
 }

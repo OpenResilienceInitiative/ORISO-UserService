@@ -620,6 +620,45 @@ class AdviceSeekerReplyEmailServiceTest {
   }
 
   @Test
+  void tragerWithNotificationMailsSwitchedOffEndsTheClaimInsteadOfRetryingForever() {
+    // FE#1701: on Dev every Träger but one has featureSystemNotificationEmailsEnabled off. Their
+    // reply mails were retried every five minutes for days, logged as a setup outage.
+    when(sessions.findById(42L)).thenReturn(Optional.of(session(asker(true, "asker@example.net"))));
+    when(writer.claim(1L)).thenReturn(Optional.of(claim(1L)));
+    when(routes.resolve(7L)).thenReturn(Optional.empty());
+
+    service.deliverPending(1L);
+
+    verify(writer).finish(1L, Status.REJECTED);
+    verify(writer, never()).retryLater(1L);
+    verify(delivery, never()).sendReply(anyLong(), any(), anyString(), any(), any());
+  }
+
+  @Test
+  void consultantMailOfTragerWithNotificationMailsSwitchedOffEndsTheClaim() {
+    when(sessions.findById(42L)).thenReturn(Optional.of(consultation()));
+    when(writer.claim(1L)).thenReturn(Optional.of(consultantClaim()));
+    when(routes.resolve(7L)).thenReturn(Optional.empty());
+
+    service.deliverPending(1L);
+
+    verify(writer).finish(1L, Status.REJECTED);
+    verify(writer, never()).retryLater(1L);
+  }
+
+  @Test
+  void unavailableTenantSettingsStillRetryAfterRepair() {
+    when(sessions.findById(42L)).thenReturn(Optional.of(session(asker(true, "asker@example.net"))));
+    when(writer.claim(1L)).thenReturn(Optional.of(claim(1L)));
+    when(routes.resolve(7L)).thenThrow(new IllegalStateException("TenantService unavailable"));
+
+    service.deliverPending(1L);
+
+    verify(writer).retryLater(1L);
+    verify(writer, never()).finish(1L, Status.REJECTED);
+  }
+
+  @Test
   void missingPlatformSmtpConfigurationDefersBeforeAttemptingSend() {
     when(sessions.findById(42L)).thenReturn(Optional.of(session(asker(true, "asker@example.net"))));
     when(writer.claim(1L)).thenReturn(Optional.of(claim(1L)));

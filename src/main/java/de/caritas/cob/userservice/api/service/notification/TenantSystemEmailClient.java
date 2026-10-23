@@ -1,5 +1,7 @@
 package de.caritas.cob.userservice.api.service.notification;
 
+import de.caritas.cob.userservice.api.config.auth.RoutineTaskAuthentication;
+import de.caritas.cob.userservice.api.config.auth.TaskPurpose;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
@@ -176,12 +178,9 @@ public class TenantSystemEmailClient {
   }
 
   private HttpHeaders technicalHeaders() {
-    var account = identityConfig.getTechnicalUser();
-    if (account == null || account.getClientId() == null || account.getClientSecret() == null) {
-      throw new IllegalStateException("Identity technical account is not configured");
-    }
     String token =
-        authentication.loginService(account.getClientId(), account.getClientSecret()).accessToken();
+        RoutineTaskAuthentication.accessToken(
+            TaskPurpose.SYSTEM_EMAIL_DELIVERY, identityConfig, authentication);
     return headerSupplier.getKeycloakAndCsrfHttpHeaders(token);
   }
 

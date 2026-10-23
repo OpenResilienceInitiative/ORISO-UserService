@@ -98,7 +98,8 @@ public class SecurityConfig {
   public SecurityFilterChain filterChain(
       HttpSecurity http,
       Converter<Jwt, AbstractAuthenticationToken> jwtAuthenticationConverter,
-      de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService inactivity)
+      de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService inactivity,
+      de.caritas.cob.userservice.api.admin.service.admin.ManagedAccountStatusService accounts)
       throws Exception {
     http.csrf(AbstractHttpConfigurer::disable);
     http.addFilterBefore(new StatelessCsrfFilter(csrfSecurityProperties), CsrfFilter.class);
@@ -111,6 +112,11 @@ public class SecurityConfig {
     http.addFilterAfter(
         new de.caritas.cob.userservice.api.adapters.web.controller.interceptor
             .AccountInactivityAccessFilter(inactivity),
+        SecurityContextHolderAwareRequestFilter.class);
+
+    http.addFilterAfter(
+        new de.caritas.cob.userservice.api.adapters.web.controller.interceptor
+            .ManagedAccountPauseAccessFilter(accounts),
         SecurityContextHolderAwareRequestFilter.class);
 
     http.addFilterAfter(
@@ -474,11 +480,10 @@ public class SecurityConfig {
                 .hasAuthority(VIEW_AGENCY_CONSULTANTS)
                 .requestMatchers("/users/consultants/import")
                 .hasAuthority(TECHNICAL_DEFAULT)
-                .requestMatchers("/liveproxy/send")
-                .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT, ANONYMOUS_DEFAULT)
                 .requestMatchers("/users/messages/key")
                 .hasAuthority(TECHNICAL_DEFAULT)
-                .requestMatchers("/users/chat/new", "/users/chat/v2/new")
+                .requestMatchers(
+                    "/users/chat/new", "/users/chat/v2/new", "/users/chat/internal-subset")
                 .hasAuthority(CREATE_NEW_CHAT)
                 .requestMatchers("/users/chat/{chatId:[0-9]+}/start")
                 .hasAuthority(START_CHAT)
@@ -491,6 +496,14 @@ public class SecurityConfig {
                 .requestMatchers(
                     "/useradmin/identity-observations", "/service/useradmin/identity-observations")
                 .access(this::canObserveIdentityOccupancy)
+                .requestMatchers(
+                    "/useradmin/accounts/*/status", "/service/useradmin/accounts/*/status")
+                .hasAnyAuthority(
+                    USER_ADMIN,
+                    TENANT_ADMIN,
+                    SINGLE_TENANT_ADMIN,
+                    RESTRICTED_AGENCY_ADMIN,
+                    CONSULTANT_UPDATE)
                 .requestMatchers(HttpMethod.GET, "/useradmin/supportadmins/search")
                 .hasAnyAuthority(USER_ADMIN, GLOBAL_SUPPORT_ADMIN)
                 .requestMatchers(HttpMethod.GET, "/useradmin/tenantadmins/search")
@@ -544,6 +557,11 @@ public class SecurityConfig {
                         + "}/deletion/pause")
                 .hasAnyAuthority(
                     USER_ADMIN, RESTRICTED_AGENCY_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/useradmin/askers/deletion/reactivate",
+                    "/service/useradmin/askers/deletion/reactivate")
+                .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
                 .requestMatchers(
                     HttpMethod.POST,
                     "/useradmin/admins/{adminId:" + UUID_PATTERN + "}/grant-consultant-identity",

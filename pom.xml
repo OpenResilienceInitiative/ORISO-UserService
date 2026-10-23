@@ -980,6 +980,8 @@
 									<useSpringBoot3>true</useSpringBoot3>
 									<library>resttemplate</library>
 									<dateLibrary>java8</dateLibrary>
+									<!-- RestrictedTenantDTO.active is nullable; the RestTemplate mapper has no JsonNullableModule -->
+									<openApiNullable>false</openApiNullable>
 								</configOptions>
 							<inputSpec>${project.basedir}/services/tenantservice.yaml</inputSpec>
 							<generatorName>java</generatorName>

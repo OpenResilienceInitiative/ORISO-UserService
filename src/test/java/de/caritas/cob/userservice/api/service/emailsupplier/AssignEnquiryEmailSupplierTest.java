@@ -5,12 +5,15 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.service.ConsultantService;
+import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggle;
+import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggleService;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
 import de.caritas.cob.userservice.testutils.LogbackCaptor;
@@ -32,6 +35,8 @@ public class AssignEnquiryEmailSupplierTest {
 
   @Mock private ConsultantService consultantService;
 
+  @Mock private ReleaseToggleService releaseToggleService;
+
   private LogbackCaptor logCaptor;
 
   @BeforeEach
@@ -47,7 +52,8 @@ public class AssignEnquiryEmailSupplierTest {
             applicationBaseUrl,
             consultantService,
             null,
-            false);
+            false,
+            releaseToggleService);
     logCaptor = LogbackCaptor.forClass(AssignEnquiryEmailSupplier.class);
   }
 
@@ -112,5 +118,96 @@ public class AssignEnquiryEmailSupplierTest {
     assertThat(templateData.get(3).getValue(), is("7"));
     assertThat(templateData.get(4).getKey(), is("url"));
     assertThat(templateData.get(4).getValue(), is("application base url"));
+  }
+
+  @Test
+  void noAssignmentMailWhenTheCounsellorSwitchedAssignmentsOff() {
+    givenNewNotificationsAndSender();
+
+    var mails = supplierFor(counsellor(true, "{\"assignmentNotificationEnabled\":false}"));
+
+    assertThat(mails.generateEmails(), hasSize(0));
+  }
+
+  @Test
+  void noAssignmentMailWhenTheCounsellorSwitchedAllMailsOff() {
+    givenNewNotificationsAndSender();
+
+    var mails = supplierFor(counsellor(false, "{\"assignmentNotificationEnabled\":true}"));
+
+    assertThat(mails.generateEmails(), hasSize(0));
+  }
+
+  @Test
+  void assignmentMailWhenTheCounsellorSwitchedAssignmentsOn() {
+    givenNewNotificationsAndSender();
+
+    var mails = supplierFor(counsellor(true, "{\"assignmentNotificationEnabled\":true}"));
+
+    assertThat(mails.generateEmails(), hasSize(1));
+  }
+
+  @Test
+  void assignmentMailForExistingCounsellorWhoNeverSavedTheAssignmentSwitch() {
+    givenNewNotificationsAndSender();
+
+    var settingsWithoutAssignmentField =
+        supplierFor(counsellor(true, "{\"initialEnquiryNotificationEnabled\":true}"));
+    var settingsNull = supplierFor(counsellor(true, null));
+    // the column defaults to an empty string
+    var settingsBlank = supplierFor(counsellor(true, ""));
+
+    assertThat(settingsWithoutAssignmentField.generateEmails(), hasSize(1));
+    assertThat(settingsNull.generateEmails(), hasSize(1));
+    assertThat(settingsBlank.generateEmails(), hasSize(1));
+  }
+
+  @Test
+  void assignmentMailRegardlessOfSwitchesWhileNewNotificationsAreOff() {
+    when(releaseToggleService.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS))
+        .thenReturn(false);
+    when(consultantService.getConsultant(any())).thenReturn(Optional.of(sender()));
+
+    var mails = supplierFor(counsellor(false, "{\"assignmentNotificationEnabled\":false}"));
+
+    assertThat(mails.generateEmails(), hasSize(1));
+  }
+
+  private void givenNewNotificationsAndSender() {
+    when(releaseToggleService.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS))
+        .thenReturn(true);
+    // lenient: a switched-off counsellor never gets as far as looking up the sender
+    lenient().when(consultantService.getConsultant(any())).thenReturn(Optional.of(sender()));
+  }
+
+  private AssignEnquiryEmailSupplier supplierFor(Consultant receiver) {
+    return new AssignEnquiryEmailSupplier(
+        receiver,
+        "sender user id",
+        "asker user name",
+        "application base url",
+        consultantService,
+        null,
+        false,
+        releaseToggleService);
+  }
+
+  private static Consultant counsellor(boolean allMailsOn, String notificationsSettings) {
+    var counsellor = new Consultant();
+    counsellor.setId("receiver-id");
+    counsellor.setEmail("counsellor@example.test");
+    counsellor.setFirstName("Moritz");
+    counsellor.setLastName("Mustermann");
+    counsellor.setLanguageCode(LanguageCode.de);
+    counsellor.setNotificationsEnabled(allMailsOn);
+    counsellor.setNotificationsSettings(notificationsSettings);
+    return counsellor;
+  }
+
+  private static Consultant sender() {
+    var sender = new Consultant();
+    sender.setFirstName("Max");
+    sender.setLastName("Mustermann");
+    return sender;
   }
 }
