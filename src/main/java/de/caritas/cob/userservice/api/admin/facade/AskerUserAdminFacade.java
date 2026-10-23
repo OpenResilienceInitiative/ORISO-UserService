@@ -38,8 +38,7 @@ public class AskerUserAdminFacade {
   private de.caritas.cob.userservice.api.port.out.IdentityClientConfig identityMode;
 
   @org.springframework.beans.factory.annotation.Autowired(required = false)
-  public void setIdentityMode(
-      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode) {
+  public void setIdentityMode(de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode) {
     this.identityMode = java.util.Objects.requireNonNull(mode);
   }
 
