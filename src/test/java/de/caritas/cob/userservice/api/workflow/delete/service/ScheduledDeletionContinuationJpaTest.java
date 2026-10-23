@@ -950,6 +950,14 @@ class ScheduledDeletionContinuationJpaTest {
                         var target = preparationTarget(frame);
                         var prepared =
                             actions.finalAction.prepareAcknowledged(target).orElseThrow();
+                        actions.failMemberships = true;
+                        assertThrows(RuntimeException.class, () -> prepared.requireFor(frame));
+                        actions.failMemberships = false;
+                        prepared.requireFor(frame);
+                        var originalErrors = target.getDeletionWorkflowErrors();
+                        target.setDeletionWorkflowErrors(new ArrayList<>());
+                        assertThrows(RuntimeException.class, () -> prepared.requireFor(frame));
+                        target.setDeletionWorkflowErrors(originalErrors);
                         target.getDeletionWorkflowErrors().add(contentFailure());
                         assertThrows(RuntimeException.class, () -> prepared.requireFor(frame));
                         assertThrows(
