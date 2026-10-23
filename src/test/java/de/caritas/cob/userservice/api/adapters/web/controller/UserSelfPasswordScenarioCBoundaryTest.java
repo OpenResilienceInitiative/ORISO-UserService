@@ -105,11 +105,16 @@ class UserSelfPasswordScenarioCBoundaryTest {
       f.expectNative();
       assertEquals(200, f.controller.updatePassword(f.password()).getStatusCode().value());
       f.server.verify();
-      var original = f.jdbc.queryForMap("select * from identity_self_password_intent where operation_id=?", f.operation);
+      var original =
+          f.jdbc.queryForMap(
+              "select * from identity_self_password_intent where operation_id=?", f.operation);
       f.server.reset();
       f.expectAcknowledgedReplay(200);
       assertEquals(200, f.controller.updatePassword(f.password()).getStatusCode().value());
-      assertEquals(original, f.jdbc.queryForMap("select * from identity_self_password_intent where operation_id=?", f.operation));
+      assertEquals(
+          original,
+          f.jdbc.queryForMap(
+              "select * from identity_self_password_intent where operation_id=?", f.operation));
       assertEquals(1, f.effects.get());
       assertEquals(1, f.clears());
       verifyNoInteractions(f.legacy);
@@ -123,11 +128,17 @@ class UserSelfPasswordScenarioCBoundaryTest {
       f.expectNative();
       assertEquals(200, f.controller.updatePassword(f.password()).getStatusCode().value());
       f.server.verify();
-      var original = f.jdbc.queryForMap("select * from identity_self_password_intent where operation_id=?", f.operation);
+      var original =
+          f.jdbc.queryForMap(
+              "select * from identity_self_password_intent where operation_id=?", f.operation);
       f.server.reset();
       f.expectAcknowledgedReplay(403);
-      assertThrows(ServiceUnavailableException.class, () -> f.controller.updatePassword(f.password()));
-      assertEquals(original, f.jdbc.queryForMap("select * from identity_self_password_intent where operation_id=?", f.operation));
+      assertThrows(
+          ServiceUnavailableException.class, () -> f.controller.updatePassword(f.password()));
+      assertEquals(
+          original,
+          f.jdbc.queryForMap(
+              "select * from identity_self_password_intent where operation_id=?", f.operation));
       assertEquals(1, f.effects.get());
       assertEquals(1, f.clears());
       verifyNoInteractions(f.legacy);
@@ -141,10 +152,18 @@ class UserSelfPasswordScenarioCBoundaryTest {
       f.expectNative();
       assertEquals(200, f.controller.updatePassword(f.password()).getStatusCode().value());
       f.server.verify();
-      f.jdbc.update("update identity_self_password_intent set receipt=concat(receipt,'x') where operation_id=?", f.operation);
-      var original = f.jdbc.queryForMap("select * from identity_self_password_intent where operation_id=?", f.operation);
-      assertThrows(ServiceUnavailableException.class, () -> f.controller.updatePassword(f.password()));
-      assertEquals(original, f.jdbc.queryForMap("select * from identity_self_password_intent where operation_id=?", f.operation));
+      f.jdbc.update(
+          "update identity_self_password_intent set receipt=concat(receipt,'x') where operation_id=?",
+          f.operation);
+      var original =
+          f.jdbc.queryForMap(
+              "select * from identity_self_password_intent where operation_id=?", f.operation);
+      assertThrows(
+          ServiceUnavailableException.class, () -> f.controller.updatePassword(f.password()));
+      assertEquals(
+          original,
+          f.jdbc.queryForMap(
+              "select * from identity_self_password_intent where operation_id=?", f.operation));
       assertEquals(1, f.effects.get());
       assertEquals(1, f.clears());
       f.server.verify();
@@ -646,22 +665,45 @@ class UserSelfPasswordScenarioCBoundaryTest {
     }
 
     void expectAcknowledgedReplay(int status) {
-      String endpoint = "https://internal.identity.test/realms/fixture/oriso-account-maintenance/v1/accounts/" + ACCOUNT;
+      String endpoint =
+          "https://internal.identity.test/realms/fixture/oriso-account-maintenance/v1/accounts/"
+              + ACCOUNT;
       var body = frozenBodyFromIndependentDecryption();
-      String receipt = jdbc.queryForObject("select receipt from identity_self_password_intent where operation_id=?", String.class, operation);
-      server.expect(requestTo(endpoint + "/self-password"))
+      String receipt =
+          jdbc.queryForObject(
+              "select receipt from identity_self_password_intent where operation_id=?",
+              String.class,
+              operation);
+      server
+          .expect(requestTo(endpoint + "/self-password"))
           .andExpect(method(HttpMethod.POST))
           .andExpect(header("Authorization", "Bearer fixture-admin"))
           .andExpect(header("X-ORISO-Human-Authorization", "Bearer fixture-human"))
-          .andRespond(out -> {
-            assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-            assertEquals("ACKNOWLEDGED", status());
-            assertEquals(1, clears());
-            assertEquals(body, codec.read(((MockClientHttpRequest) out).getBodyAsString(), JsonNode.class));
-            return withStatus(HttpStatus.valueOf(status))
-                .body(status == 200 ? codec.canonical(Map.of("operationId", operation, "accountId", ACCOUNT, "result", "UPDATED", "receipt", receipt)) : "{}")
-                .contentType(MediaType.APPLICATION_JSON).createResponse(out);
-          });
+          .andRespond(
+              out -> {
+                assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+                assertEquals("ACKNOWLEDGED", status());
+                assertEquals(1, clears());
+                assertEquals(
+                    body,
+                    codec.read(((MockClientHttpRequest) out).getBodyAsString(), JsonNode.class));
+                return withStatus(HttpStatus.valueOf(status))
+                    .body(
+                        status == 200
+                            ? codec.canonical(
+                                Map.of(
+                                    "operationId",
+                                    operation,
+                                    "accountId",
+                                    ACCOUNT,
+                                    "result",
+                                    "UPDATED",
+                                    "receipt",
+                                    receipt))
+                            : "{}")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .createResponse(out);
+              });
     }
 
     void expectNative() {

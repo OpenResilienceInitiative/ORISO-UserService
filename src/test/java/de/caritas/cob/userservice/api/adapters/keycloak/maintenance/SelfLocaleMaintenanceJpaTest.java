@@ -563,11 +563,28 @@ class SelfLocaleMaintenanceJpaTest {
     var patch = Map.<String, Object>of("id", ACCOUNT, "preferredLanguage", "de");
     assertDoesNotThrow(() -> maintenance.patch("de", patch, () -> accounts.patchUser(patch)));
     server.verify();
-    jdbc.update("update identity_account_operation_intent set receipt=concat(receipt,'x') where operation_id=?", operation);
-    var original = jdbc.queryForMap("select * from identity_account_operation_intent where operation_id=?", operation);
-    var failure = assertThrows(ServiceUnavailableException.class, () -> maintenance.patch("de", patch, () -> { fail("Acknowledged replay repeated local PATCH"); return Optional.empty(); }));
+    jdbc.update(
+        "update identity_account_operation_intent set receipt=concat(receipt,'x') where operation_id=?",
+        operation);
+    var original =
+        jdbc.queryForMap(
+            "select * from identity_account_operation_intent where operation_id=?", operation);
+    var failure =
+        assertThrows(
+            ServiceUnavailableException.class,
+            () ->
+                maintenance.patch(
+                    "de",
+                    patch,
+                    () -> {
+                      fail("Acknowledged replay repeated local PATCH");
+                      return Optional.empty();
+                    }));
     assertMutationHeaders(failure, 503, operation, false);
-    assertEquals(original, jdbc.queryForMap("select * from identity_account_operation_intent where operation_id=?", operation));
+    assertEquals(
+        original,
+        jdbc.queryForMap(
+            "select * from identity_account_operation_intent where operation_id=?", operation));
     server.verify();
   }
 
