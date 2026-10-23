@@ -185,6 +185,8 @@ class ConsultantDeletionContinuationJpaTest {
   private String savedReply;
   private boolean loseReply;
   private boolean forgeReply;
+  private boolean loseReadReply;
+  private boolean requirePreparedCustodyAtRead;
   private boolean retain;
   private Consultant originalEntity;
   private PlatformTransactionManager ownerTransactions;
@@ -279,6 +281,16 @@ class ConsultantDeletionContinuationJpaTest {
               if ("read".equals(command)) {
                 nativeReads.incrementAndGet();
                 if (expectedOriginalSql53 == null) expectedOriginalSql53 = independentlyRead53();
+                if (requirePreparedCustodyAtRead) {
+                  assertEquals("PREPARED", status());
+                  assertNotNull(envelopeRaw(), "Original SQL custody must commit before even a read RPC");
+                  var prepared = codec.read(envelopeRaw(), com.fasterxml.jackson.databind.node.ObjectNode.class);
+                  assertTrue(prepared.path("body").isNull());
+                  String binding = prepared.remove("bindingDigest").textValue();
+                  assertEquals(binding, codec.claimedScheduledConsultantDeletionIntentDigest(prepared));
+                  assertEquals(ACCOUNT, prepared.path("originalSql").path("consultantId").textValue());
+                }
+                if (loseReadReply) throw new ResourceAccessException("fixture lost read response");
                 var response =
                     withSuccess(projection(), MediaType.APPLICATION_JSON).createResponse(outbound);
                 response.getHeaders().setCacheControl("no-store");
@@ -862,6 +874,47 @@ class ConsultantDeletionContinuationJpaTest {
       assertTrue(consultants.findById(ACCOUNT).isPresent());
       assertEquals("ACKNOWLEDGED", status());
     }
+  }
+
+  @Test void actualPreparedSnapshotCommitsBeforeAnyReadRpc() {
+    requirePreparedCustodyAtRead = true; loseReadReply = true;
+    owner(true, this::complete).performDeletionWorkflow();
+    assertEquals(1, nativeReads.get()); assertEquals(0, nativeCalls.get()); assertEquals(0, nativeEffects.get());
+    assertEquals(0, callbacks.get()); assertEquals("PREPARED", status()); assertEquals(1, intentCount());
+  }
+
+  @Test void lostReadCannotAdoptSameUuidAndDateWithARecreatedSqlBirth() {
+    loseReadReply = true; owner(true, this::complete).performDeletionWorkflow();
+    assertEquals(1, nativeReads.get()); assertEquals(0, nativeEffects.get()); assertEquals("PREPARED", status());
+    String operation = jdbc.queryForObject("select operation_id from identity_maintenance_intent where subject_id=?", String.class, ACCOUNT);
+    String original = envelopeRaw();
+    jdbc.update("update consultant set create_date=? where consultant_id=?", java.sql.Timestamp.from(Instant.now().minusSeconds(500)), ACCOUNT);
+    loseReadReply = false; owner(true, this::complete).performDeletionWorkflow();
+    assertEquals(1, nativeReads.get(), "A recreated birth must stop before another read or mutation");
+    assertEquals(0, nativeCalls.get()); assertEquals(0, callbacks.get()); assertEquals(1, intentCount());
+    assertEquals(operation, jdbc.queryForObject("select operation_id from identity_maintenance_intent where subject_id=?", String.class, ACCOUNT));
+    assertEquals(original, envelopeRaw()); assertTrue(consultants.findById(ACCOUNT).isPresent());
+  }
+
+  @Test void lostReadRetriesTheSameOriginalPreparedOwnerAndFullSnapshot() {
+    loseReadReply = true; owner(true, this::complete).performDeletionWorkflow();
+    assertEquals(1, nativeReads.get()); assertEquals(0, nativeEffects.get()); assertEquals("PREPARED", status());
+    String operation = jdbc.queryForObject("select operation_id from identity_maintenance_intent where subject_id=?", String.class, ACCOUNT);
+    loseReadReply = false; owner(true, this::complete).performDeletionWorkflow();
+    assertEquals(2, nativeReads.get()); assertEquals(1, nativeCalls.get()); assertEquals(1, callbacks.get());
+    assertEquals("APPLIED", status()); assertEquals(1, intentCount()); assertTrue(consultants.findById(ACCOUNT).isEmpty());
+    assertEquals(operation, jdbc.queryForObject("select operation_id from identity_maintenance_intent where subject_id=?", String.class, ACCOUNT));
+    assertEnvelope();
+  }
+
+  @Test void oldNullPreparedCustodyCannotBeBackfilledOrReminted() {
+    loseReadReply = true; owner(true, this::complete).performDeletionWorkflow();
+    assertEquals(1, nativeReads.get()); assertEquals("PREPARED", status());
+    jdbc.update("update identity_maintenance_intent set frozen_body=null where subject_id=?", ACCOUNT);
+    loseReadReply = false; owner(true, this::complete).performDeletionWorkflow();
+    assertEquals(1, nativeReads.get()); assertEquals(0, nativeCalls.get()); assertEquals(0, callbacks.get());
+    assertEquals(1, intentCount()); assertEquals("PREPARED", status()); assertNull(envelopeRaw());
+    assertTrue(consultants.findById(ACCOUNT).isPresent());
   }
 
   private void assertFinalVetoThenRetry(
