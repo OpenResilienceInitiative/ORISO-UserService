@@ -134,33 +134,41 @@ class AccountRoleAdditionScopedJpaTest {
       throw new AssertionError(invalid);
     }
     jdbc.update("delete from account_inactivity where identity_id=?", ACCOUNT);
-    jdbc.update("delete from admin_agency where admin_id=?", ACCOUNT);
-    jdbc.update("delete from admin where admin_id=?", ACCOUNT);
-    jdbc.update("delete from consultant_agency where consultant_id=?", ACCOUNT);
-    consultants.findById(ACCOUNT).ifPresent(consultants::delete);
-    Consultant consultant =
-        Consultant.builder()
-            .id(ACCOUNT)
-            .tenantId(7L)
-            .username(new UsernameTranscoder().encodeUsername("owned-counsellor"))
-            .firstName("Ada")
-            .lastName("Lovelace")
-            .email("ada@fixture.invalid")
-            .encourage2fa(true)
-            .magicLinkLoginEnabled(false)
-            .notifyEnquiriesRepeating(true)
-            .notifyNewChatMessageFromAdviceSeeker(true)
-            .languageCode(LanguageCode.en)
-            .status(ConsultantStatus.IN_PROGRESS)
-            .build();
-    consultants.save(consultant);
-    consultantAgencies.save(
-        ConsultantAgency.builder()
-            .consultant(consultant)
-            .agencyId(71L)
-            .tenantId(7L)
-            .createDate(LocalDateTime.now(ZoneOffset.UTC))
-            .build());
+    new TransactionTemplate(transactions)
+        .executeWithoutResult(
+            ignored -> {
+              entities.clear();
+              jdbc.update("delete from admin_agency where admin_id=?", ACCOUNT);
+              jdbc.update("delete from admin where admin_id=?", ACCOUNT);
+              jdbc.update("delete from consultant_agency where consultant_id=?", ACCOUNT);
+              consultants.findById(ACCOUNT).ifPresent(consultants::delete);
+              entities.flush();
+              entities.clear();
+              Consultant consultant =
+                  Consultant.builder()
+                      .id(ACCOUNT)
+                      .tenantId(7L)
+                      .username(new UsernameTranscoder().encodeUsername("owned-counsellor"))
+                      .firstName("Ada")
+                      .lastName("Lovelace")
+                      .email("ada@fixture.invalid")
+                      .encourage2fa(true)
+                      .magicLinkLoginEnabled(false)
+                      .notifyEnquiriesRepeating(true)
+                      .notifyNewChatMessageFromAdviceSeeker(true)
+                      .languageCode(LanguageCode.en)
+                      .status(ConsultantStatus.IN_PROGRESS)
+                      .build();
+              consultants.saveAndFlush(consultant);
+              consultantAgencies.saveAndFlush(
+                  ConsultantAgency.builder()
+                      .consultant(consultant)
+                      .agencyId(71L)
+                      .tenantId(7L)
+                      .createDate(LocalDateTime.now(ZoneOffset.UTC))
+                      .build());
+              entities.clear();
+            });
     human.setUserId(HUMAN);
     human.setTenantId(7L);
     human.setAccessToken("fixture-human");
@@ -172,17 +180,7 @@ class AccountRoleAdditionScopedJpaTest {
     request.addHeader("Idempotency-Key", OPERATION);
     request.removeHeader("Authorization");
     request.addHeader("Authorization", "Bearer fixture-human");
-    var jwt =
-        Jwt.withTokenValue("fixture-human")
-            .header("alg", "RS256")
-            .subject(HUMAN)
-            .issuer(ISSUER)
-            .issuedAt(Instant.now().minusSeconds(2))
-            .expiresAt(Instant.now().plusSeconds(300))
-            .claim("azp", "admin")
-            .claim("tenantId", "7")
-            .build();
-    request.setUserPrincipal(new JwtAuthenticationToken(jwt, List.of()));
+    request.setUserPrincipal(authentication(7L));
     assertTrue(((JwtAuthenticationToken) request.getUserPrincipal()).isAuthenticated());
     maintenance.configureReviewedOrdinaryGroups(
         Map.of(
@@ -231,6 +229,19 @@ class AccountRoleAdditionScopedJpaTest {
                   outbound.getURI().getPath().endsWith("/read") ? "read" : "profile-transition";
               verifyProof(outbound.getHeaders().getFirst("X-ORISO-Task-Context"), command, body);
               if ("read".equals(command)) {
+                if (nativeBody == null) {
+                  var held = jdbc.queryForMap(
+                      "select status,original_json,native_body,native_receipt from general_admin_identity_intent where operation_id=?",
+                      OPERATION);
+                  assertEquals("PREPARED", held.get("status"));
+                  assertNull(held.get("native_body"));
+                  assertNull(held.get("native_receipt"));
+                  var source = codec.read((String) held.get("original_json"), JsonNode.class);
+                  var tables = codec.read(source.path("sql").textValue(), JsonNode.class);
+                  var row = codec.read(tables.path("consultant").get(0).textValue(), JsonNode.class);
+                  assertEquals(ACCOUNT, row.path("consultant_id").textValue());
+                  assertNotNull(row.path("create_date").textValue());
+                }
                 reads.incrementAndGet();
                 var projection = new TreeMap<String, Object>();
                 projection.put("id", ACCOUNT);
@@ -324,9 +335,11 @@ class AccountRoleAdditionScopedJpaTest {
             String.class,
             OPERATION);
     int priorCalls = calls.get();
+    int priorReads = reads.get();
     revoked = true;
     assertThrows(ForbiddenException.class, () -> service.add(ACCOUNT, COMMAND));
     assertEquals(priorCalls + 1, calls.get());
+    assertEquals(priorReads, reads.get());
     assertEquals("APPLIED", phase());
     assertEquals(
         applied,
@@ -337,6 +350,7 @@ class AccountRoleAdditionScopedJpaTest {
     revoked = false;
     assertDoesNotThrow(() -> service.add(ACCOUNT, COMMAND));
     assertEquals(1, effects.get());
+    assertEquals(priorReads, reads.get());
     assertEquals(
         1,
         jdbc.queryForObject(
@@ -367,11 +381,26 @@ class AccountRoleAdditionScopedJpaTest {
   @Test
   void actualCurrentScopeRefusesForeignTenantBeforeNativeOrLocalGrant() {
     human.setTenantId(8L);
+    request.setUserPrincipal(authentication(8L));
     assertThrows(ForbiddenException.class, () -> service.add(ACCOUNT, COMMAND));
     assertEquals(0, reads.get());
     assertEquals(0, effects.get());
     assertFalse(admins.existsById(ACCOUNT));
     verifyNoInteractions(generic);
+  }
+
+  private JwtAuthenticationToken authentication(long tenant) {
+    var jwt =
+        Jwt.withTokenValue("fixture-human")
+            .header("alg", "RS256")
+            .subject(HUMAN)
+            .issuer(ISSUER)
+            .issuedAt(Instant.now().minusSeconds(2))
+            .expiresAt(Instant.now().plusSeconds(300))
+            .claim("azp", "admin")
+            .claim("tenantId", Long.toString(tenant))
+            .build();
+    return new JwtAuthenticationToken(jwt, List.of());
   }
 
   private String phase() {
