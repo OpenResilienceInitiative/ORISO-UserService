@@ -222,19 +222,35 @@ class ClaimedConsultantDeletionCodecTest {
         codec.claimedScheduledConsultantDeletionRowDigest(changed));
   }
 
-  @Test void preparedNullBodyIsClosedOwnedDataAndNeverAReplacementDeleteBody() {
-    var prepared = envelope(); prepared.putNull("body");
-    assertEquals(expected("claimed-scheduled-consultant-deletion-intent/v1", prepared),
+  @Test
+  void preparedNullBodyIsClosedOwnedDataAndNeverAReplacementDeleteBody() {
+    var prepared = envelope();
+    prepared.putNull("body");
+    assertEquals(
+        expected("claimed-scheduled-consultant-deletion-intent/v1", prepared),
         assertDoesNotThrow(() -> codec.claimedScheduledConsultantDeletionIntentDigest(prepared)));
-    var missing = prepared.deepCopy(); missing.remove("body");
-    assertThrows(IllegalArgumentException.class, () -> codec.claimedScheduledConsultantDeletionIntentDigest(missing));
-    var wrong = prepared.deepCopy(); wrong.put("body", false);
-    assertThrows(IllegalArgumentException.class, () -> codec.claimedScheduledConsultantDeletionIntentDigest(wrong));
-    var partial = prepared.deepCopy(); partial.set("body", JSON.createObjectNode().put("operationId", OPERATION));
-    assertThrows(IllegalArgumentException.class, () -> codec.claimedScheduledConsultantDeletionIntentDigest(partial));
-    var authority = prepared.deepCopy(); authority.put("claimStatus", "ACKNOWLEDGED");
-    assertThrows(IllegalArgumentException.class, () -> codec.claimedScheduledConsultantDeletionIntentDigest(authority));
-    assertNotEquals(codec.claimedScheduledConsultantDeletionIntentDigest(envelope()),
+    var missing = prepared.deepCopy();
+    missing.remove("body");
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> codec.claimedScheduledConsultantDeletionIntentDigest(missing));
+    var wrong = prepared.deepCopy();
+    wrong.put("body", false);
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> codec.claimedScheduledConsultantDeletionIntentDigest(wrong));
+    var partial = prepared.deepCopy();
+    partial.set("body", JSON.createObjectNode().put("operationId", OPERATION));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> codec.claimedScheduledConsultantDeletionIntentDigest(partial));
+    var authority = prepared.deepCopy();
+    authority.put("claimStatus", "ACKNOWLEDGED");
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> codec.claimedScheduledConsultantDeletionIntentDigest(authority));
+    assertNotEquals(
+        codec.claimedScheduledConsultantDeletionIntentDigest(envelope()),
         codec.claimedScheduledConsultantDeletionIntentDigest(prepared));
   }
 
