@@ -47,6 +47,7 @@ public final class HumanAdminAccountMaintenance {
   private final Clock clock;
   private final String publicIssuer;
   private final TransactionTemplate transactions;
+  private final jakarta.persistence.EntityManagerFactory jpaOwner;
   private final ObjectMapper json =
       new ObjectMapper()
           .enable(com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
@@ -113,6 +114,7 @@ public final class HumanAdminAccountMaintenance {
     if (transactions instanceof JpaTransactionManager jpa) owner = jpa.getDataSource();
     else if (transactions instanceof DataSourceTransactionManager sql) owner = sql.getDataSource();
     if (owner == null || owner != jdbc.getDataSource()) throw unavailable();
+    this.jpaOwner = transactions instanceof JpaTransactionManager jpa ? jpa.getEntityManagerFactory() : null;
     this.transactions = new TransactionTemplate(transactions);
     this.transactions.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
   }
@@ -180,6 +182,25 @@ public final class HumanAdminAccountMaintenance {
         updateProfile(edit.accountId(), edit.profile(), edit, true);
   }
 
+  public de.caritas.cob.userservice.api.service.accountinvite.AccountRoleAddition.AddedRole addAgencyAdmin(
+      de.caritas.cob.userservice.api.service.accountinvite.AccountRoleAddition.ScopedAddition addition) {
+    Objects.requireNonNull(addition);
+    requireOutsideSql();
+    addition.requireJpaOwner(jpaOwner);
+    reviewedGroups.requireConfigured();
+    if (!"POST".equals(request.getMethod())
+        || !("/useradmin/consultants/" + addition.accountId() + "/roles").equals(request.getRequestURI()))
+      throw forbidden();
+    currentHuman();
+    AdminRow current = authorizedRow(addition.accountId(), false);
+    addition.validateOutsideSql();
+    Intent prior = intent(operationId(), false);
+    AdminRow original = prior == null ? current : decode(prior.original, ConsultantOriginal.class).row;
+    var profile = new IdentityProfileUpdate(original.username, original.email, original.tenant, original.firstName, original.lastName);
+    return (de.caritas.cob.userservice.api.service.accountinvite.AccountRoleAddition.AddedRole)
+        updateProfile(addition.accountId(), profile, null, false, addition);
+  }
+
   private Object updateProfile(
       String accountId,
       IdentityProfileUpdate profile,
@@ -196,33 +217,58 @@ public final class HumanAdminAccountMaintenance {
               .ScopedEdit
           edit,
       boolean self) {
+    return updateProfile(accountId, profile, edit, self, null);
+  }
+
+  private Object updateProfile(
+      String accountId,
+      IdentityProfileUpdate profile,
+      de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService.ScopedEdit edit,
+      boolean self,
+      de.caritas.cob.userservice.api.service.accountinvite.AccountRoleAddition.ScopedAddition addition) {
     requireOutsideSql();
-    if (!Set.of("PATCH", "PUT").contains(request.getMethod())) throw forbidden();
+    if (!(addition == null ? Set.of("PATCH", "PUT").contains(request.getMethod()) : "POST".equals(request.getMethod()))) throw forbidden();
     Human human = currentHuman();
     UUID operation = operationId();
     AdminRow current = authorizedRow(accountId, false, self);
     // Consultant-only read scopes never authorize the Admin profile writer.
-    if ("CONSULTANT".equals(current.type) && edit == null) throw forbidden();
+    if ("CONSULTANT".equals(current.type) && edit == null && addition == null) throw forbidden();
     if (edit != null && !"CONSULTANT".equals(current.type) && current.secondary == null)
       throw forbidden();
-    validateProfile(current, profile);
     Intent prior = intent(operation, false);
     ConsultantOriginal fullOriginal =
-        edit == null || prior == null ? null : decode(prior.original, ConsultantOriginal.class);
+        edit == null && addition == null || prior == null ? null : decode(prior.original, ConsultantOriginal.class);
     AdminRow original =
         prior == null
             ? current
-            : edit == null ? decode(prior.original, AdminRow.class) : fullOriginal.row;
-    if (!current.sameIdentity(original)) throw conflict();
+            : edit == null && addition == null ? decode(prior.original, AdminRow.class) : fullOriginal.row;
+    if (!(addition != null && prior != null && "APPLIED".equals(prior.status))
+        && !current.sameIdentity(original)) throw conflict();
+    validateProfile(addition == null ? current : original, profile);
+    if (addition != null && current.secondary != null
+        && (!Objects.equals(current.firstName, current.secondary.firstName)
+            || !Objects.equals(current.lastName, current.secondary.lastName)
+            || !Objects.equals(current.email, current.secondary.email))) throw conflict();
     String fullSql =
-        edit == null
+        edit == null && addition == null
             ? null
             : fullOriginal == null ? consultantSnapshot(accountId, false) : fullOriginal.sql;
     if (edit != null && (prior == null || !"APPLIED".equals(prior.status))) edit.validate();
+    if (addition != null && (prior == null || !"APPLIED".equals(prior.status))) addition.validate();
     try (var checked =
-        new CheckedAccount(current, original, human, operation, profile, edit, fullSql, self)) {
+        new CheckedAccount(current, original, human, operation, profile, edit, fullSql, self, addition)) {
       checked.applied = prior != null && "APPLIED".equals(prior.status);
       checked.terminalOnly = prior != null && "NO_EFFECT".equals(prior.status);
+      if (addition != null && prior != null && prior.body != null) {
+        var body = decode(frozen(prior).body(), com.fasterxml.jackson.databind.JsonNode.class);
+        var change = body.path("change");
+        var fields = new java.util.HashSet<String>();
+        change.fieldNames().forEachRemaining(fields::add);
+        if (!fields.equals(Set.of("transition", "group"))
+            || !"ADD_AGENCY_ADMIN_IDENTITY".equals(change.path("transition").textValue())
+            || !change.path("group").isTextual()) throw conflict();
+        checked.role = reviewedGroups.frozenAgencyAdminAddition(change.path("group").textValue());
+      }
       HumanAdminMaintenanceTransport.Projection initialRoleProjection = null;
       if (edit != null && edit.groupChatRequested() != null) {
         reviewedGroups.requireConfigured();
@@ -251,9 +297,11 @@ public final class HumanAdminAccountMaintenance {
       String digest = transport.profileRequestDigest(checked, profile, operation);
       if (digest == null || !digest.matches("[0-9a-f]{64}")) throw unavailable();
       String originalJson =
-          edit == null ? encode(original) : encode(new ConsultantOriginal(original, fullSql));
+          edit == null && addition == null ? encode(original) : encode(new ConsultantOriginal(original, fullSql));
       String desiredJson =
-          edit == null
+          addition != null
+              ? encode(java.util.Map.of("profile", profile, "publicRoleAddition", addition.intentJson()))
+              : edit == null
               ? encode(profile)
               : checked.role == null
                   ? encode(java.util.Map.of("profile", profile, "publicEdit", edit.intentJson()))
@@ -280,7 +328,7 @@ public final class HumanAdminAccountMaintenance {
       }
       if ("APPLIED".equals(intent.status)) {
         checked.applied = true;
-        requireDesired(authorizedRow(accountId, false, self), original, profile);
+        requireDesired(checked, authorizedRow(accountId, false, self));
         // The whole original public callback postcondition must hold before any replay RPC.
         profileResultOrConsultant(checked);
         var originalFrozen = frozen(intent);
@@ -298,6 +346,12 @@ public final class HumanAdminAccountMaintenance {
       if ("PREPARED".equals(intent.status)) {
         var state = initialRoleState == null ? transport.read(checked) : initialRoleState;
         requireProjection(checked, state);
+        if (addition != null) {
+          if (!Objects.equals(state.firstName(), original.firstName)
+              || !Objects.equals(state.lastName(), original.lastName)
+              || !Objects.equals(state.email(), original.email)) throw conflict();
+          checked.role = reviewedGroups.agencyAdminAddition(state.effectiveRoles());
+        }
         if (checked.role != null
             && !java.util.Set.copyOf(checked.role.original())
                 .equals(java.util.Set.copyOf(state.effectiveRoles()))) throw conflict();
@@ -388,6 +442,7 @@ public final class HumanAdminAccountMaintenance {
       if (!Objects.equals(currentNative.firstName(), profile.firstName())
           || !Objects.equals(currentNative.lastName(), profile.lastName())
           || !Objects.equals(currentNative.email(), profile.email())) throw conflict();
+      if (addition != null) addition.validateOutsideSql();
       try {
         transaction(
             () -> {
@@ -401,13 +456,19 @@ public final class HumanAdminAccountMaintenance {
         if (found == null
             || !"APPLIED".equals(found.status)
             || !Objects.equals(receipt, found.receipt)) throw unavailable();
-        requireDesired(authorizedRow(accountId, false, self), original, profile);
+        requireDesired(checked, authorizedRow(accountId, false, self));
       }
       return profileResultOrConsultant(checked);
     }
   }
 
   private Object profileResultOrConsultant(CheckedAccount checked) {
+    if (checked.addition != null) return transaction(() -> {
+      requireDesired(checked, authorizedRow(checked.actual.account, true, false));
+      var found = intent(checked.workflow, true);
+      requireConsultantPostcondition(checked, Objects.requireNonNull(found));
+      return checked.addition.currentResult();
+    });
     if (checked.edit == null) return profileResult(checked);
     return transaction(
         () -> {
@@ -433,7 +494,7 @@ public final class HumanAdminAccountMaintenance {
   }
 
   private void requireConsultantPostcondition(CheckedAccount checked, Intent intent) {
-    if (checked.edit != null
+    if ((checked.edit != null || checked.addition != null)
         && (!"APPLIED".equals(intent.status)
             || intent.applied == null
             || !Objects.equals(intent.applied, consultantSnapshot(checked.actual.account, true))))
@@ -441,7 +502,7 @@ public final class HumanAdminAccountMaintenance {
   }
 
   private void requireConsultantSnapshot(CheckedAccount checked, String status) {
-    if (checked.edit != null
+    if ((checked.edit != null || checked.addition != null)
         && !Set.of("APPLIED", "NO_EFFECT").contains(status)
         && !Objects.equals(checked.fullSql, consultantSnapshot(checked.actual.account, true)))
       throw conflict();
@@ -574,7 +635,7 @@ public final class HumanAdminAccountMaintenance {
   }
 
   private Intent prepare(CheckedAccount checked, String digest, String original, String desired) {
-    if (checked.role != null) {
+    if (checked.role != null || checked.addition != null) {
       var lifecycle =
           jdbc.queryForList(
               "select status from account_inactivity where identity_id=? for update",
@@ -587,7 +648,7 @@ public final class HumanAdminAccountMaintenance {
     var found = checkedIntent(checked, digest, original, desired);
     requireConsultantSnapshot(checked, found == null ? "PREPARED" : found.status);
     if (found != null) {
-      requireOwnedRow(row, checked.original, checked.profile, found.status);
+      requireOwnedRow(checked, row, found.status);
       return found;
     }
     if (!row.equals(checked.original)) throw conflict();
@@ -625,7 +686,7 @@ public final class HumanAdminAccountMaintenance {
     var row = authorizedRow(checked.actual.account, true, checked.self);
     var found = Objects.requireNonNull(checkedIntent(checked, digest, original, desired));
     requireConsultantSnapshot(checked, found.status);
-    requireOwnedRow(row, checked.original, checked.profile, found.status);
+    requireOwnedRow(checked, row, found.status);
     if (!"PREPARED".equals(found.status)) {
       if (!body.equals(found.body)) throw conflict();
       return found;
@@ -649,7 +710,7 @@ public final class HumanAdminAccountMaintenance {
     var row = authorizedRow(checked.actual.account, true, checked.self);
     var found = Objects.requireNonNull(checkedIntent(checked, digest, original, desired));
     requireConsultantSnapshot(checked, found.status);
-    requireOwnedRow(row, checked.original, checked.profile, found.status);
+    requireOwnedRow(checked, row, found.status);
     if (!body.equals(found.body)) throw conflict();
     if (Set.of("ACKNOWLEDGED", "APPLIED").contains(found.status)) {
       if (!Objects.equals(receipt, found.receipt)) throw conflict();
@@ -673,12 +734,20 @@ public final class HumanAdminAccountMaintenance {
     requireConsultantSnapshot(checked, found.status);
     if (!receipt.equals(found.receipt)) throw unavailable();
     if ("APPLIED".equals(found.status)) {
-      requireDesired(row, checked.original, checked.profile);
+      requireDesired(checked, row);
       return;
     }
     if (!"ACKNOWLEDGED".equals(found.status) || !row.equals(checked.original)) throw conflict();
     var profile = checked.profile;
-    if ("CONSULTANT".equals(row.type)) {
+    if (checked.addition != null) {
+      TransactionSynchronizationManager.bindResource(checked.addition, checked.addition);
+      try {
+        checked.addition.apply();
+        checked.addition.flush();
+      } finally {
+        TransactionSynchronizationManager.unbindResource(checked.addition);
+      }
+    } else if ("CONSULTANT".equals(row.type)) {
       if (jdbc.update(
               "update consultant set first_name=?,last_name=?,email=?,update_date=? where consultant_id=? and delete_date is null and username=? and ((tenant_id=?) or (tenant_id is null and ? is null)) and first_name=? and last_name=? and email=? and ((update_date=?) or (update_date is null and ? is null))",
               profile.firstName(),
@@ -712,7 +781,7 @@ public final class HumanAdminAccountMaintenance {
             timestamp(row.updated),
             timestamp(row.updated))
         != 1) throw conflict();
-    if (row.secondary != null) {
+    if (checked.addition == null && row.secondary != null) {
       var secondary = row.secondary;
       if (jdbc.update(
               "update consultant set first_name=?,last_name=?,email=?,update_date=? where consultant_id=? and username=? and ((tenant_id=?) or (tenant_id is null and ? is null)) and delete_date is null and first_name=? and last_name=? and email=? and ((update_date=?) or (update_date is null and ? is null))",
@@ -735,10 +804,11 @@ public final class HumanAdminAccountMaintenance {
       checked.edit.apply();
       checked.edit.flush();
     }
-    requireDesired(authorizedRow(row.account, true, checked.self), row, profile);
+    requireDesired(checked, authorizedRow(row.account, true, checked.self));
+    if (checked.addition != null) requireAgencyAdminPostcondition(checked);
     if (jdbc.update(
             "update general_admin_identity_intent set status='APPLIED',applied_json=?,updated_at=? where operation_id=? and status='ACKNOWLEDGED' and native_receipt=? and applied_json is null",
-            checked.edit == null ? null : consultantSnapshot(checked.actual.account, true),
+            checked.edit == null && checked.addition == null ? null : consultantSnapshot(checked.actual.account, true),
             Timestamp.from(clock.instant()),
             checked.workflow.toString(),
             receipt)
@@ -765,7 +835,7 @@ public final class HumanAdminAccountMaintenance {
             && found.receipt == null
         || "FROZEN".equals(found.status) && found.receipt != null
         || !"APPLIED".equals(found.status) && found.applied != null
-        || checked.edit != null && "APPLIED".equals(found.status) && found.applied == null)
+        || (checked.edit != null || checked.addition != null) && "APPLIED".equals(found.status) && found.applied == null)
       throw unavailable();
     return found;
   }
@@ -1009,6 +1079,52 @@ public final class HumanAdminAccountMaintenance {
         throw new BadRequestException("Managed profile fields are invalid");
   }
 
+  private void requireOwnedRow(CheckedAccount checked, AdminRow row, String status) {
+    if (checked.addition != null && "APPLIED".equals(status)) {
+      requireDesired(checked, row);
+    } else requireOwnedRow(row, checked.original, checked.profile, status);
+  }
+
+  private void requireAgencyAdminPostcondition(CheckedAccount checked) {
+    var before = decode(checked.fullSql, com.fasterxml.jackson.databind.JsonNode.class);
+    var after = decode(consultantSnapshot(checked.actual.account, true), com.fasterxml.jackson.databind.JsonNode.class);
+    for (String table : List.of("consultant", "language", "consultant_topic", "consultant_agency"))
+      if (!before.path(table).equals(after.path(table))) throw conflict();
+    if (!before.path("admin").isEmpty() && !before.path("admin").equals(after.path("admin")))
+      throw conflict();
+    var remaining = new java.util.ArrayList<String>();
+    for (var row : after.path("admin_agency")) remaining.add(row.textValue());
+    for (var row : before.path("admin_agency"))
+      if (!remaining.remove(row.textValue())) throw conflict();
+    if (remaining.size() != 1) throw conflict();
+    var added = decode(remaining.getFirst(), com.fasterxml.jackson.databind.JsonNode.class);
+    if (!checked.actual.account.equals(added.path("admin_id").textValue())
+        || !added.path("agency_id").isIntegralNumber()
+        || added.path("agency_id").longValue() != checked.addition.agencyId()
+        || !added.path("id").isIntegralNumber()
+        || added.path("id").longValue() <= 0
+        || !added.path("create_date").isTextual()) throw conflict();
+  }
+
+  private void requireDesired(CheckedAccount checked, AdminRow row) {
+    if (checked.addition == null) {
+      requireDesired(row, checked.original, checked.profile);
+      return;
+    }
+    var original = checked.original;
+    var profile = checked.profile;
+    if (!row.account.equals(original.account)
+        || !Objects.equals(row.tenant, original.tenant)
+        || !decodedUsername(row.username).equals(decodedUsername(original.username))
+        || !"AGENCY".equals(row.type) || row.secondary == null
+        || !Objects.equals(row.firstName, profile.firstName())
+        || !Objects.equals(row.lastName, profile.lastName())
+        || !Objects.equals(row.email, profile.email())
+        || !Objects.equals(row.secondary.firstName, profile.firstName())
+        || !Objects.equals(row.secondary.lastName, profile.lastName())
+        || !Objects.equals(row.secondary.email, profile.email())) throw conflict();
+  }
+
   private static void requireOwnedRow(
       AdminRow row, AdminRow original, IdentityProfileUpdate desired, String status) {
     if ("APPLIED".equals(status)) requireDesired(row, original, desired);
@@ -1171,6 +1287,7 @@ public final class HumanAdminAccountMaintenance {
             .ConsultantUpdateService.ScopedEdit
         edit;
     private final String fullSql;
+    private final de.caritas.cob.userservice.api.service.accountinvite.AccountRoleAddition.ScopedAddition addition;
     private boolean applied, terminalOnly;
     private java.util.Map<String, StoredTerminal> terminals = java.util.Map.of();
     private ReviewedOrdinaryGroups.Transition role;
@@ -1186,7 +1303,7 @@ public final class HumanAdminAccountMaintenance {
         Human human,
         UUID workflow,
         IdentityProfileUpdate profile) {
-      this(actual, original, human, workflow, profile, null, null, false);
+      this(actual, original, human, workflow, profile, null, null, false, null);
     }
 
     private CheckedAccount(
@@ -1199,7 +1316,9 @@ public final class HumanAdminAccountMaintenance {
                 .ScopedEdit
             edit,
         String fullSql,
-        boolean self) {
+        boolean self,
+        de.caritas.cob.userservice.api.service.accountinvite.AccountRoleAddition.ScopedAddition addition) {
+      this.addition = addition;
       this.self = self;
       this.edit = edit;
       this.fullSql = fullSql;
@@ -1223,6 +1342,7 @@ public final class HumanAdminAccountMaintenance {
     }
 
     public String profileCommand() {
+      if (addition != null) return "profile-transition";
       if (role != null) return "ordinary-profile";
       return self && profile != null && !Objects.equals(original.email, profile.email())
           ? "email"
@@ -1266,6 +1386,10 @@ public final class HumanAdminAccountMaintenance {
       return encode(original);
     }
 
+    public boolean agencyAdminAddition() { return addition != null; }
+    public String roleAdditionIntent() { return addition == null ? null : addition.intentJson(); }
+    public String roleAdditionOriginalSql() { return addition == null ? null : fullSql; }
+
     public IdentityProfileUpdate desiredProfile() {
       return profile;
     }
@@ -1292,7 +1416,7 @@ public final class HumanAdminAccountMaintenance {
       requireOutsideSql();
       currentHumanMatching(human);
       if (!actual.equals(authorizedRow(actual.account, false, self))) throw conflict();
-      if (edit != null
+      if ((edit != null || addition != null)
           && !applied
           && !terminalOnly
           && !Objects.equals(fullSql, consultantSnapshot(actual.account, false))) throw conflict();

@@ -51,6 +51,7 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtAut
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
@@ -91,6 +92,7 @@ class AccountRoleAdditionScopedJpaTest {
       new AccountRoleAddition.AddRoleCommand(AccountInviteTargetRole.AGENCY_ADMIN, 71L);
 
   @Autowired private AccountRoleAddition service;
+  @MockitoSpyBean private CounsellorAgencyAdminGrantService localGrant;
   @Autowired private HumanAdminAccountMaintenance maintenance;
   @Autowired private ConsultantRepository consultants;
   @Autowired private ConsultantAgencyRepository consultantAgencies;
@@ -106,6 +108,7 @@ class AccountRoleAdditionScopedJpaTest {
   @Autowired private AccountLifecycleCodec codec;
   @MockitoBean private IdentityClient generic;
   @MockitoBean private AgencyService agencies;
+  @MockitoBean private AgencyFacts selectedAgency;
   private JdbcTemplate jdbc;
   private MockRestServiceServer server;
   private final AtomicInteger reads = new AtomicInteger();
@@ -114,6 +117,7 @@ class AccountRoleAdditionScopedJpaTest {
   private Set<String> nativeRoles = ORIGINAL;
   private String nativeBody, nativeReply;
   private boolean lostReply, revoked;
+  private boolean lostReadReply;
 
   @BeforeEach
   void actualCurrentHumanSqlAndScopedReceiver() {
@@ -134,6 +138,10 @@ class AccountRoleAdditionScopedJpaTest {
       throw new AssertionError(invalid);
     }
     jdbc.update("delete from account_inactivity where identity_id=?", ACCOUNT);
+    when(selectedAgency.find(71L)).thenAnswer(ignored -> {
+      assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+      return Optional.of(new AgencyFacts.Agency(71L, 7L, false, List.of()));
+    });
     new TransactionTemplate(transactions)
         .executeWithoutResult(
             ignored -> {
@@ -243,6 +251,10 @@ class AccountRoleAdditionScopedJpaTest {
                   assertNotNull(row.path("create_date").textValue());
                 }
                 reads.incrementAndGet();
+                if (lostReadReply) {
+                  lostReadReply = false;
+                  throw new ResourceAccessException("Synthetic lost first role read");
+                }
                 var projection = new TreeMap<String, Object>();
                 projection.put("id", ACCOUNT);
                 projection.put("username", "owned-counsellor");
@@ -401,6 +413,78 @@ class AccountRoleAdditionScopedJpaTest {
             .claim("tenantId", Long.toString(tenant))
             .build();
     return new JwtAuthenticationToken(jwt, List.of());
+  }
+
+  @Test
+  void anExistingLocalRelationCannotAuthorizeAnAgencyCurrentlyOwnedByAnotherTenant() {
+    when(selectedAgency.find(71L))
+        .thenReturn(Optional.of(new AgencyFacts.Agency(71L, 8L, false, List.of())));
+    assertThrows(ForbiddenException.class, () -> service.add(ACCOUNT, COMMAND));
+    assertEquals(0, reads.get());
+    assertEquals(0, effects.get());
+    assertFalse(admins.existsById(ACCOUNT));
+    verifyNoInteractions(generic);
+  }
+
+  @Test
+  void theActualLocalCallbackCannotChangeUnrequestedConsultantStateAndItsAckRemainsRetryable() {
+    doAnswer(invocation -> {
+      invocation.callRealMethod();
+      jdbc.update("update consultant set is_absent=true where consultant_id=?", ACCOUNT);
+      return null;
+    }).when(localGrant).bindCheckedAgencyAdmin(any(AccountRoleAddition.ScopedAddition.class));
+    assertThrows(RuntimeException.class, () -> service.add(ACCOUNT, COMMAND));
+    assertEquals(1, effects.get());
+    assertEquals("ACKNOWLEDGED", phase());
+    assertFalse(admins.existsById(ACCOUNT));
+    assertFalse(jdbc.queryForObject("select is_absent from consultant where consultant_id=?", Boolean.class, ACCOUNT));
+    doCallRealMethod().when(localGrant).bindCheckedAgencyAdmin(any(AccountRoleAddition.ScopedAddition.class));
+    assertDoesNotThrow(() -> service.add(ACCOUNT, COMMAND));
+    assertEquals(1, effects.get());
+    assertEquals("APPLIED", phase());
+  }
+
+  @Test
+  void anAlreadyCombinedIdentityCanAddItsNewAgencyWithoutChangingExistingRolesOrAdmin() {
+    new TransactionTemplate(transactions).executeWithoutResult(ignored -> {
+      admins.saveAndFlush(de.caritas.cob.userservice.api.model.Admin.builder()
+          .id(ACCOUNT).tenantId(7L).type(de.caritas.cob.userservice.api.model.Admin.AdminType.AGENCY)
+          .username("owned-counsellor").firstName("Ada").lastName("Lovelace")
+          .email("ada@fixture.invalid").createDate(LocalDateTime.now(ZoneOffset.UTC)).build());
+      entities.clear();
+    });
+    var originalAdmin = new TreeMap<>(jdbc.queryForMap("select * from admin where admin_id=?", ACCOUNT));
+    nativeRoles = DESIRED;
+    assertDoesNotThrow(() -> service.add(ACCOUNT, COMMAND));
+    assertEquals(DESIRED, nativeRoles);
+    assertEquals(originalAdmin, new TreeMap<>(jdbc.queryForMap("select * from admin where admin_id=?", ACCOUNT)));
+    assertEquals(List.of(71L), jdbc.queryForList("select agency_id from admin_agency where admin_id=?", Long.class, ACCOUNT));
+    assertEquals("APPLIED", phase());
+    verifyNoInteractions(generic);
+  }
+
+  @Test
+  void aLostFirstReadKeepsTheOriginalPreparedSqlAndCannotRecaptureChangedBirth() {
+    lostReadReply = true;
+    assertThrows(RuntimeException.class, () -> service.add(ACCOUNT, COMMAND));
+    assertEquals("PREPARED", phase());
+    assertEquals(1, reads.get());
+    assertEquals(0, effects.get());
+    String original = jdbc.queryForObject(
+        "select original_json from general_admin_identity_intent where operation_id=?", String.class, OPERATION);
+    new TransactionTemplate(transactions).executeWithoutResult(ignored -> {
+      jdbc.update("update consultant set create_date=? where consultant_id=?",
+          java.sql.Timestamp.from(Instant.now().plusSeconds(10)), ACCOUNT);
+      entities.clear();
+    });
+    assertThrows(RuntimeException.class, () -> service.add(ACCOUNT, COMMAND));
+    assertEquals(1, reads.get());
+    assertEquals(0, calls.get());
+    assertEquals(original, jdbc.queryForObject(
+        "select original_json from general_admin_identity_intent where operation_id=?", String.class, OPERATION));
+    assertNull(jdbc.queryForObject("select native_body from general_admin_identity_intent where operation_id=?", String.class, OPERATION));
+    assertFalse(admins.existsById(ACCOUNT));
+    verifyNoInteractions(generic);
   }
 
   private String phase() {
