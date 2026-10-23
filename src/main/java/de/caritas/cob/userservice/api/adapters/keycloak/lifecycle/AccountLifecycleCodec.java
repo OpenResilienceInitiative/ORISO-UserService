@@ -1338,6 +1338,14 @@ public final class AccountLifecycleCodec {
     return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "reactivate", "UPDATED");
   }
 
+  public String claimedScheduledConsultantDeletionRowDigest(JsonNode independentlyOwned53) {
+    return digest("claimed-scheduled-consultant-deletion-row/v1",ClaimedConsultantDeletionSchema.row(independentlyOwned53));
+  }
+
+  public String claimedScheduledConsultantDeletionIntentDigest(JsonNode exactOwnedEnvelope) {
+    return digest("claimed-scheduled-consultant-deletion-intent/v1",ClaimedConsultantDeletionSchema.envelope(exactOwnedEnvelope));
+  }
+
   public String claimedScheduledDeletionIntentDigest(JsonNode exactOwnedEnvelope) {
     return digest(
         "claimed-scheduled-deletion-intent/v1",
