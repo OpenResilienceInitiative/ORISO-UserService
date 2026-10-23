@@ -29,6 +29,28 @@ public class DeleteDatabaseAskerAction implements ActionCommand<AskerDeletionWor
   private final @NonNull UserMobileTokenRepository userMobileTokenRepository;
   private final @NonNull IdentityTombstoneService identityTombstoneService;
 
+  /** Closed compile seam; no preparation is issued until actual owned prerequisites qualify. */
+  public java.util.Optional<PreparedUserDeletion> prepareAcknowledged(
+      AskerDeletionWorkflowDTO owned) {
+    throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+  }
+
+  /** Final completion accepts only this actual action's private-issued preparation. */
+  public boolean completeAcknowledged(PreparedUserDeletion preparation) {
+    throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+  }
+
+  public static final class PreparedUserDeletion {
+    private PreparedUserDeletion() {}
+
+    public void requireFor(
+        de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance
+                .AcknowledgedDeletion
+            acknowledged) {
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    }
+  }
+
   /**
    * Deletes the given {@link User} in database, together with the dependencies that hold a
    * restricting foreign key on it.

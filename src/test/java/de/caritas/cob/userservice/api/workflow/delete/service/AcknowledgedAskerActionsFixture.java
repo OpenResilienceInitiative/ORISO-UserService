@@ -37,6 +37,7 @@ final class AcknowledgedAskerActionsFixture implements AutoCloseable {
   final List<String> events = new ArrayList<>();
   final DeleteUserAccountService service;
   final IdentityAccountRemover forbiddenNative = mock(IdentityAccountRemover.class);
+  final DeleteDatabaseAskerAction finalAction;
   final WorkflowErrorMailService errorMail = mock(WorkflowErrorMailService.class);
   Consumer<String> afterExternal = event -> {};
   Consumer<AskerDeletionWorkflowDTO> beforeMatrixAction = target -> {};
@@ -44,6 +45,7 @@ final class AcknowledgedAskerActionsFixture implements AutoCloseable {
   final AtomicInteger matrixEntries = new AtomicInteger();
   boolean failDrafts;
   boolean failMemberships;
+  boolean failMobileTokens;
   private final GenericApplicationContext context = new GenericApplicationContext();
   private final EntityManager entities;
   private final String accountId;
@@ -177,10 +179,13 @@ final class AcknowledgedAskerActionsFixture implements AutoCloseable {
         local(
             UserMobileTokenRepository.class,
             "mobileTokens",
-            invocation ->
-                "findByUser".equals(invocation.getMethod().getName())
-                    ? List.of()
-                    : Answers.RETURNS_DEFAULTS.answer(invocation));
+            invocation -> {
+              if (failMobileTokens)
+                throw new IllegalStateException("fixture mobile-token cleanup refused");
+              return "findByUser".equals(invocation.getMethod().getName())
+                  ? List.of()
+                  : Answers.RETURNS_DEFAULTS.answer(invocation);
+            });
     var tombstoneService = spy(new IdentityTombstoneService(tombstones));
     doAnswer(
             invocation -> {
@@ -210,7 +215,8 @@ final class AcknowledgedAskerActionsFixture implements AutoCloseable {
     register(new DeleteAskerDraftMessagesAction(drafts));
     register(new DeleteAskerEventNotificationsAction(notifications));
     register(new DeleteAskerReplyEmailDeliveriesAction(replies));
-    register(new DeleteDatabaseAskerAction(users, chats, tokens, tombstoneService));
+    finalAction = new DeleteDatabaseAskerAction(users, chats, tokens, tombstoneService);
+    register(finalAction);
     context.refresh();
     service =
         spy(
