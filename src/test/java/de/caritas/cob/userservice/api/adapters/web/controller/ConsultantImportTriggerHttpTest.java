@@ -44,11 +44,13 @@ import org.springframework.web.servlet.config.annotation.EnableWebMvc;
  * Actual configured security chain, inactivity filter and delegate; only the importer is mocked.
  */
 @SpringJUnitWebConfig(ConsultantImportTriggerHttpTest.Config.class)
+@org.springframework.test.context.ActiveProfiles("scenario-c-import-http-fixture")
 @TestPropertySource(properties = {"TASK_IDENTITY_MODEL=FIVE_ACTORS", "multitenancy.enabled=false"})
 class ConsultantImportTriggerHttpTest {
   private static final String SUBJECT = "84000000-0000-4000-8000-000000000001";
 
   @Configuration
+  @Profile("scenario-c-import-http-fixture")
   @EnableWebMvc
   @Import({
     SecurityConfig.class,
@@ -85,6 +87,7 @@ class ConsultantImportTriggerHttpTest {
   }
 
   @RestController
+  @Profile("scenario-c-import-http-fixture")
   static class ImportRoute {
     private final UserSupportControllerDelegate delegate;
 

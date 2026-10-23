@@ -116,7 +116,7 @@ class UserSelfLocaleScenarioCBoundaryTest {
   @Test
   void publicPatchNewOwnerReplaysFrozenLocaleAfterLostReplyWithoutDomainReapply() {
     var fixture = new Fixture(true);
-    fixture.expectNative(true);
+    fixture.expectNative(true, 1);
     assertThrows(RuntimeException.class, () -> fixture.controller.patchUser(fixture.patch(false)));
     assertEquals(1, fixture.domainCalls());
     assertEquals("FROZEN", fixture.status());
@@ -560,6 +560,10 @@ class UserSelfLocaleScenarioCBoundaryTest {
     }
 
     void expectNative(boolean lostReply) {
+      expectNative(lostReply, 0);
+    }
+
+    void expectNative(boolean lostReply, int acknowledgedReplays) {
       expectRead();
       String endpoint =
           (splitIssuer ? "https://internal.identity.test" : "https://identity.test")
@@ -567,9 +571,10 @@ class UserSelfLocaleScenarioCBoundaryTest {
               + ACCOUNT;
       var frozen = new AtomicReference<String>();
       var reply = new AtomicReference<String>();
+      var dispatches = new AtomicInteger();
       server
           .expect(
-              lostReply ? ExpectedCount.twice() : ExpectedCount.once(),
+              ExpectedCount.times((lostReply ? 2 : 1) + acknowledgedReplays),
               requestTo(endpoint + "/locale"))
           .andExpect(method(HttpMethod.POST))
           .andExpect(header("Authorization", "Bearer fixture-admin"))
@@ -581,9 +586,10 @@ class UserSelfLocaleScenarioCBoundaryTest {
                 assertEquals(
                     1,
                     jdbc.queryForObject(
-                        "select count(*) from identity_account_operation_intent where operation_id=? and status='FROZEN' and domain_applied=true",
+                        "select count(*) from identity_account_operation_intent where operation_id=? and status=? and domain_applied=true",
                         Integer.class,
-                        operation));
+                        operation,
+                        dispatches.incrementAndGet() <= (lostReply ? 2 : 1) ? "FROZEN" : "ACKNOWLEDGED"));
                 String wire = ((MockClientHttpRequest) outbound).getBodyAsString();
                 if (frozen.get() == null) {
                   frozen.set(wire);

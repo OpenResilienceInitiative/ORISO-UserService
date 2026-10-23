@@ -1364,6 +1364,23 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
         ClaimedInactivityRowSchema.require(exactOwnedRow, true));
   }
 
+  /** Fixed scheduled deletion data binding; only its actual private owner can issue live work. */
+  public String claimedScheduledDeletionIntentDigest(JsonNode exactOwnedEnvelope) {
+    return digest(
+        "claimed-scheduled-deletion-intent/v1",
+        ClaimedDeletionIntentSchema.scheduled(exactOwnedEnvelope));
+  }
+
+  /** Fixed inactivity deletion data binding; nullable SQL data cannot issue private work. */
+  public String claimedInactivityDeletionIntentDigest(JsonNode exactOwnedEnvelope) {
+    if (exactOwnedEnvelope == null || !exactOwnedEnvelope.isObject())
+      throw new IllegalArgumentException("Invalid owned inactivity deletion metadata");
+    String rowDigest = claimedInactivityDeletionRowDigest(exactOwnedEnvelope.path("originalRow"));
+    return digest(
+        "claimed-inactivity-deletion-intent/v1",
+        ClaimedDeletionIntentSchema.inactivity(exactOwnedEnvelope, rowDigest));
+  }
+
   public String claimedInactivityRowDigest(JsonNode exactOwnedRow) {
     return digest(
         "claimed-inactivity-row/v1", ClaimedInactivityRowSchema.require(exactOwnedRow, false));
