@@ -1251,8 +1251,10 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
         throw new IllegalArgumentException();
       JsonNode status = outer.path("status");
       boolean chosenPasswordReactivation = false;
-      if ("reactivate".equals(command) && status.isIntegralNumber()
-          && status.canConvertToInt() && status.intValue() == 400) {
+      if ("reactivate".equals(command)
+          && status.isIntegralNumber()
+          && status.canConvertToInt()
+          && status.intValue() == 400) {
         intentFields(frozen, java.util.Set.of("target", "operationId", "expectedState", "change"));
         JsonNode change = frozen.path("change");
         intentFields(change, java.util.Set.of("expectedUsername", "expectedEmail", "password"));

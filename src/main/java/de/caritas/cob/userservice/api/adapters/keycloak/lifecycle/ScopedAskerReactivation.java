@@ -192,26 +192,31 @@ public final class ScopedAskerReactivation {
       final AccountLifecycleCodec.VerifiedMaintenanceNoEffect proof;
       final String canonicalReceipt;
       try {
-        proof = codec.verifyMaintenanceNoEffectReceipt(
-            refused.reply, realmId, actor, frozen.wrapper.path("body"), "reactivate");
+        proof =
+            codec.verifyMaintenanceNoEffectReceipt(
+                refused.reply, realmId, actor, frozen.wrapper.path("body"), "reactivate");
         if (proof.status() != refused.status) throw unavailable();
         canonicalReceipt = codec.canonical(codec.read(refused.reply, JsonNode.class));
       } catch (RuntimeException unsignedOrUnbound) {
         throw unavailable();
       }
-      transaction(() -> {
-        same(snapshot(account, true), frozen.wrapper.path("originalSql"));
-        same(saved(account), frozen.raw);
-        if (jdbc.update("update user set deletion_lifecycle_state='READ_ONLY_SAFEGUARD',reactivation_operation_id=null,reactivation_operation_started_at=null where user_id=? and reactivation_operation_id=?",
-            account, proof.operationId().toString()) != 1) throw conflict();
-        var terminal = frozen.raw.deepCopy();
-        ((ObjectNode)terminal).put("phase", "NO_EFFECT");
-        ((ObjectNode)terminal).put("receipt", canonicalReceipt);
-        ((ObjectNode)terminal).set("postSql", snapshot(account, true));
-        requirePost(terminal, frozen.wrapper.path("originalSql"), "NO_EFFECT");
-        save(account, terminal);
-        return null;
-      });
+      transaction(
+          () -> {
+            same(snapshot(account, true), frozen.wrapper.path("originalSql"));
+            same(saved(account), frozen.raw);
+            if (jdbc.update(
+                    "update user set deletion_lifecycle_state='READ_ONLY_SAFEGUARD',reactivation_operation_id=null,reactivation_operation_started_at=null where user_id=? and reactivation_operation_id=?",
+                    account,
+                    proof.operationId().toString())
+                != 1) throw conflict();
+            var terminal = frozen.raw.deepCopy();
+            ((ObjectNode) terminal).put("phase", "NO_EFFECT");
+            ((ObjectNode) terminal).put("receipt", canonicalReceipt);
+            ((ObjectNode) terminal).set("postSql", snapshot(account, true));
+            requirePost(terminal, frozen.wrapper.path("originalSql"), "NO_EFFECT");
+            save(account, terminal);
+            return null;
+          });
       throw terminal(proof.status());
     } catch (RuntimeException unknown) {
       throw unavailable();
@@ -446,8 +451,10 @@ public final class ScopedAskerReactivation {
         || !"user".equals(read.path("effectiveRoles").get(0).textValue())) throw forbidden();
     for (String name : List.of("firstName", "lastName", "preferredLanguage")) {
       var value = read.path(name);
-      if (!value.isNull() && (!value.isTextual() || value.textValue().length() > 255
-          || value.textValue().chars().anyMatch(c -> c < 32 || c == 127))) throw forbidden();
+      if (!value.isNull()
+          && (!value.isTextual()
+              || value.textValue().length() > 255
+              || value.textValue().chars().anyMatch(c -> c < 32 || c == 127))) throw forbidden();
     }
   }
 
