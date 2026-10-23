@@ -45,15 +45,16 @@ public class DeleteDatabaseAskerAction implements ActionCommand<AskerDeletionWor
     frame.requireCurrentUser(original);
     if (errors == null) throw new ScopedIdentityCommandRequiredException();
     var result = new AtomicReference<PreparedUserDeletion>();
-    owned.runOwnedLocal(() -> {
-      if (owned.getUser() != original || owned.getDeletionWorkflowErrors() != errors)
-        throw new ScopedIdentityCommandRequiredException();
-      if (vetoed(owned, frame)) return;
-      if (!deleteChatMemberships(owned) || !deleteMobileTokens(owned)) return;
-      var prepared = new PreparedUserDeletion(this, owned, original, frame, errors);
-      prepared.requireWithinOwner(frame);
-      result.set(prepared);
-    });
+    owned.runOwnedLocal(
+        () -> {
+          if (owned.getUser() != original || owned.getDeletionWorkflowErrors() != errors)
+            throw new ScopedIdentityCommandRequiredException();
+          if (vetoed(owned, frame)) return;
+          if (!deleteChatMemberships(owned) || !deleteMobileTokens(owned)) return;
+          var prepared = new PreparedUserDeletion(this, owned, original, frame, errors);
+          prepared.requireWithinOwner(frame);
+          result.set(prepared);
+        });
     return Optional.ofNullable(result.get());
   }
 
@@ -61,15 +62,16 @@ public class DeleteDatabaseAskerAction implements ActionCommand<AskerDeletionWor
   public boolean completeAcknowledged(PreparedUserDeletion preparation) {
     if (preparation == null || preparation.issuer != this)
       throw new ScopedIdentityCommandRequiredException();
-    return preparation.frame.completeOwnedLocalDeletion(() -> {
-      preparation.requireFor(preparation.frame);
-      try {
-        identityTombstoneService.recordDeletedUser(preparation.originalUser);
-        userRepository.delete(preparation.originalUser);
-      } catch (Exception failure) {
-        appendError(preparation.target, failure, "Unable to delete user");
-      }
-    });
+    return preparation.frame.completeOwnedLocalDeletion(
+        () -> {
+          preparation.requireFor(preparation.frame);
+          try {
+            identityTombstoneService.recordDeletedUser(preparation.originalUser);
+            userRepository.delete(preparation.originalUser);
+          } catch (Exception failure) {
+            appendError(preparation.target, failure, "Unable to delete user");
+          }
+        });
   }
 
   private static boolean vetoed(AskerDeletionWorkflowDTO target, AcknowledgedDeletion frame) {
@@ -85,8 +87,11 @@ public class DeleteDatabaseAskerAction implements ActionCommand<AskerDeletionWor
     private final AcknowledgedDeletion frame;
     private final List<DeletionWorkflowError> errors;
 
-    private PreparedUserDeletion(DeleteDatabaseAskerAction issuer,
-        AskerDeletionWorkflowDTO target, User originalUser, AcknowledgedDeletion frame,
+    private PreparedUserDeletion(
+        DeleteDatabaseAskerAction issuer,
+        AskerDeletionWorkflowDTO target,
+        User originalUser,
+        AcknowledgedDeletion frame,
         List<DeletionWorkflowError> errors) {
       this.issuer = issuer;
       this.target = target;
@@ -104,8 +109,10 @@ public class DeleteDatabaseAskerAction implements ActionCommand<AskerDeletionWor
     }
 
     private void requireWithinOwner(AcknowledgedDeletion acknowledged) {
-      if (acknowledged != frame || target.getAcknowledgedDeletion() != frame
-          || target.getUser() != originalUser || target.getDeletionWorkflowErrors() != errors)
+      if (acknowledged != frame
+          || target.getAcknowledgedDeletion() != frame
+          || target.getUser() != originalUser
+          || target.getDeletionWorkflowErrors() != errors)
         throw new ScopedIdentityCommandRequiredException();
       frame.requireCurrentUser(originalUser);
       if (vetoed(target, frame)) throw new ScopedIdentityCommandRequiredException();
