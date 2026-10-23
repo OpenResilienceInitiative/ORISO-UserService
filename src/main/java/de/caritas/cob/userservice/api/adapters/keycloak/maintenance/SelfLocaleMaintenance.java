@@ -38,8 +38,8 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.springframework.web.client.RestTemplate;
 import org.springframework.web.client.HttpStatusCodeException;
+import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
 /**
@@ -70,7 +70,8 @@ public final class SelfLocaleMaintenance {
     int status();
   }
 
-  public static final class VerifiedLocaleForbidden extends ForbiddenException implements VerifiedTerminal {
+  public static final class VerifiedLocaleForbidden extends ForbiddenException
+      implements VerifiedTerminal {
     private final UUID operation;
 
     private VerifiedLocaleForbidden(UUID operation) {
@@ -78,12 +79,17 @@ public final class SelfLocaleMaintenance {
       this.operation = operation;
     }
 
-    public UUID operationId() { return operation; }
+    public UUID operationId() {
+      return operation;
+    }
 
-    public int status() { return 403; }
+    public int status() {
+      return 403;
+    }
   }
 
-  public static final class VerifiedLocaleConflict extends ConflictException implements VerifiedTerminal {
+  public static final class VerifiedLocaleConflict extends ConflictException
+      implements VerifiedTerminal {
     private final UUID operation;
 
     private VerifiedLocaleConflict(UUID operation) {
@@ -91,9 +97,13 @@ public final class SelfLocaleMaintenance {
       this.operation = operation;
     }
 
-    public UUID operationId() { return operation; }
+    public UUID operationId() {
+      return operation;
+    }
 
-    public int status() { return 409; }
+    public int status() {
+      return 409;
+    }
   }
 
   public SelfLocaleMaintenance(
@@ -162,7 +172,8 @@ public final class SelfLocaleMaintenance {
       if (intent == null) throw unavailable();
     }
     if ("REFUSED".equals(intent.status)) throw verifiedRefusal(intent, actor);
-    if ("ACKNOWLEDGED".equals(intent.status)) return recheckAcknowledged(self, intent, digest, actor);
+    if ("ACKNOWLEDGED".equals(intent.status))
+      return recheckAcknowledged(self, intent, digest, actor);
     if ("PREPARED".equals(intent.status)) {
       String state = readState(self, intent, actor);
       var body = codec.read("{}", ObjectNode.class);
@@ -180,11 +191,13 @@ public final class SelfLocaleMaintenance {
         intent = transaction(() -> findChecked(self, operation, digest, actor));
         if (intent == null
             || !intent.domainApplied
-            || !Set.of("FROZEN", "ACKNOWLEDGED", "REFUSED").contains(intent.status)) throw unavailable();
+            || !Set.of("FROZEN", "ACKNOWLEDGED", "REFUSED").contains(intent.status))
+          throw unavailable();
       }
     }
     if ("REFUSED".equals(intent.status)) throw verifiedRefusal(intent, actor);
-    if ("ACKNOWLEDGED".equals(intent.status)) return recheckAcknowledged(self, intent, digest, actor);
+    if ("ACKNOWLEDGED".equals(intent.status))
+      return recheckAcknowledged(self, intent, digest, actor);
     if (!"FROZEN".equals(intent.status) || !intent.domainApplied || intent.body == null)
       throw unavailable();
     final Intent original = intent;
@@ -210,25 +223,41 @@ public final class SelfLocaleMaintenance {
               reply, realmId, actor, codec.read(frozen.body, JsonNode.class));
     } catch (DefiniteLocaleRefusal refusal) {
       try {
-        transaction(() -> {
-          var current = findChecked(self, operation, digest, actor);
-          if (current == null || !Objects.equals(frozen.body, current.body)) throw unavailable();
-          codec.verifyMaintenanceNoEffectReceipt(refusal.reply, realmId, actor, codec.read(current.body, JsonNode.class), "locale");
-          if ("REFUSED".equals(current.status)) {
-            if (!refusal.reply.equals(current.receipt)) throw unavailable();
-            return null;
-          }
-          if (!"FROZEN".equals(current.status)) throw unavailable();
-          // The mixed local PATCH has already committed. Only the native identity command had no effect.
-          if (jdbc.update("update identity_account_operation_intent set status='REFUSED',receipt=?,updated_at=? where operation_id=? and operation_kind='SELF_LOCALE' and status='FROZEN' and request_digest=?", refusal.reply, java.sql.Timestamp.from(clock.instant()), operation, digest) != 1) throw unavailable();
-          return null;
-        });
+        transaction(
+            () -> {
+              var current = findChecked(self, operation, digest, actor);
+              if (current == null || !Objects.equals(frozen.body, current.body))
+                throw unavailable();
+              codec.verifyMaintenanceNoEffectReceipt(
+                  refusal.reply,
+                  realmId,
+                  actor,
+                  codec.read(current.body, JsonNode.class),
+                  "locale");
+              if ("REFUSED".equals(current.status)) {
+                if (!refusal.reply.equals(current.receipt)) throw unavailable();
+                return null;
+              }
+              if (!"FROZEN".equals(current.status)) throw unavailable();
+              // The mixed local PATCH has already committed. Only the native identity command had
+              // no effect.
+              if (jdbc.update(
+                      "update identity_account_operation_intent set status='REFUSED',receipt=?,updated_at=? where operation_id=? and operation_kind='SELF_LOCALE' and status='FROZEN' and request_digest=?",
+                      refusal.reply,
+                      java.sql.Timestamp.from(clock.instant()),
+                      operation,
+                      digest)
+                  != 1) throw unavailable();
+              return null;
+            });
       } catch (RuntimeException uncertain) {
         // A fresh independently bound durable row is required even after uncertain local commit.
       }
       var terminal = transaction(() -> findChecked(self, operation, digest, actor));
-      if (terminal == null || !"REFUSED".equals(terminal.status)
-          || !Objects.equals(frozen.body, terminal.body) || !refusal.reply.equals(terminal.receipt)) throw unavailable();
+      if (terminal == null
+          || !"REFUSED".equals(terminal.status)
+          || !Objects.equals(frozen.body, terminal.body)
+          || !refusal.reply.equals(terminal.receipt)) throw unavailable();
       throw verifiedRefusal(terminal, actor);
     } catch (RuntimeException rejected) {
       throw unavailable();
@@ -260,15 +289,19 @@ public final class SelfLocaleMaintenance {
       CheckedSelf self, Intent original, String digest, TaskActorCredentials actor) {
     try {
       String reply = request("locale", self, original.body, actor);
-      String verified = codec.verifyMaintenanceLocaleReceipt(reply, realmId, actor, codec.read(original.body, JsonNode.class));
-      transaction(() -> {
-        var current = findChecked(self, original.operation, digest, actor);
-        if (current == null || !"ACKNOWLEDGED".equals(current.status)
-            || !Objects.equals(original.body, current.body)
-            || !Objects.equals(original.receipt, current.receipt)
-            || !verified.equals(current.receipt)) throw unavailable();
-        return null;
-      });
+      String verified =
+          codec.verifyMaintenanceLocaleReceipt(
+              reply, realmId, actor, codec.read(original.body, JsonNode.class));
+      transaction(
+          () -> {
+            var current = findChecked(self, original.operation, digest, actor);
+            if (current == null
+                || !"ACKNOWLEDGED".equals(current.status)
+                || !Objects.equals(original.body, current.body)
+                || !Objects.equals(original.receipt, current.receipt)
+                || !verified.equals(current.receipt)) throw unavailable();
+            return null;
+          });
       return acknowledged(self);
     } catch (RuntimeException unknown) {
       // Reauthorization cannot replace a successful audit or repeat its local callback.
@@ -278,7 +311,9 @@ public final class SelfLocaleMaintenance {
 
   private RuntimeException verifiedRefusal(Intent row, TaskActorCredentials actor) {
     try {
-      var proof = codec.verifyMaintenanceNoEffectReceipt(row.receipt, realmId, actor, codec.read(row.body, JsonNode.class), "locale");
+      var proof =
+          codec.verifyMaintenanceNoEffectReceipt(
+              row.receipt, realmId, actor, codec.read(row.body, JsonNode.class), "locale");
       return switch (proof.status()) {
         case 403 -> new VerifiedLocaleForbidden(UUID.fromString(row.operation));
         case 409 -> new VerifiedLocaleConflict(UUID.fromString(row.operation));
@@ -593,7 +628,13 @@ public final class SelfLocaleMaintenance {
       if ("locale".equals(command) && Set.of(403, 409).contains(refused.getStatusCode().value())) {
         String verified;
         try {
-          var proof = codec.verifyMaintenanceNoEffectReceipt(refused.getResponseBodyAsString(), realmId, actor, codec.read(frozen, JsonNode.class), "locale");
+          var proof =
+              codec.verifyMaintenanceNoEffectReceipt(
+                  refused.getResponseBodyAsString(),
+                  realmId,
+                  actor,
+                  codec.read(frozen, JsonNode.class),
+                  "locale");
           if (proof.status() != refused.getStatusCode().value()) throw unavailable();
           verified = codec.canonical(codec.read(refused.getResponseBodyAsString(), JsonNode.class));
         } catch (RuntimeException invalid) {

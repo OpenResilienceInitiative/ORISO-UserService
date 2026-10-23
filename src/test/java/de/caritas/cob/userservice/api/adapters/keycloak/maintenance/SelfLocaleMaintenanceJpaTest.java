@@ -668,6 +668,7 @@ class SelfLocaleMaintenanceJpaTest {
 
   @org.springframework.web.bind.annotation.RestController
   @org.springframework.boot.test.context.TestConfiguration(proxyBeanMethods = false)
+  @org.springframework.context.annotation.Profile("scenario-c-locale-outcome-boundary")
   static final class LocaleFailureBoundary {
     private final RuntimeException failure;
 

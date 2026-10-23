@@ -1031,6 +1031,7 @@ class HumanAdminAccountMaintenanceTest {
 
   @org.springframework.web.bind.annotation.RestController
   @org.springframework.boot.test.context.TestConfiguration(proxyBeanMethods = false)
+  @org.springframework.context.annotation.Profile("scenario-c-profile-outcome-boundary")
   static final class MutationFailureBoundary {
     private final RuntimeException failure;
 
