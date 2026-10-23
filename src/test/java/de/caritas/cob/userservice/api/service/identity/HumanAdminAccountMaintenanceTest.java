@@ -911,7 +911,7 @@ class HumanAdminAccountMaintenanceTest {
       var failure =
           assertThrows(
               RuntimeException.class, () -> publicEdit.updateConsultant(ACCOUNT, dto, false));
-      assertPublicMutationOutcome(failure, status, signed);
+      assertDoesNotThrow(() -> assertPublicMutationOutcome(failure, status, signed));
       assertEquals("Old", jdbc.queryForObject("select first_name from consultant", String.class));
       assertEquals(
           "old@example.test", jdbc.queryForObject("select email from consultant", String.class));
@@ -923,7 +923,7 @@ class HumanAdminAccountMaintenanceTest {
         var replay =
             assertThrows(
                 RuntimeException.class, () -> publicEdit.updateConsultant(ACCOUNT, dto, false));
-        assertPublicMutationOutcome(replay, status, true);
+        assertDoesNotThrow(() -> assertPublicMutationOutcome(replay, status, true));
       }
       server.verify();
       return;

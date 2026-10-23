@@ -93,6 +93,10 @@ public final class ScheduledAskerMaintenance {
       throw unavailable();
     }
 
+    public boolean completed() {
+      throw unavailable();
+    }
+
     public void runOwnedLocal(Runnable action) {
       throw unavailable();
     }
