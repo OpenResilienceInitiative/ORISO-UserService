@@ -267,7 +267,8 @@ class TeamDiscussionFacadeTest {
     @Bean
     org.springframework.transaction.PlatformTransactionManager fixtureTransactions(
         org.springframework.jdbc.core.JdbcTemplate jdbc) {
-      return new org.springframework.jdbc.datasource.DataSourceTransactionManager(jdbc.getDataSource());
+      return new org.springframework.jdbc.datasource.DataSourceTransactionManager(
+          jdbc.getDataSource());
     }
 
     @org.springframework.context.annotation.Bean

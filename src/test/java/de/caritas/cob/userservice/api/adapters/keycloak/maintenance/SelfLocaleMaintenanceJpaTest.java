@@ -26,9 +26,9 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
-import javax.sql.DataSource;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
+import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -41,8 +41,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
-import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.http.client.MockClientHttpRequest;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.orm.jpa.JpaTransactionManager;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
@@ -341,30 +341,47 @@ class SelfLocaleMaintenanceJpaTest {
   private void assertSignedTerminal(int status) throws Exception {
     expectRead();
     server.expect(requestTo(ENDPOINT + "/locale")).andRespond(noEffect(status, "valid"));
-    var patch = Map.<String, Object>of("id", ACCOUNT, "preferredLanguage", "de", "encourage2fa", true);
+    var patch =
+        Map.<String, Object>of("id", ACCOUNT, "preferredLanguage", "de", "encourage2fa", true);
     var domainCalls = new AtomicInteger();
-    java.util.function.Supplier<Optional<Map<String, Object>>> callback = () -> {
-      domainCalls.incrementAndGet();
-      return accounts.patchUser(patch);
-    };
-    RuntimeException refusal = assertThrows(RuntimeException.class,
-        () -> maintenance.patch("de", patch, callback));
+    java.util.function.Supplier<Optional<Map<String, Object>>> callback =
+        () -> {
+          domainCalls.incrementAndGet();
+          return accounts.patchUser(patch);
+        };
+    RuntimeException refusal =
+        assertThrows(RuntimeException.class, () -> maintenance.patch("de", patch, callback));
     assertInstanceOf(status == 403 ? ForbiddenException.class : ConflictException.class, refusal);
     assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
     assertEquals("REFUSED", status());
     assertEquals(1, domainCalls.get());
-    // NO_EFFECT describes the native identity command. The original mixed local PATCH stays committed.
+    // NO_EFFECT describes the native identity command. The original mixed local PATCH stays
+    // committed.
     assertEquals(LanguageCode.de, users.findById(ACCOUNT).orElseThrow().getLanguageCode());
     assertTrue(users.findById(ACCOUNT).orElseThrow().getEncourage2fa());
-    var original = jdbc.queryForMap("select * from identity_account_operation_intent where operation_id=?", operation);
+    var original =
+        jdbc.queryForMap(
+            "select * from identity_account_operation_intent where operation_id=?", operation);
     assertNotNull(original.get("receipt"));
     assertMutationHeaders(refusal, status, operation, true);
     for (String key : Arrays.asList(null, UUID.randomUUID().toString(), operation + " "))
       assertMutationHeaders(refusal, status, key, false);
-    RuntimeException replay = assertThrows(RuntimeException.class,
-        () -> maintenance.patch("de", patch, () -> { fail("Terminal replay repeated the local PATCH"); return Optional.empty(); }));
+    RuntimeException replay =
+        assertThrows(
+            RuntimeException.class,
+            () ->
+                maintenance.patch(
+                    "de",
+                    patch,
+                    () -> {
+                      fail("Terminal replay repeated the local PATCH");
+                      return Optional.empty();
+                    }));
     assertMutationHeaders(replay, status, operation, true);
-    assertEquals(original, jdbc.queryForMap("select * from identity_account_operation_intent where operation_id=?", operation));
+    assertEquals(
+        original,
+        jdbc.queryForMap(
+            "select * from identity_account_operation_intent where operation_id=?", operation));
     assertEquals(1, domainCalls.get());
     server.verify();
   }
@@ -372,15 +389,30 @@ class SelfLocaleMaintenanceJpaTest {
   @Test
   void unsignedForeignOrWrongMacLocaleErrorsCannotRetireTheFrozenOperation() throws Exception {
     expectRead();
-    for (String scenario : List.of("unsigned", "wrong-mac", "foreign-intent", "status-mismatch", "invalid-400"))
+    for (String scenario :
+        List.of("unsigned", "wrong-mac", "foreign-intent", "status-mismatch", "invalid-400"))
       server.expect(requestTo(ENDPOINT + "/locale")).andRespond(noEffect(403, scenario));
-    var patch = Map.<String, Object>of("id", ACCOUNT, "preferredLanguage", "de", "encourage2fa", true);
+    var patch =
+        Map.<String, Object>of("id", ACCOUNT, "preferredLanguage", "de", "encourage2fa", true);
     var domainCalls = new AtomicInteger();
     for (int attempt = 0; attempt < 5; attempt++) {
-      var failure = assertThrows(ServiceUnavailableException.class,
-          () -> maintenance.patch("de", patch, () -> { domainCalls.incrementAndGet(); return accounts.patchUser(patch); }));
+      var failure =
+          assertThrows(
+              ServiceUnavailableException.class,
+              () ->
+                  maintenance.patch(
+                      "de",
+                      patch,
+                      () -> {
+                        domainCalls.incrementAndGet();
+                        return accounts.patchUser(patch);
+                      }));
       assertEquals("FROZEN", status());
-      assertNull(jdbc.queryForObject("select receipt from identity_account_operation_intent where operation_id=?", String.class, operation));
+      assertNull(
+          jdbc.queryForObject(
+              "select receipt from identity_account_operation_intent where operation_id=?",
+              String.class,
+              operation));
       assertEquals(1, domainCalls.get());
       assertMutationHeaders(failure, 503, operation, false);
     }
@@ -388,40 +420,77 @@ class SelfLocaleMaintenanceJpaTest {
   }
 
   @Test
-  void terminalReceiptTamperingAndOriginalOwnerBirthDriftCannotProduceMutationHeaders() throws Exception {
+  void terminalReceiptTamperingAndOriginalOwnerBirthDriftCannotProduceMutationHeaders()
+      throws Exception {
     expectRead();
     server.expect(requestTo(ENDPOINT + "/locale")).andRespond(noEffect(409, "valid"));
     var patch = Map.<String, Object>of("id", ACCOUNT, "preferredLanguage", "de");
-    assertInstanceOf(ConflictException.class, assertThrows(RuntimeException.class,
-        () -> maintenance.patch("de", patch, () -> accounts.patchUser(patch))));
+    assertInstanceOf(
+        ConflictException.class,
+        assertThrows(
+            RuntimeException.class,
+            () -> maintenance.patch("de", patch, () -> accounts.patchUser(patch))));
     assertEquals("REFUSED", status());
-    String receipt = jdbc.queryForObject("select receipt from identity_account_operation_intent where operation_id=?", String.class, operation);
-    jdbc.update("update identity_account_operation_intent set receipt='{}' where operation_id=?", operation);
-    var corrupted = assertThrows(RuntimeException.class, () -> maintenance.patch("de", patch, Optional::empty));
+    String receipt =
+        jdbc.queryForObject(
+            "select receipt from identity_account_operation_intent where operation_id=?",
+            String.class,
+            operation);
+    jdbc.update(
+        "update identity_account_operation_intent set receipt='{}' where operation_id=?",
+        operation);
+    var corrupted =
+        assertThrows(RuntimeException.class, () -> maintenance.patch("de", patch, Optional::empty));
     assertMutationHeaders(corrupted, 503, operation, false);
-    jdbc.update("update identity_account_operation_intent set receipt=? where operation_id=?", receipt, operation);
-    jdbc.update("update user set create_date=? where user_id=?", java.sql.Timestamp.valueOf("2026-10-01 01:02:03"), ACCOUNT);
-    var replaced = assertThrows(ConflictException.class, () -> maintenance.patch("de", patch, Optional::empty));
+    jdbc.update(
+        "update identity_account_operation_intent set receipt=? where operation_id=?",
+        receipt,
+        operation);
+    jdbc.update(
+        "update user set create_date=? where user_id=?",
+        java.sql.Timestamp.valueOf("2026-10-01 01:02:03"),
+        ACCOUNT);
+    var replaced =
+        assertThrows(
+            ConflictException.class, () -> maintenance.patch("de", patch, Optional::empty));
     assertMutationHeaders(replaced, 409, operation, false);
     server.verify();
   }
 
   @Test
-  void failedTerminalSqlCommitPreservesTheFrozenIntentWithoutDefiniteOutcomeHeaders() throws Exception {
+  void failedTerminalSqlCommitPreservesTheFrozenIntentWithoutDefiniteOutcomeHeaders()
+      throws Exception {
     expectRead();
     server.expect(requestTo(ENDPOINT + "/locale")).andRespond(noEffect(409, "valid"));
     server.expect(requestTo(ENDPOINT + "/locale")).andRespond(noEffect(409, "valid"));
-    jdbc.execute("alter table identity_account_operation_intent add constraint fixture_refusal_commit check(status <> 'REFUSED')");
+    jdbc.execute(
+        "alter table identity_account_operation_intent add constraint fixture_refusal_commit check(status <> 'REFUSED')");
     var patch = Map.<String, Object>of("id", ACCOUNT, "preferredLanguage", "de");
-    var failure = assertThrows(ServiceUnavailableException.class,
-        () -> maintenance.patch("de", patch, () -> accounts.patchUser(patch)));
+    var failure =
+        assertThrows(
+            ServiceUnavailableException.class,
+            () -> maintenance.patch("de", patch, () -> accounts.patchUser(patch)));
     assertEquals("FROZEN", status());
-    assertNull(jdbc.queryForObject("select receipt from identity_account_operation_intent where operation_id=?", String.class, operation));
+    assertNull(
+        jdbc.queryForObject(
+            "select receipt from identity_account_operation_intent where operation_id=?",
+            String.class,
+            operation));
     assertEquals(LanguageCode.de, users.findById(ACCOUNT).orElseThrow().getLanguageCode());
     assertMutationHeaders(failure, 503, operation, false);
-    jdbc.execute("alter table identity_account_operation_intent drop constraint fixture_refusal_commit");
-    var retry = assertThrows(RuntimeException.class,
-        () -> maintenance.patch("de", patch, () -> { fail("Retry repeated the committed local PATCH"); return Optional.empty(); }));
+    jdbc.execute(
+        "alter table identity_account_operation_intent drop constraint fixture_refusal_commit");
+    var retry =
+        assertThrows(
+            RuntimeException.class,
+            () ->
+                maintenance.patch(
+                    "de",
+                    patch,
+                    () -> {
+                      fail("Retry repeated the committed local PATCH");
+                      return Optional.empty();
+                    }));
     assertEquals("REFUSED", status());
     assertMutationHeaders(retry, 409, operation, true);
     server.verify();
@@ -434,15 +503,21 @@ class SelfLocaleMaintenanceJpaTest {
     server.expect(requestTo(ENDPOINT + "/locale")).andRespond(noEffect(200, "updated"));
     var patch = Map.<String, Object>of("id", ACCOUNT, "preferredLanguage", "de");
     var calls = new AtomicInteger();
-    java.util.function.Supplier<Optional<Map<String, Object>>> callback = () -> {
-      calls.incrementAndGet();
-      return accounts.patchUser(patch);
-    };
+    java.util.function.Supplier<Optional<Map<String, Object>>> callback =
+        () -> {
+          calls.incrementAndGet();
+          return accounts.patchUser(patch);
+        };
     assertDoesNotThrow(() -> maintenance.patch("de", patch, callback));
-    var original = jdbc.queryForMap("select * from identity_account_operation_intent where operation_id=?", operation);
+    var original =
+        jdbc.queryForMap(
+            "select * from identity_account_operation_intent where operation_id=?", operation);
     assertDoesNotThrow(() -> maintenance.patch("de", patch, callback));
     assertEquals(1, calls.get());
-    assertEquals(original, jdbc.queryForMap("select * from identity_account_operation_intent where operation_id=?", operation));
+    assertEquals(
+        original,
+        jdbc.queryForMap(
+            "select * from identity_account_operation_intent where operation_id=?", operation));
     server.verify();
   }
 
@@ -450,15 +525,33 @@ class SelfLocaleMaintenanceJpaTest {
   void revokedNativeLocaleGrantCannotReplayLocalAcknowledgementAsSuccess() throws Exception {
     expectRead();
     server.expect(requestTo(ENDPOINT + "/locale")).andRespond(noEffect(200, "updated"));
-    server.expect(requestTo(ENDPOINT + "/locale")).andRespond(
-        org.springframework.test.web.client.response.MockRestResponseCreators.withStatus(HttpStatus.FORBIDDEN).body("{}"));
+    server
+        .expect(requestTo(ENDPOINT + "/locale"))
+        .andRespond(
+            org.springframework.test.web.client.response.MockRestResponseCreators.withStatus(
+                    HttpStatus.FORBIDDEN)
+                .body("{}"));
     var patch = Map.<String, Object>of("id", ACCOUNT, "preferredLanguage", "de");
     assertDoesNotThrow(() -> maintenance.patch("de", patch, () -> accounts.patchUser(patch)));
-    var original = jdbc.queryForMap("select * from identity_account_operation_intent where operation_id=?", operation);
-    var failure = assertThrows(ServiceUnavailableException.class,
-        () -> maintenance.patch("de", patch, () -> { fail("Acknowledged replay repeated the local PATCH"); return Optional.empty(); }));
+    var original =
+        jdbc.queryForMap(
+            "select * from identity_account_operation_intent where operation_id=?", operation);
+    var failure =
+        assertThrows(
+            ServiceUnavailableException.class,
+            () ->
+                maintenance.patch(
+                    "de",
+                    patch,
+                    () -> {
+                      fail("Acknowledged replay repeated the local PATCH");
+                      return Optional.empty();
+                    }));
     assertMutationHeaders(failure, 503, operation, false);
-    assertEquals(original, jdbc.queryForMap("select * from identity_account_operation_intent where operation_id=?", operation));
+    assertEquals(
+        original,
+        jdbc.queryForMap(
+            "select * from identity_account_operation_intent where operation_id=?", operation));
     server.verify();
   }
 
@@ -466,8 +559,13 @@ class SelfLocaleMaintenanceJpaTest {
     return outbound -> {
       try {
         assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-        var codec = new AccountLifecycleCodec("0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.UTF_8));
-        var body = codec.read(((MockClientHttpRequest) outbound).getBodyAsString(), com.fasterxml.jackson.databind.JsonNode.class);
+        var codec =
+            new AccountLifecycleCodec(
+                "0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.UTF_8));
+        var body =
+            codec.read(
+                ((MockClientHttpRequest) outbound).getBodyAsString(),
+                com.fasterxml.jackson.databind.JsonNode.class);
         int signedStatus = "invalid-400".equals(scenario) ? 400 : status;
         var payload = new TreeMap<String, Object>();
         payload.put("realmId", REALM);
@@ -476,20 +574,67 @@ class SelfLocaleMaintenanceJpaTest {
         payload.put("command", "locale");
         payload.put("ownerClient", "backend-account-admin");
         payload.put("ownerSubject", "33333333-3333-4333-8333-333333333333");
-        payload.put("intentDigest", "foreign-intent".equals(scenario) ? "b".repeat(64) : codec.digest("maintenance-intent", body));
+        payload.put(
+            "intentDigest",
+            "foreign-intent".equals(scenario)
+                ? "b".repeat(64)
+                : codec.digest("maintenance-intent", body));
         payload.put("previousState", body.path("expectedState").textValue());
         payload.put("tenantId", "7");
-        payload.put("originDigest", codec.digest("maintenance-origin", body.path("target").path("origin")));
+        payload.put(
+            "originDigest", codec.digest("maintenance-origin", body.path("target").path("origin")));
         boolean updated = "updated".equals(scenario);
         payload.put("result", updated ? "UPDATED" : "NO_EFFECT");
         if (!updated) payload.put("status", signedStatus);
-        String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(codec.canonical(payload).getBytes(StandardCharsets.UTF_8));
+        String encoded =
+            Base64.getUrlEncoder()
+                .withoutPadding()
+                .encodeToString(codec.canonical(payload).getBytes(StandardCharsets.UTF_8));
         var mac = Mac.getInstance("HmacSHA256");
-        mac.init(new SecretKeySpec("0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
-        String domain = updated ? "maintenance-operation-receipt\n" : "maintenance-no-effect-receipt/v1\n";
-        String receipt = encoded + "." + ("wrong-mac".equals(scenario) ? "0".repeat(64) : HexFormat.of().formatHex(mac.doFinal((domain + encoded).getBytes(StandardCharsets.UTF_8))));
-        String reply = "unsigned".equals(scenario) ? "{}" : updated ? codec.canonical(Map.of("operationId", operation, "accountId", ACCOUNT, "result", "UPDATED", "receipt", receipt)) : codec.canonical(Map.of("operationId", operation, "accountId", ACCOUNT, "result", "NO_EFFECT", "status", "status-mismatch".equals(scenario) ? 409 : signedStatus, "receipt", receipt));
-        return org.springframework.test.web.client.response.MockRestResponseCreators.withStatus(HttpStatus.valueOf(status)).contentType(MediaType.APPLICATION_JSON).body(reply).createResponse(outbound);
+        mac.init(
+            new SecretKeySpec(
+                "0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+        String domain =
+            updated ? "maintenance-operation-receipt\n" : "maintenance-no-effect-receipt/v1\n";
+        String receipt =
+            encoded
+                + "."
+                + ("wrong-mac".equals(scenario)
+                    ? "0".repeat(64)
+                    : HexFormat.of()
+                        .formatHex(
+                            mac.doFinal((domain + encoded).getBytes(StandardCharsets.UTF_8))));
+        String reply =
+            "unsigned".equals(scenario)
+                ? "{}"
+                : updated
+                    ? codec.canonical(
+                        Map.of(
+                            "operationId",
+                            operation,
+                            "accountId",
+                            ACCOUNT,
+                            "result",
+                            "UPDATED",
+                            "receipt",
+                            receipt))
+                    : codec.canonical(
+                        Map.of(
+                            "operationId",
+                            operation,
+                            "accountId",
+                            ACCOUNT,
+                            "result",
+                            "NO_EFFECT",
+                            "status",
+                            "status-mismatch".equals(scenario) ? 409 : signedStatus,
+                            "receipt",
+                            receipt));
+        return org.springframework.test.web.client.response.MockRestResponseCreators.withStatus(
+                HttpStatus.valueOf(status))
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(reply)
+            .createResponse(outbound);
       } catch (java.io.IOException failure) {
         throw failure;
       } catch (Exception failure) {
@@ -498,11 +643,19 @@ class SelfLocaleMaintenanceJpaTest {
     };
   }
 
-  private void assertMutationHeaders(RuntimeException failure, int status, String key, boolean expected) throws Exception {
-    var mvc = org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup(new LocaleFailureBoundary(failure))
-        .setControllerAdvice(new de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler()).build();
-    var request = org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch("/locale-outcome")
-        .requestAttr("X-ORISO-Mutation-Outcome", "NO_EFFECT").requestAttr("X-ORISO-Mutation-Operation", operation);
+  private void assertMutationHeaders(
+      RuntimeException failure, int status, String key, boolean expected) throws Exception {
+    var mvc =
+        org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup(
+                new LocaleFailureBoundary(failure))
+            .setControllerAdvice(
+                new de.caritas.cob.userservice.api.adapters.web.controller.interceptor
+                    .ApiResponseEntityExceptionHandler())
+            .build();
+    var request =
+        org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch("/locale-outcome")
+            .requestAttr("X-ORISO-Mutation-Outcome", "NO_EFFECT")
+            .requestAttr("X-ORISO-Mutation-Operation", operation);
     if (key != null) request.header("Idempotency-Key", key);
     var response = mvc.perform(request).andReturn().getResponse();
     assertEquals(status, response.getStatus());
@@ -516,8 +669,14 @@ class SelfLocaleMaintenanceJpaTest {
   @org.springframework.boot.test.context.TestConfiguration(proxyBeanMethods = false)
   static final class LocaleFailureBoundary {
     private final RuntimeException failure;
-    LocaleFailureBoundary(RuntimeException failure) { this.failure = failure; }
+
+    LocaleFailureBoundary(RuntimeException failure) {
+      this.failure = failure;
+    }
+
     @org.springframework.web.bind.annotation.PatchMapping("/locale-outcome")
-    void fail() { throw failure; }
+    void fail() {
+      throw failure;
+    }
   }
 }
