@@ -19,7 +19,7 @@ import uuid
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
-KC_COMMIT = "e1b2baae5c8509f2a28a2de306761a14c5840faa"
+KC_COMMIT = "dc576a8970b60eda998a330076411b850869f38f"
 SUITE = "de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedOtpBootstrapNativePairProof"
 CASE = "actualOwnedRecipientCompletesOtpAfterLostNativeReplyWithoutEnablingAccount"
 IMAGE = "quay.io/keycloak/keycloak@sha256:9b0330756022422149aa6502eb2def8cd47c6e1b000c7c65cdb13e7c0133e992"

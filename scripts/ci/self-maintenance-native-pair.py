@@ -20,7 +20,7 @@ import xml.etree.ElementTree as ET
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
-KC_COMMIT = "e1b2baae5c8509f2a28a2de306761a14c5840faa"
+KC_COMMIT = "dc576a8970b60eda998a330076411b850869f38f"
 SUITE = "de.caritas.cob.userservice.api.adapters.web.controller.UserSelfMaintenanceNativePairProof"
 CASES = {"password": "publicPasswordSavedReplayRequiresCurrentNativeGrantWithoutRepeatingJpaCallback",
          "locale": "publicLocaleSavedReplayRequiresCurrentNativeGrantWithoutRepeatingJpaCallback"}
@@ -179,7 +179,7 @@ def native(kc, report):
 
         @classmethod
         def extra_launch_arguments(cls):
-            return ["-v", str(jars["OTP_C_TEST_JAR"].resolve()) + ":/opt/keycloak/providers/otp-config-spi.jar:ro"]
+            return ["-v", str(jars["OTP_C_TEST_JAR"].resolve()) + ":/opt/keycloak/providers/otp-config-spi.jar:ro", "-e", "IDENTITY_ACCOUNT_ADMIN_CLIENT_ID=backend-account-admin", "-e", "ORISO_APP_BASE_URL=https://otp-fixture.internal", "-e", "EMAIL_BRANDING_NAME=OTP Fixture", "-e", "EMAIL_LEGAL_ORGANISATION_NAME=Fixture Operator", "-v", str(kc / "keycloak-image/themes/oriso") + ":/opt/keycloak/themes/oriso:ro", "--add-host", "host.docker.internal:host-gateway"]
 
     receipt = {"kind": kind, "case": CASES[kind], "phase": "fixture-setup", "accepted": False,
         "executed": 0, "genuine_behavior_red": False, "before": before, "jars": hashes,

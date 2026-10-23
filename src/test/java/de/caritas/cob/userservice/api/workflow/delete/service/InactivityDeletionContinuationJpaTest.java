@@ -270,6 +270,19 @@ class InactivityDeletionContinuationJpaTest {
   }
 
   @Test
+  void productionInactivityFactoryBindsTheSamePrivateDeletionOwner() {
+    productionFactory = true;
+    var service = inactivity(true, false);
+    service.scan(false);
+    assertEquals(1, nativeEffects.get(), "The production factory must bind the private deletion owner");
+    assertEquals(1, callbacks.get());
+    assertTrue(users.findById(ACCOUNT).isEmpty());
+    assertEquals("DELETED", service.snapshot(ACCOUNT).orElseThrow().status().name());
+    assertEquals("APPLIED", status());
+    server.verify();
+  }
+
+  @Test
   void duePrivateClaimDeletesActualActiveUserWithoutInventingHumanDeletionDate() {
     var service = inactivity(true, false);
     assertEquals(
@@ -537,6 +550,7 @@ class InactivityDeletionContinuationJpaTest {
 
   private final de.caritas.cob.userservice.api.adapters.keycloak.KeycloakClient sdk =
       mock(de.caritas.cob.userservice.api.adapters.keycloak.KeycloakClient.class);
+  private boolean productionFactory;
   private boolean retainLocalUser;
   private boolean withMatrixIdentity;
   private boolean loseMediaReply;
@@ -702,12 +716,13 @@ class InactivityDeletionContinuationJpaTest {
                 assertTrue(frame.completeOwnedLocalDeletion(() -> {}));
               }
             });
-    effects.setScopedDeletionMaintenance(deletion);
+    if (!productionFactory) effects.setScopedDeletionMaintenance(deletion);
     var service =
         new de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService(
             jdbc, transactions, clock, effects);
     service.setIdentityMode(mode);
-    service.configureScopedInactivity(
+    if (productionFactory) configureProductionInactivity(service, effects, deletion);
+    else service.configureScopedInactivity(
         new de.caritas.cob.userservice.api.adapters.keycloak.maintenance
             .KeycloakInactivityMaintenance(
             http,
@@ -724,6 +739,45 @@ class InactivityDeletionContinuationJpaTest {
         Set.of("admin"));
     if (initialize) service.assignAtCreation(ACCOUNT, 7L, 24, 0, enrolledAt);
     return service;
+  }
+
+  private void configureProductionInactivity(
+      de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService service,
+      de.caritas.cob.userservice.api.workflow.accountinactivity.DefaultAccountInactivityEffects effects,
+      ScheduledAskerMaintenance deletion) {
+    try (var context = new org.springframework.context.support.GenericApplicationContext()) {
+      var environment = new org.springframework.mock.env.MockEnvironment()
+          .withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS")
+          .withProperty("ORISO_ACCOUNT_LIFECYCLE_GROUPS", "{\"/human-roles/user\":[\"user\"]}")
+          .withProperty("ORISO_IDENTITY_HUMAN_CLIENT_IDS", "[\"admin\"]")
+          .withProperty("KEYCLOAK_REALM_INTERNAL_ID", REALM);
+      var configuration = new de.caritas.cob.userservice.api.adapters.keycloak.lifecycle
+          .AccountLifecycleCallerConfiguration(environment);
+      var keycloak = mock(de.caritas.cob.userservice.api.adapters.keycloak.config.KeycloakConfig.class);
+      when(keycloak.getRealm()).thenReturn("fixture");
+      when(keycloak.getAuthServerUrl()).thenReturn("https://identity.test");
+      var factory = context.getDefaultListableBeanFactory();
+      java.util.Map.ofEntries(
+          java.util.Map.entry("productionConfiguration", configuration),
+          java.util.Map.entry("existingService", service),
+          java.util.Map.entry("existingEffects", effects),
+          java.util.Map.entry("existingDeletion", deletion),
+          java.util.Map.entry("human", new de.caritas.cob.userservice.api.helper.AuthenticatedUser()),
+          java.util.Map.entry("request", new org.springframework.mock.web.MockHttpServletRequest()),
+          java.util.Map.entry("actors", actors), java.util.Map.entry("broker", broker),
+          java.util.Map.entry("codec", codec), java.util.Map.entry("keycloakRestTemplate", http),
+          java.util.Map.entry("keycloak", keycloak)).forEach(factory::registerSingleton);
+      var definition = new org.springframework.beans.factory.support.RootBeanDefinition(
+          de.caritas.cob.userservice.api.port.out.AccountInactivityIdentityTransport.class);
+      definition.setFactoryBeanName("productionConfiguration");
+      definition.setFactoryMethodName("accountInactivityIdentityTransport");
+      definition.setAutowireMode(
+          org.springframework.beans.factory.support.AbstractBeanDefinition.AUTOWIRE_CONSTRUCTOR);
+      factory.registerBeanDefinition("productionInactivityTransport", definition);
+      context.refresh();
+      assertNotNull(context.getBean(
+          de.caritas.cob.userservice.api.port.out.AccountInactivityIdentityTransport.class));
+    }
   }
 
   private ScheduledAskerMaintenance owner(
