@@ -55,6 +55,7 @@ def select_slice(name):
             "publicPatchCapturesIntentAndDomainCommitBeforeScopedLocaleRpc",
             "publicPatchSeparatesInternalRpcFromVerifiedPublicIssuerAndUsesCheckedMachineToken",
             "publicPatchNewOwnerReplaysFrozenLocaleAfterLostReplyWithoutDomainReapply",
+            "publicTenantConsultantPairRetainsProtectedOriginAcrossLostReplyAndRestart",
             "publicPatchSameIdCannotSubstituteTheCompleteMixedRequest",
             "publicPatchMissingIntentRefusesBeforeAnyDomainMutation",
             "publicPatchDomainFailureCannotCommitDispatchableIntentOrPartialDomainChange",
