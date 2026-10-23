@@ -430,6 +430,11 @@ public class AccountInactivityService {
     this.scopedClients = java.util.Set.copyOf(clients);
   }
 
+  private InactivitySuspensionSource suspensionSource() {
+    if (scopedTransport == null) throw InactivityClaimJournal.invalid();
+    return new InactivitySuspensionSource(jdbc, claimJournal, scopedTransport);
+  }
+
   private record ManualHuman(
       String subject, String issuer, String client, String bearer, Instant expires) {
     java.util.Map<String, Object> binding() {
@@ -486,31 +491,12 @@ public class AccountInactivityService {
       for (var candidate : page) {
         ClaimedWork checked = null;
         try {
-          checked = work.execute(ignored -> scheduledClaim(candidate.identityId()));
+          var release =
+              candidate.status() == Status.ACTIVE
+                  ? suspensionSource().prepareRelease(candidate)
+                  : null;
+          checked = work.execute(ignored -> scheduledClaim(candidate.identityId(), release));
           if (checked == null) continue;
-          if (checked.terminalOnly) {
-            if (scopedTransport == null) throw InactivityClaimJournal.invalid();
-            scopedTransport.verifyNoEffect(
-                checked,
-                new de.caritas.cob.userservice.api.port.out.AccountInactivityIdentityTransport
-                    .Frozen(checked.saved.body()),
-                checked.saved.receipt());
-            var previous = checked;
-            checked =
-                work.execute(
-                    ignored -> {
-                      previous.requireOwned(true);
-                      return new ClaimedWork(
-                          claimJournal.claim(
-                              locked(previous.identityId()).orElseThrow(),
-                              "SUSPEND",
-                              java.util.Map.of("kind", "SCHEDULED"),
-                              clock.instant(),
-                              null),
-                          null);
-                    });
-            previous.close();
-          }
           if (checked.action().equals("SUSPEND") && checked.saved.phase().equals("CLAIMED")) {
             var roles = effects.currentRoles(checked);
             if (roles == null
@@ -549,23 +535,23 @@ public class AccountInactivityService {
     }
   }
 
-  private ClaimedWork scheduledClaim(String id) {
+  private ClaimedWork scheduledClaim(String id, InactivitySuspensionRelease release) {
     var row = locked(id).orElse(null);
     if (row == null) return null;
     if (row.status() == Status.ACTIVE) {
       if (row.dueAt().isAfter(clock.instant())) return null;
-      var prior = claimJournal.saved(id, true);
-      if (prior.work() != null && "NO_EFFECT".equals(prior.phase()))
-        return new ClaimedWork(prior, null, true);
       // The same row lock interlocks all role writers while remote work runs outside SQL.
       if (!jdbc.queryForList(
               "select operation_id from general_admin_identity_intent where account_id=? and status<>'APPLIED' for update",
               String.class,
               id)
           .isEmpty()) return null;
+      if (release == null) throw InactivityClaimJournal.invalid();
+      release.recheckAndCleanup(row);
       var saved =
           claimJournal.claim(
               row, "SUSPEND", java.util.Map.of("kind", "SCHEDULED"), clock.instant(), null);
+      saved = suspensionSource().capture(saved, release);
       audit(id, "SUSPENDING", "DATABASE", "CLAIMED");
       return new ClaimedWork(saved, null);
     }
@@ -587,7 +573,11 @@ public class AccountInactivityService {
     ManualHuman human = currentPlatformHuman();
     InactivityClaimJournal.Saved verifiedTerminal = null;
     var existingRow = snapshot(id).orElseThrow();
-    if (java.util.Set.of(Status.ACTIVE, Status.SUSPENDED).contains(existingRow.status())) {
+    var release =
+        !restoring && existingRow.status() == Status.ACTIVE
+            ? suspensionSource().prepareRelease(existingRow)
+            : null;
+    if (restoring && existingRow.status() == Status.SUSPENDED) {
       var prior = claimJournal.saved(id, false);
       if (prior.work() != null && "NO_EFFECT".equals(prior.phase())) {
         if (scopedTransport == null) throw InactivityClaimJournal.invalid();
@@ -608,9 +598,10 @@ public class AccountInactivityService {
             ignored -> {
               var row = locked(id).orElseThrow();
               var before = claimJournal.saved(id, true);
-              if (before.work() != null
+              if (restoring
+                  && before.work() != null
                   && "NO_EFFECT".equals(before.phase())
-                  && java.util.Set.of(Status.ACTIVE, Status.SUSPENDED).contains(row.status())
+                  && row.status() == Status.SUSPENDED
                   && !before.equals(terminalProof)) throw InactivityClaimJournal.invalid();
               if (!restoring && row.status() == Status.SUSPENDED
                   || restoring && row.status() == Status.ACTIVE) return null;
@@ -644,8 +635,11 @@ public class AccountInactivityService {
                       String.class,
                       id)
                   .isEmpty()) throw InactivityClaimJournal.invalid();
+              if (release == null) throw InactivityClaimJournal.invalid();
+              release.recheckAndCleanup(row);
               var saved =
                   claimJournal.claim(row, "SUSPEND", human.binding(), clock.instant(), null);
+              saved = suspensionSource().capture(saved, release);
               audit(id, "SUSPENDING", "DATABASE", "CLAIMED");
               return new ClaimedWork(saved, human);
             });
@@ -664,6 +658,9 @@ public class AccountInactivityService {
     checked.requireCurrent();
     if (checked.terminalOnly || scopedTransport == null || !"RESTORE".equals(checked.action()))
       throw InactivityClaimJournal.invalid();
+    suspensionSource()
+        .requirePrior(
+            claimJournal.saved(checked.identityId(), false), checked.suspensionOperationId());
     var prior =
         jdbc.queryForMap(
             "select suspension_body,suspension_receipt from account_inactivity where identity_id=? and work_id=?",
@@ -686,9 +683,14 @@ public class AccountInactivityService {
       var projection = checked.nativeRead();
       var frozen = scopedTransport.freeze(checked, projection, restoreEnabled);
       scopedTransport.verifyFrozen(checked, frozen, restoreEnabled);
+      var sourceChange =
+          "SUSPEND".equals(checked.action())
+              ? suspensionSource().advance(checked.saved, "FROZEN", frozen.body(), null)
+              : null;
       work.executeWithoutResult(
           ignored -> {
             checked.requireOwned(true);
+            if (sourceChange != null) suspensionSource().save(checked.saved, sourceChange);
             if (jdbc.update(
                     "update account_inactivity set native_phase='FROZEN',native_body=? where identity_id=? and work_id=? and native_phase='CLAIMED' and native_body is null",
                     frozen.body(),
@@ -726,9 +728,15 @@ public class AccountInactivityService {
         de.caritas.cob.userservice.api.port.out.AccountInactivityIdentityTransport.NoEffect
                 refused) {
       var verified = scopedTransport.verifyNoEffect(checked, frozen, refused.receipt());
+      var sourceChange =
+          "SUSPEND".equals(checked.action())
+              ? suspensionSource()
+                  .advance(checked.saved, "NO_EFFECT", frozen.body(), verified.receipt())
+              : null;
       work.executeWithoutResult(
           ignored -> {
             checked.requireOwned(true);
+            if (sourceChange != null) suspensionSource().save(checked.saved, sourceChange);
             if (jdbc.update(
                     "update account_inactivity set native_phase='NO_EFFECT',native_receipt=?,status=?,attempts=attempts+1,last_error=? where identity_id=? and work_id=? and native_phase='FROZEN' and native_body=? and native_receipt is null",
                     verified.receipt(),
@@ -752,9 +760,14 @@ public class AccountInactivityService {
         de.caritas.cob.userservice.api.port.out.AccountInactivityIdentityTransport.Applied applied))
       throw InactivityClaimJournal.invalid();
     String receipt = scopedTransport.verifyApplied(checked, frozen, applied.receipt());
+    var sourceChange =
+        "SUSPEND".equals(checked.action())
+            ? suspensionSource().advance(checked.saved, "ACKNOWLEDGED", frozen.body(), receipt)
+            : null;
     work.executeWithoutResult(
         ignored -> {
           checked.requireOwned(true);
+          if (sourceChange != null) suspensionSource().save(checked.saved, sourceChange);
           if (jdbc.update(
                   "update account_inactivity set native_phase='ACKNOWLEDGED',native_receipt=? where identity_id=? and work_id=? and native_phase='FROZEN' and native_body=? and native_receipt is null",
                   receipt,
@@ -1160,6 +1173,9 @@ public class AccountInactivityService {
       }
       var row = lock ? locked(identityId()).orElseThrow() : snapshot(identityId()).orElseThrow();
       var current = claimJournal.saved(identityId(), lock);
+      if ("SUSPEND".equals(action())) suspensionSource().requireBound(saved, current);
+      else if ("RESTORE".equals(action()))
+        suspensionSource().requirePrior(current, suspensionOperationId());
       if (!saved.work().equals(current.work())
           || !saved.claimed().equals(current.claimed())
           || !saved.source().equals(current.source())

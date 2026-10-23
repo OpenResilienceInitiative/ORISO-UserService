@@ -53,4 +53,25 @@ public interface AccountInactivityIdentityTransport {
   NoEffect verifyNoEffect(ClaimedWork work, Frozen frozen, String receipt);
 
   void verifyPriorSuspension(ClaimedWork restore, String frozenBody, String receipt);
+
+  /** Fixed data binding only; a JSON value cannot issue private claimed work. */
+  default String bindSuspensionCustody(String exactPrefix) {
+    throw new IllegalStateException("Original suspension source custody unavailable");
+  }
+
+  /** Strict fixed source and original native proof validation, never authority from JSON. */
+  default void verifySuspensionCustody(String exactSealedCustody) {
+    throw new IllegalStateException("Original suspension source custody unavailable");
+  }
+
+  /** Historical fixed RESTORE proof only; does not issue work or current write authority. */
+  default void verifyCompletedInactivityRestoreReceipt(String frozenBody, String receipt) {
+    throw new IllegalStateException("Completed inactivity restore proof unavailable");
+  }
+
+  /** Same fixed historical proof, additionally bound to the exact saved original RESTORE row. */
+  default void verifyCompletedInactivityRestoreReceipt(
+      String frozenBody, String receipt, String originalRowJson) {
+    throw new IllegalStateException("Completed inactivity restore row proof unavailable");
+  }
 }

@@ -159,6 +159,44 @@ class ReactivationIntentCodecTest {
         () -> codec.sealReactivationIntent(metadata, bytes(restore)));
   }
 
+  @Test
+  void encodedNativeUsernameAndExactEmailRemainBoundToTheOriginalSqlSpelling() throws Exception {
+    var metadata = metadata(false);
+    var original = (ObjectNode) json.readTree(plaintext(false));
+    var transcoder = new de.caritas.cob.userservice.api.helper.UsernameTranscoder();
+    String sqlUsername = transcoder.encodeUsername("soft-deleted-asker");
+    String nativeUsername = sqlUsername.toLowerCase(Locale.ROOT);
+    ((ObjectNode) original.path("originalSql"))
+        .put("username", sqlUsername)
+        .put("email", "MiXeD@example.test");
+    ((ObjectNode) original.path("body").path("change"))
+        .put("expectedUsername", nativeUsername)
+        .put("expectedEmail", "MiXeD@example.test");
+    byte[] frozen = bytes(original);
+    String sealed = assertDoesNotThrow(() -> codec.sealReactivationIntent(metadata, frozen));
+    assertArrayEquals(frozen, codec.openReactivationIntent(metadata, sealed));
+    assertArrayEquals(frozen, independent(metadata, json.readTree(sealed)));
+    for (String foreign :
+        List.of("soft-deleted-asker", transcoder.encodeUsername("foreign-asker"))) {
+      var wrong = original.deepCopy();
+      ((ObjectNode) wrong.path("body").path("change")).put("expectedUsername", foreign);
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> codec.sealReactivationIntent(metadata, bytes(wrong)));
+    }
+    var wrongEmail = original.deepCopy();
+    ((ObjectNode) wrongEmail.path("body").path("change"))
+        .put("expectedEmail", "mixed@example.test");
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> codec.sealReactivationIntent(metadata, bytes(wrongEmail)));
+    var nontextual = original.deepCopy();
+    ((ObjectNode) nontextual.path("body").path("change")).put("expectedUsername", 1);
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> codec.sealReactivationIntent(metadata, bytes(nontextual)));
+  }
+
   private ObjectNode metadata(boolean self) throws Exception {
     var metadata = json.createObjectNode();
     metadata.put("v", 1);

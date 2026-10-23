@@ -292,19 +292,12 @@ final class SelfPasswordIntentCodec {
     var change = body.path("change");
     fields(change, Set.of("expectedUsername", "expectedEmail", "password"));
     text(change, "password", 4096);
-    String originalUsername =
-        new de.caritas.cob.userservice.api.helper.UsernameTranscoder()
-            .decodeUsername(wrapper.path("originalSql").path("username").textValue());
-    if (!originalUsername
-            .trim()
-            .toLowerCase(Locale.ROOT)
-            .equals(text(change, "expectedUsername", 255))
+    String originalUsername = wrapper.path("originalSql").path("username").textValue();
+    if (!originalUsername.equalsIgnoreCase(text(change, "expectedUsername", 255))
         || !wrapper
             .path("originalSql")
             .path("email")
             .textValue()
-            .trim()
-            .toLowerCase(Locale.ROOT)
             .equals(text(change, "expectedEmail", 255))
         || !raw.equals(codec.canonical(wrapper))) throw invalid();
     return snapshot;

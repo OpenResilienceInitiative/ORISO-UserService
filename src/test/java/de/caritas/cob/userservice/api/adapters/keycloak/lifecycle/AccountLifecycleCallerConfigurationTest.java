@@ -320,6 +320,20 @@ class AccountLifecycleCallerConfigurationTest {
   }
 
   @Test
+  void enabledCallerInstallsTheScopedConsultantDeletionOwner() {
+    withEnabledCallerGraph(
+        context ->
+            assertEquals(
+                1,
+                context
+                    .getBeansOfType(
+                        de.caritas.cob.userservice.api.workflow.delete.service
+                            .ScheduledConsultantMaintenance.class)
+                    .size(),
+                "FIVE_ACTORS must install the consultant owner as well as the asker owner"));
+  }
+
+  @Test
   void legacyModeCannotInstallTheBoundedFiveActorCaller() {
     assertThrows(
         IllegalStateException.class,

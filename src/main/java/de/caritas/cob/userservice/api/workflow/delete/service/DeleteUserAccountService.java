@@ -134,6 +134,68 @@ public class DeleteUserAccountService {
         });
   }
 
+  /** Continues the existing nine Consultant steps only from the held owner's strict native ACK. */
+  public void continueAcknowledgedConsultantDeletion(
+      ScheduledConsultantMaintenance.AcknowledgedConsultantDeletion acknowledged) {
+    java.util.Objects.requireNonNull(acknowledged);
+    acknowledged.requireCurrent();
+    if (acknowledged.completed()) return;
+    TenantContext.runIn(
+        acknowledged.tenantId(),
+        () -> {
+          var original = new java.util.concurrent.atomic.AtomicReference<Consultant>();
+          acknowledged.runOwnedLocal(
+              () -> {
+                var loaded = consultantRepository.findById(acknowledged.accountId()).orElseThrow();
+                acknowledged.requireCurrentConsultant(loaded);
+                original.set(loaded);
+              });
+          var target =
+              new ConsultantDeletionWorkflowDTO(original.get(), new ArrayList<>(), acknowledged);
+          executeAcknowledgedConsultant(target, DeleteMatrixConsultantAction.class);
+          target.runOwnedLocal(
+              () ->
+                  executeAcknowledgedConsultant(
+                      target, DeleteDatabaseConsultantAgencyAction.class));
+          executeAcknowledgedConsultant(target, DeleteChatAction.class);
+          target.runOwnedExternal(
+              () ->
+                  executeAcknowledgedConsultant(
+                      target, DeleteAppointmentServiceConsultantAction.class));
+          target.runOwnedLocal(
+              () ->
+                  executeAcknowledgedConsultant(
+                      target, DeleteCaseHandoverRequestsForConsultantAction.class));
+          target.runOwnedLocal(
+              () ->
+                  executeAcknowledgedConsultant(target, DeleteConsultantDraftMessagesAction.class));
+          target.runOwnedLocal(
+              () ->
+                  executeAcknowledgedConsultant(
+                      target, DeleteConsultantEventNotificationsAction.class));
+          target.runOwnedLocal(
+              () ->
+                  executeAcknowledgedConsultant(
+                      target, DeleteConsultantMessageEmailDeliveriesAction.class));
+          target.completeOwnedLocalDeletion(
+              () -> executeAcknowledgedConsultant(target, DeleteDatabaseConsultantAction.class));
+          if (isNotEmpty(target.getDeletionWorkflowErrors())) {
+            acknowledged.requireCurrent();
+            workflowErrorMailService.buildAndSendErrorMail(target.getDeletionWorkflowErrors());
+            acknowledged.requireCurrent();
+          }
+        });
+  }
+
+  private void executeAcknowledgedConsultant(
+      ConsultantDeletionWorkflowDTO target,
+      Class<? extends ActionCommand<ConsultantDeletionWorkflowDTO>> action) {
+    actionsRegistry
+        .buildContainerForType(ConsultantDeletionWorkflowDTO.class)
+        .addActionToExecute(action)
+        .executeActions(target);
+  }
+
   private void continueInactiveUser(ScheduledAskerMaintenance.AcknowledgedDeletion acknowledged) {
     var original = new java.util.concurrent.atomic.AtomicReference<User>();
     acknowledged.runOwnedLocal(

@@ -362,6 +362,326 @@ class ScopedInactivityNativeBoundaryTest {
     f.server.verify();
   }
 
+  @Test
+  void originalSuspensionCustodySurvivesTheFreshRestoreClaimAndOnlyReleasedLineageCanBeReplaced()
+      throws Exception {
+    var f = new Fixture(true, false);
+    f.read(false);
+    f.mutate("deactivate", false, false);
+    f.read(true);
+    f.mutate("reactivate", true, false);
+    f.read(false);
+    f.mutate("deactivate", false, false);
+    f.service.scan(false);
+    assertEquals(
+        AccountInactivityService.Status.SUSPENDED,
+        f.service.snapshot(ACCOUNT).orElseThrow().status());
+    assertEquals(1, f.order.stream().filter("native-deactivate"::equals).count());
+    String captured = f.value("suspension_source_json");
+    assertNotNull(captured, "The acknowledged SUSPEND must retain its original owning source");
+    var custody = f.json.readTree(captured);
+    assertEquals(
+        Set.of(
+            "representation",
+            "originalRow",
+            "source",
+            "nativeBody",
+            "nativeReceipt",
+            "phase",
+            "bindingDigest"),
+        Fixture.fields(custody));
+    assertEquals("ACKNOWLEDGED", custody.path("phase").textValue());
+    assertEquals(f.value("claimed_json"), f.canonical(custody.path("originalRow")));
+    assertEquals(f.value("source_json"), f.canonical(custody.path("source")));
+    assertEquals(f.value("native_body"), f.canonical(custody.path("nativeBody")));
+    assertEquals(f.value("native_receipt"), custody.path("nativeReceipt").textValue());
+    var prefix = ((com.fasterxml.jackson.databind.node.ObjectNode) custody).deepCopy();
+    prefix.remove("bindingDigest");
+    assertEquals(
+        f.digest("claimed-inactivity-suspension-custody/v1", prefix),
+        custody.path("bindingDigest").textValue());
+    String first = f.value("work_id");
+    f.platformHuman();
+    assertTrue(f.service.reactivate(ACCOUNT));
+    assertNotEquals(first, f.value("work_id"));
+    assertEquals(
+        captured,
+        f.value("suspension_source_json"),
+        "A RESTORE claim must not overwrite the named SUSPEND birth/Matrix source");
+    assertTrue(assertDoesNotThrow(() -> f.service.suspend(ACCOUNT)));
+    var replaced = f.json.readTree(f.value("suspension_source_json"));
+    assertNotEquals(first, replaced.path("originalRow").path("workId").textValue());
+    assertEquals(f.value("work_id"), replaced.path("originalRow").path("workId").textValue());
+    assertEquals("ACKNOWLEDGED", replaced.path("phase").textValue());
+    assertEquals(2, f.order.stream().filter("native-deactivate"::equals).count());
+    verifyNoInteractions(f.sdk);
+    f.server.verify();
+  }
+
+  @Test
+  void missingForgedOrChangedOriginalBirthAndMatrixCustodyCannotRestoreAnyAccess()
+      throws Exception {
+    for (String changed : List.of("missing", "forged", "birth", "matrix")) {
+      var f = new Fixture(true, false);
+      f.read(false);
+      f.mutate("deactivate", false, false);
+      f.read(true, ExpectedCount.between(0, 1));
+      f.mutate("reactivate", true, false, ExpectedCount.between(0, 1));
+      f.service.scan(false);
+      assertEquals(
+          AccountInactivityService.Status.SUSPENDED,
+          f.service.snapshot(ACCOUNT).orElseThrow().status());
+      var before = List.copyOf(f.order);
+      switch (changed) {
+        case "missing" ->
+            f.jdbc.update(
+                "update account_inactivity set suspension_source_json=null where identity_id=?",
+                ACCOUNT);
+        case "forged" ->
+            f.jdbc.update(
+                "update account_inactivity set suspension_source_json=? where identity_id=?",
+                "{\"forged\":true}",
+                ACCOUNT);
+        case "birth" ->
+            f.jdbc.update(
+                "update consultant set create_date=? where consultant_id=?",
+                java.sql.Timestamp.from(Instant.parse("2025-01-02T00:00:00Z")),
+                ACCOUNT);
+        case "matrix" ->
+            f.jdbc.update(
+                "update consultant set matrix_user_id='@replaced:example.test' where consultant_id=?",
+                ACCOUNT);
+        default -> throw new AssertionError(changed);
+      }
+      f.platformHuman();
+      assertThrows(RuntimeException.class, () -> f.service.reactivate(ACCOUNT));
+      assertEquals(
+          before,
+          f.order,
+          "Authenticate original source before any Matrix/media restore: " + changed);
+      verifyNoInteractions(f.sdk);
+      f.server.verify();
+    }
+  }
+
+  @Test
+  void unknownSuspensionRetainsItsOriginalCustodyBodyAndWorkUntilTheSameCommandAcknowledges()
+      throws Exception {
+    var f = new Fixture(true, false);
+    f.read(false);
+    f.mutate("deactivate", false, true);
+    f.mutate("deactivate", false, false);
+    f.service.scan(false);
+    assertEquals("FROZEN", f.value("native_phase"));
+    String captured = f.value("suspension_source_json");
+    assertNotNull(captured, "Unknown native work must retain immutable original source custody");
+    var original = f.json.readTree(captured);
+    assertEquals("FROZEN", original.path("phase").textValue());
+    assertEquals(f.value("native_body"), f.canonical(original.path("nativeBody")));
+    String work = f.value("work_id");
+    f.service.scan(false);
+    var acknowledged = f.json.readTree(f.value("suspension_source_json"));
+    assertEquals("ACKNOWLEDGED", acknowledged.path("phase").textValue());
+    for (String field : List.of("originalRow", "source", "nativeBody"))
+      assertEquals(original.path(field), acknowledged.path(field));
+    assertEquals(work, f.value("work_id"));
+    assertEquals(2, f.order.stream().filter("native-deactivate"::equals).count());
+    verifyNoInteractions(f.sdk);
+    f.server.verify();
+  }
+
+  @Test
+  void unreleasedAcknowledgedSuspensionCannotBeReplacedByANewManualClaim() throws Exception {
+    for (String changed :
+        List.of(
+            "missing-restore",
+            "forged-restore",
+            "unfinished-wal",
+            "wrong-access-owner",
+            "changed-original-lock",
+            "changed-attempts",
+            "changed-last-error",
+            "changed-initiator")) {
+      var f = new Fixture(true, false);
+      f.read(false);
+      f.mutate("deactivate", false, false);
+      if (!"missing-restore".equals(changed)) {
+        f.read(true);
+        f.mutate("reactivate", true, false);
+      }
+      f.read(false, ExpectedCount.between(0, 1));
+      f.mutate("deactivate", false, false, ExpectedCount.between(0, 1));
+      f.service.scan(false);
+      f.platformHuman();
+      if ("missing-restore".equals(changed))
+        f.jdbc.update("update account_inactivity set status='ACTIVE' where identity_id=?", ACCOUNT);
+      else {
+        assertTrue(f.service.reactivate(ACCOUNT));
+        switch (changed) {
+          case "forged-restore" ->
+              f.jdbc.update(
+                  "update account_inactivity set native_receipt='synthetic-invalid' where identity_id=?",
+                  ACCOUNT);
+          case "unfinished-wal" -> {
+            var wal =
+                (com.fasterxml.jackson.databind.node.ObjectNode)
+                    f.json.readTree(f.value("restore_effects_json"));
+            ((com.fasterxml.jackson.databind.node.ObjectNode) wal.path("matrix").get(0))
+                .put("restorePhase", "STARTED");
+            f.jdbc.update(
+                "update account_inactivity set restore_effects_json=? where identity_id=?",
+                f.canonical(wal),
+                ACCOUNT);
+          }
+          case "wrong-access-owner" ->
+              f.jdbc.update(
+                  "update account_inactivity set access_work_id=? where identity_id=?",
+                  UUID.randomUUID().toString(),
+                  ACCOUNT);
+          case "changed-original-lock" ->
+              f.jdbc.update(
+                  "update account_inactivity_matrix_state set original_locked=TRUE where identity_id=?",
+                  ACCOUNT);
+          case "changed-attempts", "changed-last-error", "changed-initiator" -> {
+            var row =
+                (com.fasterxml.jackson.databind.node.ObjectNode)
+                    f.json.readTree(f.value("claimed_json"));
+            if ("changed-attempts".equals(changed))
+              row.put("attempts", row.path("attempts").intValue() + 1);
+            else if ("changed-last-error".equals(changed))
+              row.put("lastError", "KEYCLOAK:UNCONFIRMED");
+            else row.putObject("initiator").put("kind", "SCHEDULED");
+            f.jdbc.update(
+                "update account_inactivity set claimed_json=? where identity_id=?",
+                f.canonical(row),
+                ACCOUNT);
+          }
+          default -> throw new AssertionError(changed);
+        }
+      }
+      String work = f.value("work_id"), original = f.value("claimed_json");
+      var before = List.copyOf(f.order);
+      assertThrows(RuntimeException.class, () -> f.service.suspend(ACCOUNT));
+      assertEquals(
+          work,
+          f.value("work_id"),
+          "A status/restored flag cannot release original custody: " + changed);
+      assertEquals(original, f.value("claimed_json"));
+      assertEquals(before, f.order);
+      verifyNoInteractions(f.sdk);
+      f.server.verify();
+    }
+  }
+
+  @Test
+  void aColdRestartAfterClaimCommitRetainsCapturedSourceBeforeClassificationOrAnyMutation()
+      throws Exception {
+    for (boolean releasedPrior : List.of(false, true)) {
+      var f = new Fixture(true, false);
+      String oldCustody = null;
+      if (releasedPrior) {
+        f.read(false);
+        f.mutate("deactivate", false, false);
+        f.read(true);
+        f.mutate("reactivate", true, false);
+      }
+      f.server
+          .expect(requestTo(URL + "/read"))
+          .andExpect(method(HttpMethod.POST))
+          .andRespond(
+              outbound -> {
+                try {
+                  f.body(outbound, "read", false);
+                } catch (Exception invalid) {
+                  throw new java.io.IOException(invalid);
+                }
+                throw new ResourceAccessException(
+                    "Synthetic lost classification reply after actual claim commit");
+              });
+      f.read(false);
+      f.mutate("deactivate", false, false);
+      if (releasedPrior) {
+        f.service.scan(false);
+        f.platformHuman();
+        assertTrue(f.service.reactivate(ACCOUNT));
+        oldCustody = f.value("suspension_source_json");
+        f.clock = Clock.offset(CLOCK, java.time.Duration.ofDays(800));
+      }
+      var before = List.copyOf(f.order);
+      f.freshService().scan(false);
+      assertEquals("CLAIMED", f.value("native_phase"));
+      assertNull(f.value("native_body"));
+      assertEquals(before, f.order);
+      String work = f.value("work_id"),
+          original = f.value("claimed_json"),
+          source = f.value("source_json");
+      String custody = f.value("suspension_source_json");
+      assertNotNull(custody, "CAPTURED commits atomically with the actual SUSPEND claim");
+      assertEquals("CAPTURED", f.json.readTree(custody).path("phase").textValue());
+      if (releasedPrior) {
+        assertNotEquals(oldCustody, custody);
+        assertEquals(
+            0,
+            f.jdbc.queryForObject(
+                "select count(*) from account_inactivity_access_state where identity_id=?",
+                Integer.class,
+                ACCOUNT));
+        assertEquals(
+            0,
+            f.jdbc.queryForObject(
+                "select count(*) from account_inactivity_matrix_state where identity_id=?",
+                Integer.class,
+                ACCOUNT));
+      }
+      var restarted = f.freshService();
+      restarted.scan(false);
+      assertEquals(
+          AccountInactivityService.Status.SUSPENDED,
+          restarted.snapshot(ACCOUNT).orElseThrow().status());
+      assertEquals(work, f.value("work_id"));
+      assertEquals(original, f.value("claimed_json"));
+      assertEquals(source, f.value("source_json"));
+      assertEquals(
+          "ACKNOWLEDGED",
+          f.json.readTree(f.value("suspension_source_json")).path("phase").textValue());
+      verifyNoInteractions(f.sdk);
+      f.server.verify();
+    }
+  }
+
+  @Test
+  void signedSuspensionNoEffectAllowsOnlyVerifiedCaptureCleanupBeforeFreshSourceReplacement()
+      throws Exception {
+    for (int status : List.of(403, 409)) {
+      var f = new Fixture(true, false);
+      f.read(false);
+      f.refuse("deactivate", false, status);
+      f.read(false);
+      f.mutate("deactivate", false, false);
+      f.service.scan(false);
+      assertEquals("NO_EFFECT", f.value("native_phase"));
+      assertEquals(
+          AccountInactivityService.Status.ACTIVE,
+          f.service.snapshot(ACCOUNT).orElseThrow().status());
+      String original = f.value("suspension_source_json"), operation = f.value("work_id");
+      assertNotNull(original);
+      assertEquals("NO_EFFECT", f.json.readTree(original).path("phase").textValue());
+      assertEquals(List.of("matrix-read", "native-deactivate-no-effect-" + status), f.order);
+      f.service.scan(false);
+      assertEquals(
+          AccountInactivityService.Status.SUSPENDED,
+          f.service.snapshot(ACCOUNT).orElseThrow().status());
+      assertNotEquals(operation, f.value("work_id"));
+      var refreshed = f.json.readTree(f.value("suspension_source_json"));
+      assertEquals("ACKNOWLEDGED", refreshed.path("phase").textValue());
+      assertEquals(f.value("work_id"), refreshed.path("originalRow").path("workId").textValue());
+      assertEquals(f.json.readTree(original).path("source"), refreshed.path("source"));
+      assertEquals(1, f.order.stream().filter("media-revoke"::equals).count());
+      verifyNoInteractions(f.sdk);
+      f.server.verify();
+    }
+  }
+
   private static final class Fixture {
     final ObjectMapper json = new ObjectMapper();
     final AccountLifecycleCodec codec = new AccountLifecycleCodec(KEY);
@@ -380,6 +700,7 @@ class ScopedInactivityNativeBoundaryTest {
     final AccountInactivityService service;
     final AuthenticatedUser human = new AuthenticatedUser();
     final MockHttpServletRequest request = new MockHttpServletRequest();
+    Clock clock = CLOCK;
     final boolean originalEnabled;
     JsonNode suspend, restore;
 
@@ -411,7 +732,7 @@ class ScopedInactivityNativeBoundaryTest {
                 .replaceFirst("(?s)^.*?ALTER TABLE account_inactivity\\s+ADD COLUMN\\s+", "")
                 .replaceFirst(";\\s*$", "")
                 .split(",\\s*ADD COLUMN\\s+");
-        assertEquals(12, columns.length);
+        assertEquals(13, columns.length);
         for (String column : columns)
           jdbc.execute("ALTER TABLE account_inactivity ADD COLUMN " + column);
       } catch (java.io.IOException invalid) {
@@ -428,10 +749,14 @@ class ScopedInactivityNativeBoundaryTest {
                 + "`("
                 + (table.equals("user") ? "user" : table)
                 + "_id varchar(36),tenant_id bigint,username varchar(255),create_date timestamp(6),matrix_user_id varchar(255))");
+      jdbc.execute("alter table consultant add column delete_date timestamp(6)");
+      jdbc.execute("alter table consultant add column status varchar(20) default 'CREATED'");
+      jdbc.execute(
+          "alter table consultant add column deletion_lifecycle_state varchar(64) default 'ACTIVE'");
       jdbc.execute(
           "create table general_admin_identity_intent(operation_id varchar(36),account_id varchar(36),status varchar(20))");
       jdbc.update(
-          "insert into consultant values(?,7,'existing-consultant',?,?)",
+          "insert into consultant(consultant_id,tenant_id,username,create_date,matrix_user_id) values(?,7,'existing-consultant',?,?)",
           ACCOUNT,
           java.sql.Timestamp.from(Instant.parse("2025-01-01T00:00:00Z")),
           MATRIX);
@@ -447,34 +772,7 @@ class ScopedInactivityNativeBoundaryTest {
       when(token.validatedJwtExpiresAt())
           .thenReturn(Instant.now().plusSeconds(300).getEpochSecond());
       when(broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(token);
-      var manager = new DataSourceTransactionManager(ds);
-      var effects =
-          new DefaultAccountInactivityEffects(
-              jdbc,
-              manager,
-              sdk,
-              matrix,
-              media,
-              new StaticListableBeanFactory().getBeanProvider(InactiveAskerDeletionService.class));
-      var mode = mock(IdentityClientConfig.class);
-      when(mode.isFiveActorMode()).thenReturn(true);
-      effects.setIdentityMode(mode);
-      service = new AccountInactivityService(jdbc, manager, CLOCK, effects);
-      service.setIdentityMode(mode);
-      service.configureScopedInactivity(
-          new KeycloakInactivityMaintenance(
-              http,
-              actors,
-              broker,
-              codec,
-              "https://internal-auth.example.test",
-              "test",
-              "realm-1",
-              ISSUER),
-          human,
-          request,
-          ISSUER,
-          Set.of("admin"));
+      service = freshService();
       service.assignAtCreation(ACCOUNT, 7L, 24, 0, Instant.parse("2023-01-01T00:00:00Z"));
       when(matrix.getAccountLocked(MATRIX))
           .thenAnswer(
@@ -506,6 +804,38 @@ class ScopedInactivityNativeBoundaryTest {
               })
           .when(media)
           .restore(List.of(MATRIX));
+    }
+
+    AccountInactivityService freshService() {
+      var manager = new DataSourceTransactionManager(jdbc.getDataSource());
+      var effects =
+          new DefaultAccountInactivityEffects(
+              jdbc,
+              manager,
+              sdk,
+              matrix,
+              media,
+              new StaticListableBeanFactory().getBeanProvider(InactiveAskerDeletionService.class));
+      var mode = mock(IdentityClientConfig.class);
+      when(mode.isFiveActorMode()).thenReturn(true);
+      effects.setIdentityMode(mode);
+      var current = new AccountInactivityService(jdbc, manager, clock, effects);
+      current.setIdentityMode(mode);
+      current.configureScopedInactivity(
+          new KeycloakInactivityMaintenance(
+              http,
+              actors,
+              broker,
+              codec,
+              "https://internal-auth.example.test",
+              "test",
+              "realm-1",
+              ISSUER),
+          human,
+          request,
+          ISSUER,
+          Set.of("admin"));
+      return current;
     }
 
     void platformHuman() {
@@ -540,8 +870,12 @@ class ScopedInactivityNativeBoundaryTest {
     }
 
     void read(boolean restoring) {
+      read(restoring, ExpectedCount.once());
+    }
+
+    void read(boolean restoring, ExpectedCount count) {
       server
-          .expect(requestTo(URL + "/read"))
+          .expect(count, requestTo(URL + "/read"))
           .andExpect(method(HttpMethod.POST))
           .andRespond(
               outbound -> {
@@ -573,8 +907,12 @@ class ScopedInactivityNativeBoundaryTest {
     }
 
     void mutate(String command, boolean restoring, boolean lost) {
+      mutate(command, restoring, lost, ExpectedCount.once());
+    }
+
+    void mutate(String command, boolean restoring, boolean lost, ExpectedCount count) {
       server
-          .expect(requestTo(URL + "/" + command))
+          .expect(count, requestTo(URL + "/" + command))
           .andExpect(method(HttpMethod.POST))
           .andRespond(
               outbound -> {
@@ -593,7 +931,9 @@ class ScopedInactivityNativeBoundaryTest {
                         originalEnabled, body.path("change").path("restoreEnabled").booleanValue());
                   } else {
                     assertTrue(body.path("change").isEmpty());
-                    if (suspend != null) assertEquals(suspend, body);
+                    if (suspend != null
+                        && suspend.path("operationId").equals(body.path("operationId")))
+                      assertEquals(suspend, body);
                     suspend = body;
                   }
                   assertEquals("FROZEN", value("native_phase"));
@@ -644,22 +984,26 @@ class ScopedInactivityNativeBoundaryTest {
     }
 
     void refuseRestore(int status) {
+      refuse("reactivate", true, status);
+    }
+
+    void refuse(String command, boolean restoring, int status) {
       server
-          .expect(requestTo(URL + "/reactivate"))
+          .expect(requestTo(URL + "/" + command))
           .andExpect(method(HttpMethod.POST))
           .andRespond(
               outbound -> {
                 try {
-                  var body = body(outbound, "reactivate", true);
-                  restore = body;
+                  var body = body(outbound, command, restoring);
+                  if (restoring) restore = body;
                   assertEquals("FROZEN", value("native_phase"));
                   assertEquals(canonical(body), value("native_body"));
-                  order.add("native-reactivate-no-effect-" + status);
+                  order.add("native-" + command + "-no-effect-" + status);
                   var signed = new TreeMap<String, Object>();
                   signed.put("realmId", "realm-1");
                   signed.put("accountId", ACCOUNT);
                   signed.put("operationId", body.path("operationId").textValue());
-                  signed.put("command", "reactivate");
+                  signed.put("command", command);
                   signed.put("ownerClient", actor.clientId());
                   signed.put("ownerSubject", SUBJECT);
                   signed.put("intentDigest", digest("maintenance-intent", body));
@@ -709,8 +1053,11 @@ class ScopedInactivityNativeBoundaryTest {
       outside();
       assertEquals(
           "Bearer synthetic-checked-admin", outbound.getHeaders().getFirst("Authorization"));
+      var originalClaim = json.readTree(value("claimed_json"));
+      boolean manual =
+          "HUMAN_ADMIN".equals(originalClaim.path("initiator").path("kind").textValue());
       assertEquals(
-          restoring ? "Bearer synthetic-platform-human" : null,
+          manual ? "Bearer synthetic-platform-human" : null,
           outbound.getHeaders().getFirst("X-ORISO-Human-Authorization"));
       var body = json.readTree(((MockClientHttpRequest) outbound).getBodyAsString());
       var workflow = body.path("workflow");
@@ -743,10 +1090,10 @@ class ScopedInactivityNativeBoundaryTest {
           original.path("dueAtMicros").longValue() / 1_000_000L,
           workflow.path("dueAt").longValue());
       assertEquals(
-          restoring ? "HUMAN_ADMIN" : "INACTIVITY",
+          manual ? "HUMAN_ADMIN" : "INACTIVITY",
           body.path("target").path("origin").path("kind").textValue());
       assertEquals(
-          restoring ? "PROTECTED_ACCOUNT_OPERATIONS_V1" : null,
+          manual ? "PROTECTED_ACCOUNT_OPERATIONS_V1" : null,
           body.path("target").path("origin").path("humanAuthority").textValue());
       var parts = outbound.getHeaders().getFirst("X-ORISO-Task-Context").split("\\.", -1);
       assertEquals(2, parts.length);

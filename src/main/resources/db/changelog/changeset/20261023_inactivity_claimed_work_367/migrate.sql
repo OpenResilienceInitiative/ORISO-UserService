@@ -11,4 +11,5 @@ ALTER TABLE account_inactivity
  ADD COLUMN suspension_body LONGTEXT NULL,
  ADD COLUMN suspension_receipt LONGTEXT NULL,
  ADD COLUMN access_work_id VARCHAR(36) NULL,
- ADD COLUMN restore_effects_json LONGTEXT NULL;
+ ADD COLUMN restore_effects_json LONGTEXT NULL,
+ ADD COLUMN suspension_source_json LONGTEXT NULL;

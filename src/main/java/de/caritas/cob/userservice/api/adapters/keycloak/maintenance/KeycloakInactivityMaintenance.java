@@ -245,6 +245,197 @@ public final class KeycloakInactivityMaintenance implements AccountInactivityIde
         receipt, realmId, actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), frozen);
   }
 
+  @Override
+  public String bindSuspensionCustody(String exactPrefix) {
+    if (exactPrefix == null || exactPrefix.getBytes(StandardCharsets.UTF_8).length > 8192)
+      throw unavailable();
+    var value = codec.read(exactPrefix, JsonNode.class);
+    String digest = codec.claimedInactivitySuspensionCustodyDigest(value);
+    if (!exactPrefix.equals(codec.canonical(value))) throw unavailable();
+    verifyCustodyNative(value);
+    var sealed = ((com.fasterxml.jackson.databind.node.ObjectNode) value).deepCopy();
+    sealed.put("bindingDigest", digest);
+    String result = codec.canonical(sealed);
+    if (result.getBytes(StandardCharsets.UTF_8).length > 8192) throw unavailable();
+    return result;
+  }
+
+  @Override
+  public void verifySuspensionCustody(String exactSealedCustody) {
+    if (exactSealedCustody == null
+        || exactSealedCustody.getBytes(StandardCharsets.UTF_8).length > 8192) throw unavailable();
+    var value = codec.read(exactSealedCustody, JsonNode.class);
+    fields(
+        value,
+        Set.of(
+            "representation",
+            "originalRow",
+            "source",
+            "nativeBody",
+            "nativeReceipt",
+            "phase",
+            "bindingDigest"));
+    if (!exactSealedCustody.equals(codec.canonical(value))
+        || !value.path("bindingDigest").isTextual()
+        || !value.path("bindingDigest").textValue().matches("[0-9a-f]{64}")) throw unavailable();
+    var prefix = ((com.fasterxml.jackson.databind.node.ObjectNode) value).deepCopy();
+    prefix.remove("bindingDigest");
+    String expected = codec.claimedInactivitySuspensionCustodyDigest(prefix);
+    if (!java.security.MessageDigest.isEqual(
+        expected.getBytes(StandardCharsets.US_ASCII),
+        value.path("bindingDigest").textValue().getBytes(StandardCharsets.US_ASCII)))
+      throw unavailable();
+    verifyCustodyNative(prefix);
+  }
+
+  private void verifyCustodyNative(JsonNode prefix) {
+    String phase = prefix.path("phase").textValue();
+    if ("ACKNOWLEDGED".equals(phase))
+      codec.verifyMaintenanceInactivitySuspendReceipt(
+          prefix.path("nativeReceipt").textValue(),
+          realmId,
+          actors.require(TaskPurpose.ACCOUNT_MAINTENANCE),
+          prefix.path("nativeBody"));
+    else if ("NO_EFFECT".equals(phase))
+      codec.verifyMaintenanceNoEffectReceipt(
+          prefix.path("nativeReceipt").textValue(),
+          realmId,
+          actors.require(TaskPurpose.ACCOUNT_MAINTENANCE),
+          prefix.path("nativeBody"),
+          "deactivate");
+    else if (!Set.of("CAPTURED", "FROZEN").contains(phase)) throw unavailable();
+  }
+
+  /** Historical proof data only; current authority and actual SQL release remain independent. */
+  @Override
+  public void verifyCompletedInactivityRestoreReceipt(String frozenBody, String receipt) {
+    if (frozenBody == null
+        || receipt == null
+        || frozenBody.getBytes(StandardCharsets.UTF_8).length > 32768
+        || receipt.getBytes(StandardCharsets.UTF_8).length > 32768) throw unavailable();
+    var body = codec.read(frozenBody, JsonNode.class);
+    fields(body, Set.of("target", "workflow", "operationId", "expectedState", "change"));
+    fields(body.path("target"), Set.of("accountId", "tenantId", "origin"));
+    fields(body.path("change"), Set.of("restoreEnabled"));
+    if (!body.path("change").path("restoreEnabled").isBoolean()
+        || !body.path("expectedState").isTextual()
+        || !body.path("expectedState").textValue().matches("[0-9a-f]{64}")) throw unavailable();
+    String operation = historicalUuid(body.path("operationId"));
+    historicalUuid(body.path("target").path("accountId"));
+    var tenant = body.path("target").path("tenantId");
+    if (!tenant.isNull()) {
+      if (!tenant.isTextual() || !tenant.textValue().matches("0|[1-9][0-9]{0,18}"))
+        throw unavailable();
+      try {
+        if (Long.parseLong(tenant.textValue()) < 0) throw unavailable();
+      } catch (NumberFormatException invalid) {
+        throw unavailable();
+      }
+    }
+    var workflow = body.path("workflow");
+    fields(
+        workflow,
+        Set.of(
+            "v",
+            "kind",
+            "workId",
+            "action",
+            "rowDigest",
+            "revision",
+            "assignedMonths",
+            "lastActivity",
+            "dueAt",
+            "suspensionOperationId"));
+    if (historicalNumber(workflow.path("v"), true, true) != 1
+        || !"INACTIVITY".equals(workflow.path("kind").textValue())
+        || !"RESTORE".equals(workflow.path("action").textValue())
+        || !operation.equals(historicalUuid(workflow.path("workId")))
+        || operation.equals(historicalUuid(workflow.path("suspensionOperationId")))
+        || !workflow.path("rowDigest").isTextual()
+        || !workflow.path("rowDigest").textValue().matches("[0-9a-f]{64}")) throw unavailable();
+    historicalNumber(workflow.path("revision"), false, false);
+    historicalNumber(workflow.path("assignedMonths"), true, true);
+    if (historicalNumber(workflow.path("lastActivity"), true, false)
+        > historicalNumber(workflow.path("dueAt"), true, false)) throw unavailable();
+    var origin = body.path("target").path("origin");
+    fields(
+        origin,
+        Set.of(
+            "kind", "workflowId", "humanSubject", "humanIssuer", "humanClient", "humanAuthority"));
+    if (!operation.equals(historicalUuid(origin.path("workflowId")))) throw unavailable();
+    if ("INACTIVITY".equals(origin.path("kind").textValue())) {
+      for (String field : List.of("humanSubject", "humanIssuer", "humanClient", "humanAuthority"))
+        if (!origin.path(field).isNull()) throw unavailable();
+    } else {
+      if (!"HUMAN_ADMIN".equals(origin.path("kind").textValue())
+          || !issuer.equals(origin.path("humanIssuer").textValue())
+          || !origin.path("humanClient").isTextual()
+          || !origin.path("humanClient").textValue().matches("[A-Za-z0-9][A-Za-z0-9_.:-]{0,254}")
+          || !"PROTECTED_ACCOUNT_OPERATIONS_V1".equals(origin.path("humanAuthority").textValue()))
+        throw unavailable();
+      historicalUuid(origin.path("humanSubject"));
+    }
+    if (!frozenBody.equals(codec.canonical(body))) throw unavailable();
+    codec.verifyMaintenanceInactivityRestoreReceipt(
+        receipt, realmId, actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), body);
+  }
+
+  @Override
+  public void verifyCompletedInactivityRestoreReceipt(
+      String frozenBody, String receipt, String originalRowJson) {
+    if (originalRowJson == null || originalRowJson.getBytes(StandardCharsets.UTF_8).length > 8192)
+      throw unavailable();
+    verifyCompletedInactivityRestoreReceipt(frozenBody, receipt);
+    var row = codec.read(originalRowJson, JsonNode.class);
+    String digest = codec.claimedInactivityRowDigest(row);
+    var body = codec.read(frozenBody, JsonNode.class);
+    var workflow = body.path("workflow");
+    if (!originalRowJson.equals(codec.canonical(row))
+        || !"RESTORE".equals(row.path("action").textValue())
+        || !"REACTIVATING".equals(row.path("status").textValue())
+        || !java.security.MessageDigest.isEqual(
+            digest.getBytes(StandardCharsets.US_ASCII),
+            workflow.path("rowDigest").textValue().getBytes(StandardCharsets.US_ASCII))
+        || !row.path("identityId").equals(body.path("target").path("accountId"))
+        || !row.path("tenantId").equals(body.path("target").path("tenantId"))
+        || !row.path("workId").equals(body.path("operationId"))
+        || !row.path("suspensionOperationId").equals(workflow.path("suspensionOperationId"))
+        || row.path("revision").longValue() != workflow.path("revision").longValue()
+        || row.path("assignedMonths").intValue() != workflow.path("assignedMonths").intValue()
+        || row.path("lastActivityMicros").longValue() / 1_000_000L
+            != workflow.path("lastActivity").longValue()
+        || row.path("dueAtMicros").longValue() / 1_000_000L != workflow.path("dueAt").longValue())
+      throw unavailable();
+    var initiator = row.path("initiator");
+    var origin = body.path("target").path("origin");
+    if ("SCHEDULED".equals(initiator.path("kind").textValue())) {
+      if (!"INACTIVITY".equals(origin.path("kind").textValue())) throw unavailable();
+    } else if (!"HUMAN_ADMIN".equals(origin.path("kind").textValue())
+        || !initiator.path("subject").equals(origin.path("humanSubject"))
+        || !initiator.path("issuer").equals(origin.path("humanIssuer"))
+        || !initiator.path("client").equals(origin.path("humanClient"))) throw unavailable();
+  }
+
+  private static String historicalUuid(JsonNode value) {
+    if (!value.isTextual()) throw unavailable();
+    try {
+      if (!UUID.fromString(value.textValue()).toString().equals(value.textValue()))
+        throw unavailable();
+      return value.textValue();
+    } catch (IllegalArgumentException invalid) {
+      throw unavailable();
+    }
+  }
+
+  private static long historicalNumber(JsonNode value, boolean positive, boolean narrow) {
+    if (!value.isIntegralNumber()
+        || !value.canConvertToLong()
+        || narrow && !value.canConvertToInt()
+        || positive && value.longValue() <= 0
+        || !positive && value.longValue() < 0) throw unavailable();
+    return value.longValue();
+  }
+
   private Map<String, Object> body(ClaimedWork work, String state, boolean restoreEnabled) {
     if (!Set.of("SUSPEND", "RESTORE").contains(work.action())) throw unavailable();
     return Map.of(

@@ -1364,6 +1364,18 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
         ClaimedInactivityRowSchema.require(exactOwnedRow, true));
   }
 
+  public String claimedScheduledConsultantDeletionRowDigest(JsonNode independentlyOwned53) {
+    return digest(
+        "claimed-scheduled-consultant-deletion-row/v1",
+        ClaimedConsultantDeletionSchema.row(independentlyOwned53));
+  }
+
+  public String claimedScheduledConsultantDeletionIntentDigest(JsonNode exactOwnedEnvelope) {
+    return digest(
+        "claimed-scheduled-consultant-deletion-intent/v1",
+        ClaimedConsultantDeletionSchema.envelope(exactOwnedEnvelope));
+  }
+
   /** Fixed scheduled deletion data binding; only its actual private owner can issue live work. */
   public String claimedScheduledDeletionIntentDigest(JsonNode exactOwnedEnvelope) {
     return digest(
@@ -1389,6 +1401,20 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
   public String verifyMaintenanceProfileTransitionReceipt(
       String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
     return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "profile-transition", "UPDATED");
+  }
+
+  /** Fixed original SUSPEND source data; actual private SQL ownership is independently required. */
+  public String claimedInactivitySuspensionCustodyDigest(JsonNode exactOwnedCustody) {
+    if (exactOwnedCustody == null || !exactOwnedCustody.isObject())
+      throw new IllegalArgumentException("Invalid original suspension source custody");
+    var bounded = ((com.fasterxml.jackson.databind.node.ObjectNode) exactOwnedCustody).deepCopy();
+    bounded.put("bindingDigest", "0".repeat(64));
+    if (canonical(bounded).getBytes(StandardCharsets.UTF_8).length > 8192)
+      throw new IllegalArgumentException("Invalid original suspension source custody");
+    ClaimedInactivitySuspensionCustodySchema.require(exactOwnedCustody, null);
+    String rowDigest = claimedInactivityRowDigest(exactOwnedCustody.path("originalRow"));
+    var checked = ClaimedInactivitySuspensionCustodySchema.require(exactOwnedCustody, rowDigest);
+    return digest("claimed-inactivity-suspension-custody/v1", checked);
   }
 
   public String verifyMaintenanceOrdinaryProfileReceipt(
