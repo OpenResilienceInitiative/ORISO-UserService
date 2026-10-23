@@ -1250,12 +1250,24 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
       if (tenant == null || (!tenant.isNull() && !tenant.isTextual()))
         throw new IllegalArgumentException();
       JsonNode status = outer.path("status");
+      boolean chosenPasswordReactivation = false;
+      if ("reactivate".equals(command) && status.isIntegralNumber()
+          && status.canConvertToInt() && status.intValue() == 400) {
+        intentFields(frozen, java.util.Set.of("target", "operationId", "expectedState", "change"));
+        JsonNode change = frozen.path("change");
+        intentFields(change, java.util.Set.of("expectedUsername", "expectedEmail", "password"));
+        intentText(change, "expectedUsername", 255);
+        intentText(change, "expectedEmail", 255);
+        intentText(change, "password", 4096);
+        chosenPasswordReactivation = true;
+      }
       if (!status.isIntegralNumber()
           || !status.canConvertToInt()
           || !(status.intValue() == 403
               || status.intValue() == 409
               || (status.intValue() == 400
-                  && java.util.Set.of("self-password", "password-reset").contains(command)))
+                  && (java.util.Set.of("self-password", "password-reset").contains(command)
+                      || chosenPasswordReactivation)))
           || !operation.equals(intentUuid(outer, "operationId"))
           || !account.equals(intentText(outer, "accountId", 512))
           || !"NO_EFFECT".equals(intentText(outer, "result", 16)))

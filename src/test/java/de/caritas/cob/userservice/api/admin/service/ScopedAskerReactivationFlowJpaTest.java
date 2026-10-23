@@ -81,6 +81,10 @@ class ScopedAskerReactivationFlowJpaTest {
   private IdentityReactivationRepairService repair;
   private DeletionLifecycleService lifecycle;
   private String nativeUsername;
+  private final MutableClock clock = new MutableClock(Instant.now());
+  private AuthenticatedUser authenticated;
+  private MockHttpServletRequest request;
+  private TaskActorTokenBroker.VerifiedMaintenanceToken checked;
   private boolean emptyNativeNames;
   private String firstBody;
   private String receipt;
@@ -88,6 +92,7 @@ class ScopedAskerReactivationFlowJpaTest {
 
   @BeforeEach
   void committedExclusiveAskerAndRealFacade() {
+    clock.current = Instant.now();
     assertInstanceOf(JpaTransactionManager.class, transactions);
     assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
     TenantContext.setCurrentTenant(7L);
@@ -124,7 +129,7 @@ class ScopedAskerReactivationFlowJpaTest {
     var mode = mock(IdentityClientConfig.class);
     when(mode.isFiveActorMode()).thenReturn(true);
     facade.setIdentityMode(mode);
-    var authenticated =
+    authenticated =
         new AuthenticatedUser(
             HUMAN,
             "actual-admin",
@@ -132,9 +137,9 @@ class ScopedAskerReactivationFlowJpaTest {
             "fixture-human",
             Set.of("ROLE_USER_ADMIN"));
     authenticated.setTenantId(7L);
-    var request =
+    request =
         new MockHttpServletRequest("POST", "/service/useradmin/askers/deletion/reactivate");
-    var now = Instant.now();
+    var now = clock.instant();
     var jwt =
         Jwt.withTokenValue("fixture-human")
             .header("alg", "RS256")
@@ -158,7 +163,7 @@ class ScopedAskerReactivationFlowJpaTest {
             new TaskActorCredentials(
                 TaskActor.ACCOUNT_ADMIN, "backend-account-admin", "fixture-secret", OWNER));
     var broker = mock(TaskActorTokenBroker.class);
-    var checked = mock(TaskActorTokenBroker.VerifiedMaintenanceToken.class);
+    checked = mock(TaskActorTokenBroker.VerifiedMaintenanceToken.class);
     when(checked.accessToken()).thenReturn("fixture-admin");
     when(checked.actor()).thenReturn(TaskActor.ACCOUNT_ADMIN);
     when(checked.purpose()).thenReturn(TaskPurpose.ACCOUNT_MAINTENANCE);
@@ -182,7 +187,7 @@ class ScopedAskerReactivationFlowJpaTest {
             broker,
             codec,
             http,
-            Clock.systemUTC(),
+            clock,
             "https://identity.test",
             ISSUER,
             "fixture",
@@ -507,6 +512,93 @@ class ScopedAskerReactivationFlowJpaTest {
     verify(lifecycle, times(1)).cancelUserDeletion(any(User.class));
     verifyNoInteractions(generic, repair);
     server.verify();
+  }
+
+
+  @Test
+  void signedForbiddenAndConflictReleaseOnlyTheirExactFencedClaim() {
+    for (int status : List.of(403,409)) {
+      expectRead();
+      for (int replay=0;replay<2;replay++) server.expect(requestTo(URL + "/reactivate")).andRespond(outbound -> {
+        assertOutsideSql();String raw=((MockClientHttpRequest)outbound).getBodyAsString();
+        return org.springframework.test.web.client.response.MockRestResponseCreators.withStatus(org.springframework.http.HttpStatus.valueOf(status))
+            .contentType(MediaType.APPLICATION_JSON).body(signed(raw,status)).createResponse(outbound);
+      });
+    }
+    for (int status : List.of(403,409)) {
+      var chosen=input();chosen.setPassword("distinct-refused-password-"+status);
+      Class<? extends RuntimeException> type=status==403?de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class:de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class;
+      assertThrows(type,()->facade.reactivateAsker(chosen));
+      var saved=jdbc.queryForObject("select reactivation_scoped_json from user where user_id=?",String.class,ACCOUNT);
+      assertEquals("NO_EFFECT",codec.read(saved,JsonNode.class).path("phase").textValue());
+      assertNull(jdbc.queryForObject("select reactivation_operation_id from user where user_id=?",String.class,ACCOUNT));
+      assertNotNull(jdbc.queryForObject("select delete_date from user where user_id=?",java.sql.Timestamp.class,ACCOUNT));
+      assertThrows(type,()->facade.reactivateAsker(chosen));
+      assertEquals(saved,jdbc.queryForObject("select reactivation_scoped_json from user where user_id=?",String.class,ACCOUNT));
+    }
+    verify(lifecycle,never()).cancelUserDeletion(any(User.class));verifyNoInteractions(generic,repair);server.verify();
+  }
+
+  @Test
+  void expiredOriginalBearerCannotRetryWhileFreshSameHumanRenewsOnlyTheOriginalFrozenCommand() {
+    expectRead();
+    var originalBody=new java.util.concurrent.atomic.AtomicReference<String>();
+    server.expect(requestTo(URL+"/reactivate")).andRespond(outbound->{
+      originalBody.set(((MockClientHttpRequest)outbound).getBodyAsString());
+      return org.springframework.test.web.client.response.MockRestResponseCreators.withStatus(org.springframework.http.HttpStatus.CONFLICT).body("{}").createResponse(outbound);
+    });
+    server.expect(requestTo(URL+"/reactivate")).andRespond(outbound->{
+      assertOutsideSql();String raw=((MockClientHttpRequest)outbound).getBodyAsString();assertTrue(originalBody.get().equals(raw),"Renewal cannot change frozen command");
+      return withSuccess(signed(raw),MediaType.APPLICATION_JSON).createResponse(outbound);
+    });
+    assertThrows(de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException.class,()->facade.reactivateAsker(input()));
+    var frozen=codec.read(jdbc.queryForObject("select reactivation_scoped_json from user where user_id=?",String.class,ACCOUNT),JsonNode.class);
+    clock.current=Instant.ofEpochSecond(frozen.path("metadata").path("authorityValidUntil").longValue()+1);
+    assertThrows(de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,()->facade.reactivateAsker(input()));
+    renewHuman("renewed-synthetic-human",HUMAN);
+    when(checked.validatedJwtIssuedAt()).thenReturn(clock.instant().minusSeconds(1).getEpochSecond());
+    when(checked.validatedJwtExpiresAt()).thenReturn(clock.instant().plusSeconds(600).getEpochSecond());
+    assertDoesNotThrow(()->facade.reactivateAsker(input()));
+    var acknowledged=codec.read(jdbc.queryForObject("select reactivation_scoped_json from user where user_id=?",String.class,ACCOUNT),JsonNode.class);
+    assertEquals(frozen.path("metadata"),acknowledged.path("metadata"));assertEquals(frozen.path("envelope"),acknowledged.path("envelope"));
+    verify(lifecycle,times(1)).cancelUserDeletion(any(User.class));server.verify();
+  }
+
+  @Test
+  void frozenCurrentSqlHumanAndPasswordDriftCannotRebindOrDispatchAnotherCommand() {
+    expectRead();
+    server.expect(requestTo(URL+"/reactivate")).andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withStatus(org.springframework.http.HttpStatus.CONFLICT).body("{}"));
+    assertThrows(de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException.class,()->facade.reactivateAsker(input()));server.verify();server.reset();
+    var frozen=jdbc.queryForObject("select reactivation_scoped_json from user where user_id=?",String.class,ACCOUNT);
+    var row=jdbc.queryForMap("select * from user where user_id=?",ACCOUNT);
+    Map<String,Object> changes=new LinkedHashMap<>();changes.put("create_date",java.sql.Timestamp.valueOf("2026-01-01 00:00:00"));changes.put("email","unrelated@fixture.invalid");changes.put("username","unrelated");changes.put("language_code","de");changes.put("notifications_enabled",true);changes.put("avatar_id","different-avatar");changes.put("reactivation_operation_id","85000000-0000-4000-8000-000000000099");
+    for(var change:changes.entrySet()) {
+      // The only interpolated identifier comes from this private fixed literal map.
+      jdbc.update("update user set "+change.getKey()+"=? where user_id=?",change.getValue(),ACCOUNT);
+      assertThrows(RuntimeException.class,()->facade.reactivateAsker(input()),change.getKey());
+      assertEquals(frozen,jdbc.queryForObject("select reactivation_scoped_json from user where user_id=?",String.class,ACCOUNT));
+      jdbc.update("update user set "+change.getKey()+"=? where user_id=?",row.get(change.getKey()),ACCOUNT);
+    }
+    var changed=input();changed.setPassword("unrelated-new-password");assertThrows(de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class,()->facade.reactivateAsker(changed));
+    renewHuman("foreign-synthetic-human","85000000-0000-4000-8000-000000000098");
+    assertThrows(RuntimeException.class,()->facade.reactivateAsker(input()));
+    assertEquals(row,jdbc.queryForMap("select * from user where user_id=?",ACCOUNT));
+    assertEquals(frozen,jdbc.queryForObject("select reactivation_scoped_json from user where user_id=?",String.class,ACCOUNT));
+    verify(lifecycle,never()).cancelUserDeletion(any(User.class));verifyNoInteractions(generic,repair);server.verify();
+  }
+
+  private void renewHuman(String token,String subject) {
+    authenticated.setUserId(subject);authenticated.setAccessToken(token);
+    var jwt=Jwt.withTokenValue(token).header("alg","RS256").subject(subject).issuer(ISSUER).claim("azp","admin-ui").claim("tenantId","7").issuedAt(clock.instant().minusSeconds(1)).expiresAt(clock.instant().plusSeconds(600)).build();
+    request.setUserPrincipal(new JwtAuthenticationToken(jwt,List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_USER_ADMIN"))));
+    request.removeHeader("Authorization");request.addHeader("Authorization","Bearer "+token);
+  }
+
+  private static final class MutableClock extends Clock {
+    private Instant current;private MutableClock(Instant initial){current=initial;}
+    @Override public Instant instant(){return current;}
+    @Override public java.time.ZoneId getZone(){return ZoneOffset.UTC;}
+    @Override public Clock withZone(java.time.ZoneId zone){if(!ZoneOffset.UTC.equals(zone))throw new IllegalArgumentException("UTC fixture only");return this;}
   }
 
   private void expectRead() {

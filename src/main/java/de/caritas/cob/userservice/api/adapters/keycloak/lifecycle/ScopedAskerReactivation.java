@@ -189,8 +189,30 @@ public final class ScopedAskerReactivation {
       reply =
           call("reactivate", human, account, codec.canonical(frozen.wrapper.path("body")), actor);
     } catch (NativeRefusal refused) {
-      // The original immutable intent remains pending until its terminal-release slice qualifies.
-      throw unavailable();
+      final AccountLifecycleCodec.VerifiedMaintenanceNoEffect proof;
+      final String canonicalReceipt;
+      try {
+        proof = codec.verifyMaintenanceNoEffectReceipt(
+            refused.reply, realmId, actor, frozen.wrapper.path("body"), "reactivate");
+        if (proof.status() != refused.status) throw unavailable();
+        canonicalReceipt = codec.canonical(codec.read(refused.reply, JsonNode.class));
+      } catch (RuntimeException unsignedOrUnbound) {
+        throw unavailable();
+      }
+      transaction(() -> {
+        same(snapshot(account, true), frozen.wrapper.path("originalSql"));
+        same(saved(account), frozen.raw);
+        if (jdbc.update("update user set deletion_lifecycle_state='READ_ONLY_SAFEGUARD',reactivation_operation_id=null,reactivation_operation_started_at=null where user_id=? and reactivation_operation_id=?",
+            account, proof.operationId().toString()) != 1) throw conflict();
+        var terminal = frozen.raw.deepCopy();
+        ((ObjectNode)terminal).put("phase", "NO_EFFECT");
+        ((ObjectNode)terminal).put("receipt", canonicalReceipt);
+        ((ObjectNode)terminal).set("postSql", snapshot(account, true));
+        requirePost(terminal, frozen.wrapper.path("originalSql"), "NO_EFFECT");
+        save(account, terminal);
+        return null;
+      });
+      throw terminal(proof.status());
     } catch (RuntimeException unknown) {
       throw unavailable();
     }
@@ -351,15 +373,16 @@ public final class ScopedAskerReactivation {
             .toLowerCase(Locale.ROOT);
     var rows =
         jdbc.queryForList(
-            "select user_id,username,email from user where lower(username) in (?,?) and tenant_id=? limit 3",
+            "select user_id,username,email from user where lower(username) in (?,?) and tenant_id=? and lower(email)=? limit 2",
             encoded,
             logical.toLowerCase(Locale.ROOT),
-            input.getTenantId());
+            input.getTenantId(),
+            input.getEmail().trim().toLowerCase(Locale.ROOT));
     var exact =
         rows.stream()
             .filter(row -> input.getEmail().trim().equalsIgnoreCase((String) row.get("email")))
             .toList();
-    if (exact.size() != 1 || rows.size() > 2) throw conflict();
+    if (exact.size() != 1) throw conflict();
     return uuid((String) exact.getFirst().get("user_id"));
   }
 
@@ -421,8 +444,11 @@ public final class ScopedAskerReactivation {
         || !read.path("effectiveRoles").isArray()
         || read.path("effectiveRoles").size() != 1
         || !"user".equals(read.path("effectiveRoles").get(0).textValue())) throw forbidden();
-    for (String name : List.of("firstName", "lastName", "preferredLanguage"))
-      if (!read.path(name).isNull()) text(read.path(name).textValue(), 255);
+    for (String name : List.of("firstName", "lastName", "preferredLanguage")) {
+      var value = read.path(name);
+      if (!value.isNull() && (!value.isTextual() || value.textValue().length() > 255
+          || value.textValue().chars().anyMatch(c -> c < 32 || c == 127))) throw forbidden();
+    }
   }
 
   private Human currentHuman() {
