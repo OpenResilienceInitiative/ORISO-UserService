@@ -293,7 +293,9 @@ class DeleteUserAccountScenarioCBoundaryTest {
             + " deletion_read_only_until timestamp(6), deletion_paused_until timestamp(6))");
     new org.springframework.jdbc.datasource.init.ResourceDatabasePopulator(
             new org.springframework.core.io.ClassPathResource(
-                "db/changelog/changeset/20261021_identity_maintenance_367/migrate.sql"))
+                "db/changelog/changeset/20261021_identity_maintenance_367/migrate.sql"),
+            new org.springframework.core.io.ClassPathResource(
+                "db/changelog/changeset/20261022_identity_maintenance_retry_367/migrate.sql"))
         .execute(source);
     jdbc.update(
         "insert into scheduled_task_claim values(?,?,?)",
@@ -323,9 +325,10 @@ class DeleteUserAccountScenarioCBoundaryTest {
     var actors = mock(TaskActorConfiguration.class);
     when(actors.require(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(actor);
     var broker = mock(TaskActorTokenBroker.class);
-    when(broker.issue(TaskPurpose.ACCOUNT_MAINTENANCE))
-        .thenReturn(
-            new TaskActorTokenBroker.TaskToken(TaskActor.ACCOUNT_ADMIN, "fixture-admin", 60));
+    var token = mock(TaskActorTokenBroker.VerifiedMaintenanceToken.class);
+    when(token.actor()).thenReturn(TaskActor.ACCOUNT_ADMIN);
+    when(token.accessToken()).thenReturn("fixture-admin");
+    when(broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(token);
     byte[] key = "0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.UTF_8);
     var codec = new AccountLifecycleCodec(key);
     var http = new RestTemplate();
@@ -480,7 +483,8 @@ class DeleteUserAccountScenarioCBoundaryTest {
             mock(IdentityReactivationRepairService.class));
     ReflectionTestUtils.setField(scheduler, "scopedMaintenance", freshWorker.get());
     if (lostReply) {
-      assertThrows(IllegalStateException.class, scheduler::performDeletionWorkflow);
+      // One refused account must retain its intent without aborting later candidates.
+      assertDoesNotThrow(scheduler::performDeletionWorkflow);
       assertEquals(
           1,
           jdbc.queryForObject(
@@ -508,7 +512,7 @@ class DeleteUserAccountScenarioCBoundaryTest {
           jdbc.queryForObject("select count(*) from identity_maintenance_intent", Integer.class));
       assertEquals(1, receiverEffects.get());
     } else if (invalidReceipt) {
-      assertThrows(IllegalArgumentException.class, scheduler::performDeletionWorkflow);
+      assertDoesNotThrow(scheduler::performDeletionWorkflow);
     } else {
       scheduler.performDeletionWorkflow();
     }
