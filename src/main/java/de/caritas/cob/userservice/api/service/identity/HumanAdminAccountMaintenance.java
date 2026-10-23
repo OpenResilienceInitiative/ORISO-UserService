@@ -56,6 +56,11 @@ public final class HumanAdminAccountMaintenance {
           .enable(DeserializationFeature.FAIL_ON_MISSING_CREATOR_PROPERTIES)
           .disable(com.fasterxml.jackson.databind.MapperFeature.ALLOW_COERCION_OF_SCALARS);
 
+  /** Data-only installed profile projection. Receiving authority remains independent. */
+  public void configureReviewedSelfProfileRoles(java.util.Map<String, List<Set<String>>> profiles) {
+    // Closed test-first wiring seam; exact current SQL/native coherence is not enabled yet.
+  }
+
   /** Root supplies only the already validated immutable lifecycle group map. */
   public void configureReviewedOrdinaryGroups(java.util.Map<String, Set<String>> groups) {
     reviewedGroups = new ReviewedOrdinaryGroups(groups);
