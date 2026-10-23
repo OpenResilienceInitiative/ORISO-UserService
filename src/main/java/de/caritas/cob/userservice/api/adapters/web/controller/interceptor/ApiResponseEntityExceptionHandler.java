@@ -485,6 +485,9 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
     java.util.UUID operation = null;
     if (ex instanceof VerifiedTerminal terminal && terminal.status() == status.value()) {
       operation = terminal.operationId();
+    } else if (ex instanceof de.caritas.cob.userservice.api.adapters.keycloak.maintenance.SelfLocaleMaintenance.VerifiedTerminal terminal
+        && terminal.status() == status.value()) {
+      operation = terminal.operationId();
     } else if (ex instanceof DefiniteProfileNoEffect terminal
         && (status == HttpStatus.FORBIDDEN && ex instanceof DefiniteProfileForbidden
             || status == HttpStatus.CONFLICT && ex instanceof DefiniteProfileConflict)) {
