@@ -1302,6 +1302,11 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
         ClaimedDeletionIntentSchema.inactivity(exactOwnedEnvelope, rowDigest));
   }
 
+  /** Closed fixed-purpose source custody until independent MAC/schema tests witness acceptance. */
+  public String claimedInactivitySuspensionCustodyDigest(JsonNode exactOwnedCustody) {
+    throw new IllegalArgumentException("Original suspension source custody unavailable");
+  }
+
   public String claimedInactivityRowDigest(JsonNode exactOwnedRow) {
     return digest(
         "claimed-inactivity-row/v1", ClaimedInactivityRowSchema.require(exactOwnedRow, false));
