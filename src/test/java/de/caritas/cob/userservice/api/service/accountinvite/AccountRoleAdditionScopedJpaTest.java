@@ -170,13 +170,14 @@ class AccountRoleAdditionScopedJpaTest {
                       .status(ConsultantStatus.IN_PROGRESS)
                       .build();
               consultants.saveAndFlush(consultant);
-              consultantAgencies.saveAndFlush(
+              consultantAgencies.save(
                   ConsultantAgency.builder()
                       .consultant(consultant)
                       .agencyId(71L)
                       .tenantId(7L)
                       .createDate(LocalDateTime.now(ZoneOffset.UTC))
                       .build());
+              entities.flush();
               entities.clear();
             });
     human.setUserId(HUMAN);
