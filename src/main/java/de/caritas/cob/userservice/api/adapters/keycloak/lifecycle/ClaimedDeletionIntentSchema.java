@@ -127,7 +127,7 @@ final class ClaimedDeletionIntentSchema {
     if (!row.path("chat_recovery_mode").isNull()
         && !Set.of("LOGIN_PASSWORD", "RECOVERY_KEY")
             .contains(text(row.path("chat_recovery_mode"), 32, false))) throw invalid();
-    if (!text(row.path("language_code"), 3, false).matches("[a-z]{2,3}")) throw invalid();
+    if (!text(row.path("language_code"), 2, false).matches("[a-z]{2}")) throw invalid();
     for (String name : List.of("language_formal", "notifications_enabled", "temporary_account"))
       if (!row.path(name).isBoolean()) throw invalid();
     for (String name : List.of("encourage_2fa", "magic_link_login_enabled"))
