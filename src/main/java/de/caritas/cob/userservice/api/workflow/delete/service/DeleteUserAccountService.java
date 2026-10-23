@@ -134,6 +134,13 @@ public class DeleteUserAccountService {
         });
   }
 
+  /** Only the actual Consultant owner may issue this continuation. Default closed until TDD. */
+  public void continueAcknowledgedConsultantDeletion(
+      ScheduledConsultantMaintenance.AcknowledgedConsultantDeletion acknowledged) {
+    java.util.Objects.requireNonNull(acknowledged);
+    throw new ScopedIdentityCommandRequiredException();
+  }
+
   private void continueInactiveUser(ScheduledAskerMaintenance.AcknowledgedDeletion acknowledged) {
     var original = new java.util.concurrent.atomic.AtomicReference<User>();
     acknowledged.runOwnedLocal(
