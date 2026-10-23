@@ -54,6 +54,24 @@ public final class ScheduledAskerMaintenance {
   private final @NonNull String realmName;
   private final @NonNull String realmId;
 
+  /** Closed test-first continuation seam; only the owning ACK issuer may enable it. */
+  public void configureAcknowledgedCleanup(java.util.function.Consumer<AcknowledgedDeletion> cleanup) {
+    Objects.requireNonNull(cleanup);
+  }
+
+  /** Nonconstructible outside this owner. Closed until exact original SQL/ACK qualification. */
+  public static final class AcknowledgedDeletion {
+    private AcknowledgedDeletion() {}
+
+    public void requireCurrent() { throw unavailable(); }
+    public String accountId() { throw unavailable(); }
+    public Long tenantId() { throw unavailable(); }
+    public boolean hasLocalUser() { throw unavailable(); }
+    public boolean inactivityCause() { throw unavailable(); }
+    public void runOwnedLocal(Runnable action) { throw unavailable(); }
+    public void completeOwnedLocalDeletion(Runnable finalDelete) { throw unavailable(); }
+  }
+
   public void performDeletionWorkflow() {
     if (TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
     var acquired = claims.tryClaimLease(TASK, Duration.ofHours(12));
