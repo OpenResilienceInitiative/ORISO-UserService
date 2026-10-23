@@ -803,19 +803,28 @@ class ScheduledDeletionContinuationJpaTest {
   void privatePreparationRunsActualOwnedPrerequisitesBeforeFinalJpaDeletion() {
     var preparations = new AtomicInteger();
     try (var actions = actions()) {
-      owner(true, frame -> TenantContext.runIn(frame.tenantId(), () -> {
-        var target = preparationTarget(frame);
-        frame.runOwnedLocal(() -> drafts.deleteByUserId(ACCOUNT));
-        var prepared = actions.finalAction.prepareAcknowledged(target).orElseThrow();
-        preparations.incrementAndGet();
-        prepared.requireFor(frame);
-        assertTrue(users.findById(ACCOUNT).isPresent(), "Preparation must retain the real User");
-        assertFalse(actions.events.contains("finalUserDelete"));
-        assertTrue(actions.events.contains("memberships.deleteAll"));
-        assertTrue(actions.events.contains("mobileTokens.deleteAll"));
-        assertTrue(actions.finalAction.completeAcknowledged(prepared));
-        assertTrue(frame.completed());
-      })).performDeletionWorkflow();
+      owner(
+              true,
+              frame ->
+                  TenantContext.runIn(
+                      frame.tenantId(),
+                      () -> {
+                        var target = preparationTarget(frame);
+                        frame.runOwnedLocal(() -> drafts.deleteByUserId(ACCOUNT));
+                        var prepared =
+                            actions.finalAction.prepareAcknowledged(target).orElseThrow();
+                        preparations.incrementAndGet();
+                        prepared.requireFor(frame);
+                        assertTrue(
+                            users.findById(ACCOUNT).isPresent(),
+                            "Preparation must retain the real User");
+                        assertFalse(actions.events.contains("finalUserDelete"));
+                        assertTrue(actions.events.contains("memberships.deleteAll"));
+                        assertTrue(actions.events.contains("mobileTokens.deleteAll"));
+                        assertTrue(actions.finalAction.completeAcknowledged(prepared));
+                        assertTrue(frame.completed());
+                      }))
+          .performDeletionWorkflow();
       assertEquals(1, preparations.get(), "Actual private ACK must reach successful preparation");
       assertTrue(users.findById(ACCOUNT).isEmpty());
       assertEquals("APPLIED", status());
@@ -827,12 +836,18 @@ class ScheduledDeletionContinuationJpaTest {
   void userContentVetoCannotMintFinalPreparationOrDeleteMemberships() {
     var refusals = new AtomicInteger();
     try (var actions = actions()) {
-      owner(true, frame -> TenantContext.runIn(frame.tenantId(), () -> {
-        var target = preparationTarget(frame);
-        target.getDeletionWorkflowErrors().add(contentFailure());
-        assertTrue(actions.finalAction.prepareAcknowledged(target).isEmpty());
-        refusals.incrementAndGet();
-      })).performDeletionWorkflow();
+      owner(
+              true,
+              frame ->
+                  TenantContext.runIn(
+                      frame.tenantId(),
+                      () -> {
+                        var target = preparationTarget(frame);
+                        target.getDeletionWorkflowErrors().add(contentFailure());
+                        assertTrue(actions.finalAction.prepareAcknowledged(target).isEmpty());
+                        refusals.incrementAndGet();
+                      }))
+          .performDeletionWorkflow();
       assertEquals(1, refusals.get());
       assertFalse(actions.events.contains("memberships.findByUser"));
       assertFalse(actions.events.contains("finalUserDelete"));
@@ -847,12 +862,18 @@ class ScheduledDeletionContinuationJpaTest {
     var refusals = new AtomicInteger();
     try (var actions = actions()) {
       actions.failMemberships = true;
-      owner(true, frame -> TenantContext.runIn(frame.tenantId(), () -> {
-        var target = preparationTarget(frame);
-        assertTrue(actions.finalAction.prepareAcknowledged(target).isEmpty());
-        assertFalse(target.getDeletionWorkflowErrors().isEmpty());
-        refusals.incrementAndGet();
-      })).performDeletionWorkflow();
+      owner(
+              true,
+              frame ->
+                  TenantContext.runIn(
+                      frame.tenantId(),
+                      () -> {
+                        var target = preparationTarget(frame);
+                        assertTrue(actions.finalAction.prepareAcknowledged(target).isEmpty());
+                        assertFalse(target.getDeletionWorkflowErrors().isEmpty());
+                        refusals.incrementAndGet();
+                      }))
+          .performDeletionWorkflow();
       assertEquals(1, refusals.get());
       assertFalse(actions.events.contains("mobileTokens.findByUser"));
       assertFalse(actions.events.contains("finalUserDelete"));
@@ -866,12 +887,18 @@ class ScheduledDeletionContinuationJpaTest {
     var refusals = new AtomicInteger();
     try (var actions = actions()) {
       actions.failMobileTokens = true;
-      owner(true, frame -> TenantContext.runIn(frame.tenantId(), () -> {
-        var target = preparationTarget(frame);
-        assertTrue(actions.finalAction.prepareAcknowledged(target).isEmpty());
-        assertFalse(target.getDeletionWorkflowErrors().isEmpty());
-        refusals.incrementAndGet();
-      })).performDeletionWorkflow();
+      owner(
+              true,
+              frame ->
+                  TenantContext.runIn(
+                      frame.tenantId(),
+                      () -> {
+                        var target = preparationTarget(frame);
+                        assertTrue(actions.finalAction.prepareAcknowledged(target).isEmpty());
+                        assertFalse(target.getDeletionWorkflowErrors().isEmpty());
+                        refusals.incrementAndGet();
+                      }))
+          .performDeletionWorkflow();
       assertEquals(1, refusals.get());
       assertTrue(actions.events.contains("memberships.deleteAll"));
       assertFalse(actions.events.contains("finalUserDelete"));
@@ -884,17 +911,26 @@ class ScheduledDeletionContinuationJpaTest {
   void preparationRejectsAnEqualButSubstitutedUserReferenceInTheSameDto() {
     var checked = new AtomicInteger();
     try (var actions = actions()) {
-      owner(true, frame -> TenantContext.runIn(frame.tenantId(), () -> {
-        var target = preparationTarget(frame);
-        var prepared = actions.finalAction.prepareAcknowledged(target).orElseThrow();
-        var original = target.getUser();
-        var replacement = users.findById(ACCOUNT).orElseThrow();
-        assertNotSame(original, replacement);
-        target.setUser(replacement);
-        assertThrows(RuntimeException.class, () -> prepared.requireFor(frame));
-        assertThrows(RuntimeException.class, () -> actions.finalAction.completeAcknowledged(prepared));
-        checked.incrementAndGet();
-      })).performDeletionWorkflow();
+      owner(
+              true,
+              frame ->
+                  TenantContext.runIn(
+                      frame.tenantId(),
+                      () -> {
+                        var target = preparationTarget(frame);
+                        var prepared =
+                            actions.finalAction.prepareAcknowledged(target).orElseThrow();
+                        var original = target.getUser();
+                        var replacement = users.findById(ACCOUNT).orElseThrow();
+                        assertNotSame(original, replacement);
+                        target.setUser(replacement);
+                        assertThrows(RuntimeException.class, () -> prepared.requireFor(frame));
+                        assertThrows(
+                            RuntimeException.class,
+                            () -> actions.finalAction.completeAcknowledged(prepared));
+                        checked.incrementAndGet();
+                      }))
+          .performDeletionWorkflow();
       assertEquals(1, checked.get());
       assertFalse(actions.events.contains("finalUserDelete"));
       assertTrue(users.findById(ACCOUNT).isPresent());
@@ -905,14 +941,23 @@ class ScheduledDeletionContinuationJpaTest {
   void preparationRechecksCurrentContentVetoBeforeEveryFinalUse() {
     var checked = new AtomicInteger();
     try (var actions = actions()) {
-      owner(true, frame -> TenantContext.runIn(frame.tenantId(), () -> {
-        var target = preparationTarget(frame);
-        var prepared = actions.finalAction.prepareAcknowledged(target).orElseThrow();
-        target.getDeletionWorkflowErrors().add(contentFailure());
-        assertThrows(RuntimeException.class, () -> prepared.requireFor(frame));
-        assertThrows(RuntimeException.class, () -> actions.finalAction.completeAcknowledged(prepared));
-        checked.incrementAndGet();
-      })).performDeletionWorkflow();
+      owner(
+              true,
+              frame ->
+                  TenantContext.runIn(
+                      frame.tenantId(),
+                      () -> {
+                        var target = preparationTarget(frame);
+                        var prepared =
+                            actions.finalAction.prepareAcknowledged(target).orElseThrow();
+                        target.getDeletionWorkflowErrors().add(contentFailure());
+                        assertThrows(RuntimeException.class, () -> prepared.requireFor(frame));
+                        assertThrows(
+                            RuntimeException.class,
+                            () -> actions.finalAction.completeAcknowledged(prepared));
+                        checked.incrementAndGet();
+                      }))
+          .performDeletionWorkflow();
       assertEquals(1, checked.get());
       assertFalse(actions.events.contains("finalUserDelete"));
       assertTrue(users.findById(ACCOUNT).isPresent());
@@ -923,13 +968,27 @@ class ScheduledDeletionContinuationJpaTest {
   void preparationCannotAuthorizeAChangedActualSqlIncarnation() {
     var checked = new AtomicInteger();
     try (var actions = actions()) {
-      owner(true, frame -> TenantContext.runIn(frame.tenantId(), () -> {
-        var prepared = actions.finalAction.prepareAcknowledged(preparationTarget(frame)).orElseThrow();
-        jdbc.update("update user set create_date=dateadd('DAY',1,create_date) where user_id=?", ACCOUNT);
-        assertThrows(RuntimeException.class, () -> prepared.requireFor(frame));
-        assertThrows(RuntimeException.class, () -> actions.finalAction.completeAcknowledged(prepared));
-        checked.incrementAndGet();
-      })).performDeletionWorkflow();
+      owner(
+              true,
+              frame ->
+                  TenantContext.runIn(
+                      frame.tenantId(),
+                      () -> {
+                        var prepared =
+                            actions
+                                .finalAction
+                                .prepareAcknowledged(preparationTarget(frame))
+                                .orElseThrow();
+                        jdbc.update(
+                            "update user set create_date=dateadd('DAY',1,create_date) where user_id=?",
+                            ACCOUNT);
+                        assertThrows(RuntimeException.class, () -> prepared.requireFor(frame));
+                        assertThrows(
+                            RuntimeException.class,
+                            () -> actions.finalAction.completeAcknowledged(prepared));
+                        checked.incrementAndGet();
+                      }))
+          .performDeletionWorkflow();
       assertEquals(1, checked.get());
       assertFalse(actions.events.contains("finalUserDelete"));
       assertTrue(users.findById(ACCOUNT).isPresent());
@@ -941,19 +1000,35 @@ class ScheduledDeletionContinuationJpaTest {
   void preparationIsBoundToItsActualActionIssuerAndCannotSurviveAColdFrame() {
     var original = new AtomicReference<PreparedUserDeletion>();
     var first = new AtomicInteger();
-    try (var actions = actions(); var otherAction = actions()) {
-      owner(true, frame -> TenantContext.runIn(frame.tenantId(), () -> {
-        var prepared = actions.finalAction.prepareAcknowledged(preparationTarget(frame)).orElseThrow();
-        original.set(prepared);
-        assertThrows(RuntimeException.class, () -> otherAction.finalAction.completeAcknowledged(prepared));
-        first.incrementAndGet();
-      })).performDeletionWorkflow();
+    try (var actions = actions();
+        var otherAction = actions()) {
+      owner(
+              true,
+              frame ->
+                  TenantContext.runIn(
+                      frame.tenantId(),
+                      () -> {
+                        var prepared =
+                            actions
+                                .finalAction
+                                .prepareAcknowledged(preparationTarget(frame))
+                                .orElseThrow();
+                        original.set(prepared);
+                        assertThrows(
+                            RuntimeException.class,
+                            () -> otherAction.finalAction.completeAcknowledged(prepared));
+                        first.incrementAndGet();
+                      }))
+          .performDeletionWorkflow();
       assertEquals(1, first.get());
       var second = new AtomicInteger();
-      owner(true, frame -> {
-        assertThrows(RuntimeException.class, () -> original.get().requireFor(frame));
-        second.incrementAndGet();
-      }).performDeletionWorkflow();
+      owner(
+              true,
+              frame -> {
+                assertThrows(RuntimeException.class, () -> original.get().requireFor(frame));
+                second.incrementAndGet();
+              })
+          .performDeletionWorkflow();
       assertEquals(1, second.get());
       assertTrue(users.findById(ACCOUNT).isPresent());
       assertEquals("ACKNOWLEDGED", status());
