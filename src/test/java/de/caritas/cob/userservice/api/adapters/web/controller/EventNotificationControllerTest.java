@@ -668,6 +668,9 @@ class EventNotificationControllerTest {
         feedbackMessageEmailService,
         internalChatEmailService,
         authenticatedUser,
+        mock(
+            de.caritas.cob.userservice.api.service.notification.MessageEventCurrentAccessService
+                .class),
         Optional.empty());
   }
 
@@ -842,7 +845,8 @@ class EventNotificationControllerTest {
             mock(NotificationRoomLevelRepository.class),
             agencies,
             s6Sessions,
-            s6RealService);
+            s6RealService,
+            mock(de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService.class));
     var controller = s6Controller(realTeamService);
 
     // Colleague A reads the enquiry's own room, colleague B reads the team discussion.
