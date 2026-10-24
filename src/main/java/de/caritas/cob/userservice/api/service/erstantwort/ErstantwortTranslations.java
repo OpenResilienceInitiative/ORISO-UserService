@@ -23,6 +23,35 @@ public final class ErstantwortTranslations {
     return locale != null && LOCALES.contains(locale) ? locale : null;
   }
 
+  /**
+   * The platform's own plain texts for the Träger editor, so an admin sees what is sent when the
+   * field stays empty. {@code de} with {@code informal} selects the {@code de@informal} variant.
+   *
+   * @throws IllegalArgumentException for a locale outside the whitelist
+   */
+  public static Map<String, Object> platformDefaults(String locale, boolean informal) {
+    var valid = validLocale(locale == null || locale.isBlank() ? "de" : locale);
+    if (valid == null) throw new IllegalArgumentException("Unsupported Erstantwort locale");
+    if (valid.equals("de") && informal) valid = "de@informal";
+    var catalogue = catalogue(valid);
+    var result = new java.util.LinkedHashMap<String, Object>();
+    result.put("locale", valid);
+    for (var id : List.of("greeting", "whoReadsAlong", "closing", "emergencyNumbers")) {
+      result.put(id, catalogue.path(id).path("body").asText(""));
+    }
+    result.put(
+        "responseDeadline",
+        catalogue
+            .path("responseDeadline")
+            .path("body")
+            .asText("")
+            .replace(
+                "{{deadlineDays}}",
+                String.valueOf(ErstantwortPayloadBuilder.DEFAULT_RESPONSE_DEADLINE_DAYS)));
+    result.put("responseDeadlineDays", ErstantwortPayloadBuilder.DEFAULT_RESPONSE_DEADLINE_DAYS);
+    return result;
+  }
+
   static void localizePlatformDefaults(
       List<Map<String, Object>> blocks, ErstantwortContext context) {
     var locale = validLocale(context.getLocale());
@@ -83,6 +112,7 @@ public final class ErstantwortTranslations {
               context.getWhoReadsAlongByTopic(),
               context.getWhoReadsAlongByAgency(),
               context.getWhoReadsAlongByTenant());
+      case "emergencyAddition" -> true;
       case "closing" ->
           any(
               context.getClosingByTopic(),

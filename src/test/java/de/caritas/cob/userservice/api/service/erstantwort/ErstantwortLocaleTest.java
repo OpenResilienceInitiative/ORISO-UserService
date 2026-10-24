@@ -74,6 +74,50 @@ class ErstantwortLocaleTest {
     }
   }
 
+  private static final java.util.List<String> ALL_LOCALES =
+      java.util.List.of("de", "de@informal", "en", "fr", "ru", "ti", "tr");
+
+  /** A locale missing any key silently costs the whole Erstantwort (the facade swallows it). */
+  @ParameterizedTest
+  @CsvSource({"de", "de@informal", "en", "fr", "ru", "ti", "tr"})
+  void everyLocaleCoversEveryKeyTheBuilderCanEmit(String locale) throws Exception {
+    var mapper = new ObjectMapper();
+    var reference = mapper.readTree(getClass().getResourceAsStream("/erstantwort/en.json"));
+    var actual =
+        mapper.readTree(getClass().getResourceAsStream("/erstantwort/" + locale + ".json"));
+    for (var field : (Iterable<String>) reference::fieldNames) {
+      for (var leaf : (Iterable<String>) reference.path(field)::fieldNames) {
+        assertThat(actual.path(field).path(leaf).asText(""))
+            .as(locale + " " + field + "." + leaf)
+            .isNotBlank();
+      }
+      if (reference.path(field).isTextual()) {
+        assertThat(actual.path(field).asText("")).as(locale + " " + field).isNotBlank();
+      }
+    }
+    for (var modality : ErstantwortModality.values()) {
+      var payload =
+          payload(
+              ErstantwortContext.builder()
+                  .modality(modality)
+                  .locale(locale)
+                  .dataPrivacyUrl("https://example.org/dp")
+                  .imprintUrl("https://example.org/imprint")
+                  .freeNoticeByTenant("free")
+                  .emergencyAdditionByTenant("extra")
+                  .build());
+      for (var block : payload.path("bausteine")) {
+        var id = block.path("id").asText();
+        assertThat(actual.has(id) || id.equals("freeNotice")).as(locale + " " + id).isTrue();
+        assertThat(block.path("body").asText()).as(locale + " " + id).isNotBlank();
+      }
+    }
+    var defaults = ErstantwortTranslations.platformDefaults(locale, false);
+    for (var value : defaults.values()) {
+      assertThat(String.valueOf(value)).isNotBlank();
+    }
+  }
+
   private JsonNode payload(ErstantwortContext context) throws Exception {
     var body = builder.buildFirstResponseBody(context);
     return new ObjectMapper()
