@@ -103,6 +103,54 @@ class MatrixSessionSystemMessageServiceTest {
   }
 
   @Test
+  void postUserLeftChatMessage_shouldOmitEndedBy_whenNoPersonEndedTheChat() {
+    // System ends (inactivity) keep today's body byte-identical.
+    var body = sendUserLeftAndCaptureBody(null);
+
+    assertThat(body)
+        .isEqualTo(
+            "[SYSTEM_NOTIFICATION]{\"type\":\"USER_LEFT_CHAT\",\"username\":\"asker.username\"}");
+  }
+
+  @Test
+  void postUserLeftChatMessage_shouldSayConsultant_whenTheCounsellorEndedTheChat() {
+    var body = sendUserLeftAndCaptureBody(MatrixSessionSystemMessageService.EndedBy.CONSULTANT);
+
+    assertThat(body)
+        .isEqualTo(
+            "[SYSTEM_NOTIFICATION]{\"type\":\"USER_LEFT_CHAT\",\"username\":\"asker.username\","
+                + "\"endedBy\":\"CONSULTANT\"}");
+  }
+
+  @Test
+  void postUserLeftChatMessage_shouldSayAdviceSeeker_whenTheAskerEndedTheChat() {
+    var body = sendUserLeftAndCaptureBody(MatrixSessionSystemMessageService.EndedBy.ADVICE_SEEKER);
+
+    assertThat(body)
+        .isEqualTo(
+            "[SYSTEM_NOTIFICATION]{\"type\":\"USER_LEFT_CHAT\",\"username\":\"asker.username\","
+                + "\"endedBy\":\"ADVICE_SEEKER\"}");
+  }
+
+  private String sendUserLeftAndCaptureBody(MatrixSessionSystemMessageService.EndedBy endedBy) {
+    var session = sessionWithUserMatrixId(USER_MATRIX_ID, "asker.username");
+    when(matrixSynapseService.loginAsUserAccessToken(USER_MATRIX_ID)).thenReturn(ACCESS_TOKEN);
+    when(matrixSynapseService.sendMessage(eq(MATRIX_ROOM_ID), anyString(), eq(ACCESS_TOKEN)))
+        .thenReturn(Map.of("event_id", "$evt"));
+
+    if (endedBy == null) {
+      matrixSessionSystemMessageService.postUserLeftChatMessage(session);
+    } else {
+      matrixSessionSystemMessageService.postUserLeftChatMessage(session, endedBy);
+    }
+
+    var bodyCaptor = ArgumentCaptor.forClass(String.class);
+    verify(matrixSynapseService)
+        .sendMessage(eq(MATRIX_ROOM_ID), bodyCaptor.capture(), eq(ACCESS_TOKEN));
+    return bodyCaptor.getValue();
+  }
+
+  @Test
   void postUserLeftChatMessage_shouldImpersonateAgencyWithFullMatrixId() {
     // The agency's full Matrix identity is used when no human Matrix ID is on the session.
     var session = sessionWithoutHumanMatrixIds();

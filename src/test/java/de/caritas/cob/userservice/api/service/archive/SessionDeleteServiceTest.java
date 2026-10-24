@@ -110,6 +110,35 @@ class SessionDeleteServiceTest {
     org.mockito.Mockito.verifyNoInteractions(actionsRegistry);
   }
 
+  @Test
+  void deleteSession_Should_sayConsultantEndedIt_When_aConsultantDeletes() {
+    var sessionId = givenAPresentSession(false);
+    givenActionRegistryDeletesSession();
+    when(authenticatedUser.isConsultant()).thenReturn(true);
+
+    sessionDeleteService.deleteSession(sessionId);
+
+    verify(matrixSessionSystemMessageService)
+        .postUserLeftChatMessage(
+            any(Session.class),
+            org.mockito.ArgumentMatchers.eq(MatrixSessionSystemMessageService.EndedBy.CONSULTANT));
+  }
+
+  @Test
+  void deleteSession_Should_sayAdviceSeekerEndedIt_When_theAskerDeletes() {
+    var sessionId = givenAPresentSession(false);
+    givenActionRegistryDeletesSession();
+    when(authenticatedUser.isConsultant()).thenReturn(false);
+
+    sessionDeleteService.deleteSession(sessionId);
+
+    verify(matrixSessionSystemMessageService)
+        .postUserLeftChatMessage(
+            any(Session.class),
+            org.mockito.ArgumentMatchers.eq(
+                MatrixSessionSystemMessageService.EndedBy.ADVICE_SEEKER));
+  }
+
   private long givenAPresentSession(boolean isOnlySession) {
     var sessionId = easyRandom.nextLong();
     var session = easyRandom.nextObject(Session.class);
