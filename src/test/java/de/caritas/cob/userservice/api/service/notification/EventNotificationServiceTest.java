@@ -2398,7 +2398,9 @@ class EventNotificationServiceTest {
         agencies,
         sessionRepository,
         eventNotificationService,
-        mock(de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService.class));
+        mock(
+            de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+                .class));
   }
 
   @Test
