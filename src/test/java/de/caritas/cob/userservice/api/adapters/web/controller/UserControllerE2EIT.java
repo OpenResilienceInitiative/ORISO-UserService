@@ -1318,6 +1318,40 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
   }
 
   @Test
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void patchAnotherEmailSettingPreservesConsultantInternalChatOptOut() throws Exception {
+    givenABearerToken();
+    givenAValidConsultant();
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(consultant.getUsername());
+    patchUserData(
+        "{\"emailNotifications\":{\"emailNotificationsEnabled\":true,\"settings\":{\"internalChatNotificationEnabled\":false}}}");
+    patchUserData(
+        "{\"emailNotifications\":{\"emailNotificationsEnabled\":true,\"settings\":{\"initialEnquiryNotificationEnabled\":false}}}");
+    entityManager.flush();
+    entityManager.clear();
+    var saved = consultantRepository.findById(consultant.getId()).orElseThrow();
+    var internalChatSetting =
+        objectMapper
+            .readTree(saved.getNotificationsSettings())
+            .get("internalChatNotificationEnabled");
+    assertThat(internalChatSetting).isNotNull();
+    assertThat(internalChatSetting.isBoolean()).isTrue();
+    assertThat(internalChatSetting.booleanValue()).isFalse();
+    mockMvc
+        .perform(
+            get("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(
+            jsonPath("emailNotifications.settings.internalChatNotificationEnabled", is(false)))
+        .andExpect(
+            jsonPath("emailNotifications.settings.initialEnquiryNotificationEnabled", is(false)));
+  }
+
+  @Test
   @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
   void patchUserDataShouldOverrideDefaultAndRespondWithNoContent() throws Exception {
     givenAValidConsultant();

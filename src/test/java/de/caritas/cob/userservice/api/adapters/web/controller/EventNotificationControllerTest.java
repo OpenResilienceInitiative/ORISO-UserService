@@ -43,6 +43,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
@@ -78,6 +80,9 @@ class EventNotificationControllerTest {
             feedbackMessageEmailService,
             internalChatEmailService,
             authenticatedUser,
+            mock(
+                de.caritas.cob.userservice.api.service.notification.MessageEventCurrentAccessService
+                    .class),
             Optional.of(redisMessageMirrorService));
     controllerWithoutMirror =
         new EventNotificationController(
@@ -86,7 +91,47 @@ class EventNotificationControllerTest {
             feedbackMessageEmailService,
             internalChatEmailService,
             authenticatedUser,
+            mock(
+                de.caritas.cob.userservice.api.service.notification.MessageEventCurrentAccessService
+                    .class),
             Optional.empty());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"ordinary", "feedback"})
+  void deniedPrimaryRoomWriterStopsEveryDownstreamNotification(String kind) {
+    var access =
+        mock(
+            de.caritas.cob.userservice.api.service.notification.MessageEventCurrentAccessService
+                .class);
+    var controller =
+        new EventNotificationController(
+            eventNotificationService,
+            teamDiscussionNotificationService,
+            feedbackMessageEmailService,
+            internalChatEmailService,
+            authenticatedUser,
+            access,
+            Optional.of(redisMessageMirrorService));
+    var request = new EventNotificationController.MessageEventRequestDTO();
+    request.setRoomId("!case:matrix.example");
+    request.setMatrixEventId("$event");
+    request.setFeedbackMailIntent("feedback".equals(kind));
+    org.mockito.Mockito.doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException(
+                "No current case access"))
+        .when(access)
+        .assertPrimaryRoomWriter("!case:matrix.example", authenticatedUser);
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+        () -> controller.createMessageEventNotification(request));
+    verifyNoInteractions(
+        eventNotificationService,
+        teamDiscussionNotificationService,
+        feedbackMessageEmailService,
+        internalChatEmailService,
+        redisMessageMirrorService);
   }
 
   /** api-error-contract: a failed durable step never answers 2xx; the client retries. */
@@ -172,6 +217,9 @@ class EventNotificationControllerTest {
             feedbackMessageEmailService,
             internalChatEmailService,
             authenticatedUser,
+            mock(
+                de.caritas.cob.userservice.api.service.notification.MessageEventCurrentAccessService
+                    .class),
             Optional.empty());
 
     when(authenticatedUser.getUserId()).thenReturn("counsellor-1");
@@ -620,6 +668,9 @@ class EventNotificationControllerTest {
         feedbackMessageEmailService,
         internalChatEmailService,
         authenticatedUser,
+        mock(
+            de.caritas.cob.userservice.api.service.notification.MessageEventCurrentAccessService
+                .class),
         Optional.empty());
   }
 
@@ -794,7 +845,10 @@ class EventNotificationControllerTest {
             mock(NotificationRoomLevelRepository.class),
             agencies,
             s6Sessions,
-            s6RealService);
+            s6RealService,
+            mock(
+                de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+                    .class));
     var controller = s6Controller(realTeamService);
 
     // Colleague A reads the enquiry's own room, colleague B reads the team discussion.

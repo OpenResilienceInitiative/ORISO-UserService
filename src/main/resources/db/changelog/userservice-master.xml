@@ -251,4 +251,5 @@
        so it stays append-only. Idempotent (ADD COLUMN IF NOT EXISTS). -->
   <include file="db/changelog/changeset/0086_reactivation_saga_claim/0086_changeSet.xml"/>
   <include file="db/changelog/changeset/20261023_account_creation_attempt/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261008_enquiry_rejection/changeSet.xml"/>
 </databaseChangeLog>

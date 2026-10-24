@@ -87,6 +87,7 @@ import de.caritas.cob.userservice.api.service.chat.ChatOccurrenceQueryService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatFeatureGate;
 import de.caritas.cob.userservice.api.service.chat.GroupChatRoleService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.api.service.enquiry.EnquiryRejectionService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.RequestedContactSheetService;
 import de.caritas.cob.userservice.api.service.session.SessionConsentService;
@@ -286,6 +287,7 @@ class UserControllerIT {
 
   @Autowired private MockMvc mvc;
 
+  @MockitoBean private EnquiryRejectionService enquiryRejectionService;
   @MockitoBean private UserAccountService userAccountService;
   @MockitoBean private PasswordResetService passwordResetService;
   @MockitoBean private AccountInviteService accountInviteService;
@@ -460,6 +462,16 @@ class UserControllerIT {
     mvc.perform(get("/users/{username}", username).accept(MediaType.APPLICATION_JSON))
         /* then */
         .andExpect(status().isNotFound());
+  }
+
+  @Test
+  void rejectEnquiryReturnsNoContentOnlyForAVerifiedClosure() throws Exception {
+    when(enquiryRejectionService.rejectEnquiry(5L)).thenReturn(true);
+    mvc.perform(post("/users/sessions/{sessionId}/rejection", 5L))
+        .andExpect(status().isNoContent());
+    when(enquiryRejectionService.rejectEnquiry(5L)).thenReturn(false);
+    mvc.perform(post("/users/sessions/{sessionId}/rejection", 5L))
+        .andExpect(status().isServiceUnavailable());
   }
 
   @Test

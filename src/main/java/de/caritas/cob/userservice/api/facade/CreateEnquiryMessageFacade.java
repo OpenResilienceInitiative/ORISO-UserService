@@ -1,11 +1,9 @@
 package de.caritas.cob.userservice.api.facade;
 
-import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static de.caritas.cob.userservice.api.model.Session.RegistrationType.ANONYMOUS;
 import static java.util.Objects.nonNull;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
-import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateEnquiryMessageResponseDTO;
 import de.caritas.cob.userservice.api.container.CreateEnquiryExceptionInformation;
@@ -108,7 +106,8 @@ public class CreateEnquiryMessageFacade {
             .session(session)
             .matrixRoomId(matrixRoomId)
             .build();
-    updateMatrixSession(session, enquiryData.getLanguage(), matrixRoomId, exceptionInformation);
+    session =
+        updateMatrixSession(session, enquiryData.getLanguage(), matrixRoomId, exceptionInformation);
     sendEnquiryNotifications(session, agencyList);
     postErstantwort(session, enquiryData.getUiLocale());
 
@@ -296,23 +295,14 @@ public class CreateEnquiryMessageFacade {
     }
   }
 
-  private void updateMatrixSession(
+  private Session updateMatrixSession(
       Session session,
       String language,
       String matrixRoomId,
       CreateEnquiryExceptionInformation exceptionInformation)
       throws CreateEnquiryException {
     try {
-      session.setMatrixRoomId(matrixRoomId);
-      session.setStatus(SessionStatus.NEW);
-      session.setEnquiryMessageDate(nowInUtc());
-      if (nonNull(language)) {
-        session.setLanguageCode(LanguageCode.getByCode(language));
-      }
-      if (nonNull(session.getConsultant())) {
-        session.setStatus(SessionStatus.IN_PROGRESS);
-      }
-      sessionService.saveSession(session);
+      return sessionService.finalizeEnquiry(session, language, matrixRoomId);
     } catch (InternalServerErrorException exception) {
       throw new CreateEnquiryException(
           String.format(

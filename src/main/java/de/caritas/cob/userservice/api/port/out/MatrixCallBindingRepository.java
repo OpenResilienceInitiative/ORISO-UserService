@@ -10,6 +10,11 @@ public interface MatrixCallBindingRepository extends JpaRepository<MatrixCallBin
   Optional<MatrixCallBinding> findByMediaRoomId(String mediaRoomId);
 
   @org.springframework.data.jpa.repository.Query(
+      "select b.mediaRoomId from MatrixCallBinding b where b.mediaRoomId in :rooms")
+  java.util.Set<String> findKnownMediaRooms(
+      @org.springframework.data.repository.query.Param("rooms") java.util.Collection<String> rooms);
+
+  @org.springframework.data.jpa.repository.Query(
       "select b.mediaRoomId from MatrixCallBinding b where b.endedAt is null "
           + "and b.mediaObservedAt is null and (b.nextObservationAttemptAt is null or b.nextObservationAttemptAt <= :now) "
           + "order by coalesce(b.nextObservationAttemptAt, 0), b.id")
