@@ -489,12 +489,28 @@ public class AccountLifecycleCallerConfiguration {
       @Qualifier("keycloakRestTemplate") RestTemplate http,
       KeycloakConfig keycloak) {
     String publicServer = keycloak.getAuthServerUrl();
-    String internalServer = environment.getProperty("ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL", publicServer);
-    if (publicServer == null || publicServer.isBlank() || internalServer == null || internalServer.isBlank()) throw invalid();
-    return new SelfContactEmailMaintenance(identities, user, request, jdbc, manager, entities, actors,
-        broker, codec, http, Clock.systemUTC(), internalServer,
+    String internalServer =
+        environment.getProperty("ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL", publicServer);
+    if (publicServer == null
+        || publicServer.isBlank()
+        || internalServer == null
+        || internalServer.isBlank()) throw invalid();
+    return new SelfContactEmailMaintenance(
+        identities,
+        user,
+        request,
+        jdbc,
+        manager,
+        entities,
+        actors,
+        broker,
+        codec,
+        http,
+        Clock.systemUTC(),
+        internalServer,
         publicServer.replaceAll("/+$", "") + "/realms/" + keycloak.getRealm(),
-        keycloak.getRealm(), required("KEYCLOAK_REALM_INTERNAL_ID"));
+        keycloak.getRealm(),
+        required("KEYCLOAK_REALM_INTERNAL_ID"));
   }
 
   @Bean

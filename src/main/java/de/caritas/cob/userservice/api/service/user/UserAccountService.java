@@ -42,7 +42,8 @@ public class UserAccountService {
   @org.springframework.beans.factory.annotation.Autowired
   public void configureSelfContactEmailMaintenance(
       org.springframework.beans.factory.ObjectProvider<
-              de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfContactEmailMaintenance>
+              de.caritas.cob.userservice.api.adapters.keycloak.lifecycle
+                  .SelfContactEmailMaintenance>
           owners) {
     selfContactEmailMaintenance = owners.getIfAvailable();
     if (identityClientConfig.isFiveActorMode() && selfContactEmailMaintenance == null)
@@ -233,13 +234,24 @@ public class UserAccountService {
     user.ifPresent(u -> appointmentService.updateAskerEmail(id, email));
     if (optionalEmail.isEmpty()) return;
     LanguageCode language =
-        user.map(User::getLanguageCode).orElseGet(() -> consultant.map(Consultant::getLanguageCode).orElse(null));
-    try { OrisoEmailRenderer.Tone.of(language); }
-    catch (IllegalArgumentException unsupported) { language = LanguageCode.de; }
-    Long tenant = user.map(User::getTenantId).orElse(consultant.map(Consultant::getTenantId).orElse(null));
-    String username = user.map(User::getUsername).orElse(consultant.map(Consultant::getUsername).orElse(id));
+        user.map(User::getLanguageCode)
+            .orElseGet(() -> consultant.map(Consultant::getLanguageCode).orElse(null));
+    try {
+      OrisoEmailRenderer.Tone.of(language);
+    } catch (IllegalArgumentException unsupported) {
+      language = LanguageCode.de;
+    }
+    Long tenant =
+        user.map(User::getTenantId).orElse(consultant.map(Consultant::getTenantId).orElse(null));
+    String username =
+        user.map(User::getUsername).orElse(consultant.map(Consultant::getUsername).orElse(id));
     supervisorAddedEmailNotificationService.notifyEmailAddressChanged(
-        username, email, tenant, TenantContext.getCurrentTenantData(), authenticatedUser.getAccessToken(), language);
+        username,
+        email,
+        tenant,
+        TenantContext.getCurrentTenantData(),
+        authenticatedUser.getAccessToken(),
+        language);
   }
 
   private void setInitialEmailNotificationsSettingsForNewEmailAddress(User user, String email) {

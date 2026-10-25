@@ -128,50 +128,90 @@ final class SelfContactEmailSource {
           "two_factor_required",
           "walk_through_enabled");
 
-  private static final Set<String> ADMIN = Set.of("managed_paused", "admin_id", "tenant_id", "username", "first_name", "last_name", "email", "type", "id_old", "create_date", "update_date");
+  private static final Set<String> ADMIN =
+      Set.of(
+          "managed_paused",
+          "admin_id",
+          "tenant_id",
+          "username",
+          "first_name",
+          "last_name",
+          "email",
+          "type",
+          "id_old",
+          "create_date",
+          "update_date");
 
-  static JsonNode capture(JdbcTemplate jdbc, AccountLifecycleCodec codec, String account, Long tenant) {
+  static JsonNode capture(
+      JdbcTemplate jdbc, AccountLifecycleCodec codec, String account, Long tenant) {
     var owner = SelfAccountOwner.inspect(jdbc, account, tenant);
     if (owner.kind().admin() && !owner.consultant()) throw invalid();
     ObjectNode source = codec.read("{}", ObjectNode.class);
     source.put("v", 1).put("kind", owner.kind().name());
-    if (owner.kind() == SelfAccountOwner.Kind.USER) source.set("user", row(jdbc, codec, "user", "user_id", USER, account));
+    if (owner.kind() == SelfAccountOwner.Kind.USER)
+      source.set("user", row(jdbc, codec, "user", "user_id", USER, account));
     else source.putNull("user");
-    if (owner.kind() == SelfAccountOwner.Kind.CONSULTANT || owner.consultant()) source.set("consultant", row(jdbc, codec, "consultant", "consultant_id", CONSULTANT, account));
+    if (owner.kind() == SelfAccountOwner.Kind.CONSULTANT || owner.consultant())
+      source.set(
+          "consultant", row(jdbc, codec, "consultant", "consultant_id", CONSULTANT, account));
     else source.putNull("consultant");
-    if (owner.kind().admin()) source.set("admin", row(jdbc, codec, "admin", "admin_id", ADMIN, account));
+    if (owner.kind().admin())
+      source.set("admin", row(jdbc, codec, "admin", "admin_id", ADMIN, account));
     else source.putNull("admin");
     return source;
   }
 
-  private static JsonNode row(JdbcTemplate jdbc, AccountLifecycleCodec codec, String table, String identifier, Set<String> fields, String account) {
-    var rows = jdbc.query("select " + String.join(",", new java.util.TreeSet<>(fields)) + " from " + table + " where " + identifier + "=? for update", (rs, index) -> {
-      var value = new TreeMap<String, Object>();
-      for (String field : fields) {
-        Object current;
-        if (TIMES.contains(field)) {
-          var time = rs.getObject(field, LocalDateTime.class);
-          current = time == null ? null : time.toString();
-        } else if (NUMBERS.contains(field)) {
-          long number = rs.getLong(field); current = rs.wasNull() ? null : number;
-        } else if (FLAGS.contains(field)) {
-          boolean flag = rs.getBoolean(field); current = rs.wasNull() ? null : flag;
-        } else {
-          current = rs.getObject(field);
-          if (current instanceof Clob clob) {
-            if (clob.length() > 1048576) throw invalid();
-            current = clob.getSubString(1, Math.toIntExact(clob.length()));
-          }
-          if (current != null && (!(current instanceof String text) || text.length() > 1048576)) throw invalid();
-        }
-        value.put(field, current);
-      }
-      return codec.read(codec.canonical(value), JsonNode.class);
-    }, account);
+  private static JsonNode row(
+      JdbcTemplate jdbc,
+      AccountLifecycleCodec codec,
+      String table,
+      String identifier,
+      Set<String> fields,
+      String account) {
+    var rows =
+        jdbc.query(
+            "select "
+                + String.join(",", new java.util.TreeSet<>(fields))
+                + " from "
+                + table
+                + " where "
+                + identifier
+                + "=? for update",
+            (rs, index) -> {
+              var value = new TreeMap<String, Object>();
+              for (String field : fields) {
+                Object current;
+                if (TIMES.contains(field)) {
+                  var time = rs.getObject(field, LocalDateTime.class);
+                  current = time == null ? null : time.toString();
+                } else if (NUMBERS.contains(field)) {
+                  long number = rs.getLong(field);
+                  current = rs.wasNull() ? null : number;
+                } else if (FLAGS.contains(field)) {
+                  boolean flag = rs.getBoolean(field);
+                  current = rs.wasNull() ? null : flag;
+                } else {
+                  current = rs.getObject(field);
+                  if (current instanceof Clob clob) {
+                    if (clob.length() > 1048576) throw invalid();
+                    current = clob.getSubString(1, Math.toIntExact(clob.length()));
+                  }
+                  if (current != null
+                      && (!(current instanceof String text) || text.length() > 1048576))
+                    throw invalid();
+                }
+                value.put(field, current);
+              }
+              return codec.read(codec.canonical(value), JsonNode.class);
+            },
+            account);
     if (rows.size() != 1) throw invalid();
     return rows.getFirst();
   }
 
-  private static IllegalStateException invalid() { return new IllegalStateException("Contact email source unavailable"); }
+  private static IllegalStateException invalid() {
+    return new IllegalStateException("Contact email source unavailable");
+  }
+
   private SelfContactEmailSource() {}
 }
