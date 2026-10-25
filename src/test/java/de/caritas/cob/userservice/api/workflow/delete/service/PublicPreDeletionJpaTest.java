@@ -157,8 +157,9 @@ class PublicPreDeletionJpaTest {
   private RestTemplate http;
   private MockRestServiceServer server;
   private String savedBody, savedReply;
-  private boolean loseReply, loseReadReply, forgedReceipt, unavailableNative, unknownOutcome;
+  private boolean loseReply, loseReadReply, forgedReceipt, unavailableNative, unknownOutcome, refuseNativeReach;
 
+  private GroupChatMembershipService scopedRemote;
   private final MembersOnlyRevocation memberships = mock(MembersOnlyRevocation.class);
   private final StatisticsService statistics = mock(StatisticsService.class);
 
@@ -891,6 +892,222 @@ class PublicPreDeletionJpaTest {
   }
 
   @Test
+  void crashAfterStrictAckButBeforePreparationRetainsPendingCustodyAndColdOwnerCompletes() {
+    consultant();
+    membershipFixture(true);
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    assertThrows(ServiceUnavailableException.class, () -> owner().startAdminConsultant(ACCOUNT, false, ack -> {
+      ack.requireCurrent();
+      throw new ServiceUnavailableException("Fixture process ended before preparation");
+    }));
+    assertEquals("ACKNOWLEDGED", status());
+    String retained = relatedCustody();
+    assertNotNull(retained);
+    assertEquals("PENDING", codec.read(retained, JsonNode.class).path("plan").path("state").asText());
+    assertDoesNotThrow(() -> completeMembershipDeletion(realMemberships(mock(GroupChatMembershipService.class), mock(MatrixChatShutdownService.class)), false));
+    assertEquals("APPLIED", status());
+    assertEquals(1, nativeEffects.get());
+  }
+
+  @Test
+  void missingCustodyAfterAnUnknownRoomAttemptCannotAllocateAReplacementPlan() {
+    consultant();
+    membershipFixture(true);
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    var remote = mock(GroupChatMembershipService.class);
+    doThrow(new ServiceUnavailableException("Unknown fixture room reply")).doNothing().when(remote).removeParticipantFromRoom(any(), anyString());
+    assertThrows(ServiceUnavailableException.class, () -> completeMembershipDeletion(realMemberships(remote, mock(MatrixChatShutdownService.class)), false));
+    assertNotNull(relatedCustody());
+    jdbc.update("update identity_account_operation_intent set applied_json=null where operation_id=?", operation);
+    clearInvocations(remote);
+    assertThrows(ServiceUnavailableException.class, () -> completeMembershipDeletion(realMemberships(remote, mock(MatrixChatShutdownService.class)), false));
+    verifyNoInteractions(remote);
+    assertNull(relatedCustody());
+    assertEquals("ACKNOWLEDGED", status());
+    assertNull(consultants.findById(ACCOUNT).orElseThrow().getDeleteDate());
+  }
+
+  @Test
+  void firstRelatedPlanIsCommittedBeforeAnyRoomRpcAndContainsOnlyCompleteRowDigests() {
+    consultant();
+    var fixture = membershipFixture(true);
+    String fullLob = "Related private source ".repeat(6000);
+    jdbc.update("update consultant set admin_remarks=? where consultant_id=?", fullLob, ACCOUNT);
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    var remote = mock(GroupChatMembershipService.class);
+    var witnessed = new java.util.concurrent.atomic.AtomicReference<String>();
+    doAnswer(call -> {
+      assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+      String retained = relatedCustody();
+      assertNotNull(retained, "The original plan must commit before the first room RPC");
+      var node = codec.read(retained, JsonNode.class);
+      assertEquals("PRE_DELETION_RELATED_V1", node.path("kind").asText());
+      assertEquals(operation, node.path("binding").path("operationId").asText());
+      assertEquals(ACCOUNT, node.path("binding").path("accountId").asText());
+      assertEquals("FROZEN", node.path("plan").path("state").asText());
+      assertEquals(2, node.path("plan").path("remotes").path("count").asInt());
+      assertEquals(digest("public-pre-deletion-related/v1", Map.of("remotes", List.of(
+          relatedRemote("SIDE", null, "!side:fixture.invalid", "@pre-deletion:fixture.invalid"),
+          relatedRemote("MAIN", fixture.chat(), "!main:fixture.invalid", "@pre-deletion:fixture.invalid")))), node.path("plan").path("remotes").path("digest").asText());
+      assertFalse(retained.contains("!side:fixture.invalid"));
+      assertFalse(retained.contains("!main:fixture.invalid"));
+      assertFalse(retained.contains(fullLob));
+      assertTrue(retained.getBytes(StandardCharsets.UTF_8).length <= 65536);
+      if (witnessed.get() == null) witnessed.set(retained); else assertEquals(witnessed.get(), retained);
+      return null;
+    }).when(remote).removeMemberFromRoomOrFail(anyString(), anyString());
+    assertDoesNotThrow(() -> completeMembershipDeletion(realMemberships(remote, mock(MatrixChatShutdownService.class)), false));
+    assertNotNull(witnessed.get());
+    assertEquals("APPLIED", status());
+    assertEquals(1, nativeEffects.get());
+  }
+
+  @Test
+  void actualPublicConsultantWithMoreThanFiveHundredOwnedRowsHasCompactCompleteCustody() {
+    consultant();
+    var fixture = membershipFixture(true);
+    var memberSession = sessions.findById(fixture.session()).orElseThrow();
+    memberSession.setStatus(Session.SessionStatus.DONE); sessions.save(memberSession);
+    var asker = users.findById(ASKER).orElseThrow();
+    var leaving = consultants.findById(ACCOUNT).orElseThrow();
+    var batch = new java.util.ArrayList<Session>();
+    for (int i = 0; i < 600; i++) batch.add(Session.builder().user(asker).consultant(leaving)
+        .postcode("12345").languageCode(LanguageCode.en).registrationType(Session.RegistrationType.REGISTERED)
+        .status(Session.SessionStatus.DONE).isConsultantDirectlySet(false).tenantId(7L)
+        .createDate(LocalDateTime.of(2024,1,2,3,4)).build());
+    sessions.saveAll(batch);
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    scopedRemote = mock(GroupChatMembershipService.class);
+    var observed = new AtomicInteger();
+    doAnswer(call -> {
+      assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+      String retained = relatedCustody();
+      assertNotNull(retained);
+      assertEquals(601, codec.read(retained, JsonNode.class).path("plan").path("rows").path("session").path("count").asInt());
+      assertTrue(retained.getBytes(StandardCharsets.UTF_8).length < 8192);
+      observed.incrementAndGet();
+      return null;
+    }).when(scopedRemote).removeMemberFromRoomOrFail(anyString(), anyString());
+    assertDoesNotThrow(() -> consultantService().markConsultantForDeletion(ACCOUNT, false));
+    assertEquals(1, observed.get());
+    assertEquals("APPLIED", status());
+    assertEquals(601, jdbc.queryForObject("select count(*) from session where user_id=?", Integer.class, ASKER));
+    assertEquals(1, nativeEffects.get());
+  }
+
+  private Map<String,Object> relatedRemote(String kind, Long chatId, String roomId, String memberId) {
+    var value = new TreeMap<String,Object>();
+    value.put("kind", kind); value.put("chatId", chatId); value.put("roomId", roomId); value.put("memberId", memberId);
+    return value;
+  }
+
+  @Test
+  void unknownRoomReplyThenColdChangedRoomCannotRebindTheOriginalDurablePlan() {
+    consultant();
+    var fixture = membershipFixture(true);
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    var remote = mock(GroupChatMembershipService.class);
+    doThrow(new ServiceUnavailableException("Unknown fixture room reply")).doNothing().when(remote).removeParticipantFromRoom(any(), anyString());
+    assertThrows(ServiceUnavailableException.class, () -> completeMembershipDeletion(realMemberships(remote, mock(MatrixChatShutdownService.class)), false));
+    String original = relatedCustody();
+    assertNotNull(original);
+    jdbc.update("update chat set matrix_room_id=? where id=?", "!new-current:fixture.invalid", fixture.chat());
+    clearInvocations(remote);
+    assertThrows(ConflictException.class, () -> completeMembershipDeletion(realMemberships(remote, mock(MatrixChatShutdownService.class)), false));
+    verifyNoInteractions(remote);
+    assertEquals(original, relatedCustody());
+    assertEquals("ACKNOWLEDGED", status());
+    assertTrue(participants.findById(fixture.participation()).isPresent());
+    assertNull(consultants.findById(ACCOUNT).orElseThrow().getDeleteDate());
+    assertEquals(1, nativeEffects.get());
+  }
+
+  @Test
+  void unknownRoomReplyThenColdAgencyRelationDriftCannotBeAdoptedByThePublicCallback() {
+    consultant();
+    var fixture = membershipFixture(true);
+    var session = sessions.findById(fixture.session()).orElseThrow();
+    session.setStatus(Session.SessionStatus.DONE); sessions.save(session);
+    var relation = consultantAgencies.save(ConsultantAgency.builder().consultant(consultants.findById(ACCOUNT).orElseThrow())
+        .agencyId(71L).tenantId(7L).createDate(LocalDateTime.of(2024,1,2,3,4)).build());
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    scopedRemote = mock(GroupChatMembershipService.class);
+    doThrow(new ServiceUnavailableException("Unknown fixture room reply")).doNothing().when(scopedRemote).removeParticipantFromRoom(any(), anyString());
+    assertThrows(ServiceUnavailableException.class, () -> consultantService().markConsultantForDeletion(ACCOUNT, false));
+    String retained = relatedCustody();
+    assertNotNull(retained);
+    jdbc.update("update consultant_agency set agency_id=? where id=?", 72L, relation.getId());
+    clearInvocations(scopedRemote);
+    assertThrows(ConflictException.class, () -> consultantService().markConsultantForDeletion(ACCOUNT, false));
+    verifyNoInteractions(scopedRemote);
+    assertEquals(retained, relatedCustody());
+    assertEquals("ACKNOWLEDGED", status());
+    assertNull(consultantAgencies.findById(relation.getId()).orElseThrow().getDeleteDate());
+    assertEquals(72L, consultantAgencies.findById(relation.getId()).orElseThrow().getAgencyId());
+    assertNull(consultants.findById(ACCOUNT).orElseThrow().getDeleteDate());
+  }
+
+  @Test
+  void foreignOrCorruptDurableRelatedPlanCannotReachAnyFurtherRoomRpc() {
+    consultant();
+    membershipFixture(true);
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    var remote = mock(GroupChatMembershipService.class);
+    doThrow(new ServiceUnavailableException("Unknown fixture room reply")).doNothing().when(remote).removeParticipantFromRoom(any(), anyString());
+    assertThrows(ServiceUnavailableException.class, () -> completeMembershipDeletion(realMemberships(remote, mock(MatrixChatShutdownService.class)), false));
+    String original = relatedCustody();
+    assertNotNull(original);
+    var corrupt = codec.read(original, com.fasterxml.jackson.databind.node.ObjectNode.class);
+    corrupt.put("mac", "0".repeat(64));
+    jdbc.update("update identity_account_operation_intent set applied_json=? where operation_id=?", codec.canonical(corrupt), operation);
+    clearInvocations(remote);
+    assertThrows(ServiceUnavailableException.class, () -> completeMembershipDeletion(realMemberships(remote, mock(MatrixChatShutdownService.class)), false));
+    verifyNoInteractions(remote);
+    var foreign = codec.read(original, com.fasterxml.jackson.databind.node.ObjectNode.class);
+    ((com.fasterxml.jackson.databind.node.ObjectNode) foreign.path("binding")).put("operationId", "ffffffff-ffff-4fff-bfff-ffffffffffff");
+    foreign.remove("mac");
+    foreign.put("mac", digest("public-pre-deletion-related/v1", foreign));
+    jdbc.update("update identity_account_operation_intent set applied_json=? where operation_id=?", codec.canonical(foreign), operation);
+    assertThrows(ServiceUnavailableException.class, () -> completeMembershipDeletion(realMemberships(remote, mock(MatrixChatShutdownService.class)), false));
+    verifyNoInteractions(remote);
+    assertEquals("ACKNOWLEDGED", status());
+    assertNull(consultants.findById(ACCOUNT).orElseThrow().getDeleteDate());
+    assertEquals(1, nativeEffects.get());
+  }
+
+  @Test
+  void coldAcknowledgedAdminContinuationRejoinsNativeCurrentReachBeforeAnyFurtherCallback() {
+    consultant();
+    var fixture = membershipFixture(true);
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    var remote = mock(GroupChatMembershipService.class);
+    doThrow(new ServiceUnavailableException("Unknown fixture room reply")).doNothing().when(remote).removeParticipantFromRoom(any(), anyString());
+    assertThrows(ServiceUnavailableException.class, () -> completeMembershipDeletion(realMemberships(remote, mock(MatrixChatShutdownService.class)), false));
+    String original = relatedCustody();
+    clearInvocations(remote);
+    refuseNativeReach = true;
+    assertThrows(ServiceUnavailableException.class, () -> completeMembershipDeletion(realMemberships(remote, mock(MatrixChatShutdownService.class)), false));
+    verifyNoInteractions(remote);
+    assertEquals(original, relatedCustody());
+    assertEquals("ACKNOWLEDGED", status());
+    assertTrue(participants.findById(fixture.participation()).isPresent());
+    assertNull(consultants.findById(ACCOUNT).orElseThrow().getDeleteDate());
+    assertEquals(1, nativeEffects.get());
+  }
+
+  private String relatedCustody() {
+    return jdbc.queryForObject("select applied_json from identity_account_operation_intent where operation_id=?", String.class, operation);
+  }
+
+  @Test
   void acknowledgedAgencyValidationReadsRemoteOutsideSqlAndMarksRelationOnlyInFinalJpa() {
     consultant();
     var relation =
@@ -1197,6 +1414,9 @@ class PublicPreDeletionJpaTest {
               var body = codec.read(mock.getBodyAsString(), JsonNode.class);
               assertEquals(boundAccount, body.path("target").path("accountId").textValue());
               String path = raw.getURI().getPath();
+              if (refuseNativeReach && (path.endsWith("/deactivate") || path.endsWith("/deactivate/outcome")))
+                return org.springframework.test.web.client.response.MockRestResponseCreators.withStatus(org.springframework.http.HttpStatus.FORBIDDEN)
+                    .body("{\"error\":\"Maintenance request rejected\"}").header("Cache-Control", "no-store").createResponse(raw);
               if (path.endsWith("/read")) {
                 nativeReads.incrementAndGet();
                 assertNotNull(
@@ -1409,7 +1629,7 @@ class PublicPreDeletionJpaTest {
             sessions,
             new MembersOnlyChatAccess(chats, participants),
             realMemberships(
-                mock(GroupChatMembershipService.class), mock(MatrixChatShutdownService.class)),
+                scopedRemote == null ? mock(GroupChatMembershipService.class) : scopedRemote, mock(MatrixChatShutdownService.class)),
             new SessionOwnershipService(
                 sessions,
                 entities,

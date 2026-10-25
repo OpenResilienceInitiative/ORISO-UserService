@@ -238,9 +238,11 @@ public final class PublicPreDeletionMaintenance {
       } finally {
         tx(
             () -> {
+              var attemptedAt = now();
               jdbc.update(
-                  "update identity_account_operation_intent set updated_at=? where operation_id=? and operation_kind=? and status in ('FROZEN','ACKNOWLEDGED')",
-                  now(),
+                  "update identity_account_operation_intent set updated_at=case when updated_at>=? then timestampadd(microsecond,1,updated_at) else ? end where operation_id=? and operation_kind=? and status in ('FROZEN','ACKNOWLEDGED')",
+                  attemptedAt,
+                  attemptedAt,
                   operation,
                   NAMESPACE);
               return null;
