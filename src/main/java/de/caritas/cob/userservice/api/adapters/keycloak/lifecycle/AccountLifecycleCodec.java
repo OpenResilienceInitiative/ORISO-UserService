@@ -140,7 +140,26 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
       String phase,
       String receipt,
       TaskActorCredentials actor) {
-    throw new IllegalArgumentException("Reactivation history remains gated");
+    try {
+      var original = read(utf8(openReactivationIntent(metadata, envelope)), JsonNode.class);
+      if (clock.instant().getEpochSecond()
+          < Math.addExact(metadata.path("authorityValidUntil").longValue(), 604800L))
+        throw invalidSecretIntent();
+      String fullIntent = digest("maintenance-intent", original.path("body"));
+      requireReactivationHistoryReceipt(metadata, original.path("body"), phase, receipt, actor,
+          fullIntent, false);
+      var template = (ObjectNode) original.path("body").deepCopy();
+      ((ObjectNode) template.path("change")).remove("password");
+      var history = read("{}", ObjectNode.class);
+      history.put("phase", phase);
+      history.set("originalSql", original.path("originalSql"));
+      history.set("template", template);
+      history.put("intentDigest", fullIntent);
+      return new SelfPasswordIntentCodec(this, this::mac)
+          .sealReactivationHistory(metadata, canonical(history).getBytes(StandardCharsets.UTF_8));
+    } catch (RuntimeException invalid) {
+      throw invalidSecretIntent();
+    }
   }
 
   VerifiedReactivationHistory verifyReactivationHistory(
@@ -149,7 +168,18 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
       String phase,
       String receipt,
       TaskActorCredentials actor) {
-    throw new IllegalArgumentException("Reactivation history remains gated");
+    try {
+      var history = read(utf8(new SelfPasswordIntentCodec(this, this::mac)
+          .openReactivationHistory(metadata, envelope)), JsonNode.class);
+      String authenticatedPhase = history.path("phase").textValue();
+      if (!(authenticatedPhase + "_HISTORY").equals(phase)) throw invalidSecretIntent();
+      requireReactivationHistoryReceipt(metadata, history.path("template"), authenticatedPhase,
+          receipt, actor, history.path("intentDigest").textValue(), true);
+      return new VerifiedReactivationHistory(authenticatedPhase, history.path("originalSql"),
+          history.path("template"), history.path("intentDigest").textValue());
+    } catch (RuntimeException invalid) {
+      throw invalidSecretIntent();
+    }
   }
 
   String materializeReactivationHistory(
@@ -159,7 +189,32 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
       String receipt,
       TaskActorCredentials actor,
       String originalPassword) {
-    throw new IllegalArgumentException("Reactivation history remains gated");
+    var history = verifyReactivationHistory(metadata, envelope, phase, receipt, actor);
+    var body = (ObjectNode) history.template();
+    ((ObjectNode) body.path("change")).put("password", originalPassword);
+    intentText(body.path("change"), "password", 4096);
+    if (!java.security.MessageDigest.isEqual(
+        history.intentDigest().getBytes(StandardCharsets.US_ASCII),
+        digest("maintenance-intent", body).getBytes(StandardCharsets.US_ASCII)))
+      throw invalidSecretIntent();
+    return canonical(body);
+  }
+
+  private void requireReactivationHistoryReceipt(JsonNode metadata, JsonNode template, String phase,
+      String receipt, TaskActorCredentials actor, String authenticatedIntent, boolean retained) {
+    if (actor.actor() != de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN
+        || !actor.clientId().equals(metadata.path("ownerClient").textValue())
+        || !actor.serviceSubject().equals(metadata.path("ownerSubject").textValue()))
+      throw invalidSecretIntent();
+    String realm = metadata.path("realmId").textValue();
+    switch (phase) {
+      case "FROZEN" -> { if (receipt != null) throw invalidSecretIntent(); }
+      case "ACKNOWLEDGED" -> verifyMaintenanceReceipt(
+          receipt, realm, actor, template, "reactivate", "UPDATED", authenticatedIntent);
+      case "NO_EFFECT" -> verifyMaintenanceNoEffectReceipt(
+          receipt, realm, actor, template, "reactivate", authenticatedIntent, retained);
+      default -> throw invalidSecretIntent();
+    }
   }
 
   static final class VerifiedReactivationHistory {
@@ -1289,6 +1344,13 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
 
   public VerifiedMaintenanceNoEffect verifyMaintenanceNoEffectReceipt(
       String reply, String realmId, TaskActorCredentials actor, JsonNode frozen, String command) {
+    return verifyMaintenanceNoEffectReceipt(
+        reply, realmId, actor, frozen, command, digest("maintenance-intent", frozen), false);
+  }
+
+  private VerifiedMaintenanceNoEffect verifyMaintenanceNoEffectReceipt(
+      String reply, String realmId, TaskActorCredentials actor, JsonNode frozen, String command,
+      String authenticatedIntent, boolean retainedReactivation) {
     try {
       if (!java.util.Set.of(
                   "delete",
@@ -1303,6 +1365,7 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
                   "password-reset",
                   "reassign-tenant")
               .contains(command)
+          || (retainedReactivation && !"reactivate".equals(command))
           || actor.actor() != de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN)
         throw new IllegalArgumentException();
       JsonNode outer = read(reply, JsonNode.class);
@@ -1322,10 +1385,11 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
           && status.intValue() == 400) {
         intentFields(frozen, java.util.Set.of("target", "operationId", "expectedState", "change"));
         JsonNode change = frozen.path("change");
-        intentFields(change, java.util.Set.of("expectedUsername", "expectedEmail", "password"));
+        intentFields(change, retainedReactivation ? java.util.Set.of("expectedUsername", "expectedEmail")
+            : java.util.Set.of("expectedUsername", "expectedEmail", "password"));
         intentText(change, "expectedUsername", 255);
         intentText(change, "expectedEmail", 255);
-        intentText(change, "password", 4096);
+        if (!retainedReactivation) intentText(change, "password", 4096);
         chosenPasswordReactivation = true;
       }
       if (!status.isIntegralNumber()
@@ -1374,7 +1438,7 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
           || !command.equals(intentText(payload, "command", 64))
           || !actor.clientId().equals(intentText(payload, "ownerClient", 512))
           || !actor.serviceSubject().equals(intentText(payload, "ownerSubject", 512))
-          || !digest("maintenance-intent", frozen).equals(intentDigest(payload, "intentDigest"))
+          || !authenticatedIntent.equals(intentDigest(payload, "intentDigest"))
           || !previousState.equals(intentDigest(payload, "previousState"))
           || !tenant.equals(payload.get("tenantId"))
           || !digest("maintenance-origin", frozen.path("target").path("origin"))
@@ -1497,6 +1561,13 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
       JsonNode frozen,
       String command,
       String expectedResult) {
+    return verifyMaintenanceReceipt(reply, realmId, actor, frozen, command, expectedResult,
+        digest("maintenance-intent", frozen));
+  }
+
+  private String verifyMaintenanceReceipt(
+      String reply, String realmId, TaskActorCredentials actor, JsonNode frozen,
+      String command, String expectedResult, String authenticatedIntent) {
     try {
       var result = read(reply, MaintenanceReply.class);
       UUID operation = UUID.fromString(frozen.path("operationId").asText());
@@ -1527,7 +1598,7 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
           || !command.equals(outcome.command())
           || !actor.clientId().equals(outcome.ownerClient())
           || !actor.serviceSubject().equals(outcome.ownerSubject())
-          || !digest("maintenance-intent", frozen).equals(outcome.intentDigest())
+          || !authenticatedIntent.equals(outcome.intentDigest())
           || !frozen.path("expectedState").asText().equals(outcome.previousState())
           || !java.util.Objects.equals(expectedTenant, outcome.tenantId())
           || !digest("maintenance-origin", frozen.path("target").path("origin"))

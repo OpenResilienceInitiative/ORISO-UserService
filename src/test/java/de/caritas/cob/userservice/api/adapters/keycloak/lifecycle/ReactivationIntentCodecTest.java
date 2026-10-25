@@ -231,11 +231,10 @@ class ReactivationIntentCodecTest {
             "backend-account-admin",
             "synthetic-only",
             "85000000-0000-4000-8000-000000000004");
-    for (String phase : List.of("FROZEN", "ACKNOWLEDGED", "NO_EFFECT")) {
-      String receipt =
-          "FROZEN".equals(phase)
-              ? null
-              : historyReceipt(original.path("body"), "NO_EFFECT".equals(phase) ? 400 : null);
+    for (int outcome : List.of(0, 200, 400, 403, 409)) {
+      String phase = outcome == 0 ? "FROZEN" : outcome == 200 ? "ACKNOWLEDGED" : "NO_EFFECT";
+      Integer refusalStatus = outcome >= 400 ? outcome : null;
+      String receipt = "FROZEN".equals(phase) ? null : historyReceipt(original.path("body"), refusalStatus);
       String history =
           assertDoesNotThrow(
               () -> retained.retainReactivationHistory(metadata, sealed, phase, receipt, actor));
@@ -389,7 +388,7 @@ class ReactivationIntentCodecTest {
                     metadata, history, phase + "_HISTORY", "{}", actor));
         var foreign = (ObjectNode) original.path("body").deepCopy();
         foreign.put("operationId", HUMAN);
-        String wrongReceipt = historyReceipt(foreign, "NO_EFFECT".equals(phase) ? 400 : null);
+        String wrongReceipt = historyReceipt(foreign, refusalStatus);
         assertThrows(
             IllegalArgumentException.class,
             () ->
