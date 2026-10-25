@@ -111,6 +111,8 @@ import org.springframework.web.client.RestTemplate;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PublicPreDeletionJpaTest {
   private static final String ACCOUNT = "81000000-0000-4000-8000-000000000011";
+  private static final String SECOND = "81000000-0000-4000-8000-000000000015";
+  private Clock ownerClock = Clock.systemUTC();
   private static final String ASKER = "81000000-0000-4000-8000-000000000013";
   private static final String SUCCESSOR = "81000000-0000-4000-8000-000000000014";
   private static final String HUMAN = "81000000-0000-4000-8000-000000000012";
@@ -197,6 +199,7 @@ class PublicPreDeletionJpaTest {
     jdbc.update("delete from session where user_id=?", ASKER);
     jdbc.update("delete from consultant_agency where consultant_id=?", ACCOUNT);
     users.findById(ASKER).ifPresent(users::delete);
+    users.findById(SECOND).ifPresent(users::delete);
     consultants.findById(SUCCESSOR).ifPresent(consultants::delete);
     users.findById(ACCOUNT).ifPresent(users::delete);
     consultants.findById(ACCOUNT).ifPresent(consultants::delete);
@@ -606,6 +609,42 @@ class PublicPreDeletionJpaTest {
     assertEquals(1, nativeReads.get());
     assertEquals(0, nativeEffects.get());
     verifyNoInteractions(memberships);
+  }
+
+  @Test
+  void boundedColdRecoveryDoesNotStarveTheNextRealOwnedOutcomeBehindAPoisonFirstRow() {
+    asker();
+    ownerClock = Clock.fixed(Instant.now(), ZoneOffset.UTC);
+    authenticate(true, "/service/users/account");
+    nativeHttp(false);
+    loseReply = true;
+    assertThrows(ServiceUnavailableException.class, () -> selfService().deactivateAndFlagUserAccountForDeletion("chosen-original-password"));
+    assertEquals("FROZEN", status());
+    assertEquals(1, nativeEffects.get());
+    var second = new User(SECOND, null, new UsernameTranscoder().encodeUsername("pre-deletion"), "asker@fixture.invalid", false);
+    second.setTenantId(7L); second.setLanguageCode(LanguageCode.en); second.setEncourage2fa(false);
+    second.setDeletionLifecycleState(DeletionLifecycleState.ACTIVE); users.save(second);
+    String secondOperation = "ffffffff-ffff-4fff-bfff-ffffffffffff";
+    assertTrue(operation.compareTo(secondOperation) < 0);
+    authenticate(true, "/service/users/account", SECOND, secondOperation);
+    http = new RestTemplate(); server = MockRestServiceServer.bindTo(http).build();
+    savedBody = null; savedReply = null; loseReply = true;
+    nativeHttp(false, SECOND, secondOperation);
+    assertThrows(ServiceUnavailableException.class, () -> selfService().deactivateAndFlagUserAccountForDeletion("chosen-original-password"));
+    assertEquals("FROZEN", status(secondOperation));
+    assertEquals(2, nativeEffects.get());
+    jdbc.update("update identity_account_operation_intent set updated_at=? where operation_kind='PRE_DELETION'", java.sql.Timestamp.from(ownerClock.instant()));
+    jdbc.update("update identity_account_operation_intent set source_json='{}' where operation_id=?", operation);
+    request.setUserPrincipal(null); request.removeHeader("Authorization");
+    assertEquals(0, selfService().resumeSelfAskerDeletions(1));
+    assertEquals(1, selfService().resumeSelfAskerDeletions(1));
+    assertEquals("APPLIED", status(secondOperation));
+    assertEquals("FROZEN", status());
+    assertNull(users.findById(ACCOUNT).orElseThrow().getDeleteDate());
+    assertNotNull(users.findById(SECOND).orElseThrow().getDeleteDate());
+    assertEquals(1, outcomeReads.get());
+    assertEquals(2, nativeEffects.get());
+    verify(statistics, times(1)).fireEvent(any());
   }
 
   @Test
@@ -1064,7 +1103,7 @@ class PublicPreDeletionJpaTest {
         codec,
         http,
         passwords,
-        Clock.systemUTC(),
+        ownerClock,
         "https://identity.test",
         ISSUER,
         "fixture",
@@ -1072,14 +1111,18 @@ class PublicPreDeletionJpaTest {
   }
 
   private void authenticate(boolean self, String route) {
+    authenticate(self, route, ACCOUNT, operation);
+  }
+
+  private void authenticate(boolean self, String route, String boundAccount, String boundOperation) {
     request.setMethod("DELETE");
     request.setRequestURI(route);
     request.removeHeader("Idempotency-Key");
-    request.addHeader("Idempotency-Key", operation);
+    request.addHeader("Idempotency-Key", boundOperation);
     request.removeHeader("Authorization");
     request.addHeader("Authorization", "Bearer fixture-human");
     if (self) {
-      actor.setUserId(ACCOUNT);
+      actor.setUserId(boundAccount);
       actor.setUsername("pre-deletion");
       actor.setRoles(Set.of("user"));
       actor.setGrantedAuthorities(Set.of(Authority.AuthorityValue.USER_DEFAULT));
@@ -1105,13 +1148,21 @@ class PublicPreDeletionJpaTest {
   }
 
   private String status() {
+    return status(operation);
+  }
+
+  private String status(String selectedOperation) {
     return jdbc.queryForObject(
         "select status from identity_account_operation_intent where operation_id=? and operation_kind='PRE_DELETION'",
         String.class,
-        operation);
+        selectedOperation);
   }
 
   private void nativeHttp(boolean consultant) {
+    nativeHttp(consultant, ACCOUNT, operation);
+  }
+
+  private void nativeHttp(boolean consultant, String boundAccount, String boundOperation) {
     server
         .expect(manyTimes(), ignored -> {})
         .andRespond(
@@ -1122,7 +1173,7 @@ class PublicPreDeletionJpaTest {
               assertEquals("Bearer checked-machine", raw.getHeaders().getFirst("Authorization"));
               assertNotNull(raw.getHeaders().getFirst("X-ORISO-Task-Context"));
               var body = codec.read(mock.getBodyAsString(), JsonNode.class);
-              assertEquals(ACCOUNT, body.path("target").path("accountId").textValue());
+              assertEquals(boundAccount, body.path("target").path("accountId").textValue());
               String path = raw.getURI().getPath();
               if (path.endsWith("/read")) {
                 nativeReads.incrementAndGet();
@@ -1130,13 +1181,13 @@ class PublicPreDeletionJpaTest {
                     jdbc.queryForObject(
                         "select source_json from identity_account_operation_intent where operation_id=?",
                         String.class,
-                        operation));
+                        boundOperation));
                 if (loseReadReply) {
                   loseReadReply = false;
                   throw new ResourceAccessException("Lost fixture read");
                 }
                 var projection = new TreeMap<String, Object>();
-                projection.put("id", ACCOUNT);
+                projection.put("id", boundAccount);
                 projection.put("username", "pre-deletion");
                 projection.put(
                     "email", consultant ? "consultant@fixture.invalid" : "asker@fixture.invalid");
@@ -1169,6 +1220,7 @@ class PublicPreDeletionJpaTest {
                     .createResponse(raw);
               }
               assertTrue(path.endsWith("/deactivate"));
+              assertEquals(boundOperation, body.path("operationId").textValue());
               nativeCalls.incrementAndGet();
               if (savedBody == null) {
                 assertNull(
@@ -1178,7 +1230,7 @@ class PublicPreDeletionJpaTest {
                                 ? "consultant where consultant_id=?"
                                 : "user where user_id=?"),
                         java.sql.Timestamp.class,
-                        ACCOUNT));
+                        boundAccount));
                 verifyNoInteractions(memberships);
               }
               if (unavailableNative)
@@ -1211,8 +1263,8 @@ class PublicPreDeletionJpaTest {
   private String signedReply(JsonNode body) throws java.io.IOException {
     var payload = new TreeMap<String, Object>();
     payload.put("realmId", REALM);
-    payload.put("accountId", ACCOUNT);
-    payload.put("operationId", operation);
+    payload.put("accountId", body.path("target").path("accountId").textValue());
+    payload.put("operationId", body.path("operationId").textValue());
     payload.put("command", "deactivate");
     payload.put("ownerClient", "backend-account-admin");
     payload.put("ownerSubject", MACHINE);
@@ -1230,9 +1282,9 @@ class PublicPreDeletionJpaTest {
     return codec.canonical(
         Map.of(
             "operationId",
-            operation,
+            body.path("operationId").textValue(),
             "accountId",
-            ACCOUNT,
+            body.path("target").path("accountId").textValue(),
             "result",
             "UPDATED",
             "receipt",

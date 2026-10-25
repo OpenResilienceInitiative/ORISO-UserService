@@ -70,29 +70,24 @@ public class UserAccountService {
     }
     if (preDeletion == null || !preDeletion.isFiveActorMode())
       throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
-    preDeletion.startSelfAsker(
-        password,
-        acknowledged ->
-            acknowledged.completeUser(
-                user -> {
-                  deletionLifecycleService.beginUserDeletion(user, user.getUserId());
-                  userService.saveUser(user);
-                  fireAccountDeletionStatisticsEvent(user);
-                }));
+    preDeletion.startSelfAsker(password, this::completeAcknowledgedSelfDeletion);
   }
 
   public int resumeSelfAskerDeletions(int limit) {
     if (!identityClientConfig.isFiveActorMode() || preDeletion == null)
       throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
-    return preDeletion.recoverSelfAskerOutcomes(
-        limit,
-        acknowledged ->
-            acknowledged.completeUser(
-                user -> {
-                  deletionLifecycleService.beginUserDeletion(user, user.getUserId());
-                  userService.saveUser(user);
-                  fireAccountDeletionStatisticsEvent(user);
-                }));
+    return preDeletion.recoverSelfAskerOutcomes(limit, this::completeAcknowledgedSelfDeletion);
+  }
+
+  private void completeAcknowledgedSelfDeletion(
+      de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance.AcknowledgedPreDeletion acknowledged) {
+    var completed = new java.util.concurrent.atomic.AtomicReference<User>();
+    acknowledged.completeUser(user -> {
+      deletionLifecycleService.beginUserDeletion(user, user.getUserId());
+      userService.saveUser(user);
+      completed.set(user);
+    });
+    fireAccountDeletionStatisticsEvent(completed.get());
   }
 
   public Optional<User> findUserByEmail(String email) {
