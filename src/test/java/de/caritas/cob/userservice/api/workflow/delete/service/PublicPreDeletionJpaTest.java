@@ -664,7 +664,12 @@ class PublicPreDeletionJpaTest {
     request.setUserPrincipal(null);
     request.removeHeader("Authorization");
     assertEquals(0, selfService().resumeSelfAskerDeletions(1));
-    assertEquals(1, selfService().resumeSelfAskerDeletions(1));
+    var poisonHint = jdbc.queryForObject("select updated_at from identity_account_operation_intent where operation_id=?", java.sql.Timestamp.class, operation);
+    var nextHint = jdbc.queryForObject("select updated_at from identity_account_operation_intent where operation_id=?", java.sql.Timestamp.class, secondOperation);
+    assertTrue(poisonHint.after(nextHint), "The poisoned hint must move strictly behind the untouched candidate");
+    int secondResult = selfService().resumeSelfAskerDeletions(1);
+    assertEquals(1, outcomeReads.get(), "The next owned outcome must be queried exactly once");
+    assertEquals(1, secondResult);
     assertEquals("APPLIED", status(secondOperation));
     assertEquals("FROZEN", status());
     assertNull(users.findById(ACCOUNT).orElseThrow().getDeleteDate());
@@ -1244,6 +1249,40 @@ class PublicPreDeletionJpaTest {
     assertEquals(1, nativeEffects.get());
   }
 
+  @Test
+  void privateRelatedPreparationCannotApplyThroughANonfinalOwnedCallback() {
+    consultant();
+    var fixture = membershipFixture(true);
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    var memberOwner = realMemberships(mock(GroupChatMembershipService.class), mock(MatrixChatShutdownService.class));
+    assertThrows(ServiceUnavailableException.class, () -> owner().startAdminConsultant(ACCOUNT, false, ack -> {
+      var prepared = memberOwner.prepareAcknowledgedDeletion(ack, false);
+      ack.runOwnedLocal(() -> prepared.apply(consultants.findById(ACCOUNT).orElseThrow()));
+    }));
+    assertEquals("ACKNOWLEDGED", status());
+    assertTrue(participants.findById(fixture.participation()).isPresent());
+    assertTrue(supervisions.findById(fixture.supervision()).orElseThrow().getIsActive());
+    assertNull(consultants.findById(ACCOUNT).orElseThrow().getDeleteDate());
+  }
+
+  @Test
+  void privateRelatedPreparationCannotChangeTheOriginalForceRequest() {
+    consultant();
+    var fixture = membershipFixture(true);
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    var remote = mock(GroupChatMembershipService.class);
+    var memberOwner = realMemberships(remote, mock(MatrixChatShutdownService.class));
+    assertThrows(ConflictException.class, () -> owner().startAdminConsultant(ACCOUNT, false,
+        ack -> memberOwner.prepareAcknowledgedDeletion(ack, true)));
+    verifyNoInteractions(remote);
+    assertEquals("ACKNOWLEDGED", status());
+    assertEquals("PENDING", codec.read(relatedCustody(), JsonNode.class).path("plan").path("state").asText());
+    assertTrue(participants.findById(fixture.participation()).isPresent());
+    assertNull(consultants.findById(ACCOUNT).orElseThrow().getDeleteDate());
+  }
+
   private String relatedCustody() {
     return jdbc.queryForObject(
         "select applied_json from identity_account_operation_intent where operation_id=?",
@@ -1288,10 +1327,13 @@ class PublicPreDeletionJpaTest {
                     false,
                     ack -> {
                       var prepared = presteps.prepareAcknowledgedDeletion(ack, false);
+                      var memberships = realMemberships(mock(GroupChatMembershipService.class), mock(MatrixChatShutdownService.class))
+                          .prepareAcknowledgedDeletion(ack, false);
                       ack.completeConsultant(
                           actual -> {
                             var deletedAt = LocalDateTime.now(ZoneOffset.UTC);
                             prepared.apply(actual, deletedAt);
+                            memberships.apply(actual);
                             actual.setDeleteDate(deletedAt);
                             lifecycle.beginConsultantDeletion(actual, HUMAN);
                             actual.setStatus(

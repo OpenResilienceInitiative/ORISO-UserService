@@ -91,14 +91,15 @@ public class MembersOnlyRevocation {
                           .stream()
                           .map(Session::getId)
                           .collect(java.util.stream.Collectors.toUnmodifiableSet());
-                  prepared.set(
-                      new PreparedRemoval(
+                  var proof = new PreparedRemoval(
                           this,
                           acknowledged,
                           rows,
                           remotes,
                           originalSessions,
-                          forceDeleteSessions));
+                          forceDeleteSessions);
+                  acknowledged.freezeRelatedRemoval(proof);
+                  prepared.set(proof);
                   return null;
                 }));
     var proof = prepared.get();
@@ -162,7 +163,12 @@ public class MembersOnlyRevocation {
             new RemoteRemoval(
                 "MAIN", chat.getId(), chat.getMatrixRoomId(), leaving.getMatrixUserId()));
     }
-    return List.copyOf(remotes);
+    return remotes.stream().sorted(Comparator
+        .comparingInt((RemoteRemoval value) -> value.kind.equals("SIDE") ? 0 : value.kind.equals("MAIN") ? 1 : 2)
+        .thenComparing(RemoteRemoval::chat, Comparator.nullsFirst(Comparator.naturalOrder()))
+        .thenComparing(RemoteRemoval::room, Comparator.nullsFirst(Comparator.naturalOrder()))
+        .thenComparing(RemoteRemoval::member, Comparator.nullsFirst(Comparator.naturalOrder())))
+        .toList();
   }
 
   private static void addSide(LinkedHashSet<RemoteRemoval> remotes, SessionSupervisor supervision) {
@@ -214,7 +220,7 @@ public class MembersOnlyRevocation {
     private final List<RemoteRemoval> remotes;
     private final java.util.Set<Long> originalSessions;
     private final boolean force;
-    private boolean remoteComplete, applied;
+    private boolean remoteComplete, readyForLocal, applied;
 
     private PreparedRemoval(
         MembersOnlyRevocation issuer,
@@ -244,15 +250,64 @@ public class MembersOnlyRevocation {
     }
 
     private void requireFresh() {
-      acknowledged.runOwnedLocal(this::requireRows);
+      acknowledged.runOwnedLocal(() -> {
+        requireRows();
+        acknowledged.requireFrozenRelatedRemoval(this);
+      });
+    }
+
+    /** Data is recomputed only from this issuer's complete rows and original remote inventory. */
+    public com.fasterxml.jackson.databind.JsonNode frozenPlanFor(
+        de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance.AcknowledgedPreDeletion frame,
+        de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCodec codec) {
+      if (frame != acknowledged) throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException("Foreign related preparation");
+      requireRows();
+      var summaries = new java.util.TreeMap<String, Object>();
+      rows.forEach((table, values) -> summaries.put(table, java.util.Map.of(
+          "count", (long) values.size() - 1,
+          "digest", codec.digest("public-pre-deletion-related/v1", java.util.Map.of("table", table, "rows", values)))));
+      var inventory = remotes.stream().map(remote -> {
+        var value = new java.util.TreeMap<String, Object>();
+        value.put("kind", remote.kind); value.put("chatId", remote.chat);
+        value.put("roomId", remote.room); value.put("memberId", remote.member);
+        return value;
+      }).toList();
+      return codec.read(codec.canonical(java.util.Map.of(
+          "state", "FROZEN", "rows", summaries,
+          "remotes", java.util.Map.of("count", (long) inventory.size(), "digest",
+              codec.digest("public-pre-deletion-related/v1", java.util.Map.of("remotes", inventory))))),
+          com.fasterxml.jackson.databind.JsonNode.class);
+    }
+
+    public void requireRequestFor(
+        de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance.AcknowledgedPreDeletion frame,
+        boolean originalForce) {
+      if (frame != acknowledged || force != originalForce)
+        throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException("Foreign original deletion request");
+    }
+
+    public void requireReadyFor(
+        de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance.AcknowledgedPreDeletion frame) {
+      acknowledged.requireRelatedFinal(this);
+      if (frame != acknowledged || !remoteComplete || applied)
+        throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException("Related preparation is not ready");
+      requireRows();
+      readyForLocal = true;
+    }
+
+    public void requireAppliedFor(
+        de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance.AcknowledgedPreDeletion frame) {
+      acknowledged.requireRelatedFinal(this);
+      if (frame != acknowledged || !readyForLocal || !applied)
+        throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException("Related preparation was not applied");
     }
 
     public void apply(Consultant independentlyLoadedOriginal) {
+      acknowledged.requireRelatedFinal(this);
       acknowledged.requireCurrentConsultant(independentlyLoadedOriginal);
-      if (!remoteComplete || applied)
+      if (!remoteComplete || !readyForLocal || applied)
         throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(
             "The room preparation was already consumed");
-      requireRows();
       TenantContext.supplyAcrossTenants(
           () -> {
             if (force)
@@ -269,12 +324,14 @@ public class MembersOnlyRevocation {
     }
 
     public boolean keepCaseOnDeletionOf(Session session, Consultant independentlyLoadedOriginal) {
+      acknowledged.requireRelatedFinal(this);
       acknowledged.requireCurrentConsultant(independentlyLoadedOriginal);
       if (!remoteComplete
           || !applied
           || !force
           || session == null
           || !originalSessions.contains(session.getId())
+          || issuer.sessionRepository.findById(session.getId()).orElse(null) != session
           || session.getConsultant() == null
           || !independentlyLoadedOriginal.getId().equals(session.getConsultant().getId()))
         throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(

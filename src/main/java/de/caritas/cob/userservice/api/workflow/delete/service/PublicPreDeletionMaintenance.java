@@ -159,6 +159,7 @@ public final class PublicPreDeletionMaintenance {
       verifySameResult(intent, result);
       return;
     }
+    boolean acknowledgedInThisCall = false;
     boolean frozenInThisCall = false;
     if ("PREPARED".equals(intent.status)) {
       if (kind.equals("SELF_ASKER")) {
@@ -185,8 +186,14 @@ public final class PublicPreDeletionMaintenance {
       String verified = verify(intent, response);
       Intent original = intent;
       intent = tx(() -> acknowledge(original, verified));
+      acknowledgedInThisCall = true;
     }
     if (!"ACKNOWLEDGED".equals(intent.status)) throw unavailable();
+    if (!acknowledgedInThisCall) {
+      String result = kind.equals("SELF_ASKER")
+          ? call(intent, "deactivate/outcome", null) : call(intent, "deactivate", current);
+      verifySameResult(intent, result);
+    }
     var frame = new AcknowledgedPreDeletion(this, intent);
     try {
       continuation.accept(frame);
@@ -259,7 +266,8 @@ public final class PublicPreDeletionMaintenance {
     private final Thread thread = Thread.currentThread();
     private final Instant validUntil;
     private Object localResource;
-    private boolean active = true, completed;
+    private de.caritas.cob.userservice.api.service.chat.MembersOnlyRevocation.PreparedRemoval related;
+    private boolean active = true, completed, completingConsultant;
 
     private AcknowledgedPreDeletion(PublicPreDeletionMaintenance owner, Intent original) {
       this.owner = owner;
@@ -311,6 +319,44 @@ public final class PublicPreDeletionMaintenance {
         throw conflict();
     }
 
+    /** Only a private issuer-bound preparation can freeze the related-row custody. */
+    public void freezeRelatedRemoval(
+        de.caritas.cob.userservice.api.service.chat.MembersOnlyRevocation.PreparedRemoval preparation) {
+      requireConsultantCurrent();
+      if (!TransactionSynchronizationManager.isActualTransactionActive() || localResource == null
+          || related != null && related != preparation) throw conflict();
+      var found = owner.checked(original);
+      var existing = owner.relatedPlan(found);
+      preparation.requireRequestFor(this, owner.source(found).path("forceDeleteSessions").asBoolean());
+      var plan = preparation.frozenPlanFor(this, owner.codec);
+      if ("FROZEN".equals(existing.path("state").asText())) {
+        if (!existing.equals(plan)) throw conflict();
+      } else {
+        String frozen = PreDeletionRelatedCustody.freeze(owner.codec, owner.relatedBinding(found), plan);
+        if (owner.jdbc.update(
+            "update identity_account_operation_intent set applied_json=?,updated_at=? where operation_id=? and operation_kind=? and status='ACKNOWLEDGED' and applied_json=? and intent_body=? and receipt=?",
+            frozen, owner.now(), found.operation, NAMESPACE, found.applied, found.body, found.receipt) != 1)
+          throw conflict();
+      }
+      related = preparation;
+    }
+
+    public void requireFrozenRelatedRemoval(
+        de.caritas.cob.userservice.api.service.chat.MembersOnlyRevocation.PreparedRemoval preparation) {
+      requireConsultantCurrent();
+      if (related != preparation || localResource == null
+          || !owner.relatedPlan(owner.checked(original)).equals(preparation.frozenPlanFor(this, owner.codec)))
+        throw conflict();
+    }
+
+    public void requireRelatedFinal(
+        de.caritas.cob.userservice.api.service.chat.MembersOnlyRevocation.PreparedRemoval preparation) {
+      if (!active || thread != Thread.currentThread() || !owner.clock.instant().isBefore(validUntil)
+          || related != preparation || !completingConsultant || localResource == null
+          || localResource != TransactionSynchronizationManager.getResource(owner.jdbc.getDataSource()))
+        throw unavailable();
+    }
+
     public void runOwnedLocal(Runnable localEffect) {
       owner.local(this, localEffect, false, false, null);
     }
@@ -354,9 +400,15 @@ public final class PublicPreDeletionMaintenance {
               Object actual = entities.find(type, intent.account, LockModeType.PESSIMISTIC_WRITE);
               if (actual == null) throw conflict();
               if (consultant) {
+                if (frame.related == null) throw unavailable();
+                var plan = frame.related.frozenPlanFor(frame, codec);
+                if (!relatedPlan(intent).equals(plan)) throw conflict();
+                frame.completingConsultant = true;
+                frame.related.requireReadyFor(frame);
                 @SuppressWarnings("unchecked")
                 var callback = (Consumer<Consultant>) effect;
                 callback.accept((Consultant) actual);
+                frame.related.requireAppliedFor(frame);
               } else {
                 @SuppressWarnings("unchecked")
                 var callback = (Consumer<User>) effect;
@@ -378,6 +430,7 @@ public final class PublicPreDeletionMaintenance {
                   != 1) throw conflict();
             } else if (!before.core().equals(after.core())) throw conflict();
           } finally {
+            frame.completingConsultant = false;
             frame.localResource = null;
           }
           return null;
@@ -540,9 +593,12 @@ public final class PublicPreDeletionMaintenance {
     }
     if (!"FROZEN".equals(found.status) || !Objects.equals(original.body, found.body))
       throw conflict();
+    String related = source(found).path("kind").asText().equals("ADMIN_CONSULTANT")
+        ? PreDeletionRelatedCustody.pending(codec, relatedBinding(found, receipt)) : null;
     if (jdbc.update(
-            "update identity_account_operation_intent set receipt=?,status='ACKNOWLEDGED',updated_at=? where operation_id=? and operation_kind=? and status='FROZEN' and intent_body=?",
+            "update identity_account_operation_intent set receipt=?,applied_json=?,status='ACKNOWLEDGED',updated_at=? where operation_id=? and operation_kind=? and status='FROZEN' and intent_body=?",
             receipt,
+            related,
             now(),
             found.operation,
             NAMESPACE,
@@ -568,7 +624,24 @@ public final class PublicPreDeletionMaintenance {
             : data.path("originalSql");
     if (!PreDeletionSqlSnapshot.requireCore(expected).equals(actual.core())) throw conflict();
     if (Set.of("ACKNOWLEDGED", "APPLIED").contains(found.status)) verify(found, found.receipt);
+    if ("ACKNOWLEDGED".equals(found.status)) {
+      if (consultant) relatedPlan(found);
+      else if (found.applied != null) throw conflict();
+    }
     return found;
+  }
+
+  private JsonNode relatedBinding(Intent intent) {
+    return relatedBinding(intent, intent.receipt);
+  }
+
+  private JsonNode relatedBinding(Intent intent, String receipt) {
+    return PreDeletionRelatedCustody.binding(codec, intent.operation, intent.account,
+        intent.ownerClient, intent.ownerSubject, source(intent).path("mac").asText(), intent.body, receipt);
+  }
+
+  private JsonNode relatedPlan(Intent intent) {
+    return PreDeletionRelatedCustody.require(codec, intent.applied, relatedBinding(intent));
   }
 
   private PreDeletionSqlSnapshot.Snapshot snapshot(Intent intent, boolean lock) {
@@ -593,7 +666,9 @@ public final class PublicPreDeletionMaintenance {
               if (!Set.of("PREPARED", "FROZEN", "ACKNOWLEDGED", "APPLIED", "REFUSED")
                       .contains(phase)
                   || r.getBoolean("domain_applied") != "APPLIED".equals(phase)
-                  || "APPLIED".equals(phase) != (r.getString("applied_json") != null))
+                  || "APPLIED".equals(phase) && r.getString("applied_json") == null
+                  || !Set.of("APPLIED", "ACKNOWLEDGED").contains(phase)
+                      && r.getString("applied_json") != null)
                 throw conflict();
               return new Intent(
                   r.getString("operation_id"),

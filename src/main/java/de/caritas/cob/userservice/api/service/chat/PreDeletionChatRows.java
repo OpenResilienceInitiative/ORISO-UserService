@@ -60,6 +60,11 @@ final class PreDeletionChatRows {
                 + sessions
                 + ")) order by consultant_id for update",
             account));
+    result.put(
+        "agency",
+        rows(jdbc,
+            "select * from consultant_agency where delete_date is null and (consultant_id=? or agency_id in (select agency_id from consultant_agency where consultant_id=? and delete_date is null)) order by id for update",
+            account));
     return Collections.unmodifiableMap(result);
   }
 
@@ -72,8 +77,11 @@ final class PreDeletionChatRows {
           var result = new ArrayList<List<String>>();
           int columns = rs.getMetaData().getColumnCount();
           var header = new ArrayList<String>();
-          for (int column = 1; column <= columns; column++)
+          for (int column = 1; column <= columns; column++) {
             header.add(rs.getMetaData().getColumnLabel(column));
+            header.add(Integer.toString(rs.getMetaData().getColumnType(column)));
+            header.add(rs.getMetaData().getColumnTypeName(column));
+          }
           result.add(List.copyOf(header));
           while (rs.next()) {
             var row = new ArrayList<String>();
