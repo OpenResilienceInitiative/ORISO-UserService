@@ -386,7 +386,8 @@ class UserAccountControllerDelegate {
   ResponseEntity<Void> deactivateAndFlagUserAccountForDeletion(
       DeleteUserAccountDTO deleteUserAccountDTO) {
     if (passwordIdentityConfig != null && passwordIdentityConfig.isFiveActorMode()) {
-      userAccountProvider.deactivateAndFlagUserAccountForDeletion(deleteUserAccountDTO.getPassword());
+      userAccountProvider.deactivateAndFlagUserAccountForDeletion(
+          deleteUserAccountDTO.getPassword());
       return new ResponseEntity<>(HttpStatus.OK);
     }
     var username = authenticatedUser.getUsername();

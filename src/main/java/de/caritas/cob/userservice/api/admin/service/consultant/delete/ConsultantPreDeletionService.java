@@ -31,7 +31,9 @@ public class ConsultantPreDeletionService {
 
   /** Fixed C preparation; no relation may be written before the original native ACK. */
   public PreparedRelations prepareAcknowledgedDeletion(
-      de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance.AcknowledgedPreDeletion acknowledged,
+      de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+              .AcknowledgedPreDeletion
+          acknowledged,
       Boolean forceDeleteSessions) {
     throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
   }

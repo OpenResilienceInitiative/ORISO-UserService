@@ -59,7 +59,9 @@ public class MembersOnlyRevocation {
 
   /** Fixed C continuation, issued only from the actual private pre-deletion ACK. */
   public PreparedRemoval prepareAcknowledgedDeletion(
-      de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance.AcknowledgedPreDeletion acknowledged,
+      de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+              .AcknowledgedPreDeletion
+          acknowledged,
       boolean forceDeleteSessions) {
     throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
   }

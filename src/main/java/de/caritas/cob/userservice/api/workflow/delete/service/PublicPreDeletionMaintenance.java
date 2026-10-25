@@ -146,7 +146,10 @@ public final class PublicPreDeletionMaintenance {
     }
     var authenticatedSource = passwordSource;
     Intent intent =
-        tx(() -> prepare(kind, account, operation, force, digest, current, actor, authenticatedSource));
+        tx(
+            () ->
+                prepare(
+                    kind, account, operation, force, digest, current, actor, authenticatedSource));
     if ("REFUSED".equals(intent.status)) throw refusal(intent, actor);
     if ("APPLIED".equals(intent.status)) {
       String result =
