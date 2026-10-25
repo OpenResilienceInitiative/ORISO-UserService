@@ -10,7 +10,13 @@ import java.util.UUID;
 final class ConsultantGrantMatrixSchema {
   private static final Set<String> FIELDS =
       Set.of(
-          "representation", "operationId", "accountId", "requestDigest", "localpart", "phase", "result");
+          "representation",
+          "operationId",
+          "accountId",
+          "requestDigest",
+          "localpart",
+          "phase",
+          "result");
 
   private ConsultantGrantMatrixSchema() {}
 
@@ -32,7 +38,8 @@ final class ConsultantGrantMatrixSchema {
     if (!Set.of("STARTED", "ACKNOWLEDGED", "NO_EFFECT").contains(phase)) throw invalid();
     if ("ACKNOWLEDGED".equals(phase)) {
       String result = text(value.path("result"), 512), prefix = "@" + localpart + ":";
-      if (!result.startsWith(prefix) || result.substring(prefix.length()).isBlank()) throw invalid();
+      if (!result.startsWith(prefix) || result.substring(prefix.length()).isBlank())
+        throw invalid();
     } else if (!value.path("result").isNull()) throw invalid();
     return value;
   }
