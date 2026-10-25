@@ -911,29 +911,32 @@ class UserAccountControllerDelegateTest {
     verify(identityManager).validatePasswordIgnoring2fa("enc.username", "correct");
     verify(userAccountProvider).deactivateAndFlagUserAccountForDeletion();
   }
+
   private void scopedDeletionRouteFixture() {
-    var mode = org.mockito.Mockito.mock(de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
+    var mode =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
     when(mode.isFiveActorMode()).thenReturn(true);
-    delegate = new UserAccountControllerDelegate(
-        userAccountProvider,
-        new AuthenticatedUser(USER_ID, USERNAME, Set.of("user"), "fixture-human", Set.of()),
-        decryptionService,
-        consultantDataFacade,
-        identityPolicy,
-        identityManager,
-        accountManager,
-        messenger,
-        consultantDtoMapper,
-        userDtoMapper,
-        consultantService,
-        consultantUpdateService,
-        consultantDataProvider,
-        askerDataProvider,
-        videoChatConfig,
-        keycloakUserDataProvider,
-        agencyAdminDataProvider,
-        new UsernameTranscoder());
+    delegate =
+        new UserAccountControllerDelegate(
+            userAccountProvider,
+            new AuthenticatedUser(USER_ID, USERNAME, Set.of("user"), "fixture-human", Set.of()),
+            decryptionService,
+            consultantDataFacade,
+            identityPolicy,
+            identityManager,
+            accountManager,
+            messenger,
+            consultantDtoMapper,
+            userDtoMapper,
+            consultantService,
+            consultantUpdateService,
+            consultantDataProvider,
+            askerDataProvider,
+            videoChatConfig,
+            keycloakUserDataProvider,
+            agencyAdminDataProvider,
+            new UsernameTranscoder());
     delegate.setPasswordIdentityConfig(mode);
   }
-
 }
