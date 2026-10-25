@@ -75,6 +75,19 @@ public class ConsultantAdminService {
   private final @NonNull ConsultantTopicRepository consultantTopicRepository;
   private final @NonNull TopicService topicService;
 
+  private de.caritas.cob.userservice.api.port.out.IdentityClientConfig identityMode;
+  private de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+      preDeletion;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public void setScopedPreDeletion(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode,
+      @org.springframework.lang.Nullable
+          de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance owner) {
+    identityMode = mode;
+    preDeletion = owner;
+  }
+
   /**
    * Finds a {@link Consultant} by the given consultant id and throws a {@link NoContentException}
    * if no consultant for given id exists.
@@ -211,6 +224,18 @@ public class ConsultantAdminService {
    */
   @Transactional
   public void markConsultantForDeletion(String consultantId, Boolean forceDeleteSessions) {
+    if (identityMode != null && identityMode.isFiveActorMode()) {
+      if (preDeletion == null || !preDeletion.isFiveActorMode())
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+      preDeletion.startAdminConsultant(
+          consultantId,
+          forceDeleteSessions,
+          acknowledged -> {
+            // Closed until the actual signed-ACK and mixed RPC/JPA fixture reaches this frontier.
+            throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+          });
+      return;
+    }
     var consultant = pictureStore.lockActiveConsultant(consultantId);
 
     // One date for the counsellor and the relations removed with it: that pair marks the agencies

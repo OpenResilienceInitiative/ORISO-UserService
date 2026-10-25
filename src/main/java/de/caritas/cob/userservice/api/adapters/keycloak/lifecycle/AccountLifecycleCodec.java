@@ -1145,6 +1145,22 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
     return encoded + "." + encode(mac("proof\n" + encoded));
   }
 
+  /** Fixed saved-only SELF deactivate lookup. Closed test-first bridge. */
+  public String preDeletionOutcomeProof(
+      String realmName,
+      String realmId,
+      String accountId,
+      TaskActorCredentials actor,
+      JsonNode originalFrozenSelfDeactivate) {
+    throw new IllegalArgumentException("Pre-deletion outcome proof is unavailable");
+  }
+
+  /** Fixed strict UPDATED11 alias. Closed test-first bridge. */
+  public String verifyMaintenancePreDeletionReceipt(
+      String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
+    throw new IllegalArgumentException("Pre-deletion receipt verification is unavailable");
+  }
+
   private record MaintenanceReply(
       UUID operationId, String accountId, String result, String receipt) {}
 
