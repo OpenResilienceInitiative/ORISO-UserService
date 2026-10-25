@@ -1,0 +1,57 @@
+name: Scenario C public pre-deletion proof
+on:
+  push:
+    branches: [codex/367-c-pre-deletion-finish-20261023]
+permissions:
+  contents: read
+concurrency:
+  group: public-pre-deletion-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  public-jpa:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      MAVEN_OPTS: -Xmx1024m -XX:MaxMetaspaceSize=384m -XX:ActiveProcessorCount=2
+      JAVA_TOOL_OPTIONS: -Xmx512m -XX:MaxMetaspaceSize=256m -XX:ActiveProcessorCount=2
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+        with:
+          distribution: temurin
+          java-version: '21.0.12+8.0.LTS'
+          cache: maven
+          cache-dependency-path: pom.xml
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: 3.12.13
+      - name: Verify offline evidence refusal controls
+        run: python -m unittest discover -s tests/ci -p test_pre_deletion_boundary_proof.py -v
+      - name: Bind immutable source before formatting and compilation
+        run: python scripts/ci/pre-deletion-boundary-proof.py snapshot --destination target/scenario-c-pre-deletion
+      - name: Require committed official formatting for owned sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./mvnw -B -ntp -q spotless:apply "-DspotlessFiles=$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/workflow/delete/service/PublicPreDeletionJpaTest.java"
+          git diff --binary -- src/test/java/de/caritas/cob/userservice/api/workflow/delete/service/PublicPreDeletionJpaTest.java > target/scenario-c-pre-deletion/official-format.patch
+          git diff --exit-code -- src/test/java/de/caritas/cob/userservice/api/workflow/delete/service/PublicPreDeletionJpaTest.java
+      - name: Actual public services and real owning JPA with unchanged legacy tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf target/surefire-reports
+          ./mvnw -B -ntp -Dtest=PublicPreDeletionJpaTest,UserAccountServiceTest,ConsultantAdminServiceTest,ConsultantPreDeletionServiceTest,AskerUserAdminFacadeTest -DforkCount=1 -DreuseForks=false test > target/pre-deletion-private.log 2>&1
+      - name: Collect only sanitized XML and source-qualified metadata
+        if: always()
+        run: python scripts/ci/pre-deletion-boundary-proof.py collect --destination target/scenario-c-pre-deletion
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: public-pre-deletion-${{ github.sha }}
+          path: target/scenario-c-pre-deletion
+          retention-days: 14
+          if-no-files-found: error
