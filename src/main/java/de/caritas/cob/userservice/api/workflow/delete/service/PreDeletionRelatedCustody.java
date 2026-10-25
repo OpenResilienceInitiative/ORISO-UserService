@@ -8,18 +8,41 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
-/** Closed ACK-only custody data; only the actual owner and private preparation supply its values. */
+/**
+ * Closed ACK-only custody data; only the actual owner and private preparation supply its values.
+ */
 final class PreDeletionRelatedCustody {
   static final String DOMAIN = "public-pre-deletion-related/v1";
+
   private PreDeletionRelatedCustody() {}
 
-  static ObjectNode binding(AccountLifecycleCodec codec, String operation, String account,
-      String client, String subject, String sourceMac, String body, String receipt) {
-    return codec.read(codec.canonical(Map.of(
-        "operationId", operation, "accountId", account, "ownerClient", client,
-        "ownerSubject", subject, "sourceMac", sourceMac,
-        "intentDigest", codec.digest("maintenance-intent", codec.read(body, JsonNode.class)),
-        "receiptDigest", codec.digest(DOMAIN, Map.of("receipt", receipt)))), ObjectNode.class);
+  static ObjectNode binding(
+      AccountLifecycleCodec codec,
+      String operation,
+      String account,
+      String client,
+      String subject,
+      String sourceMac,
+      String body,
+      String receipt) {
+    return codec.read(
+        codec.canonical(
+            Map.of(
+                "operationId",
+                operation,
+                "accountId",
+                account,
+                "ownerClient",
+                client,
+                "ownerSubject",
+                subject,
+                "sourceMac",
+                sourceMac,
+                "intentDigest",
+                codec.digest("maintenance-intent", codec.read(body, JsonNode.class)),
+                "receiptDigest",
+                codec.digest(DOMAIN, Map.of("receipt", receipt)))),
+        ObjectNode.class);
   }
 
   static String pending(AccountLifecycleCodec codec, JsonNode binding) {
@@ -28,8 +51,12 @@ final class PreDeletionRelatedCustody {
 
   static String freeze(AccountLifecycleCodec codec, JsonNode binding, JsonNode plan) {
     requirePlan(plan);
-    var value = codec.read(codec.canonical(Map.of("v", 1, "kind", "PRE_DELETION_RELATED_V1",
-        "binding", binding, "plan", plan)), ObjectNode.class);
+    var value =
+        codec.read(
+            codec.canonical(
+                Map.of(
+                    "v", 1, "kind", "PRE_DELETION_RELATED_V1", "binding", binding, "plan", plan)),
+            ObjectNode.class);
     value.put("mac", codec.digest(DOMAIN, value));
     return codec.canonical(value);
   }
@@ -38,14 +65,15 @@ final class PreDeletionRelatedCustody {
     try {
       var value = codec.read(encoded, ObjectNode.class);
       fields(value, Set.of("v", "kind", "binding", "plan", "mac"));
-      if (!value.path("v").isIntegralNumber() || value.path("v").intValue() != 1
+      if (!value.path("v").isIntegralNumber()
+          || value.path("v").intValue() != 1
           || !value.path("v").canConvertToInt()
           || !"PRE_DELETION_RELATED_V1".equals(value.path("kind").textValue())
           || !binding.equals(value.path("binding"))) throw unavailable();
       String mac = value.path("mac").textValue();
       value.remove("mac");
-      if (mac == null || !mac.matches("[0-9a-f]{64}")
-          || !mac.equals(codec.digest(DOMAIN, value))) throw unavailable();
+      if (mac == null || !mac.matches("[0-9a-f]{64}") || !mac.equals(codec.digest(DOMAIN, value)))
+        throw unavailable();
       requirePlan(value.path("plan"));
       return value.path("plan");
     } catch (RuntimeException invalid) {
@@ -60,15 +88,19 @@ final class PreDeletionRelatedCustody {
     }
     fields(plan, Set.of("state", "rows", "remotes"));
     if (!"FROZEN".equals(plan.path("state").textValue())) throw unavailable();
-    fields(plan.path("rows"), Set.of("chat", "participant", "session", "supervision", "consultant", "agency"));
+    fields(
+        plan.path("rows"),
+        Set.of("chat", "participant", "session", "supervision", "consultant", "agency"));
     plan.path("rows").elements().forEachRemaining(PreDeletionRelatedCustody::requireDigest);
     requireDigest(plan.path("remotes"));
   }
 
   private static void requireDigest(JsonNode value) {
     fields(value, Set.of("count", "digest"));
-    if (!value.path("count").isIntegralNumber() || !value.path("count").canConvertToLong()
-        || value.path("count").longValue() < 0 || !value.path("digest").isTextual()
+    if (!value.path("count").isIntegralNumber()
+        || !value.path("count").canConvertToLong()
+        || value.path("count").longValue() < 0
+        || !value.path("digest").isTextual()
         || !value.path("digest").textValue().matches("[0-9a-f]{64}")) throw unavailable();
   }
 

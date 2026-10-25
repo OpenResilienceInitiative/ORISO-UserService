@@ -62,7 +62,8 @@ final class PreDeletionChatRows {
             account));
     result.put(
         "agency",
-        rows(jdbc,
+        rows(
+            jdbc,
             "select * from consultant_agency where delete_date is null and (consultant_id=? or agency_id in (select agency_id from consultant_agency where consultant_id=? and delete_date is null)) order by id for update",
             account));
     return Collections.unmodifiableMap(result);
