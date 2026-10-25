@@ -273,6 +273,7 @@ def native(kc, report, driver):
                 before_identity = fixture.admin('GET', '/users/' + account)
                 subprocess.run(['docker', 'stop', '-t', '5', RolePair.name], check=True, capture_output=True, timeout=30)
                 subprocess.run(['docker', 'rm', RolePair.name], check=True, capture_output=True, timeout=30)
+                RolePair.memoryStart()
                 subprocess.run(command, check=True, capture_output=True, timeout=30)
                 RolePair.refresh_endpoint('role-grant-' + action); RolePair.ready(); fixture.installer = RolePair.installer
                 if before_identity != fixture.admin('GET', '/users/' + account): raise ValueError('Native original incarnation changed')
@@ -345,6 +346,10 @@ def native(kc, report, driver):
         RolePair.doClassCleanups()
         receipt['cleanup_verified'] = not RolePair.tearDown_exceptions
         receipt['native_resource_gate'] = resource_evidence()
+        approved_starts = [sample for sample in receipt['native_resource_gate']['startDecisions']
+            if sample.get('profile') == HOSTED_PROFILE and sample.get('freePercent', 0) >= 35
+            and sample.get('availableBytes', 0) >= 3 * 1024**3]
+        receipt['all_four_native_starts_guarded'] = len(approved_starts) >= 4
         for key, value in original_env.items():
             if value is None: os.environ.pop(key, None)
             else: os.environ[key] = value
@@ -352,6 +357,6 @@ def native(kc, report, driver):
         receipt['source_stable'] = before == after
         receipt['jar_stable'] = hashes == {key: hashlib.sha256(path.read_bytes()).hexdigest() for key, path in jars.items()}
         receipt['compiled_user_stable'] = compiled == {path: hashlib.sha256((root / path).read_bytes()).hexdigest() for path in classes}
-        receipt['accepted'] &= receipt['cleanup_verified'] and receipt['source_stable'] and receipt['jar_stable'] and receipt['compiled_user_stable']
+        receipt['accepted'] &= receipt['cleanup_verified'] and receipt['source_stable'] and receipt['jar_stable'] and receipt['compiled_user_stable'] and receipt['all_four_native_starts_guarded']
         driver.save(report, receipt)
     return receipt
