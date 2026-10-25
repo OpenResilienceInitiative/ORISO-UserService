@@ -80,13 +80,16 @@ public class UserAccountService {
   }
 
   private void completeAcknowledgedSelfDeletion(
-      de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance.AcknowledgedPreDeletion acknowledged) {
+      de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+              .AcknowledgedPreDeletion
+          acknowledged) {
     var completed = new java.util.concurrent.atomic.AtomicReference<User>();
-    acknowledged.completeUser(user -> {
-      deletionLifecycleService.beginUserDeletion(user, user.getUserId());
-      userService.saveUser(user);
-      completed.set(user);
-    });
+    acknowledged.completeUser(
+        user -> {
+          deletionLifecycleService.beginUserDeletion(user, user.getUserId());
+          userService.saveUser(user);
+          completed.set(user);
+        });
     fireAccountDeletionStatisticsEvent(completed.get());
   }
 

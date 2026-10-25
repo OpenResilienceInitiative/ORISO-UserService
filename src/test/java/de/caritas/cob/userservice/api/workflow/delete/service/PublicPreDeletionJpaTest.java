@@ -618,24 +618,45 @@ class PublicPreDeletionJpaTest {
     authenticate(true, "/service/users/account");
     nativeHttp(false);
     loseReply = true;
-    assertThrows(ServiceUnavailableException.class, () -> selfService().deactivateAndFlagUserAccountForDeletion("chosen-original-password"));
+    assertThrows(
+        ServiceUnavailableException.class,
+        () -> selfService().deactivateAndFlagUserAccountForDeletion("chosen-original-password"));
     assertEquals("FROZEN", status());
     assertEquals(1, nativeEffects.get());
-    var second = new User(SECOND, null, new UsernameTranscoder().encodeUsername("pre-deletion"), "asker@fixture.invalid", false);
-    second.setTenantId(7L); second.setLanguageCode(LanguageCode.en); second.setEncourage2fa(false);
-    second.setDeletionLifecycleState(DeletionLifecycleState.ACTIVE); users.save(second);
+    var second =
+        new User(
+            SECOND,
+            null,
+            new UsernameTranscoder().encodeUsername("pre-deletion"),
+            "asker@fixture.invalid",
+            false);
+    second.setTenantId(7L);
+    second.setLanguageCode(LanguageCode.en);
+    second.setEncourage2fa(false);
+    second.setDeletionLifecycleState(DeletionLifecycleState.ACTIVE);
+    users.save(second);
     String secondOperation = "ffffffff-ffff-4fff-bfff-ffffffffffff";
     assertTrue(operation.compareTo(secondOperation) < 0);
     authenticate(true, "/service/users/account", SECOND, secondOperation);
-    http = new RestTemplate(); server = MockRestServiceServer.bindTo(http).build();
-    savedBody = null; savedReply = null; loseReply = true;
+    http = new RestTemplate();
+    server = MockRestServiceServer.bindTo(http).build();
+    savedBody = null;
+    savedReply = null;
+    loseReply = true;
     nativeHttp(false, SECOND, secondOperation);
-    assertThrows(ServiceUnavailableException.class, () -> selfService().deactivateAndFlagUserAccountForDeletion("chosen-original-password"));
+    assertThrows(
+        ServiceUnavailableException.class,
+        () -> selfService().deactivateAndFlagUserAccountForDeletion("chosen-original-password"));
     assertEquals("FROZEN", status(secondOperation));
     assertEquals(2, nativeEffects.get());
-    jdbc.update("update identity_account_operation_intent set updated_at=? where operation_kind='PRE_DELETION'", java.sql.Timestamp.from(ownerClock.instant()));
-    jdbc.update("update identity_account_operation_intent set source_json='{}' where operation_id=?", operation);
-    request.setUserPrincipal(null); request.removeHeader("Authorization");
+    jdbc.update(
+        "update identity_account_operation_intent set updated_at=? where operation_kind='PRE_DELETION'",
+        java.sql.Timestamp.from(ownerClock.instant()));
+    jdbc.update(
+        "update identity_account_operation_intent set source_json='{}' where operation_id=?",
+        operation);
+    request.setUserPrincipal(null);
+    request.removeHeader("Authorization");
     assertEquals(0, selfService().resumeSelfAskerDeletions(1));
     assertEquals(1, selfService().resumeSelfAskerDeletions(1));
     assertEquals("APPLIED", status(secondOperation));
@@ -1114,7 +1135,8 @@ class PublicPreDeletionJpaTest {
     authenticate(self, route, ACCOUNT, operation);
   }
 
-  private void authenticate(boolean self, String route, String boundAccount, String boundOperation) {
+  private void authenticate(
+      boolean self, String route, String boundAccount, String boundOperation) {
     request.setMethod("DELETE");
     request.setRequestURI(route);
     request.removeHeader("Idempotency-Key");
