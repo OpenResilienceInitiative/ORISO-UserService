@@ -217,7 +217,11 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
     binding.put("route", account.requestPath());
     binding.put("originalSql", codec.read(account.originalSqlState(), JsonNode.class));
     binding.put("profile", profile);
-    if (account.reviewedGroup() != null) {
+    if (account.agencyAdminAddition()) {
+      binding.put("publicRoleAddition", codec.read(account.roleAdditionIntent(), JsonNode.class));
+      binding.put(
+          "wholeOriginalSql", codec.read(account.roleAdditionOriginalSql(), JsonNode.class));
+    } else if (account.reviewedGroup() != null) {
       binding.put("reviewedGroup", account.reviewedGroup());
       binding.put("originalRoles", account.originalRoles());
       binding.put("desiredRoles", account.desiredRoles());
@@ -328,6 +332,9 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
         return;
       }
     } else if (fields.equals(Set.of("group", "profile"))) command = "ordinary-profile";
+    else if (fields.equals(Set.of("transition", "group"))
+        && "ADD_AGENCY_ADMIN_IDENTITY".equals(change.path("transition").textValue())
+        && change.path("group").isTextual()) command = "profile-transition";
     else throw invalid();
     codec.verifyMaintenanceNoEffectReceipt(
         receipt, realmId, actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), body, command);
@@ -346,6 +353,9 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
                 receipt, realmId, actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), body);
         case "ordinary-profile" ->
             codec.verifyMaintenanceOrdinaryProfileReceipt(
+                receipt, realmId, actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), body);
+        case "profile-transition" ->
+            codec.verifyMaintenanceProfileTransitionReceipt(
                 receipt, realmId, actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), body);
         default -> throw invalid();
       };
@@ -396,9 +406,15 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
     change.put("lastName", profile.lastName());
     change.put("email", profile.email());
     Object completeChange =
-        account.reviewedGroup() == null
-            ? change
-            : Map.of("group", account.reviewedGroup(), "profile", change);
+        account.agencyAdminAddition()
+            ? Map.of(
+                "transition",
+                "ADD_AGENCY_ADMIN_IDENTITY",
+                "group",
+                Objects.requireNonNull(account.reviewedGroup()))
+            : account.reviewedGroup() == null
+                ? change
+                : Map.of("group", account.reviewedGroup(), "profile", change);
     return Map.of(
         "target",
         target(account),
@@ -432,8 +448,8 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
   private String call(CheckedAccount account, String command, String frozen) {
     account.requireCurrent();
     if (TransactionSynchronizationManager.isActualTransactionActive()
-        || !Set.of("read", "profile", "email", "ordinary-profile").contains(command))
-      throw invalid();
+        || !Set.of("read", "profile", "email", "ordinary-profile", "profile-transition")
+            .contains(command)) throw invalid();
     var actor = actors.require(TaskPurpose.ACCOUNT_MAINTENANCE);
     var token = broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE);
     long now = Instant.now().getEpochSecond();
@@ -493,7 +509,7 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
           || !"no-store".equals(response.getHeaders().getCacheControl())) throw invalid();
       return codec.utf8(raw);
     } catch (RestClientResponseException refusal) {
-      if (Set.of("profile", "email", "ordinary-profile").contains(command)
+      if (Set.of("profile", "email", "ordinary-profile", "profile-transition").contains(command)
           && Set.of(403, 409).contains(refusal.getStatusCode().value())
           && refusal.getResponseHeaders() != null
           && "no-store".equals(refusal.getResponseHeaders().getCacheControl())

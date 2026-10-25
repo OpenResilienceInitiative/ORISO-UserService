@@ -55,4 +55,32 @@ final class ReviewedOrdinaryGroups {
     return new Transition(
         match.getFirst().getKey(), original.stream().sorted().toList(), List.copyOf(desired));
   }
+
+  Transition agencyAdminAddition(List<String> original) {
+    requireConfigured();
+    if (original == null
+        || original.isEmpty()
+        || new HashSet<>(original).size() != original.size()
+        || !Set.of("consultant", "group-chat-consultant", "restricted-agency-admin", "user-admin")
+            .containsAll(original)
+        || !original.contains("consultant")
+        || original.contains("restricted-agency-admin") != original.contains("user-admin"))
+      throw new ScopedIdentityCommandRequiredException();
+    var desired = new TreeSet<>(original);
+    desired.addAll(Set.of("restricted-agency-admin", "user-admin"));
+    var matches =
+        groups.entrySet().stream().filter(entry -> entry.getValue().equals(desired)).toList();
+    if (matches.size() != 1) throw new ScopedIdentityCommandRequiredException();
+    return new Transition(
+        matches.getFirst().getKey(), original.stream().sorted().toList(), List.copyOf(desired));
+  }
+
+  Transition frozenAgencyAdminAddition(String group) {
+    requireConfigured();
+    var desired = groups.get(group);
+    if (desired == null) throw new ScopedIdentityCommandRequiredException();
+    var result = agencyAdminAddition(desired.stream().sorted().toList());
+    if (!result.group().equals(group)) throw new ScopedIdentityCommandRequiredException();
+    return result;
+  }
 }

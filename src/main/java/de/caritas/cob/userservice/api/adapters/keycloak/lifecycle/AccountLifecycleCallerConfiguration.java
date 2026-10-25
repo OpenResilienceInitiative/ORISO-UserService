@@ -364,6 +364,46 @@ public class AccountLifecycleCallerConfiguration {
   }
 
   @Bean
+  ScopedAskerReactivation scopedAskerReactivation(
+      IdentityClientConfig identities,
+      AuthenticatedUser user,
+      de.caritas.cob.userservice.api.admin.service.admin.AdminScope scope,
+      jakarta.servlet.http.HttpServletRequest request,
+      JdbcTemplate jdbc,
+      PlatformTransactionManager manager,
+      TaskActorConfiguration actors,
+      TaskActorTokenBroker broker,
+      AccountLifecycleCodec codec,
+      @Qualifier("keycloakRestTemplate") RestTemplate http,
+      KeycloakConfig keycloak,
+      de.caritas.cob.userservice.api.admin.service.IdentityReactivationSagaStore saga) {
+    String publicServer = keycloak.getAuthServerUrl();
+    String internalServer =
+        environment.getProperty("ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL", publicServer);
+    if (publicServer == null
+        || publicServer.isBlank()
+        || internalServer == null
+        || internalServer.isBlank()) throw invalid();
+    return new ScopedAskerReactivation(
+        identities,
+        user,
+        scope,
+        request,
+        jdbc,
+        manager,
+        actors,
+        broker,
+        codec,
+        http,
+        Clock.systemUTC(),
+        internalServer,
+        publicServer.replaceAll("/+$", "") + "/realms/" + keycloak.getRealm(),
+        keycloak.getRealm(),
+        required("KEYCLOAK_REALM_INTERNAL_ID"),
+        saga);
+  }
+
+  @Bean
   SelfPasswordMaintenance selfPasswordMaintenance(
       IdentityClientConfig identities,
       AuthenticatedUser user,
