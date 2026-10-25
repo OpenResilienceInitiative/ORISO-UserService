@@ -48,7 +48,8 @@ public class AskerUserAdminFacade {
   @org.springframework.beans.factory.annotation.Autowired
   public void setScopedPreDeletion(
       @org.springframework.lang.Nullable
-          de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance owner) {
+          de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+              owner) {
     preDeletion = owner;
   }
 

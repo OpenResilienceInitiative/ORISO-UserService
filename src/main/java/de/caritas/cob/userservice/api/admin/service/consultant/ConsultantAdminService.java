@@ -83,7 +83,8 @@ public class ConsultantAdminService {
   public void setScopedPreDeletion(
       de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode,
       @org.springframework.lang.Nullable
-          de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance owner) {
+          de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+              owner) {
     identityMode = mode;
     preDeletion = owner;
   }
@@ -232,7 +233,8 @@ public class ConsultantAdminService {
           forceDeleteSessions,
           acknowledged -> {
             // Closed until the actual signed-ACK and mixed RPC/JPA fixture reaches this frontier.
-            throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+            throw new de.caritas.cob.userservice.api.port.out
+                .ScopedIdentityCommandRequiredException();
           });
       return;
     }

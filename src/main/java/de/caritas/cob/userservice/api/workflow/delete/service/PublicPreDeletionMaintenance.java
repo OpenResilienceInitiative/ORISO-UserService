@@ -20,7 +20,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.web.client.RestTemplate;
 
-/** CLOSED test-first producer seam. No JSON/target/receipt can issue its private acknowledgement. */
+/**
+ * CLOSED test-first producer seam. No JSON/target/receipt can issue its private acknowledgement.
+ */
 @RequiredArgsConstructor
 public final class PublicPreDeletionMaintenance {
   private final @NonNull IdentityClientConfig mode;
@@ -58,8 +60,7 @@ public final class PublicPreDeletionMaintenance {
     throw new ScopedIdentityCommandRequiredException();
   }
 
-  public int recoverSelfAskerOutcomes(
-      int limit, Consumer<AcknowledgedPreDeletion> continuation) {
+  public int recoverSelfAskerOutcomes(int limit, Consumer<AcknowledgedPreDeletion> continuation) {
     throw new ScopedIdentityCommandRequiredException();
   }
 
