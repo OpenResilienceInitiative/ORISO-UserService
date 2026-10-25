@@ -619,8 +619,18 @@ class PublicPreDeletionJpaTest {
 
   @Test
   void boundedColdRecoveryDoesNotStarveTheNextRealOwnedOutcomeBehindAPoisonFirstRow() {
+    proveRecoveryHintOrder(Instant.now());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(ints = {1, 123456001, 123456789, 999999999})
+  void boundedRecoveryHintMovesBehindTheNextAccountAtEverySubMicrosecondBoundary(int nanos) {
+    proveRecoveryHintOrder(Instant.ofEpochSecond(Instant.now().getEpochSecond(), nanos));
+  }
+
+  private void proveRecoveryHintOrder(Instant exactClock) {
     asker();
-    ownerClock = Clock.fixed(Instant.now(), ZoneOffset.UTC);
+    ownerClock = Clock.fixed(exactClock, ZoneOffset.UTC);
     authenticate(true, "/service/users/account");
     nativeHttp(false);
     loseReply = true;
