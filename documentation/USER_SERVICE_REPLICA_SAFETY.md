@@ -53,10 +53,12 @@ correctness or duplicate-side-effect entry is marked `blocker`.
 
 ## Scheduled workflows
 
-Every scheduled workflow is protected against two instances running at once
-(a rolling update or restart overlap). Each such inventory entry carries a
-`claim` object naming its mechanism, and the CI contract checks that the named
-source really contains it:
+Every scheduled workflow must stay correct when two instances overlap (a
+rolling update or restart overlap). That does not mean every run is exclusive.
+Entries with a `claim` object name their mechanism, and the CI contract checks
+that the named source really contains it. The first three mechanisms below make
+a run exclusive; `idempotent-statement` deliberately allows concurrent runs
+because running the statement twice has the same effect as running it once:
 
 - `scheduled-task-claim`: the class calls `ScheduledTaskClaimService`
   (`tryClaim`, `tryClaimLease` or `runIfClaimed`). A second instance sees the
