@@ -25,8 +25,12 @@ class ConsultantGrantMatrixCodecTest {
       String saved = codec.canonical(original);
       var mac = Mac.getInstance("HmacSHA256");
       mac.init(new SecretKeySpec(KEY, "HmacSHA256"));
-      String expected = HexFormat.of().formatHex(mac.doFinal(
-          ("claimed-consultant-grant-matrix/v1\n" + saved).getBytes(StandardCharsets.UTF_8)));
+      String expected =
+          HexFormat.of()
+              .formatHex(
+                  mac.doFinal(
+                      ("claimed-consultant-grant-matrix/v1\n" + saved)
+                          .getBytes(StandardCharsets.UTF_8)));
       String actual = assertDoesNotThrow(() -> codec.claimedConsultantGrantMatrixDigest(original));
       assertEquals(expected, actual);
       assertEquals(saved, codec.canonical(original));
@@ -35,34 +39,54 @@ class ConsultantGrantMatrixCodecTest {
 
   @Test
   void wrongShapeTypesPhaseResultAndWholeCapsuleBoundsFailBeforeMac() {
-    List<Consumer<ObjectNode>> invalid = List.of(
-        node -> node.put("rawBearer", "synthetic"),
-        node -> node.remove("result"),
-        node -> node.put("representation", "SELF_PASSWORD"),
-        node -> node.put("operationId", "AA000000-0000-4000-8000-000000000001"),
-        node -> node.put("accountId", 1),
-        node -> node.put("requestDigest", "A".repeat(64)),
-        node -> node.put("localpart", "Owned"),
-        node -> node.put("localpart", ""),
-        node -> node.put("localpart", "foreign:server"),
-        node -> node.put("localpart", "@foreign"),
-        node -> node.put("localpart", "line\nbreak"),
-        node -> node.put("phase", "APPLIED"),
-        node -> node.put("phase", "ACKNOWLEDGED"),
-        node -> node.put("result", "@owned-counsellor:fixture.invalid"),
-        node -> { node.put("phase", "NO_EFFECT"); node.put("result", "@owned-counsellor:fixture.invalid"); },
-        node -> { node.put("phase", "ACKNOWLEDGED"); node.put("result", "@foreign:fixture.invalid"); },
-        node -> { node.put("phase", "ACKNOWLEDGED"); node.put("result", "@owned-counsellor:"); },
-        node -> { node.put("phase", "ACKNOWLEDGED"); node.put("result", true); },
-        node -> { node.put("phase", "ACKNOWLEDGED"); node.put("localpart", "a".repeat(220)); node.put("result", "@" + "a".repeat(220) + ":" + "b".repeat(280)); });
+    List<Consumer<ObjectNode>> invalid =
+        List.of(
+            node -> node.put("rawBearer", "synthetic"),
+            node -> node.remove("result"),
+            node -> node.put("representation", "SELF_PASSWORD"),
+            node -> node.put("operationId", "AA000000-0000-4000-8000-000000000001"),
+            node -> node.put("accountId", 1),
+            node -> node.put("requestDigest", "A".repeat(64)),
+            node -> node.put("localpart", "Owned"),
+            node -> node.put("localpart", ""),
+            node -> node.put("localpart", "foreign:server"),
+            node -> node.put("localpart", "@foreign"),
+            node -> node.put("localpart", "line\nbreak"),
+            node -> node.put("phase", "APPLIED"),
+            node -> node.put("phase", "ACKNOWLEDGED"),
+            node -> node.put("result", "@owned-counsellor:fixture.invalid"),
+            node -> {
+              node.put("phase", "NO_EFFECT");
+              node.put("result", "@owned-counsellor:fixture.invalid");
+            },
+            node -> {
+              node.put("phase", "ACKNOWLEDGED");
+              node.put("result", "@foreign:fixture.invalid");
+            },
+            node -> {
+              node.put("phase", "ACKNOWLEDGED");
+              node.put("result", "@owned-counsellor:");
+            },
+            node -> {
+              node.put("phase", "ACKNOWLEDGED");
+              node.put("result", true);
+            },
+            node -> {
+              node.put("phase", "ACKNOWLEDGED");
+              node.put("localpart", "a".repeat(220));
+              node.put("result", "@" + "a".repeat(220) + ":" + "b".repeat(280));
+            });
     for (var change : invalid) {
       ObjectNode value = data("STARTED");
       change.accept(value);
-      assertThrows(IllegalArgumentException.class, () -> codec.claimedConsultantGrantMatrixDigest(value));
+      assertThrows(
+          IllegalArgumentException.class, () -> codec.claimedConsultantGrantMatrixDigest(value));
     }
-    assertThrows(IllegalArgumentException.class,
+    assertThrows(
+        IllegalArgumentException.class,
         () -> codec.claimedConsultantGrantMatrixDigest(codec.read("[]", JsonNode.class)));
-    assertThrows(IllegalArgumentException.class, () -> codec.claimedConsultantGrantMatrixDigest(null));
+    assertThrows(
+        IllegalArgumentException.class, () -> codec.claimedConsultantGrantMatrixDigest(null));
   }
 
   private ObjectNode data(String phase) {
