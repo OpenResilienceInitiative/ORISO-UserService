@@ -238,15 +238,19 @@ public class ConsultantAdminService {
           });
       return;
     }
-    if (preDeletionTransactions == null) markConsultantForDeletionLegacy(consultantId, forceDeleteSessions);
-    else new org.springframework.transaction.support.TransactionTemplate(preDeletionTransactions)
-        .executeWithoutResult(ignored -> markConsultantForDeletionLegacy(consultantId, forceDeleteSessions));
+    if (preDeletionTransactions == null)
+      markConsultantForDeletionLegacy(consultantId, forceDeleteSessions);
+    else
+      new org.springframework.transaction.support.TransactionTemplate(preDeletionTransactions)
+          .executeWithoutResult(
+              ignored -> markConsultantForDeletionLegacy(consultantId, forceDeleteSessions));
   }
 
   private org.springframework.transaction.PlatformTransactionManager preDeletionTransactions;
 
   @org.springframework.beans.factory.annotation.Autowired
-  public void setPreDeletionTransactions(org.springframework.transaction.PlatformTransactionManager manager) {
+  public void setPreDeletionTransactions(
+      org.springframework.transaction.PlatformTransactionManager manager) {
     preDeletionTransactions = java.util.Objects.requireNonNull(manager);
   }
 
