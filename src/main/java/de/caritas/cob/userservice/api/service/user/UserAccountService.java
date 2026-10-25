@@ -265,6 +265,8 @@ public class UserAccountService {
    * deletion.
    */
   public void deactivateAndFlagUserAccountForDeletion() {
+    if (identityClientConfig.isFiveActorMode())
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
     User user = retrieveValidatedUser();
     this.identityDeactivator.deactivateUser(user.getUserId());
     deletionLifecycleService.beginUserDeletion(user, user.getUserId());

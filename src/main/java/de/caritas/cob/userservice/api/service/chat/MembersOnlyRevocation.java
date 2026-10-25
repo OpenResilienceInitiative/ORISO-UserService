@@ -57,6 +57,25 @@ public class MembersOnlyRevocation {
   private final ChatRepository chatRepository;
   private final MatrixChatShutdownService shutdownService;
 
+  /** Fixed C continuation, issued only from the actual private pre-deletion ACK. */
+  public PreparedRemoval prepareAcknowledgedDeletion(
+      de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance.AcknowledgedPreDeletion acknowledged,
+      boolean forceDeleteSessions) {
+    throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+  }
+
+  public static final class PreparedRemoval {
+    private PreparedRemoval() {}
+
+    public void apply(Consultant independentlyLoadedOriginal) {
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    }
+
+    public boolean keepCaseOnDeletionOf(Session session, Consultant independentlyLoadedOriginal) {
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    }
+  }
+
   /**
    * Call before the participation of {@code leaving} is deleted, in the same transaction. Does
    * nothing for an ordinary chat.

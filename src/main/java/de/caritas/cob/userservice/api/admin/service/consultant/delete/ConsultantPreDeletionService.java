@@ -29,6 +29,21 @@ public class ConsultantPreDeletionService {
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull IdentityDeactivator identityDeactivator;
 
+  /** Fixed C preparation; no relation may be written before the original native ACK. */
+  public PreparedRelations prepareAcknowledgedDeletion(
+      de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance.AcknowledgedPreDeletion acknowledged,
+      Boolean forceDeleteSessions) {
+    throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+  }
+
+  public static final class PreparedRelations {
+    private PreparedRelations() {}
+
+    public void apply(Consultant independentlyLoadedOriginal, LocalDateTime deletedAt) {
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    }
+  }
+
   /**
    * Validates if {@link Consultant} can be deleted and marks its agency relations.
    *

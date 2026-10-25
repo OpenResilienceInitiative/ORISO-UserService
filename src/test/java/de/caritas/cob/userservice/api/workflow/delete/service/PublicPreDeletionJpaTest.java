@@ -26,6 +26,14 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.Chat;
+import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.GroupChatParticipant;
+import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.SessionSupervisor;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
+import de.caritas.cob.userservice.api.actions.chat.MatrixChatShutdownService;
+import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.picture.ConsultantPictureAccess;
 import de.caritas.cob.userservice.api.picture.ConsultantPictureStore;
@@ -103,6 +111,8 @@ import org.springframework.web.client.RestTemplate;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PublicPreDeletionJpaTest {
   private static final String ACCOUNT = "81000000-0000-4000-8000-000000000011";
+  private static final String ASKER = "81000000-0000-4000-8000-000000000013";
+  private static final String SUCCESSOR = "81000000-0000-4000-8000-000000000014";
   private static final String HUMAN = "81000000-0000-4000-8000-000000000012";
   @Autowired private DataSource dataSource;
   @Autowired private PlatformTransactionManager transactions;
@@ -114,6 +124,9 @@ class PublicPreDeletionJpaTest {
   @Autowired private ConsultantAgencyRepository consultantAgencies;
   @Autowired private UserAgencyRepository userAgencies;
   @Autowired private SessionRepository sessions;
+  @Autowired private ChatRepository chats;
+  @Autowired private GroupChatParticipantRepository participants;
+  @Autowired private SessionSupervisorRepository supervisions;
   @Autowired private ConsultantPictureRepository pictures;
   private final AtomicInteger genericAttempts = new AtomicInteger();
   private AuthenticatedUser actor;
@@ -171,6 +184,13 @@ class PublicPreDeletionJpaTest {
                 "db/changelog/changeset/20261023_existing_import_intent_367/migrate.sql"))
         .execute(dataSource);
 
+    jdbc.update("delete from session_supervisor where supervisor_consultant_id in (?,?) or session_id in (select id from session where user_id=?)", ACCOUNT, SUCCESSOR, ASKER);
+    jdbc.update("delete from group_chat_participant where consultant_id in (?,?)", ACCOUNT, SUCCESSOR);
+    jdbc.update("delete from chat where consultant_id_owner in (?,?)", ACCOUNT, SUCCESSOR);
+    jdbc.update("delete from session where user_id=?", ASKER);
+    jdbc.update("delete from consultant_agency where consultant_id=?", ACCOUNT);
+    users.findById(ASKER).ifPresent(users::delete);
+    consultants.findById(SUCCESSOR).ifPresent(consultants::delete);
     users.findById(ACCOUNT).ifPresent(users::delete);
     consultants.findById(ACCOUNT).ifPresent(consultants::delete);
     admins.findById(ACCOUNT).ifPresent(admins::delete);
@@ -579,6 +599,198 @@ class PublicPreDeletionJpaTest {
     assertEquals(1, nativeReads.get());
     assertEquals(0, nativeEffects.get());
     verifyNoInteractions(memberships);
+  }
+
+  @Test
+  void acknowledgedMembershipPreparationLeavesSideAndMainRoomsOutsideSqlThenCommitsAllLocalRows() {
+    consultant();
+    var fixture = membershipFixture(true);
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    var remote = mock(GroupChatMembershipService.class);
+    doAnswer(call -> {
+      assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+      assertEquals("ACKNOWLEDGED", status());
+      assertTrue(participants.findById(fixture.participation()).isPresent());
+      assertNull(consultants.findById(ACCOUNT).orElseThrow().getDeleteDate());
+      return null;
+    }).when(remote).removeMemberFromRoomOrFail(anyString(), anyString());
+    doAnswer(call -> {
+      assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+      assertEquals("ACKNOWLEDGED", status());
+      return null;
+    }).when(remote).removeParticipantFromRoom(any(), anyString());
+    var memberOwner = realMemberships(remote, mock(MatrixChatShutdownService.class));
+    assertDoesNotThrow(() -> owner().startAdminConsultant(ACCOUNT, false, ack -> {
+      var prepared = memberOwner.prepareAcknowledgedDeletion(ack, false);
+      ack.completeConsultant(actual -> {
+        prepared.apply(actual);
+        lifecycle.beginConsultantDeletion(actual, HUMAN);
+        actual.setStatus(de.caritas.cob.userservice.api.model.ConsultantStatus.IN_DELETION);
+        consultants.save(actual);
+      });
+    }));
+    assertEquals("APPLIED", status());
+    assertFalse(participants.findById(fixture.participation()).isPresent());
+    assertEquals(SUCCESSOR, sessions.findById(fixture.session()).orElseThrow().getConsultant().getId());
+    assertFalse(supervisions.findById(fixture.supervision()).orElseThrow().getIsActive());
+    verify(remote).removeMemberFromRoomOrFail("!side:fixture.invalid", "@pre-deletion:fixture.invalid");
+    verify(remote).removeParticipantFromRoom(any(), eq("@pre-deletion:fixture.invalid"));
+  }
+
+  @Test
+  void acknowledgedSoleOwnerPreparationPurgesOutsideSqlAndRetiresOnlyItsOriginalChat() {
+    consultant();
+    var fixture = membershipFixture(false);
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    var shutdown = mock(MatrixChatShutdownService.class);
+    doAnswer(call -> {
+      assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+      assertTrue(chats.findById(fixture.chat()).isPresent());
+      assertEquals("ACKNOWLEDGED", status());
+      return null;
+    }).when(shutdown).shutdownRoom(any());
+    var memberOwner = realMemberships(mock(GroupChatMembershipService.class), shutdown);
+    assertDoesNotThrow(() -> owner().startAdminConsultant(ACCOUNT, true, ack -> {
+      var prepared = memberOwner.prepareAcknowledgedDeletion(ack, true);
+      ack.completeConsultant(actual -> {
+        prepared.apply(actual);
+        lifecycle.beginConsultantDeletion(actual, HUMAN);
+        actual.setStatus(de.caritas.cob.userservice.api.model.ConsultantStatus.IN_DELETION);
+        consultants.save(actual);
+      });
+    }));
+    assertEquals("APPLIED", status());
+    assertFalse(chats.findById(fixture.chat()).isPresent());
+    assertFalse(participants.findById(fixture.participation()).isPresent());
+    assertEquals(Session.SessionStatus.DONE, sessions.findById(fixture.session()).orElseThrow().getStatus());
+    verify(shutdown).shutdownRoom(argThat(chat -> chat.getId().equals(fixture.chat())));
+  }
+
+  @Test
+  void unknownMembershipReplyRetainsAckAndEverySqlRowForColdExactRetry() {
+    consultant();
+    var fixture = membershipFixture(true);
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    var remote = mock(GroupChatMembershipService.class);
+    doThrow(new ServiceUnavailableException("Unknown fixture room leave"))
+        .doNothing().when(remote).removeParticipantFromRoom(any(), anyString());
+    assertThrows(ServiceUnavailableException.class, () -> completeMembershipDeletion(realMemberships(remote, mock(MatrixChatShutdownService.class)), false));
+    assertEquals("ACKNOWLEDGED", status());
+    assertTrue(participants.findById(fixture.participation()).isPresent());
+    assertTrue(supervisions.findById(fixture.supervision()).orElseThrow().getIsActive());
+    assertNull(consultants.findById(ACCOUNT).orElseThrow().getDeleteDate());
+    assertDoesNotThrow(() -> completeMembershipDeletion(realMemberships(remote, mock(MatrixChatShutdownService.class)), false));
+    assertEquals("APPLIED", status());
+    assertEquals(1, nativeEffects.get());
+    assertFalse(participants.findById(fixture.participation()).isPresent());
+  }
+
+  @Test
+  void membershipRoomDriftDuringRemoteLeaveCannotAuthorizeChangedRelationsOrCompletion() {
+    consultant();
+    var fixture = membershipFixture(true);
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    var remote = mock(GroupChatMembershipService.class);
+    doAnswer(call -> {
+      assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+      jdbc.update("update chat set matrix_room_id=? where id=?", "!replacement:fixture.invalid", fixture.chat());
+      return null;
+    }).when(remote).removeParticipantFromRoom(any(), anyString());
+    assertThrows(ConflictException.class, () -> completeMembershipDeletion(realMemberships(remote, mock(MatrixChatShutdownService.class)), false));
+    assertEquals("ACKNOWLEDGED", status());
+    assertTrue(participants.findById(fixture.participation()).isPresent());
+    assertTrue(supervisions.findById(fixture.supervision()).orElseThrow().getIsActive());
+    assertNull(consultants.findById(ACCOUNT).orElseThrow().getDeleteDate());
+  }
+
+  @Test
+  void acknowledgedAgencyValidationReadsRemoteOutsideSqlAndMarksRelationOnlyInFinalJpa() {
+    consultant();
+    var relation = consultantAgencies.save(ConsultantAgency.builder().consultant(consultants.findById(ACCOUNT).orElseThrow()).agencyId(71L).tenantId(7L).createDate(LocalDateTime.of(2024,1,2,3,4)).build());
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    var agency = mock(AgencyService.class);
+    when(agency.getAgencyWithoutCaching(71L)).thenAnswer(call -> {
+      assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+      assertEquals("ACKNOWLEDGED", status());
+      assertNull(consultantAgencies.findById(relation.getId()).orElseThrow().getDeleteDate());
+      return new AgencyDTO().offline(true);
+    });
+    var presteps = new ConsultantPreDeletionService(new ConsultantAgencyDeletionValidationService(consultantAgencies, agency, sessions), sessions, new ClosedGenericDeactivator());
+    assertDoesNotThrow(() -> owner().startAdminConsultant(ACCOUNT, false, ack -> {
+      var prepared = presteps.prepareAcknowledgedDeletion(ack, false);
+      ack.completeConsultant(actual -> {
+        var deletedAt = LocalDateTime.now(ZoneOffset.UTC);
+        prepared.apply(actual, deletedAt);
+        actual.setDeleteDate(deletedAt);
+        lifecycle.beginConsultantDeletion(actual, HUMAN);
+        actual.setStatus(de.caritas.cob.userservice.api.model.ConsultantStatus.IN_DELETION);
+        consultants.save(actual);
+      });
+    }));
+    var saved = consultants.findById(ACCOUNT).orElseThrow();
+    assertEquals("APPLIED", status());
+    assertEquals(saved.getDeleteDate(), consultantAgencies.findById(relation.getId()).orElseThrow().getDeleteDate());
+    verify(agency).getAgencyWithoutCaching(71L);
+  }
+
+  @Test
+  void activeLastAgencyRefusalAfterNativeAckCannotMarkEitherLocalRow() {
+    consultant();
+    var relation = consultantAgencies.save(ConsultantAgency.builder().consultant(consultants.findById(ACCOUNT).orElseThrow()).agencyId(71L).tenantId(7L).createDate(LocalDateTime.of(2024,1,2,3,4)).build());
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    var agency = mock(AgencyService.class);
+    when(agency.getAgencyWithoutCaching(71L)).thenReturn(new AgencyDTO().offline(false));
+    var presteps = new ConsultantPreDeletionService(new ConsultantAgencyDeletionValidationService(consultantAgencies, agency, sessions), sessions, new ClosedGenericDeactivator());
+    assertThrows(CustomValidationHttpStatusException.class, () -> owner().startAdminConsultant(ACCOUNT, false, ack -> {
+      presteps.prepareAcknowledgedDeletion(ack, false);
+      fail("Active agency must veto before final completion");
+    }));
+    assertEquals("ACKNOWLEDGED", status());
+    assertNull(consultantAgencies.findById(relation.getId()).orElseThrow().getDeleteDate());
+    assertNull(consultants.findById(ACCOUNT).orElseThrow().getDeleteDate());
+    assertEquals(1, nativeEffects.get());
+  }
+
+  private void completeMembershipDeletion(MembersOnlyRevocation memberOwner, boolean force) {
+    owner().startAdminConsultant(ACCOUNT, force, ack -> {
+      var prepared = memberOwner.prepareAcknowledgedDeletion(ack, force);
+      ack.completeConsultant(actual -> {
+        prepared.apply(actual);
+        lifecycle.beginConsultantDeletion(actual, HUMAN);
+        actual.setStatus(de.caritas.cob.userservice.api.model.ConsultantStatus.IN_DELETION);
+        consultants.save(actual);
+      });
+    });
+  }
+
+  private MembersOnlyRevocation realMemberships(GroupChatMembershipService remote, MatrixChatShutdownService shutdown) {
+    return new MembersOnlyRevocation(sessions, consultants, participants, supervisions, remote, chats, shutdown);
+  }
+
+  private record MembershipFixture(Long chat, Long session, Long participation, Long supervision) {}
+
+  private MembershipFixture membershipFixture(boolean remaining) {
+    var leaving = consultants.findById(ACCOUNT).orElseThrow();
+    leaving.setMatrixUserId("@pre-deletion:fixture.invalid");
+    consultants.save(leaving);
+    var successor = consultants.save(Consultant.builder().id(SUCCESSOR).username("successor").firstName("Fixture").lastName("Successor").email("successor@fixture.invalid").tenantId(7L).matrixUserId("@successor:fixture.invalid").languageCode(LanguageCode.en).encourage2fa(false).magicLinkLoginEnabled(false).notifyEnquiriesRepeating(true).notifyNewChatMessageFromAdviceSeeker(true).createDate(LocalDateTime.of(2024,1,2,3,4)).build());
+    var asker = new User(ASKER, null, "fixture-asker", "asker@fixture.invalid", false);
+    asker.setTenantId(7L);
+    asker.setLanguageCode(LanguageCode.en);
+    asker.setEncourage2fa(false);
+    asker = users.save(asker);
+    var session = sessions.save(Session.builder().user(asker).consultant(leaving).postcode("12345").languageCode(LanguageCode.de).registrationType(Session.RegistrationType.REGISTERED).status(Session.SessionStatus.IN_PROGRESS).matrixRoomId("!main:fixture.invalid").isConsultantDirectlySet(false).tenantId(7L).createDate(LocalDateTime.of(2024,1,2,3,4)).build());
+    var chat = chats.save(Chat.builder().topic("Private fixture").initialStartDate(LocalDateTime.of(2024,1,2,3,4)).startDate(LocalDateTime.of(2024,1,2,3,4)).duration(30).chatOwner(leaving).membersOnly(true).matrixRoomId("!main:fixture.invalid").createDate(LocalDateTime.of(2024,1,2,3,4)).build());
+    var participation = participants.save(GroupChatParticipant.builder().chatId(session.getId()).seriesId(chat.getId()).consultantId(ACCOUNT).role(GroupChatParticipant.ParticipantRole.OWNER).build());
+    if (remaining) participants.save(GroupChatParticipant.builder().chatId(session.getId()).seriesId(chat.getId()).consultantId(SUCCESSOR).role(GroupChatParticipant.ParticipantRole.PARTICIPANT).build());
+    var supervision = supervisions.save(SessionSupervisor.builder().session(session).supervisorConsultant(leaving).addedByConsultant(successor).addedDate(LocalDateTime.of(2024,1,2,3,4)).isActive(true).matrixRoomId("!side:fixture.invalid").build());
+    return new MembershipFixture(chat.getId(), session.getId(), participation.getId(), supervision.getId());
   }
 
   private AskerUserAdminFacade adminAskerService() {

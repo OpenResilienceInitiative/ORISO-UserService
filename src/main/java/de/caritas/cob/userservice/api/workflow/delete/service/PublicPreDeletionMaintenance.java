@@ -130,7 +130,23 @@ public final class PublicPreDeletionMaintenance {
     String digest =
         codec.digest(
             "public-pre-deletion-request/v1", binding(kind, account, force, password, current));
-    Intent intent = tx(() -> prepare(kind, account, operation, force, digest, current, actor));
+    PreDeletionSqlSnapshot.Snapshot passwordSource = null;
+    if (kind.equals("SELF_ASKER")) {
+      passwordSource =
+          tx(
+              () -> {
+                if (find(operation, true) != null) return null;
+                var actual = PreDeletionSqlSnapshot.capture(jdbc, codec, false, account, true);
+                exclusive(account, false);
+                authorize(kind, account, current, actual);
+                requireEligible(actual);
+                return actual;
+              });
+      if (passwordSource != null) validateCurrentPassword(passwordSource.core(), password);
+    }
+    var authenticatedSource = passwordSource;
+    Intent intent =
+        tx(() -> prepare(kind, account, operation, force, digest, current, actor, authenticatedSource));
     if ("REFUSED".equals(intent.status)) throw refusal(intent, actor);
     if ("APPLIED".equals(intent.status)) {
       String result =
@@ -145,13 +161,8 @@ public final class PublicPreDeletionMaintenance {
       if (kind.equals("SELF_ASKER")) {
         var source = source(intent);
         requireOriginalDeadline(source);
-        String username =
-            new UsernameTranscoder()
-                .decodeUsername(source.path("originalSql").path("username").asText());
-        if (!passwords.validatePasswordIgnoring2fa(username, password)
-            && !passwords.validatePasswordIgnoring2fa(
-                source.path("originalSql").path("username").asText(), password))
-          throw new BadRequestException("The current password was not accepted");
+        if (authenticatedSource == null)
+          validateCurrentPassword(source.path("originalSql"), password);
       }
       String read = call(intent, "read", current);
       String state = projection(intent, read);
@@ -393,11 +404,14 @@ public final class PublicPreDeletionMaintenance {
       Boolean force,
       String digest,
       ActualHuman current,
-      TaskActorCredentials actor) {
+      TaskActorCredentials actor,
+      PreDeletionSqlSnapshot.Snapshot authenticatedSource) {
     var actual =
         PreDeletionSqlSnapshot.capture(jdbc, codec, kind.equals("ADMIN_CONSULTANT"), account, true);
     exclusive(account, kind.equals("ADMIN_CONSULTANT"));
     authorize(kind, account, current, actual);
+    if (authenticatedSource != null && !authenticatedSource.core().equals(actual.core()))
+      throw conflict();
     Intent old = find(operation, true);
     if (old != null) {
       var source = source(old);
@@ -410,10 +424,7 @@ public final class PublicPreDeletionMaintenance {
       checked(old);
       return old;
     }
-    if (!actual.full().path("delete_date").isNull()
-        || !actual.full().path("deletion_lifecycle_state").isNull()
-            && !"ACTIVE".equals(actual.full().path("deletion_lifecycle_state").asText()))
-      throw conflict();
+    requireEligible(actual);
     if (!jdbc.queryForList(
             "select operation_id from identity_account_operation_intent where account_id=? and operation_kind=? and status in ('PREPARED','FROZEN','ACKNOWLEDGED') for update",
             account,
@@ -457,6 +468,28 @@ public final class PublicPreDeletionMaintenance {
         codec.canonical(value),
         now());
     return find(operation, true);
+  }
+
+  private void validateCurrentPassword(JsonNode originalSql, String password) {
+    outside();
+    String encoded = originalSql.path("username").asText();
+    String decoded = new UsernameTranscoder().decodeUsername(encoded);
+    boolean accepted;
+    try {
+      accepted = passwords.validatePasswordIgnoring2fa(decoded, password);
+      if (!accepted && !encoded.equals(decoded))
+        accepted = passwords.validatePasswordIgnoring2fa(encoded, password);
+    } catch (RuntimeException unknown) {
+      throw unavailable();
+    }
+    if (!accepted) throw new BadRequestException("The current password was not accepted");
+  }
+
+  private void requireEligible(PreDeletionSqlSnapshot.Snapshot actual) {
+    if (!actual.full().path("delete_date").isNull()
+        || !actual.full().path("deletion_lifecycle_state").isNull()
+            && !"ACTIVE".equals(actual.full().path("deletion_lifecycle_state").asText()))
+      throw conflict();
   }
 
   private Intent freeze(Intent original, String state) {
