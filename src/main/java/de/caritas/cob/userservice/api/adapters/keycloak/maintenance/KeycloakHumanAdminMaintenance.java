@@ -340,7 +340,8 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
       }
     } else if (fields.equals(Set.of("group", "profile"))) command = "ordinary-profile";
     else if (fields.equals(Set.of("transition", "group"))
-        && Set.of("ADD_AGENCY_ADMIN_IDENTITY", "ADD_CONSULTANT_IDENTITY").contains(change.path("transition").textValue())
+        && Set.of("ADD_AGENCY_ADMIN_IDENTITY", "ADD_CONSULTANT_IDENTITY")
+            .contains(change.path("transition").textValue())
         && change.path("group").isTextual()) command = "profile-transition";
     else throw invalid();
     codec.verifyMaintenanceNoEffectReceipt(
@@ -416,7 +417,9 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
         account.agencyAdminAddition() || account.consultantIdentityAddition()
             ? Map.of(
                 "transition",
-                account.consultantIdentityAddition() ? "ADD_CONSULTANT_IDENTITY" : "ADD_AGENCY_ADMIN_IDENTITY",
+                account.consultantIdentityAddition()
+                    ? "ADD_CONSULTANT_IDENTITY"
+                    : "ADD_AGENCY_ADMIN_IDENTITY",
                 "group",
                 Objects.requireNonNull(account.reviewedGroup()))
             : account.reviewedGroup() == null

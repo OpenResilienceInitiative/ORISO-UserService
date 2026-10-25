@@ -86,17 +86,21 @@ final class ReviewedOrdinaryGroups {
 
   Transition consultantAddition(List<String> original, Set<String> required) {
     requireConfigured();
-    if (original == null || new HashSet<>(original).size() != original.size()
+    if (original == null
+        || new HashSet<>(original).size() != original.size()
         || !Set.copyOf(original).equals(Set.of("restricted-agency-admin", "user-admin"))
-        || !groups.containsValue(Set.copyOf(original)) || required == null
+        || !groups.containsValue(Set.copyOf(original))
+        || required == null
         || !required.contains("consultant")
-        || !Set.of("consultant", "group-chat-consultant", "restricted-agency-admin", "user-admin").containsAll(required))
-      throw new ScopedIdentityCommandRequiredException();
+        || !Set.of("consultant", "group-chat-consultant", "restricted-agency-admin", "user-admin")
+            .containsAll(required)) throw new ScopedIdentityCommandRequiredException();
     var desired = new TreeSet<>(original);
     desired.addAll(required);
-    var matches = groups.entrySet().stream().filter(entry -> entry.getValue().equals(desired)).toList();
+    var matches =
+        groups.entrySet().stream().filter(entry -> entry.getValue().equals(desired)).toList();
     if (matches.size() != 1) throw new ScopedIdentityCommandRequiredException();
-    return new Transition(matches.getFirst().getKey(), original.stream().sorted().toList(), List.copyOf(desired));
+    return new Transition(
+        matches.getFirst().getKey(), original.stream().sorted().toList(), List.copyOf(desired));
   }
 
   Transition frozenConsultantAddition(String group, Set<String> required) {
@@ -105,6 +109,7 @@ final class ReviewedOrdinaryGroups {
     var expected = consultantAddition(List.of("restricted-agency-admin", "user-admin"), required);
     if (selected == null || !expected.group().equals(group))
       throw new ScopedIdentityCommandRequiredException();
-    return new Transition(group, selected.stream().sorted().toList(), selected.stream().sorted().toList());
+    return new Transition(
+        group, selected.stream().sorted().toList(), selected.stream().sorted().toList());
   }
 }

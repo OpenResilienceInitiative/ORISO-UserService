@@ -134,8 +134,10 @@ class GrantConsultantIdentityScopedJpaTest {
   @MockitoBean private IdentityRoleUpdater genericRoles;
   @MockitoBean private IdentityRoleLookup genericRoleLookup;
   @MockitoBean private MatrixUserClient matrix;
+
   @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
   private de.caritas.cob.userservice.api.service.ConsultantService localConsultants;
+
   @MockitoBean private de.caritas.cob.userservice.api.admin.service.tenant.TenantService tenants;
 
   @MockitoBean
@@ -543,14 +545,21 @@ class GrantConsultantIdentityScopedJpaTest {
   @Test
   void firstReadLossKeepsOriginalGrantSourceAndRejectsRecreatedAdminBeforeAnotherRead() {
     lostReadReply = true;
-    assertThrows(RuntimeException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
+    assertThrows(
+        RuntimeException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
     assertEquals("PREPARED", phase());
     assertEquals(1, reads.get());
     assertEquals(0, effects.get());
     assertEquals(0, matrixCalls.get());
-    var birth = jdbc.queryForObject("select create_date from admin where admin_id=?", java.sql.Timestamp.class, ACCOUNT);
-    jdbc.update("update admin set create_date=? where admin_id=?", java.sql.Timestamp.valueOf(birth.toLocalDateTime().plusSeconds(1)), ACCOUNT);
-    assertThrows(RuntimeException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
+    var birth =
+        jdbc.queryForObject(
+            "select create_date from admin where admin_id=?", java.sql.Timestamp.class, ACCOUNT);
+    jdbc.update(
+        "update admin set create_date=? where admin_id=?",
+        java.sql.Timestamp.valueOf(birth.toLocalDateTime().plusSeconds(1)),
+        ACCOUNT);
+    assertThrows(
+        RuntimeException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
     assertEquals(1, reads.get());
     assertEquals(0, calls.get());
     assertEquals(0, matrixCalls.get());
@@ -561,35 +570,52 @@ class GrantConsultantIdentityScopedJpaTest {
   void appliedGrantReplayNeedsCurrentReceivingGrantAndNeverRepeatsMatrixOrSql() {
     assertDoesNotThrow(() -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
     int originalReads = reads.get();
-    String originalReceipt = jdbc.queryForObject("select native_receipt from general_admin_identity_intent where operation_id=?", String.class, OPERATION);
+    String originalReceipt =
+        jdbc.queryForObject(
+            "select native_receipt from general_admin_identity_intent where operation_id=?",
+            String.class,
+            OPERATION);
     var originalSql = jdbc.queryForMap("select * from consultant where consultant_id=?", ACCOUNT);
     revoked = true;
-    assertThrows(RuntimeException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
+    assertThrows(
+        RuntimeException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
     assertEquals("APPLIED", phase());
     assertEquals(originalReads, reads.get());
     assertEquals(1, effects.get());
     assertEquals(1, matrixCalls.get());
     assertEquals(1, joinedEvents.get());
-    assertEquals(originalSql, jdbc.queryForMap("select * from consultant where consultant_id=?", ACCOUNT));
+    assertEquals(
+        originalSql, jdbc.queryForMap("select * from consultant where consultant_id=?", ACCOUNT));
     revoked = false;
     assertDoesNotThrow(() -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
     assertEquals(originalReads, reads.get());
-    assertEquals(originalReceipt, jdbc.queryForObject("select native_receipt from general_admin_identity_intent where operation_id=?", String.class, OPERATION));
+    assertEquals(
+        originalReceipt,
+        jdbc.queryForObject(
+            "select native_receipt from general_admin_identity_intent where operation_id=?",
+            String.class,
+            OPERATION));
     assertEquals(1, matrixCalls.get());
     assertEquals(1, joinedEvents.get());
-    assertEquals(originalSql, jdbc.queryForMap("select * from consultant where consultant_id=?", ACCOUNT));
+    assertEquals(
+        originalSql, jdbc.queryForMap("select * from consultant where consultant_id=?", ACCOUNT));
   }
 
   @Test
   void acknowledgedMatrixCannotBeReplacedByAnUnboundNoEffectBeforeLocalRetry() {
     var inject = new java.util.concurrent.atomic.AtomicBoolean(true);
-    doAnswer(invocation -> {
-      var result = (de.caritas.cob.userservice.api.model.Consultant) invocation.callRealMethod();
-      if (inject.getAndSet(false)) result.setSupervisor(true);
-      return result;
-    }).when(localConsultants).saveConsultant(any(de.caritas.cob.userservice.api.model.Consultant.class));
+    doAnswer(
+            invocation -> {
+              var result =
+                  (de.caritas.cob.userservice.api.model.Consultant) invocation.callRealMethod();
+              if (inject.getAndSet(false)) result.setSupervisor(true);
+              return result;
+            })
+        .when(localConsultants)
+        .saveConsultant(any(de.caritas.cob.userservice.api.model.Consultant.class));
     var originalAdmin = adminSql();
-    assertThrows(RuntimeException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
+    assertThrows(
+        RuntimeException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
     assertEquals("ACKNOWLEDGED", phase());
     assertEquals("ACKNOWLEDGED", matrixPhase());
     assertEquals(1, effects.get());
@@ -597,19 +623,34 @@ class GrantConsultantIdentityScopedJpaTest {
     assertEquals(0, joinedEvents.get());
     assertEquals(originalAdmin, adminSql());
     assertNoLocalConsultant();
-    String original = jdbc.queryForObject("select matrix_result_json from general_admin_identity_intent where operation_id=?", String.class, OPERATION);
-    var tampered = (com.fasterxml.jackson.databind.node.ObjectNode) codec.read(original, JsonNode.class);
+    String original =
+        jdbc.queryForObject(
+            "select matrix_result_json from general_admin_identity_intent where operation_id=?",
+            String.class,
+            OPERATION);
+    var tampered =
+        (com.fasterxml.jackson.databind.node.ObjectNode) codec.read(original, JsonNode.class);
     tampered.put("phase", "NO_EFFECT");
     tampered.putNull("result");
-    jdbc.update("update general_admin_identity_intent set matrix_result_json=? where operation_id=?", codec.canonical(tampered), OPERATION);
-    assertThrows(RuntimeException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
+    jdbc.update(
+        "update general_admin_identity_intent set matrix_result_json=? where operation_id=?",
+        codec.canonical(tampered),
+        OPERATION);
+    assertThrows(
+        RuntimeException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
     assertEquals(1, matrixCalls.get());
     assertEquals(0, joinedEvents.get());
     assertNoLocalConsultant();
-    jdbc.update("update general_admin_identity_intent set matrix_result_json=? where operation_id=?", original, OPERATION);
+    jdbc.update(
+        "update general_admin_identity_intent set matrix_result_json=? where operation_id=?",
+        original,
+        OPERATION);
     assertDoesNotThrow(() -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
     assertEquals("APPLIED", phase());
-    assertEquals(EXPECTED_MATRIX, jdbc.queryForObject("select matrix_user_id from consultant where consultant_id=?", String.class, ACCOUNT));
+    assertEquals(
+        EXPECTED_MATRIX,
+        jdbc.queryForObject(
+            "select matrix_user_id from consultant where consultant_id=?", String.class, ACCOUNT));
     assertEquals(1, matrixCalls.get());
     assertEquals(1, joinedEvents.get());
   }
