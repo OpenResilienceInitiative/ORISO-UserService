@@ -49,6 +49,63 @@ public class ConsultantAgencyRelationCreatorService {
       consultantTopicAgencyCompatibilityValidator;
   private final @NonNull ApplicationEventPublisher eventPublisher;
 
+  /** Resolved source data only; this record cannot issue a local callback or native authority. */
+  public record GrantAgency(Long id, Long tenant, int consultingType, boolean team, boolean bounded,
+      Set<String> requiredRoles) {
+    public GrantAgency { requiredRoles = Set.copyOf(requiredRoles); }
+  }
+
+  public java.util.List<GrantAgency> resolveGrantAgencies(
+      de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService.ScopedGrant grant) {
+    if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    var result = new java.util.ArrayList<GrantAgency>();
+    for (Long id : grant.agencyIds().stream().sorted().toList()) {
+      var agency = retrieveAgency(id);
+      if (!java.util.Objects.equals(id, agency.getId())
+          || !java.util.Objects.equals(grant.tenantId(), agency.getTenantId()))
+        throw new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException("Consultant grant agency tenant changed");
+      var settings = consultingTypeManager.getConsultingTypeSettings(agency.getConsultingType());
+      var roles = new java.util.TreeSet<String>();
+      // This actual grant route sends no roleSetKey. Preserve its exact existing selector,
+      // including a configured null-key entry, rather than unioning unrelated named role sets.
+      if (settings != null && settings.getRoles() != null
+          && settings.getRoles().getConsultant() != null
+          && settings.getRoles().getConsultant().getRoleSets() != null) {
+        var sets = settings.getRoles().getConsultant().getRoleSets();
+        String key = new CreateConsultantAgencyDTO().agencyId(id).getRoleSetKey();
+        for (var entry : sets.entrySet())
+          if (java.util.Objects.equals(key, entry.getKey())) roles.addAll(entry.getValue());
+      }
+      if (!Set.of("consultant", "group-chat-consultant", "restricted-agency-admin", "user-admin").containsAll(roles))
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+      result.add(new GrantAgency(id, agency.getTenantId(), agency.getConsultingType(),
+          isTrue(agency.getTeamAgency()), consultingTypeManager.isConsultantBoundedToAgency(agency.getConsultingType()), roles));
+    }
+    if (result.stream().anyMatch(GrantAgency::bounded)
+        && result.stream().map(GrantAgency::consultingType).distinct().count() != 1)
+      throw new BadRequestException("Consultant grant agencies have incompatible consulting types");
+    return java.util.List.copyOf(result);
+  }
+
+  /** SQL only, admitted by the same actual held Grant callback after native/Matrix ACK. */
+  public void createCheckedGrantAgencies(
+      de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService.ScopedGrant grant) {
+    grant.requireLocalCurrent();
+    var consultant = retrieveConsultant(grant.accountId());
+    for (var agency : grant.agencies()) {
+      if (!java.util.Objects.equals(consultant.getTenantId(), agency.tenant())
+          || !grant.requiredRoles().containsAll(agency.requiredRoles()))
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+      var relation = ConsultantAgency.builder().consultant(consultant).agencyId(agency.id())
+          .tenantId(agency.tenant()).createDate(grant.creationDate()).updateDate(grant.creationDate())
+          .status(ConsultantAgencyStatus.IN_PROGRESS).build();
+      relation = consultantAgencyService.saveConsultantAgency(relation);
+      consultantAgencyRelationFinalizer.finalizeConsultantAgencyRelation(consultant, relation);
+      eventPublisher.publishEvent(new ConsultantJoinedAgencyEvent(consultant.getId(), agency.id()));
+    }
+  }
+
   /**
    * Creates a new {@link ConsultantAgency} based on the {@link ImportRecord} and agency ids.
    *

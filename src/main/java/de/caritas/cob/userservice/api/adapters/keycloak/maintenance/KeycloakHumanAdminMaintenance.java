@@ -204,6 +204,13 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
   }
 
   @Override
+  public String consultantGrantMatrixDigest(String exactSevenJson) {
+    if (exactSevenJson == null || exactSevenJson.getBytes(StandardCharsets.UTF_8).length > 1024)
+      throw invalid();
+    return codec.claimedConsultantGrantMatrixDigest(codec.read(exactSevenJson, JsonNode.class));
+  }
+
+  @Override
   public String profileRequestDigest(
       CheckedAccount account, IdentityProfileUpdate profile, UUID operation) {
     account.requireCurrent();
@@ -217,7 +224,7 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
     binding.put("route", account.requestPath());
     binding.put("originalSql", codec.read(account.originalSqlState(), JsonNode.class));
     binding.put("profile", profile);
-    if (account.agencyAdminAddition()) {
+    if (account.agencyAdminAddition() || account.consultantIdentityAddition()) {
       binding.put("publicRoleAddition", codec.read(account.roleAdditionIntent(), JsonNode.class));
       binding.put(
           "wholeOriginalSql", codec.read(account.roleAdditionOriginalSql(), JsonNode.class));
@@ -333,7 +340,7 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
       }
     } else if (fields.equals(Set.of("group", "profile"))) command = "ordinary-profile";
     else if (fields.equals(Set.of("transition", "group"))
-        && "ADD_AGENCY_ADMIN_IDENTITY".equals(change.path("transition").textValue())
+        && Set.of("ADD_AGENCY_ADMIN_IDENTITY", "ADD_CONSULTANT_IDENTITY").contains(change.path("transition").textValue())
         && change.path("group").isTextual()) command = "profile-transition";
     else throw invalid();
     codec.verifyMaintenanceNoEffectReceipt(
@@ -406,10 +413,10 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
     change.put("lastName", profile.lastName());
     change.put("email", profile.email());
     Object completeChange =
-        account.agencyAdminAddition()
+        account.agencyAdminAddition() || account.consultantIdentityAddition()
             ? Map.of(
                 "transition",
-                "ADD_AGENCY_ADMIN_IDENTITY",
+                account.consultantIdentityAddition() ? "ADD_CONSULTANT_IDENTITY" : "ADD_AGENCY_ADMIN_IDENTITY",
                 "group",
                 Objects.requireNonNull(account.reviewedGroup()))
             : account.reviewedGroup() == null

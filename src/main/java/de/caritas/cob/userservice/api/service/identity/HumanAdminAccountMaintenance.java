@@ -239,56 +239,98 @@ public final class HumanAdminAccountMaintenance {
       boolean self,
       de.caritas.cob.userservice.api.service.accountinvite.AccountRoleAddition.ScopedAddition
           addition) {
+    return updateProfile(accountId, profile, edit, self, addition, null);
+  }
+
+  public de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO grantConsultantIdentity(
+      de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService.ScopedGrant grant) {
+    Objects.requireNonNull(grant);
     requireOutsideSql();
-    if (!(addition == null
+    grant.requireJpaOwner(jpaOwner);
+    reviewedGroups.requireConfigured();
+    String route = "/useradmin/admins/" + grant.accountId() + "/grant-consultant-identity";
+    if (!"POST".equals(request.getMethod())
+        || !Set.of(route, "/service" + route, "/useradmin/self-assignments", "/service/useradmin/self-assignments")
+            .contains(request.getRequestURI())) throw forbidden();
+    currentHuman();
+    AdminRow current = authorizedRow(grant.accountId(), false);
+    grant.validateOutsideSql();
+    var prior = intent(operationId(), false);
+    AdminRow original = prior == null ? current : decode(prior.original, GrantOriginal.class).row;
+    var profile = new IdentityProfileUpdate(original.username, original.email, original.tenant,
+        original.firstName, original.lastName);
+    return (de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO)
+        updateProfile(grant.accountId(), profile, null, false, null, grant);
+  }
+
+  private Object updateProfile(
+      String accountId, IdentityProfileUpdate profile,
+      de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService.ScopedEdit edit,
+      boolean self,
+      de.caritas.cob.userservice.api.service.accountinvite.AccountRoleAddition.ScopedAddition addition,
+      de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService.ScopedGrant grant) {
+    requireOutsideSql();
+    if (!(addition == null && grant == null
         ? Set.of("PATCH", "PUT").contains(request.getMethod())
         : "POST".equals(request.getMethod()))) throw forbidden();
     Human human = currentHuman();
     UUID operation = operationId();
     AdminRow current = authorizedRow(accountId, false, self);
     // Consultant-only read scopes never authorize the Admin profile writer.
-    if ("CONSULTANT".equals(current.type) && edit == null && addition == null) throw forbidden();
+    if ("CONSULTANT".equals(current.type) && edit == null && addition == null && grant == null) throw forbidden();
     if (edit != null && !"CONSULTANT".equals(current.type) && current.secondary == null)
       throw forbidden();
     Intent prior = intent(operation, false);
     ConsultantOriginal fullOriginal =
-        edit == null && addition == null || prior == null
+        edit == null && addition == null || prior == null || grant != null
             ? null
             : decode(prior.original, ConsultantOriginal.class);
+    GrantOriginal grantOriginal = grant == null || prior == null ? null : decode(prior.original, GrantOriginal.class);
     AdminRow original =
         prior == null
             ? current
-            : edit == null && addition == null
+            : grant != null ? grantOriginal.row : edit == null && addition == null
                 ? decode(prior.original, AdminRow.class)
                 : fullOriginal.row;
-    if (!(addition != null && prior != null && "APPLIED".equals(prior.status))
+    if (!((addition != null || grant != null) && prior != null && "APPLIED".equals(prior.status))
         && !current.sameIdentity(original)) throw conflict();
-    validateProfile(addition == null ? current : original, profile);
+    validateProfile(addition == null && grant == null ? current : original, profile);
     if (addition != null
         && current.secondary != null
         && (!Objects.equals(current.firstName, current.secondary.firstName)
             || !Objects.equals(current.lastName, current.secondary.lastName)
             || !Objects.equals(current.email, current.secondary.email))) throw conflict();
     String fullSql =
-        edit == null && addition == null
+        edit == null && addition == null && grant == null
             ? null
-            : fullOriginal == null ? consultantSnapshot(accountId, false) : fullOriginal.sql;
+            : grant != null && grantOriginal != null ? grantOriginal.sql
+                : fullOriginal == null ? consultantSnapshot(accountId, false) : fullOriginal.sql;
+    Instant grantCreation = grant == null ? null : grantOriginal == null
+        ? clock.instant().truncatedTo(java.time.temporal.ChronoUnit.MICROS) : parseGrantCreation(grantOriginal.creation);
+    if (grant != null) {
+      grant.bindCreation(grantCreation);
+      var initial = decode(fullSql, com.fasterxml.jackson.databind.JsonNode.class);
+      for (String table : List.of("consultant", "language", "consultant_topic", "consultant_agency"))
+        if (!initial.path(table).isArray() || !initial.path(table).isEmpty()) throw conflict();
+      if (prior == null || !"APPLIED".equals(prior.status)) grant.validate();
+    }
     if (edit != null && (prior == null || !"APPLIED".equals(prior.status))) edit.validate();
     if (addition != null && (prior == null || !"APPLIED".equals(prior.status))) addition.validate();
     try (var checked =
         new CheckedAccount(
-            current, original, human, operation, profile, edit, fullSql, self, addition)) {
+            current, original, human, operation, profile, edit, fullSql, self, addition, grant, grantCreation)) {
       checked.applied = prior != null && "APPLIED".equals(prior.status);
       checked.terminalOnly = prior != null && "NO_EFFECT".equals(prior.status);
-      if (addition != null && prior != null && prior.body != null) {
+      if ((addition != null || grant != null) && prior != null && prior.body != null) {
         var body = decode(frozen(prior).body(), com.fasterxml.jackson.databind.JsonNode.class);
         var change = body.path("change");
         var fields = new java.util.HashSet<String>();
         change.fieldNames().forEachRemaining(fields::add);
         if (!fields.equals(Set.of("transition", "group"))
-            || !"ADD_AGENCY_ADMIN_IDENTITY".equals(change.path("transition").textValue())
+            || !(grant == null ? "ADD_AGENCY_ADMIN_IDENTITY" : "ADD_CONSULTANT_IDENTITY").equals(change.path("transition").textValue())
             || !change.path("group").isTextual()) throw conflict();
-        checked.role = reviewedGroups.frozenAgencyAdminAddition(change.path("group").textValue());
+        checked.role = grant == null ? reviewedGroups.frozenAgencyAdminAddition(change.path("group").textValue())
+            : reviewedGroups.frozenConsultantAddition(change.path("group").textValue(), grant.requiredRoles());
       }
       HumanAdminMaintenanceTransport.Projection initialRoleProjection = null;
       if (edit != null && edit.groupChatRequested() != null) {
@@ -318,11 +360,13 @@ public final class HumanAdminAccountMaintenance {
       String digest = transport.profileRequestDigest(checked, profile, operation);
       if (digest == null || !digest.matches("[0-9a-f]{64}")) throw unavailable();
       String originalJson =
-          edit == null && addition == null
+          grant != null ? encode(new GrantOriginal(original, fullSql, grantCreation.toString()))
+              : edit == null && addition == null
               ? encode(original)
               : encode(new ConsultantOriginal(original, fullSql));
       String desiredJson =
-          addition != null
+          grant != null ? encode(java.util.Map.of("profile", profile, "publicConsultantGrant", grant.intentJson()))
+              : addition != null
               ? encode(
                   java.util.Map.of("profile", profile, "publicRoleAddition", addition.intentJson()))
               : edit == null
@@ -347,6 +391,15 @@ public final class HumanAdminAccountMaintenance {
           recoverCommit(
               () -> transaction(() -> prepare(checked, digest, originalJson, desiredJson)),
               () -> transaction(() -> checkedIntent(checked, digest, originalJson, desiredJson)));
+      if (grant != null && "ACKNOWLEDGED".equals(intent.status)) {
+        transaction(() -> {
+          var found = Objects.requireNonNull(checkedIntent(checked, digest, originalJson, desiredJson));
+          requireConsultantSnapshot(checked, found.status);
+          var savedMatrix = matrixResult(checked, digest);
+          if (savedMatrix != null && "STARTED".equals(savedMatrix.phase)) throw unavailable();
+          return null;
+        });
+      }
       if ("NO_EFFECT".equals(intent.status)) {
         var verified = transport.verifyProfileNoEffect(checked, frozen(intent), intent.receipt);
         throw definiteProfileRefusal(checked, verified.status());
@@ -371,11 +424,12 @@ public final class HumanAdminAccountMaintenance {
       if ("PREPARED".equals(intent.status)) {
         var state = initialRoleState == null ? transport.read(checked) : initialRoleState;
         requireProjection(checked, state);
-        if (addition != null) {
+        if (addition != null || grant != null) {
           if (!Objects.equals(state.firstName(), original.firstName)
               || !Objects.equals(state.lastName(), original.lastName)
               || !Objects.equals(state.email(), original.email)) throw conflict();
-          checked.role = reviewedGroups.agencyAdminAddition(state.effectiveRoles());
+          checked.role = grant == null ? reviewedGroups.agencyAdminAddition(state.effectiveRoles())
+              : reviewedGroups.consultantAddition(state.effectiveRoles(), grant.requiredRoles());
         }
         if (checked.role != null
             && !java.util.Set.copyOf(checked.role.original())
@@ -399,6 +453,12 @@ public final class HumanAdminAccountMaintenance {
       String receipt;
       if ("ACKNOWLEDGED".equals(intent.status)) {
         receipt = transport.verifyProfileReceipt(checked, frozen, intent.receipt);
+        if (grant != null) {
+          var replay = transport.executeProfile(checked, frozen);
+          if (!(replay instanceof HumanAdminMaintenanceTransport.ProfileApplied applied)
+              || !receipt.equals(transport.verifyProfileReceipt(checked, frozen, applied.receipt())))
+            throw unavailable();
+        }
       } else if ("FROZEN".equals(intent.status)) {
         var outcome = transport.executeProfile(checked, frozen);
         if (outcome instanceof HumanAdminMaintenanceTransport.ProfileNoEffect refused) {
@@ -468,6 +528,10 @@ public final class HumanAdminAccountMaintenance {
           || !Objects.equals(currentNative.lastName(), profile.lastName())
           || !Objects.equals(currentNative.email(), profile.email())) throw conflict();
       if (addition != null) addition.validateOutsideSql();
+      if (grant != null) {
+        grant.validateOutsideSql();
+        prepareConsultantMatrix(checked, digest, originalJson, desiredJson, receipt);
+      }
       try {
         transaction(
             () -> {
@@ -488,6 +552,13 @@ public final class HumanAdminAccountMaintenance {
   }
 
   private Object profileResultOrConsultant(CheckedAccount checked) {
+    if (checked.grant != null)
+      return transaction(() -> {
+        requireDesired(checked, authorizedRow(checked.actual.account, true, false));
+        var found = Objects.requireNonNull(intent(checked.workflow, true));
+        requireConsultantPostcondition(checked, found);
+        return checked.grant.currentResult();
+      });
     if (checked.addition != null)
       return transaction(
           () -> {
@@ -516,20 +587,143 @@ public final class HumanAdminAccountMaintenance {
     }
   }
 
+  /** The existing request MAC seals this entire Grant-only representation, including birth. */
+  private record GrantOriginal(AdminRow row, String sql, String creation) {
+    @Override public String toString() { return "GrantOriginal[source=redacted]"; }
+  }
+
+  private static Instant parseGrantCreation(String value) {
+    try {
+      var parsed = Instant.parse(value);
+      if (parsed.getEpochSecond() <= 0 || parsed.getNano() % 1000 != 0 || !parsed.toString().equals(value)) throw conflict();
+      return parsed;
+    } catch (RuntimeException invalid) { throw conflict(); }
+  }
+
+  private record MatrixResult(String phase, String result, String raw) {
+    @Override public String toString() { return "MatrixResult[ownership=redacted]"; }
+  }
+
+  private String matrixResultJson(CheckedAccount checked, String digest, String phase, String result) {
+    var data = new java.util.TreeMap<String, Object>();
+    data.put("representation", "CLAIMED_CONSULTANT_GRANT_MATRIX_V1");
+    data.put("operationId", checked.workflow.toString());
+    data.put("accountId", checked.actual.account);
+    data.put("requestDigest", digest);
+    data.put("localpart", checked.grant.localpart());
+    data.put("phase", phase);
+    data.put("result", result);
+    String mac = transport.consultantGrantMatrixDigest(encode(data));
+    if (mac == null || !mac.matches("[0-9a-f]{64}")) throw unavailable();
+    data.put("bindingDigest", mac);
+    String capsule = encode(data);
+    if (capsule.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 1024) throw unavailable();
+    return capsule;
+  }
+
+  private MatrixResult matrixResult(CheckedAccount checked, String digest) {
+    String raw = jdbc.queryForObject(
+        "select matrix_result_json from general_admin_identity_intent where operation_id=?",
+        String.class, checked.workflow.toString());
+    if (raw == null) return null;
+    if (raw.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 1024) throw conflict();
+    var value = decode(raw, com.fasterxml.jackson.databind.JsonNode.class);
+    if (!value.isObject() || value.size() != 8 || !value.path("phase").isTextual()
+        || !value.path("result").isNull() && !value.path("result").isTextual()) throw conflict();
+    String result = value.path("result").isNull() ? null : value.path("result").textValue();
+    String phase = value.path("phase").textValue();
+    // Rebuild every identity/request/source field. Never trust a stored result or phase alone.
+    if (!raw.equals(matrixResultJson(checked, digest, phase, result))) throw conflict();
+    checked.grant.bindMatrixResult(result);
+    return new MatrixResult(phase, result, raw);
+  }
+
+  private MatrixResult requireConsultantMatrix(CheckedAccount checked, String digest, Intent owned) {
+    if (!Set.of("ACKNOWLEDGED", "APPLIED").contains(owned.status) || owned.receipt == null)
+      throw conflict();
+    var found = matrixResult(checked, digest);
+    if (found == null || !Set.of("ACKNOWLEDGED", "NO_EFFECT").contains(found.phase)) throw unavailable();
+    return found;
+  }
+
+  private void prepareConsultantMatrix(CheckedAccount checked, String digest, String original,
+      String desired, String receipt) {
+    String started = matrixResultJson(checked, digest, "STARTED", null);
+    // Only a normally acknowledged STARTED commit in THIS invocation can precede its first call.
+    // An uncertain commit or another invocation's STARTED stays unknown and never re-emits.
+    var created = transaction(() -> {
+      var found = Objects.requireNonNull(checkedIntent(checked, digest, original, desired));
+      requireConsultantSnapshot(checked, found.status);
+      requireOwnedRow(checked, authorizedRow(checked.actual.account, true), found.status);
+      if (!"ACKNOWLEDGED".equals(found.status) || !receipt.equals(found.receipt)) throw conflict();
+      var matrix = matrixResult(checked, digest);
+      if (matrix != null) {
+        if ("STARTED".equals(matrix.phase)) throw unavailable();
+        checked.matrixResult = requireConsultantMatrix(checked, digest, found);
+        return false;
+      }
+      if (jdbc.update("update general_admin_identity_intent set matrix_result_json=?,updated_at=? where operation_id=? and status='ACKNOWLEDGED' and native_receipt=? and matrix_result_json is null",
+          started, Timestamp.from(clock.instant()), checked.workflow.toString(), receipt) != 1) throw conflict();
+      return true;
+    });
+    if (!Boolean.TRUE.equals(created)) return;
+    String result;
+    String phase;
+    checked.requireCurrent();
+    try {
+      result = checked.grant.createMatrixWithoutReactivation();
+      if (result == null) throw unavailable();
+      checked.grant.bindMatrixResult(result);
+      phase = "ACKNOWLEDGED";
+    } catch (de.caritas.cob.userservice.api.exception.matrix.MatrixUserInUseException definiteOriginalCall) {
+      result = null;
+      phase = "NO_EFFECT";
+    } catch (de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException unknown) {
+      throw unavailable();
+    }
+    checked.requireCurrent();
+    String terminal = matrixResultJson(checked, digest, phase, result);
+    recoverCommit(() -> transaction(() -> {
+      var found = Objects.requireNonNull(checkedIntent(checked, digest, original, desired));
+      requireConsultantSnapshot(checked, found.status);
+      requireOwnedRow(checked, authorizedRow(checked.actual.account, true), found.status);
+      if (!"ACKNOWLEDGED".equals(found.status) || !receipt.equals(found.receipt)
+          || !started.equals(Objects.requireNonNull(matrixResult(checked, digest)).raw)
+          || jdbc.update("update general_admin_identity_intent set matrix_result_json=?,updated_at=? where operation_id=? and status='ACKNOWLEDGED' and native_receipt=? and matrix_result_json=?",
+              terminal, Timestamp.from(clock.instant()), checked.workflow.toString(), receipt, started) != 1)
+        throw conflict();
+      checked.matrixResult = requireConsultantMatrix(checked, digest, found);
+      return checked.matrixResult;
+    }), () -> transaction(() -> {
+      var found = Objects.requireNonNull(checkedIntent(checked, digest, original, desired));
+      requireConsultantSnapshot(checked, found.status);
+      var saved = requireConsultantMatrix(checked, digest, found);
+      if (!terminal.equals(saved.raw) || !receipt.equals(found.receipt)) throw unavailable();
+      checked.matrixResult = saved;
+      return saved;
+    }));
+  }
+
   private String consultantSnapshot(String id, boolean lock) {
     return ConsultantProfileSqlSnapshot.capture(jdbc, id, lock, this::encode);
   }
 
   private void requireConsultantPostcondition(CheckedAccount checked, Intent intent) {
-    if ((checked.edit != null || checked.addition != null)
+    if ((checked.edit != null || checked.addition != null || checked.grant != null)
         && (!"APPLIED".equals(intent.status)
             || intent.applied == null
             || !Objects.equals(intent.applied, consultantSnapshot(checked.actual.account, true))))
       throw conflict();
+    if (checked.grant != null) {
+      var matrix = requireConsultantMatrix(checked, intent.digest, intent);
+      String actual = jdbc.queryForObject("select matrix_user_id from consultant where consultant_id=?",
+          String.class, checked.actual.account);
+      if (!Objects.equals(matrix.result, actual)) throw conflict();
+    }
   }
 
   private void requireConsultantSnapshot(CheckedAccount checked, String status) {
-    if ((checked.edit != null || checked.addition != null)
+    if ((checked.edit != null || checked.addition != null || checked.grant != null)
         && !Set.of("APPLIED", "NO_EFFECT").contains(status)
         && !Objects.equals(checked.fullSql, consultantSnapshot(checked.actual.account, true)))
       throw conflict();
@@ -662,7 +856,7 @@ public final class HumanAdminAccountMaintenance {
   }
 
   private Intent prepare(CheckedAccount checked, String digest, String original, String desired) {
-    if (checked.role != null || checked.addition != null) {
+    if (checked.role != null || checked.addition != null || checked.grant != null) {
       var lifecycle =
           jdbc.queryForList(
               "select status from account_inactivity where identity_id=? for update",
@@ -674,6 +868,8 @@ public final class HumanAdminAccountMaintenance {
     var row = authorizedRow(checked.actual.account, true, checked.self);
     var found = checkedIntent(checked, digest, original, desired);
     requireConsultantSnapshot(checked, found == null ? "PREPARED" : found.status);
+    if (checked.grant != null && (found == null || !Set.of("APPLIED", "NO_EFFECT").contains(found.status)))
+      checked.grant.validate();
     if (found != null) {
       requireOwnedRow(checked, row, found.status);
       return found;
@@ -690,7 +886,7 @@ public final class HumanAdminAccountMaintenance {
     for (var other : pending)
       if (!"NO_EFFECT".equals(other.status)
           || !other.equals(checked.terminals.get(other.operation))) throw conflict();
-    Instant now = clock.instant();
+    Instant now = checked.grant == null ? clock.instant() : checked.grantCreation;
     if (jdbc.update(
             "insert into general_admin_identity_intent(operation_id,account_id,tenant_id,human_subject,human_issuer,human_client,request_digest,original_json,desired_json,status,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,'PREPARED',?,?)",
             checked.workflow.toString(),
@@ -766,7 +962,19 @@ public final class HumanAdminAccountMaintenance {
     }
     if (!"ACKNOWLEDGED".equals(found.status) || !row.equals(checked.original)) throw conflict();
     var profile = checked.profile;
-    if (checked.addition != null) {
+    if (checked.grant != null) {
+      checked.matrixResult = requireConsultantMatrix(checked, digest, found);
+      checked.grant.bindMatrixResult(checked.matrixResult.result);
+      TransactionSynchronizationManager.bindResource(checked.grant, checked.grant);
+      try {
+        de.caritas.cob.userservice.api.tenant.TenantContext.runIn(checked.actual.tenant, () -> {
+          checked.grant.apply();
+          checked.grant.flushAndRequireResult();
+        });
+      } finally {
+        TransactionSynchronizationManager.unbindResource(checked.grant);
+      }
+    } else if (checked.addition != null) {
       TransactionSynchronizationManager.bindResource(checked.addition, checked.addition);
       try {
         de.caritas.cob.userservice.api.tenant.TenantContext.runIn(
@@ -812,7 +1020,7 @@ public final class HumanAdminAccountMaintenance {
             timestamp(row.updated),
             timestamp(row.updated))
         != 1) throw conflict();
-    if (checked.addition == null && row.secondary != null) {
+    if (checked.addition == null && checked.grant == null && row.secondary != null) {
       var secondary = row.secondary;
       if (jdbc.update(
               "update consultant set first_name=?,last_name=?,email=?,update_date=? where consultant_id=? and username=? and ((tenant_id=?) or (tenant_id is null and ? is null)) and delete_date is null and first_name=? and last_name=? and email=? and ((update_date=?) or (update_date is null and ? is null))",
@@ -837,9 +1045,10 @@ public final class HumanAdminAccountMaintenance {
     }
     requireDesired(checked, authorizedRow(row.account, true, checked.self));
     if (checked.addition != null) requireAgencyAdminPostcondition(checked);
+    if (checked.grant != null) requireGrantPostcondition(checked);
     if (jdbc.update(
             "update general_admin_identity_intent set status='APPLIED',applied_json=?,updated_at=? where operation_id=? and status='ACKNOWLEDGED' and native_receipt=? and applied_json is null",
-            checked.edit == null && checked.addition == null
+            checked.edit == null && checked.addition == null && checked.grant == null
                 ? null
                 : consultantSnapshot(checked.actual.account, true),
             Timestamp.from(clock.instant()),
@@ -861,6 +1070,15 @@ public final class HumanAdminAccountMaintenance {
         || !digest.equals(found.digest)
         || !original.equals(found.original)
         || !desired.equals(found.desired)) throw conflict();
+    if (checked.grant != null) {
+      var born = jdbc.queryForObject("select created_at from general_admin_identity_intent where operation_id=?",
+          Timestamp.class, checked.workflow.toString());
+      if (born == null || !born.toLocalDateTime().toInstant(java.time.ZoneOffset.UTC).equals(checked.grantCreation))
+        throw conflict();
+      String matrix = jdbc.queryForObject("select matrix_result_json from general_admin_identity_intent where operation_id=?",
+          String.class, checked.workflow.toString());
+      if (matrix != null && !Set.of("ACKNOWLEDGED", "APPLIED").contains(found.status)) throw conflict();
+    }
     if (!Set.of("PREPARED", "FROZEN", "ACKNOWLEDGED", "APPLIED", "NO_EFFECT").contains(found.status)
         || "PREPARED".equals(found.status) && (found.body != null || found.receipt != null)
         || !"PREPARED".equals(found.status) && found.body == null
@@ -868,7 +1086,7 @@ public final class HumanAdminAccountMaintenance {
             && found.receipt == null
         || "FROZEN".equals(found.status) && found.receipt != null
         || !"APPLIED".equals(found.status) && found.applied != null
-        || (checked.edit != null || checked.addition != null)
+        || (checked.edit != null || checked.addition != null || checked.grant != null)
             && "APPLIED".equals(found.status)
             && found.applied == null) throw unavailable();
     return found;
@@ -1114,7 +1332,7 @@ public final class HumanAdminAccountMaintenance {
   }
 
   private void requireOwnedRow(CheckedAccount checked, AdminRow row, String status) {
-    if (checked.addition != null && "APPLIED".equals(status)) {
+    if ((checked.addition != null || checked.grant != null) && "APPLIED".equals(status)) {
       requireDesired(checked, row);
     } else requireOwnedRow(row, checked.original, checked.profile, status);
   }
@@ -1154,7 +1372,58 @@ public final class HumanAdminAccountMaintenance {
         || !added.path("create_date").isTextual()) throw conflict();
   }
 
+  private void requireGrantPostcondition(CheckedAccount checked) {
+    var before = decode(checked.fullSql, com.fasterxml.jackson.databind.JsonNode.class);
+    var after = decode(consultantSnapshot(checked.actual.account, true), com.fasterxml.jackson.databind.JsonNode.class);
+    if (!before.path("admin").equals(after.path("admin"))
+        || !before.path("admin_agency").equals(after.path("admin_agency"))
+        || !after.path("language").isEmpty() || after.path("consultant").size() != 1) throw conflict();
+    var expectedAgencies = new java.util.HashSet<>(checked.grant.agencyIds());
+    String date = Timestamp.valueOf(java.time.LocalDateTime.ofInstant(checked.grantCreation, java.time.ZoneOffset.UTC))
+        .toInstant().toString();
+    for (var encoded : after.path("consultant_agency")) {
+      var row = decode(encoded.textValue(), com.fasterxml.jackson.databind.JsonNode.class);
+      if (row.size() != 8 || !checked.actual.account.equals(row.path("consultant_id").textValue())
+          || !row.path("agency_id").isIntegralNumber() || !expectedAgencies.remove(row.path("agency_id").longValue())
+          || (row.path("tenant_id").isNull() ? checked.actual.tenant != null
+              : !row.path("tenant_id").isIntegralNumber() || !row.path("tenant_id").canConvertToLong()
+                  || !Objects.equals(checked.actual.tenant, row.path("tenant_id").longValue()))
+          || !row.path("id").isIntegralNumber() || row.path("id").longValue() <= 0
+          || !row.path("delete_date").isNull() || !"CREATED".equals(row.path("status").textValue())
+          || !date.equals(row.path("create_date").textValue()) || !date.equals(row.path("update_date").textValue()))
+        throw conflict();
+    }
+    if (!expectedAgencies.isEmpty()) throw conflict();
+    var expectedTopics = new java.util.HashSet<String>();
+    checked.grant.topicsByAgency().forEach((agency, topics) -> topics.forEach(topic -> expectedTopics.add(agency + "/" + topic)));
+    for (var encoded : after.path("consultant_topic")) {
+      var row = decode(encoded.textValue(), com.fasterxml.jackson.databind.JsonNode.class);
+      if (row.size() != 6 || !checked.actual.account.equals(row.path("consultant_id").textValue())
+          || !row.path("agency_id").isIntegralNumber() || !row.path("topic_id").isIntegralNumber()
+          || !expectedTopics.remove(row.path("agency_id").longValue() + "/" + row.path("topic_id").longValue())
+          || !row.path("id").isIntegralNumber() || row.path("id").longValue() <= 0
+          || !date.equals(row.path("create_date").textValue()) || !date.equals(row.path("update_date").textValue()))
+        throw conflict();
+    }
+    if (!expectedTopics.isEmpty()) throw conflict();
+  }
+
   private void requireDesired(CheckedAccount checked, AdminRow row) {
+    if (checked.grant != null) {
+      var original = checked.original;
+      if (!row.account.equals(original.account) || !Objects.equals(row.tenant, original.tenant)
+          || !Objects.equals(row.username, original.username) || !Objects.equals(row.type, original.type)
+          || !Objects.equals(row.firstName, original.firstName) || !Objects.equals(row.lastName, original.lastName)
+          || !Objects.equals(row.email, original.email) || !Objects.equals(row.updated, original.updated)
+          || original.secondary != null || row.secondary == null
+          || !Objects.equals(row.secondary.tenant, original.tenant)
+          || !decodedUsername(row.secondary.username).equals(decodedUsername(original.username))
+          || !Objects.equals(row.secondary.firstName, original.firstName)
+          || !Objects.equals(row.secondary.lastName, original.lastName)
+          || !Objects.equals(row.secondary.email, original.email) || row.secondary.deleted != null)
+        throw conflict();
+      return;
+    }
     if (checked.addition == null) {
       requireDesired(row, checked.original, checked.profile);
       return;
@@ -1339,6 +1608,9 @@ public final class HumanAdminAccountMaintenance {
     private final de.caritas.cob.userservice.api.service.accountinvite.AccountRoleAddition
             .ScopedAddition
         addition;
+    private final de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService.ScopedGrant grant;
+    private final Instant grantCreation;
+    private MatrixResult matrixResult;
     private boolean applied, terminalOnly;
     private java.util.Map<String, StoredTerminal> terminals = java.util.Map.of();
     private ReviewedOrdinaryGroups.Transition role;
@@ -1370,6 +1642,18 @@ public final class HumanAdminAccountMaintenance {
         boolean self,
         de.caritas.cob.userservice.api.service.accountinvite.AccountRoleAddition.ScopedAddition
             addition) {
+      this(actual, original, human, workflow, profile, edit, fullSql, self, addition, null, null);
+    }
+
+    private CheckedAccount(AdminRow actual, AdminRow original, Human human, UUID workflow,
+        IdentityProfileUpdate profile,
+        de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService.ScopedEdit edit,
+        String fullSql, boolean self,
+        de.caritas.cob.userservice.api.service.accountinvite.AccountRoleAddition.ScopedAddition addition,
+        de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService.ScopedGrant grant,
+        Instant grantCreation) {
+      this.grant = grant;
+      this.grantCreation = grantCreation;
       this.addition = addition;
       this.self = self;
       this.edit = edit;
@@ -1394,7 +1678,7 @@ public final class HumanAdminAccountMaintenance {
     }
 
     public String profileCommand() {
-      if (addition != null) return "profile-transition";
+      if (addition != null || grant != null) return "profile-transition";
       if (role != null) return "ordinary-profile";
       return self && profile != null && !Objects.equals(original.email, profile.email())
           ? "email"
@@ -1435,19 +1719,21 @@ public final class HumanAdminAccountMaintenance {
     }
 
     public String originalSqlState() {
-      return encode(original);
+      return grant == null ? encode(original) : encode(new GrantOriginal(original, fullSql, grantCreation.toString()));
     }
 
     public boolean agencyAdminAddition() {
       return addition != null;
     }
 
+    public boolean consultantIdentityAddition() { return grant != null; }
+
     public String roleAdditionIntent() {
-      return addition == null ? null : addition.intentJson();
+      return grant != null ? grant.intentJson() : addition == null ? null : addition.intentJson();
     }
 
     public String roleAdditionOriginalSql() {
-      return addition == null ? null : fullSql;
+      return addition == null && grant == null ? null : fullSql;
     }
 
     public IdentityProfileUpdate desiredProfile() {
@@ -1476,7 +1762,7 @@ public final class HumanAdminAccountMaintenance {
       requireOutsideSql();
       currentHumanMatching(human);
       if (!actual.equals(authorizedRow(actual.account, false, self))) throw conflict();
-      if ((edit != null || addition != null)
+      if ((edit != null || addition != null || grant != null)
           && !applied
           && !terminalOnly
           && !Objects.equals(fullSql, consultantSnapshot(actual.account, false))) throw conflict();

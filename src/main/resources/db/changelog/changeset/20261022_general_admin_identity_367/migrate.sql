@@ -11,6 +11,7 @@ CREATE TABLE general_admin_identity_intent (
   native_body LONGTEXT NULL,
   native_receipt LONGTEXT NULL,
   applied_json LONGTEXT NULL,
+  matrix_result_json VARCHAR(1024) NULL,
   status VARCHAR(20) NOT NULL,
   created_at TIMESTAMP(6) NOT NULL,
   updated_at TIMESTAMP(6) NOT NULL,
