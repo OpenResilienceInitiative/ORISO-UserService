@@ -247,7 +247,9 @@ public final class PublicPreDeletionMaintenance {
       } finally {
         tx(
             () -> {
-              var attemptedAt = now();
+              // The retry hint column is DATETIME(6); finer clock digits must not retain a tie.
+              var attemptedAt =
+                  Timestamp.from(clock.instant().truncatedTo(java.time.temporal.ChronoUnit.MICROS));
               jdbc.update(
                   "update identity_account_operation_intent set updated_at=case when updated_at>=? then timestampadd(microsecond,1,updated_at) else ? end where operation_id=? and operation_kind=? and status in ('FROZEN','ACKNOWLEDGED')",
                   attemptedAt,
