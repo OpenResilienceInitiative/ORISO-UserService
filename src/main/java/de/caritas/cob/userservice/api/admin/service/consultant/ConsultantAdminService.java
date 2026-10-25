@@ -223,7 +223,7 @@ public class ConsultantAdminService {
    * @param consultantId the consultant id
    * @param forceDeleteSessions
    */
-  @Transactional
+  @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
   public void markConsultantForDeletion(String consultantId, Boolean forceDeleteSessions) {
     if (identityMode != null && identityMode.isFiveActorMode()) {
       if (preDeletion == null || !preDeletion.isFiveActorMode())
@@ -238,6 +238,19 @@ public class ConsultantAdminService {
           });
       return;
     }
+    if (preDeletionTransactions == null) markConsultantForDeletionLegacy(consultantId, forceDeleteSessions);
+    else new org.springframework.transaction.support.TransactionTemplate(preDeletionTransactions)
+        .executeWithoutResult(ignored -> markConsultantForDeletionLegacy(consultantId, forceDeleteSessions));
+  }
+
+  private org.springframework.transaction.PlatformTransactionManager preDeletionTransactions;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public void setPreDeletionTransactions(org.springframework.transaction.PlatformTransactionManager manager) {
+    preDeletionTransactions = java.util.Objects.requireNonNull(manager);
+  }
+
+  private void markConsultantForDeletionLegacy(String consultantId, Boolean forceDeleteSessions) {
     var consultant = pictureStore.lockActiveConsultant(consultantId);
 
     // One date for the counsellor and the relations removed with it: that pair marks the agencies

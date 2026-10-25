@@ -1145,20 +1145,44 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
     return encoded + "." + encode(mac("proof\n" + encoded));
   }
 
-  /** Fixed saved-only SELF deactivate lookup. Closed test-first bridge. */
+  /** Fixed saved-only SELF deactivate lookup; ordinary proof encoding remains unchanged. */
   public String preDeletionOutcomeProof(
       String realmName,
       String realmId,
       String accountId,
       TaskActorCredentials actor,
       JsonNode originalFrozenSelfDeactivate) {
-    throw new IllegalArgumentException("Pre-deletion outcome proof is unavailable");
+    PreDeletionProofSchema.text(realmName, 255);
+    PreDeletionProofSchema.text(realmId, 255);
+    PreDeletionProofSchema.require(originalFrozenSelfDeactivate, accountId);
+    if (actor == null
+        || actor.actor() != de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN)
+      throw new IllegalArgumentException("Invalid fixed pre-deletion actor");
+    long now = clock.instant().getEpochSecond();
+    Map<String, Object> claims = new TreeMap<>();
+    claims.put("iss", "userservice");
+    claims.put("aud", "oriso-account-maintenance");
+    claims.put("purpose", TaskPurpose.ACCOUNT_MAINTENANCE.name());
+    claims.put("operation", "account.deactivate.outcome");
+    claims.put("method", "POST");
+    claims.put("actor", actor.actor().name());
+    claims.put("realm", realmName);
+    claims.put("target", "realm/" + realmId + "/account/" + accountId);
+    claims.put("taskClient", actor.clientId());
+    claims.put("taskSubject", actor.serviceSubject());
+    claims.put("payloadDigest", digest("payload", originalFrozenSelfDeactivate));
+    claims.put("jti", UUID.randomUUID().toString());
+    claims.put("nonce", UUID.randomUUID().toString().replace("-", ""));
+    claims.put("iat", now);
+    claims.put("exp", now + 60);
+    String encoded = encode(canonical(claims).getBytes(StandardCharsets.UTF_8));
+    return encoded + "." + encode(mac("proof\n" + encoded));
   }
 
-  /** Fixed strict UPDATED11 alias. Closed test-first bridge. */
+  /** Fixed strict UPDATED11 alias using the unchanged native verifier. */
   public String verifyMaintenancePreDeletionReceipt(
       String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
-    throw new IllegalArgumentException("Pre-deletion receipt verification is unavailable");
+    return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "deactivate", "UPDATED");
   }
 
   private record MaintenanceReply(

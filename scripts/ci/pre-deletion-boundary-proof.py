@@ -24,6 +24,8 @@ COMPILED = [
     'workflow/delete/service/DeletionLifecycleService',
     'workflow/delete/service/PublicPreDeletionMaintenance',
     'adapters/keycloak/lifecycle/AccountLifecycleCodec',
+    'adapters/keycloak/lifecycle/PreDeletionProofSchema',
+    'workflow/delete/service/PreDeletionSqlSnapshot',
 ]
 
 
