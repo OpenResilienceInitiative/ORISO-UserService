@@ -151,7 +151,7 @@ class GrantConsultantIdentityScopedJpaTest {
   private String matrixResult = EXPECTED_MATRIX;
 
   @BeforeEach
-  void actualCurrentHumanSqlAndScopedReceiver() {
+  void actualCurrentHumanSqlAndScopedReceiver() throws Exception {
     TenantContext.clear();
     jdbc = new JdbcTemplate(dataSource);
     jdbc.execute("drop table if exists general_admin_identity_intent");
@@ -464,7 +464,7 @@ class GrantConsultantIdentityScopedJpaTest {
   }
 
   @Test
-  void anUnknownMatrixCreateRemainsStartedAndRetryNeverReemitsOrAdopts() {
+  void anUnknownMatrixCreateRemainsStartedAndRetryNeverReemitsOrAdopts() throws Exception {
     matrixLostReply = true;
     assertThrows(
         RuntimeException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
@@ -484,7 +484,7 @@ class GrantConsultantIdentityScopedJpaTest {
   }
 
   @Test
-  void onlyTheOriginalDefiniteMatrixUserInUseCanFinishWithoutAMatrixIdentity() {
+  void onlyTheOriginalDefiniteMatrixUserInUseCanFinishWithoutAMatrixIdentity() throws Exception {
     matrixInUse = true;
     assertDoesNotThrow(() -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
     assertEquals(1, effects.get());
