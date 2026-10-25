@@ -47,6 +47,7 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -56,14 +57,15 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.orm.jpa.JpaTransactionManager;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.aop.framework.ProxyFactory;
-import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
 import org.springframework.transaction.interceptor.TransactionInterceptor;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-/** Actual public services, original repositories and JpaTM. No native acceptance is claimed here. */
+/**
+ * Actual public services, original repositories and JpaTM. No native acceptance is claimed here.
+ */
 @DataJpaTest
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
@@ -112,20 +114,48 @@ class PublicPreDeletionJpaTest {
     consultants.findById(ACCOUNT).ifPresent(consultants::delete);
     admins.findById(ACCOUNT).ifPresent(admins::delete);
     admins.findById(HUMAN).ifPresent(admins::delete);
-    actor = new AuthenticatedUser(HUMAN, "operator", Set.of("single-tenant-admin", "user-admin"),
-        "fixture-human", Set.of("ROLE_SINGLE_TENANT_ADMIN", "ROLE_USER_ADMIN"));
+    actor =
+        new AuthenticatedUser(
+            HUMAN,
+            "operator",
+            Set.of("single-tenant-admin", "user-admin"),
+            "fixture-human",
+            Set.of("ROLE_SINGLE_TENANT_ADMIN", "ROLE_USER_ADMIN"));
     actor.setTenantId(7L);
-    admins.save(Admin.builder().id(HUMAN).tenantId(7L).username("operator").firstName("Fixture")
-        .lastName("Operator").email("operator@fixture.invalid").type(Admin.AdminType.TENANT).build());
+    admins.save(
+        Admin.builder()
+            .id(HUMAN)
+            .tenantId(7L)
+            .username("operator")
+            .firstName("Fixture")
+            .lastName("Operator")
+            .email("operator@fixture.invalid")
+            .type(Admin.AdminType.TENANT)
+            .build());
     mode = mock(IdentityClientConfig.class);
     when(mode.isFiveActorMode()).thenReturn(true);
     lifecycle = new DeletionLifecycleService();
-    org.springframework.test.util.ReflectionTestUtils.setField(lifecycle, "globalReadOnlyHours", 48L);
-    org.springframework.test.util.ReflectionTestUtils.setField(lifecycle, "tenantOverrideConfig", "");
-    userService = new UserService(users, mock(UserMobileTokenRepository.class),
-        mock(AuditingHandler.class), mock(AccountInactivityEnrollmentService.class));
-    scope = new AdminScope(actor, admins, adminAgencies, consultants, consultantAgencies,
-        mock(AgencyService.class), users, sessions, userAgencies);
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        lifecycle, "globalReadOnlyHours", 48L);
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        lifecycle, "tenantOverrideConfig", "");
+    userService =
+        new UserService(
+            users,
+            mock(UserMobileTokenRepository.class),
+            mock(AuditingHandler.class),
+            mock(AccountInactivityEnrollmentService.class));
+    scope =
+        new AdminScope(
+            actor,
+            admins,
+            adminAgencies,
+            consultants,
+            consultantAgencies,
+            mock(AgencyService.class),
+            users,
+            sessions,
+            userAgencies);
     org.springframework.test.util.ReflectionTestUtils.setField(scope, "multitenancyEnabled", true);
   }
 
@@ -156,9 +186,15 @@ class PublicPreDeletionJpaTest {
   @Test
   void adminAskerStartUsesActualScopeAndOwnedAcknowledgementBeforeSql() {
     asker();
-    var service = new AskerUserAdminFacade(new ClosedGenericDeactivator(),
-        mock(IdentityReactivationSagaStore.class), mock(IdentityReactivationRepairService.class),
-        userService, new UsernameTranscoder(), lifecycle, scope);
+    var service =
+        new AskerUserAdminFacade(
+            new ClosedGenericDeactivator(),
+            mock(IdentityReactivationSagaStore.class),
+            mock(IdentityReactivationRepairService.class),
+            userService,
+            new UsernameTranscoder(),
+            lifecycle,
+            scope);
     service.setIdentityMode(mode);
 
     assertDoesNotThrow(() -> service.markAskerForDeletion(ACCOUNT));
@@ -189,7 +225,8 @@ class PublicPreDeletionJpaTest {
     consultant();
     ConsultantAdminService service = consultantService();
 
-    assertThrows(ScopedIdentityCommandRequiredException.class,
+    assertThrows(
+        ScopedIdentityCommandRequiredException.class,
         () -> service.markConsultantForDeletion(ACCOUNT, false));
 
     verifyNoInteractions(memberships);
@@ -199,8 +236,13 @@ class PublicPreDeletionJpaTest {
   }
 
   private void asker() {
-    User user = new User(ACCOUNT, null, new UsernameTranscoder().encodeUsername("pre-deletion"),
-        "asker@fixture.invalid", false);
+    User user =
+        new User(
+            ACCOUNT,
+            null,
+            new UsernameTranscoder().encodeUsername("pre-deletion"),
+            "asker@fixture.invalid",
+            false);
     user.setTenantId(7L);
     user.setLanguageCode(LanguageCode.en);
     user.setEncourage2fa(false);
@@ -209,36 +251,77 @@ class PublicPreDeletionJpaTest {
   }
 
   private void consultant() {
-    Consultant consultant = Consultant.builder().id(ACCOUNT).tenantId(7L)
-        .username(new UsernameTranscoder().encodeUsername("pre-deletion"))
-        .firstName("Fixture").lastName("Consultant").email("consultant@fixture.invalid")
-        .languageCode(LanguageCode.en).encourage2fa(false).magicLinkLoginEnabled(false)
-        .notifyEnquiriesRepeating(true).notifyNewChatMessageFromAdviceSeeker(true)
-        .createDate(LocalDateTime.now(ZoneOffset.UTC).minusYears(1))
-        .status(de.caritas.cob.userservice.api.model.ConsultantStatus.CREATED)
-        .deletionLifecycleState(DeletionLifecycleState.ACTIVE).build();
+    Consultant consultant =
+        Consultant.builder()
+            .id(ACCOUNT)
+            .tenantId(7L)
+            .username(new UsernameTranscoder().encodeUsername("pre-deletion"))
+            .firstName("Fixture")
+            .lastName("Consultant")
+            .email("consultant@fixture.invalid")
+            .languageCode(LanguageCode.en)
+            .encourage2fa(false)
+            .magicLinkLoginEnabled(false)
+            .notifyEnquiriesRepeating(true)
+            .notifyNewChatMessageFromAdviceSeeker(true)
+            .createDate(LocalDateTime.now(ZoneOffset.UTC).minusYears(1))
+            .status(de.caritas.cob.userservice.api.model.ConsultantStatus.CREATED)
+            .deletionLifecycleState(DeletionLifecycleState.ACTIVE)
+            .build();
     consultants.save(consultant);
   }
 
   private UserAccountService selfService() {
-    return new UserAccountService(userService,
+    return new UserAccountService(
+        userService,
         new ConsultantService(consultants, mock(ConsultantMobileTokenRepository.class)),
-        mock(AppointmentService.class), actor, mock(IdentityClient.class),
-        mock(IdentityEmailAddressUpdater.class), new ClosedGenericDeactivator(), mock(UserHelper.class),
-        mode, statistics, mock(SupervisorAddedEmailNotificationService.class), lifecycle);
+        mock(AppointmentService.class),
+        actor,
+        mock(IdentityClient.class),
+        mock(IdentityEmailAddressUpdater.class),
+        new ClosedGenericDeactivator(),
+        mock(UserHelper.class),
+        mode,
+        statistics,
+        mock(SupervisorAddedEmailNotificationService.class),
+        lifecycle);
   }
 
   private ConsultantAdminService consultantService() {
-    var store = new ConsultantPictureStore(consultants, pictures, mock(ConsultantPictureAccess.class),
-        entities, mock(de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.class));
-    var presteps = new ConsultantPreDeletionService(
-        new ConsultantAgencyDeletionValidationService(consultantAgencies, mock(AgencyService.class), sessions),
-        sessions, new ClosedGenericDeactivator());
-    var target = new ConsultantAdminService(consultants, store, mock(CreateConsultantSaga.class),
-        mock(ConsultantUpdateService.class), presteps, sessions, mock(MembersOnlyChatAccess.class),
-        memberships, mock(SessionOwnershipService.class), mock(CaseHandoverRequestRepository.class),
-        mock(SessionSupervisorRepository.class), actor, mock(AccountManager.class),
-        mock(AppointmentService.class), lifecycle, mock(ConsultantTopicRepository.class), mock(TopicService.class));
+    var store =
+        new ConsultantPictureStore(
+            consultants,
+            pictures,
+            mock(ConsultantPictureAccess.class),
+            entities,
+            mock(
+                de.caritas.cob.userservice.api.service.accountinvite.onboarding
+                    .CounsellorOnboardingService.class));
+    var presteps =
+        new ConsultantPreDeletionService(
+            new ConsultantAgencyDeletionValidationService(
+                consultantAgencies, mock(AgencyService.class), sessions),
+            sessions,
+            new ClosedGenericDeactivator());
+    var target =
+        new ConsultantAdminService(
+            consultants,
+            store,
+            mock(CreateConsultantSaga.class),
+            mock(ConsultantUpdateService.class),
+            presteps,
+            sessions,
+            mock(MembersOnlyChatAccess.class),
+            memberships,
+            mock(SessionOwnershipService.class),
+            mock(CaseHandoverRequestRepository.class),
+            mock(SessionSupervisorRepository.class),
+            actor,
+            mock(AccountManager.class),
+            mock(AppointmentService.class),
+            lifecycle,
+            mock(ConsultantTopicRepository.class),
+            mock(TopicService.class));
     // The initial implementation owns one real transaction around its public legacy method.
     // C will need an outer transaction-free entry and explicit owned local callbacks instead.
     var interceptor = new TransactionInterceptor();
