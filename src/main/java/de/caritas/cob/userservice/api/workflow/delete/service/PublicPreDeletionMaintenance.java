@@ -293,6 +293,22 @@ public final class PublicPreDeletionMaintenance {
       return original.tenant;
     }
 
+    public void requireConsultantCurrent() {
+      requireCurrent();
+      if (!"ADMIN_CONSULTANT".equals(owner.source(original).path("kind").asText()))
+        throw forbidden();
+    }
+
+    public void requireCurrentConsultant(Consultant independentlyLoadedOriginal) {
+      requireConsultantCurrent();
+      if (!TransactionSynchronizationManager.isActualTransactionActive()
+          || localResource == null
+          || independentlyLoadedOriginal == null
+          || !owner.entities.contains(independentlyLoadedOriginal)
+          || independentlyLoadedOriginal != owner.entities.find(Consultant.class, original.account))
+        throw conflict();
+    }
+
     public void runOwnedLocal(Runnable localEffect) {
       owner.local(this, localEffect, false, false, null);
     }

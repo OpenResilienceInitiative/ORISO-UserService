@@ -230,9 +230,28 @@ public class ConsultantAdminService {
           consultantId,
           forceDeleteSessions,
           acknowledged -> {
-            // Closed until the actual signed-ACK and mixed RPC/JPA fixture reaches this frontier.
-            throw new de.caritas.cob.userservice.api.port.out
-                .ScopedIdentityCommandRequiredException();
+            var relations = consultantPreDeletionService.prepareAcknowledgedDeletion(acknowledged, forceDeleteSessions);
+            var memberships = membersOnlyRevocation.prepareAcknowledgedDeletion(acknowledged, Boolean.TRUE.equals(forceDeleteSessions));
+            acknowledged.completeConsultant(consultant -> {
+              var deletedAt = nowInUtc();
+              relations.apply(consultant, deletedAt);
+              memberships.apply(consultant);
+              if (Boolean.TRUE.equals(forceDeleteSessions)) {
+                sessionRepository.findByConsultantAndStatusIn(consultant, Lists.newArrayList(IN_PROGRESS, IN_ARCHIVE))
+                    .forEach(session -> {
+                      if (membersOnlyChatAccess.concerns(session) && memberships.keepCaseOnDeletionOf(session, consultant)) return;
+                      caseHandoverRequestRepository.deleteAllBySessionId(session.getId());
+                      sessionSupervisorRepository.deleteAllBySessionId(session.getId());
+                      sessionRepository.delete(session);
+                    });
+                unassignNewOrInitialSessions(consultant);
+              }
+              consultant.setDeleteDate(deletedAt);
+              deletionLifecycleService.beginConsultantDeletion(consultant, authenticatedUser.getUserId());
+              pictureStore.removeForConsultantDeletion(consultantId);
+              consultant.setStatus(ConsultantStatus.IN_DELETION);
+              consultantRepository.save(consultant);
+            });
           });
       return;
     }

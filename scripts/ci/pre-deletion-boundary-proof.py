@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[2]
 SUITES = {
     'de.caritas.cob.userservice.api.adapters.web.controller.UserAccountControllerDelegateTest': 47,
-    'de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionJpaTest': 21,
+    'de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionJpaTest': 23,
     'de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.PreDeletionMaintenanceCodecTest': 4,
     'de.caritas.cob.userservice.api.service.user.UserAccountServiceTest': 28,
     'de.caritas.cob.userservice.api.admin.service.consultant.ConsultantAdminServiceTest': 24,
@@ -28,6 +28,8 @@ COMPILED = [
     'adapters/keycloak/lifecycle/AccountLifecycleCodec',
     'adapters/keycloak/lifecycle/PreDeletionProofSchema',
     'workflow/delete/service/PreDeletionSqlSnapshot',
+    'service/chat/MembersOnlyRevocation', 'service/chat/PreDeletionChatRows',
+    'admin/service/agency/ConsultantAgencyDeletionValidationService',
 ]
 
 
