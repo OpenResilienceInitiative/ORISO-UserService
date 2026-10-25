@@ -142,7 +142,14 @@ final class PreDeletionSqlSnapshot {
     var columns = consultant ? CONSULTANT : USER;
     var rows =
         jdbc.query(
-            "select " + String.join(",", columns) + " from " + table + " where " + id + "=?" + (lock ? " for update" : ""),
+            "select "
+                + String.join(",", columns)
+                + " from "
+                + table
+                + " where "
+                + id
+                + "=?"
+                + (lock ? " for update" : ""),
             (rs, index) -> {
               var observed = new HashSet<String>();
               for (int i = 1; i <= rs.getMetaData().getColumnCount(); i++)

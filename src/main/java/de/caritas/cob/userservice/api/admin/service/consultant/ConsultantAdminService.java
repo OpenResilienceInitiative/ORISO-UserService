@@ -42,7 +42,6 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 /** Service class for admin operations on {@link Consultant} objects. */
 @Service
@@ -223,7 +222,6 @@ public class ConsultantAdminService {
    * @param consultantId the consultant id
    * @param forceDeleteSessions
    */
-  @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
   public void markConsultantForDeletion(String consultantId, Boolean forceDeleteSessions) {
     if (identityMode != null && identityMode.isFiveActorMode()) {
       if (preDeletion == null || !preDeletion.isFiveActorMode())

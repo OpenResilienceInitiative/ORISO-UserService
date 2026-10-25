@@ -164,8 +164,7 @@ class PublicPreDeletionJpaTest {
     new ResourceDatabasePopulator(
             new ClassPathResource(
                 "db/changelog/changeset/20260923_user_temporary_account/migrate.sql"),
-            new ClassPathResource(
-                "db/changelog/changeset/20261007_user_avatar_1240/migrate.sql"),
+            new ClassPathResource("db/changelog/changeset/20261007_user_avatar_1240/migrate.sql"),
             new ClassPathResource(
                 "db/changelog/changeset/20261021_identity_self_locale_367/migrate.sql"),
             new ClassPathResource(
@@ -182,7 +181,8 @@ class PublicPreDeletionJpaTest {
             "operator",
             Set.of("single-tenant-admin", "user-admin"),
             "fixture-human",
-            Set.of(Authority.AuthorityValue.SINGLE_TENANT_ADMIN, Authority.AuthorityValue.USER_ADMIN));
+            Set.of(
+                Authority.AuthorityValue.SINGLE_TENANT_ADMIN, Authority.AuthorityValue.USER_ADMIN));
     actor.setTenantId(7L);
     admins.save(
         Admin.builder()
@@ -466,10 +466,15 @@ class PublicPreDeletionJpaTest {
     asker();
     jdbc.update("update user set username=? where user_id=?", "pre-deletion", ACCOUNT);
     authenticate(true, "/service/users/account");
-    assertThrows(BadRequestException.class,
+    assertThrows(
+        BadRequestException.class,
         () -> selfService().deactivateAndFlagUserAccountForDeletion("wrong-current-password"));
-    assertEquals(0, jdbc.queryForObject("select count(*) from identity_account_operation_intent", Integer.class));
-    verify(passwords, times(1)).validatePasswordIgnoring2fa("pre-deletion", "wrong-current-password");
+    assertEquals(
+        0,
+        jdbc.queryForObject(
+            "select count(*) from identity_account_operation_intent", Integer.class));
+    verify(passwords, times(1))
+        .validatePasswordIgnoring2fa("pre-deletion", "wrong-current-password");
     assertEquals(0, nativeReads.get());
     assertEquals(0, nativeCalls.get());
   }
@@ -479,15 +484,25 @@ class PublicPreDeletionJpaTest {
     asker();
     authenticate(true, "/service/users/account");
     when(passwords.validatePasswordIgnoring2fa(anyString(), eq("chosen-original-password")))
-        .thenAnswer(ignored -> {
-          assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-          assertEquals(0, jdbc.queryForObject("select count(*) from identity_account_operation_intent", Integer.class));
-          jdbc.update("update user set create_date=DATEADD('DAY',-1,create_date) where user_id=?", ACCOUNT);
-          return true;
-        });
-    assertThrows(ConflictException.class,
+        .thenAnswer(
+            ignored -> {
+              assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+              assertEquals(
+                  0,
+                  jdbc.queryForObject(
+                      "select count(*) from identity_account_operation_intent", Integer.class));
+              jdbc.update(
+                  "update user set create_date=DATEADD('DAY',-1,create_date) where user_id=?",
+                  ACCOUNT);
+              return true;
+            });
+    assertThrows(
+        ConflictException.class,
         () -> selfService().deactivateAndFlagUserAccountForDeletion("chosen-original-password"));
-    assertEquals(0, jdbc.queryForObject("select count(*) from identity_account_operation_intent", Integer.class));
+    assertEquals(
+        0,
+        jdbc.queryForObject(
+            "select count(*) from identity_account_operation_intent", Integer.class));
     assertEquals(0, nativeReads.get());
     assertEquals(0, nativeCalls.get());
   }
@@ -498,9 +513,13 @@ class PublicPreDeletionJpaTest {
     authenticate(true, "/service/users/account");
     when(passwords.validatePasswordIgnoring2fa(anyString(), eq("chosen-original-password")))
         .thenThrow(new ResourceAccessException("Unknown password authentication response"));
-    assertThrows(ServiceUnavailableException.class,
+    assertThrows(
+        ServiceUnavailableException.class,
         () -> selfService().deactivateAndFlagUserAccountForDeletion("chosen-original-password"));
-    assertEquals(0, jdbc.queryForObject("select count(*) from identity_account_operation_intent", Integer.class));
+    assertEquals(
+        0,
+        jdbc.queryForObject(
+            "select count(*) from identity_account_operation_intent", Integer.class));
     assertEquals(0, nativeReads.get());
     assertEquals(0, nativeCalls.get());
   }
@@ -510,16 +529,23 @@ class PublicPreDeletionJpaTest {
     consultant();
     String original = "L".repeat(100000);
     jdbc.update("update consultant set admin_remarks=? where consultant_id=?", original, ACCOUNT);
-    var first = new org.springframework.transaction.support.TransactionTemplate(transactions)
-        .execute(ignored -> PreDeletionSqlSnapshot.capture(jdbc, codec, true, ACCOUNT, true));
+    var first =
+        new org.springframework.transaction.support.TransactionTemplate(transactions)
+            .execute(ignored -> PreDeletionSqlSnapshot.capture(jdbc, codec, true, ACCOUNT, true));
     assertEquals(53, first.full().size());
     assertEquals(original, first.full().path("admin_remarks").textValue());
     assertEquals(8, first.core().size());
     assertTrue(codec.canonical(first.core()).length() < 4096);
-    assertEquals(digest("public-pre-deletion-row/v1", Map.of("kind", "CONSULTANT", "row", first.full())), first.core().path("rowDigest").textValue());
-    jdbc.update("update consultant set admin_remarks=? where consultant_id=?", original.substring(0, 99999) + "R", ACCOUNT);
-    var changed = new org.springframework.transaction.support.TransactionTemplate(transactions)
-        .execute(ignored -> PreDeletionSqlSnapshot.capture(jdbc, codec, true, ACCOUNT, true));
+    assertEquals(
+        digest("public-pre-deletion-row/v1", Map.of("kind", "CONSULTANT", "row", first.full())),
+        first.core().path("rowDigest").textValue());
+    jdbc.update(
+        "update consultant set admin_remarks=? where consultant_id=?",
+        original.substring(0, 99999) + "R",
+        ACCOUNT);
+    var changed =
+        new org.springframework.transaction.support.TransactionTemplate(transactions)
+            .execute(ignored -> PreDeletionSqlSnapshot.capture(jdbc, codec, true, ACCOUNT, true));
     assertTrue(PreDeletionSqlSnapshot.sameBirth(first.core(), changed.core()));
     assertNotEquals(first.core().path("rowDigest"), changed.core().path("rowDigest"));
   }
@@ -532,13 +558,24 @@ class PublicPreDeletionJpaTest {
     authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
     loseReadReply = true;
     nativeHttp(true);
-    assertThrows(ServiceUnavailableException.class, () -> consultantService().markConsultantForDeletion(ACCOUNT, false));
+    assertThrows(
+        ServiceUnavailableException.class,
+        () -> consultantService().markConsultantForDeletion(ACCOUNT, false));
     assertEquals("PREPARED", status());
-    String retained = jdbc.queryForObject("select source_json from identity_account_operation_intent where operation_id=?", String.class, operation);
+    String retained =
+        jdbc.queryForObject(
+            "select source_json from identity_account_operation_intent where operation_id=?",
+            String.class,
+            operation);
     assertTrue(retained.length() < 8192);
     assertFalse(retained.contains(original));
-    jdbc.update("update consultant set admin_remarks=? where consultant_id=?", original.substring(0, 99999) + "R", ACCOUNT);
-    assertThrows(ConflictException.class, () -> consultantService().markConsultantForDeletion(ACCOUNT, false));
+    jdbc.update(
+        "update consultant set admin_remarks=? where consultant_id=?",
+        original.substring(0, 99999) + "R",
+        ACCOUNT);
+    assertThrows(
+        ConflictException.class,
+        () -> consultantService().markConsultantForDeletion(ACCOUNT, false));
     assertEquals(1, nativeReads.get());
     assertEquals(0, nativeEffects.get());
     verifyNoInteractions(memberships);
