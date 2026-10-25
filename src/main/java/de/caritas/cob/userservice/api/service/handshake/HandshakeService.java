@@ -11,6 +11,8 @@ import de.caritas.cob.userservice.api.model.HandshakeSession;
 import de.caritas.cob.userservice.api.model.HandshakeSession.HandshakeStatus;
 import de.caritas.cob.userservice.api.port.out.HandshakeAuditEventRepository;
 import de.caritas.cob.userservice.api.port.out.HandshakeSessionRepository;
+import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -36,6 +38,9 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class HandshakeService {
 
+  public static final String SWEEP_TASK_NAME = "handshake-expiry-sweep";
+  public static final String AUDIT_PURGE_TASK_NAME = "handshake-audit-purge";
+
   private static final String EVENT_INITIATED = "INITIATED";
   private static final String EVENT_CONFIRMED = "CONFIRMED";
   private static final String EVENT_CONFIRM_REJECTED = "CONFIRM_REJECTED";
@@ -54,6 +59,7 @@ public class HandshakeService {
       identityClientConfig;
 
   private final @NonNull List<HandshakeCompletionHandler> completionHandlers;
+  private final @NonNull ScheduledTaskClaimService claims;
 
   private final de.caritas.cob.userservice.api.helper.UsernameTranscoder usernameTranscoder =
       new de.caritas.cob.userservice.api.helper.UsernameTranscoder();
@@ -69,6 +75,12 @@ public class HandshakeService {
 
   @Value("${handshake.sweep-batch-size:200}")
   private int sweepBatchSize;
+
+  @Value("${handshake.sweep-claim-duration:PT2M}")
+  private Duration sweepClaimDuration;
+
+  @Value("${handshake.audit-purge-claim-duration:PT10M}")
+  private Duration auditPurgeClaimDuration;
 
   @Transactional
   public HandshakeItem initiate(AuthenticatedUser initiator, InitiateHandshakeRequest request) {
@@ -177,10 +189,17 @@ public class HandshakeService {
         .toList();
   }
 
-  /** Lapse sweep — a quiet no-answer leaves exactly one audit entry per session. */
+  /**
+   * Lapse sweep — a quiet no-answer leaves exactly one audit entry per session. Takes a shared
+   * lease ({@link ScheduledTaskClaimService}) so two overlapping instances do not both expire and
+   * audit the same session; the work runs and commits inside the lease transaction.
+   */
   @Scheduled(fixedDelayString = "${handshake.sweep-delay-ms:60000}")
-  @Transactional
   public void sweepExpired() {
+    claims.runIfClaimed(SWEEP_TASK_NAME, sweepClaimDuration, this::expireLapsedSessions);
+  }
+
+  private void expireLapsedSessions() {
     handshakeSessionRepository
         .findAllByStatusAndExpiryDateBefore(
             HandshakeStatus.PENDING,
@@ -189,12 +208,15 @@ public class HandshakeService {
         .forEach(this::expire);
   }
 
-  /** ADR-018 §3: audit retention 12 months, automatic deletion. */
+  /** ADR-018 §3: audit retention 12 months, automatic deletion; one instance purges at a time. */
   @Scheduled(cron = "${handshake.audit-purge-cron:0 30 3 * * *}")
-  @Transactional
   public void purgeOldAuditEvents() {
-    handshakeAuditEventRepository.deleteAllByCreateDateBefore(
-        nowInUtc().minusMonths(auditRetentionMonths));
+    claims.runIfClaimed(
+        AUDIT_PURGE_TASK_NAME,
+        auditPurgeClaimDuration,
+        () ->
+            handshakeAuditEventRepository.deleteAllByCreateDateBefore(
+                nowInUtc().minusMonths(auditRetentionMonths)));
   }
 
   /**

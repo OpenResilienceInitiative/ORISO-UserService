@@ -5,7 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakAuthClient;
@@ -16,11 +18,15 @@ import de.caritas.cob.userservice.api.model.HandshakeSession;
 import de.caritas.cob.userservice.api.port.out.HandshakeAuditEventRepository;
 import de.caritas.cob.userservice.api.port.out.HandshakeSessionRepository;
 import de.caritas.cob.userservice.api.service.handshake.HandshakeService.InitiateHandshakeRequest;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -45,6 +51,11 @@ class HandshakeServiceTest {
 
   @Mock private de.caritas.cob.userservice.api.port.out.IdentityClientConfig identityClientConfig;
 
+  private final de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService
+      claims =
+          de.caritas.cob.userservice.api.workflow.scheduling.InMemoryScheduledTaskClaimWriter
+              .newClaimService();
+
   private HandshakeService handshakeService;
 
   @BeforeEach
@@ -57,10 +68,14 @@ class HandshakeServiceTest {
             identityClient,
             identitySecondFactor,
             identityClientConfig,
-            List.of(completionHandler));
+            List.of(completionHandler),
+            claims);
     ReflectionTestUtils.setField(handshakeService, "ttlSeconds", 300L);
     ReflectionTestUtils.setField(handshakeService, "maxConfirmAttempts", 5);
     ReflectionTestUtils.setField(handshakeService, "sweepBatchSize", 200);
+    ReflectionTestUtils.setField(handshakeService, "sweepClaimDuration", Duration.ofMinutes(2));
+    ReflectionTestUtils.setField(
+        handshakeService, "auditPurgeClaimDuration", Duration.ofMinutes(10));
     org.mockito.Mockito.lenient().when(identityClientConfig.isOtpAllowed(any())).thenReturn(true);
     org.mockito.Mockito.lenient()
         .when(identitySecondFactor.getOtpCredential(anyString()))
@@ -426,5 +441,63 @@ class HandshakeServiceTest {
     assertThat(captor.getValue())
         .isBefore(LocalDateTime.now(ZoneOffset.UTC).minusMonths(11))
         .isAfter(LocalDateTime.now(ZoneOffset.UTC).minusMonths(13));
+  }
+
+  @Test
+  void sweepExpired_Should_Skip_When_AnotherReplicaHoldsTheSweepClaim() {
+    assertThat(claims.tryClaim(HandshakeService.SWEEP_TASK_NAME, Duration.ofMinutes(2))).isTrue();
+
+    handshakeService.sweepExpired();
+
+    verifyNoInteractions(handshakeSessionRepository, handshakeAuditEventRepository);
+  }
+
+  @Test
+  void sweepExpired_Should_ExpireAndAuditOnce_When_TwoReplicasOverlap() throws Exception {
+    var session = pendingSession();
+    session.setExpiryDate(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1));
+    var firstReplicaReading = new CountDownLatch(1);
+    var releaseFirstReplica = new CountDownLatch(1);
+    when(handshakeSessionRepository.findAllByStatusAndExpiryDateBefore(
+            any(), any(LocalDateTime.class), any(org.springframework.data.domain.Pageable.class)))
+        .thenAnswer(
+            invocation -> {
+              firstReplicaReading.countDown();
+              assertThat(releaseFirstReplica.await(5, TimeUnit.SECONDS)).isTrue();
+              return List.of(session);
+            });
+    when(handshakeSessionRepository.save(any(HandshakeSession.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    var executor = Executors.newSingleThreadExecutor();
+    try {
+      var first = executor.submit(handshakeService::sweepExpired);
+      assertThat(firstReplicaReading.await(5, TimeUnit.SECONDS)).isTrue();
+
+      handshakeService.sweepExpired();
+
+      releaseFirstReplica.countDown();
+      first.get(5, TimeUnit.SECONDS);
+    } finally {
+      releaseFirstReplica.countDown();
+      executor.shutdownNow();
+    }
+
+    verify(handshakeSessionRepository, times(1))
+        .findAllByStatusAndExpiryDateBefore(
+            any(), any(LocalDateTime.class), any(org.springframework.data.domain.Pageable.class));
+    verify(handshakeAuditEventRepository, times(1)).save(any());
+    assertThat(claims.tryClaim(HandshakeService.SWEEP_TASK_NAME, Duration.ofMinutes(2)))
+        .as("the claim is released after the sweep so the next tick can run")
+        .isTrue();
+  }
+
+  @Test
+  void purgeOldAuditEvents_Should_Skip_When_AnotherReplicaHoldsThePurgeClaim() {
+    assertThat(claims.tryClaim(HandshakeService.AUDIT_PURGE_TASK_NAME, Duration.ofMinutes(10)))
+        .isTrue();
+
+    handshakeService.purgeOldAuditEvents();
+
+    verifyNoInteractions(handshakeAuditEventRepository);
   }
 }
