@@ -36,7 +36,8 @@ final class SelfPasswordIntentCodec {
     return seal(checkedMetadata, command, reactivation, false);
   }
 
-  private String seal(JsonNode checkedMetadata, byte[] command, boolean reactivation, boolean history) {
+  private String seal(
+      JsonNode checkedMetadata, byte[] command, boolean reactivation, boolean history) {
     try {
       var metadata = metadata(checkedMetadata, reactivation);
       byte[] plaintext = history ? history(metadata, command) : command(metadata, command);
@@ -71,7 +72,8 @@ final class SelfPasswordIntentCodec {
     return open(checkedMetadata, envelope, reactivation, false);
   }
 
-  private byte[] open(JsonNode checkedMetadata, String envelope, boolean reactivation, boolean history) {
+  private byte[] open(
+      JsonNode checkedMetadata, String envelope, boolean reactivation, boolean history) {
     try {
       var metadata = metadata(checkedMetadata, reactivation);
       if (envelope == null || envelope.length() > 87500) throw invalid();
@@ -288,10 +290,7 @@ final class SelfPasswordIntentCodec {
   private void reactivationBody(
       Metadata metadata, JsonNode originalSql, JsonNode body, boolean password) {
     ReactivationUserSnapshotSchema.require(
-        originalSql,
-        metadata.accountId(),
-        metadata.tenantId(),
-        metadata.operationId());
+        originalSql, metadata.accountId(), metadata.tenantId(), metadata.operationId());
     fields(body, Set.of("target", "operationId", "expectedState", "change"));
     if (!metadata.operationId().equals(uuid(body, "operationId"))
         || !metadata.expectedState().equals(digest(body, "expectedState"))) throw invalid();
@@ -327,8 +326,11 @@ final class SelfPasswordIntentCodec {
     if (!text(origin, "humanClient", 255).matches("[A-Za-z0-9][A-Za-z0-9_.:-]{0,254}"))
       throw invalid();
     var change = body.path("change");
-    fields(change, password ? Set.of("expectedUsername", "expectedEmail", "password")
-        : Set.of("expectedUsername", "expectedEmail"));
+    fields(
+        change,
+        password
+            ? Set.of("expectedUsername", "expectedEmail", "password")
+            : Set.of("expectedUsername", "expectedEmail"));
     if (password) text(change, "password", 4096);
     String originalUsername = originalSql.path("username").textValue();
     if (!originalUsername.equalsIgnoreCase(text(change, "expectedUsername", 255))

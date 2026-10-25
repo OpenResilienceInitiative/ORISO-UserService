@@ -234,7 +234,8 @@ class ReactivationIntentCodecTest {
     for (int outcome : List.of(0, 200, 400, 403, 409)) {
       String phase = outcome == 0 ? "FROZEN" : outcome == 200 ? "ACKNOWLEDGED" : "NO_EFFECT";
       Integer refusalStatus = outcome >= 400 ? outcome : null;
-      String receipt = "FROZEN".equals(phase) ? null : historyReceipt(original.path("body"), refusalStatus);
+      String receipt =
+          "FROZEN".equals(phase) ? null : historyReceipt(original.path("body"), refusalStatus);
       String history =
           assertDoesNotThrow(
               () -> retained.retainReactivationHistory(metadata, sealed, phase, receipt, actor));

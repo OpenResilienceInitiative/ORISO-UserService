@@ -146,8 +146,8 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
           < Math.addExact(metadata.path("authorityValidUntil").longValue(), 604800L))
         throw invalidSecretIntent();
       String fullIntent = digest("maintenance-intent", original.path("body"));
-      requireReactivationHistoryReceipt(metadata, original.path("body"), phase, receipt, actor,
-          fullIntent, false);
+      requireReactivationHistoryReceipt(
+          metadata, original.path("body"), phase, receipt, actor, fullIntent, false);
       var template = (ObjectNode) original.path("body").deepCopy();
       ((ObjectNode) template.path("change")).remove("password");
       var history = read("{}", ObjectNode.class);
@@ -169,14 +169,27 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
       String receipt,
       TaskActorCredentials actor) {
     try {
-      var history = read(utf8(new SelfPasswordIntentCodec(this, this::mac)
-          .openReactivationHistory(metadata, envelope)), JsonNode.class);
+      var history =
+          read(
+              utf8(
+                  new SelfPasswordIntentCodec(this, this::mac)
+                      .openReactivationHistory(metadata, envelope)),
+              JsonNode.class);
       String authenticatedPhase = history.path("phase").textValue();
       if (!(authenticatedPhase + "_HISTORY").equals(phase)) throw invalidSecretIntent();
-      requireReactivationHistoryReceipt(metadata, history.path("template"), authenticatedPhase,
-          receipt, actor, history.path("intentDigest").textValue(), true);
-      return new VerifiedReactivationHistory(authenticatedPhase, history.path("originalSql"),
-          history.path("template"), history.path("intentDigest").textValue());
+      requireReactivationHistoryReceipt(
+          metadata,
+          history.path("template"),
+          authenticatedPhase,
+          receipt,
+          actor,
+          history.path("intentDigest").textValue(),
+          true);
+      return new VerifiedReactivationHistory(
+          authenticatedPhase,
+          history.path("originalSql"),
+          history.path("template"),
+          history.path("intentDigest").textValue());
     } catch (RuntimeException invalid) {
       throw invalidSecretIntent();
     }
@@ -200,19 +213,29 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
     return canonical(body);
   }
 
-  private void requireReactivationHistoryReceipt(JsonNode metadata, JsonNode template, String phase,
-      String receipt, TaskActorCredentials actor, String authenticatedIntent, boolean retained) {
+  private void requireReactivationHistoryReceipt(
+      JsonNode metadata,
+      JsonNode template,
+      String phase,
+      String receipt,
+      TaskActorCredentials actor,
+      String authenticatedIntent,
+      boolean retained) {
     if (actor.actor() != de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN
         || !actor.clientId().equals(metadata.path("ownerClient").textValue())
         || !actor.serviceSubject().equals(metadata.path("ownerSubject").textValue()))
       throw invalidSecretIntent();
     String realm = metadata.path("realmId").textValue();
     switch (phase) {
-      case "FROZEN" -> { if (receipt != null) throw invalidSecretIntent(); }
-      case "ACKNOWLEDGED" -> verifyMaintenanceReceipt(
-          receipt, realm, actor, template, "reactivate", "UPDATED", authenticatedIntent);
-      case "NO_EFFECT" -> verifyMaintenanceNoEffectReceipt(
-          receipt, realm, actor, template, "reactivate", authenticatedIntent, retained);
+      case "FROZEN" -> {
+        if (receipt != null) throw invalidSecretIntent();
+      }
+      case "ACKNOWLEDGED" ->
+          verifyMaintenanceReceipt(
+              receipt, realm, actor, template, "reactivate", "UPDATED", authenticatedIntent);
+      case "NO_EFFECT" ->
+          verifyMaintenanceNoEffectReceipt(
+              receipt, realm, actor, template, "reactivate", authenticatedIntent, retained);
       default -> throw invalidSecretIntent();
     }
   }
@@ -1349,8 +1372,13 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
   }
 
   private VerifiedMaintenanceNoEffect verifyMaintenanceNoEffectReceipt(
-      String reply, String realmId, TaskActorCredentials actor, JsonNode frozen, String command,
-      String authenticatedIntent, boolean retainedReactivation) {
+      String reply,
+      String realmId,
+      TaskActorCredentials actor,
+      JsonNode frozen,
+      String command,
+      String authenticatedIntent,
+      boolean retainedReactivation) {
     try {
       if (!java.util.Set.of(
                   "delete",
@@ -1385,8 +1413,11 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
           && status.intValue() == 400) {
         intentFields(frozen, java.util.Set.of("target", "operationId", "expectedState", "change"));
         JsonNode change = frozen.path("change");
-        intentFields(change, retainedReactivation ? java.util.Set.of("expectedUsername", "expectedEmail")
-            : java.util.Set.of("expectedUsername", "expectedEmail", "password"));
+        intentFields(
+            change,
+            retainedReactivation
+                ? java.util.Set.of("expectedUsername", "expectedEmail")
+                : java.util.Set.of("expectedUsername", "expectedEmail", "password"));
         intentText(change, "expectedUsername", 255);
         intentText(change, "expectedEmail", 255);
         if (!retainedReactivation) intentText(change, "password", 4096);
@@ -1561,13 +1592,24 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
       JsonNode frozen,
       String command,
       String expectedResult) {
-    return verifyMaintenanceReceipt(reply, realmId, actor, frozen, command, expectedResult,
+    return verifyMaintenanceReceipt(
+        reply,
+        realmId,
+        actor,
+        frozen,
+        command,
+        expectedResult,
         digest("maintenance-intent", frozen));
   }
 
   private String verifyMaintenanceReceipt(
-      String reply, String realmId, TaskActorCredentials actor, JsonNode frozen,
-      String command, String expectedResult, String authenticatedIntent) {
+      String reply,
+      String realmId,
+      TaskActorCredentials actor,
+      JsonNode frozen,
+      String command,
+      String expectedResult,
+      String authenticatedIntent) {
     try {
       var result = read(reply, MaintenanceReply.class);
       UUID operation = UUID.fromString(frozen.path("operationId").asText());
