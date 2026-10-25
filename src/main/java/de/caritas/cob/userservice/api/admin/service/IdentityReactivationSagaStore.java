@@ -26,6 +26,13 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class IdentityReactivationSagaStore {
 
+  private de.caritas.cob.userservice.api.port.out.IdentityClientConfig identityMode;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  public void setIdentityMode(de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode) {
+    this.identityMode = java.util.Objects.requireNonNull(mode);
+  }
+
   private final @NonNull UserRepository userRepository;
   private final @NonNull UsernameTranscoder usernameTranscoder;
   private final @NonNull IdentityReactivator identityReactivator;
@@ -35,6 +42,7 @@ public class IdentityReactivationSagaStore {
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public IdentityReactivationOperation begin(
       String requestedUsername, String requestedEmail, Long tenantId) {
+    requireLegacy();
     String username = normalize(requestedUsername);
     String email = normalize(requestedEmail);
     List<User> candidates =
@@ -77,6 +85,7 @@ public class IdentityReactivationSagaStore {
       propagation = Propagation.REQUIRES_NEW,
       noRollbackFor = IdentityReactivationUnmutatedException.class)
   public void reactivateAndCommit(IdentityReactivationOperation operation, String password) {
+    requireLegacy();
     final User user;
     try {
       user = currentOperationForUpdate(operation);
@@ -101,9 +110,34 @@ public class IdentityReactivationSagaStore {
     userRepository.save(user);
   }
 
+  /**
+   * The scoped owner has already recorded a strict native ACK in this same short JPA transaction.
+   */
+  public void acknowledgeScoped(
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ScopedAskerReactivation
+              .VerifiedUpdate
+          proof,
+      jakarta.persistence.EntityManager entities) {
+    if (!org.springframework.transaction.support.TransactionSynchronizationManager
+            .isActualTransactionActive()
+        || !entities.isJoinedToTransaction())
+      throw new IllegalStateException("Owned reactivation transaction required");
+    User user =
+        userRepository
+            .findByUserIdForUpdate(proof.accountId())
+            .orElseThrow(() -> new ConflictException("Asker incarnation is absent"));
+    entities.refresh(user);
+    proof.requireCurrent(user);
+    deletionLifecycleService.cancelUserDeletion(user);
+    clearOperation(user);
+    userRepository.save(user);
+    entities.flush();
+  }
+
   /** Releases a claim after a proven pre-mutation validation failure. */
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public boolean abortUnmutated(IdentityReactivationOperation operation) {
+    requireLegacy();
     return releaseCurrentClaimIfPresent(operation);
   }
 
@@ -161,6 +195,11 @@ public class IdentityReactivationSagaStore {
   static void clearOperation(User user) {
     user.setReactivationOperationId(null);
     user.setReactivationOperationStartedAt(null);
+  }
+
+  private void requireLegacy() {
+    if (identityMode != null && identityMode.isFiveActorMode())
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
   }
 
   private static String normalize(String value) {

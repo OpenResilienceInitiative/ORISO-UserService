@@ -158,6 +158,11 @@ class AccountLifecycleCallerConfigurationTest {
                                 .DeleteUserAccountService.class));
                     factory.registerSingleton("fixtureAdminScope", mock(AdminScope.class));
                     factory.registerSingleton(
+                        "fixtureReactivationSaga",
+                        mock(
+                            de.caritas.cob.userservice.api.admin.service
+                                .IdentityReactivationSagaStore.class));
+                    factory.registerSingleton(
                         "fixtureDeletionClaims",
                         mock(
                             de.caritas.cob.userservice.api.workflow.scheduling
@@ -331,6 +336,16 @@ class AccountLifecycleCallerConfigurationTest {
                             .ScheduledConsultantMaintenance.class)
                     .size(),
                 "FIVE_ACTORS must install the consultant owner as well as the asker owner"));
+  }
+
+  @Test
+  void enabledCallerInstallsTheScopedAskerReactivationOwner() {
+    withEnabledCallerGraph(
+        context ->
+            assertEquals(
+                1,
+                context.getBeansOfType(ScopedAskerReactivation.class).size(),
+                "FIVE_ACTORS must install the bounded chosen-password reactivation owner"));
   }
 
   @Test

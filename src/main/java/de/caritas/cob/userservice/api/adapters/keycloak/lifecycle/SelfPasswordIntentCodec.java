@@ -298,7 +298,7 @@ final class SelfPasswordIntentCodec {
             .path("originalSql")
             .path("email")
             .textValue()
-            .equals(text(change, "expectedEmail", 255))
+            .equalsIgnoreCase(text(change, "expectedEmail", 255))
         || !raw.equals(codec.canonical(wrapper))) throw invalid();
     return snapshot;
   }

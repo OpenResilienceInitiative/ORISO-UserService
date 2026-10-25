@@ -285,6 +285,16 @@ class KeycloakServiceScenarioCModeTest {
   }
 
   @Test
+  void fiveActorsChosenPasswordReactivationRequiresScopedOwnerBeforeAnyNativeReadOrRepair() {
+    assertThrows(
+        ScopedIdentityCommandRequiredException.class,
+        () ->
+            service.reactivateUser(
+                "target", "actual-target", "target@example.test", 7L, "synthetic-chosen-password"));
+    verifyNoInteractions(nativeClient);
+  }
+
+  @Test
   void fiveActorsEmailOwnerLookupRequiresScopedAuthorityBeforeGenericNativeSearch() {
     assertThrows(
         ScopedIdentityCommandRequiredException.class,

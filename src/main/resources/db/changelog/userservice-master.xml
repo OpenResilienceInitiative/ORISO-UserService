@@ -274,4 +274,5 @@
   <include file="db/changelog/changeset/20261022_identity_setup_password_claim_367/changeSet.xml"/>
   <include file="db/changelog/changeset/20261023_identity_setup_password_original_sql_367/changeSet.xml"/>
   <include file="db/changelog/changeset/20261023_identity_claimed_password_intent_367/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261023_identity_asker_reactivation_367/changeSet.xml"/>
 </databaseChangeLog>

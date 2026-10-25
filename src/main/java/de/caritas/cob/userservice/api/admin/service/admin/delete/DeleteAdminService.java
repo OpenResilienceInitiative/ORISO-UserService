@@ -16,8 +16,8 @@ public class DeleteAdminService {
   private final @NonNull IdentityAccountRemover identityAccountRemover;
 
   public void deleteAgencyAdmin(String adminId) {
-    this.adminAgencyRepository.deleteByAdminId(adminId);
     this.identityAccountRemover.deleteUser(adminId);
+    this.adminAgencyRepository.deleteByAdminId(adminId);
     this.adminRepository.deleteById(adminId);
   }
 
