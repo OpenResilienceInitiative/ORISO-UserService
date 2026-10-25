@@ -705,7 +705,7 @@ class ScopedAskerReactivationFlowJpaTest {
             self,
             mock(SessionRepository.class),
             mock(de.caritas.cob.userservice.api.service.appointment.AppointmentService.class),
-            mock(de.caritas.cob.userservice.api.facade.userdata.PatchConsultantSaga.class));
+            mock(de.caritas.cob.userservice.api.PatchConsultantSaga.class));
     assertEquals(Map.of("id", ACCOUNT, "avatarId", "magpie"), map);
     assertTrue(accounts.patchUser(map).isPresent());
     assertEquals("magpie", users.findById(ACCOUNT).orElseThrow().getAvatarId());
