@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Two real JPA/public SELF/native replay cases; no credentials or raw output retained."""
+"""Four finite real JPA/public SELF/native replay cases; no credentials or raw output retained."""
 import argparse
 import ast
 import base64
@@ -20,10 +20,12 @@ import xml.etree.ElementTree as ET
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
-KC_COMMIT = "5d4c58e8df6090451fa544481d7ef16e6fab4fc1"
+KC_COMMIT = "6ef53b161606a20bdba6fa0e9f9c3ebfcad99dd4"
 SUITE = "de.caritas.cob.userservice.api.adapters.web.controller.UserSelfMaintenanceNativePairProof"
 CASES = {"password": "publicPasswordSavedReplayRequiresCurrentNativeGrantWithoutRepeatingJpaCallback",
-         "locale": "publicLocaleSavedReplayRequiresCurrentNativeGrantWithoutRepeatingJpaCallback"}
+         "locale": "publicLocaleSavedReplayRequiresCurrentNativeGrantWithoutRepeatingJpaCallback",
+         "contact-email": "publicContactEmailLostReplyPreservesVerificationAndRequiresCurrentGrant",
+         "contact-email-remove": "publicContactEmailRemovalKeepsConsultantAndRequiresCurrentGrant"}
 IMAGE = "quay.io/keycloak/keycloak@sha256:9b0330756022422149aa6502eb2def8cd47c6e1b000c7c65cdb13e7c0133e992"
 WITNESS_FLAGS = {"actualJpa", "actualCurrentSelf", "canonicalAdmin", "firstNative200",
     "savedBeforeWithdrawal200", "sameFrozenCommand", "sameHumanAfterRestart", "readAfterWithdrawal200",
@@ -34,7 +36,8 @@ WITNESS_FLAGS = {"actualJpa", "actualCurrentSelf", "canonicalAdmin", "firstNativ
 
 def reviewed_operations(kind):
     if kind not in CASES: raise ValueError("Unknown finite SELF maintenance case")
-    return ["account.read", "account.password" if kind == "password" else "account.locale"]
+    return ["account.read", "account.password" if kind == "password" else
+            "account.email" if kind in {"contact-email", "contact-email-remove"} else "account.locale"]
 
 
 def checked_witness(value, kind):
@@ -144,6 +147,11 @@ def native(kc, report):
             "adapters/keycloak/lifecycle/SelfPasswordMaintenance", "adapters/keycloak/maintenance/SelfLocaleMaintenance",
             "adapters/keycloak/lifecycle/SelfAccountOwner", "adapters/keycloak/lifecycle/AccountLifecycleCodec",
             "config/auth/TaskActorTokenBroker", "AccountManager", "service/ConsultantService"]]
+    if kind in {"contact-email", "contact-email-remove"}:
+        classes += ["target/classes/de/caritas/cob/userservice/api/" + path + ".class" for path in [
+            "adapters/keycloak/lifecycle/SelfContactEmailMaintenance",
+            "adapters/keycloak/lifecycle/SelfContactEmailSource", "service/user/UserAccountService",
+            "service/user/UserService"]]
     if not all((ROOT / path).is_file() for path in classes): raise ValueError("Actual compiled producer/JPA classes required")
     compiled = {path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest() for path in classes}
     before = snapshot(kc)
@@ -179,7 +187,7 @@ def native(kc, report):
         @classmethod
         def reviewed_human_profile(cls):
             return ({"kind": "CONSULTANT", "group": "consultant", "roles": ["consultant", "group-chat-consultant"], "id": "consultant-v1"}
-                    if kind == "password" else {"kind": "ASKER", "group": "user", "roles": ["user"], "id": "user-v1"})
+                    if kind in {"password", "contact-email-remove"} else {"kind": "ASKER", "group": "user", "roles": ["user"], "id": "user-v1"})
 
         @classmethod
         def reviewed_self_operations(cls): return reviewed_operations(kind)
@@ -197,6 +205,8 @@ def native(kc, report):
     try:
         UserPair.setUpClass(); fixture = UserPair("runTest"); fixture.human()
         native_user = fixture.admin("GET", "/users/" + fixture.account_id)
+        if type(native_user.get("emailVerified")) is not bool:
+            raise ValueError("Actual native prior email verification flag required")
         realm = fixture.admin("GET", ""); realm["adminEventsEnabled"] = True
         realm["adminEventsDetailsEnabled"] = False; fixture.admin("PUT", "", realm)
         prefix = "ORISO_ACCOUNT_MAINTENANCE_CONFIG="
@@ -249,6 +259,7 @@ def native(kc, report):
         environment.update({"PAIR_KIND": kind, "PAIR_NATIVE_BASE": fixture.base, "PAIR_REALM": lifecycle.REALM,
             "PAIR_REALM_ID": fixture.realm_id, "PAIR_ACCOUNT_ID": fixture.account_id,
             "PAIR_USERNAME": fixture.creation_input["account"]["username"], "PAIR_EMAIL": native_user["email"],
+            "PAIR_EMAIL_VERIFIED": str(native_user["emailVerified"]).lower(),
             "PAIR_PASSWORD": fixture.creation_input["account"]["password"], "PAIR_HUMAN_CLIENT": CLIENT,
             "PAIR_CONTEXT_KEY_B64": base64.b64encode(lifecycle.CONTEXT_KEY).decode(),
             "PAIR_CONTROL_BASE": "http://127.0.0.1:" + str(control.server_address[1]),

@@ -17,6 +17,7 @@ import xml.etree.ElementTree as ET
 SUITE = 'de.caritas.cob.userservice.api.service.accountinvite.UserRoleMaintenanceNativePairProof'
 CASE = 'publicCombinedAgencyRoleKeepsNativeAndSqlOwnershipAcrossLossRevocationAndRestart'
 KIND = 'role-agency'
+PLATFORM_HUMAN_ROLES = frozenset({'agency-admin', 'tenant-admin', 'user-admin'})
 FLAGS = {'actualJpa', 'actualPublicRoleCaller', 'actualCurrentHuman', 'canonicalAdmin',
     'preparedBeforeRead', 'nativeReplyLostAfter200', 'sameFrozenCommand',
     'nativeAcknowledgedBeforeLocal', 'oneLocalCallback', 'combinedRolesPreserved',
@@ -30,6 +31,83 @@ def checked_witness(value):
             or any(type(value[key]) is not bool for key in FLAGS)):
         raise ValueError('Exact closed role-agency witness required')
     return all(value[key] for key in FLAGS)
+
+
+
+def canonical_platform_configuration(configuration, subject, group):
+    """Finite diagnostic source alignment with canonical Helm PLATFORM roles; no target edit."""
+    value = copy.deepcopy(configuration)
+    bindings = [item for item in value.get('bindings', []) if item.get('subject') == subject]
+    profiles = [item for item in value.get('profiles', []) if item.get('id') == 'platform-v1']
+    old = {'agency-admin', 'tenant-admin'}
+    if (len(bindings) != 1 or len(profiles) != 1
+            or bindings[0].get('authority') != 'PLATFORM'
+            or bindings[0].get('authorizerTenantIds') != [0]
+            or bindings[0].get('humanClientIds') != ['protected-human-web']
+            or bindings[0].get('audienceSets') != [['userservice']]
+            or bindings[0].get('protectedProfileIds') != ['platform-v1']
+            or set(bindings[0].get('realmRoles', [])) != old
+            or len(bindings[0]['realmRoles']) != len(old)
+            or profiles[0].get('kind') != 'PLATFORM_ADMIN'
+            or profiles[0].get('groupId') != group
+            or profiles[0].get('groupPath') != '/protected-admins/platform-admins'
+            or set(profiles[0].get('realmRoles', [])) != old
+            or len(profiles[0]['realmRoles']) != len(old)):
+        raise ValueError('Exact existing diagnostic PLATFORM source binding/profile required')
+    bindings[0]['realmRoles'] = sorted(PLATFORM_HUMAN_ROLES)
+    profiles[0]['realmRoles'] = sorted(PLATFORM_HUMAN_ROLES)
+    return value
+
+
+def install_canonical_platform_source(cls, helper, configuration, ordinary_policy):
+    """Before configured launch, align actual source mappings and verify exact readbacks."""
+    value = canonical_platform_configuration(configuration, cls.human_subject, cls.protected_group_id)
+    subject = '/users/' + cls.human_subject
+    group = '/groups/' + cls.protected_group_id
+    old = {'agency-admin', 'tenant-admin'}
+    if ({role['name'] for role in helper.admin('GET', subject + '/role-mappings/realm')} != old
+            or {role['name'] for role in helper.admin('GET', group + '/role-mappings/realm')} != old):
+        raise ValueError('Independent original native PLATFORM mappings changed')
+    role = helper.admin('GET', '/roles/user-admin')
+    if role.get('name') != 'user-admin' or role.get('composite') is not False:
+        raise ValueError('Canonical application role must be non-composite')
+    helper.admin('POST', subject + '/role-mappings/realm', [role])
+    helper.admin('POST', group + '/role-mappings/realm', [role])
+    if ({role['name'] for role in helper.admin('GET', subject + '/role-mappings/realm/composite')} != PLATFORM_HUMAN_ROLES
+            or {role['name'] for role in helper.admin('GET', group + '/role-mappings/realm/composite')} != PLATFORM_HUMAN_ROLES):
+        raise ValueError('Actual canonical PLATFORM mapping readbacks failed')
+    clients = helper.admin('GET', '/clients?clientId=protected-human-web')
+    if len(clients) != 1: raise ValueError('One actual human interactive client required')
+    scope = {role['name'] for role in helper.admin('GET', '/clients/' + clients[0]['id'] + '/scope-mappings/realm')}
+    expected = PLATFORM_HUMAN_ROLES | {role for profile in ordinary_policy['ordinaryProfiles'] for role in profile['realmRoles']}
+    if scope != expected: raise ValueError('Exact original target role union plus canonical source client scope required')
+    native = helper.admin('GET', subject)
+    if native.get('attributes', {}).get('tenantId') != ['0'] or native.get('enabled') is not True or native.get('serviceAccountClientLink') is not None:
+        raise ValueError('Actual existing human PLATFORM source required')
+    cls.canonical_platform_source = {'roles': sorted(PLATFORM_HUMAN_ROLES),
+        'directAndEffectiveHumanMappings': True, 'protectedSourceGroupMapping': True,
+        'sourceBindingAndProfile': True, 'sameOriginalTargetClientScope': True}
+    return value
+
+
+def verify_canonical_platform_human(fixture, lifecycle, issuer, password):
+    """The inherited two-role human validator is deliberately not widened for this fixture."""
+    status, reply = lifecycle.call(fixture.base, 'POST', '/realms/' + lifecycle.REALM + '/protocol/openid-connect/token',
+        {'client_id': 'protected-human-web', 'grant_type': 'password', 'username': 'reviewed-human', 'password': password, 'scope': 'openid'}, form=True)
+    if status != 200: raise ValueError('Fresh native canonical PLATFORM human login required')
+    bearer = reply['access_token']; encoded = bearer.split('.')[1]
+    claims = json.loads(base64.urlsafe_b64decode(encoded + '=' * (-len(encoded) % 4)))
+    if (claims.get('sub') != fixture.human_subject or claims.get('iss') != issuer
+            or claims.get('azp') != 'protected-human-web' or claims.get('tenantId') != '0'
+            or set(claims.get('aud', []) if isinstance(claims.get('aud'), list) else [claims.get('aud')]) != {'userservice'}
+            or set(claims.get('realm_access', {}).get('roles', [])) != PLATFORM_HUMAN_ROLES
+            or type(claims.get('exp')) is not int or claims['exp'] <= time.time() or not claims.get('sid')):
+        raise ValueError('Exact actual canonical PLATFORM JWT required')
+    status, current = lifecycle.call(fixture.base, 'GET', '/realms/' + lifecycle.REALM + '/protocol/openid-connect/userinfo', token=bearer)
+    sessions = fixture.admin('GET', '/users/' + fixture.human_subject + '/sessions')
+    if status != 200 or current.get('sub') != fixture.human_subject or not any(session['id'] == claims['sid'] for session in sessions):
+        raise ValueError('Actual current human UserInfo and native session required')
+    return bearer
 
 
 def withdrawn_policy(original):
@@ -110,6 +188,7 @@ def native(kc, report, driver):
     compiled = {path: hashlib.sha256((root / path).read_bytes()).hexdigest() for path in classes}
     sys.path.insert(0, str(module / 'tests'))
     import lifecycle_fixture as lifecycle
+    from protected_resources import HOSTED_PROFILE, evidence as resource_evidence
     from protected_otp_bootstrap import BootstrapFixture
     from protected_account_operations import OperationFixture, ProtectedOperationRead
     from ordinary_admin_operations import install_policy
@@ -117,7 +196,7 @@ def native(kc, report, driver):
     from test_protected_invitations import ISSUER, HUMAN_PASSWORD
     if lifecycle.IMAGE != driver.IMAGE: raise ValueError('Exact pinned native image required')
     frames = driver.source_frame_catalog([Path(__file__), *[module / 'tests' / name for name in [
-        'lifecycle_fixture.py', 'test_protected_invitations.py', 'protected_otp_bootstrap.py',
+        'lifecycle_fixture.py', 'test_protected_invitations.py', 'protected_otp_bootstrap.py', 'protected_resources.py',
         'protected_account_operations.py', 'ordinary_admin_operations.py', 'profile_transition_operations.py']]])
 
     class RolePair(BootstrapFixture):
@@ -140,7 +219,7 @@ def native(kc, report, driver):
                 raise ValueError('One captured ordinary fixture configuration required')
             cls.command = [prefix + json.dumps(policy, separators=(',', ':')) if arg.startswith(prefix) else arg for arg in cls.command]
             cls.ordinary_installed_configuration = copy.deepcopy(policy)
-            return configuration
+            return install_canonical_platform_source(cls, helper, configuration, policy)
 
         @classmethod
         def ready(cls):
@@ -158,8 +237,9 @@ def native(kc, report, driver):
     receipt = {'kind': KIND, 'case': CASE, 'phase': 'fixture-setup', 'accepted': False,
         'executed': 0, 'genuine_behavior_red': False, 'before': before, 'jars': hashes,
         'compiled_user_classes': compiled, 'image': driver.IMAGE}
-    original_env = {key: os.environ.get(key) for key in jars}
+    original_env = {key: os.environ.get(key) for key in [*jars, 'PROTECTED_PROOF_RESOURCE_PROFILE']}
     for key, path in jars.items(): os.environ[key] = str(path.resolve())
+    os.environ['PROTECTED_PROOF_RESOURCE_PROFILE'] = HOSTED_PROFILE
     control = None; stage = ['ORIGINAL']; lock = threading.Lock(); controls = []; launches = []
     original_run = subprocess.run
     def capture(args, *positional, **keywords):
@@ -169,7 +249,9 @@ def native(kc, report, driver):
         with patch.object(subprocess, 'run', side_effect=capture): RolePair.setUpClass()
         if not launches: raise ValueError('Actual configured native launch absent')
         configured = launches[-1]
-        fixture = RolePair('runTest'); fixture.human(record=False)
+        fixture = RolePair('runTest')
+        verify_canonical_platform_human(fixture, lifecycle, ISSUER, HUMAN_PASSWORD)
+        receipt['canonical_platform_source'] = copy.deepcopy(RolePair.canonical_platform_source)
         account, creation = committed_kind(fixture, fixture, 'CONSULTANT_AGENCY_ADMIN', 'consultant-agency-admin')
         fixture.account_id = account; fixture.creation_input = creation
         native_user = fixture.admin('GET', '/users/' + account)
@@ -191,6 +273,7 @@ def native(kc, report, driver):
                 before_identity = fixture.admin('GET', '/users/' + account)
                 subprocess.run(['docker', 'stop', '-t', '5', RolePair.name], check=True, capture_output=True, timeout=30)
                 subprocess.run(['docker', 'rm', RolePair.name], check=True, capture_output=True, timeout=30)
+                RolePair.memoryStart()
                 subprocess.run(command, check=True, capture_output=True, timeout=30)
                 RolePair.refresh_endpoint('role-grant-' + action); RolePair.ready(); fixture.installer = RolePair.installer
                 if before_identity != fixture.admin('GET', '/users/' + account): raise ValueError('Native original incarnation changed')
@@ -262,6 +345,11 @@ def native(kc, report, driver):
         if control is not None: control.shutdown(); control.server_close()
         RolePair.doClassCleanups()
         receipt['cleanup_verified'] = not RolePair.tearDown_exceptions
+        receipt['native_resource_gate'] = resource_evidence()
+        approved_starts = [sample for sample in receipt['native_resource_gate']['startDecisions']
+            if sample.get('profile') == HOSTED_PROFILE and sample.get('freePercent', 0) >= 35
+            and sample.get('availableBytes', 0) >= 3 * 1024**3]
+        receipt['all_four_native_starts_guarded'] = len(approved_starts) >= 4
         for key, value in original_env.items():
             if value is None: os.environ.pop(key, None)
             else: os.environ[key] = value
@@ -269,6 +357,6 @@ def native(kc, report, driver):
         receipt['source_stable'] = before == after
         receipt['jar_stable'] = hashes == {key: hashlib.sha256(path.read_bytes()).hexdigest() for key, path in jars.items()}
         receipt['compiled_user_stable'] = compiled == {path: hashlib.sha256((root / path).read_bytes()).hexdigest() for path in classes}
-        receipt['accepted'] &= receipt['cleanup_verified'] and receipt['source_stable'] and receipt['jar_stable'] and receipt['compiled_user_stable']
+        receipt['accepted'] &= receipt['cleanup_verified'] and receipt['source_stable'] and receipt['jar_stable'] and receipt['compiled_user_stable'] and receipt['all_four_native_starts_guarded']
         driver.save(report, receipt)
     return receipt

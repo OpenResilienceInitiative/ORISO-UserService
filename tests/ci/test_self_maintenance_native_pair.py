@@ -15,8 +15,9 @@ class SelfMaintenancePairControls(unittest.TestCase):
     def witness(self, kind):
         return {"kind": kind, **{key: True for key in proof.WITNESS_FLAGS}}
 
-    def test_only_complete_password_or_locale_witness_can_pass(self):
-        for kind in ("password", "locale"):
+    def test_only_complete_finite_self_witness_can_pass(self):
+        self.assertEqual({"password", "locale", "contact-email", "contact-email-remove"}, set(proof.CASES))
+        for kind in proof.CASES:
             self.assertTrue(proof.checked_witness(self.witness(kind), kind))
             for flag in proof.WITNESS_FLAGS:
                 value = self.witness(kind); value[flag] = False
@@ -50,6 +51,8 @@ class SelfMaintenancePairControls(unittest.TestCase):
     def test_pair_policy_grants_exact_read_and_selected_operation_only(self):
         self.assertEqual(["account.read", "account.password"], proof.reviewed_operations("password"))
         self.assertEqual(["account.read", "account.locale"], proof.reviewed_operations("locale"))
+        self.assertEqual(["account.read", "account.email"], proof.reviewed_operations("contact-email"))
+        self.assertEqual(["account.read", "account.email"], proof.reviewed_operations("contact-email-remove"))
         with self.assertRaises(ValueError): proof.reviewed_operations("other")
 
     def test_setup_frames_identify_known_source_line_without_exception_secrets(self):
@@ -68,14 +71,14 @@ class SelfMaintenancePairControls(unittest.TestCase):
                     self.assertNotIn(sensitive, exported)
                 self.assertEqual([], proof.sanitized_failure_frames(error, {}))
 
-    def test_workflow_uses_same_exact_common_source_and_two_self_cases_plus_agency_role(self):
+    def test_workflow_uses_same_exact_common_source_and_four_self_cases_plus_agency_role(self):
         import yaml
         workflow = yaml.safe_load((ROOT / ".github/workflows/scenario-c-self-maintenance-native-pair.yml").read_text())
         job = next(iter(workflow["jobs"].values()))
-        self.assertEqual(["password", "locale", "role-agency"], job["strategy"]["matrix"]["kind"])
+        self.assertEqual(["password", "locale", "contact-email", "contact-email-remove", "role-agency"], job["strategy"]["matrix"]["kind"])
         native = [step for step in job["steps"] if step.get("with", {}).get("repository") == "OpenResilienceInitiative/ORISO-Keycloak"]
         self.assertEqual(1, len(native)); self.assertEqual(proof.KC_COMMIT, native[0]["with"]["ref"])
-        self.assertEqual("5d4c58e8df6090451fa544481d7ef16e6fab4fc1", proof.KC_COMMIT)
+        self.assertEqual("6ef53b161606a20bdba6fa0e9f9c3ebfcad99dd4", proof.KC_COMMIT)
 
 
 if __name__ == "__main__": unittest.main()

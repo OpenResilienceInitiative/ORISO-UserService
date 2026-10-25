@@ -28,10 +28,19 @@ final class SelfPasswordIntentCodec {
     return seal(checkedMetadata, command, true);
   }
 
+  String sealReactivationHistory(JsonNode checkedMetadata, byte[] command) {
+    return seal(checkedMetadata, command, true, true);
+  }
+
   private String seal(JsonNode checkedMetadata, byte[] command, boolean reactivation) {
+    return seal(checkedMetadata, command, reactivation, false);
+  }
+
+  private String seal(
+      JsonNode checkedMetadata, byte[] command, boolean reactivation, boolean history) {
     try {
       var metadata = metadata(checkedMetadata, reactivation);
-      byte[] plaintext = command(metadata, command);
+      byte[] plaintext = history ? history(metadata, command) : command(metadata, command);
       byte[] nonce = new byte[12];
       random.nextBytes(nonce);
       return codec.canonical(
@@ -55,7 +64,16 @@ final class SelfPasswordIntentCodec {
     return open(checkedMetadata, envelope, true);
   }
 
+  byte[] openReactivationHistory(JsonNode checkedMetadata, String envelope) {
+    return open(checkedMetadata, envelope, true, true);
+  }
+
   private byte[] open(JsonNode checkedMetadata, String envelope, boolean reactivation) {
+    return open(checkedMetadata, envelope, reactivation, false);
+  }
+
+  private byte[] open(
+      JsonNode checkedMetadata, String envelope, boolean reactivation, boolean history) {
     try {
       var metadata = metadata(checkedMetadata, reactivation);
       if (envelope == null || envelope.length() > 87500) throw invalid();
@@ -67,7 +85,8 @@ final class SelfPasswordIntentCodec {
           || !envelope.equals(codec.canonical(value))) throw invalid();
       byte[] nonce = decode(value.path("nonce"), 12, 12);
       byte[] ciphertext = decode(value.path("ciphertext"), 16, 65552);
-      return command(metadata, cipher(Cipher.DECRYPT_MODE, metadata, nonce, ciphertext));
+      byte[] plaintext = cipher(Cipher.DECRYPT_MODE, metadata, nonce, ciphertext);
+      return history ? history(metadata, plaintext) : command(metadata, plaintext);
     } catch (RuntimeException invalid) {
       throw invalid();
     }
@@ -249,12 +268,29 @@ final class SelfPasswordIntentCodec {
   private byte[] reactivationCommand(
       Metadata metadata, JsonNode wrapper, String raw, byte[] snapshot) {
     fields(wrapper, Set.of("body", "originalSql"));
+    reactivationBody(metadata, wrapper.path("originalSql"), wrapper.path("body"), true);
+    if (!raw.equals(codec.canonical(wrapper))) throw invalid();
+    return snapshot;
+  }
+
+  private byte[] history(Metadata metadata, byte[] bytes) {
+    if (bytes == null || bytes.length == 0 || bytes.length > 65536) throw invalid();
+    byte[] snapshot = bytes.clone();
+    String raw = codec.utf8(snapshot);
+    var value = codec.read(raw, JsonNode.class);
+    fields(value, Set.of("phase", "originalSql", "template", "intentDigest"));
+    if (!Set.of("FROZEN", "ACKNOWLEDGED", "NO_EFFECT").contains(text(value, "phase", 32)))
+      throw invalid();
+    digest(value, "intentDigest");
+    reactivationBody(metadata, value.path("originalSql"), value.path("template"), false);
+    if (!raw.equals(codec.canonical(value))) throw invalid();
+    return snapshot;
+  }
+
+  private void reactivationBody(
+      Metadata metadata, JsonNode originalSql, JsonNode body, boolean password) {
     ReactivationUserSnapshotSchema.require(
-        wrapper.path("originalSql"),
-        metadata.accountId(),
-        metadata.tenantId(),
-        metadata.operationId());
-    var body = wrapper.path("body");
+        originalSql, metadata.accountId(), metadata.tenantId(), metadata.operationId());
     fields(body, Set.of("target", "operationId", "expectedState", "change"));
     if (!metadata.operationId().equals(uuid(body, "operationId"))
         || !metadata.expectedState().equals(digest(body, "expectedState"))) throw invalid();
@@ -290,17 +326,18 @@ final class SelfPasswordIntentCodec {
     if (!text(origin, "humanClient", 255).matches("[A-Za-z0-9][A-Za-z0-9_.:-]{0,254}"))
       throw invalid();
     var change = body.path("change");
-    fields(change, Set.of("expectedUsername", "expectedEmail", "password"));
-    text(change, "password", 4096);
-    String originalUsername = wrapper.path("originalSql").path("username").textValue();
+    fields(
+        change,
+        password
+            ? Set.of("expectedUsername", "expectedEmail", "password")
+            : Set.of("expectedUsername", "expectedEmail"));
+    if (password) text(change, "password", 4096);
+    String originalUsername = originalSql.path("username").textValue();
     if (!originalUsername.equalsIgnoreCase(text(change, "expectedUsername", 255))
-        || !wrapper
-            .path("originalSql")
+        || !originalSql
             .path("email")
             .textValue()
-            .equalsIgnoreCase(text(change, "expectedEmail", 255))
-        || !raw.equals(codec.canonical(wrapper))) throw invalid();
-    return snapshot;
+            .equalsIgnoreCase(text(change, "expectedEmail", 255))) throw invalid();
   }
 
   private byte[] cipher(int mode, Metadata metadata, byte[] nonce, byte[] input) {
