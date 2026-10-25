@@ -72,9 +72,11 @@ class SelfContactEmailJpaTest {
     when(mode.getEmailDummySuffix()).thenReturn("@dummy.invalid");
     genericEmail = mock(IdentityEmailAddressUpdater.class);
     doThrow(new ScopedIdentityCommandRequiredException())
-        .when(genericEmail).updateCurrentUserEmail(anyString());
+        .when(genericEmail)
+        .updateCurrentUserEmail(anyString());
     doThrow(new ScopedIdentityCommandRequiredException())
-        .when(genericEmail).deleteCurrentUserEmail();
+        .when(genericEmail)
+        .deleteCurrentUserEmail();
     appointments = mock(AppointmentService.class);
     notifications = mock(SupervisorAddedEmailNotificationService.class);
     helper = mock(UserHelper.class);
@@ -138,7 +140,8 @@ class SelfContactEmailJpaTest {
   }
 
   private UserAccountService service(String id, String role) {
-    var actor = new AuthenticatedUser(id, encodedUsername(), Set.of(role), "fixture-human", Set.of());
+    var actor =
+        new AuthenticatedUser(id, encodedUsername(), Set.of(role), "fixture-human", Set.of());
     actor.setTenantId(7L);
     var userService =
         new UserService(
