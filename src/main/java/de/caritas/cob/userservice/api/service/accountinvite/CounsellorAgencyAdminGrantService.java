@@ -128,21 +128,32 @@ public class CounsellorAgencyAdminGrantService {
   void bindCheckedAgencyAdmin(AccountRoleAddition.ScopedAddition addition) {
     addition.requireLocalCurrent();
     Consultant consultant = addition.currentConsultant();
-    bindAdmin(
-        consultant.getId(),
-        addition.agencyId(),
-        () ->
-            Admin.builder()
-                .id(consultant.getId())
-                .type(Admin.AdminType.AGENCY)
-                .tenantId(consultant.getTenantId())
-                .username(usernameTranscoder.decodeUsername(consultant.getUsername()))
-                .firstName(consultant.getFirstName())
-                .lastName(consultant.getLastName())
-                .email(consultant.getEmail())
-                .createDate(nowInUtc())
-                .updateDate(nowInUtc())
-                .build());
+    // An existing managed Admin is already part of the owner's complete locked snapshot.
+    // Re-saving it can merge a second instance and must not change its audit fields.
+    Admin savedAdmin =
+        adminRepository
+            .findById(consultant.getId())
+            .orElseGet(
+                () ->
+                    adminRepository.save(
+                        Admin.builder()
+                            .id(consultant.getId())
+                            .type(Admin.AdminType.AGENCY)
+                            .tenantId(consultant.getTenantId())
+                            .username(usernameTranscoder.decodeUsername(consultant.getUsername()))
+                            .firstName(consultant.getFirstName())
+                            .lastName(consultant.getLastName())
+                            .email(consultant.getEmail())
+                            .createDate(nowInUtc())
+                            .updateDate(nowInUtc())
+                            .build()));
+    adminAgencyRepository.save(
+        AdminAgency.builder()
+            .admin(savedAdmin)
+            .agencyId(addition.agencyId())
+            .createDate(nowInUtc())
+            .updateDate(nowInUtc())
+            .build());
   }
 
   private void bindAdmin(String userId, Long agencyId, Supplier<Admin> newAdmin) {

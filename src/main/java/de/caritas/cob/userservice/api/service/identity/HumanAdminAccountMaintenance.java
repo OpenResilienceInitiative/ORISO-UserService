@@ -769,8 +769,12 @@ public final class HumanAdminAccountMaintenance {
     if (checked.addition != null) {
       TransactionSynchronizationManager.bindResource(checked.addition, checked.addition);
       try {
-        checked.addition.apply();
-        checked.addition.flush();
+        de.caritas.cob.userservice.api.tenant.TenantContext.runIn(
+            checked.actual.tenant,
+            () -> {
+              checked.addition.apply();
+              checked.addition.flush();
+            });
       } finally {
         TransactionSynchronizationManager.unbindResource(checked.addition);
       }
@@ -1123,8 +1127,17 @@ public final class HumanAdminAccountMaintenance {
             com.fasterxml.jackson.databind.JsonNode.class);
     for (String table : List.of("consultant", "language", "consultant_topic", "consultant_agency"))
       if (!before.path(table).equals(after.path(table))) throw conflict();
-    if (!before.path("admin").isEmpty() && !before.path("admin").equals(after.path("admin")))
-      throw conflict();
+    if (!before.path("admin").isEmpty()) {
+      if (!before.path("admin").equals(after.path("admin"))) throw conflict();
+    } else {
+      if (after.path("admin").size() != 1) throw conflict();
+      var created =
+          decode(after.path("admin").get(0).textValue(), com.fasterxml.jackson.databind.JsonNode.class);
+      var paused = created.path("managed_paused");
+      if (!created.path("id_old").isNull()
+          || !(paused.isBoolean() && !paused.booleanValue()
+              || paused.isIntegralNumber() && paused.longValue() == 0)) throw conflict();
+    }
     var remaining = new java.util.ArrayList<String>();
     for (var row : after.path("admin_agency")) remaining.add(row.textValue());
     for (var row : before.path("admin_agency"))

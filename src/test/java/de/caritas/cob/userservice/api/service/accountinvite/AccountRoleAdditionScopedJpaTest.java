@@ -507,6 +507,7 @@ class AccountRoleAdditionScopedJpaTest {
     var originalAdmin =
         new TreeMap<>(jdbc.queryForMap("select * from admin where admin_id=?", ACCOUNT));
     nativeRoles = DESIRED;
+    var originalTenantContext = TenantContext.getCurrentTenantData();
     var callbackFailure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
     var callbackAttempts = new AtomicInteger();
     doAnswer(
@@ -530,6 +531,7 @@ class AccountRoleAdditionScopedJpaTest {
                 + callbackAttempts.get()
                 + ";callbackCause="
                 + callbackFailure.get());
+    assertSame(originalTenantContext, TenantContext.getCurrentTenantData());
     assertEquals(DESIRED, nativeRoles);
     assertEquals(
         originalAdmin,
