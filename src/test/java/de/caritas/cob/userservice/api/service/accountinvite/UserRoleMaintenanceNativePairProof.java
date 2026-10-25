@@ -148,6 +148,7 @@ class UserRoleMaintenanceNativePairProof {
       var lastStatus = new AtomicInteger();
       var discardFirstReply = new AtomicBoolean(true);
       http.getInterceptors().add((outbound, bytes, execution) -> {
+        assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
         var uri = outbound.getURI();
         assertEquals("protected-fixture.invalid", uri.getHost());
         var mapped = new HttpRequestWrapper(outbound) {

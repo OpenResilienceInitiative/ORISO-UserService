@@ -129,6 +129,17 @@ def native(kc, report, driver):
         def prepare_installation(cls, helper, configuration):
             # Reuse the actual ordinary profiles/grants. No OTP READY observer or diagnostic write.
             install_policy(cls, helper, configuration)
+            policy = copy.deepcopy(cls.ordinary_installed_configuration)
+            source = [grant for grant in policy['adminOperations'] if grant['authority'] == 'PLATFORM']
+            if len(source) != 1: raise ValueError('One exact fixture PLATFORM grant required')
+            selected = copy.deepcopy(source[0]); selected['targetProfiles'] = ['consultant-agency-admin-v1']
+            selected['operations'] = ['account.read', 'account.profile-transition']
+            policy['adminOperations'] = [selected]
+            prefix = 'ORISO_ACCOUNT_MAINTENANCE_CONFIG='
+            if sum(arg.startswith(prefix) for arg in cls.command) != 1:
+                raise ValueError('One captured ordinary fixture configuration required')
+            cls.command = [prefix + json.dumps(policy, separators=(',', ':')) if arg.startswith(prefix) else arg for arg in cls.command]
+            cls.ordinary_installed_configuration = copy.deepcopy(policy)
             return configuration
 
         @classmethod
