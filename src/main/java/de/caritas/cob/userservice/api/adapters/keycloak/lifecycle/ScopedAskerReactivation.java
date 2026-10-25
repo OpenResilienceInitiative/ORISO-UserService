@@ -76,16 +76,21 @@ public final class ScopedAskerReactivation {
       } else {
         verifyTerminal(initial.capsule, opened, actor);
         requirePost(initial.capsule, original, phase);
-        same(initial.row, initial.capsule.path("postSql"));
-        boolean exact =
-            digest.equals(initial.capsule.path("metadata").path("requestDigest").textValue());
-        if (exact) {
-          requireIntent(initial.capsule, opened, human, digest);
-          replayTerminal(human, account, initial, input.getTenantId(), actor, opened);
-          return;
+        if ("ACKNOWLEDGED".equals(phase)
+            && beginsNewDeletionCycle(initial.row, original, initial.capsule.path("postSql"))) {
+          frozen = freezeFresh(input, human, account, initial, digest, actor, machine);
+        } else {
+          same(initial.row, initial.capsule.path("postSql"));
+          boolean exact =
+              digest.equals(initial.capsule.path("metadata").path("requestDigest").textValue());
+          if (exact) {
+            requireIntent(initial.capsule, opened, human, digest);
+            replayTerminal(human, account, initial, input.getTenantId(), actor, opened);
+            return;
+          }
+          if (!"NO_EFFECT".equals(phase)) throw conflict();
+          frozen = freezeFresh(input, human, account, initial, digest, actor, machine);
         }
-        if (!"NO_EFFECT".equals(phase)) throw conflict();
-        frozen = freezeFresh(input, human, account, initial, digest, actor, machine);
       }
     } else frozen = freezeFresh(input, human, account, initial, digest, actor, machine);
     execute(input, human, account, frozen, actor);
@@ -366,6 +371,22 @@ public final class ScopedAskerReactivation {
       ((ObjectNode) expected).set("update_date", update);
     }
     same(expected, raw.path("postSql"));
+  }
+
+  private boolean beginsNewDeletionCycle(JsonNode current, JsonNode original, JsonNode post) {
+    if (current.path("delete_date").isNull()
+        || !Set.of("PENDING_DELETION", "READ_ONLY_SAFEGUARD")
+            .contains(current.path("deletion_lifecycle_state").asText())
+        || !current.path("reactivation_operation_id").isNull()
+        || !current.path("reactivation_operation_started_at").isNull()) return false;
+    for (String anchor : List.of("user_id", "create_date", "tenant_id"))
+      if (!current.path(anchor).equals(original.path(anchor))) throw conflict();
+    try {
+      return Instant.parse(current.path("delete_date").textValue())
+          .isAfter(Instant.parse(post.path("update_date").textValue()));
+    } catch (java.time.DateTimeException | NullPointerException invalid) {
+      throw conflict();
+    }
   }
 
   private String locate(AskerReactivationRequestDTO input) {
