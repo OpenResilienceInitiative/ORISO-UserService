@@ -1318,7 +1318,12 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
 
   /** Closed data-only bridge; no frame or external Matrix authority is issued here. */
   public String claimedConsultantGrantMatrixDigest(JsonNode exactSeven) {
-    throw new IllegalArgumentException("Consultant grant Matrix data is not configured");
+    var checked = ConsultantGrantMatrixSchema.require(exactSeven);
+    var bounded = ((com.fasterxml.jackson.databind.node.ObjectNode) checked).deepCopy();
+    bounded.put("bindingDigest", "0".repeat(64));
+    if (canonical(bounded).getBytes(StandardCharsets.UTF_8).length > 1024)
+      throw new IllegalArgumentException("Invalid consultant grant Matrix result metadata");
+    return digest("claimed-consultant-grant-matrix/v1", checked);
   }
 
   public String claimedInactivityRowDigest(JsonNode exactOwnedRow) {
