@@ -686,7 +686,8 @@ class ScopedAskerReactivationFlowJpaTest {
         new AuthenticatedUser(
             ACCOUNT, USERNAME, Set.of("user"), "local-profile-callback-only", Set.of("ROLE_USER"));
     self.setTenantId(7L);
-    var patch = new de.caritas.cob.userservice.api.adapters.web.dto.PatchUserDTO().avatarId("magpie");
+    var patch =
+        new de.caritas.cob.userservice.api.adapters.web.dto.PatchUserDTO().avatarId("magpie");
     var map =
         new de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper(new IdentityConfig())
             .mapOf(patch, self)
@@ -736,7 +737,8 @@ class ScopedAskerReactivationFlowJpaTest {
                   assertTrue(
                       nextBody.get().equals(raw),
                       "New cycle retry must retain its own immutable command");
-                return withSuccess(signed(raw), MediaType.APPLICATION_JSON).createResponse(outbound);
+                return withSuccess(signed(raw), MediaType.APPLICATION_JSON)
+                    .createResponse(outbound);
               });
     assertDoesNotThrow(() -> facade.reactivateAsker(input()));
     var nextCapsule =
