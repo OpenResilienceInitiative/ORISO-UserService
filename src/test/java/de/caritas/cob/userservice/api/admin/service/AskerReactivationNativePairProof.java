@@ -109,6 +109,18 @@ class AskerReactivationNativePairProof {
             "oneLocalCallback",
             "actualOriginalMachineDeadlineBound",
             "lost200FrozenUntilRenewedAfterOriginalDeadline")) facts.put(flag, false);
+    var originalFacts = Set.copyOf(facts.keySet());
+    for (String flag :
+        List.of(
+            "laterAvatarAndBirthSqlBound",
+            "laterDeletionAndNativeDisableBound",
+            "laterCycleSamePasswordNewOperation",
+            "laterCycleFreshDeadline",
+            "laterCycleSavedReceiptReplay",
+            "twoCyclesTwoCallbacks",
+            "nativeForeignHumanDenied",
+            "sameUuidNewNativeBirthDenied",
+            "secondCycleSqlAckUnchangedOnNativeDenials")) facts.put(flag, false);
     var codec =
         new AccountLifecycleCodec(Base64.getDecoder().decode(required("PAIR_CONTEXT_KEY_B64")));
     var jdbc = new JdbcTemplate(source);
@@ -452,6 +464,165 @@ class AskerReactivationNativePairProof {
       verify(lifecycle, times(1)).cancelUserDeletion(any(User.class));
       verifyNoInteractions(generic, repair);
       facts.put("oneLocalCallback", true);
+      for (String original : originalFacts) assertEquals(true, facts.get(original), original);
+      assertNativeEventCheckpoint(1, true);
+
+      // Real retained avatar callback and deletion lifecycle. The native deactivation below is
+      // the existing explicit HUMAN_ADMIN fixture boundary, not a public pre-deletion claim.
+      var originalBirth =
+          jdbc.queryForObject(
+              "select create_date from user where user_id=?", java.sql.Timestamp.class, account);
+      String originalAcknowledgement = codec.canonical(acknowledged);
+      String actualSelfToken = login(http, logical, realm, username, chosen);
+      var actualSelfJwt = decoder.decode(actualSelfToken);
+      assertEquals(account, actualSelfJwt.getSubject());
+      assertEquals("11", actualSelfJwt.getClaimAsString("tenantId"));
+      var actualSelfRoles =
+          new TreeSet<String>(
+              (List<String>)
+                  ((Map<?, ?>) actualSelfJwt.getClaims().get("realm_access")).get("roles"));
+      assertEquals(Set.of("user"), actualSelfRoles);
+      var self =
+          new AuthenticatedUser(
+              account, username, actualSelfRoles, actualSelfToken, Set.of("ROLE_USER"));
+      self.setTenantId(11L);
+      var savedAuthentication = SecurityContextHolder.getContext().getAuthentication();
+      try {
+        TenantContext.setCurrentTenant(11L);
+        SecurityContextHolder.getContext()
+            .setAuthentication(
+                new JwtAuthenticationToken(
+                    actualSelfJwt, List.of(new SimpleGrantedAuthority("ROLE_USER"))));
+        var transcoder = new UsernameTranscoder();
+        var patch =
+            new de.caritas.cob.userservice.api.adapters.web.dto.PatchUserDTO().avatarId("magpie");
+        var map =
+            new de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper(identity)
+                .mapOf(patch, self)
+                .orElseThrow();
+        var accounts =
+            new de.caritas.cob.userservice.api.AccountManager(
+                consultants,
+                admins,
+                users,
+                new de.caritas.cob.userservice.api.UserServiceMapper(transcoder),
+                transcoder,
+                mock(AgencyService.class),
+                mock(de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class),
+                consultantAgencies,
+                self,
+                sessions,
+                mock(de.caritas.cob.userservice.api.service.appointment.AppointmentService.class),
+                mock(de.caritas.cob.userservice.api.PatchConsultantSaga.class));
+        assertTrue(accounts.patchUser(map).isPresent());
+      } finally {
+        TenantContext.setCurrentTenant(0L);
+        SecurityContextHolder.getContext().setAuthentication(savedAuthentication);
+      }
+      assertEquals("magpie", users.findById(account).orElseThrow().getAvatarId());
+      assertEquals(
+          originalBirth,
+          jdbc.queryForObject(
+              "select create_date from user where user_id=?", java.sql.Timestamp.class, account));
+      facts.put("laterAvatarAndBirthSqlBound", true);
+      var deleting = users.findById(account).orElseThrow();
+      lifecycle.beginUserDeletion(deleting, required("PAIR_PLATFORM_SUBJECT"));
+      users.save(deleting);
+      assertEquals(originalAcknowledgement, codec.canonical(capsule(jdbc, account, codec)));
+      String nextHuman =
+          login(
+              http,
+              logical,
+              realm,
+              required("PAIR_PLATFORM_USERNAME"),
+              required("PAIR_PLATFORM_PASSWORD"));
+      current =
+          context(
+              nextHuman, decoder, http, identity, actors, keycloak, mode, codec, jdbc, lifecycle,
+              saga, repair, generic, logical, issuer, realm, realmId);
+      String firstCommand = bodies.get(lastOperation.get());
+      deactivateForNextCycle(
+          http,
+          logical,
+          realm,
+          realmId,
+          account,
+          actors,
+          current.broker,
+          codec,
+          firstCommand,
+          nextHuman);
+      assertNativeEventCheckpoint(2, false);
+      assertEquals(
+          "READ_ONLY_SAFEGUARD",
+          jdbc.queryForObject(
+              "select deletion_lifecycle_state from user where user_id=?", String.class, account));
+      assertNotNull(
+          jdbc.queryForObject(
+              "select delete_date from user where user_id=?", java.sql.Timestamp.class, account));
+      facts.put("laterDeletionAndNativeDisableBound", true);
+      current.facade.reactivateAsker(input(username, sqlEmail, chosen));
+      assertEquals(200, lastStatus.get());
+      var secondAcknowledged = capsule(jdbc, account, codec);
+      assertEquals("ACKNOWLEDGED", secondAcknowledged.path("phase").textValue());
+      assertNotEquals(
+          acknowledged.path("metadata").path("operationId"),
+          secondAcknowledged.path("metadata").path("operationId"));
+      String secondCommand = bodies.get(lastOperation.get());
+      assertEquals(
+          codec.read(firstCommand, JsonNode.class).path("change").path("password"),
+          codec.read(secondCommand, JsonNode.class).path("change").path("password"));
+      assertEquals(3, bodies.size());
+      assertEquals(2, receipts.size());
+      facts.put("laterCycleSamePasswordNewOperation", true);
+      assertTrue(
+          secondAcknowledged.path("metadata").path("authorityValidUntil").longValue()
+              > acknowledged.path("metadata").path("authorityValidUntil").longValue());
+      facts.put("laterCycleFreshDeadline", true);
+      assertEquals("magpie", users.findById(account).orElseThrow().getAvatarId());
+      assertEquals(
+          originalBirth,
+          jdbc.queryForObject(
+              "select create_date from user where user_id=?", java.sql.Timestamp.class, account));
+      var secondSql = jdbc.queryForMap("select * from user where user_id=?", account);
+      current.facade.reactivateAsker(input(username, sqlEmail, chosen));
+      assertEquals(secondAcknowledged, capsule(jdbc, account, codec));
+      assertEquals(secondSql, jdbc.queryForMap("select * from user where user_id=?", account));
+      facts.put("laterCycleSavedReceiptReplay", true);
+      verify(lifecycle, times(2)).cancelUserDeletion(any(User.class));
+      facts.put("twoCyclesTwoCallbacks", true);
+      assertNativeEventCheckpoint(3, true);
+
+      String ordinaryHuman = login(http, logical, realm, username, chosen);
+      assertEquals(account, decoder.decode(ordinaryHuman).getSubject());
+      assertSavedDeniedForForeignHuman(
+          http,
+          logical,
+          realm,
+          realmId,
+          account,
+          actors,
+          current.broker,
+          codec,
+          secondCommand,
+          ordinaryHuman);
+      facts.put("nativeForeignHumanDenied", true);
+      recreateNativeIncarnation(base);
+      lastStatus.set(0);
+      lastOperation.set(null);
+      var recreated = current;
+      assertThrows(
+          ServiceUnavailableException.class,
+          () -> recreated.facade.reactivateAsker(input(username, sqlEmail, chosen)));
+      assertEquals(403, lastStatus.get());
+      assertEquals(
+          secondAcknowledged.path("metadata").path("operationId").textValue(), lastOperation.get());
+      facts.put("sameUuidNewNativeBirthDenied", true);
+      assertEquals(secondAcknowledged, capsule(jdbc, account, codec));
+      assertEquals(secondSql, jdbc.queryForMap("select * from user where user_id=?", account));
+      verify(lifecycle, times(2)).cancelUserDeletion(any(User.class));
+      verifyNoInteractions(generic, repair);
+      facts.put("secondCycleSqlAckUnchangedOnNativeDenials", true);
     } finally {
       SecurityContextHolder.clearContext();
       TenantContext.clear();
@@ -608,6 +779,131 @@ class AskerReactivationNativePairProof {
     String next = (String) value.get("nativeBase");
     assertTrue(next.matches("http://127\\.0\\.0\\.1:[0-9]+"));
     base.set(next);
+  }
+
+  private static void assertNativeEventCheckpoint(int expected, boolean enabled) {
+    var reply =
+        new RestTemplate()
+            .postForEntity(required("PAIR_CONTROL_BASE") + "/events", HttpEntity.EMPTY, Map.class);
+    assertEquals(200, reply.getStatusCode().value());
+    var value = Objects.requireNonNull(reply.getBody());
+    assertEquals(
+        Set.of("count", "sameNativeBirth", "exclusiveUserProfile", "enabled"), value.keySet());
+    assertEquals(expected, ((Number) value.get("count")).intValue());
+    assertEquals(true, value.get("sameNativeBirth"));
+    assertEquals(true, value.get("exclusiveUserProfile"));
+    assertEquals(enabled, value.get("enabled"));
+  }
+
+  private static void recreateNativeIncarnation(AtomicReference<String> base) {
+    var reply =
+        new RestTemplate()
+            .postForEntity(
+                required("PAIR_CONTROL_BASE") + "/recreate-incarnation",
+                HttpEntity.EMPTY,
+                Map.class);
+    assertEquals(200, reply.getStatusCode().value());
+    var value = Objects.requireNonNull(reply.getBody());
+    assertEquals(Set.of("nativeBase", "stage"), value.keySet());
+    assertEquals("RECREATED", value.get("stage"));
+    assertEquals(base.get(), value.get("nativeBase"));
+  }
+
+  private static void deactivateForNextCycle(
+      RestTemplate http,
+      String logical,
+      String realm,
+      String realmId,
+      String account,
+      TaskActorConfiguration actors,
+      TaskActorTokenBroker broker,
+      AccountLifecycleCodec codec,
+      String actualOriginalCommand,
+      String human) {
+    var target = codec.read(actualOriginalCommand, JsonNode.class).path("target").deepCopy();
+    String operation = UUID.randomUUID().toString();
+    ((com.fasterxml.jackson.databind.node.ObjectNode) target.path("origin"))
+        .put("workflowId", operation);
+    String readBody = codec.canonical(Map.of("target", target));
+    var current =
+        readSaved(http, logical, realm, realmId, account, actors, broker, codec, readBody, human);
+    assertTrue(current.path("enabled").booleanValue());
+    var body =
+        codec.read(
+            codec.canonical(
+                Map.of(
+                    "target",
+                    target,
+                    "operationId",
+                    operation,
+                    "expectedState",
+                    current.path("state").textValue(),
+                    "change",
+                    Map.of())),
+            JsonNode.class);
+    var actor = actors.require(TaskPurpose.ACCOUNT_MAINTENANCE);
+    var headers =
+        bearer(broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE).accessToken());
+    headers.setContentType(MediaType.APPLICATION_JSON);
+    headers.set("X-ORISO-Human-Authorization", "Bearer " + human);
+    headers.set(
+        "X-ORISO-Task-Context",
+        codec.maintenanceProof("deactivate", realm, realmId, account, actor, body));
+    var reply =
+        http.postForEntity(
+            logical
+                + "/realms/"
+                + realm
+                + "/oriso-account-maintenance/v1/accounts/"
+                + account
+                + "/deactivate",
+            new HttpEntity<>(codec.canonical(body), headers),
+            String.class);
+    assertEquals(200, reply.getStatusCode().value());
+    // Existing fixed deactivate receipt encoding; the helper issues no INACTIVITY authority.
+    assertNotNull(
+        codec.verifyMaintenanceInactivitySuspendReceipt(
+            Objects.requireNonNull(reply.getBody()), realmId, actor, body));
+    assertFalse(
+        readSaved(http, logical, realm, realmId, account, actors, broker, codec, readBody, human)
+            .path("enabled")
+            .booleanValue());
+  }
+
+  private static void assertSavedDeniedForForeignHuman(
+      RestTemplate http,
+      String logical,
+      String realm,
+      String realmId,
+      String account,
+      TaskActorConfiguration actors,
+      TaskActorTokenBroker broker,
+      AccountLifecycleCodec codec,
+      String actualCommand,
+      String actualForeignHuman) {
+    var body = codec.read(actualCommand, JsonNode.class);
+    var actor = actors.require(TaskPurpose.ACCOUNT_MAINTENANCE);
+    var headers =
+        bearer(broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE).accessToken());
+    headers.setContentType(MediaType.APPLICATION_JSON);
+    headers.set("X-ORISO-Human-Authorization", "Bearer " + actualForeignHuman);
+    headers.set(
+        "X-ORISO-Task-Context",
+        codec.maintenanceProof("reactivate", realm, realmId, account, actor, body));
+    var denied =
+        assertThrows(
+            HttpClientErrorException.class,
+            () ->
+                http.postForEntity(
+                    logical
+                        + "/realms/"
+                        + realm
+                        + "/oriso-account-maintenance/v1/accounts/"
+                        + account
+                        + "/reactivate",
+                    new HttpEntity<>(actualCommand, headers),
+                    String.class));
+    assertEquals(403, denied.getStatusCode().value());
   }
 
   private static JsonNode readSaved(

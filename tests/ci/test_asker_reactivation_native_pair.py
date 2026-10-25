@@ -31,6 +31,11 @@ class AskerReactivationPairControls(unittest.TestCase):
         self.assertEqual(original, policy); self.assertEqual(original["ordinaryProfiles"], changed["ordinaryProfiles"])
         with self.assertRaises(ValueError): proof.withdraw_reactivation(changed)
 
+    def test_original_and_later_cycle_effects_have_three_exact_independent_checkpoints(self):
+        self.assertTrue(proof.phase_effects([1, 2, 3]))
+        for value in [[], [1], [1, 3, 4], [1, 1, 2], [1, 2, 3, 4], [True, 2, 3], [1, 2, 3.0], (1, 2, 3)]:
+            self.assertFalse(proof.phase_effects(value))
+
     def test_exact_one_case_and_zero_skips_are_mandatory(self):
         with tempfile.TemporaryDirectory() as folder:
             reports = Path(folder); path = reports / ("TEST-" + proof.SUITE + ".xml")

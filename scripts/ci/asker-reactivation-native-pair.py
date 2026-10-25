@@ -24,7 +24,7 @@ CASE = "actualChosenPasswordPolicyReleaseAndCurrentGrantReplayPreserveOneJpaCall
 FLAGS = {"actualJpa", "actualCurrentPlatform", "canonicalAdmin", "actualNativeRead200", "nativeProjectionBoundExceptMailboxCase", "nativeEmailCaseDifference",
     "signedPolicy400", "nativePolicyRefusalStateUnchanged", "rejectedClaimReleased", "differentPasswordNewOperation", "firstNative200", "newPasswordLogin",
     "oldPasswordLoginDenied", "savedReplay200", "readAfterWithdrawal200", "savedAfterWithdrawal403", "sqlAcknowledgementUnchanged",
-    "restoredReplay200", "originalReceiptRestored", "sameFrozenCommands", "oneLocalCallback", "actualOriginalMachineDeadlineBound", "lost200FrozenUntilRenewedAfterOriginalDeadline"}
+    "restoredReplay200", "originalReceiptRestored", "sameFrozenCommands", "oneLocalCallback", "actualOriginalMachineDeadlineBound", "lost200FrozenUntilRenewedAfterOriginalDeadline", "laterAvatarAndBirthSqlBound", "laterDeletionAndNativeDisableBound", "laterCycleSamePasswordNewOperation", "laterCycleFreshDeadline", "laterCycleSavedReceiptReplay", "twoCyclesTwoCallbacks", "nativeForeignHumanDenied", "sameUuidNewNativeBirthDenied", "secondCycleSqlAckUnchangedOnNativeDenials"}
 _spec = importlib.util.spec_from_file_location("existing_self_pair_data_controls", ROOT / "scripts/ci/self-maintenance-native-pair.py")
 shared = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(shared)
 
@@ -43,6 +43,11 @@ def withdraw_reactivation(policy):
     result["adminOperations"] = changed
     if result == policy: raise ValueError("Existing explicit user PLATFORM reactivate grant required")
     return result
+
+
+def phase_effects(value):
+    """Original reactivation, separate fixture deactivation, second reactivation only."""
+    return isinstance(value, list) and len(value) == 3 and all(type(item) is int for item in value) and value == [1, 2, 3]
 
 
 def witness(value):
@@ -109,7 +114,8 @@ def native(kc, report):
         "admin/facade/AskerUserAdminFacade", "admin/service/IdentityReactivationSagaStore", "admin/service/admin/AdminScope",
         "adapters/keycloak/lifecycle/ScopedAskerReactivation", "adapters/keycloak/lifecycle/AccountLifecycleCodec",
         "adapters/keycloak/lifecycle/SelfPasswordIntentCodec", "adapters/keycloak/lifecycle/ReactivationUserSnapshotSchema",
-        "config/auth/TaskActorTokenBroker", "workflow/delete/service/DeletionLifecycleService"]]
+        "config/auth/TaskActorTokenBroker", "workflow/delete/service/DeletionLifecycleService",
+        "AccountManager", "UserServiceMapper", "adapters/web/mapping/UserDtoMapper", "adapters/web/dto/PatchUserDTO"]]
     if not all((ROOT / path).is_file() for path in classes): raise ValueError("Actual compiled caller/JPA classes required")
     compiled = {path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest() for path in classes}
     before = snapshot(kc)
@@ -125,7 +131,7 @@ def native(kc, report):
         "before": before, "jars": hashes, "compiled_user_classes": compiled, "image": lifecycle.IMAGE}
     previous_env = {key: os.environ.get(key) for key in jars}
     for key, path in jars.items(): os.environ[key] = str(path.resolve())
-    stage = ["ORIGINAL"]; controls = []; lock = threading.Lock(); control = None; commands = []
+    stage = ["ORIGINAL"]; controls = []; phase_counts = []; incarnation_controls = []; incarnation_snapshot = []; lock = threading.Lock(); control = None; commands = []
     original_run = subprocess.run
     def capture(args, *positional, **keywords):
         if isinstance(args, list) and args[:2] == ["docker", "run"]: commands.append(args.copy())
@@ -155,6 +161,45 @@ def native(kc, report):
         admin_client.setdefault("attributes", {})["access.token.lifespan"] = "15"
         fixture.admin("PUT", "/clients/" + admin_client["id"], admin_client)
         record["fixture_original_admin_token_lifetime_seconds"] = 15
+        native_birth = current["createdTimestamp"]
+        user_group = next(profile["groupId"] for profile in original_policy["ordinaryProfiles"] if profile["id"] == "user-v1")
+        def native_updates():
+            events = fixture.admin("GET", "/admin-events?resourcePath=accounts/" + account + "&max=100")
+            return [event for event in events if event.get("resourcePath") == "accounts/" + account and event.get("operationType") == "UPDATE" and event.get("resourceType") == "USER" and event.get("authDetails", {}).get("clientId") == lifecycle.ACTORS["ACCOUNT_ADMIN"][0] and event.get("authDetails", {}).get("userId") == lifecycle.SUBJECTS["ACCOUNT_ADMIN"]]
+        def event_checkpoint():
+            assert stage[0] == "RESTORED" and len(phase_counts) < 3 and not incarnation_controls
+            now = fixture.admin("GET", "/users/" + account)
+            groups = fixture.admin("GET", "/users/" + account + "/groups")
+            roles = fixture.admin("GET", "/users/" + account + "/role-mappings/realm/composite")
+            direct = fixture.admin("GET", "/users/" + account + "/role-mappings")
+            updates = native_updates(); assert all(event.get("representation") is None for event in updates)
+            phase_counts.append(len(updates))
+            return {"count": len(updates), "sameNativeBirth": type(now.get("createdTimestamp")) is int and now["createdTimestamp"] == native_birth,
+                "exclusiveUserProfile": {group["id"] for group in groups} == {user_group} and {role["name"] for role in roles} == {"user"} and not direct.get("realmMappings", []) and not direct.get("clientMappings", {}), "enabled": now["enabled"]}
+        def recreate_incarnation():
+            assert stage[0] == "RESTORED" and phase_counts == [1, 2, 3] and not incarnation_controls
+            before_user = fixture.admin("GET", "/users/" + account)
+            assert type(before_user["createdTimestamp"]) is int and before_user["createdTimestamp"] == native_birth and native_birth > 0
+            original_direct = fixture.admin("GET", "/users/" + account + "/role-mappings")
+            replacement = {key: copy.deepcopy(before_user[key]) for key in ["id", "username", "email", "firstName", "lastName", "enabled", "emailVerified", "attributes"] if key in before_user}
+            replacement["requiredActions"] = []
+            assert "credentials" not in replacement
+            fixture.admin("DELETE", "/users/" + account)
+            fixture.admin("POST", "/partialImport", {"ifResourceExists": "FAIL", "users": [replacement]})
+            defaults = fixture.admin("GET", "/users/" + account + "/role-mappings/realm")
+            if defaults: fixture.admin("DELETE", "/users/" + account + "/role-mappings/realm", defaults)
+            fixture.admin("PUT", "/users/" + account + "/groups/" + user_group)
+            after_user = fixture.admin("GET", "/users/" + account)
+            assert type(after_user["createdTimestamp"]) is int and after_user["createdTimestamp"] > 0 and after_user["createdTimestamp"] != native_birth
+            assert all(after_user.get(key) == before_user.get(key) for key in replacement if key != "requiredActions")
+            assert {group["id"] for group in fixture.admin("GET", "/users/" + account + "/groups")} == {user_group}
+            assert {role["name"] for role in fixture.admin("GET", "/users/" + account + "/role-mappings/realm/composite")} == {"user"}
+            current_direct = fixture.admin("GET", "/users/" + account + "/role-mappings")
+            assert current_direct.get("realmMappings", []) == original_direct.get("realmMappings", [])
+            assert current_direct.get("clientMappings", {}) == original_direct.get("clientMappings", {})
+            incarnation_snapshot.append(after_user)
+            incarnation_controls.append({"sameUuidIdentityAndFullProfile": True, "differentPositiveNativeBirth": True, "noCredentialRewrite": True})
+            return {"nativeBase": OperationFixture.base, "stage": "RECREATED"}
         def restart(action):
             with lock:
                 assert (action, stage[0]) in {("withdraw", "ORIGINAL"), ("restore", "WITHDRAWN")}
@@ -175,8 +220,9 @@ def native(kc, report):
         class Control(http.server.BaseHTTPRequestHandler):
             def log_message(self, *args): pass
             def do_POST(self):
-                if self.path not in {"/withdraw", "/restore"} or self.headers.get("Content-Length", "0") != "0": self.send_response(400); self.end_headers(); return
-                try: value = restart(self.path[1:]); status = 200
+                if self.path not in {"/withdraw", "/restore", "/events", "/recreate-incarnation"} or self.headers.get("Content-Length", "0") != "0": self.send_response(400); self.end_headers(); return
+                try:
+                    value = event_checkpoint() if self.path == "/events" else recreate_incarnation() if self.path == "/recreate-incarnation" else restart(self.path[1:]); status = 200
                 except BaseException as error:
                     record["control_failure_category"] = type(error).__name__; record["control_failure_frames"] = shared.sanitized_failure_frames(error, catalog); value = {}; status = 503
                 raw = json.dumps(value).encode(); self.send_response(status); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(raw))); self.end_headers(); self.wfile.write(raw)
@@ -203,12 +249,17 @@ def native(kc, report):
             if witness_path.exists(): shared.save(witness_path, {"witnessSchemaRejected": True})
             raise
         record["genuine_behavior_red"] = inventory["exact_method_inventory"] and inventory["tests"] == inventory["failures"] == 1 and inventory["errors"] == inventory["skipped"] == 0 and all(facts[key] for key in ["actualJpa", "actualCurrentPlatform", "canonicalAdmin", "actualNativeRead200", "nativeProjectionBoundExceptMailboxCase", "nativeEmailCaseDifference"])
-        events = fixture.admin("GET", "/admin-events?resourcePath=accounts/" + account + "&max=100")
-        actual = [event for event in events if event.get("resourcePath") == "accounts/" + account and event.get("operationType") == "UPDATE" and event.get("resourceType") == "USER" and event.get("authDetails", {}).get("clientId") == lifecycle.ACTORS["ACCOUNT_ADMIN"][0] and event.get("authDetails", {}).get("userId") == lifecycle.SUBJECTS["ACCOUNT_ADMIN"]]
-        record["one_actual_native_effect_event"] = len(actual) == 1 and all(event.get("representation") is None for event in actual)
+        actual = native_updates()
+        record["phase_native_update_counts"] = phase_counts
+        record["one_actual_native_effect_event"] = bool(phase_counts) and phase_counts[0] == 1
+        record["native_updates_total"] = len(actual)
+        record["fixture_deactivation_effect_separate"] = len(phase_counts) >= 2 and phase_counts[:2] == [1, 2]
+        record["two_actual_reactivation_effect_events"] = phase_effects(phase_counts) and len(actual) == 3 and all(event.get("representation") is None for event in actual)
+        record["incarnation_controls"] = incarnation_controls
+        record["recreated_native_unchanged_after_denial"] = len(incarnation_snapshot) == 1 and incarnation_snapshot[0] == fixture.admin("GET", "/users/" + account)
         record["controls"] = controls; record["installer_identity_checks"] = ProtectedOperationRead.observation.get("installerIdentityChecks", [])
         checks = record["installer_identity_checks"]; record["installer_identity_verified_every_restart"] = len(checks) >= 4 and all(check.get("sameActualEnabledMasterInstallerAndNativeSessionVerified") is True for check in checks)
-        record["accepted"] = inventory["accepted"] and record["child_exit"] == 0 and record["java_witness_complete"] and record["one_actual_native_effect_event"] and record["installer_identity_verified_every_restart"] and stage[0] == "RESTORED" and len(controls) == 2
+        record["accepted"] = inventory["accepted"] and record["child_exit"] == 0 and record["java_witness_complete"] and record["one_actual_native_effect_event"] and record["installer_identity_verified_every_restart"] and stage[0] == "RESTORED" and len(controls) == 2 and record["two_actual_reactivation_effect_events"] and record["fixture_deactivation_effect_separate"] and len(incarnation_controls) == 1 and record["recreated_native_unchanged_after_denial"]
         record["phase"] = "complete"
     except BaseException as error:
         record["exception_category"] = type(error).__name__; record["accepted"] = False; record["failure_frames"] = shared.sanitized_failure_frames(error, catalog)

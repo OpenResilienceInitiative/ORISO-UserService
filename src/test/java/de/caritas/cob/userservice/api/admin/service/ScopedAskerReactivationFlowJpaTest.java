@@ -670,6 +670,191 @@ class ScopedAskerReactivationFlowJpaTest {
     server.verify();
   }
 
+  @Test
+  void completedReactivationAllowsALaterDeletionCycleAfterTheRealOrdinaryAvatarCallback() {
+    completeAndReplay();
+    server.reset();
+    String oldCapsule =
+        jdbc.queryForObject(
+            "select reactivation_scoped_json from user where user_id=?", String.class, ACCOUNT);
+    var old = codec.read(oldCapsule, JsonNode.class);
+    var birth =
+        jdbc.queryForObject(
+            "select create_date from user where user_id=?", java.sql.Timestamp.class, ACCOUNT);
+    var transcoder = new UsernameTranscoder();
+    var self =
+        new AuthenticatedUser(
+            ACCOUNT, USERNAME, Set.of("user"), "local-profile-callback-only", Set.of("ROLE_USER"));
+    self.setTenantId(7L);
+    var patch =
+        new de.caritas.cob.userservice.api.adapters.web.dto.PatchUserDTO().avatarId("magpie");
+    var map =
+        new de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper(new IdentityConfig())
+            .mapOf(patch, self)
+            .orElseThrow();
+    var accounts =
+        new de.caritas.cob.userservice.api.AccountManager(
+            mock(ConsultantRepository.class),
+            mock(AdminRepository.class),
+            users,
+            new de.caritas.cob.userservice.api.UserServiceMapper(transcoder),
+            transcoder,
+            mock(de.caritas.cob.userservice.api.service.agency.AgencyService.class),
+            mock(de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class),
+            mock(ConsultantAgencyRepository.class),
+            self,
+            mock(SessionRepository.class),
+            mock(de.caritas.cob.userservice.api.service.appointment.AppointmentService.class),
+            mock(de.caritas.cob.userservice.api.PatchConsultantSaga.class));
+    assertEquals(Map.of("id", ACCOUNT, "avatarId", "magpie"), map);
+    assertTrue(accounts.patchUser(map).isPresent());
+    assertEquals("magpie", users.findById(ACCOUNT).orElseThrow().getAvatarId());
+    var later = users.findById(ACCOUNT).orElseThrow();
+    lifecycle.beginUserDeletion(later, HUMAN);
+    users.save(later);
+    assertEquals(
+        birth,
+        jdbc.queryForObject(
+            "select create_date from user where user_id=?", java.sql.Timestamp.class, ACCOUNT));
+    assertEquals(
+        oldCapsule,
+        jdbc.queryForObject(
+            "select reactivation_scoped_json from user where user_id=?", String.class, ACCOUNT));
+    assertCompletedCycleCannotBypassCurrentOwnership(oldCapsule);
+    expectRead("b".repeat(64));
+    var nextBody = new java.util.concurrent.atomic.AtomicReference<String>();
+    for (int retry = 0; retry < 2; retry++)
+      server
+          .expect(requestTo(URL + "/reactivate"))
+          .andRespond(
+              outbound -> {
+                assertOutsideSql();
+                String raw = ((MockClientHttpRequest) outbound).getBodyAsString();
+                var next = codec.read(raw, JsonNode.class);
+                assertNotEquals(old.path("metadata").path("operationId"), next.path("operationId"));
+                assertEquals("b".repeat(64), next.path("expectedState").textValue());
+                if (nextBody.get() == null) nextBody.set(raw);
+                else
+                  assertTrue(
+                      nextBody.get().equals(raw),
+                      "New cycle retry must retain its own immutable command");
+                return withSuccess(signed(raw), MediaType.APPLICATION_JSON)
+                    .createResponse(outbound);
+              });
+    assertDoesNotThrow(() -> facade.reactivateAsker(input()));
+    var nextCapsule =
+        jdbc.queryForObject(
+            "select reactivation_scoped_json from user where user_id=?", String.class, ACCOUNT);
+    assertNotEquals(oldCapsule, nextCapsule);
+    assertEquals("magpie", users.findById(ACCOUNT).orElseThrow().getAvatarId());
+    assertEquals(
+        birth,
+        jdbc.queryForObject(
+            "select create_date from user where user_id=?", java.sql.Timestamp.class, ACCOUNT));
+    assertDoesNotThrow(() -> facade.reactivateAsker(input()));
+    assertEquals(
+        nextCapsule,
+        jdbc.queryForObject(
+            "select reactivation_scoped_json from user where user_id=?", String.class, ACCOUNT));
+    verify(lifecycle, times(2)).cancelUserDeletion(any(User.class));
+    verifyNoInteractions(generic, repair);
+    server.verify();
+  }
+
+  private void assertCompletedCycleCannotBypassCurrentOwnership(String oldCapsule) {
+    var baseline = jdbc.queryForMap("select * from user where user_id=?", ACCOUNT);
+    var old = codec.read(oldCapsule, JsonNode.class);
+    var postUpdate =
+        java.sql.Timestamp.from(Instant.parse(old.path("postSql").path("update_date").textValue()));
+    for (String scenario :
+        List.of(
+            "new-sql-birth",
+            "tenant",
+            "competing-claim",
+            "missing-delete",
+            "not-after",
+            "earlier-delete",
+            "invalid-state",
+            "phase-flip",
+            "foreign-signed-receipt",
+            "old-post-birth")) {
+      var changed = old.deepCopy();
+      switch (scenario) {
+        case "new-sql-birth" ->
+            jdbc.update(
+                "update user set create_date=? where user_id=?",
+                java.sql.Timestamp.valueOf("2026-01-01 00:00:00"),
+                ACCOUNT);
+        case "tenant" -> jdbc.update("update user set tenant_id=8 where user_id=?", ACCOUNT);
+        case "competing-claim" ->
+            jdbc.update(
+                "update user set reactivation_operation_id=?,reactivation_operation_started_at=? where user_id=?",
+                "85000000-0000-4000-8000-000000000099",
+                postUpdate,
+                ACCOUNT);
+        case "missing-delete" ->
+            jdbc.update("update user set delete_date=null where user_id=?", ACCOUNT);
+        case "not-after" ->
+            jdbc.update("update user set delete_date=? where user_id=?", postUpdate, ACCOUNT);
+        case "earlier-delete" ->
+            jdbc.update(
+                "update user set delete_date=? where user_id=?",
+                java.sql.Timestamp.from(postUpdate.toInstant().minusSeconds(1)),
+                ACCOUNT);
+        case "invalid-state" ->
+            jdbc.update(
+                "update user set deletion_lifecycle_state='HARD_DELETE_IN_PROGRESS' where user_id=?",
+                ACCOUNT);
+        case "phase-flip" ->
+            ((com.fasterxml.jackson.databind.node.ObjectNode) changed).put("phase", "FROZEN");
+        case "foreign-signed-receipt" -> {
+          var foreign = codec.read(firstBody, JsonNode.class).deepCopy();
+          ((com.fasterxml.jackson.databind.node.ObjectNode) foreign)
+              .put("operationId", "85000000-0000-4000-8000-000000000099");
+          ((com.fasterxml.jackson.databind.node.ObjectNode) changed)
+              .put("receipt", signed(codec.canonical(foreign)));
+        }
+        case "old-post-birth" ->
+            ((com.fasterxml.jackson.databind.node.ObjectNode) changed.path("postSql"))
+                .put("create_date", "2026-01-01T00:00:00Z");
+      }
+      if (!changed.equals(old))
+        jdbc.update(
+            "update user set reactivation_scoped_json=? where user_id=?",
+            codec.canonical(changed),
+            ACCOUNT);
+      var before = jdbc.queryForMap("select * from user where user_id=?", ACCOUNT);
+      assertThrows(RuntimeException.class, () -> facade.reactivateAsker(input()), scenario);
+      assertEquals(
+          before, jdbc.queryForMap("select * from user where user_id=?", ACCOUNT), scenario);
+      jdbc.update(
+          "update user set create_date=?,tenant_id=?,delete_date=?,deletion_lifecycle_state=?,reactivation_operation_id=?,reactivation_operation_started_at=?,reactivation_scoped_json=?,update_date=? where user_id=?",
+          baseline.get("create_date"),
+          baseline.get("tenant_id"),
+          baseline.get("delete_date"),
+          baseline.get("deletion_lifecycle_state"),
+          baseline.get("reactivation_operation_id"),
+          baseline.get("reactivation_operation_started_at"),
+          oldCapsule,
+          baseline.get("update_date"),
+          ACCOUNT);
+      assertEquals(baseline, jdbc.queryForMap("select * from user where user_id=?", ACCOUNT));
+    }
+    // A separately checked native read, not the SQL UUID, owns native-incarnation evidence.
+    server
+        .expect(requestTo(URL + "/read"))
+        .andRespond(
+            org.springframework.test.web.client.response.MockRestResponseCreators.withStatus(
+                org.springframework.http.HttpStatus.FORBIDDEN));
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException.class,
+        () -> facade.reactivateAsker(input()));
+    assertEquals(baseline, jdbc.queryForMap("select * from user where user_id=?", ACCOUNT));
+    verify(lifecycle, times(1)).cancelUserDeletion(any(User.class));
+    server.verify();
+    server.reset();
+  }
+
   private void renewHuman(String token, String subject) {
     authenticated.setUserId(subject);
     authenticated.setAccessToken(token);
@@ -718,6 +903,10 @@ class ScopedAskerReactivationFlowJpaTest {
   }
 
   private void expectRead() {
+    expectRead("a".repeat(64));
+  }
+
+  private void expectRead(String state) {
     server
         .expect(requestTo(URL + "/read"))
         .andRespond(
@@ -737,7 +926,7 @@ class ScopedAskerReactivationFlowJpaTest {
                               Map.entry("preferredLanguage", "en"),
                               Map.entry("effectiveRoles", List.of("user")),
                               Map.entry("passwordChangeRequired", false),
-                              Map.entry("state", "a".repeat(64)))),
+                              Map.entry("state", state))),
                       MediaType.APPLICATION_JSON)
                   .createResponse(outbound);
             });
