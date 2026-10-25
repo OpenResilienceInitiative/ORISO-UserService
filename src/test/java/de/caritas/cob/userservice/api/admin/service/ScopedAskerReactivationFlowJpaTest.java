@@ -670,6 +670,94 @@ class ScopedAskerReactivationFlowJpaTest {
     server.verify();
   }
 
+  @Test
+  void completedReactivationAllowsALaterDeletionCycleAfterTheRealOrdinaryAvatarCallback() {
+    completeAndReplay();
+    server.reset();
+    String oldCapsule =
+        jdbc.queryForObject(
+            "select reactivation_scoped_json from user where user_id=?", String.class, ACCOUNT);
+    var old = codec.read(oldCapsule, JsonNode.class);
+    var birth =
+        jdbc.queryForObject(
+            "select create_date from user where user_id=?", java.sql.Timestamp.class, ACCOUNT);
+    var transcoder = new UsernameTranscoder();
+    var self =
+        new AuthenticatedUser(
+            ACCOUNT, USERNAME, Set.of("user"), "local-profile-callback-only", Set.of("ROLE_USER"));
+    self.setTenantId(7L);
+    var patch = new de.caritas.cob.userservice.api.adapters.web.dto.PatchUserDTO().avatarId("magpie");
+    var map =
+        new de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper(new IdentityConfig())
+            .mapOf(patch, self)
+            .orElseThrow();
+    var accounts =
+        new de.caritas.cob.userservice.api.AccountManager(
+            mock(ConsultantRepository.class),
+            mock(AdminRepository.class),
+            users,
+            new de.caritas.cob.userservice.api.UserServiceMapper(transcoder),
+            transcoder,
+            mock(de.caritas.cob.userservice.api.service.agency.AgencyService.class),
+            mock(de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class),
+            mock(ConsultantAgencyRepository.class),
+            self,
+            mock(SessionRepository.class),
+            mock(de.caritas.cob.userservice.api.service.appointment.AppointmentService.class),
+            mock(de.caritas.cob.userservice.api.facade.userdata.PatchConsultantSaga.class));
+    assertEquals(Map.of("id", ACCOUNT, "avatarId", "magpie"), map);
+    assertTrue(accounts.patchUser(map).isPresent());
+    assertEquals("magpie", users.findById(ACCOUNT).orElseThrow().getAvatarId());
+    var later = users.findById(ACCOUNT).orElseThrow();
+    lifecycle.beginUserDeletion(later, HUMAN);
+    users.save(later);
+    assertEquals(
+        birth,
+        jdbc.queryForObject(
+            "select create_date from user where user_id=?", java.sql.Timestamp.class, ACCOUNT));
+    assertEquals(
+        oldCapsule,
+        jdbc.queryForObject(
+            "select reactivation_scoped_json from user where user_id=?", String.class, ACCOUNT));
+    expectRead("b".repeat(64));
+    var nextBody = new java.util.concurrent.atomic.AtomicReference<String>();
+    for (int retry = 0; retry < 2; retry++)
+      server
+          .expect(requestTo(URL + "/reactivate"))
+          .andRespond(
+              outbound -> {
+                assertOutsideSql();
+                String raw = ((MockClientHttpRequest) outbound).getBodyAsString();
+                var next = codec.read(raw, JsonNode.class);
+                assertNotEquals(old.path("metadata").path("operationId"), next.path("operationId"));
+                assertEquals("b".repeat(64), next.path("expectedState").textValue());
+                if (nextBody.get() == null) nextBody.set(raw);
+                else
+                  assertTrue(
+                      nextBody.get().equals(raw),
+                      "New cycle retry must retain its own immutable command");
+                return withSuccess(signed(raw), MediaType.APPLICATION_JSON).createResponse(outbound);
+              });
+    assertDoesNotThrow(() -> facade.reactivateAsker(input()));
+    var nextCapsule =
+        jdbc.queryForObject(
+            "select reactivation_scoped_json from user where user_id=?", String.class, ACCOUNT);
+    assertNotEquals(oldCapsule, nextCapsule);
+    assertEquals("magpie", users.findById(ACCOUNT).orElseThrow().getAvatarId());
+    assertEquals(
+        birth,
+        jdbc.queryForObject(
+            "select create_date from user where user_id=?", java.sql.Timestamp.class, ACCOUNT));
+    assertDoesNotThrow(() -> facade.reactivateAsker(input()));
+    assertEquals(
+        nextCapsule,
+        jdbc.queryForObject(
+            "select reactivation_scoped_json from user where user_id=?", String.class, ACCOUNT));
+    verify(lifecycle, times(2)).cancelUserDeletion(any(User.class));
+    verifyNoInteractions(generic, repair);
+    server.verify();
+  }
+
   private void renewHuman(String token, String subject) {
     authenticated.setUserId(subject);
     authenticated.setAccessToken(token);
@@ -718,6 +806,10 @@ class ScopedAskerReactivationFlowJpaTest {
   }
 
   private void expectRead() {
+    expectRead("a".repeat(64));
+  }
+
+  private void expectRead(String state) {
     server
         .expect(requestTo(URL + "/read"))
         .andRespond(
@@ -737,7 +829,7 @@ class ScopedAskerReactivationFlowJpaTest {
                               Map.entry("preferredLanguage", "en"),
                               Map.entry("effectiveRoles", List.of("user")),
                               Map.entry("passwordChangeRequired", false),
-                              Map.entry("state", "a".repeat(64)))),
+                              Map.entry("state", state))),
                       MediaType.APPLICATION_JSON)
                   .createResponse(outbound);
             });
