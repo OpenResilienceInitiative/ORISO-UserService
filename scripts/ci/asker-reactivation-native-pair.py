@@ -171,14 +171,16 @@ def native(kc, report):
             now = fixture.admin("GET", "/users/" + account)
             groups = fixture.admin("GET", "/users/" + account + "/groups")
             roles = fixture.admin("GET", "/users/" + account + "/role-mappings/realm/composite")
+            direct = fixture.admin("GET", "/users/" + account + "/role-mappings")
             updates = native_updates(); assert all(event.get("representation") is None for event in updates)
             phase_counts.append(len(updates))
             return {"count": len(updates), "sameNativeBirth": type(now.get("createdTimestamp")) is int and now["createdTimestamp"] == native_birth,
-                "exclusiveUserProfile": {group["id"] for group in groups} == {user_group} and {role["name"] for role in roles} == {"user"}, "enabled": now["enabled"]}
+                "exclusiveUserProfile": {group["id"] for group in groups} == {user_group} and {role["name"] for role in roles} == {"user"} and not direct.get("realmMappings", []) and not direct.get("clientMappings", {}), "enabled": now["enabled"]}
         def recreate_incarnation():
             assert stage[0] == "RESTORED" and phase_counts == [1, 2, 3] and not incarnation_controls
             before_user = fixture.admin("GET", "/users/" + account)
             assert type(before_user["createdTimestamp"]) is int and before_user["createdTimestamp"] == native_birth and native_birth > 0
+            original_direct = fixture.admin("GET", "/users/" + account + "/role-mappings")
             replacement = {key: copy.deepcopy(before_user[key]) for key in ["id", "username", "email", "firstName", "lastName", "enabled", "emailVerified", "attributes"] if key in before_user}
             replacement["requiredActions"] = []
             assert "credentials" not in replacement
@@ -192,6 +194,9 @@ def native(kc, report):
             assert all(after_user.get(key) == before_user.get(key) for key in replacement if key != "requiredActions")
             assert {group["id"] for group in fixture.admin("GET", "/users/" + account + "/groups")} == {user_group}
             assert {role["name"] for role in fixture.admin("GET", "/users/" + account + "/role-mappings/realm/composite")} == {"user"}
+            current_direct = fixture.admin("GET", "/users/" + account + "/role-mappings")
+            assert current_direct.get("realmMappings", []) == original_direct.get("realmMappings", [])
+            assert current_direct.get("clientMappings", {}) == original_direct.get("clientMappings", {})
             incarnation_snapshot.append(after_user)
             incarnation_controls.append({"sameUuidIdentityAndFullProfile": True, "differentPositiveNativeBirth": True, "noCredentialRewrite": True})
             return {"nativeBase": OperationFixture.base, "stage": "RECREATED"}
