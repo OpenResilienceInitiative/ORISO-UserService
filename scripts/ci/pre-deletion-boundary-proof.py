@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import xml.etree.ElementTree as ET
@@ -79,6 +80,13 @@ def collect(destination):
             for kind in ('failure', 'error', 'skipped'):
                 if case.find(kind) is not None:
                     entry['outcome'] = kind.upper()
+                    failure = case.find(kind)
+                    trace = failure.text or ''
+                    # Classes and source lines only; no exception messages, SQL, DTOs or tokens.
+                    entry['exceptionClasses'] = sorted(set(re.findall(
+                        r'(?:Caused by: |^)([a-zA-Z_$][a-zA-Z0-9_.$]*(?:Exception|Error))(?=:|\s|$)', trace, re.MULTILINE)))
+                    entry['ownedFrames'] = list(dict.fromkeys(re.findall(
+                        r'de\.caritas\.cob\.userservice\.api\.[a-zA-Z0-9_.$]+\([a-zA-Z0-9_.$]+\.java:[0-9]+\)', trace)))[:24]
                     ET.SubElement(output, kind, message='Sanitized public pre-deletion diagnostic outcome')
             methods.append(entry)
         ET.ElementTree(clean).write(destination / (name.rsplit('.', 1)[1] + '.xml'), encoding='utf-8')

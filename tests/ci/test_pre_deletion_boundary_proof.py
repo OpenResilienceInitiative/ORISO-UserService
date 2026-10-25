@@ -22,7 +22,7 @@ class EvidenceControls(unittest.TestCase):
             for item in range(count):
                 case = ET.SubElement(suite, 'testcase', classname=name, name='method' + str(item))
                 if failed and item == 0:
-                    ET.SubElement(case, 'failure', message='private-password-token').text = 'private body'
+                    ET.SubElement(case, 'failure', message='private-password-token').text = 'private body\nCaused by: java.lang.IllegalStateException: private password\n at de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance.start(PublicPreDeletionMaintenance.java:123)'
             ET.ElementTree(suite).write(reports / ('TEST-' + name + '.xml'))
         for name in proof.COMPILED:
             path = root / 'target/classes/de/caritas/cob/userservice/api' / (name + '.class')
@@ -54,6 +54,10 @@ class EvidenceControls(unittest.TestCase):
             self.assertFalse(receipt['green'])
             self.assertNotIn('private-password-token', ''.join(path.read_text() for path in destination.glob('*')))
             self.assertEqual(1, receipt['suites'][next(iter(proof.SUITES))]['counts']['failures'])
+            failure = receipt['suites'][next(iter(proof.SUITES))]['cases'][0]
+            self.assertEqual(['java.lang.IllegalStateException'], failure['exceptionClasses'])
+            self.assertEqual(['de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance.start(PublicPreDeletionMaintenance.java:123)'], failure['ownedFrames'])
+            self.assertNotIn('private password', str(receipt))
 
     def test_missing_required_compiled_owner_cannot_be_green(self):
         with tempfile.TemporaryDirectory() as directory:

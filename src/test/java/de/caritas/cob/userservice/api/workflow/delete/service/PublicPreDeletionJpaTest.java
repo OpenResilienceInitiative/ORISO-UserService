@@ -273,6 +273,7 @@ class PublicPreDeletionJpaTest {
   @Test
   void adminAskerStartUsesActualScopeAndOwnedAcknowledgementBeforeSql() {
     asker();
+    authenticate(false, "/service/useradmin/askers/" + ACCOUNT);
     var service =
         new AskerUserAdminFacade(
             new ClosedGenericDeactivator(),
