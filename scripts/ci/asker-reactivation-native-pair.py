@@ -18,7 +18,7 @@ import xml.etree.ElementTree as ET
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
-KC_COMMIT = "5d4c58e8df6090451fa544481d7ef16e6fab4fc1"
+KC_COMMIT = "6ef53b161606a20bdba6fa0e9f9c3ebfcad99dd4"
 SUITE = "de.caritas.cob.userservice.api.admin.service.AskerReactivationNativePairProof"
 CASE = "actualChosenPasswordPolicyReleaseAndCurrentGrantReplayPreserveOneJpaCallback"
 FLAGS = {"actualJpa", "actualCurrentPlatform", "canonicalAdmin", "actualNativeRead200", "nativeProjectionBoundExceptMailboxCase", "nativeEmailCaseDifference",

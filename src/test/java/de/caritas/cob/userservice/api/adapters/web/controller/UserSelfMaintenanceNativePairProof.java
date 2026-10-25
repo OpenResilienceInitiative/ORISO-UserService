@@ -31,15 +31,15 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.*;
-import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService;
+import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.DecryptionService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
-import de.caritas.cob.userservice.api.service.user.UserAccountService;
-import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.service.notification.SupervisorAddedEmailNotificationService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
+import de.caritas.cob.userservice.api.service.user.UserAccountService;
+import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import java.net.URI;
@@ -54,8 +54,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.context.annotation.Import;
-import org.springframework.data.auditing.AuditingHandler;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.data.auditing.AuditingHandler;
 import org.springframework.http.*;
 import org.springframework.http.client.BufferingClientHttpRequestFactory;
 import org.springframework.http.client.support.*;
@@ -160,21 +160,47 @@ class UserSelfMaintenanceNativePairProof {
       assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
       var jdbc = new JdbcTemplate(source);
       if (contact(kind)) {
-        for (var migration : Map.of("TEMPORARY_ACCOUNT", "20260923_user_temporary_account",
-            "AVATAR_ID", "20261007_user_avatar_1240").entrySet()) {
-          if (jdbc.queryForObject("select count(*) from information_schema.columns where table_name='USER' and column_name=?",
-              Integer.class, migration.getKey()) == 0)
-            new ResourceDatabasePopulator(new ClassPathResource("db/changelog/changeset/" + migration.getValue() + "/migrate.sql")).execute(source);
+        for (var migration :
+            Map.of(
+                    "TEMPORARY_ACCOUNT",
+                    "20260923_user_temporary_account",
+                    "AVATAR_ID",
+                    "20261007_user_avatar_1240")
+                .entrySet()) {
+          if (jdbc.queryForObject(
+                  "select count(*) from information_schema.columns where table_name='USER' and column_name=?",
+                  Integer.class,
+                  migration.getKey())
+              == 0)
+            new ResourceDatabasePopulator(
+                    new ClassPathResource(
+                        "db/changelog/changeset/" + migration.getValue() + "/migrate.sql"))
+                .execute(source);
         }
-        contactUsers = spy(new UserService(users, mock(UserMobileTokenRepository.class),
-            mock(AuditingHandler.class), mock(AccountInactivityEnrollmentService.class)));
+        contactUsers =
+            spy(
+                new UserService(
+                    users,
+                    mock(UserMobileTokenRepository.class),
+                    mock(AuditingHandler.class),
+                    mock(AccountInactivityEnrollmentService.class)));
         contactAppointments = mock(AppointmentService.class);
         contactNotifications = mock(SupervisorAddedEmailNotificationService.class);
         genericContactEmail = mock(IdentityEmailAddressUpdater.class);
-        doAnswer(i -> { assertFalse(TransactionSynchronizationManager.isActualTransactionActive()); return null; })
-            .when(contactAppointments).updateAskerEmail(anyString(), anyString());
-        doAnswer(i -> { assertFalse(TransactionSynchronizationManager.isActualTransactionActive()); return null; })
-            .when(contactNotifications).notifyEmailAddressChanged(anyString(), anyString(), any(), any(), anyString(), any());
+        doAnswer(
+                i -> {
+                  assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+                  return null;
+                })
+            .when(contactAppointments)
+            .updateAskerEmail(anyString(), anyString());
+        doAnswer(
+                i -> {
+                  assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+                  return null;
+                })
+            .when(contactNotifications)
+            .notifyEmailAddressChanged(anyString(), anyString(), any(), any(), anyString(), any());
       }
       jdbc.execute("drop table if exists identity_self_password_intent");
       jdbc.execute("drop table if exists identity_account_operation_intent");
@@ -233,7 +259,8 @@ class UserSelfMaintenanceNativePairProof {
       var firstReceipt = new AtomicReference<String>();
       var lastMutation = new AtomicInteger();
       var mutationCalls = new AtomicInteger();
-      String command = kind.equals("password") ? "self-password" : contact(kind) ? "email" : "locale";
+      String command =
+          kind.equals("password") ? "self-password" : contact(kind) ? "email" : "locale";
       String table =
           kind.equals("password")
               ? "identity_self_password_intent"
@@ -285,7 +312,8 @@ class UserSelfMaintenanceNativePairProof {
                       firstReceipt.set(codec.canonical(reply));
                       if (contact(kind)) {
                         response.close();
-                        throw new ResourceAccessException("Simulated lost actual native positive reply");
+                        throw new ResourceAccessException(
+                            "Simulated lost actual native positive reply");
                       }
                     } else assertEquals(firstReceipt.get(), codec.canonical(reply));
                   }
@@ -363,11 +391,19 @@ class UserSelfMaintenanceNativePairProof {
       facts.put("canonicalAdmin", true);
       if (contact(kind)) {
         var firstContext = current;
-        assertThrows(ServiceUnavailableException.class,
+        assertThrows(
+            ServiceUnavailableException.class,
             () -> invoke(firstContext.controller, kind, oldPassword, newPassword));
         assertEquals(1, mutationCalls.get());
-        assertEquals("FROZEN", jdbc.queryForObject("select status from " + table + " where operation_id=?", String.class, operation));
-        assertEquals(required("PAIR_EMAIL"), consultant(kind) ? consultants.findById(account).orElseThrow().getEmail() : users.findById(account).orElseThrow().getEmail());
+        assertEquals(
+            "FROZEN",
+            jdbc.queryForObject(
+                "select status from " + table + " where operation_id=?", String.class, operation));
+        assertEquals(
+            required("PAIR_EMAIL"),
+            consultant(kind)
+                ? consultants.findById(account).orElseThrow().getEmail()
+                : users.findById(account).orElseThrow().getEmail());
         verifyNoInteractions(contactAppointments, contactNotifications, genericContactEmail);
         verify(contactUsers, never()).saveUser(any(User.class));
         verify(consultantService, never()).saveConsultant(any(Consultant.class));
@@ -413,13 +449,32 @@ class UserSelfMaintenanceNativePairProof {
                 .path("preferredLanguage")
                 .textValue());
       } else {
-        String email = kind.equals("contact-email-remove") ? account + "@dummy.invalid" : "changed-contact@example.test";
-        assertEquals(email, consultant(kind) ? consultants.findById(account).orElseThrow().getEmail() : users.findById(account).orElseThrow().getEmail());
-        var target = readOriginalTarget(http, logical, realm, realmId, account, actors,
-            current.broker, codec, frozenBody.get(), actual);
+        String email =
+            kind.equals("contact-email-remove")
+                ? account + "@dummy.invalid"
+                : "changed-contact@example.test";
+        assertEquals(
+            email,
+            consultant(kind)
+                ? consultants.findById(account).orElseThrow().getEmail()
+                : users.findById(account).orElseThrow().getEmail());
+        var target =
+            readOriginalTarget(
+                http,
+                logical,
+                realm,
+                realmId,
+                account,
+                actors,
+                current.broker,
+                codec,
+                frozenBody.get(),
+                actual);
         assertEquals(email, target.path("email").textValue());
         assertTrue(target.path("emailVerified").isBoolean());
-        assertEquals(Boolean.parseBoolean(required("PAIR_EMAIL_VERIFIED")), target.path("emailVerified").booleanValue());
+        assertEquals(
+            Boolean.parseBoolean(required("PAIR_EMAIL_VERIFIED")),
+            target.path("emailVerified").booleanValue());
       }
       facts.put("nativeLogicalEffectVerified", true);
       current =
@@ -537,8 +592,16 @@ class UserSelfMaintenanceNativePairProof {
         } else {
           verify(contactUsers, times(1)).saveUser(any(User.class));
           verify(consultantService, never()).saveConsultant(any(Consultant.class));
-          verify(contactAppointments, times(1)).updateAskerEmail(account, "changed-contact@example.test");
-          verify(contactNotifications, times(1)).notifyEmailAddressChanged(anyString(), eq("changed-contact@example.test"), eq(11L), any(), anyString(), eq(LanguageCode.en));
+          verify(contactAppointments, times(1))
+              .updateAskerEmail(account, "changed-contact@example.test");
+          verify(contactNotifications, times(1))
+              .notifyEmailAddressChanged(
+                  anyString(),
+                  eq("changed-contact@example.test"),
+                  eq(11L),
+                  any(),
+                  anyString(),
+                  eq(LanguageCode.en));
         }
       }
       facts.put("oneLocalCallback", true);
@@ -582,8 +645,7 @@ class UserSelfMaintenanceNativePairProof {
         new TreeSet<String>(
             (List<String>) ((Map<?, ?>) jwt.getClaims().get("realm_access")).get("roles"));
     assertEquals(
-        consultant(kind) ? Set.of("consultant", "group-chat-consultant") : Set.of("user"),
-        roles);
+        consultant(kind) ? Set.of("consultant", "group-chat-consultant") : Set.of("user"), roles);
     var human =
         new AuthenticatedUser(
             account,
@@ -594,14 +656,17 @@ class UserSelfMaintenanceNativePairProof {
     human.setTenantId(11L);
     var request =
         new MockHttpServletRequest(
-            kind.equals("password") || kind.equals("contact-email") ? "PUT" : kind.equals("contact-email-remove") ? "DELETE" : "PATCH",
-            kind.equals("password") ? "/service/users/password/change" : contact(kind) ? "/service/users/email" : "/service/users/data");
+            kind.equals("password") || kind.equals("contact-email")
+                ? "PUT"
+                : kind.equals("contact-email-remove") ? "DELETE" : "PATCH",
+            kind.equals("password")
+                ? "/service/users/password/change"
+                : contact(kind) ? "/service/users/email" : "/service/users/data");
     var auth =
         new JwtAuthenticationToken(
             jwt,
             List.of(
-                new SimpleGrantedAuthority(
-                    consultant(kind) ? "ROLE_CONSULTANT" : "ROLE_USER")));
+                new SimpleGrantedAuthority(consultant(kind) ? "ROLE_CONSULTANT" : "ROLE_USER")));
     request.setUserPrincipal(auth);
     request.addHeader("Authorization", "Bearer " + bearer);
     request.addHeader("Idempotency-Key", operation);
@@ -631,13 +696,41 @@ class UserSelfMaintenanceNativePairProof {
     if (contact(kind)) {
       var helper = mock(UserHelper.class);
       when(helper.getDummyEmail(account)).thenReturn(account + "@dummy.invalid");
-      contactService = new UserAccountService(contactUsers, consultantService, contactAppointments,
-          human, mock(IdentityClient.class), genericContactEmail, mock(IdentityDeactivator.class),
-          helper, mode, mock(StatisticsService.class), contactNotifications, new DeletionLifecycleService());
-      var owner = new SelfContactEmailMaintenance(mode, human, request, jdbc, transactions, entities,
-          actors, broker, codec, http, Clock.systemUTC(), logical, issuer, realm, realmId);
-      contactService.configureSelfContactEmailMaintenance(new org.springframework.beans.factory.support.StaticListableBeanFactory(Map.of("contact", owner))
-          .getBeanProvider(SelfContactEmailMaintenance.class));
+      contactService =
+          new UserAccountService(
+              contactUsers,
+              consultantService,
+              contactAppointments,
+              human,
+              mock(IdentityClient.class),
+              genericContactEmail,
+              mock(IdentityDeactivator.class),
+              helper,
+              mode,
+              mock(StatisticsService.class),
+              contactNotifications,
+              new DeletionLifecycleService());
+      var owner =
+          new SelfContactEmailMaintenance(
+              mode,
+              human,
+              request,
+              jdbc,
+              transactions,
+              entities,
+              actors,
+              broker,
+              codec,
+              http,
+              Clock.systemUTC(),
+              logical,
+              issuer,
+              realm,
+              realmId);
+      contactService.configureSelfContactEmailMaintenance(
+          new org.springframework.beans.factory.support.StaticListableBeanFactory(
+                  Map.of("contact", owner))
+              .getBeanProvider(SelfContactEmailMaintenance.class));
     }
     var delegate =
         new UserAccountControllerDelegate(
@@ -708,7 +801,9 @@ class UserSelfMaintenanceNativePairProof {
       patch.setPreferredLanguage(de.caritas.cob.userservice.api.adapters.web.dto.LanguageCode.DE);
       assertEquals(204, controller.patchUser(patch).getStatusCode().value());
     } else if (kind.equals("contact-email")) {
-      assertEquals(200, controller.updateEmailAddress("CHANGED-CONTACT@EXAMPLE.TEST").getStatusCode().value());
+      assertEquals(
+          200,
+          controller.updateEmailAddress("CHANGED-CONTACT@EXAMPLE.TEST").getStatusCode().value());
     } else if (kind.equals("contact-email-remove")) {
       assertEquals(200, controller.deleteEmailAddress().getStatusCode().value());
     } else {

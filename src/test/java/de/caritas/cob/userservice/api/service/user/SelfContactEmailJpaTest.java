@@ -300,8 +300,12 @@ class SelfContactEmailJpaTest {
     anAskerCanChangeContactEmailThroughTheActualPublicService();
     int previous = calls.get();
     var before = jdbc.queryForMap("select * from user where user_id=?", ASKER);
-    assertEquals(1, jdbc.update("update identity_account_operation_intent set status='FROZEN',domain_applied=false"));
-    assertThrows(de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException.class,
+    assertEquals(
+        1,
+        jdbc.update(
+            "update identity_account_operation_intent set status='FROZEN',domain_applied=false"));
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException.class,
         () -> currentService.changeUserAccountEmailAddress(Optional.of("changed@oriso.org")));
     assertEquals(previous, calls.get());
     assertEquals(before, jdbc.queryForMap("select * from user where user_id=?", ASKER));
@@ -312,12 +316,21 @@ class SelfContactEmailJpaTest {
   void aForeignRequestPrincipalCannotReuseTheOriginalHumansAttempt() {
     anAskerCanChangeContactEmailThroughTheActualPublicService();
     int previous = calls.get();
-    var jwt = org.springframework.security.oauth2.jwt.Jwt.withTokenValue("fixture-human")
-        .header("alg", "RS256").subject(CONSULTANT).issuer("https://identity.test/realms/fixture")
-        .claim("azp", "app").claim("tenantId", "7").issuedAt(java.time.Instant.now().minusSeconds(10))
-        .expiresAt(java.time.Instant.now().plusSeconds(600)).build();
-    currentRequest.setUserPrincipal(new org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken(jwt));
-    assertThrows(de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+    var jwt =
+        org.springframework.security.oauth2.jwt.Jwt.withTokenValue("fixture-human")
+            .header("alg", "RS256")
+            .subject(CONSULTANT)
+            .issuer("https://identity.test/realms/fixture")
+            .claim("azp", "app")
+            .claim("tenantId", "7")
+            .issuedAt(java.time.Instant.now().minusSeconds(10))
+            .expiresAt(java.time.Instant.now().plusSeconds(600))
+            .build();
+    currentRequest.setUserPrincipal(
+        new org.springframework.security.oauth2.server.resource.authentication
+            .JwtAuthenticationToken(jwt));
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
         () -> currentService.changeUserAccountEmailAddress(Optional.of("changed@oriso.org")));
     assertEquals(previous, calls.get());
     assertEquals("changed@oriso.org", users.findById(ASKER).orElseThrow().getEmail());

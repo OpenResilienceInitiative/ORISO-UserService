@@ -54,7 +54,7 @@ class ScheduledDeletionPairControls(unittest.TestCase):
             self.assertFalse(result['exact_method_inventory'])
 
     def test_native_source_and_image_are_fixed(self):
-        self.assertEqual('5d4c58e8df6090451fa544481d7ef16e6fab4fc1', pair.KC_COMMIT)
+        self.assertEqual('6ef53b161606a20bdba6fa0e9f9c3ebfcad99dd4', pair.KC_COMMIT)
         self.assertEqual('quay.io/keycloak/keycloak@sha256:9b0330756022422149aa6502eb2def8cd47c6e1b000c7c65cdb13e7c0133e992', pair.IMAGE)
         self.assertIn('actualCreatorCommitted', pair.WITNESS_FLAGS)
         self.assertIn('claimedOriginalSqlBirthPreserved', pair.WITNESS_FLAGS)
