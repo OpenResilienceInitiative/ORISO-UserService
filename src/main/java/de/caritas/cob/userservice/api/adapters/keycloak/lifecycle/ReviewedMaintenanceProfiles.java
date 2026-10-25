@@ -95,6 +95,7 @@ public final class ReviewedMaintenanceProfiles {
                       "account.profile",
                       "account.email",
                       "account.password",
+                      "account.deactivate",
                       "otp.read",
                       "otp.app-setup",
                       "otp.delete",

@@ -129,6 +129,37 @@ class ReviewedMaintenanceProfilesTest {
   }
 
   @Test
+  void completeAskerSelfPolicyIncludesItsScopedDeletionStartWithoutChangingSelectors() {
+    var raw = ordinary();
+    ObjectNode user = null;
+    for (var profile : raw.path("ordinaryProfiles")) {
+      if (profile.path("id").asText().equals("user")) {
+        user = (ObjectNode) profile;
+      }
+    }
+    assertNotNull(user);
+    var operations = user.putArray("selfOperations");
+    for (String operation :
+        List.of(
+            "account.read",
+            "account.locale",
+            "account.email",
+            "account.password",
+            "account.deactivate",
+            "otp.read",
+            "otp.app-setup",
+            "otp.delete",
+            "otp.email-start",
+            "otp.email-finish")) operations.add(operation);
+    assertEquals(10, operations.size());
+    assertEquals(
+        read(ordinary(), protectedPolicy()).profiles(),
+        assertDoesNotThrow(() -> read(raw, protectedPolicy())).profiles());
+    operations.add("account.delete");
+    assertThrows(IllegalStateException.class, () -> read(raw, protectedPolicy()));
+  }
+
+  @Test
   void initialKindWrongRealmAndMissingOrdinaryMapRefuse() {
     assertThrows(
         IllegalStateException.class,
