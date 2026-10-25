@@ -613,13 +613,17 @@ class PublicPreDeletionJpaTest {
     asker();
     authenticate(true, "/service/users/account");
     nativeHttp(false);
-    doAnswer(call -> {
-      assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-      assertEquals("APPLIED", status());
-      assertNotNull(users.findById(ACCOUNT).orElseThrow().getDeleteDate());
-      return null;
-    }).when(statistics).fireEvent(any());
-    assertDoesNotThrow(() -> selfService().deactivateAndFlagUserAccountForDeletion("chosen-original-password"));
+    doAnswer(
+            call -> {
+              assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+              assertEquals("APPLIED", status());
+              assertNotNull(users.findById(ACCOUNT).orElseThrow().getDeleteDate());
+              return null;
+            })
+        .when(statistics)
+        .fireEvent(any());
+    assertDoesNotThrow(
+        () -> selfService().deactivateAndFlagUserAccountForDeletion("chosen-original-password"));
     verify(statistics, times(1)).fireEvent(any());
     assertEquals("APPLIED", status());
   }
@@ -632,16 +636,22 @@ class PublicPreDeletionJpaTest {
     var lost = new LostCommitReplyJpaManager(entities.getEntityManagerFactory(), dataSource);
     transactions = lost;
     userService = spy(userService);
-    doAnswer(call -> {
-      Object result = call.callRealMethod();
-      lost.loseNextCommit = true;
-      return result;
-    }).when(userService).saveUser(any());
-    assertThrows(IllegalStateException.class, () -> selfService().deactivateAndFlagUserAccountForDeletion("chosen-original-password"));
+    doAnswer(
+            call -> {
+              Object result = call.callRealMethod();
+              lost.loseNextCommit = true;
+              return result;
+            })
+        .when(userService)
+        .saveUser(any());
+    assertThrows(
+        IllegalStateException.class,
+        () -> selfService().deactivateAndFlagUserAccountForDeletion("chosen-original-password"));
     assertEquals("APPLIED", status());
     assertNotNull(users.findById(ACCOUNT).orElseThrow().getDeleteDate());
     assertEquals(1, nativeEffects.get());
-    assertDoesNotThrow(() -> selfService().deactivateAndFlagUserAccountForDeletion("chosen-original-password"));
+    assertDoesNotThrow(
+        () -> selfService().deactivateAndFlagUserAccountForDeletion("chosen-original-password"));
     verify(userService, times(1)).saveUser(any());
     assertEquals(1, nativeEffects.get());
     assertEquals("APPLIED", status());
@@ -649,12 +659,21 @@ class PublicPreDeletionJpaTest {
 
   private static final class LostCommitReplyJpaManager extends JpaTransactionManager {
     private boolean loseNextCommit;
-    private LostCommitReplyJpaManager(jakarta.persistence.EntityManagerFactory factory, DataSource source) {
-      super(factory); setDataSource(source);
+
+    private LostCommitReplyJpaManager(
+        jakarta.persistence.EntityManagerFactory factory, DataSource source) {
+      super(factory);
+      setDataSource(source);
     }
-    @Override protected void doCommit(org.springframework.transaction.support.DefaultTransactionStatus status) {
+
+    @Override
+    protected void doCommit(
+        org.springframework.transaction.support.DefaultTransactionStatus status) {
       super.doCommit(status);
-      if (loseNextCommit) { loseNextCommit = false; throw new IllegalStateException("Lost fixture reply after actual commit"); }
+      if (loseNextCommit) {
+        loseNextCommit = false;
+        throw new IllegalStateException("Lost fixture reply after actual commit");
+      }
     }
   }
 
@@ -925,8 +944,9 @@ class PublicPreDeletionJpaTest {
 
   private MembersOnlyRevocation realMemberships(
       GroupChatMembershipService remote, MatrixChatShutdownService shutdown) {
-    var result = new MembersOnlyRevocation(
-        sessions, consultants, participants, supervisions, remote, chats, shutdown);
+    var result =
+        new MembersOnlyRevocation(
+            sessions, consultants, participants, supervisions, remote, chats, shutdown);
     result.configurePreDeletionJdbc(jdbc);
     return result;
   }
@@ -1314,9 +1334,15 @@ class PublicPreDeletionJpaTest {
             presteps,
             sessions,
             new MembersOnlyChatAccess(chats, participants),
-            realMemberships(mock(GroupChatMembershipService.class), mock(MatrixChatShutdownService.class)),
-            new SessionOwnershipService(sessions, entities,
-                new de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore(sessions, acceptanceNotices, new de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver())),
+            realMemberships(
+                mock(GroupChatMembershipService.class), mock(MatrixChatShutdownService.class)),
+            new SessionOwnershipService(
+                sessions,
+                entities,
+                new de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore(
+                    sessions,
+                    acceptanceNotices,
+                    new de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver())),
             handovers,
             supervisions,
             actor,
