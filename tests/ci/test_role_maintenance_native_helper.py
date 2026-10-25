@@ -29,6 +29,39 @@ class RoleMaintenanceNativeGateTest(unittest.TestCase):
                 else: value['actualJpa'] = {'string': 'true', 'number': 1, 'null': None}[edit]
                 with self.assertRaises(ValueError): HELPER.checked_witness(value)
 
+    def platform(self):
+        return {'bindings': [{'subject': 'human', 'authority': 'PLATFORM', 'authorizerTenantIds': [0],
+            'humanClientIds': ['protected-human-web'], 'audienceSets': [['userservice']],
+            'protectedProfileIds': ['platform-v1'], 'realmRoles': ['agency-admin', 'tenant-admin']}],
+            'profiles': [{'id': 'platform-v1', 'kind': 'PLATFORM_ADMIN', 'groupId': 'group',
+                'groupPath': '/protected-admins/platform-admins', 'realmRoles': ['agency-admin', 'tenant-admin']}],
+            'unrelatedTargetPolicy': {'operations': ['account.read']}}
+
+    def test_canonical_platform_source_changes_only_exact_existing_binding_and_profile(self):
+        original = self.platform(); saved = copy.deepcopy(original)
+        result = HELPER.canonical_platform_configuration(original, 'human', 'group')
+        self.assertEqual(original, saved)
+        self.assertEqual(['agency-admin', 'tenant-admin', 'user-admin'], result['bindings'][0]['realmRoles'])
+        self.assertEqual(result['bindings'][0]['realmRoles'], result['profiles'][0]['realmRoles'])
+        result['bindings'][0]['realmRoles'] = original['bindings'][0]['realmRoles']
+        result['profiles'][0]['realmRoles'] = original['profiles'][0]['realmRoles']
+        self.assertEqual(original, result)
+
+    def test_foreign_or_ambiguous_platform_catalog_never_mints_a_source(self):
+        for change in ['subject', 'authority', 'tenant', 'client', 'audience', 'roles', 'duplicate', 'profile', 'group']:
+            with self.subTest(change=change):
+                value = self.platform(); binding = value['bindings'][0]
+                if change == 'subject': binding['subject'] = 'foreign'
+                elif change == 'authority': binding['authority'] = 'TENANT_PEER'
+                elif change == 'tenant': binding['authorizerTenantIds'] = [7]
+                elif change == 'client': binding['humanClientIds'] = ['foreign']
+                elif change == 'audience': binding['audienceSets'] = [['userservice', 'other']]
+                elif change == 'roles': binding['realmRoles'].append('user-admin')
+                elif change == 'duplicate': value['bindings'].append(copy.deepcopy(binding))
+                elif change == 'profile': value['profiles'][0]['kind'] = 'TENANT_ADMIN'
+                else: value['profiles'][0]['groupId'] = 'foreign'
+                with self.assertRaises(ValueError): HELPER.canonical_platform_configuration(value, 'human', 'group')
+
     def policy(self):
         return {'version': 1, 'native': {'issuer': 'fixed'}, 'ordinaryProfiles': [{'id': 'combined', 'version': 1, 'realmRoles': ['consultant']}],
             'adminOperations': [{'authority': 'PLATFORM', 'targetProfiles': ['combined'], 'selfOnly': False,

@@ -492,7 +492,7 @@ class UserRoleMaintenanceNativePairProof {
     var roles =
         new TreeSet<String>(
             (List<String>) ((Map<?, ?>) jwt.getClaims().get("realm_access")).get("roles"));
-    assertEquals(Set.of("agency-admin", "tenant-admin"), roles);
+    assertEquals(Set.of("agency-admin", "tenant-admin", "user-admin"), roles);
     var mapped =
         new RoleAuthorizationAuthorityMapper()
             .mapAuthorities(roles.stream().map(SimpleGrantedAuthority::new).toList());
@@ -501,6 +501,7 @@ class UserRoleMaintenanceNativePairProof {
             .map(org.springframework.security.core.GrantedAuthority::getAuthority)
             .collect(java.util.stream.Collectors.toSet());
     assertTrue(authorityNames.contains(Authority.AuthorityValue.TENANT_ADMIN));
+    assertTrue(authorityNames.contains(Authority.AuthorityValue.USER_ADMIN));
     var human =
         new AuthenticatedUser(
             jwt.getSubject(), required("PAIR_HUMAN_USERNAME"), roles, bearer, authorityNames);
