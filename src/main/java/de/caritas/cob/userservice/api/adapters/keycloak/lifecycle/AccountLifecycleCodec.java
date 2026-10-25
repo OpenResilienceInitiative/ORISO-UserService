@@ -1316,6 +1316,11 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
     return digest("claimed-inactivity-suspension-custody/v1", checked);
   }
 
+  /** Closed data-only bridge; no frame or external Matrix authority is issued here. */
+  public String claimedConsultantGrantMatrixDigest(JsonNode exactSeven) {
+    throw new IllegalArgumentException("Consultant grant Matrix data is not configured");
+  }
+
   public String claimedInactivityRowDigest(JsonNode exactOwnedRow) {
     return digest(
         "claimed-inactivity-row/v1", ClaimedInactivityRowSchema.require(exactOwnedRow, false));
