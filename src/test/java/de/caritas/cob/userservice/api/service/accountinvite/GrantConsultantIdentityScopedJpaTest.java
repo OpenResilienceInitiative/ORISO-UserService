@@ -6,7 +6,6 @@ import static org.springframework.test.web.client.ExpectedCount.manyTimes;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCodec;
 import de.caritas.cob.userservice.api.adapters.keycloak.maintenance.KeycloakHumanAdminMaintenance;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
@@ -15,9 +14,6 @@ import de.caritas.cob.userservice.api.config.auth.*;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
-import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.model.ConsultantAgency;
-import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.port.out.*;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance;
@@ -51,7 +47,6 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtAut
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
@@ -74,16 +69,19 @@ import org.springframework.web.client.RestTemplate;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({
   JpaAuditingConfiguration.class,
-  de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService.class,
+  de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService
+      .class,
   de.caritas.cob.userservice.api.service.ConsultantService.class,
   de.caritas.cob.userservice.api.service.ConsultantAgencyService.class,
   de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService.class,
   de.caritas.cob.userservice.api.helper.UserHelper.class,
   de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver.class,
-  de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService.class,
-  de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationFinalizer.class,
-  de.caritas.cob.userservice.api.admin.service.consultant.validation.ConsultantTopicAgencyCompatibilityValidator.class,
-
+  de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation
+      .ConsultantAgencyRelationCreatorService.class,
+  de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation
+      .ConsultantAgencyRelationFinalizer.class,
+  de.caritas.cob.userservice.api.admin.service.consultant.validation
+      .ConsultantTopicAgencyCompatibilityValidator.class,
   AccountInviteAccessPolicy.class,
   AdminScope.class,
   GrantConsultantIdentityScopedJpaTest.Configuration.class
@@ -103,7 +101,11 @@ class GrantConsultantIdentityScopedJpaTest {
       Set.of("consultant", "group-chat-consultant", "restricted-agency-admin", "user-admin");
   private static final String EXPECTED_MATRIX = "@owned-counsellor:fixture.invalid";
 
-  @Autowired private de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService service;
+  @Autowired
+  private de.caritas.cob.userservice.api.admin.service.consultant.create
+          .GrantConsultantIdentityService
+      service;
+
   @Autowired private HumanAdminAccountMaintenance maintenance;
   @Autowired private ConsultantRepository consultants;
   @Autowired private ConsultantAgencyRepository consultantAgencies;
@@ -133,9 +135,16 @@ class GrantConsultantIdentityScopedJpaTest {
   @MockitoBean private IdentityRoleLookup genericRoleLookup;
   @MockitoBean private MatrixUserClient matrix;
   @MockitoBean private de.caritas.cob.userservice.api.admin.service.tenant.TenantService tenants;
-  @MockitoBean private de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager consultingTypes;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager
+      consultingTypes;
+
   @MockitoBean private de.caritas.cob.userservice.api.port.in.AccountManaging unusedAccounts;
-  @MockitoBean private de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper unusedUserMapper;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper unusedUserMapper;
+
   @Autowired private java.util.concurrent.atomic.AtomicInteger joinedEvents;
   private final AtomicInteger matrixCalls = new AtomicInteger();
   private boolean matrixLostReply, matrixInUse;
@@ -150,7 +159,8 @@ class GrantConsultantIdentityScopedJpaTest {
             new ClassPathResource(
                 "db/changelog/changeset/20261022_general_admin_identity_367/migrate.sql"))
         .execute(dataSource);
-    jdbc.execute("alter table general_admin_identity_intent add column if not exists matrix_result_json varchar(1024) null");
+    jdbc.execute(
+        "alter table general_admin_identity_intent add column if not exists matrix_result_json varchar(1024) null");
     // The original table DDL is portable; its separate MySQL DATE_ADD rollout is not this test.
     try (var migration =
         new ClassPathResource("db/changelog/changeset/20260916_account_inactivity/migrate.sql")
@@ -190,11 +200,18 @@ class GrantConsultantIdentityScopedJpaTest {
     new TransactionTemplate(transactions)
         .executeWithoutResult(
             ignored -> {
-              var admin = de.caritas.cob.userservice.api.model.Admin.builder()
-                  .id(ACCOUNT).type(de.caritas.cob.userservice.api.model.Admin.AdminType.AGENCY)
-                  .tenantId(7L).createDate(born).updateDate(born)
-                  .username("owned-counsellor").firstName("Ada").lastName("Lovelace")
-                  .email("ada@fixture.invalid").build();
+              var admin =
+                  de.caritas.cob.userservice.api.model.Admin.builder()
+                      .id(ACCOUNT)
+                      .type(de.caritas.cob.userservice.api.model.Admin.AdminType.AGENCY)
+                      .tenantId(7L)
+                      .createDate(born)
+                      .updateDate(born)
+                      .username("owned-counsellor")
+                      .firstName("Ada")
+                      .lastName("Lovelace")
+                      .email("ada@fixture.invalid")
+                      .build();
               entities.persist(admin);
               entities.flush();
               entities.refresh(admin);
@@ -206,9 +223,7 @@ class GrantConsultantIdentityScopedJpaTest {
     assertEquals(
         persistedBorn.get(),
         jdbc.queryForObject(
-                "select create_date from admin where admin_id=?",
-                java.sql.Timestamp.class,
-                ACCOUNT)
+                "select create_date from admin where admin_id=?", java.sql.Timestamp.class, ACCOUNT)
             .toLocalDateTime());
     human.setUserId(HUMAN);
     human.setTenantId(7L);
@@ -233,35 +248,65 @@ class GrantConsultantIdentityScopedJpaTest {
         .when(generic)
         .updateRole(anyString(), any(UserRole.class));
     joinedEvents.set(0);
-    doThrow(new ScopedIdentityCommandRequiredException()).when(genericRoles).ensureRoles(anyString(), anySet());
-    var agency = new de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO()
-        .id(71L).tenantId(7L).consultingType(1).teamAgency(false).topicIds(List.of());
+    doThrow(new ScopedIdentityCommandRequiredException())
+        .when(genericRoles)
+        .ensureRoles(anyString(), anySet());
+    var agency =
+        new de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO()
+            .id(71L)
+            .tenantId(7L)
+            .consultingType(1)
+            .teamAgency(false)
+            .topicIds(List.of());
     when(agencies.getAgency(71L)).thenReturn(agency);
-    when(agencies.getAgenciesWithoutCaching(anyList())).thenAnswer(invocation -> {
-      assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-      return List.of(agency);
-    });
-    when(consultingTypes.getConsultingTypeSettings(1)).thenReturn(
-        new de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO());
-    when(tenants.getRestrictedTenantDataFresh(7L)).thenAnswer(invocation -> {
-      assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-      return new de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO().id(7L).settings(
-          new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings().tenantAdminControls(
-              new de.caritas.cob.userservice.tenantservice.generated.web.model.TenantAdminControls().chatRecoverySettings(
-                  new de.caritas.cob.userservice.tenantservice.generated.web.model.ChatRecoverySettings()
-                      .asker(de.caritas.cob.userservice.tenantservice.generated.web.model.ChatRecoveryMode.RECOVERY_KEY)
-                      .consultant(de.caritas.cob.userservice.tenantservice.generated.web.model.ChatRecoveryMode.RECOVERY_KEY).revision(0L))));
-    });
-    when(matrix.createUserIdWithoutReactivation(anyString(), anyString(), anyString())).thenAnswer(invocation -> {
-      assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-      assertEquals("ACKNOWLEDGED", phase());
-      assertEquals("STARTED", matrixPhase());
-      assertEquals("owned-counsellor", invocation.getArgument(0));
-      matrixCalls.incrementAndGet();
-      if (matrixInUse) throw new de.caritas.cob.userservice.api.exception.matrix.MatrixUserInUseException();
-      if (matrixLostReply) throw new ResourceAccessException("Synthetic lost original Matrix reply");
-      return matrixResult;
-    });
+    when(agencies.getAgenciesWithoutCaching(anyList()))
+        .thenAnswer(
+            invocation -> {
+              assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+              return List.of(agency);
+            });
+    when(consultingTypes.getConsultingTypeSettings(1))
+        .thenReturn(
+            new de.caritas.cob.userservice.consultingtypeservice.generated.web.model
+                .ExtendedConsultingTypeResponseDTO());
+    when(tenants.getRestrictedTenantDataFresh(7L))
+        .thenAnswer(
+            invocation -> {
+              assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+              return new de.caritas.cob.userservice.tenantservice.generated.web.model
+                      .RestrictedTenantDTO()
+                  .id(7L)
+                  .settings(
+                      new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
+                          .tenantAdminControls(
+                              new de.caritas.cob.userservice.tenantservice.generated.web.model
+                                      .TenantAdminControls()
+                                  .chatRecoverySettings(
+                                      new de.caritas.cob.userservice.tenantservice.generated.web
+                                              .model.ChatRecoverySettings()
+                                          .asker(
+                                              de.caritas.cob.userservice.tenantservice.generated.web
+                                                  .model.ChatRecoveryMode.RECOVERY_KEY)
+                                          .consultant(
+                                              de.caritas.cob.userservice.tenantservice.generated.web
+                                                  .model.ChatRecoveryMode.RECOVERY_KEY)
+                                          .revision(0L))));
+            });
+    when(matrix.createUserIdWithoutReactivation(anyString(), anyString(), anyString()))
+        .thenAnswer(
+            invocation -> {
+              assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+              assertEquals("ACKNOWLEDGED", phase());
+              assertEquals("STARTED", matrixPhase());
+              assertEquals("owned-counsellor", invocation.getArgument(0));
+              matrixCalls.incrementAndGet();
+              if (matrixInUse)
+                throw new de.caritas.cob.userservice.api.exception.matrix
+                    .MatrixUserInUseException();
+              if (matrixLostReply)
+                throw new ResourceAccessException("Synthetic lost original Matrix reply");
+              return matrixResult;
+            });
     // Independently preflight the actual uncached source facts before entering the public producer.
     assertEquals(List.of(agency), agencies.getAgenciesWithoutCaching(List.of(71L)));
     assertEquals(7L, tenants.getRestrictedTenantDataFresh(7L).getId());
@@ -313,8 +358,7 @@ class GrantConsultantIdentityScopedJpaTest {
                   assertNull(held.get("native_receipt"));
                   var source = codec.read((String) held.get("original_json"), JsonNode.class);
                   var tables = codec.read(source.path("sql").textValue(), JsonNode.class);
-                  var row =
-                      codec.read(tables.path("admin").get(0).textValue(), JsonNode.class);
+                  var row = codec.read(tables.path("admin").get(0).textValue(), JsonNode.class);
                   assertEquals(ACCOUNT, row.path("admin_id").textValue());
                   assertNotNull(row.path("create_date").textValue());
                 }
@@ -381,9 +425,18 @@ class GrantConsultantIdentityScopedJpaTest {
     assertEquals("APPLIED", phase());
     assertEquals(before, adminSql());
     assertEquals(DESIRED, nativeRoles);
-    assertEquals(1, jdbc.queryForObject("select count(*) from consultant where consultant_id=?", Integer.class, ACCOUNT));
-    assertEquals(EXPECTED_MATRIX, jdbc.queryForObject("select matrix_user_id from consultant where consultant_id=?", String.class, ACCOUNT));
-    assertEquals(List.of(71L), jdbc.queryForList("select agency_id from consultant_agency where consultant_id=?", Long.class, ACCOUNT));
+    assertEquals(
+        1,
+        jdbc.queryForObject(
+            "select count(*) from consultant where consultant_id=?", Integer.class, ACCOUNT));
+    assertEquals(
+        EXPECTED_MATRIX,
+        jdbc.queryForObject(
+            "select matrix_user_id from consultant where consultant_id=?", String.class, ACCOUNT));
+    assertEquals(
+        List.of(71L),
+        jdbc.queryForList(
+            "select agency_id from consultant_agency where consultant_id=?", Long.class, ACCOUNT));
     assertEquals("ACKNOWLEDGED", matrixPhase());
     assertEquals(1, joinedEvents.get());
     assertDoesNotThrow(() -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
@@ -396,7 +449,8 @@ class GrantConsultantIdentityScopedJpaTest {
   @Test
   void aLostNativeReplyCannotCreateMatrixOrConsultantAndExactRetryUsesTheSameEffect() {
     lostReply = true;
-    assertThrows(RuntimeException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
+    assertThrows(
+        RuntimeException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
     assertEquals(1, effects.get());
     assertEquals(0, matrixCalls.get());
     assertEquals("FROZEN", phase());
@@ -412,13 +466,15 @@ class GrantConsultantIdentityScopedJpaTest {
   @Test
   void anUnknownMatrixCreateRemainsStartedAndRetryNeverReemitsOrAdopts() {
     matrixLostReply = true;
-    assertThrows(RuntimeException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
+    assertThrows(
+        RuntimeException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
     assertEquals(1, effects.get());
     assertEquals(1, matrixCalls.get());
     assertEquals("ACKNOWLEDGED", phase());
     assertEquals("STARTED", matrixPhase());
     assertNoLocalConsultant();
-    assertThrows(RuntimeException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
+    assertThrows(
+        RuntimeException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
     assertEquals(1, effects.get());
     assertEquals(1, matrixCalls.get());
     assertNoLocalConsultant();
@@ -435,8 +491,14 @@ class GrantConsultantIdentityScopedJpaTest {
     assertEquals(1, matrixCalls.get());
     assertEquals("APPLIED", phase());
     assertEquals("NO_EFFECT", matrixPhase());
-    assertNull(jdbc.queryForObject("select matrix_user_id from consultant where consultant_id=?", String.class, ACCOUNT));
-    assertNotNull(jdbc.queryForObject("select native_receipt from general_admin_identity_intent where operation_id=?", String.class, OPERATION));
+    assertNull(
+        jdbc.queryForObject(
+            "select matrix_user_id from consultant where consultant_id=?", String.class, ACCOUNT));
+    assertNotNull(
+        jdbc.queryForObject(
+            "select native_receipt from general_admin_identity_intent where operation_id=?",
+            String.class,
+            OPERATION));
     assertDoesNotThrow(() -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
     assertEquals(1, matrixCalls.get());
     verify(matrix, never()).findUserId(anyString());
@@ -446,12 +508,14 @@ class GrantConsultantIdentityScopedJpaTest {
   @Test
   void aForeignReturnedMatrixIdCannotBecomeSqlOwnershipOrBeRetried() {
     matrixResult = "@somebody-else:fixture.invalid";
-    assertThrows(RuntimeException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
+    assertThrows(
+        RuntimeException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
     assertEquals(1, effects.get());
     assertEquals(1, matrixCalls.get());
     assertEquals("STARTED", matrixPhase());
     assertNoLocalConsultant();
-    assertThrows(RuntimeException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
+    assertThrows(
+        RuntimeException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
     assertEquals(1, matrixCalls.get());
     assertNoLocalConsultant();
   }
@@ -460,12 +524,18 @@ class GrantConsultantIdentityScopedJpaTest {
   void theActualForeignTenantRefusalPrecedesNativeMatrixAndAllLocalGrantWrites() {
     human.setTenantId(8L);
     request.setUserPrincipal(authentication(8L));
-    assertThrows(ForbiddenException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
+    assertThrows(
+        ForbiddenException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
     assertEquals(0, reads.get());
     assertEquals(0, calls.get());
     assertEquals(0, matrixCalls.get());
     assertNoLocalConsultant();
-    assertEquals(0, jdbc.queryForObject("select count(*) from general_admin_identity_intent where operation_id=?", Integer.class, OPERATION));
+    assertEquals(
+        0,
+        jdbc.queryForObject(
+            "select count(*) from general_admin_identity_intent where operation_id=?",
+            Integer.class,
+            OPERATION));
   }
 
   private de.caritas.cob.userservice.api.adapters.web.dto.GrantConsultantIdentityDTO command() {
@@ -483,7 +553,11 @@ class GrantConsultantIdentityScopedJpaTest {
   }
 
   private String matrixPhase() {
-    String raw = jdbc.queryForObject("select matrix_result_json from general_admin_identity_intent where operation_id=?", String.class, OPERATION);
+    String raw =
+        jdbc.queryForObject(
+            "select matrix_result_json from general_admin_identity_intent where operation_id=?",
+            String.class,
+            OPERATION);
     assertNotNull(raw);
     return codec.read(raw, JsonNode.class).path("phase").textValue();
   }
@@ -491,7 +565,8 @@ class GrantConsultantIdentityScopedJpaTest {
   private void assertNoLocalConsultant() {
     assertEquals(
         0,
-        jdbc.queryForObject("select count(*) from consultant where consultant_id=?", Integer.class, ACCOUNT));
+        jdbc.queryForObject(
+            "select count(*) from consultant where consultant_id=?", Integer.class, ACCOUNT));
   }
 
   private JwtAuthenticationToken authentication(long tenant) {
@@ -620,16 +695,30 @@ class GrantConsultantIdentityScopedJpaTest {
   @TestConfiguration(proxyBeanMethods = false)
   @Profile("scenario-c-consultant-grant-jpa")
   static class Configuration {
-    @Bean UsernameTranscoder grantUsernameTranscoder() { return new UsernameTranscoder(); }
-    @Bean de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig grantMatrixConfiguration() {
-      var config = new de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig();
-      config.setServerName("fixture.invalid"); return config;
+    @Bean
+    UsernameTranscoder grantUsernameTranscoder() {
+      return new UsernameTranscoder();
     }
-    @Bean java.util.concurrent.atomic.AtomicInteger grantJoinedEvents() { return new java.util.concurrent.atomic.AtomicInteger(); }
-    @Bean Object grantEventRecorder(java.util.concurrent.atomic.AtomicInteger events) {
+
+    @Bean
+    de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig grantMatrixConfiguration() {
+      var config = new de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig();
+      config.setServerName("fixture.invalid");
+      return config;
+    }
+
+    @Bean
+    java.util.concurrent.atomic.AtomicInteger grantJoinedEvents() {
+      return new java.util.concurrent.atomic.AtomicInteger();
+    }
+
+    @Bean
+    Object grantEventRecorder(java.util.concurrent.atomic.AtomicInteger events) {
       return new Object() {
-        @org.springframework.transaction.event.TransactionalEventListener(phase=org.springframework.transaction.event.TransactionPhase.AFTER_COMMIT)
-        public void joined(de.caritas.cob.userservice.api.service.session.ConsultantJoinedAgencyEvent event) {
+        @org.springframework.transaction.event.TransactionalEventListener(
+            phase = org.springframework.transaction.event.TransactionPhase.AFTER_COMMIT)
+        public void joined(
+            de.caritas.cob.userservice.api.service.session.ConsultantJoinedAgencyEvent event) {
           events.incrementAndGet();
         }
       };
