@@ -1132,7 +1132,9 @@ public final class HumanAdminAccountMaintenance {
     } else {
       if (after.path("admin").size() != 1) throw conflict();
       var created =
-          decode(after.path("admin").get(0).textValue(), com.fasterxml.jackson.databind.JsonNode.class);
+          decode(
+              after.path("admin").get(0).textValue(),
+              com.fasterxml.jackson.databind.JsonNode.class);
       var paused = created.path("managed_paused");
       if (!created.path("id_old").isNull()
           || !(paused.isBoolean() && !paused.booleanValue()
