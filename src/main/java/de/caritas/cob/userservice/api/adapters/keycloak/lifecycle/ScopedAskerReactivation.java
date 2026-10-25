@@ -68,11 +68,11 @@ public final class ScopedAskerReactivation {
     if (initial.capsule != null) {
       var opened = open(initial.capsule, account, input.getTenantId(), actor);
       JsonNode original = opened.path("originalSql");
-      String phase = initial.capsule.path("phase").textValue();
+      String phase = phase(initial.capsule);
       if ("FROZEN".equals(phase)) {
         same(initial.row, original);
         requireIntent(initial.capsule, opened, human, digest);
-        frozen = new Capsule(initial.capsule, opened);
+        frozen = new Capsule(initial.capsule, materialize(initial.capsule, opened, actor, input.getPassword()));
       } else {
         verifyTerminal(initial.capsule, opened, actor);
         requirePost(initial.capsule, original, phase);
@@ -85,7 +85,8 @@ public final class ScopedAskerReactivation {
               digest.equals(initial.capsule.path("metadata").path("requestDigest").textValue());
           if (exact) {
             requireIntent(initial.capsule, opened, human, digest);
-            replayTerminal(human, account, initial, input.getTenantId(), actor, opened);
+            replayTerminal(human, account, initial, input.getTenantId(), actor,
+                materialize(initial.capsule, opened, actor, input.getPassword()));
             return;
           }
           if (!"NO_EFFECT".equals(phase)) throw conflict();
@@ -214,9 +215,7 @@ public final class ScopedAskerReactivation {
                     account,
                     proof.operationId().toString())
                 != 1) throw conflict();
-            var terminal = frozen.raw.deepCopy();
-            ((ObjectNode) terminal).put("phase", "NO_EFFECT");
-            ((ObjectNode) terminal).put("receipt", canonicalReceipt);
+            var terminal = terminalCapsule(frozen, "NO_EFFECT", canonicalReceipt, actor);
             ((ObjectNode) terminal).set("postSql", snapshot(account, true));
             requirePost(terminal, frozen.wrapper.path("originalSql"), "NO_EFFECT");
             save(account, terminal);
@@ -233,9 +232,7 @@ public final class ScopedAskerReactivation {
         () -> {
           same(snapshot(account, true), frozen.wrapper.path("originalSql"));
           same(saved(account), frozen.raw);
-          var acknowledged = frozen.raw.deepCopy();
-          ((ObjectNode) acknowledged).put("phase", "ACKNOWLEDGED");
-          ((ObjectNode) acknowledged).put("receipt", verified);
+          var acknowledged = terminalCapsule(frozen, "ACKNOWLEDGED", verified, actor);
           // Persist the verified ACK first, then the original saga callback in this SAME
           // transaction.
           save(account, acknowledged);
@@ -261,7 +258,7 @@ public final class ScopedAskerReactivation {
       TaskActorCredentials actor,
       JsonNode opened) {
     authorize(human, account, tenant);
-    String phase = initial.capsule.path("phase").textValue();
+    String phase = phase(initial.capsule);
     String reply;
     try {
       reply = call("reactivate", human, account, codec.canonical(opened.path("body")), actor);
@@ -298,10 +295,10 @@ public final class ScopedAskerReactivation {
     fields(capsule, Set.of("v", "phase", "metadata", "envelope", "receipt", "postSql"));
     if (!capsule.path("v").isIntegralNumber()
         || !capsule.path("v").canConvertToInt()
-        || capsule.path("v").intValue() != 1
-        || !Set.of("FROZEN", "ACKNOWLEDGED", "NO_EFFECT").contains(capsule.path("phase").asText()))
+        || capsule.path("v").intValue() != 1)
       throw unavailable();
-    if ("FROZEN".equals(capsule.path("phase").textValue())) {
+    String phase = phase(capsule);
+    if ("FROZEN".equals(phase)) {
       if (!capsule.path("receipt").isNull() || !capsule.path("postSql").isNull())
         throw unavailable();
     } else if (!capsule.path("receipt").isTextual()
@@ -317,7 +314,56 @@ public final class ScopedAskerReactivation {
         || !actor.serviceSubject().equals(metadata.path("ownerSubject").textValue()))
       throw unavailable();
     String envelope = capsule.path("envelope").textValue();
+    if (history(capsule)) {
+      var verified = codec.verifyReactivationHistory(metadata, envelope,
+          capsule.path("phase").textValue(), capsule.path("receipt").textValue(), actor);
+      var wrapper = codec.read("{}", ObjectNode.class);
+      wrapper.set("originalSql", verified.originalSql());
+      wrapper.set("body", verified.template());
+      return wrapper;
+    }
     return codec.read(codec.utf8(codec.openReactivationIntent(metadata, envelope)), JsonNode.class);
+  }
+
+  private JsonNode materialize(JsonNode raw, JsonNode wrapper,
+      TaskActorCredentials actor, String password) {
+    if (!history(raw)) return wrapper;
+    var materialized = wrapper.deepCopy();
+    ((ObjectNode) materialized).set("body", codec.read(codec.materializeReactivationHistory(
+        raw.path("metadata"), raw.path("envelope").textValue(), raw.path("phase").textValue(),
+        raw.path("receipt").textValue(), actor, password), JsonNode.class));
+    return materialized;
+  }
+
+  private JsonNode terminalCapsule(Capsule frozen, String phase, String receipt,
+      TaskActorCredentials actor) {
+    var terminal = frozen.raw.deepCopy();
+    ((ObjectNode) terminal).put("receipt", receipt);
+    if (history(frozen.raw)) {
+      // The recovered original is transient. Only authenticated password-free history is saved.
+      String transientEnvelope = codec.sealReactivationIntent(frozen.raw.path("metadata"),
+          codec.canonical(frozen.wrapper).getBytes(StandardCharsets.UTF_8));
+      ((ObjectNode) terminal).put("envelope", codec.retainReactivationHistory(
+          frozen.raw.path("metadata"), transientEnvelope, phase, receipt, actor));
+      ((ObjectNode) terminal).put("phase", phase + "_HISTORY");
+    } else ((ObjectNode) terminal).put("phase", phase);
+    return terminal;
+  }
+
+  private static boolean history(JsonNode raw) {
+    return Set.of("FROZEN_HISTORY", "ACKNOWLEDGED_HISTORY", "NO_EFFECT_HISTORY")
+        .contains(raw.path("phase").asText());
+  }
+
+  private static String phase(JsonNode raw) {
+    String value = raw.path("phase").textValue();
+    if (value == null) throw unavailable();
+    return switch (value) {
+      case "FROZEN", "FROZEN_HISTORY" -> "FROZEN";
+      case "ACKNOWLEDGED", "ACKNOWLEDGED_HISTORY" -> "ACKNOWLEDGED";
+      case "NO_EFFECT", "NO_EFFECT_HISTORY" -> "NO_EFFECT";
+      default -> throw unavailable();
+    };
   }
 
   private void requireIntent(JsonNode capsule, JsonNode wrapper, Human human, String digest) {
@@ -331,6 +377,11 @@ public final class ScopedAskerReactivation {
 
   private void verifyTerminal(JsonNode raw, JsonNode wrapper, TaskActorCredentials actor) {
     String receipt = raw.path("receipt").textValue();
+    if (history(raw)) {
+      codec.verifyReactivationHistory(raw.path("metadata"), raw.path("envelope").textValue(),
+          raw.path("phase").textValue(), receipt, actor);
+      return;
+    }
     if ("ACKNOWLEDGED".equals(raw.path("phase").textValue()))
       codec.verifyMaintenanceReactivationReceipt(receipt, realmId, actor, wrapper.path("body"));
     else if ("NO_EFFECT".equals(raw.path("phase").textValue()))

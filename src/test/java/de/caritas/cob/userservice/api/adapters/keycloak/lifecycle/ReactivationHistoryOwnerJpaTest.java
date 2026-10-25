@@ -249,6 +249,29 @@ class ReactivationHistoryOwnerJpaTest {
     assertFalse(history.template().path("change").has("password"));
     verify(lifecycle, times(1)).cancelUserDeletion(any(User.class));
     var afterAck = jdbc.queryForMap("select * from user where user_id=?", ACCOUNT);
+    var foreignBody = codec.read(firstBody.get(), ObjectNode.class);
+    String foreignOperation = UUID.randomUUID().toString();
+    foreignBody.put("operationId", foreignOperation);
+    ((ObjectNode) foreignBody.path("target").path("origin")).put("workflowId", foreignOperation);
+    String foreignReceipt = signed(codec.canonical(foreignBody));
+    for (java.util.function.Consumer<ObjectNode> corrupt :
+        List.<java.util.function.Consumer<ObjectNode>>of(
+            raw -> raw.put("phase", "ACKNOWLEDGED"),
+            raw -> raw.put("phase", "NO_EFFECT_HISTORY"),
+            raw -> raw.put("receipt", foreignReceipt),
+            raw -> ((ObjectNode) raw.path("postSql")).put("create_date", "2001-01-01T00:00:00Z"),
+            raw -> ((ObjectNode) raw.path("postSql")).put("avatar_id", "foreign-avatar"),
+            raw -> raw.remove("receipt"),
+            raw -> raw.put("extra", true))) {
+      var tampered = (ObjectNode) acknowledged.deepCopy();
+      corrupt.accept(tampered);
+      write(tampered);
+      assertThrows(RuntimeException.class, () -> facade.reactivateAsker(input(PASSWORD)));
+      assertEquals(tampered, raw());
+      verify(lifecycle, times(1)).cancelUserDeletion(any(User.class));
+    }
+    write(acknowledged);
+    assertEquals(afterAck, jdbc.queryForMap("select * from user where user_id=?", ACCOUNT));
     server
         .expect(requestTo(URL + "/reactivate"))
         .andRespond(
