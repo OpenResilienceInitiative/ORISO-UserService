@@ -140,6 +140,7 @@ public final class PublicPreDeletionMaintenance {
       verifySameResult(intent, result);
       return;
     }
+    boolean frozenInThisCall = false;
     if ("PREPARED".equals(intent.status)) {
       if (kind.equals("SELF_ASKER")) {
         var source = source(intent);
@@ -156,11 +157,12 @@ public final class PublicPreDeletionMaintenance {
       String state = projection(intent, read);
       Intent original = intent;
       intent = tx(() -> freeze(original, state));
+      frozenInThisCall = true;
     }
     if ("FROZEN".equals(intent.status)) {
       String response;
       if (kind.equals("SELF_ASKER")) {
-        response = savedOutcome(intent);
+        response = frozenInThisCall ? null : savedOutcome(intent);
         if (response == null) {
           requireOriginalDeadline(source(intent));
           response = call(intent, "deactivate", current);
