@@ -1,7 +1,8 @@
 name: Scenario C public SELF maintenance native pair
 'on':
   pull_request:
-    branches: [dev]
+    branches:
+    - dev
   push:
     branches:
     - dev
@@ -13,6 +14,8 @@ name: Scenario C public SELF maintenance native pair
     - scripts/ci/self-maintenance-native-pair.py
     - tests/ci/test_self_maintenance_native_pair.py
     - .github/workflows/scenario-c-self-maintenance-native-pair.yml
+    - scripts/ci/role-maintenance-native.py
+    - tests/ci/test_role_maintenance_native_helper.py
 permissions:
   contents: read
 concurrency:
@@ -25,7 +28,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        kind: [password, locale]
+        kind:
+        - password
+        - locale
+        - role-agency
     env:
       PAIR_KIND: ${{ matrix.kind }}
     steps:
@@ -55,16 +61,15 @@ jobs:
         python-version: 3.12.13
     - name: Install checksum-verified Maven 3.9.14
       shell: bash
-      run: "set -euo pipefail\ncurl --fail --silent --show-error --location --retry 3 \\\n  https://archive.apache.org/dist/maven/maven-3/3.9.14/binaries/apache-maven-3.9.14-bin.tar.gz\
-        \ \\\n  --output \"$RUNNER_TEMP/maven.tar.gz\"\nprintf '%s  %s\\n' \\\n  d50af8ab5e6005b46a07f0ce9d3719e67cfdf898da988a84871304cd59fb1af0fef2f99dea709e6e66f21f732f905979b5c2dce6b6860406f60a70e84d9cf0b8\
-        \ \\\n  \"$RUNNER_TEMP/maven.tar.gz\" | sha512sum --check\ntar -xzf \"$RUNNER_TEMP/maven.tar.gz\" -C \"$RUNNER_TEMP\"\
-        \necho \"$RUNNER_TEMP/apache-maven-3.9.14/bin\" >> \"$GITHUB_PATH\"\n"
+      run: "set -euo pipefail\ncurl --fail --silent --show-error --location --retry 3 \\\n  https://archive.apache.org/dist/maven/maven-3/3.9.14/binaries/apache-maven-3.9.14-bin.tar.gz \\\n  --output \"$RUNNER_TEMP/maven.tar.gz\"\nprintf '%s  %s\\n' \\\n  d50af8ab5e6005b46a07f0ce9d3719e67cfdf898da988a84871304cd59fb1af0fef2f99dea709e6e66f21f732f905979b5c2dce6b6860406f60a70e84d9cf0b8 \\\n  \"$RUNNER_TEMP/maven.tar.gz\" | sha512sum --check\ntar -xzf \"$RUNNER_TEMP/maven.tar.gz\" -C \"$RUNNER_TEMP\"\necho \"$RUNNER_TEMP/apache-maven-3.9.14/bin\" >> \"$GITHUB_PATH\"\n"
     - name: Verify nonsecret evidence gates without JVM or native fixtures
       run: python -m unittest discover -s tests/ci -p test_maintenance_boundary_proof.py -v
     - name: Install exact existing CI YAML parser dependency
       run: python -m pip install --disable-pip-version-check PyYAML==6.0.3
     - name: Check native pair proof fail-closed offline controls
-      run: python -m unittest discover -s tests/ci -p test_self_maintenance_native_pair.py -v
+      run: 'python -m unittest discover -s tests/ci -p test_self_maintenance_native_pair.py -v
+
+        python -m unittest discover -s tests/ci -p test_role_maintenance_native_helper.py -q'
     - name: Require committed formatting for actual native-pair test
       env:
         MAVEN_OPTS: -Xmx768m -XX:MaxMetaspaceSize=256m -XX:ActiveProcessorCount=2
@@ -72,12 +77,11 @@ jobs:
 
         mkdir -p target/self-maintenance-native
 
-        mvn -B -ntp -q spotless:apply "-DspotlessFiles=$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserSelfMaintenanceNativePairProof.java"
+        mvn -B -ntp -q spotless:apply "-DspotlessFiles=$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserSelfMaintenanceNativePairProof.java,$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/service/accountinvite/UserRoleMaintenanceNativePairProof.java"
 
-        git diff --binary -- src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserSelfMaintenanceNativePairProof.java
-        > target/self-maintenance-native/self-maintenance-native-format.patch
+        git diff --binary -- src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserSelfMaintenanceNativePairProof.java src/test/java/de/caritas/cob/userservice/api/service/accountinvite/UserRoleMaintenanceNativePairProof.java > target/self-maintenance-native/self-maintenance-native-format.patch
 
-        git diff --exit-code -- src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserSelfMaintenanceNativePairProof.java'
+        git diff --exit-code -- src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserSelfMaintenanceNativePairProof.java src/test/java/de/caritas/cob/userservice/api/service/accountinvite/UserRoleMaintenanceNativePairProof.java'
     - name: Bind both exact source checkouts before builds
       run: python scripts/ci/self-maintenance-native-pair.py snapshot --keycloak native-keycloak
     - name: Build same-source lifecycle before its provided OTP consumer
@@ -103,7 +107,7 @@ jobs:
     - name: Compile actual User controller, owned caller and native paired proof before container
       env:
         MAVEN_OPTS: -Xmx1024m -XX:MaxMetaspaceSize=384m -XX:ActiveProcessorCount=2
-      run: mvn -B -ntp -q test-compile -DskipTests "-DspotlessFiles=$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserSelfMaintenanceNativePairProof.java"
+      run: mvn -B -ntp -q test-compile -DskipTests "-DspotlessFiles=$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/adapters/web/controller/UserSelfMaintenanceNativePairProof.java,$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/service/accountinvite/UserRoleMaintenanceNativePairProof.java"
     - name: Run one bounded real public JPA and native Keycloak saved-authority pair
       timeout-minutes: 10
       env:

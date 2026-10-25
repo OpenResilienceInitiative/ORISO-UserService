@@ -120,6 +120,13 @@ def sanitize(reports, output, kind):
 
 
 def native(kc, report):
+    if os.environ.get("PAIR_KIND") == "role-agency":
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("role_maintenance_native", ROOT / "scripts/ci/role-maintenance-native.py")
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        result = helper.native(kc, report, sys.modules[__name__])
+        return 0 if result.get("accepted") is True else 1
     if platform.system() != "Linux" or os.environ.get("GITHUB_ACTIONS") != "true":
         raise ValueError("Fresh hosted Linux native fixture required")
     available = int(next(line.split()[1] for line in Path("/proc/meminfo").read_text().splitlines() if line.startswith("MemAvailable:")))

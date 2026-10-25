@@ -68,11 +68,11 @@ class SelfMaintenancePairControls(unittest.TestCase):
                     self.assertNotIn(sensitive, exported)
                 self.assertEqual([], proof.sanitized_failure_frames(error, {}))
 
-    def test_workflow_uses_same_exact_common_source_and_two_finite_cases(self):
+    def test_workflow_uses_same_exact_common_source_and_two_self_cases_plus_agency_role(self):
         import yaml
         workflow = yaml.safe_load((ROOT / ".github/workflows/scenario-c-self-maintenance-native-pair.yml").read_text())
         job = next(iter(workflow["jobs"].values()))
-        self.assertEqual(["password", "locale"], job["strategy"]["matrix"]["kind"])
+        self.assertEqual(["password", "locale", "role-agency"], job["strategy"]["matrix"]["kind"])
         native = [step for step in job["steps"] if step.get("with", {}).get("repository") == "OpenResilienceInitiative/ORISO-Keycloak"]
         self.assertEqual(1, len(native)); self.assertEqual(proof.KC_COMMIT, native[0]["with"]["ref"])
         self.assertEqual("5d4c58e8df6090451fa544481d7ef16e6fab4fc1", proof.KC_COMMIT)
