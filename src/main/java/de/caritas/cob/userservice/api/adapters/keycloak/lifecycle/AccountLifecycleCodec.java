@@ -135,18 +135,30 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
 
   /** Fixed reactivation data retention; never supplies current dispatch authority. */
   String retainReactivationHistory(
-      JsonNode metadata, String envelope, String phase, String receipt, TaskActorCredentials actor) {
+      JsonNode metadata,
+      String envelope,
+      String phase,
+      String receipt,
+      TaskActorCredentials actor) {
     throw new IllegalArgumentException("Reactivation history remains gated");
   }
 
   VerifiedReactivationHistory verifyReactivationHistory(
-      JsonNode metadata, String envelope, String phase, String receipt, TaskActorCredentials actor) {
+      JsonNode metadata,
+      String envelope,
+      String phase,
+      String receipt,
+      TaskActorCredentials actor) {
     throw new IllegalArgumentException("Reactivation history remains gated");
   }
 
   String materializeReactivationHistory(
-      JsonNode metadata, String envelope, String phase, String receipt,
-      TaskActorCredentials actor, String originalPassword) {
+      JsonNode metadata,
+      String envelope,
+      String phase,
+      String receipt,
+      TaskActorCredentials actor,
+      String originalPassword) {
     throw new IllegalArgumentException("Reactivation history remains gated");
   }
 
@@ -164,13 +176,26 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
       this.intentDigest = intentDigest;
     }
 
-    String phase() { return phase; }
-    JsonNode originalSql() { return originalSql.deepCopy(); }
-    JsonNode template() { return template.deepCopy(); }
-    String intentDigest() { return intentDigest; }
+    String phase() {
+      return phase;
+    }
+
+    JsonNode originalSql() {
+      return originalSql.deepCopy();
+    }
+
+    JsonNode template() {
+      return template.deepCopy();
+    }
+
+    String intentDigest() {
+      return intentDigest;
+    }
 
     @Override
-    public String toString() { return "VerifiedReactivationHistory[redacted]"; }
+    public String toString() {
+      return "VerifiedReactivationHistory[redacted]";
+    }
   }
 
   String sealSelfPasswordIntent(JsonNode independentlyCheckedOwnedMetadata, byte[] frozenCommand) {

@@ -218,118 +218,238 @@ class ReactivationIntentCodecTest {
     var metadata = metadata(false);
     long expiry = java.time.Instant.parse("2026-10-23T12:00:00Z").getEpochSecond();
     metadata.put("authorityValidUntil", expiry);
-    var retained = new AccountLifecycleCodec(KEY,
-        java.time.Clock.fixed(java.time.Instant.ofEpochSecond(expiry + 604800), java.time.ZoneOffset.UTC));
+    var retained =
+        new AccountLifecycleCodec(
+            KEY,
+            java.time.Clock.fixed(
+                java.time.Instant.ofEpochSecond(expiry + 604800), java.time.ZoneOffset.UTC));
     var original = json.readTree(plaintext(false));
     String sealed = retained.sealReactivationIntent(metadata, bytes(original));
-    var actor = new de.caritas.cob.userservice.api.config.auth.TaskActorCredentials(
-        de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN,
-        "backend-account-admin", "synthetic-only", "85000000-0000-4000-8000-000000000004");
+    var actor =
+        new de.caritas.cob.userservice.api.config.auth.TaskActorCredentials(
+            de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN,
+            "backend-account-admin",
+            "synthetic-only",
+            "85000000-0000-4000-8000-000000000004");
     for (String phase : List.of("FROZEN", "ACKNOWLEDGED", "NO_EFFECT")) {
-      String receipt = "FROZEN".equals(phase) ? null : historyReceipt(original.path("body"), "NO_EFFECT".equals(phase) ? 400 : null);
-      String history = assertDoesNotThrow(
-          () -> retained.retainReactivationHistory(metadata, sealed, phase, receipt, actor));
+      String receipt =
+          "FROZEN".equals(phase)
+              ? null
+              : historyReceipt(original.path("body"), "NO_EFFECT".equals(phase) ? 400 : null);
+      String history =
+          assertDoesNotThrow(
+              () -> retained.retainReactivationHistory(metadata, sealed, phase, receipt, actor));
       assertNotEquals(sealed, history);
-      assertThrows(IllegalArgumentException.class,
-          () -> retained.retainReactivationHistory(metadata, sealed, phase, receipt,
-              new de.caritas.cob.userservice.api.config.auth.TaskActorCredentials(
-                  de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN,
-                  "foreign-admin", "synthetic-only", "85000000-0000-4000-8000-000000000004")));
-      assertThrows(IllegalArgumentException.class,
-          () -> retained.verifyReactivationHistory(metadata, history, phase + "_HISTORY", receipt,
-              new de.caritas.cob.userservice.api.config.auth.TaskActorCredentials(
-                  de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN,
-                  "backend-account-admin", "synthetic-only", HUMAN)));
-      var changedMetadata = metadata.deepCopy(); changedMetadata.put("authorityValidUntil", expiry + 1);
-      assertThrows(IllegalArgumentException.class,
-          () -> retained.verifyReactivationHistory(changedMetadata, history, phase + "_HISTORY", receipt, actor));
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              retained.retainReactivationHistory(
+                  metadata,
+                  sealed,
+                  phase,
+                  receipt,
+                  new de.caritas.cob.userservice.api.config.auth.TaskActorCredentials(
+                      de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN,
+                      "foreign-admin",
+                      "synthetic-only",
+                      "85000000-0000-4000-8000-000000000004")));
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              retained.verifyReactivationHistory(
+                  metadata,
+                  history,
+                  phase + "_HISTORY",
+                  receipt,
+                  new de.caritas.cob.userservice.api.config.auth.TaskActorCredentials(
+                      de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN,
+                      "backend-account-admin",
+                      "synthetic-only",
+                      HUMAN)));
+      var changedMetadata = metadata.deepCopy();
+      changedMetadata.put("authorityValidUntil", expiry + 1);
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              retained.verifyReactivationHistory(
+                  changedMetadata, history, phase + "_HISTORY", receipt, actor));
       var historyOuter = (ObjectNode) json.readTree(history);
       String ciphertext = historyOuter.path("ciphertext").textValue();
-      historyOuter.put("ciphertext", (ciphertext.charAt(0) == 'A' ? "B" : "A") + ciphertext.substring(1));
-      assertThrows(IllegalArgumentException.class,
-          () -> retained.verifyReactivationHistory(metadata, codec.canonical(historyOuter), phase + "_HISTORY", receipt, actor));
-      assertThrows(IllegalArgumentException.class,
-          () -> retained.verifyReactivationHistory(metadata, history, phase + "_HISTORY", "FROZEN".equals(phase) ? "{}" : null, actor));
+      historyOuter.put(
+          "ciphertext", (ciphertext.charAt(0) == 'A' ? "B" : "A") + ciphertext.substring(1));
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              retained.verifyReactivationHistory(
+                  metadata, codec.canonical(historyOuter), phase + "_HISTORY", receipt, actor));
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              retained.verifyReactivationHistory(
+                  metadata,
+                  history,
+                  phase + "_HISTORY",
+                  "FROZEN".equals(phase) ? "{}" : null,
+                  actor));
       var privateHistory = json.readTree(independent(metadata, json.readTree(history)));
-      assertEquals(Set.of("phase", "originalSql", "template", "intentDigest"), names(privateHistory));
+      assertEquals(
+          Set.of("phase", "originalSql", "template", "intentDigest"), names(privateHistory));
       assertEquals(phase, privateHistory.path("phase").textValue());
       assertEquals(original.path("originalSql"), privateHistory.path("originalSql"));
       assertEquals(29, privateHistory.path("originalSql").size());
       assertFalse(privateHistory.path("template").path("change").has("password"));
       assertFalse(codec.canonical(privateHistory).contains("synthetic-chosen-password"));
-      assertEquals(codec.digest("maintenance-intent", original.path("body")), privateHistory.path("intentDigest").textValue());
-      var verified = retained.verifyReactivationHistory(metadata, history, phase + "_HISTORY", receipt, actor);
+      assertEquals(
+          codec.digest("maintenance-intent", original.path("body")),
+          privateHistory.path("intentDigest").textValue());
+      var verified =
+          retained.verifyReactivationHistory(metadata, history, phase + "_HISTORY", receipt, actor);
       assertEquals(phase, verified.phase());
       assertEquals(original.path("originalSql"), verified.originalSql());
       assertEquals(privateHistory.path("template"), verified.template());
       assertEquals(privateHistory.path("intentDigest").textValue(), verified.intentDigest());
-      assertEquals(codec.canonical(original.path("body")),
-          retained.materializeReactivationHistory(metadata, history, phase + "_HISTORY", receipt, actor, "synthetic-chosen-password"));
-      assertThrows(IllegalArgumentException.class,
-          () -> retained.materializeReactivationHistory(metadata, history, phase + "_HISTORY", receipt, actor, "different-password"));
-      assertThrows(IllegalArgumentException.class,
-          () -> retained.openReactivationIntent(metadata, history));
-      assertThrows(IllegalArgumentException.class,
-          () -> retained.verifyReactivationHistory(metadata, sealed, phase + "_HISTORY", receipt, actor));
+      assertEquals(
+          codec.canonical(original.path("body")),
+          retained.materializeReactivationHistory(
+              metadata, history, phase + "_HISTORY", receipt, actor, "synthetic-chosen-password"));
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              retained.materializeReactivationHistory(
+                  metadata, history, phase + "_HISTORY", receipt, actor, "different-password"));
+      assertThrows(
+          IllegalArgumentException.class, () -> retained.openReactivationIntent(metadata, history));
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              retained.verifyReactivationHistory(
+                  metadata, sealed, phase + "_HISTORY", receipt, actor));
       for (String name : names(privateHistory)) {
-        var missing = (ObjectNode) privateHistory.deepCopy(); missing.remove(name);
+        var missing = (ObjectNode) privateHistory.deepCopy();
+        missing.remove(name);
         String forged = independentSeal(metadata, bytes(missing));
-        assertThrows(IllegalArgumentException.class,
-            () -> retained.verifyReactivationHistory(metadata, forged, phase + "_HISTORY", receipt, actor), name);
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                retained.verifyReactivationHistory(
+                    metadata, forged, phase + "_HISTORY", receipt, actor),
+            name);
       }
-      for (String scenario : List.of("extra", "phase", "digest", "missing-sql-field", "template-operation", "password")) {
+      for (String scenario :
+          List.of(
+              "extra", "phase", "digest", "missing-sql-field", "template-operation", "password")) {
         var changed = (ObjectNode) privateHistory.deepCopy();
         switch (scenario) {
           case "extra" -> changed.put("authority", true);
           case "phase" -> changed.put("phase", "FROZEN".equals(phase) ? "ACKNOWLEDGED" : "FROZEN");
           case "digest" -> changed.put("intentDigest", "f".repeat(64));
-          case "missing-sql-field" -> ((ObjectNode) changed.path("originalSql")).remove("create_date");
-          case "template-operation" -> ((ObjectNode) changed.path("template")).put("operationId", HUMAN);
-          case "password" -> ((ObjectNode) changed.path("template").path("change")).put("password", "synthetic-chosen-password");
+          case "missing-sql-field" ->
+              ((ObjectNode) changed.path("originalSql")).remove("create_date");
+          case "template-operation" ->
+              ((ObjectNode) changed.path("template")).put("operationId", HUMAN);
+          case "password" ->
+              ((ObjectNode) changed.path("template").path("change"))
+                  .put("password", "synthetic-chosen-password");
         }
         String forged = independentSeal(metadata, bytes(changed));
         if ("FROZEN".equals(phase) && "digest".equals(scenario)) {
-          assertThrows(IllegalArgumentException.class,
-              () -> retained.materializeReactivationHistory(metadata, forged, phase + "_HISTORY", null, actor, "synthetic-chosen-password"));
+          assertThrows(
+              IllegalArgumentException.class,
+              () ->
+                  retained.materializeReactivationHistory(
+                      metadata,
+                      forged,
+                      phase + "_HISTORY",
+                      null,
+                      actor,
+                      "synthetic-chosen-password"));
         } else {
-          assertThrows(IllegalArgumentException.class,
-              () -> retained.verifyReactivationHistory(metadata, forged, phase + "_HISTORY", receipt, actor), scenario);
+          assertThrows(
+              IllegalArgumentException.class,
+              () ->
+                  retained.verifyReactivationHistory(
+                      metadata, forged, phase + "_HISTORY", receipt, actor),
+              scenario);
         }
       }
-      assertThrows(IllegalArgumentException.class,
-          () -> retained.verifyReactivationHistory(metadata, history, "FROZEN".equals(phase) ? "ACKNOWLEDGED_HISTORY" : "FROZEN_HISTORY", receipt, actor));
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              retained.verifyReactivationHistory(
+                  metadata,
+                  history,
+                  "FROZEN".equals(phase) ? "ACKNOWLEDGED_HISTORY" : "FROZEN_HISTORY",
+                  receipt,
+                  actor));
       if (!"FROZEN".equals(phase)) {
-        assertThrows(IllegalArgumentException.class,
-            () -> retained.verifyReactivationHistory(metadata, history, phase + "_HISTORY", "{}", actor));
-        var foreign = (ObjectNode) original.path("body").deepCopy(); foreign.put("operationId", HUMAN);
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                retained.verifyReactivationHistory(
+                    metadata, history, phase + "_HISTORY", "{}", actor));
+        var foreign = (ObjectNode) original.path("body").deepCopy();
+        foreign.put("operationId", HUMAN);
         String wrongReceipt = historyReceipt(foreign, "NO_EFFECT".equals(phase) ? 400 : null);
-        assertThrows(IllegalArgumentException.class,
-            () -> retained.verifyReactivationHistory(metadata, history, phase + "_HISTORY", wrongReceipt, actor));
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                retained.verifyReactivationHistory(
+                    metadata, history, phase + "_HISTORY", wrongReceipt, actor));
       } else {
         String forgedTerminal = historyReceipt(original.path("body"), null);
-        assertThrows(IllegalArgumentException.class,
-            () -> retained.verifyReactivationHistory(metadata, history, "ACKNOWLEDGED_HISTORY", forgedTerminal, actor));
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                retained.verifyReactivationHistory(
+                    metadata, history, "ACKNOWLEDGED_HISTORY", forgedTerminal, actor));
       }
     }
-    var before = new AccountLifecycleCodec(KEY,
-        java.time.Clock.fixed(java.time.Instant.ofEpochSecond(expiry + 604799), java.time.ZoneOffset.UTC));
-    assertThrows(IllegalArgumentException.class,
+    var before =
+        new AccountLifecycleCodec(
+            KEY,
+            java.time.Clock.fixed(
+                java.time.Instant.ofEpochSecond(expiry + 604799), java.time.ZoneOffset.UTC));
+    assertThrows(
+        IllegalArgumentException.class,
         () -> before.retainReactivationHistory(metadata, sealed, "FROZEN", null, actor));
   }
 
   private String historyReceipt(JsonNode body, Integer status) throws Exception {
     var payload = new TreeMap<String, Object>();
-    payload.put("realmId", "synthetic-realm"); payload.put("accountId", ACCOUNT);
-    payload.put("operationId", body.path("operationId").textValue()); payload.put("command", "reactivate");
-    payload.put("ownerClient", "backend-account-admin"); payload.put("ownerSubject", "85000000-0000-4000-8000-000000000004");
-    payload.put("intentDigest", codec.digest("maintenance-intent", body)); payload.put("previousState", body.path("expectedState").textValue());
-    payload.put("tenantId", "7"); payload.put("originDigest", codec.digest("maintenance-origin", body.path("target").path("origin")));
-    payload.put("result", status == null ? "UPDATED" : "NO_EFFECT"); if (status != null) payload.put("status", status);
-    String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(codec.canonical(payload).getBytes(StandardCharsets.UTF_8));
-    var outer = new TreeMap<String, Object>(); outer.put("operationId", body.path("operationId").textValue());
-    outer.put("accountId", ACCOUNT); outer.put("result", status == null ? "UPDATED" : "NO_EFFECT");
+    payload.put("realmId", "synthetic-realm");
+    payload.put("accountId", ACCOUNT);
+    payload.put("operationId", body.path("operationId").textValue());
+    payload.put("command", "reactivate");
+    payload.put("ownerClient", "backend-account-admin");
+    payload.put("ownerSubject", "85000000-0000-4000-8000-000000000004");
+    payload.put("intentDigest", codec.digest("maintenance-intent", body));
+    payload.put("previousState", body.path("expectedState").textValue());
+    payload.put("tenantId", "7");
+    payload.put(
+        "originDigest", codec.digest("maintenance-origin", body.path("target").path("origin")));
+    payload.put("result", status == null ? "UPDATED" : "NO_EFFECT");
+    if (status != null) payload.put("status", status);
+    String encoded =
+        Base64.getUrlEncoder()
+            .withoutPadding()
+            .encodeToString(codec.canonical(payload).getBytes(StandardCharsets.UTF_8));
+    var outer = new TreeMap<String, Object>();
+    outer.put("operationId", body.path("operationId").textValue());
+    outer.put("accountId", ACCOUNT);
+    outer.put("result", status == null ? "UPDATED" : "NO_EFFECT");
     if (status != null) outer.put("status", status);
-    outer.put("receipt", encoded + "." + HexFormat.of().formatHex(hmac((status == null ? "maintenance-operation-receipt" : "maintenance-no-effect-receipt/v1") + "\n" + encoded)));
+    outer.put(
+        "receipt",
+        encoded
+            + "."
+            + HexFormat.of()
+                .formatHex(
+                    hmac(
+                        (status == null
+                                ? "maintenance-operation-receipt"
+                                : "maintenance-no-effect-receipt/v1")
+                            + "\n"
+                            + encoded)));
     return codec.canonical(outer);
   }
 
