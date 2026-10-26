@@ -176,7 +176,7 @@ class InternalChatEmailServiceTest {
                     "mail@example.org",
                     "passwordSet",
                     true)));
-    when(mailClient.readTenant(7L)).thenAnswer(i -> Map.of("settings", tenantSettings));
+    when(mailClient.readMailContext(7L)).thenAnswer(i -> mailContext());
     doAnswer(
             i -> {
               received.add(new Delivered(i.getArgument(2), i.getArgument(3), i.getArgument(4)));
@@ -219,6 +219,32 @@ class InternalChatEmailServiceTest {
             route,
             delivery);
     ReflectionTestUtils.setField(service, "applicationBaseUrl", "https://app.example.net");
+  }
+
+  private TenantSystemEmailClient.MailContext mailContext() {
+    @SuppressWarnings("unchecked")
+    Map<String, Object> smtp = (Map<String, Object>) tenantSettings.get("smtp");
+    boolean smtpPresent = smtp != null && !smtp.isEmpty();
+    boolean ownSmtpConfigured =
+        smtpPresent
+            && Boolean.TRUE.equals(smtp.get("enabled"))
+            && smtp.get("host") instanceof String host
+            && !host.isBlank()
+            && smtp.get("port") instanceof Number port
+            && port.intValue() >= 1
+            && port.intValue() <= 65535
+            && smtp.get("secure") instanceof Boolean
+            && smtp.get("username") instanceof String username
+            && !username.isBlank()
+            && smtp.get("from") instanceof String from
+            && !from.isBlank()
+            && Boolean.TRUE.equals(smtp.get("passwordSet"));
+    return new TenantSystemEmailClient.MailContext(
+        (Boolean) tenantSettings.get("featureSystemNotificationEmailsEnabled"),
+        (String) tenantSettings.get("smtpMode"),
+        smtp == null ? null : (String) smtp.get("emailThemeColor"),
+        ownSmtpConfigured,
+        smtpPresent);
   }
 
   @org.junit.jupiter.params.ParameterizedTest
