@@ -105,7 +105,7 @@ def sanitize(reports, output, kind):
     if kind not in CASES: raise ValueError("Unknown finite public pre-deletion case")
     clean = ET.Element("testsuite", name=SUITE)
     counts = dict(tests=0, failures=0, errors=0, skipped=0)
-    files = list(reports.glob("TEST-*.xml")); names = []; valid = len(files) == 1; frames = []
+    files = list(reports.glob("TEST-*.xml")); names = []; valid = len(files) == 1; frames = []; categories = set()
     for path in files:
         suite = ET.parse(path).getroot(); valid &= suite.get("name") == SUITE
         for case in suite.findall("testcase"):
@@ -117,14 +117,17 @@ def sanitize(reports, output, kind):
                 if problem is not None:
                     counts[key] += 1
                     ET.SubElement(child, tag, message="Sensitive paired diagnostic omitted")
-                    frames += re.findall(r"PublicPreDeletionNativePairProof\.java:[0-9]+", problem.text or "")
+                    frames += re.findall(r"PublicPreDeletion(?:NativePairProof|JpaTest)\.java:[0-9]+", problem.text or "")
+                    category = problem.get("type", "")
+                    if re.fullmatch(r"(?:java|org\.springframework|org\.hibernate|org\.opentest4j|de\.caritas\.cob\.userservice)\.[A-Za-z0-9_.$]{1,180}", category):
+                        categories.add(category)
         for key, count in counts.items():
             valid &= suite.get(key) is None or int(suite.get(key)) == count
     valid &= names == [CASES[kind]]
     for key, value in counts.items(): clean.set(key, str(value))
     output.parent.mkdir(parents=True, exist_ok=True)
     ET.ElementTree(clean).write(output, encoding="utf-8", xml_declaration=True)
-    return {**counts, "exact_method_inventory": valid, "failure_locations": sorted(set(frames)),
+    return {**counts, "exact_method_inventory": valid, "failure_locations": sorted(set(frames)), "failure_categories": sorted(categories),
             "accepted": valid and counts == dict(tests=1, failures=0, errors=0, skipped=0)}
 
 
@@ -235,6 +238,9 @@ def native(kc, report):
             'admin/facade/AskerUserAdminFacade', 'admin/service/consultant/ConsultantAdminService',
             'admin/service/consultant/delete/ConsultantPreDeletionService', 'service/chat/MembersOnlyRevocation']]
     if not all((ROOT / path).is_file() for path in classes): raise ValueError('Actual compiled creator/public/owner classes required')
+    # Private issued frames/callback implementations are compiled as nested classes, too.
+    classes = sorted(set(classes) | {str(nested.relative_to(ROOT)) for name in classes
+        for nested in (ROOT / name).parent.glob((ROOT / name).stem + '$*.class')})
     compiled = {path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest() for path in classes}
     before = snapshot(kc)
     if before != json.loads(report.with_name('public-pre-deletion-native-before.json').read_text()):

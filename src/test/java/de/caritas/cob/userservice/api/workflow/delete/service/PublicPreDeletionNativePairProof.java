@@ -55,6 +55,8 @@ class PublicPreDeletionNativePairProof extends PublicPreDeletionJpaTest {
   private static final String MATRIX = "@owned-public-pre-deletion:fixture.invalid";
   private final String chosenPassword = UUID.randomUUID() + "-C-private-public-start";
   private String nativeRealm, nativeRealmId, issuer;
+  @org.springframework.beans.factory.annotation.Autowired
+  private org.springframework.core.env.Environment fixtureEnvironment;
 
   @Test
   void selfAskerRealCreatorDisableLostReplyExpiryAndColdOwnedCompletion() throws Exception {
@@ -104,12 +106,16 @@ class PublicPreDeletionNativePairProof extends PublicPreDeletionJpaTest {
     assertEquals(required("PAIR_HUMAN_CLIENT"), jwt.getClaimAsString("azp"));
     assertEquals(Set.of("userservice"), Set.copyOf(jwt.getAudience()));
     var roles = KeycloakRoles.of(jwt.getClaims());
+    var security = new SecurityConfig(new CsrfSecurityProperties(), null, null);
+    ReflectionTestUtils.setField(
+        security,
+        "principalAttribute",
+        fixtureEnvironment.getRequiredProperty("keycloak.principal-attribute"));
     var authentication =
-        new SecurityConfig(new CsrfSecurityProperties(), null, null)
-            .jwtAuthenticationConverter(new RoleAuthorizationAuthorityMapper())
-            .convert(jwt);
+        security.jwtAuthenticationConverter(new RoleAuthorizationAuthorityMapper()).convert(jwt);
     assertNotNull(authentication);
     assertTrue(authentication.isAuthenticated());
+    assertEquals(username, authentication.getName());
     SecurityContextHolder.getContext().setAuthentication(authentication);
     request.setUserPrincipal(authentication);
     request.removeHeader("Authorization");
@@ -640,6 +646,7 @@ class PublicPreDeletionNativePairProof extends PublicPreDeletionJpaTest {
         assertEquals(originalPost, intentValue("applied_json", account));
       }
       assertEquals(1, sqlStats.getEntityUpdateCount());
+      assertEquals(0, genericAttempts.get());
       facts.put("oneLocalCallback", true);
       assertEquals("APPLIED", intentValue("status", account));
       facts.put("intentApplied", true);
