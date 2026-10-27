@@ -245,11 +245,8 @@ class NotificationEmailSmtpContract {
     when(tenants.getRestrictedTenantDataFresh(7L)).thenReturn(tenant);
     when(tenants.getRestrictedTenantData(7L)).thenReturn(tenant);
     when(tenants.getRestrictedTenantData("fixture")).thenReturn(tenant);
-    when(tenantMail.readTenant(7L))
-        .thenReturn(
-            Map.of(
-                "settings",
-                Map.of("featureSystemNotificationEmailsEnabled", true, "smtpMode", "PLATFORM")));
+    when(tenantMail.readMailContext(7L))
+        .thenReturn(new TenantSystemEmailClient.MailContext(true, "PLATFORM", null, false, false));
     configureSmtp();
     when(toggles.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS)).thenReturn(true);
     var relation =
