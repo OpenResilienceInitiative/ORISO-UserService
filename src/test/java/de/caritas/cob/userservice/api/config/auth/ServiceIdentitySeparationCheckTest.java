@@ -9,13 +9,15 @@ import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.core.env.Environment;
 
 class ServiceIdentitySeparationCheckTest {
   private final KeycloakCustomConfig admin = new KeycloakCustomConfig();
   private final IdentityClientConfig identity = mock(IdentityClientConfig.class);
+  private final Environment environment = mock(Environment.class);
   private final TechnicalUserConfig technical = new TechnicalUserConfig();
   private final ServiceIdentitySeparationCheck check =
-      new ServiceIdentitySeparationCheck(admin, identity);
+      new ServiceIdentitySeparationCheck(admin, identity, environment);
 
   private void configure() {
     admin.setAdminClientId("backend-admin");
@@ -31,6 +33,35 @@ class ServiceIdentitySeparationCheckTest {
   void distinctClientsAndSecretsAreAccepted() {
     configure();
     check.verifyBackendClients();
+  }
+
+  @Test
+  void configuredRoutineFiveActorsRemainAcceptedWhileLifecycleIsDisabled() {
+    configure();
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        check, "taskIdentityModel", "FIVE_ACTORS");
+    when(environment.getProperty("TASK_IDENTITY_MODEL", "LEGACY")).thenReturn("FIVE_ACTORS");
+    for (var actor : TaskActor.values()) {
+      String prefix = "IDENTITY_" + actor.name();
+      when(environment.getProperty(prefix + "_CLIENT_ID")).thenReturn("fixture-" + actor.name());
+      when(environment.getProperty(prefix + "_CLIENT_SECRET"))
+          .thenReturn("synthetic-secret-" + actor.name());
+      when(environment.getProperty(prefix + "_SERVICE_SUBJECT"))
+          .thenReturn("fixture-subject-" + actor.name());
+    }
+    org.junit.jupiter.api.Assertions.assertDoesNotThrow(check::verifyBackendClients);
+  }
+
+  @Test
+  void unfinishedCoordinatedLifecycleRetainsItsActivationFence() {
+    configure();
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        check, "taskIdentityModel", "FIVE_ACTORS");
+    when(environment.getProperty("ORISO_ACCOUNT_LIFECYCLE_ENABLED")).thenReturn("true");
+    assertThatThrownBy(check::verifyBackendClients)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(
+            "Five-actor production activation is gated until native account, lifecycle and coordinated receiver contracts are implemented");
   }
 
   @ParameterizedTest

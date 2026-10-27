@@ -44,6 +44,7 @@ class ReplicaSafetyInventoryContractTest {
           "case-handover-policy-cache-refresh",
           "case-handover-co-access-expiry",
           "case-handover-matrix-repair",
+          "enquiry-rejection-repair",
           "inquiry-acceptance-notice-retry",
           "appointment-cleanup-scheduler",
           "enquiry-notification-scheduler",

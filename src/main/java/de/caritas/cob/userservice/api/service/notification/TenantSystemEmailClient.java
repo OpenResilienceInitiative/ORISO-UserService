@@ -26,6 +26,13 @@ import org.springframework.web.client.RestTemplate;
 /** Reads redacted tenant settings and delivers OWN mail without exposing its SMTP secret. */
 @Component
 public class TenantSystemEmailClient {
+  public record MailContext(
+      Boolean systemNotificationEmailsEnabled,
+      String smtpMode,
+      String emailThemeColor,
+      boolean ownSmtpConfigured,
+      boolean smtpConfigurationPresent) {}
+
   private final RestTemplate restTemplate;
   private final IdentityAuthentication authentication;
   private final IdentityClientConfig identityConfig;
@@ -63,6 +70,32 @@ public class TenantSystemEmailClient {
     return (Map<String, Object>) response;
   }
 
+  /**
+   * Reads only the mail-routing data needed by the dispatcher. Five-actor callers must never use
+   * the general tenant read endpoint because it deliberately rejects task tokens.
+   */
+  public MailContext readMailContext(long tenantId) {
+    if (!identityConfig.isFiveActorMode()) {
+      return fromLegacyTenant(readTenant(tenantId));
+    }
+    String url = systemEmailContextEndpoint(tenantId);
+    Map<?, ?> response =
+        restTemplate
+            .exchange(url, HttpMethod.GET, new HttpEntity<Void>(technicalHeaders()), Map.class)
+            .getBody();
+    if (response == null) {
+      throw new IllegalStateException("TenantService returned no system email context");
+    }
+    Map<?, ?> settings = map(response.get("settings"));
+    Map<?, ?> smtp = settings == null ? null : map(settings.get("smtp"));
+    return new MailContext(
+        settings == null ? null : bool(settings.get("featureSystemNotificationEmailsEnabled")),
+        settings == null ? null : string(settings.get("smtpMode")),
+        smtp == null ? null : string(smtp.get("emailThemeColor")),
+        smtp != null && Boolean.TRUE.equals(smtp.get("configured")),
+        smtp != null && Boolean.TRUE.equals(smtp.get("enabled")));
+  }
+
   public void deliver(
       long tenantId, String purpose, String recipient, OrisoEmailRenderer.RenderedEmail email) {
     deliver(tenantId, purpose, recipient, email, UUID.randomUUID());
@@ -85,11 +118,15 @@ public class TenantSystemEmailClient {
               Void.class);
       if (response.getStatusCode() == HttpStatus.NO_CONTENT) {
         throw new TenantSystemEmailRouteService.ConfigurationException(
+            NotificationEmailDiagnostics.Stage.TENANT_SMTP,
+            NotificationEmailDiagnostics.Reason.OWN_SMTP_DISABLED,
             "OWN tenant SMTP delivery is disabled");
       }
     } catch (HttpClientErrorException ex) {
       if (!isUnprocessable(ex)) throw ex;
       throw new TenantSystemEmailRouteService.ConfigurationException(
+          NotificationEmailDiagnostics.Stage.TENANT_SMTP,
+          NotificationEmailDiagnostics.Reason.OWN_SMTP_INVALID,
           "OWN tenant SMTP configuration is invalid");
     }
   }
@@ -196,5 +233,70 @@ public class TenantSystemEmailClient {
       throw new IllegalStateException("tenant.service.api.url (TENANT_SERVICE_API_URL) is invalid");
     }
     return tenantServiceApiUrl.replaceAll("/+$", "") + "/tenant/" + tenantId + suffix;
+  }
+
+  private String systemEmailContextEndpoint(long tenantId) {
+    if (tenantId <= 0) throw new IllegalArgumentException("tenantId must be positive");
+    if (tenantServiceApiUrl == null || tenantServiceApiUrl.isBlank()) {
+      throw new IllegalStateException(
+          "tenant.service.api.url (TENANT_SERVICE_API_URL) is required");
+    }
+    URI base = URI.create(tenantServiceApiUrl.trim());
+    if (!("http".equals(base.getScheme()) || "https".equals(base.getScheme()))
+        || base.getHost() == null) {
+      throw new IllegalStateException("tenant.service.api.url (TENANT_SERVICE_API_URL) is invalid");
+    }
+    return tenantServiceApiUrl.replaceAll("/+$", "")
+        + "/internal/tenants/"
+        + tenantId
+        + "/system-email-context";
+  }
+
+  private static MailContext fromLegacyTenant(Map<String, Object> tenant) {
+    Map<?, ?> settings = map(tenant.get("settings"));
+    Map<?, ?> smtp = settings == null ? null : map(settings.get("smtp"));
+    boolean smtpPresent =
+        smtp != null
+            && java.util.stream.Stream.of(
+                    "enabled", "host", "port", "secure", "username", "from", "passwordSet")
+                .map(smtp::get)
+                .anyMatch(TenantSystemEmailClient::configured);
+    boolean smtpConfigured =
+        smtp != null
+            && Boolean.TRUE.equals(smtp.get("enabled"))
+            && configured(smtp.get("host"))
+            && validPort(smtp.get("port"))
+            && smtp.get("secure") instanceof Boolean
+            && configured(smtp.get("username"))
+            && configured(smtp.get("from"))
+            && Boolean.TRUE.equals(smtp.get("passwordSet"));
+    return new MailContext(
+        settings == null ? null : bool(settings.get("featureSystemNotificationEmailsEnabled")),
+        settings == null ? null : string(settings.get("smtpMode")),
+        smtp == null ? null : string(smtp.get("emailThemeColor")),
+        smtpConfigured,
+        smtpPresent);
+  }
+
+  private static Map<?, ?> map(Object value) {
+    return value instanceof Map<?, ?> result ? result : null;
+  }
+
+  private static Boolean bool(Object value) {
+    return value instanceof Boolean result ? result : null;
+  }
+
+  private static String string(Object value) {
+    return value instanceof String result ? result : null;
+  }
+
+  private static boolean configured(Object value) {
+    return value != null
+        && !Boolean.FALSE.equals(value)
+        && !(value instanceof String text && text.isBlank());
+  }
+
+  private static boolean validPort(Object value) {
+    return value instanceof Number number && number.intValue() >= 1 && number.intValue() <= 65535;
   }
 }

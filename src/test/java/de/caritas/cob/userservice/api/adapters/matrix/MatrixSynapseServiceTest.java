@@ -1224,6 +1224,28 @@ class MatrixSynapseServiceTest {
     assertThat(matrixSynapseService().getCallRoomBinding(MATRIX_ROOM_ID, MATRIX_USER_ID)).isEmpty();
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"M_USER_LOCKED", "M_USER_DEACTIVATED"})
+  void getCallRoomBinding_lockedMemberTokenIsADefinitiveDenial(String errcode) {
+    stubCallBindingPrerequisites(MATRIX_USER_ID);
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.argThat(
+                uri -> uri.toString().contains("/state/org.oriso.call.binding")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            org.mockito.ArgumentMatchers
+                .<org.springframework.core.ParameterizedTypeReference<Map<String, Object>>>any()))
+        .thenThrow(
+            new HttpClientErrorException(
+                HttpStatus.UNAUTHORIZED,
+                "synthetic member denial",
+                org.springframework.http.HttpHeaders.EMPTY,
+                ("{\"errcode\":\"" + errcode + "\"}").getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8));
+
+    assertThat(matrixSynapseService().getCallRoomBinding(MATRIX_ROOM_ID, MATRIX_USER_ID)).isEmpty();
+  }
+
   @Test
   void getCallRoomBinding_unauthorizedFreshTokenIsRetryable() {
     stubCallBindingPrerequisites(MATRIX_USER_ID);
@@ -1241,8 +1263,11 @@ class MatrixSynapseServiceTest {
         .isInstanceOf(MatrixSynapseService.CallLookupUnavailableException.class);
   }
 
-  @Test
-  void getCallRoomBinding_unauthorizedImpersonationRefreshesAdminAuthenticationOnRetry() {
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"M_UNKNOWN_TOKEN", "M_USER_LOCKED", "M_USER_DEACTIVATED"})
+  void getCallRoomBinding_unauthorizedImpersonationRefreshesAdminAuthenticationOnRetry(
+      String errcode) {
     matrixConfig.setApiUrl(MATRIX_BASE_URL);
     matrixConfig.setAdminUsername("admin");
     matrixConfig.setAdminPassword("admin-password");
@@ -1266,7 +1291,13 @@ class MatrixSynapseServiceTest {
                 + UriUtils.encode(MATRIX_USER_ID, StandardCharsets.UTF_8)
                 + "/login");
     when(restTemplate.postForEntity(eq(impersonationUri), any(HttpEntity.class), eq(Map.class)))
-        .thenThrow(new HttpClientErrorException(HttpStatus.UNAUTHORIZED))
+        .thenThrow(
+            new HttpClientErrorException(
+                HttpStatus.UNAUTHORIZED,
+                "synthetic admin denial",
+                org.springframework.http.HttpHeaders.EMPTY,
+                ("{\"errcode\":\"" + errcode + "\"}").getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8))
         .thenReturn(ResponseEntity.ok(Map.of("access_token", MATRIX_USER_TOKEN)));
 
     Map<String, Object> binding = Map.of("call_id", "call-401", "source_room_id", MATRIX_ROOM_ID);
@@ -1448,6 +1479,29 @@ class MatrixSynapseServiceTest {
 
     assertThat(matrixSynapseService().getRoomEvent(MATRIX_ROOM_ID, "$missing", ACCESS_TOKEN))
         .isEmpty();
+  }
+
+  @Test
+  void findRoomEvent_isEmptyOnlyForANotFoundEventAndThrowsOnTransientFailures() {
+    matrixConfig.setApiUrl(MATRIX_BASE_URL);
+    when(restTemplate.exchange(
+            any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenThrow(
+            org.springframework.web.client.HttpClientErrorException.create(
+                org.springframework.http.HttpStatus.NOT_FOUND, "Not Found", null, null, null))
+        .thenThrow(
+            org.springframework.web.client.HttpServerErrorException.create(
+                org.springframework.http.HttpStatus.BAD_GATEWAY, "Bad Gateway", null, null, null))
+        .thenThrow(new org.springframework.web.client.ResourceAccessException("timeout"));
+
+    assertThat(matrixSynapseService().findRoomEvent(MATRIX_ROOM_ID, "$missing", ACCESS_TOKEN))
+        .isEmpty();
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> matrixSynapseService().findRoomEvent(MATRIX_ROOM_ID, "$event", ACCESS_TOKEN))
+        .isInstanceOf(MatrixSynapseService.RoomEventUnavailableException.class);
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> matrixSynapseService().findRoomEvent(MATRIX_ROOM_ID, "$event", ACCESS_TOKEN))
+        .isInstanceOf(MatrixSynapseService.RoomEventUnavailableException.class);
   }
 
   // -------------------------------------------------------------------------

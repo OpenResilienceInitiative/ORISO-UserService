@@ -126,6 +126,7 @@ class UserAdminControllerIT {
   @MockitoBean private GrantConsultantIdentityService grantConsultantIdentityService;
 
   @MockitoBean private UserIdentitiesService userIdentitiesService;
+  @MockitoBean private IdentityObservationHttpAdapter identityObservationHttpAdapter;
   @MockitoBean private AdminListPreferenceService adminListPreferenceService;
   @MockitoBean private de.caritas.cob.userservice.api.helper.UserHelper userHelper;
 

@@ -275,4 +275,6 @@
   <include file="db/changelog/changeset/20261023_identity_setup_password_original_sql_367/changeSet.xml"/>
   <include file="db/changelog/changeset/20261023_identity_claimed_password_intent_367/changeSet.xml"/>
   <include file="db/changelog/changeset/20261023_identity_asker_reactivation_367/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261023_account_creation_attempt/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261008_enquiry_rejection/changeSet.xml"/>
 </databaseChangeLog>

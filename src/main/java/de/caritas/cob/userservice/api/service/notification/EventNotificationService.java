@@ -907,24 +907,10 @@ public class EventNotificationService {
       String callId,
       String mediaRoomId,
       boolean video) {
-    var params = session.notificationParams();
-    params.put("callId", callId);
-    params.put("callRoomId", mediaRoomId);
+    var params = callParams(session, callId, mediaRoomId);
     params.put("callType", video ? "video" : "audio");
     params.put("callerName", resolveSenderName(senderId));
-    String sourceRoom = session.getMatrixRoomId();
-    String identity = sourceRoom.length() + ":" + sourceRoom + ":" + callId;
-    String key;
-    try {
-      key =
-          "call.invited:"
-              + java.util.HexFormat.of()
-                  .formatHex(
-                      java.security.MessageDigest.getInstance("SHA-256")
-                          .digest(identity.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-    } catch (java.security.NoSuchAlgorithmException impossible) {
-      throw new IllegalStateException("SHA-256 unavailable", impossible);
-    }
+    String key = callEventKey("call.invited", session.getMatrixRoomId(), callId);
     createEventOnce(
         key,
         recipientId,
@@ -932,6 +918,33 @@ public class EventNotificationService {
         CATEGORY_SYSTEM,
         "Call invitation",
         "You were invited to a call.",
+        serializeParams(params),
+        session.actionPath(consultantRecipient),
+        session.getSessionId(),
+        session.getTenantId());
+  }
+
+  /**
+   * One retained start per original invitee and call, independent of devices and listener restarts.
+   */
+  @Transactional
+  public void createCallStartedNotification(
+      de.caritas.cob.userservice.api.service.matrix.MatrixCallConversation session,
+      String recipientId,
+      boolean consultantRecipient,
+      String callId,
+      String mediaRoomId,
+      boolean video) {
+    var params = callParams(session, callId, mediaRoomId);
+    params.put("callType", video ? "video" : "audio");
+    String key = callEventKey("call.started", session.getMatrixRoomId(), callId);
+    createEventOnce(
+        key,
+        recipientId,
+        "call.started",
+        CATEGORY_SYSTEM,
+        "Call started",
+        "The call has started.",
         serializeParams(params),
         session.actionPath(consultantRecipient),
         session.getSessionId(),
@@ -947,23 +960,9 @@ public class EventNotificationService {
       String mediaRoomId,
       long startedAt,
       long endedAt) {
-    var params = session.notificationParams();
-    params.put("callId", callId);
-    params.put("callRoomId", mediaRoomId);
+    var params = callParams(session, callId, mediaRoomId);
     params.put("durationSeconds", Long.toString(Math.max(0, endedAt - startedAt) / 1000));
-    String sourceRoom = session.getMatrixRoomId();
-    String identity = sourceRoom.length() + ":" + sourceRoom + ":" + callId;
-    String key;
-    try {
-      key =
-          "call.ended:"
-              + java.util.HexFormat.of()
-                  .formatHex(
-                      java.security.MessageDigest.getInstance("SHA-256")
-                          .digest(identity.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-    } catch (java.security.NoSuchAlgorithmException impossible) {
-      throw new IllegalStateException("SHA-256 unavailable", impossible);
-    }
+    String key = callEventKey("call.ended", session.getMatrixRoomId(), callId);
     createEventOnce(
         key,
         recipientId,
@@ -985,23 +984,9 @@ public class EventNotificationService {
       String callId,
       String mediaRoomId,
       boolean video) {
-    var params = session.notificationParams();
-    params.put("callId", callId);
-    params.put("callRoomId", mediaRoomId);
+    var params = callParams(session, callId, mediaRoomId);
     params.put("callType", video ? "video" : "audio");
-    String sourceRoom = session.getMatrixRoomId();
-    String identity = sourceRoom.length() + ":" + sourceRoom + ":" + callId;
-    String key;
-    try {
-      key =
-          "call.missed:"
-              + java.util.HexFormat.of()
-                  .formatHex(
-                      java.security.MessageDigest.getInstance("SHA-256")
-                          .digest(identity.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-    } catch (java.security.NoSuchAlgorithmException impossible) {
-      throw new IllegalStateException("SHA-256 unavailable", impossible);
-    }
+    String key = callEventKey("call.missed", session.getMatrixRoomId(), callId);
     createEventOnce(
         key,
         recipientId,
@@ -1013,6 +998,31 @@ public class EventNotificationService {
         session.actionPath(consultantRecipient),
         session.getSessionId(),
         session.getTenantId());
+  }
+
+  private Map<String, Object> callParams(
+      de.caritas.cob.userservice.api.service.matrix.MatrixCallConversation conversation,
+      String callId,
+      String mediaRoomId) {
+    var params = conversation.notificationParams();
+    params.put("callId", callId);
+    params.put("callRoomId", mediaRoomId);
+    return params;
+  }
+
+  private String callEventKey(String eventType, String sourceRoom, String callId) {
+    // Keep the persisted identity exactly stable, including Java's UTF-16 room length.
+    String identity = sourceRoom.length() + ":" + sourceRoom + ":" + callId;
+    try {
+      return eventType
+          + ":"
+          + java.util.HexFormat.of()
+              .formatHex(
+                  java.security.MessageDigest.getInstance("SHA-256")
+                      .digest(identity.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    } catch (java.security.NoSuchAlgorithmException impossible) {
+      throw new IllegalStateException("SHA-256 unavailable", impossible);
+    }
   }
 
   /** Persists an event at most once for a producer-owned key and recipient. */

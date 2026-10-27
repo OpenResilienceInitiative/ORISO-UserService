@@ -474,10 +474,7 @@ public class MatrixEventListenerService {
         }
       }
     }
-    for (Map.Entry<String, Object> roomEntry : joinedRooms.entrySet()) {
-      callInviteNotifications.handleMediaRoom(
-          roomEntry.getKey(), (Map<String, Object>) roomEntry.getValue());
-    }
+    callInviteNotifications.handleMediaRooms(joinedRooms);
   }
 
   /**
