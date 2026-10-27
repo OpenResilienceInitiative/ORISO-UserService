@@ -1680,7 +1680,7 @@ class EnquiryRejectionControllerIT {
             rejectionService,
             context.getBean(
                 de.caritas.cob.userservice.api.service.enquiry.EnquiryRejectionTransactions.class),
-            context.getBean(java.time.Clock.class));
+            context.getBean("clock", java.time.Clock.class));
     TenantContext.setCurrentTenant(99L);
     scheduler.retryPending();
     assertThat(TenantContext.getCurrentTenant()).isEqualTo(99L);
@@ -1712,7 +1712,7 @@ class EnquiryRejectionControllerIT {
             rejectionService,
             context.getBean(
                 de.caritas.cob.userservice.api.service.enquiry.EnquiryRejectionTransactions.class),
-            context.getBean(java.time.Clock.class));
+            context.getBean("clock", java.time.Clock.class));
     jdbc.execute(
         "ALTER TABLE enquiry_rejection ADD CONSTRAINT n12_attempt_storage_fault CHECK (attempt_count < 2)");
     try {
@@ -1757,7 +1757,7 @@ class EnquiryRejectionControllerIT {
             rejectionService,
             context.getBean(
                 de.caritas.cob.userservice.api.service.enquiry.EnquiryRejectionTransactions.class),
-            context.getBean(java.time.Clock.class));
+            context.getBean("clock", java.time.Clock.class));
     TenantContext.setCurrentTenant(99L);
     scheduler.retryPending();
     assertThat(TenantContext.getCurrentTenant()).isEqualTo(99L);

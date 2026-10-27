@@ -110,6 +110,9 @@ class TeamDiscussionNotificationIT {
   @Autowired private NotificationRoomLevelRepository levels;
   @Autowired private EventNotificationRepository events;
   @Autowired private EventNotificationController controller;
+  @MockitoBean
+  private de.caritas.cob.userservice.api.port.out.IdentityClientConfig identityMode;
+
   @MockitoBean private AuthenticatedUser authenticatedUser;
   @MockitoBean private IdentityTombstoneService tombstones;
   @MockitoBean private MatrixFeedUpdateSignalService feedSignals;
