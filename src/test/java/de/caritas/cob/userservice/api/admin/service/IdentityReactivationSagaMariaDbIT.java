@@ -34,14 +34,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
-import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
@@ -50,7 +50,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /** Proves the reactivation generation claim with PreDev's real MariaDB transaction semantics. */
 @DataJpaTest
-@ActiveProfiles({"testing", "reactivation-erasure-proof"})
+@TestPropertySource(properties = "oriso.test.reactivation-erasure-clock=true")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @EnabledIfEnvironmentVariable(named = "LIQUIBASE_IT_DB_URL", matches = ".+")
 @Import({
@@ -84,7 +84,7 @@ class IdentityReactivationSagaMariaDbIT {
   private TransactionTemplate transactionTemplate;
 
   @TestConfiguration
-  @Profile("reactivation-erasure-proof")
+  @ConditionalOnProperty(name = "oriso.test.reactivation-erasure-clock", havingValue = "true", matchIfMissing = false)
   static class ErasureClockConfiguration {
     @Bean
     @Primary

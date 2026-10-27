@@ -248,7 +248,7 @@ class AccountLifecycleRetryFairnessMariaDbIT extends AccountLifecycleRetryFairne
 
   private static DataSource erasureSource() {
     String url = System.getenv("CALLER_FAIRNESS_DB_URL");
-    assertEquals("jdbc:mariadb://127.0.0.1:3306/caller_fairness", url);
+    assertTrue("jdbc:mariadb://127.0.0.1:3306/caller_fairness".equals(url), "disposable proof database required");
     return new DriverManagerDataSource(url, "root", System.getenv("CALLER_FAIRNESS_DB_PASSWORD"));
   }
 
@@ -460,8 +460,9 @@ class AccountLifecycleRetryFairnessMariaDbIT extends AccountLifecycleRetryFairne
     return tx.execute(
         ignored -> {
           var rows =
-              fixture.jdbc.queryForList(
+              fixture.jdbc.query(
                   "select claimed_until from scheduled_task_claim where task_name=? for update",
+                  (rs, index) -> rs.getObject(1, java.time.LocalDateTime.class),
                   ScopedAskerReactivation.SECRET_ERASURE_TASK);
           var until =
               java.time.LocalDateTime.ofInstant(now.plusSeconds(300), java.time.ZoneOffset.UTC);
@@ -472,8 +473,7 @@ class AccountLifecycleRetryFairnessMariaDbIT extends AccountLifecycleRetryFairne
                 java.time.LocalDateTime.ofInstant(now, java.time.ZoneOffset.UTC),
                 until);
           else {
-            assertFalse(
-                ((Timestamp) rows.getFirst().get("claimed_until")).toInstant().isAfter(now));
+            assertFalse(rows.getFirst().isAfter(java.time.LocalDateTime.ofInstant(now, java.time.ZoneOffset.UTC)));
             fixture.jdbc.update(
                 "update scheduled_task_claim set claimed_at=?,claimed_until=? where task_name=?",
                 java.time.LocalDateTime.ofInstant(now, java.time.ZoneOffset.UTC),
@@ -551,8 +551,11 @@ class AccountLifecycleRetryFairnessMariaDbIT extends AccountLifecycleRetryFairne
       assertTrue(
           child.waitFor(20, java.util.concurrent.TimeUnit.SECONDS),
           "bounded cold process timed out");
-      assertEquals(0, child.exitValue(), "bounded cold process failed");
-      assertEquals("REACTIVATION_ERASURE_CHILD_OK\n", java.nio.file.Files.readString(output));
+      String report = java.nio.file.Files.size(output) <= 256 ? java.nio.file.Files.readString(output) : "";
+      String category = report.matches("REACTIVATION_ERASURE_CHILD_FAILED_[A-Za-z0-9_$]{1,80}\n")
+          ? report.strip() : "UNCLASSIFIED";
+      assertEquals(0, child.exitValue(), "bounded cold process " + stage + " failed: " + category);
+      assertTrue("REACTIVATION_ERASURE_CHILD_OK\n".equals(report), "bounded cold process invalid sanitized output");
     } finally {
       if (child != null && child.isAlive()) {
         child.destroyForcibly();
