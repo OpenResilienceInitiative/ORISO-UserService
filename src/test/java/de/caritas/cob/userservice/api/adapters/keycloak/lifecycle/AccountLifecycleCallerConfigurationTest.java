@@ -147,6 +147,9 @@ class AccountLifecycleCallerConfigurationTest {
                     factory.registerSingleton("fixtureTaskBroker", broker);
                     factory.registerSingleton("fixtureIdentityMode", mode);
                     factory.registerSingleton("fixtureHuman", new AuthenticatedUser());
+                    factory.registerSingleton(
+                        "fixturePasswordValidation",
+                        mock(de.caritas.cob.userservice.api.port.in.IdentityManaging.class));
                     factory.registerSingleton("fixtureRequest", new MockHttpServletRequest());
                     factory.registerSingleton("fixtureJdbc", jdbc);
                     factory.registerSingleton("fixtureTransactions", transactions);
@@ -346,6 +349,37 @@ class AccountLifecycleCallerConfigurationTest {
                 1,
                 context.getBeansOfType(ScopedAskerReactivation.class).size(),
                 "FIVE_ACTORS must install the bounded chosen-password reactivation owner"));
+  }
+
+  @Test
+  void enabledCallerInstallsThePublicPreDeletionOwnerWithoutAnyPasswordOrNativeCall() {
+    withEnabledCallerGraph(
+        context -> {
+          var owners =
+              context.getBeansOfType(
+                  de.caritas.cob.userservice.api.workflow.delete.service
+                      .PublicPreDeletionMaintenance.class);
+          assertEquals(1, owners.size());
+          assertTrue(owners.values().iterator().next().isFiveActorMode());
+          verifyNoInteractions(
+              context.getBean(de.caritas.cob.userservice.api.port.in.IdentityManaging.class));
+        });
+  }
+
+  @Test
+  void defaultOffDoesNotInstallPublicPreDeletionWithoutAnyBindings() {
+    new ApplicationContextRunner()
+        .withUserConfiguration(AccountLifecycleCallerConfiguration.class)
+        .run(
+            context -> {
+              assertNull(context.getStartupFailure());
+              assertTrue(
+                  context
+                      .getBeansOfType(
+                          de.caritas.cob.userservice.api.workflow.delete.service
+                              .PublicPreDeletionMaintenance.class)
+                      .isEmpty());
+            });
   }
 
   @Test
