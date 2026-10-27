@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 import unittest
+from unittest.mock import patch
 import xml.etree.ElementTree as ET
 
 sys.dont_write_bytecode = True
@@ -29,7 +30,8 @@ IMAGE = "quay.io/keycloak/keycloak@sha256:9b0330756022422149aa6502eb2def8cd47c6e
 WITNESS_FLAGS = {"actualJpa", "actualCreatorCommitted", "creatorProofRetained",
     "originalSqlBirthPreserved", "actualCurrentPrincipal", "realNativeRead", "realNativeDeactivate",
     "strictRealReceipt", "nativeDisabled", "sqlReadOnly", "intentApplied", "oneLocalCallback",
-    "sameFrozenCommand", "lostReplyExpiredHumanRecovered"}
+    "sameFrozenCommand", "lostReplyExpiredHumanRecovered", "profileGrantWithdrawalClosed",
+    "machineGrantWithdrawalClosed", "grantRestorationReusedOriginalOutcome"}
 PLATFORM_HUMAN_ROLES = frozenset({'agency-admin', 'tenant-admin', 'user-admin'})
 
 
@@ -48,7 +50,8 @@ def checked_protocol(value, kind):
             or any(type(value[key]) is not int or not 0 <= value[key] <= 10 for key in keys)):
         raise ValueError('Exact finite nonsecret protocol counts required')
     return (all(value[key] == 1 for key in ['creatorCreate201', 'creatorOwnedRead200', 'creatorCommit200', 'maintenanceRead200'])
-        and value['deactivate200'] == value['deactivateAttempts'] == (1 if kind == 'self-asker' else 2)
+        and value['deactivate200'] == (1 if kind == 'self-asker' else 3)
+        and value['deactivateAttempts'] == (1 if kind == 'self-asker' else 4)
         and value['outcomeRead200'] == (1 if kind == 'self-asker' else 0)
         and value['humanPasswordGrants200'] == (2 if kind == 'self-asker' else 0))
 
@@ -69,6 +72,33 @@ def checked_installer_checks(checks):
                 or item['sameActualEnabledMasterInstallerAndNativeSessionVerified'] is not True): return False
     phases = [item['phase'] for item in checks]
     return phases[:2] == ['NATIVE_READY', 'NATIVE_READY'] and phases[2:] == ['NATIVE_READY', 'RENEWAL'] * ((len(phases) - 2) // 2)
+
+
+def withdrawn_policy(original, kind):
+    """Withdraw only the current target's existing logical deactivate permission."""
+    if kind not in CASES: raise ValueError('Finite public kind required')
+    value = copy.deepcopy(original)
+    if kind == 'self-asker':
+        profiles = [profile for profile in value['ordinaryProfiles'] if profile['id'] == 'user-v1']
+        if len(profiles) != 1: raise ValueError('Exact reviewed USER target required')
+        selected = profiles[0]['selfOperations']
+    else:
+        grants = [grant for grant in value['adminOperations'] if grant['authority'] == 'PLATFORM']
+        if len(grants) != 1: raise ValueError('One original PLATFORM grant required')
+        selected = grants[0]['operations']
+    if selected.count('account.deactivate') != 1 or 'account.read' not in selected:
+        raise ValueError('Independent existing read and deactivate grants required')
+    selected.remove('account.deactivate')
+    return value
+
+
+def checked_grant_controls(controls):
+    stages = [('PROFILE', 'WITHDRAWN'), ('PROFILE', 'RESTORED'), ('MACHINE', 'WITHDRAWN'), ('MACHINE', 'RESTORED')]
+    flags = {'sameOriginalNativeIncarnation', 'actualCurrentGrantReadback', 'sameOwnedRuntimeAndProviderInputs'}
+    return (isinstance(controls, list) and len(controls) == len(stages) and all(
+        isinstance(value, dict) and set(value) == flags | {'kind', 'phase'}
+        and (value['kind'], value['phase']) == stage and all(value[key] is True for key in flags)
+        for value, stage in zip(controls, stages)))
 
 
 def source_frame_catalog(paths):
@@ -266,15 +296,16 @@ def native(kc, report):
         raise ValueError('Source changed after required build snapshot')
     sys.path.insert(0, str(module / 'tests'))
     import lifecycle_fixture as lifecycle
-    from protected_resources import HOSTED_PROFILE, evidence as resource_evidence
+    from protected_resources import HOSTED_PROFILE, evidence as resource_evidence, require_start, require_active
     from protected_otp_bootstrap import BootstrapFixture
+    from protected_binding_readiness import BindingReadiness, inspect_owned, config_values
     from protected_account_operations import OperationFixture, ProtectedOperationRead
     from ordinary_admin_operations import install_policy
     from test_protected_invitations import ISSUER, HUMAN_PASSWORD
     if lifecycle.IMAGE != IMAGE: raise ValueError('Exact native image required')
     frames = source_frame_catalog([Path(__file__), *[module / 'tests' / name for name in [
         'lifecycle_fixture.py', 'test_protected_invitations.py', 'protected_otp_bootstrap.py',
-        'protected_resources.py', 'protected_account_operations.py', 'ordinary_admin_operations.py']]])
+        'protected_resources.py', 'protected_binding_readiness.py', 'protected_account_operations.py', 'ordinary_admin_operations.py']]])
 
     class PublicPair(BootstrapFixture):
         native_issuer = ISSUER
@@ -307,13 +338,74 @@ def native(kc, report):
     for key, path in jars.items(): os.environ[key] = str(path.resolve())
     os.environ['PROTECTED_PROOF_RESOURCE_PROFILE'] = HOSTED_PROFILE
     control = None; targets = []; observations = []; originals = {}; window = {}; lock = threading.Lock()
+    controls = []; policy_ready_indices = []; policy_stage = ['ORIGINAL']; machine_stage = ['ORIGINAL']; launches = []
+    original_run = subprocess.run
+    def capture(args, *positional, **keywords):
+        if isinstance(args, list) and args[:2] == ['docker', 'run']: launches.append(args.copy())
+        return original_run(args, *positional, **keywords)
     try:
-        PublicPair.setUpClass(); fixture = PublicPair('runTest')
+        with patch.object(subprocess, 'run', side_effect=capture): PublicPair.setUpClass()
+        if not launches: raise ValueError('Actual native configured launch required')
+        configured = launches[-1]
+        fixture = PublicPair('runTest')
         raw_human = verify_canonical_platform_human(fixture, lifecycle, ISSUER, HUMAN_PASSWORD)
         native_human = fixture.admin('GET', '/users/' + fixture.human_subject)
         receipt['canonical_platform_source'] = copy.deepcopy(PublicPair.canonical_platform_source)
         realm = fixture.admin('GET', ''); realm['adminEventsEnabled'] = True
         realm['adminEventsDetailsEnabled'] = False; fixture.admin('PUT', '', realm)
+
+        prefix = 'ORISO_ACCOUNT_MAINTENANCE_CONFIG='
+        installed = [arg for arg in configured if arg.startswith(prefix)]
+        if len(installed) != 1: raise ValueError('One actual installed ordinary policy required')
+        original_policy = json.loads(installed[0][len(prefix):]); withdrawn = withdrawn_policy(original_policy, kind)
+        baseline_runtime = inspect_owned(PublicPair)
+        protected_config = config_values(baseline_runtime)['ORISO_PROTECTED_INVITATIONS_CONFIG']
+        runtime = BindingReadiness('runTest')
+        runtime.runtime(baseline_runtime, protected_config, fixture=PublicPair)
+        machine_path = '/users/' + lifecycle.SUBJECTS['ACCOUNT_ADMIN'] + '/role-mappings/realm'
+        original_machine_roles = fixture.admin('GET', machine_path)
+        role = [item for item in original_machine_roles if item['name'] == 'account-maintenance']
+        if len(role) != 1 or role[0].get('composite') is not False:
+            raise ValueError('Original actual primitive ACCOUNT_ADMIN maintenance role required')
+        original_machine_names = {item['name'] for item in original_machine_roles}
+
+        def grant_control(family, action):
+            if len(targets) != 1: raise ValueError('Actual creator target must be observed first')
+            account = targets[0]; before_native = fixture.admin('GET', '/users/' + account)
+            state = policy_stage if family == 'PROFILE' else machine_stage
+            if (action, state[0]) not in {('withdraw', 'ORIGINAL'), ('restore', 'WITHDRAWN')}:
+                raise ValueError('Exact withdrawal/restoration sequence required')
+            if family == 'PROFILE':
+                policy = withdrawn if action == 'withdraw' else original_policy
+                command = [prefix + json.dumps(policy, separators=(',', ':')) if arg.startswith(prefix) else arg for arg in configured]
+                if action == 'restore' and command != configured: raise ValueError('Exact original native launch must be restored')
+                subprocess.run(['docker', 'stop', '-t', '5', PublicPair.name], check=True, capture_output=True, timeout=30)
+                subprocess.run(['docker', 'rm', PublicPair.name], check=True, capture_output=True, timeout=30)
+                require_start()
+                subprocess.run(command, check=True, capture_output=True, timeout=30)
+                PublicPair.refresh_endpoint('public-pre-deletion-profile-' + action)
+                checks = ProtectedOperationRead.observation.get('installerIdentityChecks', [])
+                index = len(checks)
+                PublicPair.ready(); fixture.installer = PublicPair.installer
+                if len(checks) != index + 1 or checks[index]['phase'] != 'NATIVE_READY':
+                    raise ValueError('One real policy-restart ready check required')
+                policy_ready_indices.append(index)
+                current = runtime.runtime(baseline_runtime, protected_config, fixture=PublicPair)
+                if json.loads(config_values(current)['ORISO_ACCOUNT_MAINTENANCE_CONFIG']) != policy:
+                    raise ValueError('Actual current target policy readback mismatch')
+            else:
+                if policy_stage[0] != 'RESTORED': raise ValueError('Profile restoration must precede separate machine control')
+                fixture.admin('DELETE' if action == 'withdraw' else 'POST', machine_path, role)
+                actual = {item['name'] for item in fixture.admin('GET', machine_path)}
+                expected = original_machine_names - {'account-maintenance'} if action == 'withdraw' else original_machine_names
+                if actual != expected: raise ValueError('Exact native current machine role readback mismatch')
+            if before_native != fixture.admin('GET', '/users/' + account):
+                raise ValueError('Grant control changed original target incarnation')
+            require_active('public-pre-deletion-grant-readback')
+            state[0] = 'WITHDRAWN' if action == 'withdraw' else 'RESTORED'
+            controls.append({'kind': family, 'phase': state[0], 'sameOriginalNativeIncarnation': True,
+                'actualCurrentGrantReadback': True, 'sameOwnedRuntimeAndProviderInputs': True})
+            return {'kind': family, 'phase': state[0]}
 
         class Control(http.server.BaseHTTPRequestHandler):
             def log_message(self, *args): pass
@@ -323,6 +415,17 @@ def native(kc, report):
                     if not 0 < length <= 256: raise ValueError('Fixed bounded observation DATA required')
                     body = json.loads(self.rfile.read(length))
                     with lock:
+                        if self.path == '/endpoint':
+                            if body != {}: raise ValueError('Fixed endpoint DATA only')
+                            raw = json.dumps({'nativeBase': fixture.base}).encode()
+                            self.send_response(200); self.send_header('Content-Type', 'application/json')
+                            self.end_headers(); self.wfile.write(raw); return
+                        if self.path in {'/profile/withdraw', '/profile/restore', '/machine/withdraw', '/machine/restore'}:
+                            if body != {}: raise ValueError('No caller grant selectors accepted')
+                            family, action = self.path[1:].split('/')
+                            raw = json.dumps(grant_control(family.upper(), action)).encode()
+                            self.send_response(200); self.send_header('Content-Type', 'application/json')
+                            self.end_headers(); self.wfile.write(raw); return
                         if self.path in {'/self-window/open', '/self-window/close'}:
                             if body != {} or kind != 'self-asker': raise ValueError('Exact SELF time fixture only')
                             if self.path.endswith('/open'):
@@ -368,7 +471,9 @@ def native(kc, report):
                         observations.append(result); raw = json.dumps(result).encode()
                     self.send_response(200); self.send_header('Content-Type', 'application/json')
                     self.end_headers(); self.wfile.write(raw)
-                except BaseException:
+                except BaseException as error:
+                    receipt['control_failure_category'] = type(error).__name__
+                    receipt['control_failure_frames'] = sanitized_failure_frames(error, frames)
                     self.send_response(503); self.end_headers()
 
         control = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Control)
@@ -417,14 +522,24 @@ def native(kc, report):
             and observations[-1]['updateEvents'] - observations[0]['updateEvents'] == 1
             and all(value['exists'] and value['exactOriginalProjection'] and value['noRepresentation'] for value in observations))
         receipt['installer_identity_checks'] = ProtectedOperationRead.observation.get('installerIdentityChecks', [])
-        receipt['installer_identity_verified'] = checked_installer_checks(receipt['installer_identity_checks'])
-        receipt['coverage_limits'] = {'httpSecurityFilterChain': False, 'browser': False,
-            'externalDelivery': False, 'pairedPublicGrantWithdrawalRestoration': False,
+        checks = receipt['installer_identity_checks']
+        policy_checks = [checks[index] for index in policy_ready_indices]
+        original_checks = [item for index, item in enumerate(checks) if index not in policy_ready_indices]
+        receipt['bootstrap_installer_identity_checks'] = original_checks
+        receipt['policy_restart_installer_identity_checks'] = policy_checks
+        receipt['installer_identity_verified'] = (len(policy_ready_indices) == 2
+            and len(set(policy_ready_indices)) == 2 and all(index >= 2 for index in policy_ready_indices)
+            and checked_installer_checks(original_checks) and checked_installer_checks(policy_checks))
+        receipt['current_grant_controls'] = controls
+        receipt['current_grant_controls_verified'] = checked_grant_controls(controls)
+        receipt['coverage'] = {'httpSecurityFilterChain': False, 'browser': False,
+            'externalDelivery': False, 'pairedPublicGrantWithdrawalRestoration': receipt['current_grant_controls_verified'],
             'restrictedOrdinaryOperator': False}
         receipt['self_time_fixture_original_restored'] = kind != 'self-asker' or bool(window and window['restored'])
         receipt['accepted'] = (inventory['accepted'] and receipt['child_exit'] == 0 and receipt['java_witness_complete']
             and receipt['protocol_counts_complete'] and receipt['one_actual_native_effect_event']
-            and receipt['installer_identity_verified'] and receipt['self_time_fixture_original_restored'])
+            and receipt['installer_identity_verified'] and receipt['self_time_fixture_original_restored']
+            and receipt['current_grant_controls_verified'])
         receipt['phase'] = 'complete'
     except BaseException as error:
         receipt['exception_category'] = type(error).__name__; receipt['accepted'] = False

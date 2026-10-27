@@ -107,7 +107,8 @@ class PublicPreDeletionNativePairProof extends PublicPreDeletionJpaTest {
     assertEquals(required("PAIR_HUMAN_CLIENT"), jwt.getClaimAsString("azp"));
     assertEquals(Set.of("userservice"), Set.copyOf(jwt.getAudience()));
     var roles = KeycloakRoles.of(jwt.getClaims());
-    String principalAttribute = fixtureEnvironment.getRequiredProperty("keycloak.principal-attribute");
+    String principalAttribute =
+        fixtureEnvironment.getRequiredProperty("keycloak.principal-attribute");
     var security = new SecurityConfig(new CsrfSecurityProperties(), null, null);
     ReflectionTestUtils.setField(security, "principalAttribute", principalAttribute);
     var authentication =
@@ -115,7 +116,9 @@ class PublicPreDeletionNativePairProof extends PublicPreDeletionJpaTest {
     assertNotNull(authentication);
     assertTrue(authentication.isAuthenticated());
     assertEquals(
-        jwt.hasClaim(principalAttribute) ? jwt.getClaimAsString(principalAttribute) : jwt.getSubject(),
+        jwt.hasClaim(principalAttribute)
+            ? jwt.getClaimAsString(principalAttribute)
+            : jwt.getSubject(),
         authentication.getName());
     SecurityContextHolder.getContext().setAuthentication(authentication);
     request.setUserPrincipal(authentication);
@@ -189,6 +192,56 @@ class PublicPreDeletionNativePairProof extends PublicPreDeletionJpaTest {
             required("PAIR_CONTROL_BASE") + (open ? "/self-window/open" : "/self-window/close"),
             new HttpEntity<>("{}", headers),
             Void.class);
+  }
+
+  private JsonNode control(String path) {
+    assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+    var headers = new HttpHeaders();
+    headers.setContentType(MediaType.APPLICATION_JSON);
+    return codec.read(new RestTemplate().postForObject(required("PAIR_CONTROL_BASE") + path,
+        new HttpEntity<>("{}", headers), String.class), JsonNode.class);
+  }
+
+  private String currentNativeBase() {
+    var endpoint = control("/endpoint");
+    assertEquals(Set.of("nativeBase"), java.util.stream.StreamSupport.stream(
+        java.util.Spliterators.spliteratorUnknownSize(endpoint.fieldNames(), 0), false)
+        .collect(java.util.stream.Collectors.toSet()));
+    var uri = URI.create(endpoint.path("nativeBase").textValue());
+    assertEquals("http", uri.getScheme());
+    assertEquals("127.0.0.1", uri.getHost());
+    assertTrue(uri.getPort() > 0 && uri.getPort() <= 65535);
+    assertEquals("", uri.getPath());
+    assertNull(uri.getUserInfo());
+    assertNull(uri.getRawQuery());
+    assertNull(uri.getFragment());
+    return uri.toString();
+  }
+
+  private void grantWithdrawalControls(String kind, String account, Runnable publicStart,
+      org.hibernate.stat.Statistics stats, Map<String, Integer> protocol, Map<String, Object> facts) {
+    String originalStatus = intentValue("status", account);
+    String originalSource = intentValue("source_json", account);
+    String originalBody = intentValue("intent_body", account);
+    String originalReceipt = intentValue("receipt", account);
+    String originalApplied = intentValue("applied_json", account);
+    long originalUpdates = stats.getEntityUpdateCount();
+    for (String family : List.of("profile", "machine")) {
+      assertEquals("WITHDRAWN", control("/" + family + "/withdraw").path("phase").asText());
+      int attempts = protocol.get("deactivateAttempts");
+      if (kind.equals("self-asker")) assertEquals(0, selfService().resumeSelfAskerDeletions(1));
+      else assertThrows(de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException.class, publicStart::run);
+      if (family.equals("machine")) assertEquals(attempts, protocol.get("deactivateAttempts"));
+      assertEquals(originalUpdates, stats.getEntityUpdateCount());
+      assertEquals(originalStatus, intentValue("status", account));
+      assertEquals(originalSource, intentValue("source_json", account));
+      assertEquals(originalBody, intentValue("intent_body", account));
+      assertEquals(originalReceipt, intentValue("receipt", account));
+      assertEquals(originalApplied, intentValue("applied_json", account));
+      assertFalse(observe(account).path("enabled").asBoolean());
+      facts.put(family.equals("profile") ? "profileGrantWithdrawalClosed" : "machineGrantWithdrawalClosed", true);
+      assertEquals("RESTORED", control("/" + family + "/restore").path("phase").asText());
+    }
   }
 
   private String createAsker(
@@ -338,7 +391,10 @@ class PublicPreDeletionNativePairProof extends PublicPreDeletionJpaTest {
             "intentApplied",
             "oneLocalCallback",
             "sameFrozenCommand",
-            "lostReplyExpiredHumanRecovered")) facts.put(flag, false);
+            "lostReplyExpiredHumanRecovered",
+            "profileGrantWithdrawalClosed",
+            "machineGrantWithdrawalClosed",
+            "grantRestorationReusedOriginalOutcome")) facts.put(flag, false);
     var protocol = new TreeMap<String, Integer>();
     for (String counter :
         List.of(
@@ -376,7 +432,7 @@ class PublicPreDeletionNativePairProof extends PublicPreDeletionJpaTest {
                 assertEquals("protected-fixture.invalid", logical.getHost());
                 var physical =
                     URI.create(
-                        required("PAIR_NATIVE_BASE")
+                        currentNativeBase()
                             + logical.getRawPath()
                             + (logical.getRawQuery() == null ? "" : "?" + logical.getRawQuery()));
                 var mapped =
@@ -631,6 +687,7 @@ class PublicPreDeletionNativePairProof extends PublicPreDeletionJpaTest {
         request.setUserPrincipal(null);
         request.removeHeader("Authorization");
         SecurityContextHolder.clearContext();
+        grantWithdrawalControls(kind, account, publicStart, sqlStats, protocol, facts);
         assertEquals(1, selfService().resumeSelfAskerDeletions(1));
         assertEquals(0, selfService().resumeSelfAskerDeletions(1));
         assertEquals(originalBody, intentValue("intent_body", account));
@@ -642,10 +699,14 @@ class PublicPreDeletionNativePairProof extends PublicPreDeletionJpaTest {
         String originalPost = intentValue("applied_json", account);
         assertDoesNotThrow(publicStart::run);
         assertEquals(originalPost, intentValue("applied_json", account));
+        grantWithdrawalControls(kind, account, publicStart, sqlStats, protocol, facts);
+        assertDoesNotThrow(publicStart::run);
+        assertEquals(originalPost, intentValue("applied_json", account));
       }
       assertEquals(1, sqlStats.getEntityUpdateCount());
       assertEquals(0, genericAttempts.get());
       facts.put("oneLocalCallback", true);
+      facts.put("grantRestorationReusedOriginalOutcome", true);
       assertEquals("APPLIED", intentValue("status", account));
       facts.put("intentApplied", true);
       assertNotNull(

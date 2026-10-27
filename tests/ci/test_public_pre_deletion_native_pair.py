@@ -67,8 +67,8 @@ class PublicPreDeletionPairControls(unittest.TestCase):
 
     def protocol(self, kind):
         return {'creatorCreate201': 1, 'creatorOwnedRead200': 1, 'creatorCommit200': 1,
-            'maintenanceRead200': 1, 'deactivateAttempts': 1 if kind == 'self-asker' else 2,
-            'deactivate200': 1 if kind == 'self-asker' else 2,
+            'maintenanceRead200': 1, 'deactivateAttempts': 1 if kind == 'self-asker' else 4,
+            'deactivate200': 1 if kind == 'self-asker' else 3,
             'outcomeRead200': 1 if kind == 'self-asker' else 0,
             'humanPasswordGrants200': 2 if kind == 'self-asker' else 0}
 
@@ -125,6 +125,25 @@ class PublicPreDeletionPairControls(unittest.TestCase):
                 ('sameActualEnabledMasterInstallerAndNativeSessionVerified', False), ('pinnedMasterIssuer', [False])]:
             checks = copy.deepcopy([ready, ready]); checks[1][key] = value
             self.assertFalse(pair.checked_installer_checks(checks))
+
+    def test_grant_withdrawal_is_targeted_and_restoration_witness_is_closed(self):
+        import copy
+        original = {'ordinaryProfiles': [{'id': 'user-v1', 'selfOperations': ['account.read', 'account.deactivate']}],
+            'adminOperations': [{'authority': 'PLATFORM', 'operations': ['account.read', 'account.deactivate', 'account.email']}]}
+        for kind in pair.CASES:
+            value = pair.withdrawn_policy(original, kind)
+            self.assertEqual(original, {'ordinaryProfiles': [{'id': 'user-v1', 'selfOperations': ['account.read', 'account.deactivate']}],
+                'adminOperations': [{'authority': 'PLATFORM', 'operations': ['account.read', 'account.deactivate', 'account.email']}]})
+            selected = value['ordinaryProfiles'][0]['selfOperations'] if kind == 'self-asker' else value['adminOperations'][0]['operations']
+            self.assertNotIn('account.deactivate', selected); self.assertIn('account.read', selected)
+        records = [{'kind': kind, 'phase': phase, 'sameOriginalNativeIncarnation': True,
+            'actualCurrentGrantReadback': True, 'sameOwnedRuntimeAndProviderInputs': True}
+            for kind, phase in [('PROFILE', 'WITHDRAWN'), ('PROFILE', 'RESTORED'), ('MACHINE', 'WITHDRAWN'), ('MACHINE', 'RESTORED')]]
+        self.assertTrue(pair.checked_grant_controls(records))
+        self.assertFalse(pair.checked_grant_controls(records[:2]))
+        self.assertFalse(pair.checked_grant_controls(list(reversed(records))))
+        changed = copy.deepcopy(records); changed[2]['actualCurrentGrantReadback'] = False
+        self.assertFalse(pair.checked_grant_controls(changed))
 
     def test_fixture_visibility_keeps_original_38_case_inventory(self):
         import hashlib
