@@ -348,6 +348,8 @@ class ReactivationHistoryOwnerJpaTest {
     assertEquals(0, owner.eraseExpiredScopedSecrets(lease));
     assertEquals(frozen, raw());
     clock.current = clock.current.plusSeconds(1);
+    assertEquals(0, owner.eraseExpiredScopedSecrets(lease));
+    assertNull(cursor());
     assertEquals(1, owner.eraseExpiredScopedSecrets(lease));
     var history = raw();
     assertEquals("FROZEN_HISTORY", history.path("phase").textValue());
@@ -458,7 +460,7 @@ class ReactivationHistoryOwnerJpaTest {
   }
 
   private void removeHuman() {
-    authenticated.setAccessToken(null);
+    authenticated.setAccessToken("");
     request.setUserPrincipal(null);
     request.removeHeader("Authorization");
     clearInvocations(broker);

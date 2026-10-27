@@ -37,7 +37,9 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
+import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -48,6 +50,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /** Proves the reactivation generation claim with PreDev's real MariaDB transaction semantics. */
 @DataJpaTest
+@ActiveProfiles({"testing", "reactivation-erasure-proof"})
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @EnabledIfEnvironmentVariable(named = "LIQUIBASE_IT_DB_URL", matches = ".+")
 @Import({
@@ -81,6 +84,7 @@ class IdentityReactivationSagaMariaDbIT {
   private TransactionTemplate transactionTemplate;
 
   @TestConfiguration
+  @Profile("reactivation-erasure-proof")
   static class ErasureClockConfiguration {
     @Bean
     @Primary

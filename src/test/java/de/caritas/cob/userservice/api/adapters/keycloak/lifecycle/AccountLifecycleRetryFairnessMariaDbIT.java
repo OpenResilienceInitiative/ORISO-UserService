@@ -130,6 +130,8 @@ class AccountLifecycleRetryFairnessMariaDbIT extends AccountLifecycleRetryFairne
     assertEquals(
         0, erasureOwner(fixture, ERASURE_NOW.minusSeconds(1)).eraseExpiredScopedSecrets(lease));
     assertEquals(fixture.frozen, erasureRaw(fixture));
+    assertEquals(0, erasureOwner(fixture, ERASURE_NOW).eraseExpiredScopedSecrets(lease));
+    assertNull(erasureCursor(fixture));
     assertEquals(1, erasureOwner(fixture, ERASURE_NOW).eraseExpiredScopedSecrets(lease));
     var history = erasureRaw(fixture);
     assertEquals("FROZEN_HISTORY", history.path("phase").textValue());
