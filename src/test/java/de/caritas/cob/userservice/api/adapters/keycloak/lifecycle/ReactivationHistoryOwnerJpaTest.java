@@ -153,23 +153,25 @@ class ReactivationHistoryOwnerJpaTest {
     when(broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE)).thenReturn(machine);
     var http = new RestTemplate();
     server = MockRestServiceServer.bindTo(http).build();
-    coldOwner = () -> new ScopedAskerReactivation(
-            mode,
-            authenticated,
-            scope,
-            request,
-            jdbc,
-            transactions,
-            actors,
-            broker,
-            codec,
-            http,
-            clock,
-            "https://identity.test",
-            ISSUER,
-            "history",
-            REALM,
-            saga);
+    coldOwner =
+        () ->
+            new ScopedAskerReactivation(
+                mode,
+                authenticated,
+                scope,
+                request,
+                jdbc,
+                transactions,
+                actors,
+                broker,
+                codec,
+                http,
+                clock,
+                "https://identity.test",
+                ISSUER,
+                "history",
+                REALM,
+                saga);
     owner = coldOwner.get();
     facade.setScopedReactivation(owner);
     renewHuman();
@@ -353,11 +355,17 @@ class ReactivationHistoryOwnerJpaTest {
     assertEquals(full29, ReactivationUserSnapshotSchema.capture(jdbc, codec, ACCOUNT, false));
     assertNull(history.path("receipt").textValue());
     assertTrue(history.path("postSql").isNull());
-    var verified = codec.verifyReactivationHistory(history.path("metadata"),
-        history.path("envelope").textValue(), "FROZEN_HISTORY", null, actor);
+    var verified =
+        codec.verifyReactivationHistory(
+            history.path("metadata"),
+            history.path("envelope").textValue(),
+            "FROZEN_HISTORY",
+            null,
+            actor);
     assertFalse(verified.template().path("change").has("password"));
-    var stale = new de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService.ClaimLease(
-        lease.taskName(), lease.claimedUntil().minusNanos(1000));
+    var stale =
+        new de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService.ClaimLease(
+            lease.taskName(), lease.claimedUntil().minusNanos(1000));
     assertEquals(0, owner.eraseExpiredScopedSecrets(stale));
     assertEquals(0, owner.eraseExpiredScopedSecrets(lease));
     assertEquals(history, raw());
@@ -373,13 +381,17 @@ class ReactivationHistoryOwnerJpaTest {
     for (int index = 0; index < 105; index++) {
       String id = String.format(Locale.ROOT, "10000000-0000-4000-8000-%012d", index);
       var user = new User(id, null, "poison-" + index, EMAIL, false);
-      user.setTenantId(7L); user.setLanguageCode(LanguageCode.en);
-      users.save(user); poisonAccounts.add(id);
+      user.setTenantId(7L);
+      user.setLanguageCode(LanguageCode.en);
+      users.save(user);
+      poisonAccounts.add(id);
       String raw = index == 0 ? "x".repeat(131073) : "{\"incomplete\":";
       poison.put(id, raw);
       jdbc.update("update user set reactivation_scoped_json=? where user_id=?", raw, id);
     }
-    clock.current = Instant.ofEpochSecond(frozen.path("metadata").path("authorityValidUntil").longValue() + 604800);
+    clock.current =
+        Instant.ofEpochSecond(
+            frozen.path("metadata").path("authorityValidUntil").longValue() + 604800);
     var lease = claimErasure();
     removeHuman();
     var full29 = ReactivationUserSnapshotSchema.capture(jdbc, codec, ACCOUNT, false);
@@ -390,8 +402,14 @@ class ReactivationHistoryOwnerJpaTest {
     assertEquals(ACCOUNT, cursor());
     assertEquals("FROZEN_HISTORY", raw().path("phase").textValue());
     assertEquals(full29, ReactivationUserSnapshotSchema.capture(jdbc, codec, ACCOUNT, false));
-    for (var row : poison.entrySet()) assertTrue(row.getValue().equals(jdbc.queryForObject(
-        "select reactivation_scoped_json from user where user_id=?", String.class, row.getKey())));
+    for (var row : poison.entrySet())
+      assertTrue(
+          row.getValue()
+              .equals(
+                  jdbc.queryForObject(
+                      "select reactivation_scoped_json from user where user_id=?",
+                      String.class,
+                      row.getKey())));
     assertEquals(0, coldOwner.get().eraseExpiredScopedSecrets(lease));
     assertNull(cursor());
     verifyNoInteractions(broker, generic, repair);
@@ -401,31 +419,48 @@ class ReactivationHistoryOwnerJpaTest {
 
   private JsonNode uncertain() {
     expectRead("a".repeat(64));
-    server.expect(requestTo(URL + "/reactivate")).andRespond(outbound -> {
-      throw new ResourceAccessException("synthetic unknown receiver outcome");
-    });
-    assertThrows(de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException.class,
+    server
+        .expect(requestTo(URL + "/reactivate"))
+        .andRespond(
+            outbound -> {
+              throw new ResourceAccessException("synthetic unknown receiver outcome");
+            });
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException.class,
         () -> facade.reactivateAsker(input(PASSWORD)));
-    server.verify(); server.reset();
+    server.verify();
+    server.reset();
     return raw();
   }
 
-  private de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService.ClaimLease claimErasure() {
-    var writer = new de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimWriter(claims, clock);
-    var service = new de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService(writer);
+  private de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService.ClaimLease
+      claimErasure() {
+    var writer =
+        new de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimWriter(
+            claims, clock);
+    var service =
+        new de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService(writer);
     // The actual writer/repository run under this physical owning JPA transaction.
-    return new org.springframework.transaction.support.TransactionTemplate(transactions).execute(
-        ignored -> service.tryClaimLease(ScopedAskerReactivation.SECRET_ERASURE_TASK, Duration.ofMinutes(5)).orElseThrow());
+    return new org.springframework.transaction.support.TransactionTemplate(transactions)
+        .execute(
+            ignored ->
+                service
+                    .tryClaimLease(
+                        ScopedAskerReactivation.SECRET_ERASURE_TASK, Duration.ofMinutes(5))
+                    .orElseThrow());
   }
 
   private String cursor() {
-    return jdbc.queryForObject("select reactivation_erasure_after_account_id from scheduled_task_claim where task_name=?",
-        String.class, ScopedAskerReactivation.SECRET_ERASURE_TASK);
+    return jdbc.queryForObject(
+        "select reactivation_erasure_after_account_id from scheduled_task_claim where task_name=?",
+        String.class,
+        ScopedAskerReactivation.SECRET_ERASURE_TASK);
   }
 
   private void removeHuman() {
     authenticated.setAccessToken(null);
-    request.setUserPrincipal(null); request.removeHeader("Authorization");
+    request.setUserPrincipal(null);
+    request.removeHeader("Authorization");
     clearInvocations(broker);
   }
 
@@ -443,42 +478,66 @@ class ReactivationHistoryOwnerJpaTest {
     expectRead("a".repeat(64));
     var originalBody = new AtomicReference<String>();
     var refusal = new AtomicReference<String>();
-    server.expect(requestTo(URL + "/reactivate")).andRespond(outbound -> {
-      assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-      String body = ((MockClientHttpRequest) outbound).getBodyAsString();
-      originalBody.set(body); refusal.set(signed(body, status));
-      throw new ResourceAccessException("synthetic lost terminal response");
-    });
-    assertThrows(de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException.class,
+    server
+        .expect(requestTo(URL + "/reactivate"))
+        .andRespond(
+            outbound -> {
+              assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+              String body = ((MockClientHttpRequest) outbound).getBodyAsString();
+              originalBody.set(body);
+              refusal.set(signed(body, status));
+              throw new ResourceAccessException("synthetic lost terminal response");
+            });
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException.class,
         () -> facade.reactivateAsker(input(PASSWORD)));
-    server.verify(); server.reset();
+    server.verify();
+    server.reset();
     var frozen = raw();
-    clock.current = Instant.ofEpochSecond(frozen.path("metadata").path("authorityValidUntil").longValue() + 604800);
+    clock.current =
+        Instant.ofEpochSecond(
+            frozen.path("metadata").path("authorityValidUntil").longValue() + 604800);
     var erased = (ObjectNode) frozen.deepCopy();
     erased.put("phase", "FROZEN_HISTORY");
-    erased.put("envelope", codec.retainReactivationHistory(frozen.path("metadata"),
-        frozen.path("envelope").textValue(), "FROZEN", null, actor));
-    write(erased); renewHuman();
-    Class<? extends RuntimeException> expected = switch (status) {
-      case 400 -> de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException.class;
-      case 403 -> de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class;
-      case 409 -> de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class;
-      default -> throw new AssertionError("Unknown synthetic status");
-    };
+    erased.put(
+        "envelope",
+        codec.retainReactivationHistory(
+            frozen.path("metadata"), frozen.path("envelope").textValue(), "FROZEN", null, actor));
+    write(erased);
+    renewHuman();
+    Class<? extends RuntimeException> expected =
+        switch (status) {
+          case 400 ->
+              de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException.class;
+          case 403 ->
+              de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class;
+          case 409 ->
+              de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class;
+          default -> throw new AssertionError("Unknown synthetic status");
+        };
     expectRefusal(originalBody.get(), refusal.get(), status);
     assertThrows(expected, () -> facade.reactivateAsker(input(PASSWORD)));
-    server.verify(); server.reset();
+    server.verify();
+    server.reset();
     var declined = raw();
     assertEquals("NO_EFFECT_HISTORY", declined.path("phase").textValue());
     assertEquals(frozen.path("metadata"), declined.path("metadata"));
-    assertNull(jdbc.queryForObject("select reactivation_operation_id from user where user_id=?", String.class, ACCOUNT));
-    var verified = codec.verifyReactivationHistory(declined.path("metadata"),
-        declined.path("envelope").textValue(), "NO_EFFECT_HISTORY", declined.path("receipt").textValue(), actor);
+    assertNull(
+        jdbc.queryForObject(
+            "select reactivation_operation_id from user where user_id=?", String.class, ACCOUNT));
+    var verified =
+        codec.verifyReactivationHistory(
+            declined.path("metadata"),
+            declined.path("envelope").textValue(),
+            "NO_EFFECT_HISTORY",
+            declined.path("receipt").textValue(),
+            actor);
     assertEquals("NO_EFFECT", verified.phase());
     assertFalse(verified.template().path("change").has("password"));
     verify(lifecycle, never()).cancelUserDeletion(any(User.class));
     var invalidPost = (ObjectNode) declined.deepCopy();
-    ((ObjectNode) invalidPost.path("postSql")).put("reactivation_operation_id", frozen.path("metadata").path("operationId").textValue());
+    ((ObjectNode) invalidPost.path("postSql"))
+        .put("reactivation_operation_id", frozen.path("metadata").path("operationId").textValue());
     write(invalidPost);
     assertThrows(RuntimeException.class, () -> facade.reactivateAsker(input(PASSWORD)));
     write(declined);
@@ -486,28 +545,48 @@ class ReactivationHistoryOwnerJpaTest {
     expectRefusal(originalBody.get(), refusal.get(), status);
     assertThrows(expected, () -> facade.reactivateAsker(input(PASSWORD)));
     assertEquals(afterRejection, jdbc.queryForMap("select * from user where user_id=?", ACCOUNT));
-    server.verify(); server.reset();
-    clock.current = Instant.now(); renewHuman();
+    server.verify();
+    server.reset();
+    clock.current = Instant.now();
+    renewHuman();
     expectRead("b".repeat(64));
-    server.expect(requestTo(URL + "/reactivate")).andRespond(outbound -> {
-      String body = ((MockClientHttpRequest) outbound).getBodyAsString();
-      assertNotEquals(frozen.path("metadata").path("operationId"), codec.read(body, JsonNode.class).path("operationId"));
-      assertTrue("synthetic-corrected-password".equals(codec.read(body, JsonNode.class).path("change").path("password").textValue()));
-      return withSuccess(signed(body), MediaType.APPLICATION_JSON).createResponse(outbound);
-    });
+    server
+        .expect(requestTo(URL + "/reactivate"))
+        .andRespond(
+            outbound -> {
+              String body = ((MockClientHttpRequest) outbound).getBodyAsString();
+              assertNotEquals(
+                  frozen.path("metadata").path("operationId"),
+                  codec.read(body, JsonNode.class).path("operationId"));
+              assertTrue(
+                  "synthetic-corrected-password"
+                      .equals(
+                          codec
+                              .read(body, JsonNode.class)
+                              .path("change")
+                              .path("password")
+                              .textValue()));
+              return withSuccess(signed(body), MediaType.APPLICATION_JSON).createResponse(outbound);
+            });
     assertDoesNotThrow(() -> facade.reactivateAsker(input("synthetic-corrected-password")));
     assertEquals("ACKNOWLEDGED", raw().path("phase").textValue());
     verify(lifecycle, times(1)).cancelUserDeletion(any(User.class));
-    verifyNoInteractions(generic, repair); server.verify();
+    verifyNoInteractions(generic, repair);
+    server.verify();
   }
 
   private void expectRefusal(String body, String reply, int status) {
-    server.expect(requestTo(URL + "/reactivate")).andRespond(outbound -> {
-      assertTrue(body.equals(((MockClientHttpRequest) outbound).getBodyAsString()));
-      return org.springframework.test.web.client.response.MockRestResponseCreators
-          .withStatus(org.springframework.http.HttpStatus.valueOf(status))
-          .body(reply).contentType(MediaType.APPLICATION_JSON).createResponse(outbound);
-    });
+    server
+        .expect(requestTo(URL + "/reactivate"))
+        .andRespond(
+            outbound -> {
+              assertTrue(body.equals(((MockClientHttpRequest) outbound).getBodyAsString()));
+              return org.springframework.test.web.client.response.MockRestResponseCreators
+                  .withStatus(org.springframework.http.HttpStatus.valueOf(status))
+                  .body(reply)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .createResponse(outbound);
+            });
   }
 
   private void renewHuman() {
@@ -612,9 +691,19 @@ class ReactivationHistoryOwnerJpaTest {
       outer.put("accountId", ACCOUNT);
       outer.put("result", status == null ? "UPDATED" : "NO_EFFECT");
       if (status != null) outer.put("status", status);
-      outer.put("receipt", encoded + "." + HexFormat.of().formatHex(mac.doFinal(
-          ((status == null ? "maintenance-operation-receipt" : "maintenance-no-effect-receipt/v1")
-              + "\n" + encoded).getBytes(StandardCharsets.UTF_8))));
+      outer.put(
+          "receipt",
+          encoded
+              + "."
+              + HexFormat.of()
+                  .formatHex(
+                      mac.doFinal(
+                          ((status == null
+                                      ? "maintenance-operation-receipt"
+                                      : "maintenance-no-effect-receipt/v1")
+                                  + "\n"
+                                  + encoded)
+                              .getBytes(StandardCharsets.UTF_8))));
       return codec.canonical(outer);
     } catch (java.security.GeneralSecurityException impossible) {
       throw new IllegalStateException("Synthetic receipt unavailable");

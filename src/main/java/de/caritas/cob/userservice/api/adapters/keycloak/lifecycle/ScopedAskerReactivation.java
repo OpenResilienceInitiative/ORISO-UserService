@@ -53,7 +53,8 @@ public final class ScopedAskerReactivation {
 
   /** Local-only retention is closed until the bounded SQL/lease assertions are reached. */
   public int eraseExpiredScopedSecrets(
-      de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService.ClaimLease lease) {
+      de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService.ClaimLease
+          lease) {
     return 0;
   }
 
