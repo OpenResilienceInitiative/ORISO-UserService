@@ -489,9 +489,15 @@ public class GrantConsultantIdentityService {
 
     public ConsultantAdminResponseDTO currentResult() {
       requireActive();
-      return ConsultantResponseDTOBuilder.getInstance(
-              consultantRepository.findById(account).orElseThrow())
-          .buildResponseDTO();
+      var result = new java.util.concurrent.atomic.AtomicReference<ConsultantAdminResponseDTO>();
+      TenantContext.runIn(
+          source.getTenantId(),
+          () ->
+              result.set(
+                  ConsultantResponseDTOBuilder.getInstance(
+                          consultantRepository.findById(account).orElseThrow())
+                      .buildResponseDTO()));
+      return Objects.requireNonNull(result.get());
     }
 
     @Override

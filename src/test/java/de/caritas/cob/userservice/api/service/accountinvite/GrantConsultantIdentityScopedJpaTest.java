@@ -437,7 +437,9 @@ class GrantConsultantIdentityScopedJpaTest {
   @Test
   void theActualAdminGrantAcknowledgesNativeAndOwnedMatrixBeforeItsWholeSqlCallback() {
     var before = adminSql();
+    var originalTenant = TenantContext.getCurrentTenantData();
     assertDoesNotThrow(() -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
+    assertSame(originalTenant, TenantContext.getCurrentTenantData());
     assertEquals(1, effects.get());
     assertEquals(1, matrixCalls.get());
     assertEquals("APPLIED", phase());
