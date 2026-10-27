@@ -811,8 +811,7 @@ class GrantConsultantIdentityScopedJpaTest {
     assertThrows(
         IllegalArgumentException.class,
         () ->
-            maintenance.configureReviewedProtectedProfiles(
-                Map.of("CONSULTANT", List.of(current))));
+            maintenance.configureReviewedProtectedProfiles(Map.of("CONSULTANT", List.of(current))));
     assertThrows(
         IllegalArgumentException.class,
         () ->
