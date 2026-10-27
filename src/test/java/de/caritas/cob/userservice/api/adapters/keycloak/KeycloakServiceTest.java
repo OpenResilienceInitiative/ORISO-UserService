@@ -164,6 +164,30 @@ public class KeycloakServiceTest {
   }
 
   @Test
+  void deactivateUser_Should_SucceedWhenTheKeycloakAccountIsAlreadyGone() {
+    var resource = mock(UserResource.class);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    when(usersResource.get("account-id")).thenReturn(resource);
+    when(resource.toRepresentation()).thenThrow(new jakarta.ws.rs.NotFoundException("gone"));
+
+    keycloakService.deactivateUser("account-id");
+
+    verify(resource, never()).update(org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  void deactivateUser_Should_SucceedWhenKeycloakReturnsNoRepresentation() {
+    var resource = mock(UserResource.class);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    when(usersResource.get("account-id")).thenReturn(resource);
+    when(resource.toRepresentation()).thenReturn(null);
+
+    keycloakService.deactivateUser("account-id");
+
+    verify(resource, never()).update(org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
   void findEnabledById_Should_RefreshUnauthorizedSessionAndRetryOnce() {
     var resource = mock(UserResource.class);
     var representation = new UserRepresentation();
