@@ -51,12 +51,36 @@ public class AskerUserAdminFacade {
     this.scopedReactivation = java.util.Objects.requireNonNull(owner);
   }
 
+  private de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+      preDeletion;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public void setScopedPreDeletion(
+      @org.springframework.lang.Nullable
+          de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+              owner) {
+    preDeletion = owner;
+  }
+
   /**
    * Marks the asker with the given id for deletion.
    *
    * @param userId the id of the asker
    */
   public void markAskerForDeletion(String userId) {
+    if (identityMode != null && identityMode.isFiveActorMode()) {
+      if (preDeletion == null || !preDeletion.isFiveActorMode())
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+      preDeletion.startAdminAsker(
+          userId,
+          acknowledged ->
+              acknowledged.completeUser(
+                  user -> {
+                    deletionLifecycleService.beginUserDeletion(user, null);
+                    userService.saveUser(user);
+                  }));
+      return;
+    }
     adminScope.assertMay(Target.adviceSeeker(userId));
     User user =
         userService

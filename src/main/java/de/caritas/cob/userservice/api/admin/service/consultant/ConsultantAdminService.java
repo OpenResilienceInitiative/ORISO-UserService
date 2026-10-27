@@ -42,7 +42,6 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 /** Service class for admin operations on {@link Consultant} objects. */
 @Service
@@ -74,6 +73,20 @@ public class ConsultantAdminService {
 
   private final @NonNull ConsultantTopicRepository consultantTopicRepository;
   private final @NonNull TopicService topicService;
+
+  private de.caritas.cob.userservice.api.port.out.IdentityClientConfig identityMode;
+  private de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+      preDeletion;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public void setScopedPreDeletion(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode,
+      @org.springframework.lang.Nullable
+          de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+              owner) {
+    identityMode = mode;
+    preDeletion = owner;
+  }
 
   /**
    * Finds a {@link Consultant} by the given consultant id and throws a {@link NoContentException}
@@ -209,8 +222,66 @@ public class ConsultantAdminService {
    * @param consultantId the consultant id
    * @param forceDeleteSessions
    */
-  @Transactional
   public void markConsultantForDeletion(String consultantId, Boolean forceDeleteSessions) {
+    if (identityMode != null && identityMode.isFiveActorMode()) {
+      if (preDeletion == null || !preDeletion.isFiveActorMode())
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+      preDeletion.startAdminConsultant(
+          consultantId,
+          forceDeleteSessions,
+          acknowledged -> {
+            var relations =
+                consultantPreDeletionService.prepareAcknowledgedDeletion(
+                    acknowledged, forceDeleteSessions);
+            var memberships =
+                membersOnlyRevocation.prepareAcknowledgedDeletion(
+                    acknowledged, Boolean.TRUE.equals(forceDeleteSessions));
+            acknowledged.completeConsultant(
+                consultant -> {
+                  var deletedAt = nowInUtc();
+                  relations.apply(consultant, deletedAt);
+                  memberships.apply(consultant);
+                  if (Boolean.TRUE.equals(forceDeleteSessions)) {
+                    sessionRepository
+                        .findByConsultantAndStatusIn(
+                            consultant, Lists.newArrayList(IN_PROGRESS, IN_ARCHIVE))
+                        .forEach(
+                            session -> {
+                              if (membersOnlyChatAccess.concerns(session)
+                                  && memberships.keepCaseOnDeletionOf(session, consultant)) return;
+                              caseHandoverRequestRepository.deleteAllBySessionId(session.getId());
+                              sessionSupervisorRepository.deleteAllBySessionId(session.getId());
+                              sessionRepository.delete(session);
+                            });
+                    unassignNewOrInitialSessions(consultant);
+                  }
+                  consultant.setDeleteDate(deletedAt);
+                  deletionLifecycleService.beginConsultantDeletion(
+                      consultant, authenticatedUser.getUserId());
+                  pictureStore.removeForConsultantDeletion(consultantId);
+                  consultant.setStatus(ConsultantStatus.IN_DELETION);
+                  consultantRepository.save(consultant);
+                });
+          });
+      return;
+    }
+    if (preDeletionTransactions == null)
+      markConsultantForDeletionLegacy(consultantId, forceDeleteSessions);
+    else
+      new org.springframework.transaction.support.TransactionTemplate(preDeletionTransactions)
+          .executeWithoutResult(
+              ignored -> markConsultantForDeletionLegacy(consultantId, forceDeleteSessions));
+  }
+
+  private org.springframework.transaction.PlatformTransactionManager preDeletionTransactions;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public void setPreDeletionTransactions(
+      org.springframework.transaction.PlatformTransactionManager manager) {
+    preDeletionTransactions = java.util.Objects.requireNonNull(manager);
+  }
+
+  private void markConsultantForDeletionLegacy(String consultantId, Boolean forceDeleteSessions) {
     var consultant = pictureStore.lockActiveConsultant(consultantId);
 
     // One date for the counsellor and the relations removed with it: that pair marks the agencies

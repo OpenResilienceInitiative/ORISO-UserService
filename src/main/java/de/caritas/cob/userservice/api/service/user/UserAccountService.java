@@ -66,6 +66,47 @@ public class UserAccountService {
       supervisorAddedEmailNotificationService;
   private final @NonNull DeletionLifecycleService deletionLifecycleService;
 
+  private de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+      preDeletion;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public void setScopedPreDeletion(
+      @org.springframework.lang.Nullable
+          de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+              owner) {
+    preDeletion = owner;
+  }
+
+  public void deactivateAndFlagUserAccountForDeletion(String password) {
+    if (!identityClientConfig.isFiveActorMode()) {
+      deactivateAndFlagUserAccountForDeletion();
+      return;
+    }
+    if (preDeletion == null || !preDeletion.isFiveActorMode())
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    preDeletion.startSelfAsker(password, this::completeAcknowledgedSelfDeletion);
+  }
+
+  public int resumeSelfAskerDeletions(int limit) {
+    if (!identityClientConfig.isFiveActorMode() || preDeletion == null)
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    return preDeletion.recoverSelfAskerOutcomes(limit, this::completeAcknowledgedSelfDeletion);
+  }
+
+  private void completeAcknowledgedSelfDeletion(
+      de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+              .AcknowledgedPreDeletion
+          acknowledged) {
+    var completed = new java.util.concurrent.atomic.AtomicReference<User>();
+    acknowledged.completeUser(
+        user -> {
+          deletionLifecycleService.beginUserDeletion(user, user.getUserId());
+          userService.saveUser(user);
+          completed.set(user);
+        });
+    fireAccountDeletionStatisticsEvent(completed.get());
+  }
+
   public Optional<User> findUserByEmail(String email) {
     return this.userService.findUserByEmail(email);
   }
@@ -284,6 +325,8 @@ public class UserAccountService {
    * deletion.
    */
   public void deactivateAndFlagUserAccountForDeletion() {
+    if (identityClientConfig.isFiveActorMode())
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
     User user = retrieveValidatedUser();
     this.identityDeactivator.deactivateUser(user.getUserId());
     deletionLifecycleService.beginUserDeletion(user, user.getUserId());

@@ -817,6 +817,41 @@ class UserAccountControllerDelegateTest {
   }
 
   @Test
+  void scopedDeletionDelegatesCurrentPasswordToTheOwnedOriginalAttemptBeforeAnyPasswordGrant() {
+    scopedDeletionRouteFixture();
+    var body = new DeleteUserAccountDTO();
+    body.setPassword("original-current-password");
+
+    var response = delegate.deactivateAndFlagUserAccountForDeletion(body);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    verify(userAccountProvider)
+        .deactivateAndFlagUserAccountForDeletion("original-current-password");
+    verify(userAccountProvider, never()).deactivateAndFlagUserAccountForDeletion();
+    org.mockito.Mockito.verifyNoInteractions(identityManager);
+  }
+
+  @Test
+  void
+      scopedPendingDeletionRetainsItsExactPasswordRequestInsteadOfLoggingInTheDisabledAccountAgain() {
+    scopedDeletionRouteFixture();
+    var body = new DeleteUserAccountDTO();
+    body.setPassword("original-current-password");
+    doThrow(new ServiceUnavailableException("Original operation remains pending"))
+        .doNothing()
+        .when(userAccountProvider)
+        .deactivateAndFlagUserAccountForDeletion("original-current-password");
+
+    assertThatThrownBy(() -> delegate.deactivateAndFlagUserAccountForDeletion(body))
+        .isInstanceOf(ServiceUnavailableException.class);
+    assertThat(delegate.deactivateAndFlagUserAccountForDeletion(body).getStatusCode())
+        .isEqualTo(HttpStatus.OK);
+    verify(userAccountProvider, org.mockito.Mockito.times(2))
+        .deactivateAndFlagUserAccountForDeletion("original-current-password");
+    org.mockito.Mockito.verifyNoInteractions(identityManager);
+  }
+
+  @Test
   void deactivateAndFlagUserAccountForDeletion_badPassword_throwsBadRequestException() {
     // Account deletion requires a valid current password.
     var deleteUserAccountDTO = new DeleteUserAccountDTO();
@@ -875,5 +910,33 @@ class UserAccountControllerDelegateTest {
     verify(identityManager).validatePasswordIgnoring2fa(USERNAME, "correct");
     verify(identityManager).validatePasswordIgnoring2fa("enc.username", "correct");
     verify(userAccountProvider).deactivateAndFlagUserAccountForDeletion();
+  }
+
+  private void scopedDeletionRouteFixture() {
+    var mode =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
+    when(mode.isFiveActorMode()).thenReturn(true);
+    delegate =
+        new UserAccountControllerDelegate(
+            userAccountProvider,
+            new AuthenticatedUser(USER_ID, USERNAME, Set.of("user"), "fixture-human", Set.of()),
+            decryptionService,
+            consultantDataFacade,
+            identityPolicy,
+            identityManager,
+            accountManager,
+            messenger,
+            consultantDtoMapper,
+            userDtoMapper,
+            consultantService,
+            consultantUpdateService,
+            consultantDataProvider,
+            askerDataProvider,
+            videoChatConfig,
+            keycloakUserDataProvider,
+            agencyAdminDataProvider,
+            new UsernameTranscoder());
+    delegate.setPasswordIdentityConfig(mode);
   }
 }
