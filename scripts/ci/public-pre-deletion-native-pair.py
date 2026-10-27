@@ -250,6 +250,7 @@ def native(kc, report):
             'adapters/keycloak/lifecycle/KeycloakAccountLifecycleCommands',
             'adapters/keycloak/lifecycle/AccountLifecycleCodec', 'config/auth/TaskActorTokenBroker',
             'config/auth/SecurityConfig', 'config/auth/RoleAuthorizationAuthorityMapper',
+            'adapters/keycloak/config/KeycloakConfig', 'helper/AuthenticatedUser',
             'adapters/keycloak/KeycloakService', 'adapters/keycloak/KeycloakAuthClient', 'IdentityManager',
             'workflow/delete/service/PublicPreDeletionMaintenance',
             'workflow/delete/service/PreDeletionRelatedCustody', 'service/user/UserAccountService',

@@ -102,35 +102,32 @@ class PublicPreDeletionNativePairProof extends PublicPreDeletionJpaTest {
         nativeRealmId);
   }
 
-  private void installHuman(Jwt jwt, String username, String raw) {
+  private void installHuman(Jwt jwt, String raw) {
     assertEquals(issuer, jwt.getIssuer().toString());
     assertEquals(required("PAIR_HUMAN_CLIENT"), jwt.getClaimAsString("azp"));
     assertEquals(Set.of("userservice"), Set.copyOf(jwt.getAudience()));
     var roles = KeycloakRoles.of(jwt.getClaims());
+    String principalAttribute = fixtureEnvironment.getRequiredProperty("keycloak.principal-attribute");
     var security = new SecurityConfig(new CsrfSecurityProperties(), null, null);
-    ReflectionTestUtils.setField(
-        security,
-        "principalAttribute",
-        fixtureEnvironment.getRequiredProperty("keycloak.principal-attribute"));
+    ReflectionTestUtils.setField(security, "principalAttribute", principalAttribute);
     var authentication =
         security.jwtAuthenticationConverter(new RoleAuthorizationAuthorityMapper()).convert(jwt);
     assertNotNull(authentication);
     assertTrue(authentication.isAuthenticated());
-    assertEquals(username, authentication.getName());
+    assertEquals(
+        jwt.hasClaim(principalAttribute) ? jwt.getClaimAsString(principalAttribute) : jwt.getSubject(),
+        authentication.getName());
     SecurityContextHolder.getContext().setAuthentication(authentication);
     request.setUserPrincipal(authentication);
     request.removeHeader("Authorization");
     request.addHeader("Authorization", "Bearer " + raw);
-    actor =
-        new AuthenticatedUser(
-            jwt.getSubject(),
-            username,
-            roles,
-            raw,
-            authentication.getAuthorities().stream()
-                .map(value -> value.getAuthority())
-                .collect(java.util.stream.Collectors.toUnmodifiableSet()));
-    actor.setTenantId(Long.valueOf(jwt.getClaimAsString("tenantId")));
+    var principalConfig = new KeycloakConfig();
+    principalConfig.setPrincipalAttribute(principalAttribute);
+    actor = principalConfig.authenticatedUser(request, new UsernameTranscoder());
+    assertEquals(jwt.getSubject(), actor.getUserId());
+    assertEquals(roles, actor.getRoles());
+    assertEquals(raw, actor.getAccessToken());
+    assertEquals(Long.valueOf(jwt.getClaimAsString("tenantId")), actor.getTenantId());
     scope =
         new AdminScope(
             actor,
@@ -239,7 +236,7 @@ class PublicPreDeletionNativePairProof extends PublicPreDeletionJpaTest {
     var admin =
         Admin.builder()
             .id(human.getUserId())
-            .username(new UsernameTranscoder().encodeUsername(human.getUsername()))
+            .username(new UsernameTranscoder().encodeUsername(required("PAIR_HUMAN_USERNAME")))
             .firstName("Native")
             .lastName("Operator")
             .email(required("PAIR_HUMAN_EMAIL"))
@@ -471,7 +468,7 @@ class PublicPreDeletionNativePairProof extends PublicPreDeletionJpaTest {
       String rawHuman = required("PAIR_HUMAN_TOKEN");
       var adminJwt = decoder.decode(rawHuman);
       assertEquals(required("PAIR_HUMAN_ID"), adminJwt.getSubject());
-      installHuman(adminJwt, required("PAIR_HUMAN_USERNAME"), rawHuman);
+      installHuman(adminJwt, rawHuman);
       assertEquals(Set.of("agency-admin", "tenant-admin", "user-admin"), actor.getRoles());
       assertEquals(0L, actor.getTenantId());
       assertTrue(actor.getGrantedAuthorities().contains(Authority.AuthorityValue.USER_ADMIN));
@@ -544,7 +541,7 @@ class PublicPreDeletionNativePairProof extends PublicPreDeletionJpaTest {
             Admin.builder()
                 .id(actor.getUserId())
                 .tenantId(0L)
-                .username(new UsernameTranscoder().encodeUsername(actor.getUsername()))
+                .username(new UsernameTranscoder().encodeUsername(required("PAIR_HUMAN_USERNAME")))
                 .firstName("Native")
                 .lastName("Operator")
                 .email(required("PAIR_HUMAN_EMAIL"))
@@ -564,7 +561,7 @@ class PublicPreDeletionNativePairProof extends PublicPreDeletionJpaTest {
           assertTrue(
               selfJwt.getExpiresAt().getEpochSecond() - selfJwt.getIssuedAt().getEpochSecond()
                   <= 15);
-          installHuman(selfJwt, USERNAME, login.getAccessToken());
+          installHuman(selfJwt, login.getAccessToken());
         } finally {
           selfWindow(false);
         }
