@@ -671,6 +671,77 @@ class GrantConsultantIdentityScopedJpaTest {
     assertEquals(1, joinedEvents.get());
   }
 
+  @Test
+  void jointGrantCreationColumnAndOriginalTamperCannotRebindTheFirstReadAttempt() {
+    lostReadReply = true;
+    assertThrows(
+        RuntimeException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
+    assertEquals("PREPARED", phase());
+    assertEquals(1, reads.get());
+    String originalJson =
+        jdbc.queryForObject(
+            "select original_json from general_admin_identity_intent where operation_id=?",
+            String.class,
+            OPERATION);
+    var original =
+        (com.fasterxml.jackson.databind.node.ObjectNode) codec.read(originalJson, JsonNode.class);
+    var changed = java.time.Instant.parse(original.path("creation").textValue()).plusSeconds(1);
+    original.put("creation", changed.toString());
+    jdbc.update(
+        "update general_admin_identity_intent set original_json=?,created_at=? where operation_id=?",
+        codec.canonical(original),
+        java.sql.Timestamp.from(changed),
+        OPERATION);
+    assertThrows(
+        RuntimeException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
+    assertEquals(1, reads.get());
+    assertEquals(0, calls.get());
+    assertEquals(0, matrixCalls.get());
+    assertNoLocalConsultant();
+  }
+
+  @Test
+  void missingConsultingTypeSettingsCannotAuthorizeAnAssumedEmptyRequiredRoleSet() {
+    when(consultingTypes.getConsultingTypeSettings(1)).thenReturn(null);
+    assertThrows(
+        RuntimeException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
+    assertEquals(0, reads.get());
+    assertEquals(0, calls.get());
+    assertEquals(0, matrixCalls.get());
+    assertNoLocalConsultant();
+    assertEquals(
+        0,
+        jdbc.queryForObject(
+            "select count(*) from general_admin_identity_intent where operation_id=?",
+            Integer.class,
+            OPERATION));
+  }
+
+  @Test
+  void onlyTheActualSourceSelectedConsultingRoleSetEntersTheFrozenGrantUnion() {
+    var required = new java.util.LinkedHashMap<String, java.util.List<String>>();
+    required.put(null, java.util.List.of("group-chat-consultant"));
+    required.put("unselected", java.util.List.of("technical"));
+    var consultantRoles =
+        new de.caritas.cob.userservice.api.manager.consultingtype.roles.Consultant();
+    consultantRoles.setRoleSets(required);
+    var roles = new de.caritas.cob.userservice.consultingtypeservice.generated.web.model.RolesDTO();
+    roles.setConsultant(consultantRoles);
+    var settings =
+        new de.caritas.cob.userservice.consultingtypeservice.generated.web.model
+            .ExtendedConsultingTypeResponseDTO();
+    settings.setRoles(roles);
+    when(consultingTypes.getConsultingTypeSettings(1)).thenReturn(settings);
+    var input = command();
+    input.setGroupchatConsultant(false);
+    assertDoesNotThrow(() -> service.grantConsultantIdentityToAdmin(ACCOUNT, input));
+    assertEquals(DESIRED, nativeRoles);
+    assertEquals("APPLIED", phase());
+    assertEquals(1, effects.get());
+    assertEquals(1, matrixCalls.get());
+    assertEquals(1, joinedEvents.get());
+  }
+
   private de.caritas.cob.userservice.api.adapters.web.dto.GrantConsultantIdentityDTO command() {
     var command = new de.caritas.cob.userservice.api.adapters.web.dto.GrantConsultantIdentityDTO();
     command.setAgencyIds(List.of(71L));
