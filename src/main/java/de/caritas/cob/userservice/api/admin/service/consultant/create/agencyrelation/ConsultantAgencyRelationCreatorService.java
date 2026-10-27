@@ -77,11 +77,12 @@ public class ConsultantAgencyRelationCreatorService {
         throw new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException(
             "Consultant grant agency tenant changed");
       var settings = consultingTypeManager.getConsultingTypeSettings(agency.getConsultingType());
+      if (settings == null)
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
       var roles = new java.util.TreeSet<String>();
       // This actual grant route sends no roleSetKey. Preserve its exact existing selector,
       // including a configured null-key entry, rather than unioning unrelated named role sets.
-      if (settings != null
-          && settings.getRoles() != null
+      if (settings.getRoles() != null
           && settings.getRoles().getConsultant() != null
           && settings.getRoles().getConsultant().getRoleSets() != null) {
         var sets = settings.getRoles().getConsultant().getRoleSets();
