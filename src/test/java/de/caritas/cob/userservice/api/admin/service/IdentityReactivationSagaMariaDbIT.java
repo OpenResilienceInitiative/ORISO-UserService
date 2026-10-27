@@ -31,10 +31,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
@@ -84,7 +84,10 @@ class IdentityReactivationSagaMariaDbIT {
   private TransactionTemplate transactionTemplate;
 
   @TestConfiguration
-  @ConditionalOnProperty(name = "oriso.test.reactivation-erasure-clock", havingValue = "true", matchIfMissing = false)
+  @ConditionalOnProperty(
+      name = "oriso.test.reactivation-erasure-clock",
+      havingValue = "true",
+      matchIfMissing = false)
   static class ErasureClockConfiguration {
     @Bean
     @Primary
