@@ -33,6 +33,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 /** The existing asker saga's fixed chosen-password native boundary. */
 @RequiredArgsConstructor
 public final class ScopedAskerReactivation {
+  public static final String SECRET_ERASURE_TASK = "reactivation-secret-erasure-v1";
   private final @NonNull IdentityClientConfig mode;
   private final @NonNull AuthenticatedUser authenticated;
   private final @NonNull AdminScope scope;
@@ -49,6 +50,12 @@ public final class ScopedAskerReactivation {
   private final @NonNull String realmName;
   private final @NonNull String realmId;
   private final @NonNull IdentityReactivationSagaStore saga;
+
+  /** Local-only retention is closed until the bounded SQL/lease assertions are reached. */
+  public int eraseExpiredScopedSecrets(
+      de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService.ClaimLease lease) {
+    return 0;
+  }
 
   public void reactivate(AskerReactivationRequestDTO input) {
     requireOutside();

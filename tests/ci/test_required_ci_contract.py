@@ -60,12 +60,27 @@ def assert_native_ownership(excluded, mariadb_workflow, caller_workflow):
     source = "\n".join(step.get("run", "") for step in steps)
     required = [
         selector, "names == expected",
-        "and totals == {'tests': 9, 'failures': 0, 'errors': 0, 'skipped': 0}",
+        "and totals == {'tests': 11, 'failures': 0, 'errors': 0, 'skipped': 0}",
         "status == 0 and before == after", "source-before.json", "source-after.json",
         "if not accepted:", "raise SystemExit(status or 1)",
     ]
     if not all(fragment in source for fragment in required):
         raise AssertionError("Native owner must enforce exact cases, no skips and source binding")
+    exact_names = {
+        "oneHundredUncertainOwnedCleanupsCannotStarveTheNextCommittedAccountAfterRestart",
+        "twoReplicaReservationsAreDisjointAndCrashReservationsExpireWithoutDroppingIntents",
+        "aTemporarilyLockedIntentRemainsDueAndIsClaimedByTheNextTickAfterRelease",
+        "reservationCommitsPhysicallyBeforeDispatchAndSurvivesAnUnrelatedOuterRollback",
+        "migrationBackfillsAnExistingPendingIntentWithoutChangingItsImmutableBody",
+        "confirmedNativeConflictAndRefusalCommitReconciliationWithoutClaimingCompletion",
+        "retryFailuresEmitBoundedDiagnosticsAndKeepUnknownIntentsWhileHealthyWorkProgresses",
+        "thePinnedServerUsesInnoDbAndTheExactDueQueueIndex",
+        "theActualLiquibaseChangeSetCanRollBackAndUpgradeAnExistingPendingIntent",
+        "localSecretErasureKeepsTheOriginalDeadlineFullSqlAndUnknownClaim",
+        "persistedErasureCursorSurvivesPoisonLockedRowsAndTwoColdProcesses",
+    }
+    if not all("'" + name + "'" in source for name in exact_names):
+        raise AssertionError("Every original and additive native case is required")
     owners.add("AccountLifecycleRetryFairnessMariaDbIT")
     if excluded - owners:
         raise AssertionError("H2 exclusions without an actual native owner: " + str(sorted(excluded - owners)))
@@ -370,10 +385,22 @@ class RequiredCiContractTest(unittest.TestCase):
             lambda document: document["jobs"]["native-fairness"]["strategy"]["matrix"]["include"].pop()
         )
 
-    def test_fairness_owner_requires_the_exact_nine_case_gate(self):
+    def test_fairness_owner_requires_the_exact_eleven_case_gate(self):
         self.assert_invalid_fairness_owner(
-            lambda document: self.replace_native_source(document, "'tests': 9", "'tests': 8")
+            lambda document: self.replace_native_source(document, "'tests': 11", "'tests': 10")
         )
+
+    def test_fairness_owner_preserves_every_original_and_retention_case(self):
+        names = (
+            "oneHundredUncertainOwnedCleanupsCannotStarveTheNextCommittedAccountAfterRestart",
+            "localSecretErasureKeepsTheOriginalDeadlineFullSqlAndUnknownClaim",
+            "persistedErasureCursorSurvivesPoisonLockedRowsAndTwoColdProcesses",
+        )
+        for name in names:
+            with self.subTest(name=name):
+                self.assert_invalid_fairness_owner(
+                    lambda document: self.replace_native_source(document, name, "unrelatedCase")
+                )
 
     def test_fairness_owner_cannot_be_a_missing_native_job(self):
         self.assert_invalid_fairness_owner(
