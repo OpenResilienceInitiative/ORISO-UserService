@@ -53,6 +53,24 @@ def checked_protocol(value, kind):
         and value['humanPasswordGrants200'] == (2 if kind == 'self-asker' else 0))
 
 
+def checked_installer_checks(checks):
+    """Two original Bootstrap ready calls; renewal adds one ready/readback pair."""
+    if not isinstance(checks, list) or not 2 <= len(checks) <= 1000: return False
+    keys = {'phase', 'tokenCount', 'subjectClaimPresent', 'pinnedMasterIssuer',
+        'userReadStatus', 'sessionReadStatus', 'sameActualEnabledMasterInstallerAndNativeSessionVerified'}
+    for item in checks:
+        if (not isinstance(item, dict) or set(item) != keys or item['phase'] not in {'NATIVE_READY', 'RENEWAL'}
+                or type(item['tokenCount']) is not int or item['tokenCount'] != (1 if item['phase'] == 'NATIVE_READY' else 2)
+                or not isinstance(item['subjectClaimPresent'], list)
+                or len(item['subjectClaimPresent']) != item['tokenCount']
+                or any(type(value) is not bool for value in item['subjectClaimPresent'])
+                or item['pinnedMasterIssuer'] != [True] * item['tokenCount']
+                or item['userReadStatus'] != 200 or item['sessionReadStatus'] != 200
+                or item['sameActualEnabledMasterInstallerAndNativeSessionVerified'] is not True): return False
+    phases = [item['phase'] for item in checks]
+    return phases[:2] == ['NATIVE_READY', 'NATIVE_READY'] and phases[2:] == ['NATIVE_READY', 'RENEWAL'] * ((len(phases) - 2) // 2)
+
+
 def source_frame_catalog(paths):
     """Known source definitions only; the native caller supplies four fixed repository files."""
     result = {}
@@ -398,8 +416,10 @@ def native(kc, report):
             and observations[-1]['updateEvents'] - observations[0]['updateEvents'] == 1
             and all(value['exists'] and value['exactOriginalProjection'] and value['noRepresentation'] for value in observations))
         receipt['installer_identity_checks'] = ProtectedOperationRead.observation.get('installerIdentityChecks', [])
-        receipt['installer_identity_verified'] = len(receipt['installer_identity_checks']) >= 4 and all(
-            check.get('sameActualEnabledMasterInstallerAndNativeSessionVerified') is True for check in receipt['installer_identity_checks'])
+        receipt['installer_identity_verified'] = checked_installer_checks(receipt['installer_identity_checks'])
+        receipt['coverage_limits'] = {'httpSecurityFilterChain': False, 'browser': False,
+            'externalDelivery': False, 'pairedPublicGrantWithdrawalRestoration': False,
+            'restrictedOrdinaryOperator': False}
         receipt['self_time_fixture_original_restored'] = kind != 'self-asker' or bool(window and window['restored'])
         receipt['accepted'] = (inventory['accepted'] and receipt['child_exit'] == 0 and receipt['java_witness_complete']
             and receipt['protocol_counts_complete'] and receipt['one_actual_native_effect_event']

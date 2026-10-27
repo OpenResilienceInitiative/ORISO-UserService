@@ -110,6 +110,22 @@ class PublicPreDeletionPairControls(unittest.TestCase):
                 self.assertEqual(expected[node.name], hashlib.sha256(segment.encode()).hexdigest())
         self.assertEqual(set(expected), {node.name for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in expected})
 
+    def test_two_original_installer_ready_calls_and_every_optional_renewal_are_verified(self):
+        import copy
+        ready = {'phase': 'NATIVE_READY', 'tokenCount': 1, 'subjectClaimPresent': [False],
+            'pinnedMasterIssuer': [True], 'userReadStatus': 200, 'sessionReadStatus': 200,
+            'sameActualEnabledMasterInstallerAndNativeSessionVerified': True}
+        renewal = {**ready, 'phase': 'RENEWAL', 'tokenCount': 2,
+            'subjectClaimPresent': [False, False], 'pinnedMasterIssuer': [True, True]}
+        self.assertTrue(pair.checked_installer_checks([ready, ready]))
+        self.assertTrue(pair.checked_installer_checks([ready, ready, ready, renewal]))
+        for checks in [[], [ready], [ready, ready, ready], [ready, renewal], [ready, ready, renewal]]:
+            self.assertFalse(pair.checked_installer_checks(checks))
+        for key, value in [('userReadStatus', 403), ('sessionReadStatus', 403),
+                ('sameActualEnabledMasterInstallerAndNativeSessionVerified', False), ('pinnedMasterIssuer', [False])]:
+            checks = copy.deepcopy([ready, ready]); checks[1][key] = value
+            self.assertFalse(pair.checked_installer_checks(checks))
+
     def test_fixture_visibility_keeps_original_38_case_inventory(self):
         import hashlib
         import re

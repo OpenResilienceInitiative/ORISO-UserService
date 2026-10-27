@@ -55,6 +55,7 @@ class PublicPreDeletionNativePairProof extends PublicPreDeletionJpaTest {
   private static final String MATRIX = "@owned-public-pre-deletion:fixture.invalid";
   private final String chosenPassword = UUID.randomUUID() + "-C-private-public-start";
   private String nativeRealm, nativeRealmId, issuer;
+
   @org.springframework.beans.factory.annotation.Autowired
   private org.springframework.core.env.Environment fixtureEnvironment;
 
