@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -29,6 +30,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
@@ -74,7 +76,9 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Propagation;
@@ -85,7 +89,8 @@ import org.springframework.transaction.annotation.Transactional;
  * grant. Keycloak and Matrix are fakes that remember what the grant did to them.
  */
 @DataJpaTest
-@TestPropertySource(properties = {"spring.profiles.active=testing", "multitenancy.enabled=true"})
+@ActiveProfiles({"testing", "scenario-c-legacy-first-grant-race"})
+@TestPropertySource(properties = "multitenancy.enabled=true")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({
@@ -108,7 +113,15 @@ class AdminSelfAssignmentFirstGrantRaceIT {
   private static final String CONSULTANT_ROLE = UserRole.CONSULTANT.getValue();
 
   @TestConfiguration
+  @Profile("scenario-c-legacy-first-grant-race")
   static class CallerConfig {
+    @Bean
+    IdentityClientConfig legacyIdentityClientConfig() {
+      var config = mock(IdentityClientConfig.class);
+      when(config.isFiveActorMode()).thenReturn(false);
+      return config;
+    }
+
     @Bean
     AuthenticatedUser authenticatedUser() {
       return new AuthenticatedUser();
