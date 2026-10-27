@@ -392,8 +392,8 @@ public final class HumanAdminAccountMaintenance {
                   change.path("profileVersion").longValue(),
                   grant.requiredRoles());
         } else {
-          if (!fields.equals(Set.of("transition", "group"))
-              || !change.path("group").isTextual()) throw conflict();
+          if (!fields.equals(Set.of("transition", "group")) || !change.path("group").isTextual())
+            throw conflict();
           checked.role =
               grant == null
                   ? reviewedGroups.frozenAgencyAdminAddition(change.path("group").textValue())

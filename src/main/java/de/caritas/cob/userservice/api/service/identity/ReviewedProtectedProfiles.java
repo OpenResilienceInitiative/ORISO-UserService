@@ -6,7 +6,8 @@ import java.util.*;
 
 /** Installed selector data only. Native provenance and both operation grants remain independent. */
 final class ReviewedProtectedProfiles {
-  record Transition(ProtectedProfileSelector selector, List<String> original, List<String> desired) {
+  record Transition(
+      ProtectedProfileSelector selector, List<String> original, List<String> desired) {
     Transition {
       original = List.copyOf(original);
       desired = List.copyOf(desired);
@@ -81,8 +82,7 @@ final class ReviewedProtectedProfiles {
         matches.getFirst(), original.stream().sorted().toList(), List.copyOf(desired));
   }
 
-  Transition frozenConsultantAddition(
-      String kind, String id, long version, Set<String> required) {
+  Transition frozenConsultantAddition(String kind, String id, long version, Set<String> required) {
     requireConfigured(kind);
     requireRoles(required);
     var matches =

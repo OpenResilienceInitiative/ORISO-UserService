@@ -751,7 +751,19 @@ class GrantConsultantIdentityScopedJpaTest {
     var before = adminSql();
     assertDoesNotThrow(
         () -> {
-          maintenance.configureReviewedProtectedProfiles(protectedCatalog(true));
+          maintenance.configureReviewedOrdinaryGroups(Map.of());
+          var catalog = new java.util.HashMap<>(protectedCatalog(true));
+          var entries = new java.util.ArrayList<>(catalog.get("TENANT_ADMIN"));
+          var mutableRoles = new java.util.HashSet<>(nativeDesiredRoles);
+          entries.set(
+              1,
+              new HumanAdminAccountMaintenance.ProtectedProfileSelector(
+                  "tenant-dual-v2", 2147483648L, mutableRoles));
+          catalog.put("TENANT_ADMIN", entries);
+          maintenance.configureReviewedProtectedProfiles(catalog);
+          catalog.clear();
+          entries.clear();
+          mutableRoles.clear();
           service.grantConsultantIdentityToAdmin(ACCOUNT, command());
         });
     assertEquals("APPLIED", phase());
