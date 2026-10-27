@@ -110,63 +110,63 @@ import org.springframework.web.client.RestTemplate;
 @Import(JpaAuditingConfiguration.class)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PublicPreDeletionJpaTest {
-  private static final String ACCOUNT = "81000000-0000-4000-8000-000000000011";
-  private static final String SECOND = "81000000-0000-4000-8000-000000000015";
-  private Clock ownerClock = Clock.systemUTC();
-  private static final String ASKER = "81000000-0000-4000-8000-000000000013";
-  private static final String SUCCESSOR = "81000000-0000-4000-8000-000000000014";
-  private static final String HUMAN = "81000000-0000-4000-8000-000000000012";
-  @Autowired private DataSource dataSource;
-  @Autowired private PlatformTransactionManager transactions;
-  @Autowired private EntityManager entities;
-  @Autowired private UserRepository users;
-  @Autowired private ConsultantRepository consultants;
-  @Autowired private AdminRepository admins;
-  @Autowired private AdminAgencyRepository adminAgencies;
-  @Autowired private ConsultantAgencyRepository consultantAgencies;
-  @Autowired private UserAgencyRepository userAgencies;
-  @Autowired private SessionRepository sessions;
-  @Autowired private ChatRepository chats;
-  @Autowired private InquiryAcceptanceNoticeRepository acceptanceNotices;
-  @Autowired private CaseHandoverRequestRepository handovers;
-  @Autowired private GroupChatParticipantRepository participants;
-  @Autowired private SessionSupervisorRepository supervisions;
-  @Autowired private ConsultantPictureRepository pictures;
-  private final AtomicInteger genericAttempts = new AtomicInteger();
-  private AuthenticatedUser actor;
-  private IdentityClientConfig mode;
-  private DeletionLifecycleService lifecycle;
-  private UserService userService;
-  private AdminScope scope;
-  private JdbcTemplate jdbc;
-  private static final String REALM = "82000000-0000-4000-8000-000000000011";
-  private static final String MACHINE = "82000000-0000-4000-8000-000000000012";
-  private static final String ISSUER = "https://identity.test/realms/fixture";
-  private static final byte[] KEY =
+  protected static final String ACCOUNT = "81000000-0000-4000-8000-000000000011";
+  protected static final String SECOND = "81000000-0000-4000-8000-000000000015";
+  protected Clock ownerClock = Clock.systemUTC();
+  protected static final String ASKER = "81000000-0000-4000-8000-000000000013";
+  protected static final String SUCCESSOR = "81000000-0000-4000-8000-000000000014";
+  protected static final String HUMAN = "81000000-0000-4000-8000-000000000012";
+  @Autowired protected DataSource dataSource;
+  @Autowired protected PlatformTransactionManager transactions;
+  @Autowired protected EntityManager entities;
+  @Autowired protected UserRepository users;
+  @Autowired protected ConsultantRepository consultants;
+  @Autowired protected AdminRepository admins;
+  @Autowired protected AdminAgencyRepository adminAgencies;
+  @Autowired protected ConsultantAgencyRepository consultantAgencies;
+  @Autowired protected UserAgencyRepository userAgencies;
+  @Autowired protected SessionRepository sessions;
+  @Autowired protected ChatRepository chats;
+  @Autowired protected InquiryAcceptanceNoticeRepository acceptanceNotices;
+  @Autowired protected CaseHandoverRequestRepository handovers;
+  @Autowired protected GroupChatParticipantRepository participants;
+  @Autowired protected SessionSupervisorRepository supervisions;
+  @Autowired protected ConsultantPictureRepository pictures;
+  protected final AtomicInteger genericAttempts = new AtomicInteger();
+  protected AuthenticatedUser actor;
+  protected IdentityClientConfig mode;
+  protected DeletionLifecycleService lifecycle;
+  protected UserService userService;
+  protected AdminScope scope;
+  protected JdbcTemplate jdbc;
+  protected static final String REALM = "82000000-0000-4000-8000-000000000011";
+  protected static final String MACHINE = "82000000-0000-4000-8000-000000000012";
+  protected static final String ISSUER = "https://identity.test/realms/fixture";
+  protected static final byte[] KEY =
       "0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.UTF_8);
-  private final String operation = UUID.randomUUID().toString();
-  private final MockHttpServletRequest request = new MockHttpServletRequest();
-  private final AtomicInteger nativeReads = new AtomicInteger();
-  private final AtomicInteger nativeCalls = new AtomicInteger();
-  private final AtomicInteger nativeEffects = new AtomicInteger();
-  private final AtomicInteger outcomeReads = new AtomicInteger();
-  private AccountLifecycleCodec codec;
-  private TaskActorConfiguration actors;
-  private TaskActorTokenBroker broker;
-  private IdentityManaging passwords;
-  private RestTemplate http;
-  private MockRestServiceServer server;
-  private String savedBody, savedReply;
-  private boolean loseReply,
+  protected final String operation = UUID.randomUUID().toString();
+  protected final MockHttpServletRequest request = new MockHttpServletRequest();
+  protected final AtomicInteger nativeReads = new AtomicInteger();
+  protected final AtomicInteger nativeCalls = new AtomicInteger();
+  protected final AtomicInteger nativeEffects = new AtomicInteger();
+  protected final AtomicInteger outcomeReads = new AtomicInteger();
+  protected AccountLifecycleCodec codec;
+  protected TaskActorConfiguration actors;
+  protected TaskActorTokenBroker broker;
+  protected IdentityManaging passwords;
+  protected RestTemplate http;
+  protected MockRestServiceServer server;
+  protected String savedBody, savedReply;
+  protected boolean loseReply,
       loseReadReply,
       forgedReceipt,
       unavailableNative,
       unknownOutcome,
       refuseNativeReach;
 
-  private GroupChatMembershipService scopedRemote;
-  private final MembersOnlyRevocation memberships = mock(MembersOnlyRevocation.class);
-  private final StatisticsService statistics = mock(StatisticsService.class);
+  protected GroupChatMembershipService scopedRemote;
+  protected final MembersOnlyRevocation memberships = mock(MembersOnlyRevocation.class);
+  protected final StatisticsService statistics = mock(StatisticsService.class);
 
   /** The real generic adapter is deliberately closed in C; reaching it cannot prove delivery. */
   private final class ClosedGenericDeactivator implements IdentityDeactivator {
@@ -1537,7 +1537,7 @@ class PublicPreDeletionJpaTest {
         chat.getId(), session.getId(), participation.getId(), supervision.getId());
   }
 
-  private AskerUserAdminFacade adminAskerService() {
+  protected AskerUserAdminFacade adminAskerService() {
     var service =
         new AskerUserAdminFacade(
             new ClosedGenericDeactivator(),
@@ -1552,7 +1552,7 @@ class PublicPreDeletionJpaTest {
     return service;
   }
 
-  private PublicPreDeletionMaintenance owner() {
+  protected PublicPreDeletionMaintenance owner() {
     return new PublicPreDeletionMaintenance(
         mode,
         actor,
@@ -1812,7 +1812,7 @@ class PublicPreDeletionJpaTest {
     consultants.save(consultant);
   }
 
-  private UserAccountService selfService() {
+  protected UserAccountService selfService() {
     var service =
         new UserAccountService(
             userService,
@@ -1831,7 +1831,7 @@ class PublicPreDeletionJpaTest {
     return service;
   }
 
-  private ConsultantAdminService consultantService() {
+  protected ConsultantAdminService consultantService() {
     var store =
         new ConsultantPictureStore(
             consultants,
