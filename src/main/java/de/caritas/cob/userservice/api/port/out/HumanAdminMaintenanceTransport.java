@@ -44,6 +44,11 @@ public interface HumanAdminMaintenanceTransport {
   String profileRequestDigest(
       CheckedAccount account, IdentityProfileUpdate profile, UUID operation);
 
+  /** Fixed nonsecret local integrity data; it issues no held/native/Matrix authority. */
+  default String consultantGrantMatrixDigest(String exactSevenJson) {
+    throw new ScopedIdentityCommandRequiredException();
+  }
+
   FrozenProfile freezeProfile(
       CheckedAccount account, IdentityProfileUpdate profile, UUID operation, String expectedState);
 
