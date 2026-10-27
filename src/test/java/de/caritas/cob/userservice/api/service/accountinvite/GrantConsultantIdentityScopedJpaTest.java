@@ -8,6 +8,7 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import com.fasterxml.jackson.databind.JsonNode;
 import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCodec;
 import de.caritas.cob.userservice.api.adapters.keycloak.maintenance.KeycloakHumanAdminMaintenance;
+import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.config.JpaAuditingConfiguration;
 import de.caritas.cob.userservice.api.config.auth.*;
@@ -47,6 +48,7 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtAut
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
@@ -63,6 +65,7 @@ import org.springframework.web.client.RestTemplate;
 @TestPropertySource(
     properties = {
       "multitenancy.enabled=true",
+      "matrix.serverName=fixture.invalid",
       "logging.level.org.springframework.transaction.support.TransactionTemplate=DEBUG",
       "spring.datasource.url=jdbc:h2:mem:consultant-grant-${random.uuid};DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MariaDB;DATABASE_TO_LOWER=TRUE;NON_KEYWORDS=USER,VALUE,DAY"
     })
@@ -119,6 +122,7 @@ class GrantConsultantIdentityScopedJpaTest {
   @Autowired private TaskActorConfiguration actors;
   @Autowired private TaskActorTokenBroker broker;
   @Autowired private AccountLifecycleCodec codec;
+  @Autowired private MatrixConfig configuredMatrix;
   @MockitoBean private IdentityClient generic;
   @MockitoBean private AgencyService agencies;
   @MockitoBean private AgencyFacts selectedAgency;
@@ -156,6 +160,16 @@ class GrantConsultantIdentityScopedJpaTest {
 
   @BeforeEach
   void actualCurrentHumanSqlAndScopedReceiver() throws Exception {
+    assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+    // The real configuration binder runs after @Bean initialization; a setter on the fixture
+    // alone does not override application.properties' empty MATRIX_SERVER_NAME default.
+    assertEquals("fixture.invalid", configuredMatrix.getServerName());
+    assertEquals("fixture.invalid", ReflectionTestUtils.getField(service, "matrixServer"));
+    assertSame(maintenance, ReflectionTestUtils.getField(service, "maintenance"));
+    assertTrue(maintenance.isFiveActorMode());
+    var actualJpaOwner = (EntityManager) ReflectionTestUtils.getField(service, "entities");
+    assertNotNull(actualJpaOwner);
+    assertSame(entities.getEntityManagerFactory(), actualJpaOwner.getEntityManagerFactory());
     TenantContext.clear();
     jdbc = new JdbcTemplate(dataSource);
     jdbc.execute("drop table if exists general_admin_identity_intent");
