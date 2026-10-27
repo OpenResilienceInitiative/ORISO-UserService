@@ -92,6 +92,15 @@ public final class HumanAdminAccountMaintenance {
     reviewedGroups = new ReviewedOrdinaryGroups(groups);
   }
 
+  /** Immutable reviewed selector data; this compile-only seam issues no transition authority. */
+  public record ProtectedProfileSelector(String id, long version, Set<String> completeRealmRoles) {}
+
+  /** Closed until the actual protected caller/catalog counterfactuals qualify. */
+  public void configureReviewedProtectedProfiles(
+      java.util.Map<String, List<ProtectedProfileSelector>> profiles) {
+    throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+  }
+
   public HumanAdminAccountMaintenance(
       IdentityClientConfig mode,
       AuthenticatedUser actor,
