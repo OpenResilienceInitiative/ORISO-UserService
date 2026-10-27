@@ -38,6 +38,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 public final class HumanAdminAccountMaintenance {
   private final IdentityClientConfig mode;
   private ReviewedOrdinaryGroups reviewedGroups = new ReviewedOrdinaryGroups(java.util.Map.of());
+  private ReviewedProtectedProfiles reviewedProtected =
+      new ReviewedProtectedProfiles(java.util.Map.of());
   private java.util.Map<String, List<Set<String>>> reviewedSelfProfiles = java.util.Map.of();
   private final AuthenticatedUser actor;
   private final AdminScope scope;
@@ -92,13 +94,13 @@ public final class HumanAdminAccountMaintenance {
     reviewedGroups = new ReviewedOrdinaryGroups(groups);
   }
 
-  /** Immutable reviewed selector data; this compile-only seam issues no transition authority. */
+  /** Reviewed selector data. The configured catalog defensively copies every complete role set. */
   public record ProtectedProfileSelector(String id, long version, Set<String> completeRealmRoles) {}
 
-  /** Closed until the actual protected caller/catalog counterfactuals qualify. */
+  /** Root supplies the same reviewed protected policy catalog used by the native receiver. */
   public void configureReviewedProtectedProfiles(
       java.util.Map<String, List<ProtectedProfileSelector>> profiles) {
-    throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    reviewedProtected = new ReviewedProtectedProfiles(profiles);
   }
 
   public HumanAdminAccountMaintenance(
@@ -259,7 +261,6 @@ public final class HumanAdminAccountMaintenance {
     Objects.requireNonNull(grant);
     requireOutsideSql();
     grant.requireJpaOwner(jpaOwner);
-    reviewedGroups.requireConfigured();
     String route = "/useradmin/admins/" + grant.accountId() + "/grant-consultant-identity";
     if (!"POST".equals(request.getMethod())
         || !Set.of(
@@ -270,6 +271,9 @@ public final class HumanAdminAccountMaintenance {
             .contains(request.getRequestURI())) throw forbidden();
     currentHuman();
     AdminRow current = authorizedRow(grant.accountId(), false);
+    if (Set.of("TENANT", "SUPER").contains(current.type))
+      reviewedProtected.requireConfigured(selfKind(current));
+    else reviewedGroups.requireConfigured();
     grant.validateOutsideSql();
     var prior = intent(operationId(), false);
     AdminRow original = prior == null ? current : decode(prior.original, GrantOriginal.class).row;
@@ -373,15 +377,29 @@ public final class HumanAdminAccountMaintenance {
         var change = body.path("change");
         var fields = new java.util.HashSet<String>();
         change.fieldNames().forEachRemaining(fields::add);
-        if (!fields.equals(Set.of("transition", "group"))
-            || !(grant == null ? "ADD_AGENCY_ADMIN_IDENTITY" : "ADD_CONSULTANT_IDENTITY")
-                .equals(change.path("transition").textValue())
-            || !change.path("group").isTextual()) throw conflict();
-        checked.role =
-            grant == null
-                ? reviewedGroups.frozenAgencyAdminAddition(change.path("group").textValue())
-                : reviewedGroups.frozenConsultantAddition(
-                    change.path("group").textValue(), grant.requiredRoles());
+        if (!(grant == null ? "ADD_AGENCY_ADMIN_IDENTITY" : "ADD_CONSULTANT_IDENTITY")
+            .equals(change.path("transition").textValue())) throw conflict();
+        if (grant != null && Set.of("TENANT", "SUPER").contains(original.type)) {
+          if (!fields.equals(Set.of("transition", "profileId", "profileVersion"))
+              || !change.path("profileId").isTextual()
+              || !change.path("profileVersion").isIntegralNumber()
+              || !change.path("profileVersion").canConvertToLong()
+              || change.path("profileVersion").longValue() <= 0) throw conflict();
+          checked.protectedRole =
+              reviewedProtected.frozenConsultantAddition(
+                  selfKind(original),
+                  change.path("profileId").textValue(),
+                  change.path("profileVersion").longValue(),
+                  grant.requiredRoles());
+        } else {
+          if (!fields.equals(Set.of("transition", "group"))
+              || !change.path("group").isTextual()) throw conflict();
+          checked.role =
+              grant == null
+                  ? reviewedGroups.frozenAgencyAdminAddition(change.path("group").textValue())
+                  : reviewedGroups.frozenConsultantAddition(
+                      change.path("group").textValue(), grant.requiredRoles());
+        }
       }
       HumanAdminMaintenanceTransport.Projection initialRoleProjection = null;
       if (edit != null && edit.groupChatRequested() != null) {
@@ -485,14 +503,20 @@ public final class HumanAdminAccountMaintenance {
           if (!Objects.equals(state.firstName(), original.firstName)
               || !Objects.equals(state.lastName(), original.lastName)
               || !Objects.equals(state.email(), original.email)) throw conflict();
-          checked.role =
-              grant == null
-                  ? reviewedGroups.agencyAdminAddition(state.effectiveRoles())
-                  : reviewedGroups.consultantAddition(
-                      state.effectiveRoles(), grant.requiredRoles());
+          if (grant != null && Set.of("TENANT", "SUPER").contains(original.type)) {
+            checked.protectedRole =
+                reviewedProtected.consultantAddition(
+                    selfKind(original), state.effectiveRoles(), grant.requiredRoles());
+          } else {
+            checked.role =
+                grant == null
+                    ? reviewedGroups.agencyAdminAddition(state.effectiveRoles())
+                    : reviewedGroups.consultantAddition(
+                        state.effectiveRoles(), grant.requiredRoles());
+          }
         }
-        if (checked.role != null
-            && !java.util.Set.copyOf(checked.role.original())
+        if ((checked.role != null || checked.protectedRole != null)
+            && !java.util.Set.copyOf(checked.originalRoles())
                 .equals(java.util.Set.copyOf(state.effectiveRoles()))) throw conflict();
         FrozenProfile frozen = transport.freezeProfile(checked, profile, operation, state.state());
         String body = encode(frozen);
@@ -582,8 +606,8 @@ public final class HumanAdminAccountMaintenance {
       transport.verifyProfileReceipt(checked, frozen, receipt);
       var currentNative = transport.read(checked);
       requireProjection(checked, currentNative);
-      if (checked.role != null
-          && !java.util.Set.copyOf(checked.role.desired())
+      if ((checked.role != null || checked.protectedRole != null)
+          && !java.util.Set.copyOf(checked.desiredRoles())
               .equals(java.util.Set.copyOf(currentNative.effectiveRoles()))) throw conflict();
       if (!Objects.equals(currentNative.firstName(), profile.firstName())
           || !Objects.equals(currentNative.lastName(), profile.lastName())
@@ -1763,6 +1787,7 @@ public final class HumanAdminAccountMaintenance {
     private boolean applied, terminalOnly;
     private java.util.Map<String, StoredTerminal> terminals = java.util.Map.of();
     private ReviewedOrdinaryGroups.Transition role;
+    private ReviewedProtectedProfiles.Transition protectedRole;
     private final String method = request.getMethod();
     private final String path = request.getRequestURI();
     private final Thread owner = Thread.currentThread();
@@ -1907,11 +1932,17 @@ public final class HumanAdminAccountMaintenance {
       return role == null ? null : role.group();
     }
 
+    public ProtectedProfileSelector reviewedProtectedProfile() {
+      return protectedRole == null ? null : protectedRole.selector();
+    }
+
     public java.util.List<String> originalRoles() {
+      if (protectedRole != null) return protectedRole.original();
       return role == null ? java.util.List.of() : role.original();
     }
 
     public java.util.List<String> desiredRoles() {
+      if (protectedRole != null) return protectedRole.desired();
       return role == null ? java.util.List.of() : role.desired();
     }
 
