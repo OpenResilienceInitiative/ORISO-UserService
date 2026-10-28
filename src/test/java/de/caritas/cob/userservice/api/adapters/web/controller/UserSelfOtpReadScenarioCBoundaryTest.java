@@ -140,6 +140,7 @@ class UserSelfOtpReadScenarioCBoundaryTest {
       throws Exception {
     try (var fixture = new UserSelfAppOtpScenarioCBoundaryTest.Fixture(true, true)) {
       configure(fixture, true, false);
+      expectCurrentProfileRead(fixture);
       var response = assertDoesNotThrow(() -> fixture.controller.getUserData());
       assertEquals(200, response.getStatusCode().value());
       assertFalse(response.getBody().getTwoFactorAuth().getIsEnabled());
@@ -167,6 +168,29 @@ class UserSelfOtpReadScenarioCBoundaryTest {
       var response = assertDoesNotThrow(() -> fixture.controller.getUserData());
       assertEquals(200, response.getStatusCode().value());
       assertEquals("legacy-secret", response.getBody().getTwoFactorAuth().getSecret());
+      assertReadOnly(fixture);
+      fixture.server.verify();
+    }
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(ints = {403, 503})
+  void mandatoryCurrentMetadataFailureStopsBeforeAnyOtpRead(int status) throws Exception {
+    try (var fixture = new UserSelfAppOtpScenarioCBoundaryTest.Fixture(true, true)) {
+      configure(fixture, true, true);
+      expectCurrentProfileRead(fixture, HttpStatus.valueOf(status));
+      assertThrows(ServiceUnavailableException.class, () -> fixture.controller.getUserData());
+      assertReadOnly(fixture);
+      fixture.server.verify();
+    }
+  }
+
+  @Test
+  void mandatoryCurrentMetadataRoleDriftStopsBeforeAnyOtpRead() throws Exception {
+    try (var fixture = new UserSelfAppOtpScenarioCBoundaryTest.Fixture(true, true)) {
+      configure(fixture, true, true);
+      expectCurrentProfileRead(fixture, null, true);
+      assertThrows(ForbiddenException.class, () -> fixture.controller.getUserData());
       assertReadOnly(fixture);
       fixture.server.verify();
     }
@@ -216,8 +240,17 @@ class UserSelfOtpReadScenarioCBoundaryTest {
     ReflectionTestUtils.setField(fixture.controller, "userAccountControllerDelegate", delegate);
   }
 
-  private void expectRead(
-      UserSelfAppOtpScenarioCBoundaryTest.Fixture fixture, String response, boolean unavailable) {
+  private void expectCurrentProfileRead(UserSelfAppOtpScenarioCBoundaryTest.Fixture fixture) {
+    expectCurrentProfileRead(fixture, null);
+  }
+
+  private void expectCurrentProfileRead(
+      UserSelfAppOtpScenarioCBoundaryTest.Fixture fixture, HttpStatus failure) {
+    expectCurrentProfileRead(fixture, failure, false);
+  }
+
+  private void expectCurrentProfileRead(
+      UserSelfAppOtpScenarioCBoundaryTest.Fixture fixture, HttpStatus failure, boolean roleDrift) {
     var account = fixture.human.getUserId();
     fixture
         .server
@@ -243,15 +276,31 @@ class UserSelfOtpReadScenarioCBoundaryTest {
                   "oriso-account-maintenance",
                   "POST");
               assertEquals(account, body.path("target").path("accountId").asText());
+              if (failure != null)
+                return withStatus(failure)
+                    .body("{\"error\":\"bounded unavailable\"}")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .createResponse(outbound);
               return withSuccess(
                       "{\"id\":\""
                           + account
-                          + "\",\"username\":\"ordinary\",\"email\":null,\"firstName\":null,\"lastName\":null,\"enabled\":true,\"emailVerified\":false,\"tenantId\":\"7\",\"preferredLanguage\":\"en\",\"effectiveRoles\":[\"user\"],\"passwordChangeRequired\":false,\"state\":\""
+                          + "\",\"username\":\"ordinary\",\"email\":null,\"firstName\":null,\"lastName\":null,\"enabled\":true,\"emailVerified\":false,\"tenantId\":\"7\",\"preferredLanguage\":\"en\",\"effectiveRoles\":"
+                          + (roleDrift
+                              ? "[\"consultant\",\"group-chat-consultant\"]"
+                              : "[\"user\"]")
+                          + ",\"passwordChangeRequired\":false,\"state\":\""
                           + "a".repeat(64)
                           + "\"}",
                       MediaType.APPLICATION_JSON)
                   .createResponse(outbound);
             });
+  }
+
+  private void expectRead(
+      UserSelfAppOtpScenarioCBoundaryTest.Fixture fixture, String response, boolean unavailable) {
+    var account = fixture.human.getUserId();
+    expectCurrentProfileRead(fixture);
+    expectCurrentProfileRead(fixture);
     fixture
         .server
         .expect(requestTo(fixture.issuer.issuer() + "/otp-config/fetch-otp-setup-info/ordinary"))

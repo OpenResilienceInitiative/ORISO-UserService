@@ -2,8 +2,9 @@ package de.caritas.cob.userservice.api.adapters.keycloak.lifecycle;
 
 /**
  * Durable intents and expiry claims survive process loss; no request token or password is retained.
+ * The scheduled bean remains proxyable by the existing runtime scheduler metrics aspect.
  */
-public final class AccountLifecycleRetryScheduler {
+public class AccountLifecycleRetryScheduler {
   private final JdbcAccountLifecycleJournal journal;
   private final AccountLifecycleDispatcher dispatcher;
   private final ClaimedPasswordMaintenance claimed;
