@@ -15,7 +15,7 @@
     <sql>
       INSERT INTO chat_matrix_room (room_id, series_id, occurrence_index, owner_tenant_id)
       SELECT c.matrix_room_id, c.id, c.current_occurrence_index, o.tenant_id
-      FROM chat c JOIN consultant o ON o.id = c.consultant_id_owner
+      FROM chat c JOIN consultant o ON o.consultant_id = c.consultant_id_owner
       WHERE c.matrix_room_id LIKE '!%' AND o.tenant_id &gt; 0 AND c.current_occurrence_index &gt;= 0
         AND (SELECT COUNT(*) FROM chat other WHERE other.matrix_room_id = c.matrix_room_id) = 1;
     </sql>
@@ -24,7 +24,7 @@
       <replace replace="series_id BIGINT" with="series_id BIGINT UNSIGNED"/>
       <replace replace="VARCHAR(512)" with="VARCHAR(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"/>
       <replace replace="other.matrix_room_id = c.matrix_room_id" with="BINARY other.matrix_room_id = BINARY c.matrix_room_id"/>
-      <replace replace="o.id = c.consultant_id_owner" with="BINARY o.id = BINARY c.consultant_id_owner"/>
+      <replace replace="o.consultant_id = c.consultant_id_owner" with="BINARY o.consultant_id = BINARY c.consultant_id_owner"/>
     </modifySql>
   </changeSet>
 </databaseChangeLog>

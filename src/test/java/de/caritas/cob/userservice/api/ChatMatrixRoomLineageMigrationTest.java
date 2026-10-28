@@ -91,7 +91,9 @@ class ChatMatrixRoomLineageMigrationTest {
     var connection =
         DriverManager.getConnection(
             "jdbc:h2:mem:group-room-" + UUID.randomUUID() + ";MODE=MariaDB", "sa", "");
-    execute(connection, "CREATE TABLE consultant (id VARCHAR(36) PRIMARY KEY,tenant_id BIGINT)");
+    execute(
+        connection,
+        "CREATE TABLE consultant (consultant_id VARCHAR(36) PRIMARY KEY,tenant_id BIGINT)");
     execute(
         connection,
         "CREATE TABLE chat (id BIGINT PRIMARY KEY,matrix_room_id VARCHAR(512),current_occurrence_index INT,consultant_id_owner VARCHAR(36))");

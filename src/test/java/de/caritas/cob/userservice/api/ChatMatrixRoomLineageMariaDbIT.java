@@ -16,7 +16,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class ChatMatrixRoomLineageMariaDbIT extends ChatMatrixRoomLineageMigrationTest {
   @Container
   private static final MariaDBContainer<?> DATABASE =
-      new MariaDBContainer<>("mariadb:11.4").withDatabaseName("userservice");
+      new MariaDBContainer<>("mariadb:10.11").withDatabaseName("userservice");
 
   @Override
   protected Connection database() throws Exception {
@@ -27,7 +27,9 @@ class ChatMatrixRoomLineageMariaDbIT extends ChatMatrixRoomLineageMigrationTest 
         java.util.List.of(
             "chat_matrix_room", "chat", "consultant", "DATABASECHANGELOG", "DATABASECHANGELOGLOCK"))
       execute(connection, "DROP TABLE IF EXISTS " + table);
-    execute(connection, "CREATE TABLE consultant (id VARCHAR(36) PRIMARY KEY,tenant_id BIGINT)");
+    execute(
+        connection,
+        "CREATE TABLE consultant (consultant_id VARCHAR(36) PRIMARY KEY,tenant_id BIGINT)");
     execute(
         connection,
         "CREATE TABLE chat (id BIGINT UNSIGNED PRIMARY KEY,matrix_room_id VARCHAR(512),current_occurrence_index INT,consultant_id_owner VARCHAR(36)) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
