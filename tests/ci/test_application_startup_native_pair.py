@@ -12,6 +12,57 @@ spec.loader.exec_module(proof)
 
 
 class ApplicationStartupPairControls(unittest.TestCase):
+    def test_native_difference_diagnostics_are_fixed_labels_and_never_copy_native_values(self):
+        import copy
+        labels = {name: 'private-' + name for name in ['self', 'consultantThenAdmin',
+            'adminThenConsultant', 'retainedAdmin', 'pureTenant', 'primary']}
+        original = {'user': {'id': 'private-user-id', 'username': 'private-username',
+            'email': 'private-email', 'attributes': {'tenantId': ['17'], 'locale': ['en'],
+            'private-attribute': ['private-secret']}}, 'groups': [{'id': 'private-group',
+            'name': 'private-name', 'path': '/private-path'}],
+            'roles': {'realmMappings': [{'name': 'private-role'}]},
+            'credentials': [{'secretData': 'private-password'}]}
+        expected = {key: copy.deepcopy(original) for key in [*labels.values(), 'private-other']}
+        actual = copy.deepcopy(expected)
+        actual[labels['pureTenant']]['user']['attributes']['tenantId'] = ['22']
+        actual[labels['retainedAdmin']]['groups'][0]['id'] = 'private-other-group'
+        actual['private-other']['credentials'][0]['secretData'] = 'private-changed-password'
+        events = [{'id': 'private-event', 'realmId': 'private-realm', 'operationType': 'UPDATE',
+            'resourceType': 'USER', 'resourcePath': 'accounts/' + labels['pureTenant'],
+            'authDetails': {'realmId': 'private-realm', 'clientId': 'private-client', 'userId': 'private-subject'}}]
+        result = proof.native_effect_diagnostics(expected, actual, labels, [], events,
+            'private-realm', 'private-client', 'private-subject')
+        self.assertFalse(result['targets']['pureTenant']['attributeFieldsEqual']['tenantId'])
+        self.assertFalse(result['targets']['retainedAdmin']['groupIdsEqual'])
+        self.assertTrue(result['targets']['retainedAdmin']['groupPathsEqual'])
+        self.assertFalse(result['otherAccountsExactlyEqual'])
+        self.assertEqual(1, result['newAuditCounts']['pureTenant'])
+        self.assertTrue(result['newAuditCanonicalActorAndResource'])
+        self.assertNotIn('private-', json.dumps(result))
+        self.assertNotIn('secretData', json.dumps(result))
+        events[0]['representation'] = 'private-jwt'
+        events[0]['resourcePath'] = 'private-unknown-resource'
+        events[0]['authDetails']['clientId'] = 'private-foreign-client'
+        result = proof.native_effect_diagnostics(expected, actual, labels, [], events,
+            'private-realm', 'private-client', 'private-subject')
+        self.assertFalse(result['newAuditCanonicalActorAndResource'])
+        self.assertFalse(result['newAuditWithoutRepresentation'])
+        self.assertEqual(1, result['newAuditCounts']['other'])
+        self.assertNotIn('private-', json.dumps(result))
+
+    def test_native_difference_diagnostics_keep_exact_missing_targets_and_prior_events(self):
+        labels = {name: 'id-' + name for name in ['self', 'consultantThenAdmin',
+            'adminThenConsultant', 'retainedAdmin', 'pureTenant', 'primary']}
+        before_event = {'id': 'original', 'resourcePath': 'private-original'}
+        result = proof.native_effect_diagnostics({}, {labels['consultantThenAdmin']: {}}, labels,
+            [before_event], [], 'realm', 'client', 'subject')
+        self.assertFalse(result['targets']['consultantThenAdmin']['expectedPresent'])
+        self.assertTrue(result['targets']['consultantThenAdmin']['actualPresent'])
+        self.assertFalse(result['originalAuditEventsRetainedExactly'])
+        self.assertNotIn('private-original', json.dumps(result))
+        with self.assertRaises(ValueError):
+            proof.native_effect_diagnostics({}, {}, {'private-unexpected': 'id'}, [], [], 'r', 'c', 's')
+
     def test_startup_declares_only_disposable_lowercase_h2_database(self):
         import ast
         tree = ast.parse((ROOT / 'scripts/ci/application-startup-native-pair.py').read_text())

@@ -68,6 +68,59 @@ base = importlib.util.module_from_spec(base_spec)
 base_spec.loader.exec_module(base)
 
 
+def native_effect_diagnostics(expected, actual, labels, before_events, after_events, realm, client, subject):
+    """Diagnostics only: fixed labels/equality flags, never native values or acceptance authority."""
+    names = ('self', 'consultantThenAdmin', 'adminThenConsultant', 'retainedAdmin', 'pureTenant', 'primary')
+    if set(labels) != set(names) or len(set(labels.values())) != len(names):
+        raise ValueError('Invalid native diagnostic target labels')
+    user_fields = ('id', 'username', 'firstName', 'lastName', 'email', 'emailVerified', 'enabled',
+        'createdTimestamp', 'totp', 'disableableCredentialTypes', 'requiredActions', 'notBefore',
+        'access', 'attributes', 'federationLink', 'serviceAccountClientId')
+    targets = {}
+    for name in names:
+        account = labels[name]
+        old, new = expected.get(account, {}), actual.get(account, {})
+        old_user, new_user = old.get('user', {}), new.get('user', {})
+        old_attributes, new_attributes = old_user.get('attributes', {}), new_user.get('attributes', {})
+        old_groups, new_groups = old.get('groups', []), new.get('groups', [])
+        targets[name] = {
+            'expectedPresent': account in expected, 'actualPresent': account in actual,
+            'userFieldsEqual': {field: old_user.get(field) == new_user.get(field) for field in user_fields},
+            'otherUserFieldsEqual': {k: v for k, v in old_user.items() if k not in user_fields}
+                == {k: v for k, v in new_user.items() if k not in user_fields},
+            'attributeFieldsEqual': {field: old_attributes.get(field) == new_attributes.get(field)
+                for field in ('tenantId', 'locale')},
+            'otherAttributesEqual': {k: v for k, v in old_attributes.items() if k not in ('tenantId', 'locale')}
+                == {k: v for k, v in new_attributes.items() if k not in ('tenantId', 'locale')},
+            'groupsExactlyEqual': old_groups == new_groups,
+            'groupIdsEqual': {g.get('id') for g in old_groups} == {g.get('id') for g in new_groups},
+            'groupPathsEqual': {g.get('path') for g in old_groups} == {g.get('path') for g in new_groups},
+            'rolesExactlyEqual': old.get('roles') == new.get('roles'),
+            'credentialsExactlyEqual': old.get('credentials') == new.get('credentials')}
+    selected = set(labels.values())
+    other_expected = {k: v for k, v in expected.items() if k not in selected}
+    other_actual = {k: v for k, v in actual.items() if k not in selected}
+    original = {event.get('id'): event for event in before_events}
+    after = {event.get('id'): event for event in after_events}
+    added = [event for event in after_events if event.get('id') not in original]
+    resources = {'accounts/' + labels[name]: name for name in names}
+    counts = {name: 0 for name in (*names, 'other')}
+    canonical = True
+    for event in added:
+        name = resources.get(event.get('resourcePath'), 'other'); counts[name] += 1
+        auth = event.get('authDetails', {})
+        canonical = canonical and name != 'other' and event.get('realmId') == realm \
+            and event.get('operationType') == 'UPDATE' and event.get('resourceType') == 'USER' \
+            and auth.get('realmId') == realm and auth.get('clientId') == client and auth.get('userId') == subject
+    return {'targets': targets, 'otherExpectedCount': len(other_expected), 'otherActualCount': len(other_actual),
+        'otherAccountsExactlyEqual': other_expected == other_actual,
+        'originalAuditEventsRetainedExactly': all(after.get(key) == value for key, value in original.items()),
+        'auditIdsUnique': len(original) == len(before_events) and len(after) == len(after_events),
+        'newAuditCount': len(added), 'newAuditCounts': counts,
+        'newAuditCanonicalActorAndResource': bool(canonical),
+        'newAuditWithoutRepresentation': all(not event.get('representation') for event in added)}
+
+
 def safe_child_input(raw):
     # Read captured child text only in memory; never export SQL, exception text, paths or values.
     text = raw.decode('utf-8', errors='replace')
@@ -637,7 +690,12 @@ def native(kc, report):
             moved['attributes']['tenantId'] = ['22']
             moved.update(firstName='Grace', lastName='Hopper', email='grace@fixture.invalid', emailVerified=False)
         receipt['native_accounts_exact_expected_effect'] = expected_accounts == after_accounts
-        receipt['native_admin_events_unchanged'] = original_events == fixture.admin('GET', '/admin-events?max=500')
+        after_events = fixture.admin('GET', '/admin-events?max=500')
+        receipt['native_admin_events_unchanged'] = original_events == after_events
+        receipt['native_effect_diagnostics'] = native_effect_diagnostics(expected_accounts, after_accounts,
+            {'self': self_account, **{name: target['id'] for name, target in journey_targets.items()}},
+            original_events, after_events, fixture.realm_id,
+            lifecycle.ACTORS['ACCOUNT_ADMIN'][0], lifecycle.SUBJECTS['ACCOUNT_ADMIN'])
         receipt['installer_identity_checks'] = ProtectedOperationRead.observation.get('installerIdentityChecks', [])
         receipt['native_startup_telemetry'] = {
             'nativeImageIds': sorted(set(StartupFixture.native_image_ids)),
