@@ -300,9 +300,11 @@ public class EventNotificationService {
    * tells the colleague that someone else took the case. Remove them and nudge those clients to
    * refresh their feed. The accepting consultant keeps their own entry; it leads into their case.
    *
-   * <p>Best-effort: cleaning up the timeline must never fail the acceptance.
+   * <p>Best-effort: cleaning up the timeline must never fail the acceptance. Callers run it after
+   * the acceptance has committed; it always opens its own transaction so it never joins (and can
+   * never mark rollback-only) the caller's.
    */
-  @Transactional
+  @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
   public void retireOpenEnquiryNotifications(Session session, String acceptingConsultantId) {
     if (session == null
         || session.getId() == null

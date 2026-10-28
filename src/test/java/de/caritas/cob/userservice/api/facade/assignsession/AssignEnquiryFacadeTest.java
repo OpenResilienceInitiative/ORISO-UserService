@@ -446,6 +446,43 @@ class AssignEnquiryFacadeTest {
         .retireOpenEnquiryNotifications(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY.getId());
   }
 
+  @Test
+  void assignRegisteredEnquiry_Should_stillSucceed_When_retiringTheEntriesFails() {
+    org.mockito.Mockito.doThrow(
+            new org.springframework.transaction.UnexpectedRollbackException("cleanup failed"))
+        .when(eventNotificationService)
+        .retireOpenEnquiryNotifications(any(), any());
+
+    org.junit.jupiter.api.Assertions.assertDoesNotThrow(
+        () ->
+            assignEnquiryFacade.assignRegisteredEnquiry(
+                SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY));
+    verify(eventNotificationService)
+        .createInquiryAcceptedNotification(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+  }
+
+  @Test
+  void assignRegisteredEnquiry_Should_retireTheEntriesOnlyAfterTheAcceptanceCommitted() {
+    org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+    try {
+      assignEnquiryFacade.assignRegisteredEnquiry(
+          SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+
+      verify(eventNotificationService, never()).retireOpenEnquiryNotifications(any(), any());
+
+      org.springframework.transaction.support.TransactionSynchronizationManager
+          .getSynchronizations()
+          .forEach(org.springframework.transaction.support.TransactionSynchronization::afterCommit);
+
+      verify(eventNotificationService)
+          .retireOpenEnquiryNotifications(
+              SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY.getId());
+    } finally {
+      org.springframework.transaction.support.TransactionSynchronizationManager
+          .clearSynchronization();
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Matrix account auto-creation for consultant without matrixUserId
   // ---------------------------------------------------------------------------
@@ -785,13 +822,15 @@ class AssignEnquiryFacadeTest {
       var callbacks =
           org.springframework.transaction.support.TransactionSynchronizationManager
               .getSynchronizations();
-      assertThat(callbacks).hasSize(1);
+      // The acceptance notice dispatch and the timeline cleanup (#1472) both wait for the commit.
+      assertThat(callbacks).hasSize(2);
       callbacks.forEach(
           cb ->
               cb.afterCompletion(
                   org.springframework.transaction.support.TransactionSynchronization
                       .STATUS_ROLLED_BACK));
       org.mockito.Mockito.verifyNoInteractions(acceptanceDelivery);
+      verify(eventNotificationService, never()).retireOpenEnquiryNotifications(any(), any());
     } finally {
       org.springframework.transaction.support.TransactionSynchronizationManager
           .clearSynchronization();
