@@ -160,6 +160,40 @@ public class UserController implements UsersApi {
   private final @NotNull AuthenticatedUser authenticatedUser;
   private final @NonNull RequestedContactSheetService requestedContactSheetService;
   private final @NotNull IdentitySuggestionControllerDelegate identitySuggestionControllerDelegate;
+  private final @NonNull DirectLinkControllerDelegate directLinkControllerDelegate;
+
+  @Override
+  public ResponseEntity<
+          java.util.List<de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkDTO>>
+      getOwnDirectLinks() {
+    return directLinkControllerDelegate.getOwnDirectLinks();
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkDTO>
+      createDirectLink(
+          de.caritas.cob.userservice.api.adapters.web.dto.CreateDirectLinkDTO createDirectLinkDTO) {
+    return directLinkControllerDelegate.createDirectLink(createDirectLinkDTO);
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkDTO>
+      updateDirectLink(
+          Long linkId,
+          de.caritas.cob.userservice.api.adapters.web.dto.UpdateDirectLinkDTO updateDirectLinkDTO) {
+    return directLinkControllerDelegate.updateDirectLink(linkId, updateDirectLinkDTO);
+  }
+
+  @Override
+  public ResponseEntity<Void> deleteDirectLink(Long linkId) {
+    return directLinkControllerDelegate.deleteDirectLink(linkId);
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkConversationDTO>
+      startDirectLinkConversation(String token) {
+    return directLinkControllerDelegate.startDirectLinkConversation(token);
+  }
 
   @Override
   public ResponseEntity<Void> sendContactSheetEmail(Long sessionId) {

@@ -92,6 +92,39 @@ class AgencyInviteLinkContextHttpTest {
     mvc.perform(get("/users/invitelinks/token/context")).andExpect(status().isBadRequest());
   }
 
+  @Test
+  void switchedOffDirectLinkReturns410WithReason() throws Exception {
+    var link = directLink();
+    link.setStatus("DISABLED");
+    when(repository.findByToken("token")).thenReturn(Optional.of(link));
+    mvc.perform(get("/users/invitelinks/token/context"))
+        .andExpect(status().isGone())
+        .andExpect(content().json("{\"reason\":\"DIRECT_LINK_INACTIVE\"}"));
+  }
+
+  @Test
+  void directLinkContextNamesAdmissionButNotTheOwner() throws Exception {
+    when(repository.findByToken("token")).thenReturn(Optional.of(directLink()));
+    mvc.perform(get("/users/invitelinks/token/context"))
+        .andExpect(status().isOk())
+        .andExpect(
+            content()
+                .json(
+                    """
+            {"tenantId":83,"agencyId":99,"consultingTypeId":1,"topicId":11,"chatType":"VIDEO",
+             "temporaryAccount":true,"admission":"KNOCK"}
+            """,
+                    org.springframework.test.json.JsonCompareMode.STRICT));
+  }
+
+  private AgencyInviteLink directLink() {
+    var link = link();
+    link.setLinkKind("COUNSELLOR");
+    link.setChatType("VIDEO");
+    link.setTemporaryAccount(true);
+    return link;
+  }
+
   private AgencyInviteLink link() {
     return AgencyInviteLink.builder()
         .token("token")

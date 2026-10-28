@@ -57,6 +57,121 @@ paths:
           description: Inactive or expired invitation
         '404':
           description: Invitation not found
+        '410':
+          description: The direct link was switched off; body {"reason":"DIRECT_LINK_INACTIVE"}
+  /users/invitelinks/{token}/conversations:
+    post:
+      tags: [direct-link-controller]
+      operationId: startDirectLinkConversation
+      summary: 'Open (or reopen) the caller''s own 1:1 conversation through a counsellor direct link [Authorization: Role: user]'
+      description: >-
+        Every person gets their own conversation with the link owner. It is assigned to the
+        counsellor directly (like the contact link) and never enters the enquiry inbox. A second
+        call by the same person returns the existing conversation. Audio and video links answer
+        admission KNOCK: the person waits until the counsellor admits them (ADR-029 §2).
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: The caller already had a conversation through this counsellor and topic
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DirectLinkConversationDTO'}
+        '201':
+          description: A new conversation was created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DirectLinkConversationDTO'}
+        '400': {description: Expired link, or not a counsellor direct link}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '403': {description: Direct invitations are not allowed here, or the caller belongs to another Träger}
+        '404': {description: Unknown link}
+        '410': {description: 'The link was switched off; body {"reason":"DIRECT_LINK_INACTIVE"}'}
+  /users/directlinks:
+    get:
+      tags: [direct-link-controller]
+      operationId: getOwnDirectLinks
+      summary: 'List the caller''s own direct links, newest first [Authorization: Role: consultant]'
+      security:
+        - Bearer: [ ]
+      responses:
+        '200':
+          description: The caller's direct links (switched-off ones included)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/DirectLinkDTO'}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '403': {description: Caller is not a consultant}
+    post:
+      tags: [direct-link-controller]
+      operationId: createDirectLink
+      summary: 'Create a direct link for chat, audio or video [Authorization: Role: consultant]'
+      security:
+        - Bearer: [ ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateDirectLinkDTO'}
+      responses:
+        '201':
+          description: The new link
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DirectLinkDTO'}
+        '400': {description: Missing or invalid field, or agencyId needed because the caller works for several Beratungsstellen}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '403': {description: Caller is not a consultant, not in the agency, or direct invitations are not allowed here}
+        '404': {description: Unknown topic}
+  /users/directlinks/{linkId}:
+    patch:
+      tags: [direct-link-controller]
+      operationId: updateDirectLink
+      summary: 'Change name, topic, temporary flag or on/off of an own direct link; the medium is fixed [Authorization: Role: consultant]'
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: linkId
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateDirectLinkDTO'}
+      responses:
+        '200':
+          description: The changed link
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DirectLinkDTO'}
+        '400': {description: Invalid field}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '403': {description: Switching on is not allowed here}
+        '404': {description: No own direct link with this id}
+    delete:
+      tags: [direct-link-controller]
+      operationId: deleteDirectLink
+      summary: 'Delete an own direct link; conversations started through it stay [Authorization: Role: consultant]'
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: linkId
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        '204': {description: Deleted}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '404': {description: No own direct link with this id}
   /users/{username}:
     get:
       tags:
@@ -2906,6 +3021,67 @@ components:
         consultingTypeId: {type: integer, format: int32}
         topicId: {type: integer, format: int64, nullable: true}
         chatType: {type: string}
+        temporaryAccount:
+          type: boolean
+          nullable: true
+          description: Direct links only. New people get a temporary account (ADR-029 §3).
+        admission:
+          type: string
+          nullable: true
+          enum: [DIRECT, KNOCK]
+          description: Direct links only. KNOCK for audio and video, DIRECT for chat (ADR-029 §2).
+    DirectLinkMedium:
+      type: string
+      enum: [CHAT, AUDIO, VIDEO]
+    DirectLinkDTO:
+      type: object
+      required: [id, token, url, medium, topicId, temporary, active, admission]
+      properties:
+        id: {type: integer, format: int64}
+        token: {type: string}
+        url:
+          type: string
+          description: Shareable entry URL (APP_BASE_URL + /invite/{token}; relative when the base is unset)
+        name: {type: string, maxLength: 100}
+        topicId: {type: integer, format: int64}
+        topicName: {type: string}
+        agencyId: {type: integer, format: int64}
+        medium: {$ref: '#/components/schemas/DirectLinkMedium'}
+        temporary: {type: boolean}
+        active: {type: boolean}
+        admission: {type: string, enum: [DIRECT, KNOCK]}
+        createDate: {type: string, format: date-time}
+    CreateDirectLinkDTO:
+      type: object
+      required: [medium, topicId]
+      properties:
+        medium: {$ref: '#/components/schemas/DirectLinkMedium'}
+        topicId: {type: integer, format: int64}
+        name: {type: string, maxLength: 100}
+        temporary:
+          type: boolean
+          description: Defaults to false for chat and true for calls
+        agencyId:
+          type: integer
+          format: int64
+          description: Required only when the caller works for more than one Beratungsstelle
+    UpdateDirectLinkDTO:
+      type: object
+      description: Every field is optional; absent fields stay unchanged
+      properties:
+        name: {type: string, maxLength: 100}
+        topicId: {type: integer, format: int64}
+        temporary: {type: boolean}
+        active: {type: boolean}
+    DirectLinkConversationDTO:
+      type: object
+      required: [sessionId, medium, admission, created]
+      properties:
+        sessionId: {type: integer, format: int64}
+        matrixRoomId: {type: string}
+        medium: {$ref: '#/components/schemas/DirectLinkMedium'}
+        admission: {type: string, enum: [DIRECT, KNOCK]}
+        created: {type: boolean}
     OccurrenceOverrideRequest:
       type: object
       required: [originalStartUtc]

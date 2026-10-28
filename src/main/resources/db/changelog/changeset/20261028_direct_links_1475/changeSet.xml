@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- Counsellor direct links (ORISO-UserService#1475, ADR-029): a COUNSELLOR invite link gets a
+       display name and the temporary-account flag. On/off reuses the status column
+       (ACTIVE / DISABLED); the medium reuses chat_type (CHAT / AUDIO / VIDEO). -->
+  <changeSet id="20261028-direct-links-1475" author="oriso">
+    <addColumn tableName="agency_invite_link">
+      <column name="name" type="VARCHAR(100)"/>
+      <column name="temporary_account" type="BOOLEAN" defaultValueBoolean="false">
+        <constraints nullable="false"/>
+      </column>
+      <column name="update_date" type="DATETIME"/>
+    </addColumn>
+    <createIndex tableName="agency_invite_link" indexName="idx_ail_consultant_kind">
+      <column name="consultant_id"/>
+      <column name="link_kind"/>
+    </createIndex>
+    <rollback>
+      <dropIndex tableName="agency_invite_link" indexName="idx_ail_consultant_kind"/>
+      <dropColumn tableName="agency_invite_link" columnName="update_date"/>
+      <dropColumn tableName="agency_invite_link" columnName="temporary_account"/>
+      <dropColumn tableName="agency_invite_link" columnName="name"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

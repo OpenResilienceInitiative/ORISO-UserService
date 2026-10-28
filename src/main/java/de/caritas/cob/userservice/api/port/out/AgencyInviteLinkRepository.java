@@ -2,6 +2,8 @@ package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import jakarta.persistence.LockModeType;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -13,6 +15,13 @@ import org.springframework.data.repository.query.Param;
 public interface AgencyInviteLinkRepository extends JpaRepository<AgencyInviteLink, Long> {
 
   Optional<AgencyInviteLink> findByToken(String token);
+
+  /** A counsellor's own direct links, newest first (#1475). */
+  List<AgencyInviteLink> findAllByConsultantIdAndLinkKindAndChatTypeInOrderByCreateDateDesc(
+      String consultantId, String linkKind, Collection<String> chatTypes);
+
+  Optional<AgencyInviteLink> findByIdAndConsultantIdAndLinkKindAndChatTypeIn(
+      Long id, String consultantId, String linkKind, Collection<String> chatTypes);
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   Optional<AgencyInviteLink> findByTokenAndStatus(String token, String status);
