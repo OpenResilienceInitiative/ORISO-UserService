@@ -72,6 +72,8 @@ import org.springframework.web.client.RestTemplate;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({
   JpaAuditingConfiguration.class,
+  de.caritas.cob.userservice.api.admin.service.admin.update.UpdateAdminService.class,
+  de.caritas.cob.userservice.api.admin.service.admin.search.RetrieveAdminService.class,
   de.caritas.cob.userservice.api.admin.service.admin.delete.DeleteAdminService.class,
   de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService
       .class,
@@ -116,6 +118,16 @@ class GrantConsultantIdentityScopedJpaTest {
   @Autowired
   private de.caritas.cob.userservice.api.admin.service.admin.delete.DeleteAdminService removeAdmin;
 
+  @Autowired
+  private de.caritas.cob.userservice.api.admin.service.admin.update.UpdateAdminService updateAdmin;
+
+  @MockitoBean private IdentityProfileUpdater genericProfile;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.admin.service.consultant.validation
+          .UserAccountInputValidator
+      adminInputValidator;
+
   @MockitoBean private IdentityAccountRemover genericRemoval;
   @Autowired private AdminSelfAssignmentService selfAssignments;
   @Autowired private ConsultantRepository consultants;
@@ -154,6 +166,15 @@ class GrantConsultantIdentityScopedJpaTest {
   private boolean lostReply, revoked;
   private boolean lostReadReply;
   private boolean importing;
+  private boolean movingTenant;
+  private String loseTenantReply, refuseTenantCommand;
+  private boolean signedTenantRefusal, plainTenantProfile;
+  private long nativeTenant = 7L;
+  private String nativeFirst = "Ada",
+      nativeLast = "Lovelace",
+      nativeEmail = "ada@fixture.invalid",
+      nativeState = "a".repeat(64);
+  private final Map<String, String> tenantBodies = new TreeMap<>(), tenantReplies = new TreeMap<>();
   private boolean importNoEffect;
   private boolean tamperImportNoEffect;
   private Runnable afterImportRead = () -> {};
@@ -377,7 +398,9 @@ class GrantConsultantIdentityScopedJpaTest {
                             ENDPOINT + "/read",
                             ENDPOINT + "/profile-transition",
                             ENDPOINT + "/ordinary-profile",
-                            ENDPOINT + "/delete")
+                            ENDPOINT + "/delete",
+                            ENDPOINT + "/reassign-tenant",
+                            ENDPOINT + "/profile")
                         .contains(outbound.getURI().toString())))
         .andRespond(
             outbound -> {
@@ -392,8 +415,14 @@ class GrantConsultantIdentityScopedJpaTest {
                   codec.read(((MockClientHttpRequest) outbound).getBodyAsString(), JsonNode.class);
               if (importing) operation = body.path("workflow").path("workId").textValue();
               String command =
-                  outbound.getURI().getPath().endsWith("/read") ? "read" : nativeCommand;
+                  movingTenant
+                      ? outbound
+                          .getURI()
+                          .getPath()
+                          .substring(outbound.getURI().getPath().lastIndexOf('/') + 1)
+                      : outbound.getURI().getPath().endsWith("/read") ? "read" : nativeCommand;
               verifyProof(outbound.getHeaders().getFirst("X-ORISO-Task-Context"), command, body);
+              if (movingTenant) return tenantEditResponse(outbound, body, command);
               if ("read".equals(command)) {
                 if (nativeBody == null) {
                   var held =
@@ -1301,6 +1330,548 @@ class GrantConsultantIdentityScopedJpaTest {
     assertEquals(before, consultantSql());
     assertEquals(List.of(71L), assignedAgencies());
     assertEquals(2, effects.get());
+  }
+
+  private de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantAdminDTO tenantEditInput() {
+    return new de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantAdminDTO()
+        .tenantId(8)
+        .firstname("Grace")
+        .lastname("Hopper")
+        .email("grace@fixture.invalid");
+  }
+
+  private void givenPureTenantEdit() {
+    givenProtectedTenant();
+    maintenance.configureReviewedProtectedProfiles(protectedCatalog(true));
+    human.setTenantId(0L);
+    human.setRoles(Set.of("tenant-admin", "agency-admin"));
+    human.setGrantedAuthorities(
+        Set.of(Authority.AuthorityValue.USER_ADMIN, Authority.AuthorityValue.TENANT_ADMIN));
+    request.setUserPrincipal(authentication(0L));
+    TenantContext.setCurrentTenant(0L);
+    request.setMethod("PUT");
+    request.setRequestURI("/useradmin/tenantadmins/" + ACCOUNT);
+    movingTenant = true;
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"combined", "unreviewed", "group-only"})
+  void pureTenantMoveRefusesNonPureOrUnreviewedNativeIdentityWithoutConsultantSql(String variant) {
+    givenPureTenantEdit();
+    nativeRoles =
+        switch (variant) {
+          case "combined" -> nativeDesiredRoles;
+          case "group-only" -> Set.of("single-tenant-admin", "group-chat-consultant");
+          default -> Set.of("single-tenant-admin", "unreviewed-role");
+        };
+    var before = adminSql();
+    assertThrows(
+        RuntimeException.class, () -> updateAdmin.updateTenantAdmin(ACCOUNT, tenantEditInput()));
+    assertEquals(0, effects.get());
+    assertEquals(7L, nativeTenant);
+    assertEquals(before, adminSql());
+    assertNoLocalConsultant();
+  }
+
+  @Test
+  void pureTenantAdministratorFullDtoCommitsOnlyAfterBothOriginalNativeCommands() {
+    givenPureTenantEdit();
+    var before = new TreeMap<>(adminSql());
+    var result =
+        assertDoesNotThrow(() -> updateAdmin.updateTenantAdmin(ACCOUNT, tenantEditInput()));
+    assertEquals(8L, result.getTenantId());
+    assertEquals("Grace", result.getFirstName());
+    assertEquals("Hopper", result.getLastName());
+    assertEquals("grace@fixture.invalid", result.getEmail());
+    assertEquals(8L, nativeTenant);
+    assertEquals("Grace", nativeFirst);
+    assertEquals(2, effects.get());
+    assertEquals("APPLIED", phase());
+    var after = new TreeMap<>(adminSql());
+    for (String f : List.of("tenant_id", "first_name", "last_name", "email", "update_date")) {
+      before.remove(f);
+      after.remove(f);
+    }
+    assertEquals(before, after);
+    assertNoLocalConsultant();
+    verifyNoInteractions(genericProfile, generic, genericRoles, genericRemoval);
+    var bytes = Map.copyOf(tenantBodies);
+    assertDoesNotThrow(() -> updateAdmin.updateTenantAdmin(ACCOUNT, tenantEditInput()));
+    assertEquals(bytes, tenantBodies);
+    assertEquals(2, effects.get());
+  }
+
+  private org.springframework.http.client.ClientHttpResponse tenantEditResponse(
+      org.springframework.http.client.ClientHttpRequest request, JsonNode body, String command)
+      throws java.io.IOException {
+    assertTrue(
+        jdbc.queryForObject(
+                "select count(*) from general_admin_identity_intent where operation_id=?",
+                Integer.class,
+                operation)
+            > 0);
+    if (command.equals("read")) {
+      assertEquals(Long.toString(nativeTenant), body.path("target").path("tenantId").textValue());
+      var projection = new TreeMap<String, Object>();
+      projection.put("id", ACCOUNT);
+      projection.put("username", "owned-counsellor");
+      projection.put("firstName", nativeFirst);
+      projection.put("lastName", nativeLast);
+      projection.put("email", nativeEmail);
+      projection.put("enabled", true);
+      projection.put("emailVerified", true);
+      projection.put("tenantId", Long.toString(nativeTenant));
+      projection.put("preferredLanguage", "en");
+      projection.put("effectiveRoles", nativeRoles.stream().sorted().toList());
+      projection.put("passwordChangeRequired", false);
+      projection.put("state", nativeState);
+      var response =
+          withSuccess(codec.canonical(projection), MediaType.APPLICATION_JSON)
+              .createResponse(request);
+      response.getHeaders().setCacheControl("no-store");
+      return response;
+    }
+    assertTrue(Set.of("reassign-tenant", "profile").contains(command));
+    calls.incrementAndGet();
+    if (command.equals(refuseTenantCommand)) {
+      if (signedTenantRefusal) return tenantNoEffectResponse(request, body, command);
+      return org.springframework.test.web.client.response.MockRestResponseCreators.withStatus(
+              org.springframework.http.HttpStatus.FORBIDDEN)
+          .createResponse(request);
+    }
+    String original = tenantBodies.get(command);
+    if (original != null) assertEquals(original, codec.canonical(body));
+    else {
+      assertEquals(Long.toString(nativeTenant), body.path("target").path("tenantId").textValue());
+      assertEquals(nativeState, body.path("expectedState").textValue());
+      if (!plainTenantProfile) assertNotEquals(operation, body.path("operationId").textValue());
+      assertEquals(body.path("operationId"), body.path("target").path("origin").path("workflowId"));
+      if (command.equals("reassign-tenant")) {
+        assertEquals(codec.read("{\"tenantId\":\"8\"}", JsonNode.class), body.path("change"));
+        nativeTenant = 8L;
+      } else {
+        assertEquals(8L, nativeTenant);
+        assertEquals(
+            codec.read(
+                "{\"firstName\":\"Grace\",\"lastName\":\"Hopper\",\"email\":\"grace@fixture.invalid\"}",
+                JsonNode.class),
+            body.path("change"));
+        nativeFirst = "Grace";
+        nativeLast = "Hopper";
+        nativeEmail = "grace@fixture.invalid";
+      }
+      tenantBodies.put(command, codec.canonical(body));
+      tenantReplies.put(command, tenantEditReceipt(body, command));
+      effects.incrementAndGet();
+      nativeState = (command.equals("reassign-tenant") ? "b" : "c").repeat(64);
+    }
+    if (command.equals(loseTenantReply)) {
+      loseTenantReply = null;
+      throw new ResourceAccessException("Lost original tenant edit child reply");
+    }
+    var response =
+        withSuccess(tenantReplies.get(command), MediaType.APPLICATION_JSON).createResponse(request);
+    response.getHeaders().setCacheControl("no-store");
+    return response;
+  }
+
+  private String tenantEditReceipt(JsonNode body, String command) {
+    var value = new TreeMap<String, Object>();
+    value.put("realmId", "fixture-realm");
+    value.put("accountId", ACCOUNT);
+    value.put("operationId", body.path("operationId").textValue());
+    value.put("command", command);
+    value.put("ownerClient", "backend-account-admin");
+    value.put("ownerSubject", SUBJECT);
+    value.put("intentDigest", digest("maintenance-intent", body));
+    value.put("previousState", body.path("expectedState").textValue());
+    value.put("tenantId", body.path("target").path("tenantId").textValue());
+    value.put("originDigest", digest("maintenance-origin", body.path("target").path("origin")));
+    value.put("result", "UPDATED");
+    String encoded =
+        Base64.getUrlEncoder()
+            .withoutPadding()
+            .encodeToString(codec.canonical(value).getBytes(StandardCharsets.UTF_8));
+    return codec.canonical(
+        Map.of(
+            "operationId",
+            body.path("operationId").textValue(),
+            "accountId",
+            ACCOUNT,
+            "result",
+            "UPDATED",
+            "receipt",
+            encoded + "." + mac("maintenance-operation-receipt\n" + encoded)));
+  }
+
+  @Test
+  void tenantEditLostFirstReplyRetainsParentAndChildThenCompletesFullDto() {
+    givenPureTenantEdit();
+    var before = adminSql();
+    loseTenantReply = "reassign-tenant";
+    assertThrows(
+        RuntimeException.class, () -> updateAdmin.updateTenantAdmin(ACCOUNT, tenantEditInput()));
+    assertEquals("FROZEN", phase());
+    assertEquals(before, adminSql());
+    assertEquals(8L, nativeTenant);
+    assertEquals("Ada", nativeFirst);
+    assertEquals(1, effects.get());
+    String child = tenantBodies.get("reassign-tenant");
+    assertDoesNotThrow(() -> updateAdmin.updateTenantAdmin(ACCOUNT, tenantEditInput()));
+    assertEquals(child, tenantBodies.get("reassign-tenant"));
+    assertEquals("APPLIED", phase());
+    assertEquals(2, effects.get());
+  }
+
+  @Test
+  void tenantEditProfileUnknownKeepsVisiblePartialStateAndOriginalBytes() {
+    givenPureTenantEdit();
+    var before = adminSql();
+    loseTenantReply = "profile";
+    var failure =
+        assertThrows(
+            RuntimeException.class,
+            () -> updateAdmin.updateTenantAdmin(ACCOUNT, tenantEditInput()));
+    assertFalse(failure instanceof HumanAdminAccountMaintenance.DefiniteProfileNoEffect);
+    assertEquals("PROFILE_FROZEN", phase());
+    assertEquals(before, adminSql());
+    assertEquals(8L, nativeTenant);
+    assertEquals("Grace", nativeFirst);
+    var bytes = Map.copyOf(tenantBodies);
+    assertDoesNotThrow(() -> updateAdmin.updateTenantAdmin(ACCOUNT, tenantEditInput()));
+    assertEquals(bytes, tenantBodies);
+    assertEquals("APPLIED", phase());
+    assertEquals(2, effects.get());
+  }
+
+  @Test
+  void tenantEditUnsignedProfileRefusalNeverRetiresWholeDto() {
+    givenPureTenantEdit();
+    var before = adminSql();
+    refuseTenantCommand = "profile";
+    var failure =
+        assertThrows(
+            RuntimeException.class,
+            () -> updateAdmin.updateTenantAdmin(ACCOUNT, tenantEditInput()));
+    assertFalse(failure instanceof HumanAdminAccountMaintenance.DefiniteProfileNoEffect);
+    assertEquals("PROFILE_FROZEN", phase());
+    assertEquals(before, adminSql());
+    assertEquals(8L, nativeTenant);
+    assertEquals("Ada", nativeFirst);
+    assertEquals(1, effects.get());
+    String original =
+        jdbc.queryForObject(
+            "select native_body from general_admin_identity_intent where operation_id=?",
+            String.class,
+            operation);
+    refuseTenantCommand = null;
+    updateAdmin.updateTenantAdmin(ACCOUNT, tenantEditInput());
+    assertEquals(
+        original,
+        jdbc.queryForObject(
+            "select native_body from general_admin_identity_intent where operation_id=?",
+            String.class,
+            operation));
+    assertEquals("APPLIED", phase());
+  }
+
+  @Test
+  void tenantEditSignedProfileRefusalRemainsPartialPendingOnExactRetry() {
+    givenPureTenantEdit();
+    var before = adminSql();
+    refuseTenantCommand = "profile";
+    signedTenantRefusal = true;
+    for (int retry = 0; retry < 2; retry++) {
+      var failure =
+          assertThrows(
+              RuntimeException.class,
+              () -> updateAdmin.updateTenantAdmin(ACCOUNT, tenantEditInput()));
+      assertFalse(failure instanceof HumanAdminAccountMaintenance.DefiniteProfileNoEffect);
+      assertEquals("PROFILE_REFUSED", phase());
+      assertEquals(before, adminSql());
+      assertEquals(8L, nativeTenant);
+      assertEquals(1, effects.get());
+    }
+  }
+
+  @Test
+  void tenantEditLocalCallbackRollbackResumesOnlyOriginalChildren() {
+    givenPureTenantEdit();
+    var before = adminSql();
+    jdbc.execute(
+        "alter table admin add constraint tenant_edit_callback_failure check(first_name <> 'Grace')");
+    try {
+      assertThrows(
+          RuntimeException.class, () -> updateAdmin.updateTenantAdmin(ACCOUNT, tenantEditInput()));
+      assertEquals("ACKNOWLEDGED", phase());
+      assertEquals(before, adminSql());
+      assertEquals(2, effects.get());
+    } finally {
+      jdbc.execute("alter table admin drop constraint tenant_edit_callback_failure");
+    }
+    var bytes = Map.copyOf(tenantBodies);
+    updateAdmin.updateTenantAdmin(ACCOUNT, tenantEditInput());
+    assertEquals(bytes, tenantBodies);
+    assertEquals("APPLIED", phase());
+    assertEquals(2, effects.get());
+  }
+
+  @Test
+  void tenantEditRestartsFromThePersistedOriginalParent() {
+    givenPureTenantEdit();
+    loseTenantReply = "profile";
+    assertThrows(
+        RuntimeException.class, () -> updateAdmin.updateTenantAdmin(ACCOUNT, tenantEditInput()));
+    var bytes = Map.copyOf(tenantBodies);
+    var mode = (IdentityClientConfig) ReflectionTestUtils.getField(updateAdmin, "identityMode");
+    var restarted =
+        new HumanAdminAccountMaintenance(
+            mode,
+            human,
+            (AdminScope) ReflectionTestUtils.getField(maintenance, "scope"),
+            jdbc,
+            transactions,
+            request,
+            new KeycloakHumanAdminMaintenance(
+                http, actors, broker, codec, "https://identity.test", "fixture", "fixture-realm"),
+            Clock.systemUTC(),
+            ISSUER);
+    restarted.configureReviewedProtectedProfiles(protectedCatalog(true));
+    updateAdmin.setScopedAdminMaintenance(mode, restarted);
+    try {
+      updateAdmin.updateTenantAdmin(ACCOUNT, tenantEditInput());
+      assertEquals("APPLIED", phase());
+      assertEquals(bytes, tenantBodies);
+      assertEquals(2, effects.get());
+    } finally {
+      updateAdmin.setScopedAdminMaintenance(mode, maintenance);
+    }
+  }
+
+  @Test
+  void tenantEditCannotChangeOriginalDtoAfterFirstNativeEffect() {
+    givenPureTenantEdit();
+    loseTenantReply = "reassign-tenant";
+    assertThrows(
+        RuntimeException.class, () -> updateAdmin.updateTenantAdmin(ACCOUNT, tenantEditInput()));
+    int attempted = calls.get();
+    assertThrows(
+        RuntimeException.class,
+        () -> updateAdmin.updateTenantAdmin(ACCOUNT, tenantEditInput().firstname("Changed")));
+    assertEquals(attempted, calls.get());
+    assertEquals("FROZEN", phase());
+    assertEquals(7L, ((Number) adminSql().get("tenant_id")).longValue());
+  }
+
+  @Test
+  void tenantEditRejectsRecreatedTargetAndForeignHumanBeforeAnotherCommand() {
+    givenPureTenantEdit();
+    loseTenantReply = "reassign-tenant";
+    assertThrows(
+        RuntimeException.class, () -> updateAdmin.updateTenantAdmin(ACCOUNT, tenantEditInput()));
+    int attempted = calls.get();
+    human.setUserId("72000000-0000-4000-8000-000000000090");
+    request.setUserPrincipal(authentication(0L));
+    assertThrows(
+        RuntimeException.class, () -> updateAdmin.updateTenantAdmin(ACCOUNT, tenantEditInput()));
+    assertEquals(attempted, calls.get());
+    human.setUserId(HUMAN);
+    request.setUserPrincipal(authentication(0L));
+    jdbc.update(
+        "update admin set create_date=dateadd('SECOND',1,create_date) where admin_id=?", ACCOUNT);
+    assertThrows(
+        RuntimeException.class, () -> updateAdmin.updateTenantAdmin(ACCOUNT, tenantEditInput()));
+    assertEquals(attempted, calls.get());
+    assertEquals("FROZEN", phase());
+  }
+
+  @Test
+  void tenantEditRejectsSourceAndDestinationOutsideCurrentScopeAndAmbientSql() {
+    givenPureTenantEdit();
+    human.setRoles(Set.of("single-tenant-admin"));
+    human.setTenantId(7L);
+    request.setUserPrincipal(authentication(7L));
+    assertThrows(
+        RuntimeException.class, () -> updateAdmin.updateTenantAdmin(ACCOUNT, tenantEditInput()));
+    assertEquals(0, calls.get());
+    human.setTenantId(8L);
+    request.setUserPrincipal(authentication(8L));
+    assertThrows(
+        RuntimeException.class, () -> updateAdmin.updateTenantAdmin(ACCOUNT, tenantEditInput()));
+    assertEquals(0, calls.get());
+    human.setRoles(Set.of("tenant-admin", "agency-admin"));
+    human.setTenantId(0L);
+    request.setUserPrincipal(authentication(0L));
+    assertThrows(
+        RuntimeException.class,
+        () ->
+            new TransactionTemplate(transactions)
+                .executeWithoutResult(
+                    tx -> updateAdmin.updateTenantAdmin(ACCOUNT, tenantEditInput())));
+    assertEquals(0, calls.get());
+  }
+
+  @Test
+  void tenantEditOriginalGrantWithdrawalPreventsSecondChildOnRetry() {
+    givenPureTenantEdit();
+    refuseTenantCommand = "profile";
+    assertThrows(
+        RuntimeException.class, () -> updateAdmin.updateTenantAdmin(ACCOUNT, tenantEditInput()));
+    assertEquals("PROFILE_FROZEN", phase());
+    refuseTenantCommand = "reassign-tenant";
+    assertThrows(
+        RuntimeException.class, () -> updateAdmin.updateTenantAdmin(ACCOUNT, tenantEditInput()));
+    assertEquals("PROFILE_FROZEN", phase());
+    assertEquals(1, effects.get());
+    assertEquals("Ada", nativeFirst);
+    assertEquals(7L, ((Number) adminSql().get("tenant_id")).longValue());
+  }
+
+  @Test
+  void authenticatedInitialTenantRefusalReleasesOnlyItsOldSlotAfterLegitimateMove() {
+    givenPureTenantEdit();
+    refuseTenantCommand = "reassign-tenant";
+    signedTenantRefusal = true;
+    var failure =
+        assertThrows(
+            RuntimeException.class,
+            () -> updateAdmin.updateTenantAdmin(ACCOUNT, tenantEditInput()));
+    assertInstanceOf(HumanAdminAccountMaintenance.DefiniteProfileNoEffect.class, failure);
+    assertEquals("NO_EFFECT", phase());
+    assertEquals(0, effects.get());
+    operation = "72000000-0000-4000-8000-000000000070";
+    request.removeHeader("Idempotency-Key");
+    request.addHeader("Idempotency-Key", operation);
+    refuseTenantCommand = null;
+    updateAdmin.updateTenantAdmin(ACCOUNT, tenantEditInput());
+    assertEquals("APPLIED", phase());
+    assertEquals(2, effects.get());
+    operation = "72000000-0000-4000-8000-000000000071";
+    request.removeHeader("Idempotency-Key");
+    request.addHeader("Idempotency-Key", operation);
+    tenantBodies.clear();
+    tenantReplies.clear();
+    plainTenantProfile = true;
+    assertDoesNotThrow(() -> updateAdmin.updateTenantAdmin(ACCOUNT, tenantEditInput()));
+    assertEquals("APPLIED", phase());
+    assertEquals(8L, nativeTenant);
+    assertEquals(3, effects.get());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"human", "target", "birth", "original-tenant"})
+  void oldTenantTerminalNeverAuthorizesForeignHumanTargetOrRecreatedBirth(String mutation) {
+    givenPureTenantEdit();
+    refuseTenantCommand = "reassign-tenant";
+    signedTenantRefusal = true;
+    assertThrows(
+        RuntimeException.class, () -> updateAdmin.updateTenantAdmin(ACCOUNT, tenantEditInput()));
+    assertEquals("NO_EFFECT", phase());
+    int attempted = calls.get();
+    String oldOperation = operation;
+    if (mutation.equals("human")) {
+      human.setUserId("72000000-0000-4000-8000-000000000099");
+      request.setUserPrincipal(authentication(0L));
+    } else if (mutation.equals("birth")) {
+      jdbc.update(
+          "update admin set create_date=? where admin_id=?",
+          java.sql.Timestamp.valueOf("2025-01-01 00:00:00"),
+          ACCOUNT);
+    } else {
+      String raw =
+          jdbc.queryForObject(
+              "select original_json from general_admin_identity_intent where operation_id=?",
+              String.class,
+              oldOperation);
+      var original =
+          (com.fasterxml.jackson.databind.node.ObjectNode) codec.read(raw, JsonNode.class);
+      var row = (com.fasterxml.jackson.databind.node.ObjectNode) original.path("row");
+      if (mutation.equals("target")) row.put("account", "72000000-0000-4000-8000-000000000099");
+      else row.put("tenant", 9L);
+      jdbc.update(
+          "update general_admin_identity_intent set original_json=? where operation_id=?",
+          codec.canonical(original),
+          oldOperation);
+    }
+    operation = "72000000-0000-4000-8000-000000000072";
+    request.removeHeader("Idempotency-Key");
+    request.addHeader("Idempotency-Key", operation);
+    refuseTenantCommand = null;
+    assertThrows(
+        RuntimeException.class, () -> updateAdmin.updateTenantAdmin(ACCOUNT, tenantEditInput()));
+    assertEquals(attempted, calls.get());
+    assertEquals(0, effects.get());
+    assertEquals(7L, nativeTenant);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void ownAdministratorRemovalRequiresAnotherAuthorizedAdministrator(boolean combined) {
+    givenAdministratorRemoval(combined);
+    var before = adminSql();
+    var consultant = combined ? consultantSql() : null;
+    int attempted = calls.get();
+    human.setUserId(ACCOUNT);
+    request.setUserPrincipal(authentication(7L));
+    var refusal =
+        assertThrows(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+            () -> removeAdmin.deleteAgencyAdmin(ACCOUNT));
+    assertTrue(refusal.getMessage().contains("Another authorized administrator"));
+    assertEquals(attempted, calls.get());
+    assertEquals(before, adminSql());
+    if (combined) assertEquals(consultant, consultantSql());
+    assertEquals(
+        0,
+        jdbc.queryForObject(
+            "select count(*) from general_admin_identity_intent where operation_id=?",
+            Integer.class,
+            operation));
+    verifyNoInteractions(genericRemoval);
+  }
+
+  private org.springframework.http.client.ClientHttpResponse tenantNoEffectResponse(
+      org.springframework.http.client.ClientHttpRequest request, JsonNode body, String command)
+      throws java.io.IOException {
+    var value = new TreeMap<String, Object>();
+    value.put("realmId", "fixture-realm");
+    value.put("accountId", ACCOUNT);
+    value.put("operationId", body.path("operationId").textValue());
+    value.put("command", command);
+    value.put("ownerClient", "backend-account-admin");
+    value.put("ownerSubject", SUBJECT);
+    value.put("intentDigest", digest("maintenance-intent", body));
+    value.put("previousState", body.path("expectedState").textValue());
+    value.put("tenantId", body.path("target").path("tenantId").textValue());
+    value.put("originDigest", digest("maintenance-origin", body.path("target").path("origin")));
+    value.put("result", "NO_EFFECT");
+    value.put("status", 403);
+    String encoded =
+        Base64.getUrlEncoder()
+            .withoutPadding()
+            .encodeToString(codec.canonical(value).getBytes(StandardCharsets.UTF_8));
+    String receipt = encoded + "." + mac("maintenance-no-effect-receipt/v1\n" + encoded);
+    var response =
+        org.springframework.test.web.client.response.MockRestResponseCreators.withStatus(
+                org.springframework.http.HttpStatus.FORBIDDEN)
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(
+                codec.canonical(
+                    Map.of(
+                        "operationId",
+                        body.path("operationId").textValue(),
+                        "accountId",
+                        ACCOUNT,
+                        "result",
+                        "NO_EFFECT",
+                        "status",
+                        403,
+                        "receipt",
+                        receipt)))
+            .createResponse(request);
+    response.getHeaders().setCacheControl("no-store");
+    return response;
   }
 
   @Test

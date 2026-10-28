@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.port.out.HumanAdminMaintenanceTransport;
 import de.caritas.cob.userservice.api.port.out.HumanAdminMaintenanceTransport.FrozenProfile;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdate;
+import de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException;
 import jakarta.servlet.http.HttpServletRequest;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -163,6 +164,78 @@ public final class HumanAdminAccountMaintenance {
     return (de.caritas.cob.userservice.api.model.Admin) updateProfile(accountId, profile, null);
   }
 
+  public de.caritas.cob.userservice.api.model.Admin updateTenantAdmin(
+      de.caritas.cob.userservice.api.admin.service.admin.update.UpdateAdminService.ScopedTenantEdit
+          source) {
+    requireOutsideSql();
+    source.requireLive();
+    if (!"PUT".equals(request.getMethod())
+        || !Set.of(
+                "/useradmin/tenantadmins/" + source.accountId(),
+                "/service/useradmin/tenantadmins/" + source.accountId())
+            .contains(request.getRequestURI())) throw forbidden();
+    Human human = currentHuman();
+    AdminRow current = authorizedRow(source.accountId(), false);
+    UUID operation = operationId();
+    Intent prior = intent(operation, false);
+    boolean owned =
+        prior != null
+            && "TENANT_ADMIN_EDIT_V1"
+                .equals(
+                    decode(prior.desired, com.fasterxml.jackson.databind.JsonNode.class)
+                        .path("sourceKind")
+                        .textValue());
+    if (!owned && Objects.equals(current.tenant, source.profile().tenantId()))
+      return updateAdminProfile(source.accountId(), source.profile());
+    if (prior != null && !owned) throw conflict();
+    source.requireJpaOwner(jpaOwner);
+    if (!"TENANT".equals(current.type) || current.secondary != null)
+      throw new ScopedIdentityCommandRequiredException();
+    var original =
+        prior == null
+            ? new TenantEditOriginal(current, consultantSnapshot(source.accountId(), false))
+            : decode(prior.original, TenantEditOriginal.class);
+    if (!"TENANT".equals(original.row.type)
+        || original.row.secondary != null
+        || original.row.tenant == null
+        || original.row.tenant < 1) throw forbidden();
+    validateProfile(
+        original.row,
+        new IdentityProfileUpdate(
+            source.profile().username(),
+            source.profile().email(),
+            original.row.tenant,
+            source.profile().firstName(),
+            source.profile().lastName()));
+    scope.assertMay(AdminScope.Target.tenant(original.row.tenant));
+    scope.assertMay(AdminScope.Target.tenant(source.profile().tenantId()));
+    var tables = decode(original.sql, com.fasterxml.jackson.databind.JsonNode.class);
+    for (String table : List.of("consultant", "language", "consultant_topic", "consultant_agency"))
+      if (!tables.path(table).isArray() || !tables.path(table).isEmpty())
+        throw new ScopedIdentityCommandRequiredException();
+    if (jdbc.queryForObject(
+            "select count(*) from user where user_id=?", Integer.class, source.accountId())
+        != 0) throw conflict();
+    try (var checked =
+        new CheckedAccount(
+            current,
+            original.row,
+            human,
+            operation,
+            source.profile(),
+            null,
+            original.sql,
+            false,
+            null)) {
+      checked.tenantEdit = source;
+      checked.applied = prior != null && "APPLIED".equals(prior.status);
+      checked.tenantExpectedSql = checked.applied ? prior.applied : original.sql;
+      return new PureTenantAdminEdit(jdbc, transactions, transport, clock).apply(checked);
+    }
+  }
+
+  private record TenantEditOriginal(AdminRow row, String sql) {}
+
   public de.caritas.cob.userservice.api.model.Consultant updateConsultantProfile(
       de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService
               .ScopedEdit
@@ -237,9 +310,10 @@ public final class HumanAdminAccountMaintenance {
         || !"DELETE".equals(request.getMethod())
         || !Set.of(route, "/service" + route).contains(request.getRequestURI())) throw forbidden();
     Human human = currentHuman();
-    // The retained self-removal policy choice is unresolved; its existing C fence stays closed.
+    // A second authorized person must remove administrator access.
     if (human.subject.equals(account))
-      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+      throw new ForbiddenException(
+          "Another authorized administrator must remove your administrator identity");
     UUID operation = operationId();
     String desired =
         encode(
@@ -2148,6 +2222,11 @@ public final class HumanAdminAccountMaintenance {
     private final de.caritas.cob.userservice.api.admin.service.admin.delete.DeleteAdminService
             .ScopedRemoval
         removal;
+    private de.caritas.cob.userservice.api.admin.service.admin.update.UpdateAdminService
+            .ScopedTenantEdit
+        tenantEdit;
+    private boolean tenantProfileStep;
+    private String tenantExpectedSql;
     private MatrixResult matrixResult;
     private boolean applied, terminalOnly;
     private java.util.Map<String, StoredTerminal> terminals = java.util.Map.of();
@@ -2297,6 +2376,7 @@ public final class HumanAdminAccountMaintenance {
     }
 
     public String profileCommand() {
+      if (tenantEdit != null) return tenantProfileStep ? "profile" : "reassign-tenant";
       if (removal != null) return original.secondary == null ? "delete" : "profile-transition";
       if (existingOrdinaryAssignment()) return "ordinary-profile";
       if (addition != null || grant != null) return "profile-transition";
@@ -2307,6 +2387,7 @@ public final class HumanAdminAccountMaintenance {
     }
 
     public Long tenantId() {
+      if (tenantEdit != null) return tenantProfileStep ? profile.tenantId() : original.tenant;
       return actual.tenant;
     }
 
@@ -2335,6 +2416,7 @@ public final class HumanAdminAccountMaintenance {
     }
 
     public UUID workflowId() {
+      if (tenantEdit != null) return PureTenantAdminEdit.child(workflow, tenantProfileStep);
       return workflow;
     }
 
@@ -2347,6 +2429,7 @@ public final class HumanAdminAccountMaintenance {
     }
 
     public String originalSqlState() {
+      if (tenantEdit != null) return encode(new TenantEditOriginal(original, fullSql));
       if (removal != null) return encode(new RemovalOriginal(original, fullSql));
       return grant == null
           ? encode(original)
@@ -2391,6 +2474,143 @@ public final class HumanAdminAccountMaintenance {
       return role == null ? java.util.List.of() : role.desired();
     }
 
+    public boolean tenantEdit() {
+      return tenantEdit != null;
+    }
+
+    public UUID parentWorkflowId() {
+      return workflow;
+    }
+
+    /** Old terminal evidence releases its slot only; this live owner still checks current scope. */
+    public Long originalTerminalTenant(UUID operation) {
+      requireCurrent();
+      Intent prior = intent(operation, false);
+      if (prior == null
+          || !"TENANT_ADMIN_EDIT_V1"
+              .equals(
+                  decode(prior.desired, com.fasterxml.jackson.databind.JsonNode.class)
+                      .path("sourceKind")
+                      .textValue())) return tenantId();
+      if (!"NO_EFFECT".equals(prior.status)
+          || !accountId().equals(prior.account)
+          || !human.subject.equals(prior.humanSubject)
+          || !human.issuer.equals(prior.humanIssuer)
+          || !human.client.equals(prior.humanClient)) throw forbidden();
+      var saved = decode(prior.original, TenantEditOriginal.class);
+      var before = decode(saved.sql, com.fasterxml.jackson.databind.JsonNode.class).path("admin");
+      var now =
+          decode(
+                  consultantSnapshot(accountId(), false),
+                  com.fasterxml.jackson.databind.JsonNode.class)
+              .path("admin");
+      if (!accountId().equals(saved.row.account)
+          || !Objects.equals(prior.tenant, saved.row.tenant)
+          || !"TENANT".equals(saved.row.type)
+          || saved.row.secondary != null
+          || !before.isArray()
+          || before.size() != 1
+          || !now.isArray()
+          || now.size() != 1) throw conflict();
+      var originalAdmin =
+          decode(before.get(0).textValue(), com.fasterxml.jackson.databind.JsonNode.class);
+      var currentAdmin =
+          decode(now.get(0).textValue(), com.fasterxml.jackson.databind.JsonNode.class);
+      for (String field : List.of("admin_id", "username", "type", "create_date", "id_old"))
+        if (!originalAdmin.has(field) || !originalAdmin.get(field).equals(currentAdmin.path(field)))
+          throw conflict();
+      return saved.row.tenant;
+    }
+
+    public Long originalTenantId() {
+      return original.tenant;
+    }
+
+    void selectTenantStep(boolean profileStep) {
+      requireTenantSourceLive();
+      tenantProfileStep = profileStep;
+    }
+
+    String tenantDesiredJson() {
+      requireTenantSourceLive();
+      return encode(
+          new java.util.TreeMap<>(
+              java.util.Map.of("sourceKind", "TENANT_ADMIN_EDIT_V1", "profile", profile)));
+    }
+
+    String tenantOriginalSql() {
+      requireTenantSourceLive();
+      return fullSql;
+    }
+
+    String tenantSnapshot(boolean lock) {
+      requireTenantSourceLive();
+      return consultantSnapshot(accountId(), lock);
+    }
+
+    void requireTenantSourceLive() {
+      if (tenantEdit == null
+          || !active
+          || owner != Thread.currentThread()
+          || !clock.instant().isBefore(deadline)
+          || !clock.instant().isBefore(human.expires)
+          || !Objects.equals(method, request.getMethod())
+          || !Objects.equals(path, request.getRequestURI())) throw forbidden();
+      tenantEdit.requireLive();
+      currentHumanMatching(human);
+    }
+
+    void requireTenantProjection(HumanAdminMaintenanceTransport.Projection state, boolean desired) {
+      requireTenantSourceLive();
+      if (state == null
+          || !accountId().equals(state.id())
+          || !Objects.equals(tenantId(), state.tenantId())
+          || !decodedUsername(original.username).equals(state.username())
+          || !Objects.equals(desired ? profile.firstName() : original.firstName, state.firstName())
+          || !Objects.equals(desired ? profile.lastName() : original.lastName, state.lastName())
+          || !Objects.equals(desired ? profile.email() : original.email, state.email()))
+        throw conflict();
+      reviewedProtected.requireCurrent("TENANT_ADMIN", state.effectiveRoles());
+      if (state.effectiveRoles().contains("consultant")
+          || state.effectiveRoles().contains("group-chat-consultant"))
+        throw new ScopedIdentityCommandRequiredException();
+    }
+
+    void applyTenantCallback() {
+      requireTenantSourceLive();
+      TransactionSynchronizationManager.bindResource(tenantEdit, this);
+      try {
+        de.caritas.cob.userservice.api.tenant.TenantContext.runIn(
+            profile.tenantId(), () -> tenantEdit.apply(this));
+      } finally {
+        TransactionSynchronizationManager.unbindResource(tenantEdit);
+      }
+    }
+
+    public void requireTenantEditCallback(
+        de.caritas.cob.userservice.api.admin.service.admin.update.UpdateAdminService
+                .ScopedTenantEdit
+            source) {
+      requireTenantSourceLive();
+      if (source != tenantEdit
+          || !TransactionSynchronizationManager.isActualTransactionActive()
+          || TransactionSynchronizationManager.getResource(source) != this) throw unavailable();
+    }
+
+    de.caritas.cob.userservice.api.model.Admin tenantResult() {
+      requireTenantSourceLive();
+      return tenantEdit.result();
+    }
+
+    RuntimeException tenantInitialRefusal(int status) {
+      requireCurrent();
+      var held = intent(workflow, false);
+      if (held == null || !"NO_EFFECT".equals(held.status)) throw unavailable();
+      var verified = transport.verifyProfileNoEffect(this, frozen(held), held.receipt);
+      if (verified.status() != status) throw unavailable();
+      return definiteProfileRefusal(this, status);
+    }
+
     public void requireCurrent() {
       if (!active
           || owner != Thread.currentThread()
@@ -2400,6 +2620,14 @@ public final class HumanAdminAccountMaintenance {
           || !Objects.equals(path, request.getRequestURI())) throw forbidden();
       requireOutsideSql();
       currentHumanMatching(human);
+      if (tenantEdit != null) {
+        requireTenantSourceLive();
+        scope.assertMay(AdminScope.Target.tenant(original.tenant));
+        scope.assertMay(AdminScope.Target.tenant(profile.tenantId()));
+        if (!Objects.equals(tenantExpectedSql, consultantSnapshot(accountId(), false)))
+          throw conflict();
+      }
+
       if (!actual.equals(
           removal == null ? authorizedRow(actual.account, false, self) : ownedRow(this, false)))
         throw conflict();

@@ -37,6 +37,8 @@ public class UpdateAdminService {
     this.scopedMaintenance = maintenance;
   }
 
+  @jakarta.persistence.PersistenceContext private jakarta.persistence.EntityManager scopedEntities;
+
   private boolean fiveActors() {
     return identityMode != null && identityMode.isFiveActorMode();
   }
@@ -134,17 +136,112 @@ public class UpdateAdminService {
   public Admin updateTenantAdmin(String adminId, UpdateTenantAdminDTO updateTenantAdminDTO) {
     final Admin admin = retrieveAdminService.findAdmin(adminId, Admin.AdminType.TENANT);
     final UserDTO userDTO = buildValidatedUserDTO(updateTenantAdminDTO, admin);
-    if (fiveActors())
-      return updateScoped(
-          admin,
-          profileUpdate(
-              userDTO, updateTenantAdminDTO.getFirstname(), updateTenantAdminDTO.getLastname()));
+    if (fiveActors()) {
+      if (scopedMaintenance == null || !scopedMaintenance.isFiveActorMode())
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+      try (var source =
+          new ScopedTenantEdit(
+              adminId,
+              updateTenantAdminDTO,
+              profileUpdate(
+                  userDTO,
+                  updateTenantAdminDTO.getFirstname(),
+                  updateTenantAdminDTO.getLastname()))) {
+        return scopedMaintenance.updateTenantAdmin(source);
+      }
+    }
     this.identityProfileUpdater.updateProfile(
         admin.getId(),
         profileUpdate(
             userDTO, updateTenantAdminDTO.getFirstname(), updateTenantAdminDTO.getLastname()));
 
     return this.adminRepository.save(buildAdmin(updateTenantAdminDTO, admin));
+  }
+
+  /** Only the actual full TenantAdmin DTO entry can mint this live edit source. */
+  public final class ScopedTenantEdit implements AutoCloseable {
+    private final String account;
+    private final UpdateTenantAdminDTO input;
+    private final IdentityProfileUpdate desired;
+    private final Thread owner = Thread.currentThread();
+    private boolean active = true;
+
+    private ScopedTenantEdit(
+        String account, UpdateTenantAdminDTO input, IdentityProfileUpdate desired) {
+      this.account = account;
+      this.input = input;
+      this.desired = desired;
+      requireLive();
+    }
+
+    public void requireLive() {
+      if (!active
+          || owner != Thread.currentThread()
+          || input == null
+          || desired == null
+          || input.getTenantId() == null
+          || input.getTenantId() < 1
+          || !java.util.Objects.equals(desired.tenantId(), input.getTenantId().longValue())
+          || !java.util.Objects.equals(desired.firstName(), input.getFirstname())
+          || !java.util.Objects.equals(desired.lastName(), input.getLastname())
+          || !java.util.Objects.equals(desired.email(), input.getEmail()))
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    }
+
+    public String accountId() {
+      requireLive();
+      return account;
+    }
+
+    public IdentityProfileUpdate profile() {
+      requireLive();
+      return desired;
+    }
+
+    public void requireJpaOwner(jakarta.persistence.EntityManagerFactory factory) {
+      requireLive();
+      if (factory == null
+          || scopedEntities == null
+          || scopedEntities.getEntityManagerFactory() != factory)
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    }
+
+    public void apply(
+        de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance.CheckedAccount
+            checked) {
+      requireLive();
+      checked.requireTenantEditCallback(this);
+      if (!scopedEntities.isJoinedToTransaction())
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+      var row =
+          de.caritas.cob.userservice.api.tenant.TenantContext.supplyAcrossTenants(
+                  () -> adminRepository.findByIdAndType(account, Admin.AdminType.TENANT))
+              .orElseThrow();
+      scopedEntities.refresh(row);
+      row.setTenantId(desired.tenantId());
+      row.setFirstName(desired.firstName());
+      row.setLastName(desired.lastName());
+      row.setEmail(desired.email());
+      adminRepository.save(row);
+      scopedEntities.flush();
+    }
+
+    public Admin result() {
+      requireLive();
+      return de.caritas.cob.userservice.api.tenant.TenantContext.supplyAcrossTenants(
+              () -> adminRepository.findByIdAndType(account, Admin.AdminType.TENANT))
+          .orElseThrow();
+    }
+
+    @Override
+    public void close() {
+      active = false;
+    }
+
+    @Override
+    public String toString() {
+      return "ScopedTenantEdit[ownership=redacted]";
+    }
   }
 
   public Admin patchAgencyAdmin(final String adminId, final PatchAdminDTO patchAdminDTO) {

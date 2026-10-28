@@ -218,13 +218,20 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
         || !Objects.equals(profile, account.desiredProfile())) throw invalid();
     var actor = actors.require(TaskPurpose.ACCOUNT_MAINTENANCE);
     var binding = new TreeMap<String, Object>();
-    binding.put("target", target(account));
-    binding.put("operationId", operation.toString());
+    binding.put(
+        "target",
+        account.tenantEdit()
+            ? target(account, account.originalTenantId(), account.parentWorkflowId())
+            : target(account));
+    binding.put(
+        "operationId", (account.tenantEdit() ? account.parentWorkflowId() : operation).toString());
     binding.put("method", account.requestMethod());
     binding.put("route", account.requestPath());
     binding.put("originalSql", codec.read(account.originalSqlState(), JsonNode.class));
     binding.put("profile", profile);
-    if (account.administratorRemoval()) {
+    if (account.tenantEdit()) {
+      binding.put("sourceKind", "TENANT_ADMIN_EDIT_V1");
+    } else if (account.administratorRemoval()) {
       binding.put("sourceKind", "ADMINISTRATOR_REMOVAL_V1");
     } else if (account.agencyAdminAddition() || account.consultantIdentityAddition()) {
       binding.put("publicRoleAddition", codec.read(account.roleAdditionIntent(), JsonNode.class));
@@ -300,7 +307,7 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
         realmId,
         actors.require(TaskPurpose.ACCOUNT_MAINTENANCE),
         current.accountId(),
-        current.tenantId(),
+        current.originalTerminalTenant(operation),
         current.selfService() ? "SELF" : "HUMAN_ADMIN",
         operation,
         requestDigest,
@@ -313,6 +320,9 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
     JsonNode body = checkedBody(account, frozen);
     try {
       return switch (account.profileCommand()) {
+        case "reassign-tenant" ->
+            codec.verifyMaintenanceTenantReassignmentReceipt(
+                receipt, realmId, actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), body);
         case "delete" ->
             codec.verifyMaintenanceDeleteReceipt(
                 receipt, realmId, actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), body);
@@ -377,7 +387,9 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
     change.put("lastName", profile.lastName());
     change.put("email", profile.email());
     Object completeChange;
-    if (account.administratorRemoval()) {
+    if (account.tenantEdit() && "reassign-tenant".equals(account.profileCommand())) {
+      completeChange = Map.of("tenantId", profile.tenantId().toString());
+    } else if (account.administratorRemoval()) {
       completeChange =
           account.combinedAdministratorRemoval()
               ? Map.of(
@@ -422,9 +434,13 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
   }
 
   private Map<String, Object> target(CheckedAccount account) {
+    return target(account, account.tenantId(), account.workflowId());
+  }
+
+  private Map<String, Object> target(CheckedAccount account, Long tenant, UUID workflow) {
     var origin = new TreeMap<String, Object>();
     origin.put("kind", account.selfService() ? "SELF" : "HUMAN_ADMIN");
-    origin.put("workflowId", account.workflowId().toString());
+    origin.put("workflowId", workflow.toString());
     origin.put("humanSubject", account.humanSubject());
     origin.put("humanIssuer", account.humanIssuer());
     origin.put("humanClient", account.humanClient());
@@ -435,7 +451,7 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
             : account.protectedSelf() ? "PROTECTED_ACCOUNT_OPERATIONS_V1" : null);
     var target = new TreeMap<String, Object>();
     target.put("accountId", account.accountId());
-    target.put("tenantId", account.tenantId() == null ? null : account.tenantId().toString());
+    target.put("tenantId", tenant == null ? null : tenant.toString());
     target.put("origin", origin);
     return target;
   }
@@ -443,7 +459,14 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
   private String call(CheckedAccount account, String command, String frozen) {
     account.requireCurrent();
     if (TransactionSynchronizationManager.isActualTransactionActive()
-        || !Set.of("read", "profile", "email", "ordinary-profile", "profile-transition", "delete")
+        || !Set.of(
+                "read",
+                "profile",
+                "email",
+                "ordinary-profile",
+                "profile-transition",
+                "delete",
+                "reassign-tenant")
             .contains(command)) throw invalid();
     var actor = actors.require(TaskPurpose.ACCOUNT_MAINTENANCE);
     var token = broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE);
@@ -504,7 +527,13 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
           || !"no-store".equals(response.getHeaders().getCacheControl())) throw invalid();
       return codec.utf8(raw);
     } catch (RestClientResponseException refusal) {
-      if (Set.of("profile", "email", "ordinary-profile", "profile-transition", "delete")
+      if (Set.of(
+                  "profile",
+                  "email",
+                  "ordinary-profile",
+                  "profile-transition",
+                  "delete",
+                  "reassign-tenant")
               .contains(command)
           && Set.of(403, 409).contains(refusal.getStatusCode().value())
           && refusal.getResponseHeaders() != null

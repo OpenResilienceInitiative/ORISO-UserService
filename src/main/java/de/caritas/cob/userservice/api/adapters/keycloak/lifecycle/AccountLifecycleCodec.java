@@ -1259,6 +1259,7 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
                 "email",
                 "ordinary-profile",
                 "profile-transition",
+                "reassign-tenant",
                 "deactivate",
                 "reactivate",
                 "self-password",
@@ -1543,6 +1544,11 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
   public String verifyMaintenanceLocaleReceipt(
       String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
     return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "locale", "UPDATED");
+  }
+
+  public String verifyMaintenanceTenantReassignmentReceipt(
+      String reply, String realmId, TaskActorCredentials actor, JsonNode frozen) {
+    return verifyMaintenanceReceipt(reply, realmId, actor, frozen, "reassign-tenant", "UPDATED");
   }
 
   public String verifyMaintenanceProfileReceipt(

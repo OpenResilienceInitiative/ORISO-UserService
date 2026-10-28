@@ -31,6 +31,18 @@ final class StoredMaintenanceNoEffect {
     JsonNode body = codec.read(original.body(), JsonNode.class);
     boolean imported = "IMPORT".equals(body.path("target").path("origin").path("kind").textValue());
     String originalKind = body.path("target").path("origin").path("kind").textValue();
+    String boundOperation = operation.toString();
+    if (!imported
+        && body.path("change").isObject()
+        && body.path("change").size() == 1
+        && body.path("change").has("tenantId")) {
+      String child =
+          UUID.nameUUIDFromBytes(
+                  ("tenant-admin-edit/v1/" + operation + "/tenant")
+                      .getBytes(StandardCharsets.UTF_8))
+              .toString();
+      if (child.equals(body.path("operationId").textValue())) boundOperation = child;
+    }
     var fields = new HashSet<String>();
     body.fieldNames().forEachRemaining(fields::add);
     if (!fields.equals(
@@ -38,7 +50,7 @@ final class StoredMaintenanceNoEffect {
                 ? Set.of("target", "workflow", "operationId", "expectedState", "change")
                 : Set.of("target", "operationId", "expectedState", "change"))
         || !original.body().equals(codec.canonical(body))
-        || !operation.toString().equals(body.path("operationId").textValue())
+        || !boundOperation.equals(body.path("operationId").textValue())
         || !account.equals(body.path("target").path("accountId").textValue())
         || !Objects.equals(
             tenant == null ? null : tenant.toString(),
@@ -49,9 +61,7 @@ final class StoredMaintenanceNoEffect {
             ? Set.of("SELF", "HUMAN_ADMIN", "IMPORT").contains(originalKind)
             : currentKind.equals(originalKind)
                 || Set.of("SELF", "HUMAN_ADMIN").contains(currentKind) && imported)
-        || !operation
-            .toString()
-            .equals(body.path("target").path("origin").path("workflowId").textValue())
+        || !boundOperation.equals(body.path("target").path("origin").path("workflowId").textValue())
         || original.bindingDigest() == null
         || !original.bindingDigest().matches("[0-9a-f]{64}")
         || !MessageDigest.isEqual(
@@ -112,7 +122,16 @@ final class StoredMaintenanceNoEffect {
     fields.clear();
     change.fieldNames().forEachRemaining(fields::add);
     String command;
-    if (fields.isEmpty()) command = "delete";
+    if (fields.equals(Set.of("tenantId"))
+        && body.path("change").path("tenantId").isTextual()
+        && body.path("change").path("tenantId").textValue().matches("[1-9][0-9]{0,18}")) {
+      try {
+        if (Long.parseLong(body.path("change").path("tenantId").textValue()) < 1) throw invalid();
+      } catch (NumberFormatException invalid) {
+        throw invalid();
+      }
+      command = "reassign-tenant";
+    } else if (fields.isEmpty()) command = "delete";
     else if (fields.equals(Set.of("firstName", "lastName", "email"))) {
       command = "profile";
       if ("SELF".equals(originalKind)) {
