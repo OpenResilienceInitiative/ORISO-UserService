@@ -16,7 +16,7 @@ concurrency:
 jobs:
   caller-proof:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       SCENARIO_C_DEV_BASE: c944417d9d664d35d63b31bb57c55f852c2d783c
       MAVEN_OPTS: -Xmx1024m -XX:ActiveProcessorCount=2

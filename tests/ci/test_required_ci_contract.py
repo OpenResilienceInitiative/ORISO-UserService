@@ -114,7 +114,9 @@ class RequiredCiContractTest(unittest.TestCase):
         self.assertEqual(len(selected), len(set(selected)))
         self.assertEqual(["./mvnw", "test", "-Dtest=EncodingTest#originalCase"], calls[3][0])
         self.assertEqual([600] * 4, [seconds for _, seconds in calls])
-        self.assertEqual(30, job["timeout-minutes"])
+        # The outer orchestration allows the existing 56-minute child envelope plus cleanup;
+        # individual child deadlines and native/CPU/heap limits remain unchanged.
+        self.assertEqual(60, job["timeout-minutes"])
         self.assertEqual("-Xmx512m -XX:MaxMetaspaceSize=192m -XX:ActiveProcessorCount=2",
                          job["env"]["JAVA_TOOL_OPTIONS"])
 
