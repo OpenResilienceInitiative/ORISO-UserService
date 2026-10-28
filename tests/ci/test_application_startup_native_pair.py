@@ -42,6 +42,34 @@ class ApplicationStartupPairControls(unittest.TestCase):
         config['ordinaryAdminOperations'].append({'targetProfiles': ['combined-unacknowledged-v1']})
         with self.assertRaises(ValueError): proof.startup_fixture_catalogue(config, groups)
 
+    def test_protected_catalogue_omits_only_exact_adversarial_alias_and_two_references(self):
+        import copy
+        peer = {'id': 'tenant-peer-v1', 'kind': 'TENANT_ADMIN', 'version': 1,
+                'realmRoles': ['tenant-admin'], 'groupId': 'peer', 'groupPath': '/protected-admins/tenant-peers'}
+        config = {'profiles': [peer, {**peer, 'id': 'tenant-other-v1'},
+            {'id': 'platform-v1'}, {'id': 'tenant-consultant-v2'}, {'id': 'platform-consultant-v2'}],
+            'bindings': [{'subject': who, 'protectedProfileIds': ['platform-v1', 'tenant-other-v1', 'tenant-peer-v1'],
+                'accountOperations': [{'targetProfiles': ['tenant-peer-v1'], 'operations': ['account.reassign-tenant']}]}
+                for who in ['primary', 'variant']], 'adoptedAccounts': [{'protectedProfileId': 'tenant-peer-v1'}]}
+        original = copy.deepcopy(config)
+        result = proof.startup_protected_catalogue(config)
+        expected = copy.deepcopy(config)
+        expected['profiles'].pop(1)
+        for binding in expected['bindings']: binding['protectedProfileIds'].remove('tenant-other-v1')
+        self.assertEqual(expected, result)
+        self.assertEqual(original, config)
+        self.assertEqual(['tenant-peer-v1'], [p['id'] for p in result['profiles'] if p.get('realmRoles') == ['tenant-admin']])
+        self.assertEqual(2, len([p for p in config['profiles'] if p.get('realmRoles') == ['tenant-admin']]))
+        for change in ['missing', 'extra', 'remapped', 'other-id', 'extra-reference', 'missing-reference']:
+            bad = copy.deepcopy(config)
+            if change == 'missing': bad['profiles'].pop(1)
+            elif change == 'extra': bad['profiles'].append(copy.deepcopy(peer))
+            elif change == 'remapped': bad['profiles'][1]['groupId'] = 'foreign'
+            elif change == 'other-id': bad['profiles'][2]['id'] = 'foreign'
+            elif change == 'extra-reference': bad['adoptedAccounts'].append({'protectedProfileId': 'tenant-other-v1'})
+            else: bad['bindings'][1]['protectedProfileIds'].remove('tenant-other-v1')
+            with self.subTest(change=change), self.assertRaises(ValueError): proof.startup_protected_catalogue(bad)
+
     def test_two_exact_expected_states_have_different_acceptance(self):
         for state in ['FENCED', 'OPEN']:
             self.assertTrue(proof.checked_witness(self.witness(state), state))

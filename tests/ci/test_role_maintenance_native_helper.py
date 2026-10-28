@@ -29,6 +29,30 @@ class RoleMaintenanceNativeGateTest(unittest.TestCase):
                 else: value['actualJpa'] = {'string': 'true', 'number': 1, 'null': None}[edit]
                 with self.assertRaises(ValueError): HELPER.checked_witness(value)
 
+    def test_role_grant_selects_exact_original_contract_and_separate_delete_grant(self):
+        original = {'authority': 'PLATFORM', 'selfOnly': False,
+            'targetProfiles': sorted(['consultant-v1', 'consultant-basic-v1', 'user-v1', 'agency-admin-v1',
+                'consultant-agency-admin-v1', 'consultant-agency-admin-basic-v1']),
+            'operations': ['account.deactivate', 'account.email', 'account.ordinary-profile',
+                'account.profile', 'account.reactivate', 'account.read', 'account.profile-transition']}
+        deletion = {'authority': 'PLATFORM', 'selfOnly': False, 'targetProfiles': ['agency-admin-v1'], 'operations': ['account.delete']}
+        grants = [deletion, {**original, 'authority': 'TENANT_PEER'}, original]
+        saved = copy.deepcopy(grants)
+        self.assertEqual({'authority': 'PLATFORM', 'selfOnly': False,
+            'targetProfiles': ['consultant-agency-admin-v1'], 'operations': ['account.read', 'account.profile-transition']},
+            HELPER.role_fixture_platform_grant(grants))
+        self.assertEqual(saved, grants)
+        for change in ['missing', 'extra', 'duplicate', 'target', 'operation', 'delete', 'field']:
+            bad = copy.deepcopy(grants)
+            if change == 'missing': bad.pop()
+            elif change == 'extra': bad.append({**original, 'operations': ['account.read']})
+            elif change == 'duplicate': bad.append(copy.deepcopy(original))
+            elif change == 'target': bad[-1]['targetProfiles'].append('foreign')
+            elif change == 'operation': bad[-1]['operations'].append('account.delete')
+            elif change == 'delete': bad[0]['targetProfiles'] = ['consultant-v1']
+            else: bad[-1]['extra'] = True
+            with self.subTest(change=change), self.assertRaises(ValueError): HELPER.role_fixture_platform_grant(bad)
+
     def platform(self):
         return {'bindings': [{'subject': 'human', 'authority': 'PLATFORM', 'authorizerTenantIds': [0],
             'humanClientIds': ['protected-human-web'], 'audienceSets': [['userservice']],

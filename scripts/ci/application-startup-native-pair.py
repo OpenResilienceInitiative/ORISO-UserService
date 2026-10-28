@@ -183,6 +183,32 @@ def safe_failure_types(raw):
     return list(dict.fromkeys(value for value in values if value in known))[:30]
 
 
+def startup_protected_catalogue(configuration):
+    """Omit only the native negative-test alias, identically before both peer installations."""
+    value = copy.deepcopy(configuration)
+    ids = ['platform-v1', 'tenant-peer-v1', 'tenant-other-v1', 'tenant-consultant-v2', 'platform-consultant-v2']
+    profiles = value.get('profiles', [])
+    if sorted(p.get('id', '') for p in profiles) != sorted(ids):
+        raise ValueError('Exact five protected fixture profiles required')
+    peer = next(p for p in profiles if p['id'] == 'tenant-peer-v1')
+    alias = next(p for p in profiles if p['id'] == 'tenant-other-v1')
+    if (alias != {**peer, 'id': 'tenant-other-v1'} or peer.get('kind') != 'TENANT_ADMIN'
+            or peer.get('version') != 1 or peer.get('realmRoles') != ['tenant-admin']
+            or peer.get('groupPath') != '/protected-admins/tenant-peers' or not peer.get('groupId')):
+        raise ValueError('Exact adversarial protected alias required')
+    bindings = value.get('bindings', [])
+    if len(bindings) != 2 or any(binding.get('protectedProfileIds', []).count('tenant-other-v1') != 1 for binding in bindings):
+        raise ValueError('Exact two inherited adversarial target references required')
+    profiles.remove(alias)
+    for binding in bindings: binding['protectedProfileIds'].remove('tenant-other-v1')
+    def contains_alias(node):
+        if isinstance(node, dict): return any(contains_alias(k) or contains_alias(v) for k, v in node.items())
+        if isinstance(node, list): return any(contains_alias(v) for v in node)
+        return node == 'tenant-other-v1'
+    if contains_alias(value): raise ValueError('Unexpected adversarial profile reference')
+    return value
+
+
 def startup_source_projection(configuration, subject):
     value = copy.deepcopy(configuration)
     sources = [item for item in value['bindings'] if item['subject'] == subject]
@@ -376,7 +402,7 @@ def native(kc, report):
 
         @classmethod
         def prepare_installation(cls, helper, configuration):
-            value = OperationFixture.prepare_installation.__func__(cls, helper, configuration)
+            value = startup_protected_catalogue(OperationFixture.prepare_installation.__func__(cls, helper, configuration))
             command = cls.command.copy()
             group_index = [i for i, argument in enumerate(command) if argument.startswith('ORISO_ACCOUNT_LIFECYCLE_GROUPS=')]
             policy_index = [i for i, argument in enumerate(command) if argument.startswith('ORISO_ACCOUNT_MAINTENANCE_CONFIG=')]
@@ -500,6 +526,8 @@ def native(kc, report):
             'disposableInactivityScheduler': 'ACCOUNT_INACTIVITY_ENABLED=true; unchanged dry-run default; instantiation and binding only, not inactivity effects',
             'disposableMatrixName': 'MATRIX_SERVER_NAME=startup-fixture.invalid; required grant owner configuration only, not Matrix reachability or delivery',
             'disposableRetentionPolicy': 'deletion.readOnlyWindow.tenantOverrides=11:0; proves configured immediate eligibility, not elapsed48h; nonzero tests retained',
+            'disposableTenantMetadata': 'Owned ephemeral exact GET /tenant/public/id/22, no query/body, id22/subdomain fixture-22 only; actual production response enrichment client, wire and returned subdomain asserted; no nativeTenant/policy/baseline credit',
+            'disposableProtectedCatalogue': 'Five to four profiles: omit only adversarial tenant-other-v1 plus its two inherited target-ID references; retain both human bindings and every other field; identical installed/User contents, unchanged K negative suites',
             'pureTenantProvenance': 'Existing explicitly adopted tenant-peer-v1 target17, exact native birth; move22 with unchanged installed grant',
             'journeyDownstreamLimit': 'Real User servlet/JPA and Keycloak; no Matrix account/room, no Consultant agency relations, Appointment feature retains configured false; AdminAgency row preserved',
             'schema': ['Hibernate testing create-drop', 'existing UserServiceDatabase.sql', 'existing AccountInactivityDatabase.sql', 'exact shipped C migration H2 fixture']})

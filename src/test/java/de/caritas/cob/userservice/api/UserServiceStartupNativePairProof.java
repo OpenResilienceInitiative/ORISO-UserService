@@ -80,6 +80,10 @@ class UserServiceStartupNativePairProof {
     Throwable startupFailure = null;
     var consultingTypes =
         com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+    var tenantMetadata =
+        com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+    var tenantMetadataReads = new java.util.concurrent.atomic.AtomicInteger();
+    var unexpectedTenantMetadataRequest = new java.util.concurrent.atomic.AtomicBoolean();
     var consultingTypeReads = new java.util.concurrent.atomic.AtomicInteger();
     var unexpectedConsultingTypeRequest = new java.util.concurrent.atomic.AtomicBoolean();
     try {
@@ -104,6 +108,30 @@ class UserServiceStartupNativePairProof {
             }
           });
       consultingTypes.start();
+      tenantMetadata.createContext(
+          "/",
+          exchange -> {
+            try {
+              if (!"GET".equals(exchange.getRequestMethod())
+                  || !"/tenant/public/id/22".equals(exchange.getRequestURI().toString())
+                  || exchange.getRequestBody().readNBytes(1).length != 0) {
+                unexpectedTenantMetadataRequest.set(true);
+                exchange.sendResponseHeaders(403, -1);
+                return;
+              }
+              tenantMetadataReads.incrementAndGet();
+              byte[] response =
+                  "{\"id\":22,\"subdomain\":\"fixture-22\"}"
+                      .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+              exchange.getResponseHeaders().set("Content-Type", "application/json");
+              exchange.getResponseHeaders().set("Cache-Control", "no-store");
+              exchange.sendResponseHeaders(200, response.length);
+              exchange.getResponseBody().write(response);
+            } finally {
+              exchange.close();
+            }
+          });
+      tenantMetadata.start();
       String binary = UserServiceStartupNativePairProof.class.getName().replace('.', '/');
       Path testClasses = Path.of(required("STARTUP_TEST_CLASSES"));
       boolean onlyThisProof;
@@ -212,6 +240,8 @@ class UserServiceStartupNativePairProof {
             application.run(
                 "--server.port=0",
                 "--spring.profiles.active=testing",
+                "--tenant.service.api.url=http://127.0.0.1:"
+                    + tenantMetadata.getAddress().getPort(),
                 "--consulting.type.service.api.url=http://127.0.0.1:"
                     + consultingTypes.getAddress().getPort(),
                 "--spring.sql.init.data-locations=classpath:database/UserServiceDatabase.sql,classpath:database/AccountInactivityDatabase.sql,file:"
@@ -221,6 +251,10 @@ class UserServiceStartupNativePairProof {
         assertTrue(
             consultingTypeReads.get() > 0, "Actual public metadata client must reach the fixture");
         assertFalse(unexpectedConsultingTypeRequest.get());
+        assertTrue(
+            tenantMetadataReads.get() > 0,
+            "Actual tenant response enrichment must reach the fixture");
+        assertFalse(unexpectedTenantMetadataRequest.get());
       } catch (RuntimeException failure) {
         startupFailure = failure;
         var types = new ArrayList<String>();
@@ -263,6 +297,7 @@ class UserServiceStartupNativePairProof {
         witness.put("contextClosed", !held.isActive());
       }
       consultingTypes.stop(0);
+      tenantMetadata.stop(0);
       witness.put("observedBeans", List.copyOf(observed));
       Files.writeString(Path.of(required("STARTUP_WITNESS")), JSON.writeValueAsString(witness));
     }
@@ -621,15 +656,19 @@ class UserServiceStartupNativePairProof {
           jdbc.queryForMap(
               "select * from general_admin_identity_intent where operation_id=?", tenantOperation);
       assertEquals("FROZEN", pending.get("status"));
-      command(
-          client,
-          port,
-          bearer,
-          "PUT",
-          "/useradmin/tenantadmins/" + tenant,
-          tenantOperation,
-          body,
-          200);
+      var tenantResponse =
+          command(
+              client,
+              port,
+              bearer,
+              "PUT",
+              "/useradmin/tenantadmins/" + tenant,
+              tenantOperation,
+              body,
+              200);
+      assertEquals(
+          "fixture-22",
+          JSON.readTree(tenantResponse).path("_embedded").path("tenantSubdomain").asText());
       assertEquals(2, tenantBodies.size());
       assertEquals(tenantBodies.get(0), tenantBodies.get(1));
       assertEquals(1, profileBodies.size());
@@ -686,7 +725,7 @@ class UserServiceStartupNativePairProof {
     return "/useradmin/agencyadmins/" + account;
   }
 
-  private static void command(
+  private static String command(
       HttpClient client,
       int port,
       String bearer,
@@ -710,8 +749,9 @@ class UserServiceStartupNativePairProof {
                         ? HttpRequest.BodyPublishers.noBody()
                         : HttpRequest.BodyPublishers.ofString(body))
                 .build(),
-            HttpResponse.BodyHandlers.discarding());
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(expected, response.statusCode(), "Actual public " + method + " account command");
+    return response.body();
   }
 
   private static void seedInactivity(

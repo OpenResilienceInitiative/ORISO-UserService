@@ -111,6 +111,12 @@ class AccountLifecycleCallerConfigurationTest {
 
   private void withEnabledCallerGraph(
       java.util.function.Consumer<org.springframework.context.ApplicationContext> assertions) {
+    withEnabledCallerGraph(valid(), assertions);
+  }
+
+  private void withEnabledCallerGraph(
+      MockEnvironment environment,
+      java.util.function.Consumer<org.springframework.context.ApplicationContext> assertions) {
     var actors = mock(TaskActorConfiguration.class);
     when(actors.require(any(TaskPurpose.class)))
         .thenReturn(
@@ -138,7 +144,7 @@ class AccountLifecycleCallerConfigurationTest {
     new ApplicationContextRunner()
         .withInitializer(
             context -> {
-              context.getEnvironment().merge(valid());
+              context.getEnvironment().merge(environment);
               context.addBeanFactoryPostProcessor(
                   factory -> {
                     factory.registerSingleton("fixtureKeycloakConfiguration", keycloak);
@@ -316,6 +322,55 @@ class AccountLifecycleCallerConfigurationTest {
           assertEquals(1, context.getBeansOfType(ClaimedPasswordMaintenance.class).size());
           context.getBean(ClaimedPasswordMaintenance.class).requireSupport();
         });
+  }
+
+  @Test
+  void actualCallerRefusesAmbiguousProtectedRolesAndAcceptsOnlyTheUnambiguousCatalogue()
+      throws Exception {
+    for (boolean adversarialAlias : java.util.List.of(true, false)) {
+      var policy = new com.fasterxml.jackson.databind.ObjectMapper().readTree(protectedPolicy());
+      if (adversarialAlias) {
+        var profiles = (com.fasterxml.jackson.databind.node.ArrayNode) policy.path("profiles");
+        var peer =
+            java.util.stream.StreamSupport.stream(profiles.spliterator(), false)
+                .filter(profile -> profile.path("id").asText().equals("tenant"))
+                .findFirst()
+                .orElseThrow();
+        profiles.add(
+            ((com.fasterxml.jackson.databind.node.ObjectNode) peer.deepCopy())
+                .put("id", "tenant-other-v1"));
+      }
+      withEnabledCallerGraph(
+          valid().withProperty("ORISO_PROTECTED_INVITATIONS_CONFIG", policy.toString()),
+          context -> {
+            var owner = context.getBean(HumanAdminAccountMaintenance.class);
+            var selectors =
+                org.springframework.test.util.ReflectionTestUtils.getField(
+                    owner, "reviewedProtected");
+            org.junit.jupiter.api.function.Executable current =
+                () ->
+                    org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                        selectors,
+                        "requireCurrent",
+                        "TENANT_ADMIN",
+                        java.util.List.of("tenant-admin"));
+            if (adversarialAlias)
+              assertThrows(
+                  de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException
+                      .class,
+                  current);
+            else assertDoesNotThrow(current);
+            assertThrows(
+                de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException
+                    .class,
+                () ->
+                    org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                        selectors,
+                        "requireCurrent",
+                        "TENANT_ADMIN",
+                        java.util.List.of("tenant-admin", "consultant")));
+          });
+    }
   }
 
   @Test

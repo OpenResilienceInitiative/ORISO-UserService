@@ -34,6 +34,24 @@ def checked_witness(value):
 
 
 
+def role_fixture_platform_grant(grants):
+    """Select the exact original role grant; the later pure-Admin delete grant is independent."""
+    original = {'authority': 'PLATFORM', 'selfOnly': False,
+        'targetProfiles': sorted(['consultant-v1', 'consultant-basic-v1', 'user-v1', 'agency-admin-v1',
+            'consultant-agency-admin-v1', 'consultant-agency-admin-basic-v1']),
+        'operations': ['account.deactivate', 'account.email', 'account.ordinary-profile',
+            'account.profile', 'account.reactivate', 'account.read', 'account.profile-transition']}
+    deletion = {'authority': 'PLATFORM', 'selfOnly': False,
+        'targetProfiles': ['agency-admin-v1'], 'operations': ['account.delete']}
+    source = [grant for grant in grants if grant.get('authority') == 'PLATFORM']
+    if len(source) != 2 or source.count(original) != 1 or source.count(deletion) != 1:
+        raise ValueError('Exact original role grant and separate pure-Admin delete grant required')
+    selected = copy.deepcopy(original)
+    selected['targetProfiles'] = ['consultant-agency-admin-v1']
+    selected['operations'] = ['account.read', 'account.profile-transition']
+    return selected
+
+
 def canonical_platform_configuration(configuration, subject, group):
     """Finite diagnostic source alignment with canonical Helm PLATFORM roles; no target edit."""
     value = copy.deepcopy(configuration)
@@ -209,10 +227,7 @@ def native(kc, report, driver):
             # Reuse the actual ordinary profiles/grants. No OTP READY observer or diagnostic write.
             install_policy(cls, helper, configuration)
             policy = copy.deepcopy(cls.ordinary_installed_configuration)
-            source = [grant for grant in policy['adminOperations'] if grant['authority'] == 'PLATFORM']
-            if len(source) != 1: raise ValueError('One exact fixture PLATFORM grant required')
-            selected = copy.deepcopy(source[0]); selected['targetProfiles'] = ['consultant-agency-admin-v1']
-            selected['operations'] = ['account.read', 'account.profile-transition']
+            selected = role_fixture_platform_grant(policy['adminOperations'])
             policy['adminOperations'] = [selected]
             prefix = 'ORISO_ACCOUNT_MAINTENANCE_CONFIG='
             if sum(arg.startswith(prefix) for arg in cls.command) != 1:
