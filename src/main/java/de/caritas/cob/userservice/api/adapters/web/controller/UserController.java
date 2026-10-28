@@ -66,6 +66,7 @@ import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.SearchFilter;
+import de.caritas.cob.userservice.api.service.AgencyAdminContactService;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
@@ -159,8 +160,7 @@ public class UserController implements UsersApi {
   private final @NotNull GroupChatRoleService groupChatRoleService;
   private final @NotNull GroupChatJoinRequestControllerDelegate groupChatJoinRequestDelegate;
   private final @NotNull AuthenticatedUser authenticatedUser;
-  private final @NonNull de.caritas.cob.userservice.api.service.AgencyAdminContactService
-      agencyAdminContactService;
+  private final @NonNull AgencyAdminContactService agencyAdminContactService;
   private final @NonNull RequestedContactSheetService requestedContactSheetService;
   private final @NotNull IdentitySuggestionControllerDelegate identitySuggestionControllerDelegate;
 
