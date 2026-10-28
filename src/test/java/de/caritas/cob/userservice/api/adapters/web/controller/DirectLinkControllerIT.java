@@ -20,6 +20,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationDto;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationResponseDto;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.facade.CreateNewSessionFacade;
@@ -84,6 +85,7 @@ class DirectLinkControllerIT {
   @MockitoBean private AgencyService agencyService;
   @MockitoBean private TopicService topicService;
   @MockitoBean private CreateNewSessionFacade createNewSessionFacade;
+  @MockitoBean private TenantService tenantService;
 
   private Consultant owner;
   private Consultant otherCounsellor;

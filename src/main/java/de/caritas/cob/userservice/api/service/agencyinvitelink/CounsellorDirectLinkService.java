@@ -5,6 +5,7 @@ import static de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLink
 import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationDto;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -14,6 +15,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import java.security.SecureRandom;
@@ -46,6 +48,8 @@ public class CounsellorDirectLinkService {
   private final @NonNull TopicService topicService;
   private final @NonNull DirectInvitePolicy directInvitePolicy;
   private final @NonNull CreateNewSessionFacade createNewSessionFacade;
+  private final @NonNull ConsultantRepository consultantRepository;
+  private final @NonNull TenantService tenantService;
 
   public List<AgencyInviteLink> listOwn(Consultant owner) {
     return repository.findAllByConsultantIdAndLinkKindAndChatTypeInOrderByCreateDateDesc(
@@ -145,12 +149,23 @@ public class CounsellorDirectLinkService {
         || (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now()))) {
       throw new BadRequestException("Invite link expired");
     }
-    if (user.getTenantId() != null && !Objects.equals(user.getTenantId(), link.getTenantId())) {
+    // Fail closed: a person without a Träger never reaches a link of one.
+    if (!Objects.equals(user.getTenantId(), link.getTenantId())) {
       throw new ForbiddenException("Invite link belongs to another tenant");
     }
+    tenantService.requireOperationalTenant(link.getTenantId());
     var medium = InviteLinkChatType.valueOf(link.getChatType());
     if (!directInvitePolicy.allows(link.getTenantId(), link.getAgencyId(), medium)) {
       throw new ForbiddenException("Direct invitations are not allowed here");
+    }
+    // The owner may have left the Beratungsstelle or the platform since creating the link.
+    var ownerStillThere =
+        consultantRepository
+            .findByIdAndDeleteDateIsNull(link.getConsultantId())
+            .filter(owner -> worksFor(owner, link.getAgencyId()))
+            .isPresent();
+    if (!ownerStillThere) {
+      throw new DirectLinkInactiveException();
     }
 
     var agency = agencyService.getAgencyWithoutCaching(link.getAgencyId());
@@ -176,6 +191,13 @@ public class CounsellorDirectLinkService {
     return medium != InviteLinkChatType.CHAT;
   }
 
+  private static boolean worksFor(Consultant consultant, Long agencyId) {
+    return consultant.getConsultantAgencies() != null
+        && consultant.getConsultantAgencies().stream()
+            .anyMatch(
+                ca -> ca.getDeleteDate() == null && Objects.equals(ca.getAgencyId(), agencyId));
+  }
+
   private AgencyInviteLink requireOwn(Consultant owner, Long linkId) {
     return repository
         .findByIdAndConsultantIdAndLinkKindAndChatTypeIn(
@@ -199,7 +221,7 @@ public class CounsellorDirectLinkService {
             "agencyId is required when the counsellor works for more or fewer than one agency");
       }
       agencyId = ids.getFirst();
-    } else if (!owner.isInAgency(agencyId)) {
+    } else if (!worksFor(owner, agencyId)) {
       throw new ForbiddenException("Counsellor does not work for agency %s".formatted(agencyId));
     }
     var agency = agencyService.getAgencyWithoutCaching(agencyId);
