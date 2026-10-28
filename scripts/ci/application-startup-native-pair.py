@@ -179,7 +179,7 @@ def safe_failure_types(raw):
         match = re.search(r'^package ([A-Za-z0-9_.]+);', path.read_text(), re.M)
         if match: known.add(match.group(1) + '.' + path.stem)
     text = raw.decode('utf-8', errors='replace')
-    values = re.findall(r'(?<![A-Za-z0-9_])(?:org|java)\.[A-Za-z0-9_.]+(?:Exception|Error)(?![A-Za-z0-9_])', text)
+    values = re.findall(r'(?<![A-Za-z0-9_])(?:org|java|de)\.[A-Za-z0-9_.]+(?:Exception|Error)(?![A-Za-z0-9_])', text)
     return list(dict.fromkeys(value for value in values if value in known))[:30]
 
 
@@ -240,7 +240,7 @@ def checked_witness(value, state):
 def sanitize(reports, output):
     clean = ET.Element('testsuite', name=SUITE)
     counts = dict(tests=0, failures=0, errors=0, skipped=0)
-    files = list(reports.glob('TEST-*.xml')); names = []; valid = len(files) == 1; frames = []
+    files = list(reports.glob('TEST-*.xml')); names = []; valid = len(files) == 1; frames = []; http_assertions = set()
     for path in files:
         suite = ET.parse(path).getroot(); valid &= suite.get('name') == SUITE
         for case in suite.findall('testcase'):
@@ -253,6 +253,12 @@ def sanitize(reports, output):
                     counts[key] += 1
                     ET.SubElement(child, tag, message='Sensitive startup diagnostic omitted')
                     frames += re.findall(r'UserServiceStartupNativePairProof\.java:[0-9]+', problem.text or '')
+                    # Only known HTTP status integers, never assertion text or response bodies.
+                    allowed_statuses = {200, 201, 204, 400, 401, 403, 404, 405, 409, 500, 502, 503}
+                    for expected, actual in re.findall(r'expected: <([0-9]{3})> but was: <([0-9]{3})>',
+                            (problem.get('message') or '') + '\n' + (problem.text or '')):
+                        pair = (int(expected), int(actual))
+                        if all(value in allowed_statuses for value in pair): http_assertions.add(pair)
         for key, count in counts.items():
             valid &= suite.get(key) is None or int(suite.get(key)) == count
     valid &= names == [CASE]
@@ -260,6 +266,7 @@ def sanitize(reports, output):
     output.parent.mkdir(parents=True, exist_ok=True)
     ET.ElementTree(clean).write(output, encoding='utf-8', xml_declaration=True)
     return {**counts, 'exact_method_inventory': valid, 'failure_locations': sorted(set(frames)),
+            'http_status_assertions': [{'expected': expected, 'actual': actual} for expected, actual in sorted(http_assertions)],
             'accepted': valid and counts == dict(tests=1, failures=0, errors=0, skipped=0)}
 
 

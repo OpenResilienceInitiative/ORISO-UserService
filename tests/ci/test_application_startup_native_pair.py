@@ -84,6 +84,20 @@ class ApplicationStartupPairControls(unittest.TestCase):
             for word in ['Bearer', 'secret', 'password', 'OTP123']:
                 self.assertNotIn(word, output.read_text())
 
+    def test_http_assertion_capsule_exports_only_closed_status_integers(self):
+        with tempfile.TemporaryDirectory() as folder:
+            reports = Path(folder); output = reports / 'safe.xml'
+            (reports / ('TEST-' + proof.SUITE + '.xml')).write_text(
+                '<testsuite name="' + proof.SUITE + '"><testcase classname="' + proof.SUITE + '" name="' + proof.CASE + '"><failure>'
+                'Bearer secret mail password: expected: &lt;200&gt; but was: &lt;503&gt; '
+                'unknown expected: &lt;123&gt; but was: &lt;456&gt;'
+                '</failure></testcase></testsuite>')
+            value = proof.sanitize(reports, output)
+            self.assertFalse(value['accepted'])
+            self.assertEqual([{'expected': 200, 'actual': 503}], value['http_status_assertions'])
+            for secret in ['Bearer', 'secret', 'mail', 'password', '123', '456']:
+                self.assertNotIn(secret, json.dumps(value) + output.read_text())
+
     def test_sql_input_capsule_exports_only_fixed_resource_number_and_vendor_code(self):
         raw = b'Failed to execute SQL script statement #17 of URL [file:/private/runner/application-startup-native-journals.sql]: secret password Bearer otp123 [42101-240]'
         value = proof.safe_child_input(raw)
@@ -121,7 +135,9 @@ class ApplicationStartupPairControls(unittest.TestCase):
     def test_cause_capsule_exports_only_fixed_library_and_source_exception_types(self):
         raw = b'org.springframework.beans.factory.NoUniqueBeanDefinitionException: secret password Bearer abc com.secret.UnknownException java.lang.IllegalStateException'
         self.assertEqual(['org.springframework.beans.factory.NoUniqueBeanDefinitionException', 'java.lang.IllegalStateException'], proof.safe_failure_types(raw))
-        self.assertEqual([], proof.safe_failure_types(b'org.secret.PasswordSecretException password=secret'))
+        self.assertEqual([], proof.safe_failure_types(b'org.secret.PasswordSecretException de.secret.PasswordSecretException password=secret'))
+        source_type = 'de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException'
+        self.assertEqual([source_type], proof.safe_failure_types((source_type + ': Bearer secret').encode()))
 
     def test_dependency_capsule_accepts_only_existing_production_identifiers(self):
         raw = b"bean with name 'keycloakService' password=secret Bearer abc bean with name 'selfPasswordMaintenance' bean with name 'SensitiveUnknownLabel'"
