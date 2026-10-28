@@ -99,13 +99,20 @@ class ReservedTenantBootstrapTest {
                 .claim("azp", "backend-setup")
                 .audience(
                     java.util.List.of(
-                        "tenantservice", "agencyservice", "consultingtypeservice", "userservice"))
+                        "tenantservice",
+                        "agencyservice",
+                        "consultingtypeservice",
+                        "userservice",
+                        "oriso-task-commands"))
                 .claim(
                     "realm_access",
                     Map.of(
                         "roles",
                         java.util.List.of(
-                            "config-wizard", "invitation-reservations", "consultant-import")))
+                            "config-wizard",
+                            "invitation-reservations",
+                            "consultant-import",
+                            "smtp-sync")))
                 .issuedAt(Instant.now().minusSeconds(1))
                 .expiresAt(Instant.now().plusSeconds(60))
                 .build());

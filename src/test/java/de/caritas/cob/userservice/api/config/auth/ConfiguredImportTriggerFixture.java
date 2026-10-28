@@ -47,12 +47,21 @@ public final class ConfiguredImportTriggerFixture {
               .subject(subject)
               .claim("azp", "backend-setup")
               .audience(
-                  List.of("tenantservice", "agencyservice", "consultingtypeservice", "userservice"))
+                  List.of(
+                      "tenantservice",
+                      "agencyservice",
+                      "consultingtypeservice",
+                      "userservice",
+                      "oriso-task-commands"))
               .claim(
                   "realm_access",
                   Map.of(
                       "roles",
-                      List.of("config-wizard", "invitation-reservations", "consultant-import")))
+                      List.of(
+                          "config-wizard",
+                          "invitation-reservations",
+                          "consultant-import",
+                          "smtp-sync")))
               .issueTime(Date.from(Instant.now().minusSeconds(1)))
               .expirationTime(Date.from(Instant.now().plusSeconds(300)))
               .build();

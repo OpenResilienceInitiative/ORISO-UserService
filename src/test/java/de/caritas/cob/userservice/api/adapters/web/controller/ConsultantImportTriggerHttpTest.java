@@ -230,10 +230,18 @@ class ConsultantImportTriggerHttpTest {
     values.put("sub", SUBJECT);
     values.put("azp", "backend-setup");
     values.put(
-        "aud", List.of("tenantservice", "agencyservice", "consultingtypeservice", "userservice"));
+        "aud",
+        List.of(
+            "tenantservice",
+            "agencyservice",
+            "consultingtypeservice",
+            "userservice",
+            "oriso-task-commands"));
     values.put(
         "realm_access",
-        Map.of("roles", List.of("config-wizard", "invitation-reservations", "consultant-import")));
+        Map.of(
+            "roles",
+            List.of("config-wizard", "invitation-reservations", "consultant-import", "smtp-sync")));
     values.put("iat", Date.from(Instant.now().minusSeconds(1)));
     values.put("exp", Date.from(Instant.now().plusSeconds(300)));
     values.putAll(changes);
