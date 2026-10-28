@@ -109,6 +109,10 @@ class GuestIdentityHttpTest {
   @Autowired WebApplicationContext context;
   @MockitoBean JwtDecoder jwtDecoder;
   @MockitoBean de.caritas.cob.userservice.api.admin.service.admin.AdminScope adminScope;
+
+  @MockitoBean
+  de.caritas.cob.userservice.api.service.agencyinvitelink.CallShareLinkService callShareLinks;
+
   @MockitoBean IdentityUsernameAvailability identityProvider;
   @MockitoBean UserRepository users;
   @MockitoBean MatrixUserClient matrix;
