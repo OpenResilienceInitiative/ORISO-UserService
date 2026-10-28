@@ -45,8 +45,6 @@
 		<log4j.version>2.25.5</log4j.version> <!-- force safe version due to https://logging.apache.org/log4j/2.x/security.html -->
 		<commons-text.version>1.10.0</commons-text.version>
 		<commons-validator.version>1.10.1</commons-validator.version>
-		<!-- GHSA-xxph-c9ww-hj94 / CVE-2026-102554: keep runtime Guava at the patched floor. -->
-		<guava.version>33.7.2-jre</guava.version>
 		<liquibase.version>4.27.0</liquibase.version>
 		<snakeyaml.version>2.0</snakeyaml.version>
 		<jakarta.ws.rs-api.version>3.1.0</jakarta.ws.rs-api.version>
@@ -88,17 +86,17 @@
 		     gate, so it would sit on dev unflagged — which is why this pin goes past it.
 		     Drop this override once the Boot BOM manages >= 5.36.0. -->
 		<rabbit-amqp-client.version>5.36.0</rabbit-amqp-client.version>
+		<!-- The code imports Guava directly, but it only arrived transitively via
+		     springfox-swagger2 2.9.2 as 20.0. Both 20.0 and the 33.5.0-jre copy shaded into
+		     plantuml trip the image CVE gate on CVE-2026-102554 (HIGH, DoS during
+		     deserialization), fixed in 33.7.2. -->
+		<guava.version>33.7.2-jre</guava.version>
 		<springfox-swagger-ui.version>2.10.0</springfox-swagger-ui.version>
 		<testcontainers.version>1.21.4</testcontainers.version>
 		<lombok.version>1.18.42</lombok.version>
 	</properties>
 
 	<dependencies>
-		<dependency>
-			<groupId>com.google.guava</groupId>
-			<artifactId>guava</artifactId>
-			<version>${guava.version}</version>
-		</dependency>
 		<!-- Spring Boot dependencies -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
@@ -258,6 +256,11 @@
 			<groupId>io.springfox</groupId>
 			<artifactId>springfox-swagger2</artifactId>
 			<version>${springfox.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>com.google.guava</groupId>
+			<artifactId>guava</artifactId>
+			<version>${guava.version}</version>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.plugin</groupId>
