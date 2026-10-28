@@ -1114,6 +1114,52 @@ class MatrixSynapseServiceTest {
     assertThat(matrixSynapseService().getRoomMembers(MATRIX_ROOM_ID)).isEmpty();
   }
 
+  private void stubRoomState(List<Map<String, Object>> state) {
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.argThat(uri -> uri.toString().contains("/state")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("state", state)));
+  }
+
+  private static Map<String, Object> memberEvent(String userId, String membership) {
+    return Map.of(
+        "type", "m.room.member", "state_key", userId, "content", Map.of("membership", membership));
+  }
+
+  @Test
+  void isBannedFromRoom_banMembership_returnsTrue() {
+    stubAdminLogin();
+    stubRoomState(
+        List.of(
+            memberEvent("@alice:matrix.example.com", "join"),
+            memberEvent("@bob:matrix.example.com", "ban")));
+
+    assertThat(matrixSynapseService().isBannedFromRoom(MATRIX_ROOM_ID, "@bob:matrix.example.com"))
+        .contains(true);
+  }
+
+  @Test
+  void isBannedFromRoom_otherMembership_returnsFalse() {
+    stubAdminLogin();
+    stubRoomState(List.of(memberEvent("@bob:matrix.example.com", "leave")));
+
+    assertThat(matrixSynapseService().isBannedFromRoom(MATRIX_ROOM_ID, "@bob:matrix.example.com"))
+        .contains(false);
+  }
+
+  @Test
+  void isBannedFromRoom_unreadableState_returnsEmptyOptional() {
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenThrow(new RuntimeException("synapse down"));
+
+    assertThat(matrixSynapseService().isBannedFromRoom(MATRIX_ROOM_ID, "@bob:matrix.example.com"))
+        .isEmpty();
+  }
+
   @Test
   void getCallRoomMembers_successfulEmptyListIsDefinitive() {
     stubAdminLogin();
