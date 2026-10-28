@@ -111,6 +111,7 @@ public class AssignEnquiryFacade {
     // accepted. Best-effort by the same contract — never blocks the acceptance.
     teamDiscussionFacade.archiveDiscussionIfPresent(session);
     eventNotificationService.createInquiryAcceptedNotification(session, consultant);
+    eventNotificationService.retireOpenEnquiryNotifications(session, consultant.getId());
     var event =
         new AssignSessionStatisticsEvent(consultant.getId(), UserRole.CONSULTANT, session.getId());
     event.setRequestUri(requestURI);
@@ -151,6 +152,7 @@ public class AssignEnquiryFacade {
     assignment lock. */
     assignEnquiry(session, consultant, false, true);
     eventNotificationService.createInquiryAcceptedNotification(session, consultant);
+    eventNotificationService.retireOpenEnquiryNotifications(session, consultant.getId());
   }
 
   private void assignEnquiry(Session session, Consultant consultant) {

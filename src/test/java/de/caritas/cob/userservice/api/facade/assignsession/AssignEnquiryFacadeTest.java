@@ -266,6 +266,9 @@ class AssignEnquiryFacadeTest {
     verify(eventNotificationService)
         .createInquiryAcceptedNotification(
             ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+    verify(eventNotificationService)
+        .retireOpenEnquiryNotifications(
+            ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY.getId());
   }
 
   // ---------------------------------------------------------------------------
@@ -346,6 +349,7 @@ class AssignEnquiryFacadeTest {
     // Nothing is saved: the enquiry stays NEW and the counsellor can accept it again.
     verify(sessionService, never()).updateConsultantAndStatusForSession(any(), any(), any());
     verify(eventNotificationService, never()).createInquiryAcceptedNotification(any(), any());
+    verify(eventNotificationService, never()).retireOpenEnquiryNotifications(any(), any());
   }
 
   @Test
@@ -430,6 +434,16 @@ class AssignEnquiryFacadeTest {
             SESSION_WITHOUT_CONSULTANT.getId(), CONSULTANT_WITH_AGENCY);
     verify(eventNotificationService)
         .createInquiryAcceptedNotification(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+  }
+
+  @Test
+  void assignRegisteredEnquiry_Should_retireTheOtherConsultantsNewRequestEntries() {
+    assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+
+    // ORISO-Frontend#1472: colleagues must not keep a "New client request" entry for a case that
+    // is no longer open to them.
+    verify(eventNotificationService)
+        .retireOpenEnquiryNotifications(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY.getId());
   }
 
   // ---------------------------------------------------------------------------
