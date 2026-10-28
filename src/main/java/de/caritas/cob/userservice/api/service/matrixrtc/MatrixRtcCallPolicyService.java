@@ -83,6 +83,24 @@ public class MatrixRtcCallPolicyService {
       return CallMediaPolicy.denied();
     }
 
+    // Knock first (ADR-029 §2): while the person's latest direct-link knock on this conversation
+    // is waiting, declined or cancelled, the call stays closed to them, whatever the client does.
+    var latestKnock =
+        jdbc.queryForList(
+            "SELECT r.status FROM group_chat_join_request r JOIN session s ON s.id = r.session_id"
+                + " WHERE s.matrix_room_id = ? AND r.user_id = ? AND r.via = 'DIRECT_LINK'"
+                + " ORDER BY r.id DESC LIMIT 1",
+            String.class,
+            sourceRoomId,
+            identities.getFirst());
+    if (!latestKnock.isEmpty() && !"ADMITTED".equals(latestKnock.getFirst())) {
+      log.info(
+          "Call policy denied [{}]: reason={}",
+          correlationId,
+          CallPolicyDenialReason.KNOCK_NOT_ADMITTED);
+      return CallMediaPolicy.denied();
+    }
+
     var currentMembers = matrixSynapseService.getRoomMembers(sourceRoomId);
     if (currentMembers.isEmpty()) {
       log.info(

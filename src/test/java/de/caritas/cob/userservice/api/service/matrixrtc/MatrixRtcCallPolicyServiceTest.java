@@ -82,6 +82,10 @@ class MatrixRtcCallPolicyServiceTest {
     jdbc.execute("CREATE TABLE user(user_id VARCHAR(36),matrix_user_id VARCHAR(255))");
     jdbc.execute("CREATE TABLE consultant(consultant_id VARCHAR(36),matrix_user_id VARCHAR(255))");
     jdbc.execute("CREATE TABLE account_inactivity(identity_id VARCHAR(36),status VARCHAR(20))");
+    jdbc.execute("CREATE TABLE session(id BIGINT,matrix_room_id VARCHAR(255))");
+    jdbc.execute(
+        "CREATE TABLE group_chat_join_request(id BIGINT AUTO_INCREMENT,session_id BIGINT,"
+            + "user_id VARCHAR(36),via VARCHAR(32),status VARCHAR(16))");
     jdbc.update("INSERT INTO user VALUES ('person',?)", MATRIX_USER_ID);
     jdbc.update("INSERT INTO account_inactivity VALUES ('person','ACTIVE')");
     return jdbc;
@@ -90,6 +94,40 @@ class MatrixRtcCallPolicyServiceTest {
   @AfterEach
   void clearTenantContext() {
     TenantContext.clear();
+  }
+
+  @Test
+  void waitingOrDeclinedDirectLinkKnockKeepsTheCallClosed() {
+    jdbc.update("INSERT INTO session VALUES (500, ?)", ROOM_ID);
+    jdbc.update(
+        "INSERT INTO group_chat_join_request(session_id,user_id,via,status)"
+            + " VALUES (500,'person','DIRECT_LINK','ADMITTED')");
+    jdbc.update(
+        "INSERT INTO group_chat_join_request(session_id,user_id,via,status)"
+            + " VALUES (500,'person','DIRECT_LINK','PENDING')");
+
+    try (var logs = LogbackCaptor.forClass(MatrixRtcCallPolicyService.class)) {
+      assertThat(service.resolve(ROOM_ID, MATRIX_USER_ID)).isEqualTo(CallMediaPolicy.denied());
+      assertThat(logs.messages(Level.INFO))
+          .anySatisfy(message -> assertThat(message).contains("KNOCK_NOT_ADMITTED"));
+    }
+  }
+
+  @Test
+  void admittedDirectLinkKnockPassesTheKnockGate() {
+    jdbc.update("INSERT INTO session VALUES (500, ?)", ROOM_ID);
+    jdbc.update(
+        "INSERT INTO group_chat_join_request(session_id,user_id,via,status)"
+            + " VALUES (500,'person','DIRECT_LINK','PENDING')");
+    jdbc.update(
+        "INSERT INTO group_chat_join_request(session_id,user_id,via,status)"
+            + " VALUES (500,'person','DIRECT_LINK','ADMITTED')");
+
+    try (var logs = LogbackCaptor.forClass(MatrixRtcCallPolicyService.class)) {
+      service.resolve(ROOM_ID, MATRIX_USER_ID);
+      assertThat(logs.messages(Level.INFO))
+          .noneSatisfy(message -> assertThat(message).contains("KNOCK_NOT_ADMITTED"));
+    }
   }
 
   @Test
