@@ -71,6 +71,10 @@ public class AgencyInviteLinkService {
     }
     applyDefaults(cmd);
     validateEnums(cmd);
+    if (InviteLinkKind.CALL.name().equals(cmd.getLinkKind())) {
+      // Only a counsellor in a running call creates its share link (#1487).
+      throw new BadRequestException("Call share links are created from the call");
+    }
 
     if (InviteLinkKind.COUNSELLOR.name().equals(cmd.getLinkKind())
         && isBlank(cmd.getConsultantId())) {
@@ -143,6 +147,10 @@ public class AgencyInviteLinkService {
 
     if (linkKind != null && !isValidEnumValue(linkKind, InviteLinkKind.class)) {
       throw new BadRequestException("Unknown linkKind: " + linkKind);
+    }
+    if (InviteLinkKind.CALL.name().equals(linkKind)) {
+      // Call share links are never listed for admins (#1487).
+      throw new BadRequestException("Call share links are not listed");
     }
     if (chatType != null && !isValidEnumValue(chatType, InviteLinkChatType.class)) {
       throw new BadRequestException("Unknown chatType: " + chatType);
