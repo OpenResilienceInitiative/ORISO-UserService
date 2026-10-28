@@ -223,8 +223,7 @@ class GroupCounsellingDpaAdmissionIT extends GroupCounsellingDpaHttpFixture {
 
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
-  void aLaterOccurrenceKeepsItsExistingAdmissionWhileRecurrencePolicyIsPending(boolean legacy)
-      throws Exception {
+  void aLaterOccurrenceRefusesNewAdmissionAfterExpiry(boolean legacy) throws Exception {
     long requestId = knock();
     group.setCurrentOccurrenceIndex(1);
     if (legacy) {
@@ -235,14 +234,14 @@ class GroupCounsellingDpaAdmissionIT extends GroupCounsellingDpaHttpFixture {
 
     var response = admit(requestId, consultant, "{}");
 
-    assertEquals(204, response.statusCode(), response.body());
-    assertEquals("ADMITTED", ownStatus());
-    assertEquals(0, ownerReads.get());
-    assertEquals(2, matrixWrites.get());
+    assertEquals(403, response.statusCode(), response.body());
+    assertEquals("PENDING", ownStatus());
+    assertEquals(1, ownerReads.get());
+    assertEquals(0, matrixWrites.get());
   }
 
   @Test
-  void aLaterLegacyOccurrenceKeepsItsExistingAssignmentWithoutAnOwnerDecision() throws Exception {
+  void aLaterLegacyOccurrenceRefusesNewAssignmentAfterExpiry() throws Exception {
     laterLegacyGroup();
     var recipient = fixtures.adviceSeeker(42L);
 
@@ -256,15 +255,14 @@ class GroupCounsellingDpaAdmissionIT extends GroupCounsellingDpaHttpFixture {
             42L,
             "");
 
-    assertEquals(200, response.statusCode(), response.body());
-    assertEquals(0, ownerReads.get());
+    assertEquals(403, response.statusCode(), response.body());
+    assertEquals(1, ownerReads.get());
     assertEquals(0, recipientOwnerReads.get());
     assertEquals(0, matrixWrites.get());
   }
 
   @Test
-  void aLaterLegacyOccurrenceKeepsItsExistingModeratorAdditionWithoutAnOwnerDecision()
-      throws Exception {
+  void aLaterLegacyOccurrenceRefusesNewModeratorAdditionAfterExpiry() throws Exception {
     laterLegacyGroup();
     var moderator = fixtures.consultant(OWNER, AGENCY);
 
@@ -277,9 +275,9 @@ class GroupCounsellingDpaAdmissionIT extends GroupCounsellingDpaHttpFixture {
                 + moderator.getId()
                 + "\"]}");
 
-    assertEquals(200, response.statusCode(), response.body());
-    assertEquals(0, ownerReads.get());
-    assertEquals(2, matrixWrites.get());
+    assertEquals(403, response.statusCode(), response.body());
+    assertEquals(1, ownerReads.get());
+    assertEquals(0, matrixWrites.get());
   }
 
   private void laterLegacyGroup() {

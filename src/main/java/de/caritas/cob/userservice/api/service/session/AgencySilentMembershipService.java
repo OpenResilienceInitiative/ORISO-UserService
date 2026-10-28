@@ -142,6 +142,22 @@ public class AgencySilentMembershipService {
    * be a room member and the enquiry stays invisible to them, which is the very bug being fixed —
    * so provision here too. Group-room creators use this before their first room exists.
    */
+  /** Administrative invitation only: creating/assigning a self-help group is not participation. */
+  public boolean inviteConsultantIntoRoom(Consultant consultant, String roomId, String ownerToken) {
+    try {
+      var actor = ensureMatrixAccount(consultant);
+      if (isBlank(actor)) return false;
+      sessionRoomGateway.inviteUser(roomId, actor, ownerToken);
+      return true;
+    } catch (Exception failure) {
+      // Provider bodies, tokens and account data are not diagnostic categories.
+      log.warn(
+          "Self-help group invitation remains pending: failure={}",
+          failure.getClass().getSimpleName());
+      return false;
+    }
+  }
+
   public String ensureMatrixAccount(Consultant consultant) {
     if (!isBlank(consultant.getMatrixUserId())) {
       return consultant.getMatrixUserId();
