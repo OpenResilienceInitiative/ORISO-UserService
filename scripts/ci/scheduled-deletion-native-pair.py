@@ -20,7 +20,7 @@ import xml.etree.ElementTree as ET
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
-KC_COMMIT = "bf3d7f8809d829e33e930115221b122be8e8c287"
+KC_COMMIT = "05fefa772dda8b248be9531e0552aa9910e1b71e"
 SUITE = "de.caritas.cob.userservice.api.workflow.delete.service.UserScheduledDeletionNativePairProof"
 CASES = {"asker": "scheduledAskerRealCreatorDeleteLostReplyAndFinalJpa",
          "consultant": "scheduledConsultantRealHumanCreatorDeleteAndFinalJpa",
