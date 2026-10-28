@@ -285,7 +285,11 @@ class UserServiceStartupNativePairProof {
               ? entry.getValue()
               : PREFIX + entry.getValue();
       assertEquals(
-          type, AopUtils.getTargetClass(context.getBean(entry.getKey())).getName(), entry.getKey());
+          type,
+          org.springframework.util.ClassUtils.getUserClass(
+                  AopUtils.getTargetClass(context.getBean(entry.getKey())))
+              .getName(),
+          entry.getKey());
     }
     witness.put("scopedOwnersReady", true);
     Object scheduler = context.getBean("deleteUserAccountScheduler");

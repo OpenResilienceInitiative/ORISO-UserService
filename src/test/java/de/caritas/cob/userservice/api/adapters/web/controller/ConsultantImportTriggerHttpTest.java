@@ -138,6 +138,15 @@ class ConsultantImportTriggerHttpTest {
   }
 
   @Test
+  void actualSecurityConfigurationHasTheReviewedStartupBeanType() {
+    var target =
+        org.springframework.aop.support.AopUtils.getTargetClass(
+            context.getBean(SecurityConfig.class));
+    assertNotEquals(SecurityConfig.class, target);
+    assertEquals(SecurityConfig.class, org.springframework.util.ClassUtils.getUserClass(target));
+  }
+
+  @Test
   void validSetupReachesOnlyTheFixedImportDelegateAndItsPrivateLiveCapability() throws Exception {
     String raw = token(Map.of());
     try (var checked = assertDoesNotThrow(() -> broker.verifyConsultantImportTrigger(raw))) {
