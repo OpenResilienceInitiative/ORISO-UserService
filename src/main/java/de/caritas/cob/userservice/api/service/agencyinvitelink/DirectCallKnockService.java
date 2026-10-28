@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.agencyinvitelink;
 
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -216,17 +217,32 @@ public class DirectCallKnockService {
     return knock;
   }
 
-  public List<GroupChatJoinRequest> pendingFor(Consultant consultant) {
+  /**
+   * Without sessionId and matrixRoomId: all of the counsellor's waiting knocks, as before. With
+   * either, only the current call's: direct-link knocks of that conversation and call-link knocks
+   * (#1487) whose share link belongs to a call in that conversation's room.
+   */
+  public List<GroupChatJoinRequest> pendingFor(
+      Consultant consultant, Long sessionId, String matrixRoomId) {
+    var scope = callScope(sessionId, matrixRoomId);
     var since = waitingSince();
     return Stream.concat(
-            repository
-                .findCallKnocksForConsultant(
-                    consultant.getId(), Via.DIRECT_LINK, Status.PENDING, since)
-                .stream(),
-            repository
-                .findCallLinkKnocksForConsultant(
-                    consultant.getId(), Via.CALL_LINK, Status.PENDING, since)
-                .stream())
+            scope.directLinks()
+                ? repository
+                    .findCallKnocksForConsultant(
+                        consultant.getId(),
+                        Via.DIRECT_LINK,
+                        Status.PENDING,
+                        since,
+                        scope.sessionId())
+                    .stream()
+                : Stream.<GroupChatJoinRequest>empty(),
+            scope.callLinks()
+                ? repository
+                    .findCallLinkKnocksForConsultant(
+                        consultant.getId(), Via.CALL_LINK, Status.PENDING, since, scope.roomId())
+                    .stream()
+                : Stream.<GroupChatJoinRequest>empty())
         .sorted(BY_REQUESTED_AT)
         .toList();
   }
@@ -241,21 +257,35 @@ public class DirectCallKnockService {
     return decide(knockId, consultant, Status.DECLINED);
   }
 
+  /** Only the current call: letting in every knock of every conversation at once is refused. */
   @Transactional
-  public List<GroupChatJoinRequest> admitAll(Consultant consultant) {
+  public List<GroupChatJoinRequest> admitAll(
+      Consultant consultant, Long sessionId, String matrixRoomId) {
+    var scope = callScope(sessionId, matrixRoomId);
+    if (!scope.scoped()) {
+      throw new BadRequestException("admit-all needs sessionId or matrixRoomId");
+    }
     var now = LocalDateTime.now();
     // Loaded under lock in one query, so a knock cancelled or declined meanwhile is not pending
     // any more; no earlier unlocked read can leave a stale entity in the persistence context.
     var since = waitingSince();
     return Stream.concat(
-            repository
-                .findCallKnocksForConsultantForUpdate(
-                    consultant.getId(), Via.DIRECT_LINK, Status.PENDING, since)
-                .stream(),
-            repository
-                .findCallLinkKnocksForConsultantForUpdate(
-                    consultant.getId(), Via.CALL_LINK, Status.PENDING, since)
-                .stream())
+            scope.directLinks()
+                ? repository
+                    .findCallKnocksForConsultantForUpdate(
+                        consultant.getId(),
+                        Via.DIRECT_LINK,
+                        Status.PENDING,
+                        since,
+                        scope.sessionId())
+                    .stream()
+                : Stream.<GroupChatJoinRequest>empty(),
+            scope.callLinks()
+                ? repository
+                    .findCallLinkKnocksForConsultantForUpdate(
+                        consultant.getId(), Via.CALL_LINK, Status.PENDING, since, scope.roomId())
+                    .stream()
+                : Stream.<GroupChatJoinRequest>empty())
         .sorted(BY_REQUESTED_AT)
         .map(
             knock -> {
@@ -338,6 +368,38 @@ public class DirectCallKnockService {
             .filter(link -> InviteLinkStatus.ACTIVE.name().equals(link.getStatus()))
             .map(link -> Objects.equals(link.getConsultantId(), consultant.getId()))
             .orElse(false);
+  }
+
+  /**
+   * The current call: its conversation and the conversation's Matrix room. Unscoped when neither is
+   * given. A room without a 1:1 conversation is still a call scope when a call runs in it, so a
+   * share link of a group call is found (#1487); it then matches no direct-link knock.
+   */
+  private CallScope callScope(Long sessionId, String matrixRoomId) {
+    if (matrixRoomId == null || matrixRoomId.isBlank()) {
+      if (sessionId == null) {
+        return CallScope.ANY;
+      }
+      var room = sessionRepository.findById(sessionId).map(Session::getMatrixRoomId).orElse(null);
+      return new CallScope(sessionId, room, true, room != null);
+    }
+    var roomSession = sessionRepository.findByMatrixRoomId(matrixRoomId).map(Session::getId);
+    if (roomSession.isEmpty() && !callBindings.existsBySourceRoomId(matrixRoomId)) {
+      throw new NotFoundException("No conversation for room %s", matrixRoomId);
+    }
+    if (sessionId != null && !sessionId.equals(roomSession.orElse(null))) {
+      throw new BadRequestException("sessionId and matrixRoomId name different conversations");
+    }
+    return new CallScope(roomSession.orElse(null), matrixRoomId, roomSession.isPresent(), true);
+  }
+
+  /** {@code sessionId}/{@code roomId} null with the flag on means unscoped. */
+  private record CallScope(Long sessionId, String roomId, boolean directLinks, boolean callLinks) {
+    static final CallScope ANY = new CallScope(null, null, true, true);
+
+    boolean scoped() {
+      return this != ANY;
+    }
   }
 
   private boolean isCounsellorOf(Long sessionId, Consultant consultant) {

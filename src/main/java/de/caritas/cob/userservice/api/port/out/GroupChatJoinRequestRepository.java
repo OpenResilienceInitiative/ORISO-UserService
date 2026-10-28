@@ -37,12 +37,14 @@ public interface GroupChatJoinRequestRepository extends CrudRepository<GroupChat
           + " WHERE request.sessionId = session.id AND session.consultant.id = :consultantId"
           + " AND request.via = :via AND request.status = :status"
           + " AND request.requestedAt >= :since"
+          + " AND (:sessionId IS NULL OR request.sessionId = :sessionId)"
           + " ORDER BY request.requestedAt ASC, request.id ASC")
   List<GroupChatJoinRequest> findCallKnocksForConsultant(
       @Param("consultantId") String consultantId,
       @Param("via") Via via,
       @Param("status") Status status,
-      @Param("since") java.time.LocalDateTime since);
+      @Param("since") java.time.LocalDateTime since,
+      @Param("sessionId") Long sessionId);
 
   /** Same knocks, locked: "admit all" decides on the current rows, not on an earlier read. */
   @Lock(LockModeType.PESSIMISTIC_WRITE)
@@ -52,12 +54,14 @@ public interface GroupChatJoinRequestRepository extends CrudRepository<GroupChat
           + " (SELECT session.id FROM Session session WHERE session.consultant.id = :consultantId)"
           + " AND request.via = :via AND request.status = :status"
           + " AND request.requestedAt >= :since"
+          + " AND (:sessionId IS NULL OR request.sessionId = :sessionId)"
           + " ORDER BY request.requestedAt ASC, request.id ASC")
   List<GroupChatJoinRequest> findCallKnocksForConsultantForUpdate(
       @Param("consultantId") String consultantId,
       @Param("via") Via via,
       @Param("status") Status status,
-      @Param("since") java.time.LocalDateTime since);
+      @Param("since") java.time.LocalDateTime since,
+      @Param("sessionId") Long sessionId);
 
   /** Call share link knocks (#1487): one guest on one link. */
   Optional<GroupChatJoinRequest> findFirstByInviteLinkIdAndUserIdAndViaAndStatusOrderByIdDesc(
@@ -76,12 +80,16 @@ public interface GroupChatJoinRequestRepository extends CrudRepository<GroupChat
           + " AND link.linkKind = 'CALL' AND link.status = 'ACTIVE'"
           + " AND request.via = :via AND request.status = :status"
           + " AND request.requestedAt >= :since"
+          + " AND (:roomId IS NULL OR request.inviteLinkId IN (SELECT scoped.id FROM AgencyInviteLink scoped,"
+          + " MatrixCallBinding binding WHERE scoped.callBindingId = binding.id"
+          + " AND binding.sourceRoomId = :roomId))"
           + " ORDER BY request.requestedAt ASC, request.id ASC")
   List<GroupChatJoinRequest> findCallLinkKnocksForConsultant(
       @Param("consultantId") String consultantId,
       @Param("via") Via via,
       @Param("status") Status status,
-      @Param("since") java.time.LocalDateTime since);
+      @Param("since") java.time.LocalDateTime since,
+      @Param("roomId") String roomId);
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query(
@@ -91,12 +99,16 @@ public interface GroupChatJoinRequestRepository extends CrudRepository<GroupChat
           + " AND link.linkKind = 'CALL' AND link.status = 'ACTIVE')"
           + " AND request.via = :via AND request.status = :status"
           + " AND request.requestedAt >= :since"
+          + " AND (:roomId IS NULL OR request.inviteLinkId IN (SELECT scoped.id FROM AgencyInviteLink scoped,"
+          + " MatrixCallBinding binding WHERE scoped.callBindingId = binding.id"
+          + " AND binding.sourceRoomId = :roomId))"
           + " ORDER BY request.requestedAt ASC, request.id ASC")
   List<GroupChatJoinRequest> findCallLinkKnocksForConsultantForUpdate(
       @Param("consultantId") String consultantId,
       @Param("via") Via via,
       @Param("status") Status status,
-      @Param("since") java.time.LocalDateTime since);
+      @Param("since") java.time.LocalDateTime since,
+      @Param("roomId") String roomId);
 
   List<GroupChatJoinRequest> findBySeriesIdInAndStatusOrderByRequestedAtAscIdAsc(
       Collection<Long> seriesIds, Status status);

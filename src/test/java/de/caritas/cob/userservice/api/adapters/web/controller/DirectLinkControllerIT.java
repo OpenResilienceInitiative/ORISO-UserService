@@ -26,6 +26,7 @@ import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.facade.CreateNewSessionFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
@@ -266,7 +267,17 @@ class DirectLinkControllerIT {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$", hasSize(1)))
         .andExpect(jsonPath("$[0].sessionId", is(session.getId().intValue())))
-        .andExpect(jsonPath("$[0].medium", is("VIDEO")));
+        .andExpect(jsonPath("$[0].medium", is("VIDEO")))
+        // The pseudonym the person chose, decoded; never the e-mail address.
+        .andExpect(
+            jsonPath(
+                "$[0].displayName",
+                is(new UsernameTranscoder().decodeUsername(asker.getUsername()))));
+    // Only the knocks of the current call.
+    asConsultant(get("/users/call-knocks").param("sessionId", session.getId().toString()))
+        .andExpect(jsonPath("$", hasSize(1)));
+    asConsultant(get("/users/call-knocks").param("sessionId", "987654321"))
+        .andExpect(jsonPath("$", hasSize(0)));
     asConsultant(post("/users/call-knocks/{id}/admit", knockId))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status", is("ADMITTED")));
@@ -317,10 +328,17 @@ class DirectLinkControllerIT {
         .andExpect(jsonPath("$.knockId", not((int) firstKnock)));
 
     actAsConsultant(owner);
-    asConsultant(post("/users/call-knocks/admit-all"))
+    asConsultant(
+            post("/users/call-knocks/admit-all").param("sessionId", session.getId().toString()))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$", hasSize(1)))
         .andExpect(jsonPath("$[0].status", is("ADMITTED")));
+  }
+
+  @Test
+  void admitAllWithoutTheCurrentCall_Should_BeABadRequest() throws Exception {
+    actAsConsultant(owner);
+    asConsultant(post("/users/call-knocks/admit-all")).andExpect(status().isBadRequest());
   }
 
   @Test

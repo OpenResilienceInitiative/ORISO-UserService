@@ -291,7 +291,9 @@ class CallShareLinkIT {
 
     // The counsellor sees the knock in the existing queue and lets the guest in.
     var counsellorEntity = consultants.findById(counsellor.getId()).orElseThrow();
-    assertThat(knocks.pendingFor(counsellorEntity))
+    assertThat(knocks.pendingFor(counsellorEntity, null, null)).hasSize(1);
+    assertThat(knocks.pendingFor(counsellorEntity, null, SOURCE))
+        .as("the per-call filter finds the call-link knock")
         .singleElement()
         .satisfies(
             knock -> {

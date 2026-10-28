@@ -9,6 +9,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -211,14 +212,51 @@ class DirectCallKnockServiceTest {
     var first = pending(1L, LocalDateTime.now().minusMinutes(2));
     var second = pending(2L, LocalDateTime.now().minusMinutes(1));
     when(repository.findCallKnocksForConsultantForUpdate(
-            eq("counsellor-1"), eq(Via.DIRECT_LINK), eq(Status.PENDING), any()))
+            eq("counsellor-1"), eq(Via.DIRECT_LINK), eq(Status.PENDING), any(), eq(SESSION_ID)))
         .thenReturn(List.of(first, second));
 
-    var admitted = service.admitAll(counsellor);
+    var admitted = service.admitAll(counsellor, SESSION_ID, null);
 
     assertThat(admitted)
         .extracting(GroupChatJoinRequest::getStatus)
         .containsExactly(Status.ADMITTED, Status.ADMITTED);
+  }
+
+  @Test
+  void admitAll_Should_RefuseWithoutTheCurrentCall() {
+    assertThatThrownBy(() -> service.admitAll(counsellor, null, null))
+        .isInstanceOf(BadRequestException.class);
+    verify(repository, never())
+        .findCallKnocksForConsultantForUpdate(any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void pendingFor_Should_ScopeToTheCallRoom_And_KeepTheUnscopedList() {
+    var session = new Session();
+    session.setId(SESSION_ID);
+    when(sessionRepository.findByMatrixRoomId("!room:oriso")).thenReturn(Optional.of(session));
+
+    service.pendingFor(counsellor, null, "!room:oriso");
+    verify(repository)
+        .findCallKnocksForConsultant(
+            eq("counsellor-1"), eq(Via.DIRECT_LINK), eq(Status.PENDING), any(), eq(SESSION_ID));
+
+    service.pendingFor(counsellor, null, null);
+    verify(repository)
+        .findCallKnocksForConsultant(
+            eq("counsellor-1"), eq(Via.DIRECT_LINK), eq(Status.PENDING), any(), eq(null));
+  }
+
+  @Test
+  void scope_Should_RejectAContradictionAndAnUnknownRoom() {
+    var other = new Session();
+    other.setId(SESSION_ID + 1);
+    when(sessionRepository.findByMatrixRoomId("!other:oriso")).thenReturn(Optional.of(other));
+
+    assertThatThrownBy(() -> service.pendingFor(counsellor, SESSION_ID, "!other:oriso"))
+        .isInstanceOf(BadRequestException.class);
+    assertThatThrownBy(() -> service.pendingFor(counsellor, null, "!unknown:oriso"))
+        .isInstanceOf(NotFoundException.class);
   }
 
   @Test
@@ -356,13 +394,59 @@ class DirectCallKnockServiceTest {
     var viaLink = callLinkKnock(2L, Status.PENDING);
     viaLink.setRequestedAt(LocalDateTime.now().minusMinutes(5));
     when(repository.findCallKnocksForConsultant(
-            eq("counsellor-1"), eq(Via.DIRECT_LINK), eq(Status.PENDING), any()))
+            eq("counsellor-1"), eq(Via.DIRECT_LINK), eq(Status.PENDING), any(), eq(null)))
         .thenReturn(List.of(direct));
     when(repository.findCallLinkKnocksForConsultant(
-            eq("counsellor-1"), eq(Via.CALL_LINK), eq(Status.PENDING), any()))
+            eq("counsellor-1"), eq(Via.CALL_LINK), eq(Status.PENDING), any(), eq(null)))
         .thenReturn(List.of(viaLink));
 
-    assertThat(service.pendingFor(counsellor)).containsExactly(viaLink, direct);
+    assertThat(service.pendingFor(counsellor, null, null)).containsExactly(viaLink, direct);
+  }
+
+  @Test
+  void pendingFor_Should_FindCallLinkKnocksOfTheFilteredCall() {
+    var session = new Session();
+    session.setId(SESSION_ID);
+    session.setMatrixRoomId("!room:oriso");
+    when(sessionRepository.findByMatrixRoomId("!room:oriso")).thenReturn(Optional.of(session));
+    when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
+    var viaLink = callLinkKnock(2L, Status.PENDING);
+    when(repository.findCallLinkKnocksForConsultant(
+            eq("counsellor-1"), eq(Via.CALL_LINK), eq(Status.PENDING), any(), eq("!room:oriso")))
+        .thenReturn(List.of(viaLink));
+
+    assertThat(service.pendingFor(counsellor, null, "!room:oriso")).containsExactly(viaLink);
+    assertThat(service.pendingFor(counsellor, SESSION_ID, null)).containsExactly(viaLink);
+  }
+
+  @Test
+  void pendingFor_Should_ScopeAGroupCallRoomToItsCallLinkKnocksOnly() {
+    when(callBindings.existsBySourceRoomId("!group:oriso")).thenReturn(true);
+    var viaLink = callLinkKnock(2L, Status.PENDING);
+    when(repository.findCallLinkKnocksForConsultant(
+            eq("counsellor-1"), eq(Via.CALL_LINK), eq(Status.PENDING), any(), eq("!group:oriso")))
+        .thenReturn(List.of(viaLink));
+
+    assertThat(service.pendingFor(counsellor, null, "!group:oriso")).containsExactly(viaLink);
+    verify(repository, never()).findCallKnocksForConsultant(any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void admitAll_Should_AdmitTheCallLinkKnocksOfTheCurrentCallOnly() {
+    var session = new Session();
+    session.setId(SESSION_ID);
+    session.setMatrixRoomId("!room:oriso");
+    when(sessionRepository.findByMatrixRoomId("!room:oriso")).thenReturn(Optional.of(session));
+    var viaLink = callLinkKnock(2L, Status.PENDING);
+    when(repository.findCallLinkKnocksForConsultantForUpdate(
+            eq("counsellor-1"), eq(Via.CALL_LINK), eq(Status.PENDING), any(), eq("!room:oriso")))
+        .thenReturn(List.of(viaLink));
+    when(repository.save(any())).thenAnswer(call -> call.getArgument(0));
+
+    assertThat(service.admitAll(counsellor, null, "!room:oriso")).containsExactly(viaLink);
+    assertThat(viaLink.getStatus()).isEqualTo(Status.ADMITTED);
+    verify(repository, never())
+        .findCallLinkKnocksForConsultantForUpdate(any(), any(), any(), any(), eq(null));
   }
 
   @Test
