@@ -48,6 +48,14 @@ public class TenantAdminUserService {
   @Value("${multitenancy.enabled}")
   private boolean multiTenancyEnabled;
 
+  private de.caritas.cob.userservice.api.port.out.IdentityClientConfig removalIdentityMode;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  public void setRemovalIdentityMode(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode) {
+    removalIdentityMode = mode;
+  }
+
   public AdminResponseDTO createNewTenantAdmin(final CreateAdminDTO createTenantAdminDTO) {
     validateCreateAdmin(createTenantAdminDTO);
     final Admin newAdmin = createAdminService.createNewTenantAdmin(createTenantAdminDTO);
@@ -99,7 +107,8 @@ public class TenantAdminUserService {
   }
 
   public void deleteTenantAdmin(final String adminId) {
-    adminScope.assertMay(Target.admin(adminId));
+    if (removalIdentityMode == null || !removalIdentityMode.isFiveActorMode())
+      adminScope.assertMay(Target.admin(adminId));
     this.deleteAdminService.deleteTenantAdmin(adminId);
   }
 

@@ -60,6 +60,17 @@ final class ReviewedProtectedProfiles {
       throw new ScopedIdentityCommandRequiredException();
   }
 
+  void requireCurrent(String kind, List<String> roles) {
+    requireConfigured(kind);
+    if (roles == null
+        || roles.isEmpty()
+        || new HashSet<>(roles).size() != roles.size()
+        || profiles.get(kind).stream()
+                .filter(p -> p.completeRealmRoles().equals(Set.copyOf(roles)))
+                .count()
+            != 1) throw new ScopedIdentityCommandRequiredException();
+  }
+
   Transition consultantAddition(String kind, List<String> original, Set<String> required) {
     requireConfigured(kind);
     requireRoles(required);

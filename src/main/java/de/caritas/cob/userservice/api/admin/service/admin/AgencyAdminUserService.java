@@ -46,6 +46,14 @@ public class AgencyAdminUserService {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull AdminScope adminScope;
 
+  private de.caritas.cob.userservice.api.port.out.IdentityClientConfig removalIdentityMode;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  public void setRemovalIdentityMode(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode) {
+    removalIdentityMode = mode;
+  }
+
   public AdminResponseDTO createNewAgencyAdmin(final CreateAdminDTO createAgencyAdminDTO) {
     if (adminScope.current() instanceof AdminScope.Agencies) {
       // A higher role creates a lower one; agency admins only invite counsellors.
@@ -73,7 +81,8 @@ public class AgencyAdminUserService {
   }
 
   public void deleteAgencyAdmin(final String adminId) {
-    adminScope.assertMay(Target.admin(adminId));
+    if (removalIdentityMode == null || !removalIdentityMode.isFiveActorMode())
+      adminScope.assertMay(Target.admin(adminId));
     this.deleteAdminService.deleteAgencyAdmin(adminId);
   }
 

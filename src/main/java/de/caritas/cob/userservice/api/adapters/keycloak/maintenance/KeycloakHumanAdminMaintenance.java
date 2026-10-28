@@ -224,7 +224,9 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
     binding.put("route", account.requestPath());
     binding.put("originalSql", codec.read(account.originalSqlState(), JsonNode.class));
     binding.put("profile", profile);
-    if (account.agencyAdminAddition() || account.consultantIdentityAddition()) {
+    if (account.administratorRemoval()) {
+      binding.put("sourceKind", "ADMINISTRATOR_REMOVAL_V1");
+    } else if (account.agencyAdminAddition() || account.consultantIdentityAddition()) {
       binding.put("publicRoleAddition", codec.read(account.roleAdditionIntent(), JsonNode.class));
       binding.put(
           "wholeOriginalSql", codec.read(account.roleAdditionOriginalSql(), JsonNode.class));
@@ -324,7 +326,8 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
     fields.clear();
     change.fieldNames().forEachRemaining(fields::add);
     String command;
-    if (fields.equals(Set.of("firstName", "lastName", "email"))) {
+    if (fields.isEmpty()) command = "delete";
+    else if (fields.equals(Set.of("firstName", "lastName", "email"))) {
       command = "profile";
       if (current.selfService()) {
         // These two fixed SELF commands have the same closed body shape. Neither grants authority;
@@ -340,7 +343,10 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
       }
     } else if (fields.equals(Set.of("group", "profile"))) command = "ordinary-profile";
     else if (fields.equals(Set.of("transition", "group"))
-        && Set.of("ADD_AGENCY_ADMIN_IDENTITY", "ADD_CONSULTANT_IDENTITY")
+        && Set.of(
+                "ADD_AGENCY_ADMIN_IDENTITY",
+                "ADD_CONSULTANT_IDENTITY",
+                "REMOVE_ADMINISTRATOR_IDENTITY")
             .contains(change.path("transition").textValue())
         && change.path("group").isTextual()) command = "profile-transition";
     else if (fields.equals(Set.of("transition", "profileId", "profileVersion"))
@@ -359,6 +365,9 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
     JsonNode body = checkedBody(account, frozen);
     try {
       return switch (account.profileCommand()) {
+        case "delete" ->
+            codec.verifyMaintenanceDeleteReceipt(
+                receipt, realmId, actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), body);
         case "profile" ->
             codec.verifyMaintenanceProfileReceipt(
                 receipt, realmId, actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), body);
@@ -420,7 +429,16 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
     change.put("lastName", profile.lastName());
     change.put("email", profile.email());
     Object completeChange;
-    if (account.existingOrdinaryAssignment()) {
+    if (account.administratorRemoval()) {
+      completeChange =
+          account.combinedAdministratorRemoval()
+              ? Map.of(
+                  "transition",
+                  "REMOVE_ADMINISTRATOR_IDENTITY",
+                  "group",
+                  Objects.requireNonNull(account.reviewedGroup()))
+              : Map.of();
+    } else if (account.existingOrdinaryAssignment()) {
       completeChange =
           Map.of("group", Objects.requireNonNull(account.reviewedGroup()), "profile", change);
     } else if (account.consultantIdentityAddition() && account.reviewedProtectedProfile() != null) {
@@ -477,7 +495,7 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
   private String call(CheckedAccount account, String command, String frozen) {
     account.requireCurrent();
     if (TransactionSynchronizationManager.isActualTransactionActive()
-        || !Set.of("read", "profile", "email", "ordinary-profile", "profile-transition")
+        || !Set.of("read", "profile", "email", "ordinary-profile", "profile-transition", "delete")
             .contains(command)) throw invalid();
     var actor = actors.require(TaskPurpose.ACCOUNT_MAINTENANCE);
     var token = broker.issueCheckedMaintenance(TaskPurpose.ACCOUNT_MAINTENANCE);
@@ -538,7 +556,8 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
           || !"no-store".equals(response.getHeaders().getCacheControl())) throw invalid();
       return codec.utf8(raw);
     } catch (RestClientResponseException refusal) {
-      if (Set.of("profile", "email", "ordinary-profile", "profile-transition").contains(command)
+      if (Set.of("profile", "email", "ordinary-profile", "profile-transition", "delete")
+              .contains(command)
           && Set.of(403, 409).contains(refusal.getStatusCode().value())
           && refusal.getResponseHeaders() != null
           && "no-store".equals(refusal.getResponseHeaders().getCacheControl())

@@ -72,6 +72,7 @@ import org.springframework.web.client.RestTemplate;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({
   JpaAuditingConfiguration.class,
+  de.caritas.cob.userservice.api.admin.service.admin.delete.DeleteAdminService.class,
   de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService
       .class,
   de.caritas.cob.userservice.api.service.ConsultantService.class,
@@ -111,6 +112,11 @@ class GrantConsultantIdentityScopedJpaTest {
       service;
 
   @Autowired private HumanAdminAccountMaintenance maintenance;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.admin.service.admin.delete.DeleteAdminService removeAdmin;
+
+  @MockitoBean private IdentityAccountRemover genericRemoval;
   @Autowired private AdminSelfAssignmentService selfAssignments;
   @Autowired private ConsultantRepository consultants;
   @Autowired private ConsultantAgencyRepository consultantAgencies;
@@ -132,6 +138,7 @@ class GrantConsultantIdentityScopedJpaTest {
   private MockRestServiceServer server;
   private String operation = OPERATION;
   private String nativeCommand = "profile-transition";
+  private String nativeOutcome = "UPDATED";
   private final AtomicInteger reads = new AtomicInteger();
   private final AtomicInteger calls = new AtomicInteger();
   private final AtomicInteger effects = new AtomicInteger();
@@ -365,7 +372,8 @@ class GrantConsultantIdentityScopedJpaTest {
                     Set.of(
                             ENDPOINT + "/read",
                             ENDPOINT + "/profile-transition",
-                            ENDPOINT + "/ordinary-profile")
+                            ENDPOINT + "/ordinary-profile",
+                            ENDPOINT + "/delete")
                         .contains(outbound.getURI().toString())))
         .andRespond(
             outbound -> {
@@ -448,6 +456,377 @@ class GrantConsultantIdentityScopedJpaTest {
               response.getHeaders().setCacheControl("no-store");
               return response;
             });
+  }
+
+  @Test
+  void actualCombinedAdministratorRemovalPreservesAllConsultantDataAndExactReplay() {
+    givenAdministratorRemoval(true);
+    var before = consultantSql();
+    var relations =
+        jdbc.queryForList("select * from consultant_agency where consultant_id=?", ACCOUNT);
+    var topics = jdbc.queryForList("select * from consultant_topic where consultant_id=?", ACCOUNT);
+    assertDoesNotThrow(() -> removeAdmin.deleteAgencyAdmin(ACCOUNT));
+    assertEquals(before, consultantSql());
+    assertEquals(
+        relations,
+        jdbc.queryForList("select * from consultant_agency where consultant_id=?", ACCOUNT));
+    assertEquals(
+        topics, jdbc.queryForList("select * from consultant_topic where consultant_id=?", ACCOUNT));
+    assertEquals(
+        0,
+        jdbc.queryForObject("select count(*) from admin where admin_id=?", Integer.class, ACCOUNT));
+    assertEquals("APPLIED", phase());
+    String frozen = nativeBody;
+    assertDoesNotThrow(() -> removeAdmin.deleteAgencyAdmin(ACCOUNT));
+    assertEquals(frozen, nativeBody);
+    assertEquals(before, consultantSql());
+    assertEquals(2, effects.get());
+    assertEquals(1, matrixCalls.get());
+    verifyNoInteractions(genericRemoval);
+  }
+
+  @Test
+  void actualPureAdministratorRemovalRequiresDeletedReceiptAndReplaysAfterRowDisappears() {
+    givenAdministratorRemoval(false);
+    assertDoesNotThrow(() -> removeAdmin.deleteAgencyAdmin(ACCOUNT));
+    assertEquals(
+        0,
+        jdbc.queryForObject("select count(*) from admin where admin_id=?", Integer.class, ACCOUNT));
+    assertEquals("APPLIED", phase());
+    String frozen = nativeBody;
+    assertDoesNotThrow(() -> removeAdmin.deleteAgencyAdmin(ACCOUNT));
+    assertEquals(frozen, nativeBody);
+    assertEquals(1, effects.get());
+    assertEquals(0, matrixCalls.get());
+    verifyNoInteractions(genericRemoval);
+  }
+
+  @Test
+  void administratorRemovalLostReplyKeepsAdminUntilExactOriginalRetry() {
+    givenAdministratorRemoval(true);
+    var before = consultantSql();
+    lostReply = true;
+    assertThrows(RuntimeException.class, () -> removeAdmin.deleteAgencyAdmin(ACCOUNT));
+    assertEquals("FROZEN", phase());
+    assertEquals(
+        1,
+        jdbc.queryForObject("select count(*) from admin where admin_id=?", Integer.class, ACCOUNT));
+    assertEquals(before, consultantSql());
+    String frozen = nativeBody;
+    revoked = true;
+    assertThrows(RuntimeException.class, () -> removeAdmin.deleteAgencyAdmin(ACCOUNT));
+    assertEquals("FROZEN", phase());
+    revoked = false;
+    assertDoesNotThrow(() -> removeAdmin.deleteAgencyAdmin(ACCOUNT));
+    assertEquals(frozen, nativeBody);
+    assertEquals("APPLIED", phase());
+    assertEquals(before, consultantSql());
+    assertEquals(2, effects.get());
+  }
+
+  @Test
+  void administratorRemovalSqlFailureRollsBackEveryAdminRelationAndRetriesOriginalReceipt() {
+    givenAdministratorRemoval(true);
+    var before = consultantSql();
+    var admin = adminSql();
+    var relations = jdbc.queryForList("select * from admin_agency where admin_id=?", ACCOUNT);
+    jdbc.execute(
+        "create table retained_admin_remove_fault (admin_id varchar(36) references admin(admin_id))");
+    try {
+      jdbc.update("insert into retained_admin_remove_fault(admin_id) values(?)", ACCOUNT);
+      assertThrows(RuntimeException.class, () -> removeAdmin.deleteAgencyAdmin(ACCOUNT));
+      assertEquals("ACKNOWLEDGED", phase());
+      assertEquals(admin, adminSql());
+      assertEquals(
+          relations, jdbc.queryForList("select * from admin_agency where admin_id=?", ACCOUNT));
+      assertEquals(before, consultantSql());
+      String frozen = nativeBody;
+      jdbc.update("delete from retained_admin_remove_fault");
+      assertDoesNotThrow(() -> removeAdmin.deleteAgencyAdmin(ACCOUNT));
+      assertEquals(frozen, nativeBody);
+      assertEquals("APPLIED", phase());
+      assertEquals(before, consultantSql());
+      assertEquals(2, effects.get());
+    } finally {
+      jdbc.execute("drop table retained_admin_remove_fault");
+    }
+  }
+
+  @Test
+  void pureAdministratorRemovalRejectsUpdatedInsteadOfDeletedReceipt() {
+    givenAdministratorRemoval(false);
+    nativeOutcome = "UPDATED";
+    assertThrows(RuntimeException.class, () -> removeAdmin.deleteAgencyAdmin(ACCOUNT));
+    assertEquals("FROZEN", phase());
+    assertEquals(
+        1,
+        jdbc.queryForObject("select count(*) from admin where admin_id=?", Integer.class, ACCOUNT));
+  }
+
+  @Test
+  void administratorRemovalRejectsTargetRebirthBeforeAnotherHttpCommand() {
+    givenAdministratorRemoval(true);
+    lostReply = true;
+    assertThrows(RuntimeException.class, () -> removeAdmin.deleteAgencyAdmin(ACCOUNT));
+    int attempted = calls.get();
+    jdbc.update(
+        "update admin set create_date=dateadd('SECOND',1,create_date) where admin_id=?", ACCOUNT);
+    assertThrows(RuntimeException.class, () -> removeAdmin.deleteAgencyAdmin(ACCOUNT));
+    assertEquals(attempted, calls.get());
+    assertEquals("FROZEN", phase());
+  }
+
+  @Test
+  void protectedCombinedAdministratorRemovalKeepsAllConsultantData() {
+    givenProtectedTenant();
+    maintenance.configureReviewedProtectedProfiles(protectedCatalog(true));
+    givenAdministratorRemoval(true);
+    var before = consultantSql();
+    assertDoesNotThrow(() -> removeAdmin.deleteTenantAdmin(ACCOUNT));
+    assertEquals(before, consultantSql());
+    assertEquals(Set.of("consultant", "group-chat-consultant"), nativeRoles);
+    assertEquals("APPLIED", phase());
+    assertDoesNotThrow(() -> removeAdmin.deleteTenantAdmin(ACCOUNT));
+    assertEquals(before, consultantSql());
+    assertEquals(2, effects.get());
+  }
+
+  @Test
+  void protectedPureAdministratorDeletionUsesExactOriginalDeletedReceipt() {
+    givenProtectedTenant();
+    maintenance.configureReviewedProtectedProfiles(protectedCatalog(true));
+    givenAdministratorRemoval(false);
+    assertDoesNotThrow(() -> removeAdmin.deleteTenantAdmin(ACCOUNT));
+    assertEquals("APPLIED", phase());
+    assertDoesNotThrow(() -> removeAdmin.deleteTenantAdmin(ACCOUNT));
+    assertEquals(1, effects.get());
+  }
+
+  @Test
+  void administratorRemovalRestartsFromPersistedOriginalCommandWithoutANewNativeEffect() {
+    givenAdministratorRemoval(true);
+    lostReply = true;
+    assertThrows(RuntimeException.class, () -> removeAdmin.deleteAgencyAdmin(ACCOUNT));
+    String frozen = nativeBody;
+    var mode = (IdentityClientConfig) ReflectionTestUtils.getField(removeAdmin, "mode");
+    var resumed =
+        new HumanAdminAccountMaintenance(
+            mode,
+            human,
+            (AdminScope) ReflectionTestUtils.getField(maintenance, "scope"),
+            jdbc,
+            transactions,
+            request,
+            new KeycloakHumanAdminMaintenance(
+                http, actors, broker, codec, "https://identity.test", "fixture", "fixture-realm"),
+            Clock.systemUTC(),
+            ISSUER);
+    resumed.configureReviewedOrdinaryGroups(
+        Map.of(
+            "/human-roles/agency-admin",
+            ORIGINAL,
+            "/human-roles/consultant-agency-admin-chat",
+            DESIRED,
+            "/human-roles/consultant",
+            Set.of("consultant", "group-chat-consultant")));
+    removeAdmin.setScopedMaintenance(mode, resumed);
+    try {
+      assertDoesNotThrow(() -> removeAdmin.deleteAgencyAdmin(ACCOUNT));
+      assertEquals(frozen, nativeBody);
+      assertEquals("APPLIED", phase());
+      assertEquals(2, effects.get());
+      assertDoesNotThrow(() -> removeAdmin.deleteAgencyAdmin(ACCOUNT));
+      assertEquals(2, effects.get());
+    } finally {
+      removeAdmin.setScopedMaintenance(mode, maintenance);
+    }
+  }
+
+  @Test
+  void administratorRemovalRejectsAlteredFrozenExpectedStateBeforeAnotherHttpCommand() {
+    givenAdministratorRemoval(true);
+    lostReply = true;
+    assertThrows(RuntimeException.class, () -> removeAdmin.deleteAgencyAdmin(ACCOUNT));
+    int attempted = calls.get();
+    var frozen =
+        (com.fasterxml.jackson.databind.node.ObjectNode)
+            codec.read(
+                jdbc.queryForObject(
+                    "select native_body from general_admin_identity_intent where operation_id=?",
+                    String.class,
+                    operation),
+                JsonNode.class);
+    var body =
+        (com.fasterxml.jackson.databind.node.ObjectNode)
+            codec.read(frozen.path("body").textValue(), JsonNode.class);
+    body.put("expectedState", "b".repeat(64));
+    frozen.put("body", codec.canonical(body));
+    jdbc.update(
+        "update general_admin_identity_intent set native_body=? where operation_id=?",
+        codec.canonical(frozen),
+        operation);
+    assertThrows(RuntimeException.class, () -> removeAdmin.deleteAgencyAdmin(ACCOUNT));
+    assertEquals(attempted, calls.get());
+    assertEquals("FROZEN", phase());
+    assertEquals(
+        1,
+        jdbc.queryForObject("select count(*) from admin where admin_id=?", Integer.class, ACCOUNT));
+  }
+
+  @Test
+  void administratorRemovalCannotTransferThePendingActionToAnotherHuman() {
+    givenAdministratorRemoval(true);
+    lostReply = true;
+    assertThrows(RuntimeException.class, () -> removeAdmin.deleteAgencyAdmin(ACCOUNT));
+    int attempted = calls.get();
+    human.setUserId("72000000-0000-4000-8000-000000000099");
+    request.setUserPrincipal(authentication(7L));
+    assertThrows(RuntimeException.class, () -> removeAdmin.deleteAgencyAdmin(ACCOUNT));
+    assertEquals(attempted, calls.get());
+    assertEquals("FROZEN", phase());
+  }
+
+  @Test
+  void administratorRemovalRefusesForeignTenantBeforeIssuingNativeAuthority() {
+    givenAdministratorRemoval(false);
+    human.setTenantId(8L);
+    request.setUserPrincipal(authentication(8L));
+    assertThrows(RuntimeException.class, () -> removeAdmin.deleteAgencyAdmin(ACCOUNT));
+    assertEquals(0, calls.get());
+    assertEquals(0, reads.get());
+    assertEquals(
+        0,
+        jdbc.queryForObject(
+            "select count(*) from general_admin_identity_intent where operation_id=?",
+            Integer.class,
+            operation));
+    verifyNoInteractions(genericRemoval);
+  }
+
+  @Test
+  void publicAgencyAdminEntryResumesAfterItsTargetAdminRowDisappears() {
+    givenAdministratorRemoval(false);
+    var entry =
+        new de.caritas.cob.userservice.api.admin.service.admin.AgencyAdminUserService(
+            mock(
+                de.caritas.cob.userservice.api.admin.service.admin.search.RetrieveAdminService
+                    .class),
+            mock(
+                de.caritas.cob.userservice.api.admin.service.admin.create.CreateAdminService.class),
+            mock(
+                de.caritas.cob.userservice.api.admin.service.admin.update.UpdateAdminService.class),
+            removeAdmin,
+            mock(de.caritas.cob.userservice.api.UserServiceMapper.class),
+            agencies,
+            tenants,
+            consultants,
+            (AdminScope) ReflectionTestUtils.getField(maintenance, "scope"));
+    entry.setRemovalIdentityMode(
+        (IdentityClientConfig) ReflectionTestUtils.getField(removeAdmin, "mode"));
+    assertDoesNotThrow(() -> entry.deleteAgencyAdmin(ACCOUNT));
+    assertDoesNotThrow(() -> entry.deleteAgencyAdmin(ACCOUNT));
+    assertEquals("APPLIED", phase());
+    assertEquals(1, effects.get());
+  }
+
+  @Test
+  void publicTenantAdminEntryResumesAfterItsTargetAdminRowDisappears() {
+    givenProtectedTenant();
+    maintenance.configureReviewedProtectedProfiles(protectedCatalog(true));
+    givenAdministratorRemoval(false);
+    var entry =
+        new de.caritas.cob.userservice.api.admin.service.admin.TenantAdminUserService(
+            mock(
+                de.caritas.cob.userservice.api.admin.service.admin.search.RetrieveAdminService
+                    .class),
+            mock(
+                de.caritas.cob.userservice.api.admin.service.admin.create.CreateAdminService.class),
+            mock(
+                de.caritas.cob.userservice.api.admin.service.admin.update.UpdateAdminService.class),
+            removeAdmin,
+            mock(de.caritas.cob.userservice.api.UserServiceMapper.class),
+            tenants,
+            (AdminScope) ReflectionTestUtils.getField(maintenance, "scope"),
+            consultants);
+    entry.setRemovalIdentityMode(
+        (IdentityClientConfig) ReflectionTestUtils.getField(removeAdmin, "mode"));
+    assertDoesNotThrow(() -> entry.deleteTenantAdmin(ACCOUNT));
+    assertDoesNotThrow(() -> entry.deleteTenantAdmin(ACCOUNT));
+    assertEquals("APPLIED", phase());
+    assertEquals(1, effects.get());
+  }
+
+  @Test
+  void administratorRemovalRefusesAmbientSqlBeforeAnyNativeOrGenericMutation() {
+    givenAdministratorRemoval(false);
+    assertThrows(
+        RuntimeException.class,
+        () ->
+            new TransactionTemplate(transactions)
+                .execute(
+                    ignored -> {
+                      removeAdmin.deleteAgencyAdmin(ACCOUNT);
+                      return null;
+                    }));
+    assertEquals(0, reads.get());
+    assertEquals(0, calls.get());
+    assertEquals(
+        1,
+        jdbc.queryForObject("select count(*) from admin where admin_id=?", Integer.class, ACCOUNT));
+    verifyNoInteractions(genericRemoval);
+  }
+
+  private void givenAdministratorRemoval(boolean combined) {
+    if (combined)
+      assertDoesNotThrow(() -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
+    doThrow(new ScopedIdentityCommandRequiredException())
+        .when(genericRemoval)
+        .deleteUser(anyString());
+    TenantContext.setCurrentTenant(7L);
+    request.setMethod("DELETE");
+    String adminType = (String) adminSql().get("type");
+    request.setRequestURI(
+        "/useradmin/" + ("AGENCY".equals(adminType) ? "agencyadmins/" : "tenantadmins/") + ACCOUNT);
+    new TransactionTemplate(transactions)
+        .executeWithoutResult(
+            ignored -> {
+              entities.persist(
+                  de.caritas.cob.userservice.api.model.AdminAgency.builder()
+                      .admin(admins.findById(ACCOUNT).orElseThrow())
+                      .agencyId(71L)
+                      .build());
+              entities.flush();
+              entities.clear();
+            });
+    if (combined) {
+      jdbc.update(
+          "update consultant set admin_remarks=?,is_absent=true,absence_message=? where consultant_id=?",
+          "retain remarks",
+          "retain absence",
+          ACCOUNT);
+      jdbc.update("insert into language(consultant_id,language_code) values(?,?)", ACCOUNT, "de");
+    }
+    operation = "72000000-0000-4000-8000-000000000010";
+    request.removeHeader("Idempotency-Key");
+    request.addHeader("Idempotency-Key", operation);
+    nativeBody = null;
+    nativeReply = null;
+    nativeCommand = combined ? "profile-transition" : "delete";
+    nativeOutcome = combined ? "UPDATED" : "DELETED";
+    nativeDesiredRoles = combined ? Set.of("consultant", "group-chat-consultant") : Set.of();
+    expectedRoleChange =
+        combined
+            ? Map.of(
+                "transition", "REMOVE_ADMINISTRATOR_IDENTITY", "group", "/human-roles/consultant")
+            : Map.of();
+    maintenance.configureReviewedOrdinaryGroups(
+        Map.of(
+            "/human-roles/agency-admin",
+            ORIGINAL,
+            "/human-roles/consultant-agency-admin-chat",
+            DESIRED,
+            "/human-roles/consultant",
+            Set.of("consultant", "group-chat-consultant")));
   }
 
   @Test
@@ -1322,7 +1701,7 @@ class GrantConsultantIdentityScopedJpaTest {
     value.put("previousState", "a".repeat(64));
     value.put("tenantId", "7");
     value.put("originDigest", digest("maintenance-origin", body.path("target").path("origin")));
-    value.put("result", "UPDATED");
+    value.put("result", nativeOutcome);
     String encoded =
         Base64.getUrlEncoder()
             .withoutPadding()
@@ -1334,7 +1713,7 @@ class GrantConsultantIdentityScopedJpaTest {
             "accountId",
             ACCOUNT,
             "result",
-            "UPDATED",
+            nativeOutcome,
             "receipt",
             encoded + "." + mac("maintenance-operation-receipt\n" + encoded)));
   }

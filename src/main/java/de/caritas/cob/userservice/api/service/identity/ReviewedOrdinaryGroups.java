@@ -75,6 +75,32 @@ final class ReviewedOrdinaryGroups {
         matches.getFirst().getKey(), original.stream().sorted().toList(), List.copyOf(desired));
   }
 
+  Transition administratorRemoval(List<String> original) {
+    requireConfigured();
+    if (original == null
+        || !original.contains("consultant")
+        || new HashSet<>(original).size() != original.size())
+      throw new ScopedIdentityCommandRequiredException();
+    var desired = new TreeSet<String>();
+    desired.add("consultant");
+    if (original.contains("group-chat-consultant")) desired.add("group-chat-consultant");
+    var matches =
+        groups.entrySet().stream().filter(entry -> entry.getValue().equals(desired)).toList();
+    if (matches.size() != 1) throw new ScopedIdentityCommandRequiredException();
+    return new Transition(
+        matches.getFirst().getKey(), original.stream().sorted().toList(), List.copyOf(desired));
+  }
+
+  Transition frozenAdministratorRemoval(String group) {
+    var roles = groups.get(group);
+    if (roles == null
+        || !roles.contains("consultant")
+        || !Set.of("consultant", "group-chat-consultant").containsAll(roles))
+      throw new ScopedIdentityCommandRequiredException();
+    return new Transition(
+        group, roles.stream().sorted().toList(), roles.stream().sorted().toList());
+  }
+
   Transition frozenAgencyAdminAddition(String group) {
     requireConfigured();
     var desired = groups.get(group);
