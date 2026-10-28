@@ -339,7 +339,7 @@ def startup_protected_catalogue(configuration):
 
 
 def startup_primary_adoption(configuration, subject, native):
-    """The existing named operator becomes a managed SELF target, without changing any grant."""
+    """Validate the existing primary adoption before its matching native profile migration."""
     profiles = [p for p in configuration['profiles'] if p['id'] == 'platform-v1']
     sources = [b for b in configuration['bindings'] if b['subject'] == subject]
     roles = {'agency-admin', 'tenant-admin', 'user-admin'}
@@ -356,12 +356,12 @@ def startup_primary_adoption(configuration, subject, native):
             or source.get('humanClientIds') != ['protected-human-web'] or source.get('audienceSets') != [['userservice']]
             or source.get('protectedProfileIds', []).count('platform-v1') != 1
             or set(source.get('realmRoles', [])) != roles or len(source['realmRoles']) != 3
-            or any(a.get('accountId') == subject for a in configuration['adoptedAccounts'])):
+            or [a for a in configuration['adoptedAccounts'] if a.get('accountId') == subject]
+                != [{'accountId': subject, 'protectedProfileId': 'platform-v1', 'profileVersion': profile['version']}]):
         raise ValueError('Exact unchanged reviewed primary source and profile required')
-    result = copy.deepcopy(configuration)
-    result['adoptedAccounts'].append({'accountId': subject, 'protectedProfileId': 'platform-v1',
-                                    'profileVersion': profile['version']})
-    return result
+    # OperationFixture.install_self_source already declares this exact primary target.
+    # Preserve the complete policy byte-for-byte; only its live profile mapping needs migration.
+    return copy.deepcopy(configuration)
 
 
 def install_startup_primary_adoption(cls, helper, configuration):
@@ -390,7 +390,7 @@ def install_startup_primary_adoption(cls, helper, configuration):
     cls.primary_adoption_observation = {'sameNativeIdentityAndBirth': True, 'sameCredentials': True,
         'sameEffectiveRoleUnion': True, 'exactExistingProfileGroup': True,
         'sameSourceBindingsAndOperationGrants': result['bindings'] == configuration['bindings'],
-        'oneExplicitTargetAdoption': len(result['adoptedAccounts']) == len(configuration['adoptedAccounts']) + 1}
+        'existingTargetAdoptionAndFullPolicyUnchanged': result == configuration}
     return result
 
 
@@ -664,7 +664,7 @@ def native(kc, report):
                     raise ValueError('Actual installed reviewed group roles differ from declaration')
             return True
         receipt['native_declarations_before'] = verify_installed_declarations()
-        receipt['canonical_platform_source'] = {'phase': 'PRE_ADOPTION' if browser else 'CURRENT',
+        receipt['canonical_platform_source'] = {'phase': 'PRE_PROFILE_MIGRATION' if browser else 'CURRENT',
             'observations': copy.deepcopy(StartupFixture.canonical_platform_source)}
         if browser: receipt['primary_managed_target_adoption'] = copy.deepcopy(StartupFixture.primary_adoption_observation)
         realm = fixture.admin('GET', ''); realm['adminEventsEnabled'] = True

@@ -137,15 +137,15 @@ class ApplicationStartupPairControls(unittest.TestCase):
                 'humanClientIds': ['protected-human-web'], 'audienceSets': [['userservice']],
                 'protectedProfileIds': ['platform-v1', 'tenant-peer-v1'], 'realmRoles': roles,
                 'accountOperations': [{'operations': ['account.read'], 'targetProfiles': ['platform-v1'], 'selfOnly': True}]}],
-            'adoptedAccounts': [{'accountId': 'original-tenant', 'protectedProfileId': 'tenant-peer-v1', 'profileVersion': 1}],
+            'adoptedAccounts': [{'accountId': 'original-tenant', 'protectedProfileId': 'tenant-peer-v1', 'profileVersion': 1},
+                {'accountId': subject, 'protectedProfileId': 'platform-v1', 'profileVersion': 1}],
             'other': {'preserved': ['exact']}}
         native = {'id': subject, 'enabled': True, 'createdTimestamp': 123,
             'attributes': {'tenantId': ['0']}, 'username': 'reviewed-human'}
         original = copy.deepcopy(config)
         desired = proof.startup_primary_adoption(config, subject, native)
         self.assertEqual(original, config)
-        self.assertEqual({**original, 'adoptedAccounts': original['adoptedAccounts'] + [{
-            'accountId': subject, 'protectedProfileId': 'platform-v1', 'profileVersion': 1}]}, desired)
+        self.assertEqual(original, desired)
         for key, value in [('id', 'foreign'), ('createdTimestamp', 0), ('enabled', False),
                            ('attributes', {'tenantId': ['11']}), ('serviceAccountClientLink', 'machine'),
                            ('federationLink', 'foreign')]:
@@ -157,7 +157,11 @@ class ApplicationStartupPairControls(unittest.TestCase):
                 ('bindings', 'humanClientIds', ['foreign']), ('bindings', 'authorizerTenantIds', [11])]:
             bad = copy.deepcopy(config); bad[section][0][key] = value
             with self.assertRaises(ValueError): proof.startup_primary_adoption(bad, subject, native)
-        with self.assertRaises(ValueError): proof.startup_primary_adoption(desired, subject, native)
+        for records in [original['adoptedAccounts'][:-1], original['adoptedAccounts'] + [original['adoptedAccounts'][-1]],
+                [original['adoptedAccounts'][0], {**original['adoptedAccounts'][-1], 'profileVersion': 2}],
+                [original['adoptedAccounts'][0], {**original['adoptedAccounts'][-1], 'protectedProfileId': 'foreign'}]]:
+            bad = copy.deepcopy(config); bad['adoptedAccounts'] = records
+            with self.assertRaises(ValueError): proof.startup_primary_adoption(bad, subject, native)
 
     def test_primary_adoption_native_readbacks_reject_identity_credential_and_grant_drift(self):
         import copy
@@ -171,7 +175,7 @@ class ApplicationStartupPairControls(unittest.TestCase):
                 'humanClientIds': ['protected-human-web'], 'audienceSets': [['userservice']],
                 'protectedProfileIds': ['platform-v1'], 'realmRoles': roles,
                 'accountOperations': [{'operations': ['account.read'], 'targetProfiles': ['platform-v1'], 'selfOnly': True}]}],
-            'adoptedAccounts': []}
+            'adoptedAccounts': [{'accountId': subject, 'protectedProfileId': 'platform-v1', 'profileVersion': 1}]}
         class Native:
             def __init__(self, drift):
                 self.drift = drift; self.joined = False; self.direct = [{'name': r} for r in roles]; self.writes = []
@@ -192,11 +196,12 @@ class ApplicationStartupPairControls(unittest.TestCase):
                 if path == base + '/role-mappings/realm': return copy.deepcopy(self.direct)
                 if path == base + '/role-mappings/realm/composite':
                     return [{'name': r} for r in roles + (['extra'] if self.joined and self.drift == 'roles' else [])]
-                if path == '/groups/' + group + '/role-mappings/realm/composite': return [{'name': r} for r in roles]
+                if path == '/groups/' + group + '/role-mappings/realm/composite':
+                    return [{'name': r} for r in roles + (['extra'] if self.drift == 'group-before' else [])]
                 if path == base + '/groups':
                     return [{'id': 'foreign' if self.drift == 'group' else group}] if self.joined else []
                 raise AssertionError('Unexpected native read')
-        for drift in [None, 'birth', 'tenant', 'credential', 'roles', 'group']:
+        for drift in [None, 'birth', 'tenant', 'credential', 'roles', 'group', 'group-before']:
             setup = SimpleNamespace(human_subject=subject); native = Native(drift)
             if drift:
                 with self.assertRaises(ValueError): proof.install_startup_primary_adoption(setup, native, config)
@@ -205,7 +210,7 @@ class ApplicationStartupPairControls(unittest.TestCase):
                 value = proof.install_startup_primary_adoption(setup, native, config)
                 self.assertEqual(config['bindings'], value['bindings'])
                 self.assertTrue(all(setup.primary_adoption_observation.values()))
-            self.assertEqual(['join', 'remove-direct'], native.writes)
+            self.assertEqual([] if drift == 'group-before' else ['join', 'remove-direct'], native.writes)
 
     def test_browser_credit_requires_exact_explicit_mode_and_every_bounded_witness(self):
         import copy
