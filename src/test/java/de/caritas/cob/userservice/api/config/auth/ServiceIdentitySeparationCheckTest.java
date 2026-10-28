@@ -9,13 +9,15 @@ import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.core.env.Environment;
 
 class ServiceIdentitySeparationCheckTest {
   private final KeycloakCustomConfig admin = new KeycloakCustomConfig();
   private final IdentityClientConfig identity = mock(IdentityClientConfig.class);
+  private final Environment environment = mock(Environment.class);
   private final TechnicalUserConfig technical = new TechnicalUserConfig();
   private final ServiceIdentitySeparationCheck check =
-      new ServiceIdentitySeparationCheck(admin, identity);
+      new ServiceIdentitySeparationCheck(admin, identity, environment);
 
   private void configure() {
     admin.setAdminClientId("backend-admin");

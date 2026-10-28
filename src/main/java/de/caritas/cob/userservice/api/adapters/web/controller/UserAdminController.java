@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyConsultantResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyTypeDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AskerReactivationRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAgencyResponseDTO;
@@ -76,6 +77,17 @@ import org.springframework.web.bind.annotation.RestController;
 @Slf4j
 @Api(tags = "admin-user-controller")
 public class UserAdminController implements UseradminApi {
+
+  @org.springframework.beans.factory.annotation.Autowired
+  private IdentityObservationHttpAdapter identityObservationHttpAdapter;
+
+  @Override
+  public ResponseEntity<
+          de.caritas.cob.userservice.api.adapters.web.dto.IdentityObservationResponseDTO>
+      observeIdentityOccupancy(
+          de.caritas.cob.userservice.api.adapters.web.dto.IdentityObservationRequestDTO request) {
+    return identityObservationHttpAdapter.observeIdentityOccupancy(request);
+  }
 
   private final @NonNull SessionAdminService sessionAdminService;
   private final @NonNull ViolationReportGenerator violationReportGenerator;
@@ -443,6 +455,18 @@ public class UserAdminController implements UseradminApi {
         deletionPauseRequestDTO.getMonths(),
         authenticatedUser.getUserId());
     return new ResponseEntity<>(HttpStatus.OK);
+  }
+
+  @PostMapping(
+      value = {
+        "/useradmin/askers/deletion/reactivate",
+        "/service/useradmin/askers/deletion/reactivate"
+      },
+      consumes = "application/json")
+  public ResponseEntity<Void> reactivateAsker(
+      @Valid @RequestBody AskerReactivationRequestDTO reactivationRequest) {
+    askerUserAdminFacade.reactivateAsker(reactivationRequest);
+    return ResponseEntity.noContent().build();
   }
 
   @Override

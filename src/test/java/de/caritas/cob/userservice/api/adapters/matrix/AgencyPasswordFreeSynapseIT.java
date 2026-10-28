@@ -331,6 +331,8 @@ class AgencyPasswordFreeSynapseIT {
   @Test
   void teamDiscussionCreatesJoinsAndArchivesReadOnlyWithoutPassword() {
     when(sessionRepository.findById(42L)).thenReturn(Optional.of(session));
+    when(sessionRepository.findByIdForUpdate(42L))
+        .thenAnswer(invocation -> sessionRepository.findById(42L));
     when(consultants.findById(consultant.getId())).thenReturn(Optional.of(consultant));
     var relations = mock(ConsultantAgencyRepository.class);
     when(relations.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(consultant.getId(), 7L))
@@ -343,6 +345,7 @@ class AgencyPasswordFreeSynapseIT {
               when(discussions.findBySessionId(42L)).thenReturn(Optional.of(discussion));
               return discussion;
             });
+    when(discussions.findById(99L)).thenAnswer(call -> discussions.findBySessionId(42L));
     var facade =
         new TeamDiscussionFacade(
             sessionRepository,
@@ -352,9 +355,18 @@ class AgencyPasswordFreeSynapseIT {
             matrix,
             identities,
             mock(TeamDiscussionFeatureGate.class),
-            new TeamDiscussionCreationWriter(discussions),
-            mock(TeamDiscussionParticipantWriter.class),
-            mock(TeamDiscussionRoomCleanupService.class));
+            new TeamDiscussionCreationWriter(discussions, sessionRepository),
+            new de.caritas.cob.userservice.api.service.teamdiscussion
+                .TeamDiscussionAccessTransactions(
+                sessionRepository,
+                consultants,
+                relations,
+                discussions,
+                mock(
+                    de.caritas.cob.userservice.api.port.out.TeamDiscussionParticipantRepository
+                        .class)),
+            mock(TeamDiscussionRoomCleanupService.class),
+            mock(de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess.class));
     var view = facade.getOrCreateDiscussion(42L, consultant.getId());
     var consultantToken = matrix.loginAsUserAccessToken(consultant.getMatrixUserId());
     assertThat(matrix.sendMessage(view.matrixRoomId(), "before archive", consultantToken))

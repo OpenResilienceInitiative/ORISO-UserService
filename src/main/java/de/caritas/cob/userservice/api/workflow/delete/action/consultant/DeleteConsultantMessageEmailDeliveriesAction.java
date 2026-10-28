@@ -32,6 +32,10 @@ public class DeleteConsultantMessageEmailDeliveriesAction
           RecipientKind.FEEDBACK, target.getConsultant().getId());
       repository.deleteByRecipientKindAndRecipientUserId(
           RecipientKind.FEEDBACK_INTENT, target.getConsultant().getId());
+      repository.deleteByRecipientKindAndRecipientUserId(
+          RecipientKind.INTERNAL, target.getConsultant().getId());
+      repository.deleteByRecipientKindAndRecipientUserId(
+          RecipientKind.INTERNAL_INTENT, target.getConsultant().getId());
       if (isNotBlank(target.getConsultant().getMatrixUserId())) {
         repository.deleteBySourceMatrixUserId(target.getConsultant().getMatrixUserId());
       }

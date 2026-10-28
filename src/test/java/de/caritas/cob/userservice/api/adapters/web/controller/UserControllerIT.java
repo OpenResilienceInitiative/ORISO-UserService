@@ -70,6 +70,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityPasswordChangeRequirement
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityReactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
@@ -86,6 +87,7 @@ import de.caritas.cob.userservice.api.service.chat.ChatOccurrenceQueryService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatFeatureGate;
 import de.caritas.cob.userservice.api.service.chat.GroupChatRoleService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.api.service.enquiry.EnquiryRejectionService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.RequestedContactSheetService;
 import de.caritas.cob.userservice.api.service.session.SessionConsentService;
@@ -285,6 +287,7 @@ class UserControllerIT {
 
   @Autowired private MockMvc mvc;
 
+  @MockitoBean private EnquiryRejectionService enquiryRejectionService;
   @MockitoBean private UserAccountService userAccountService;
   @MockitoBean private PasswordResetService passwordResetService;
   @MockitoBean private AccountInviteService accountInviteService;
@@ -322,6 +325,7 @@ class UserControllerIT {
         IdentityAccountStatusLookup.class,
         IdentityAuthentication.class,
         IdentityDeactivator.class,
+        IdentityReactivator.class,
         IdentityDummyEmailUpdater.class,
         IdentityEmailAddressUpdater.class,
         IdentityEmailOwnerLookup.class,
@@ -347,6 +351,7 @@ class UserControllerIT {
   @MockitoBean private JoinAndLeaveChatFacade joinAndLeaveChatFacade;
   @MockitoBean private AssignChatFacade assignChatFacade;
   @MockitoBean private CreateChatFacade createChatFacade;
+  @MockitoBean private InternalSubsetChatFacade internalSubsetChatFacade;
   @MockitoBean private ChatPermissionVerifier chatPermissionVerifier;
   @MockitoBean private StopChatFacade stopChatFacade;
   @MockitoBean private GetChatMembersFacade getChatMembersFacade;
@@ -457,6 +462,16 @@ class UserControllerIT {
     mvc.perform(get("/users/{username}", username).accept(MediaType.APPLICATION_JSON))
         /* then */
         .andExpect(status().isNotFound());
+  }
+
+  @Test
+  void rejectEnquiryReturnsNoContentOnlyForAVerifiedClosure() throws Exception {
+    when(enquiryRejectionService.rejectEnquiry(5L)).thenReturn(true);
+    mvc.perform(post("/users/sessions/{sessionId}/rejection", 5L))
+        .andExpect(status().isNoContent());
+    when(enquiryRejectionService.rejectEnquiry(5L)).thenReturn(false);
+    mvc.perform(post("/users/sessions/{sessionId}/rejection", 5L))
+        .andExpect(status().isServiceUnavailable());
   }
 
   @Test

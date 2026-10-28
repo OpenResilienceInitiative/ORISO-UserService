@@ -19,6 +19,7 @@ import de.caritas.cob.userservice.api.port.out.NotificationRoomLevelRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
+import de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -52,6 +53,7 @@ class TeamDiscussionNotificationServiceTest {
   @Mock private TeamDiscussionRepository teamDiscussionRepository;
   @Mock private TeamDiscussionParticipantRepository participantRepository;
   @Mock private NotificationRoomLevelRepository notificationRoomLevelRepository;
+  @Mock private AccountInactivityService accountLifecycle;
   @Mock private ConsultantAgencyRepository consultantAgencyRepository;
   @Mock private SessionRepository sessionRepository;
   @Mock private EventNotificationService eventNotificationService;

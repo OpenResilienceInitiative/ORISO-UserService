@@ -73,6 +73,51 @@ public class ReplyEmailDeliveryWriter {
         intent.getSessionId());
   }
 
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public long reserveInternalIntent(
+      String actorId,
+      String matrixActorId,
+      String roomId,
+      String eventId,
+      String eventKey,
+      long tenantId,
+      long sessionId) {
+    return saveNew(
+        RecipientKind.INTERNAL_INTENT,
+        actorId,
+        matrixActorId,
+        roomId,
+        eventId,
+        eventKey,
+        tenantId,
+        sessionId);
+  }
+
+  /** Tells a replayed internal intent apart from any other integrity failure. */
+  @Transactional(readOnly = true)
+  public boolean hasInternalIntent(String actorId, String eventKey) {
+    return repository.existsByRecipientKindAndRecipientUserIdAndEventKey(
+        RecipientKind.INTERNAL_INTENT, actorId, eventKey);
+  }
+
+  public boolean hasInternalRecipient(String recipientId, String eventKey) {
+    return repository.existsByRecipientKindAndRecipientUserIdAndEventKey(
+        RecipientKind.INTERNAL, recipientId, eventKey);
+  }
+
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public long reserveInternalRecipient(String recipientId, ReplyEmailDelivery intent) {
+    return saveNew(
+        RecipientKind.INTERNAL,
+        recipientId,
+        intent.getSourceMatrixUserId(),
+        intent.getSourceRoomId(),
+        intent.getSourceEventId(),
+        intent.getEventKey(),
+        intent.getTenantId(),
+        intent.getSessionId());
+  }
+
   private long saveNew(
       RecipientKind recipientKind,
       String recipientUserId,
@@ -106,7 +151,7 @@ public class ReplyEmailDeliveryWriter {
   @Transactional(readOnly = true)
   public List<Long> pendingIds() {
     return repository
-        .findTop100ByStatusAndNextAttemptAtLessThanEqualOrderByCreatedAtAsc(
+        .findTop100ByStatusAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAscCreatedAtAscIdAsc(
             ReplyEmailDelivery.Status.PENDING, LocalDateTime.now())
         .stream()
         .map(ReplyEmailDelivery::getId)
@@ -145,7 +190,8 @@ public class ReplyEmailDeliveryWriter {
             ReplyEmailDelivery.Status.SENDING, LocalDateTime.now().minus(age));
     int uncertain = 0;
     for (ReplyEmailDelivery delivery : stale) {
-      if (delivery.getRecipientKind() == RecipientKind.FEEDBACK_INTENT) {
+      if (delivery.getRecipientKind() == RecipientKind.FEEDBACK_INTENT
+          || delivery.getRecipientKind() == RecipientKind.INTERNAL_INTENT) {
         // Resolving an intent does not enter SMTP. A crash can safely re-run its idempotent
         // fan-out.
         delivery.setStatus(ReplyEmailDelivery.Status.PENDING);

@@ -291,6 +291,36 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
+  /users/sessions/{sessionId}/rejection:
+    post:
+      tags:
+        - user-controller
+      summary: 'Reject a submitted ordinary agency enquiry [Authorization: Role: consultant]'
+      operationId: rejectEnquiry
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        204:
+          description: NO CONTENT - rejected and protocol closure verified
+        401:
+          description: UNAUTHORIZED - no valid authentication
+        403:
+          description: FORBIDDEN - current agency authority required
+        404:
+          description: NOT FOUND - no accessible session
+        409:
+          description: CONFLICT - enquiry changed, already accepted, or other rejection actor
+        503:
+          description: SERVICE UNAVAILABLE - rejection saved, protocol closure remains pending
+        500:
+          description: INTERNAL SERVER ERROR - unexpected failure
+      security:
+        - Bearer: [ ]
   /users/sessions/new/{sessionId}:
     put:
       tags:
@@ -489,7 +519,7 @@ paths:
         404:
           description: NOT FOUND - session not found
         409:
-          description: CONFLICT - session is already in the archive or is not in progress
+          description: CONFLICT - session is already in the archive or is not in progress (or X-Reason MEMBERS_ONLY_CHAT_STOP_REQUIRED, the session belongs to a members-only chat and ends with it)
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
@@ -521,7 +551,7 @@ paths:
         404:
           description: NOT FOUND - session not found
         409:
-          description: CONFLICT - session is already in progress or not archived
+          description: CONFLICT - session is already in progress or not archived (or X-Reason MEMBERS_ONLY_CHAT_STOP_REQUIRED, the session belongs to a members-only chat and ends with it)
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
@@ -1338,6 +1368,78 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
+  /users/chat/internal-subset:
+    post:
+      tags:
+        - user-controller
+      summary: 'Open the members-only room for a subset of selected colleagues: a dedicated encrypted room with exactly the caller and the selected colleagues, created or reused [Authorization: Role: consultant with authority CREATE_NEW_CHAT]'
+      description: >-
+        Every selected colleague must be within the recipient scope of the caller's Träger (counselling centre, Träger or platform;
+        TenantService setting internalGroupChat.recipientScope, counselling centre when unset). One colleague outside the scope refuses
+        the whole request; nobody is dropped silently and no broader room is ever used. A room that holds exactly the same members is reused (200).
+        The room is members-only: no other colleague can list, open or join it. Every error answers with the header and the body field
+        X-Reason / reason set to one of the codes below.
+      operationId: openInternalSubsetChat
+      requestBody:
+        content:
+          'application/json':
+            schema:
+              $ref: '#/components/schemas/InternalSubsetChatDTO'
+        required: true
+      responses:
+        200:
+          description: OK - a room with exactly these members already existed and is reused
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/InternalSubsetChatResponseDTO'
+        201:
+          description: CREATED - a new members-only encrypted room was created
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/InternalSubsetChatResponseDTO'
+        400:
+          description: >-
+            BAD REQUEST - X-Reason INTERNAL_CHAT_RECIPIENTS_REQUIRED (no colleague besides the caller) or
+            INTERNAL_CHAT_RECIPIENT_UNKNOWN (a colleague the caller may pick has no chat identity yet and cannot join a room,
+            or an entry of consultantIds is null or blank; the selection is never shortened silently)
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: INTERNAL_CHAT_RECIPIENT_UNKNOWN
+        403:
+          description: >-
+            FORBIDDEN - X-Reason INTERNAL_CHAT_RECIPIENT_OUT_OF_SCOPE (a selected colleague is outside the recipient scope or
+            is not an active consultant; both answer alike),
+            or internal group chats are switched off for the Träger or counselling centre (no X-Reason)
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: INTERNAL_CHAT_RECIPIENT_OUT_OF_SCOPE
+        502:
+          description: >-
+            BAD GATEWAY - X-Reason INTERNAL_CHAT_MEMBERSHIP_FAILED (the chat service could not add every selected colleague; nothing was created)
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: INTERNAL_CHAT_MEMBERSHIP_FAILED
+        503:
+          description: >-
+            SERVICE UNAVAILABLE - X-Reason INTERNAL_CHAT_ENCRYPTION_REQUIRED (end-to-end encryption is not enabled on this installation, so no private room is created)
+            or INTERNAL_CHAT_BUSY (another request for the same people is still being processed, or the members of the existing room could not be read; try again)
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: INTERNAL_CHAT_ENCRYPTION_REQUIRED
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
   /users/chat/{chatId}/update:
     put:
       tags:
@@ -1840,6 +1942,15 @@ paths:
           description: FORBIDDEN - no/invalid role/authorization or CSRF token
         404:
           description: NOT FOUND - a session with such an ID does not exist
+        409:
+          description: >-
+            CONFLICT - X-Reason MEMBERS_ONLY_CHAT_STOP_REQUIRED (the session belongs to a members-only chat
+            and ends with it; stop the chat instead)
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: MEMBERS_ONLY_CHAT_STOP_REQUIRED
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
@@ -2257,32 +2368,6 @@ paths:
           description: FORBIDDEN - no/invalid role/authorization or CSRF token
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
-      security:
-        - Bearer: [ ]
-  /liveproxy/send:
-    post:
-      tags:
-        - liveproxy-controller
-      summary: 'Deprecated compatibility tombstone; LiveService delivery has been removed'
-      description: 'This endpoint no longer forwards events and always returns 410 Gone.'
-      deprecated: true
-      operationId: sendLiveEvent
-      parameters:
-        - name: matrixRoomId
-          in: query
-          description: Legacy Matrix room ID parameter; ignored
-          required: true
-          schema:
-            type: string
-      responses:
-        200:
-          description: Legacy response retained for source compatibility during deprecation
-        400:
-          description: BAD REQUEST - required query parameter is missing
-        403:
-          description: FORBIDDEN - no/invalid role or authorization
-        410:
-          description: GONE - LiveService delivery has been permanently removed
       security:
         - Bearer: [ ]
   /users/chat-series/{seriesId}/occurrences:
@@ -3018,6 +3103,8 @@ components:
           $ref: '#/components/schemas/SessionUserDTO'
         consultant:
           $ref: '#/components/schemas/SessionConsultantForConsultantDTO'
+        agency:
+          $ref: '#/components/schemas/AgencyDTO'
         latestMessage:
           $ref: '#/components/schemas/Date'
 
@@ -3115,7 +3202,7 @@ components:
         status:
           type: integer
           example: 0
-          description: "0 = INITIAL, 1 = NEW, 2 = IN PROGRESS, 3 = DONE"
+          description: "0 = INITIAL, 1 = NEW, 2 = IN PROGRESS, 3 = DONE, 4 = IN ARCHIVE, 5 = REJECTED"
         conversationType:
           allOf:
             - $ref: '#/components/schemas/ConversationType'
@@ -3670,6 +3757,10 @@ components:
         displayName:
           type: string
           example: Berater XYZ
+        internalName:
+          type: string
+          description: Colleague-facing name (internal display name, else first + last name). Only set on case-handover candidates.
+          example: Max Mustermann
         avatarKind:
           type: string
           description: Stored counsellor avatar kind; absent for advice seekers or when unset.
@@ -4245,6 +4336,43 @@ components:
               type: string
               maxLength: 120
 
+    InternalSubsetChatDTO:
+      type: object
+      required:
+        - consultantIds
+      properties:
+        consultantIds:
+          type: array
+          description: The colleagues to talk to (the caller is added automatically and is ignored if listed).
+          minItems: 1
+          maxItems: 50
+          items:
+            type: string
+          example: ["consultant-id-1"]
+        agencyId:
+          type: integer
+          format: int64
+          description: The counselling centre the chat belongs to. Defaults to the lowest-numbered centre of the caller that the whole selection is within the recipient scope for.
+          example: 5
+        topic:
+          type: string
+          minLength: 3
+          maxLength: 50
+          description: Name of the room. Defaults to the members' names.
+          example: Case talk
+    InternalSubsetChatResponseDTO:
+      type: object
+      required:
+        - matrixRoomId
+        - chatId
+      properties:
+        matrixRoomId:
+          type: string
+          example: "!abc:matrix.example.org"
+        chatId:
+          type: integer
+          format: int64
+          example: 42
     CreateChatResponseDTO:
       type: object
       required:
@@ -4529,6 +4657,13 @@ components:
           # switchable, not opt-in. A counsellor who never opens the settings
           # screen still gets their work queue.
           default: true
+        internalChatNotificationEnabled:
+          type: boolean
+          description: >-
+            Counsellor: a new ordinary internal-group message. Independent of
+            advice-seeker messages and protected professional feedback. Omitted
+            legacy values mean enabled; an omitted PATCH preserves the saved choice.
+          example: true
         feedbackNotificationEnabled:
           type: boolean
           description: >-

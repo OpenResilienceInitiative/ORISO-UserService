@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.identity.IdentityOtpType;
 import de.caritas.cob.userservice.api.model.AccountInvite;
@@ -97,6 +98,9 @@ class OnboardingInviteTargetedUpdateIT {
   /** No consultant row exists behind the mocked facade, so its agency relation is mocked too. */
   @MockitoBean
   private ConsultantAgencyRelationCreatorService consultantAgencyRelationCreatorService;
+
+  /** The accept also requires an operational tenant; a mock admits it like an active Träger. */
+  @MockitoBean private TenantService tenantService;
 
   private final List<Long> seededInviteIds = new ArrayList<>();
 

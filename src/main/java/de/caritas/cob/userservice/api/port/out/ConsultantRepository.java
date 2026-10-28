@@ -20,6 +20,8 @@ import org.springframework.transaction.annotation.Transactional;
 public interface ConsultantRepository
     extends JpaRepository<Consultant, String>, JpaSpecificationExecutor<Consultant> {
 
+  boolean existsByIdAndManagedPausedTrue(String id);
+
   @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
   @Query("select c from Consultant c where c.id = :id")
   Optional<Consultant> findPictureOwnerForUpdate(@Param("id") String id);
@@ -30,6 +32,9 @@ public interface ConsultantRepository
 
   @EntityGraph(attributePaths = {"consultantAgencies", "languages"})
   Optional<Consultant> findByIdAndDeleteDateIsNull(String id);
+
+  /** Active selection only; scalar identity fields suffice, so no association fetch graph. */
+  List<Consultant> findByIdInAndDeleteDateIsNull(Collection<String> ids);
 
   Optional<Consultant> findByEmailAndDeleteDateIsNull(String email);
 

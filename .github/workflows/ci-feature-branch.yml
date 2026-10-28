@@ -15,7 +15,30 @@ permissions:
   contents: read
 
 jobs:
+  route-validation:
+    name: choose branch or PR validation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      run_validation: ${{ steps.route.outputs.run_validation }}
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+      with:
+        persist-credentials: false
+
+    - name: Use PR validation when an open PR already covers this branch
+      id: route
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: bash scripts/ci/should-run-branch-validation.sh
+
   validate:
+    needs: route-validation
+    if: needs.route-validation.outputs.run_validation == 'true'
     name: test and build UserService
     runs-on: ubuntu-latest
 
@@ -37,6 +60,8 @@ jobs:
         image_name: oriso-userservice
 
   required-integration-tests:
+    needs: route-validation
+    if: needs.route-validation.outputs.run_validation == 'true'
     name: required integration tests
     runs-on: ubuntu-latest
     env:
@@ -61,4 +86,11 @@ jobs:
         java_version: '21'
 
   mariadb-contract:
+    needs: route-validation
+    if: needs.route-validation.outputs.run_validation == 'true'
     uses: ./.github/workflows/mariadb-contract.yml
+
+  notification-smtp-contract:
+    needs: route-validation
+    if: needs.route-validation.outputs.run_validation == 'true'
+    uses: ./.github/workflows/notification-smtp-contract.yml

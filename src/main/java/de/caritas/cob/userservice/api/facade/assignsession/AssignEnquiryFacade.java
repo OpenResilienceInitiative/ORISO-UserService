@@ -279,18 +279,27 @@ public class AssignEnquiryFacade {
               return;
             }
 
-            // Use agency token to invite consultant to existing room
-            try {
-              sessionRoomGateway.inviteUser(
-                  existingRoomId, consultant.getMatrixUserId(), agencyToken);
+            // Use agency token to invite consultant to existing room. A counsellor of the
+            // department already sits in it as a silent member (ADR-002); inviting them again only
+            // spends their Matrix invite allowance and can stall the accept for minutes (FE#1799).
+            if (sessionRoomGateway.isJoinedMember(existingRoomId, consultant.getMatrixUserId())) {
               log.info(
-                  "Agency invited consultant {} to existing room {}",
+                  "Consultant {} is already a member of room {}, no invite needed",
                   consultant.getUsername(),
                   existingRoomId);
-            } catch (Exception e) {
-              log.warn(
-                  "Failed to invite consultant to room using agency token: {}", e.getMessage());
-              // Continue anyway - might already be invited
+            } else {
+              try {
+                sessionRoomGateway.inviteUser(
+                    existingRoomId, consultant.getMatrixUserId(), agencyToken);
+                log.info(
+                    "Agency invited consultant {} to existing room {}",
+                    consultant.getUsername(),
+                    existingRoomId);
+              } catch (Exception e) {
+                log.warn(
+                    "Failed to invite consultant to room using agency token: {}", e.getMessage());
+                // Continue anyway - might already be invited
+              }
             }
 
             // Use agency token to set consultant as admin (power level 100)

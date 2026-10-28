@@ -19,6 +19,8 @@ import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestAdmit
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestStatusDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionListResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.InternalSubsetChatDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.InternalSubsetChatResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkConsumeDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkRequestDTO;
@@ -105,6 +107,15 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 @Api(tags = "user-controller")
 public class UserController implements UsersApi {
+  private final @NonNull de.caritas.cob.userservice.api.service.enquiry.EnquiryRejectionService
+      enquiryRejectionService;
+
+  @Override
+  public ResponseEntity<Void> rejectEnquiry(@PathVariable Long sessionId) {
+    return enquiryRejectionService.rejectEnquiry(sessionId)
+        ? ResponseEntity.noContent().build()
+        : ResponseEntity.status(503).build();
+  }
 
   private final @NotNull UserAccountService userAccountProvider;
   private final @NotNull UserRegistrationControllerDelegate userRegistrationControllerDelegate;
@@ -528,6 +539,19 @@ public class UserController implements UsersApi {
   @Override
   public ResponseEntity<CreateChatResponseDTO> createChatV2(@RequestBody ChatDTO chatDTO) {
     return userChatControllerDelegate.createChatV2(chatDTO);
+  }
+
+  /**
+   * Opens the members-only room for a subset of selected colleagues: a dedicated encrypted room
+   * with exactly the caller and the selection, created or reused (ORISO-UserService#1418).
+   *
+   * @param request {@link InternalSubsetChatDTO} (required)
+   * @return {@link ResponseEntity} containing {@link InternalSubsetChatResponseDTO}
+   */
+  @Override
+  public ResponseEntity<InternalSubsetChatResponseDTO> openInternalSubsetChat(
+      @RequestBody InternalSubsetChatDTO request) {
+    return userChatControllerDelegate.openInternalSubsetChat(request);
   }
 
   @Override

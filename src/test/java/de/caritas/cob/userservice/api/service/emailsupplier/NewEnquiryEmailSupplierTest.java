@@ -47,6 +47,11 @@ class NewEnquiryEmailSupplierTest {
   @Mock private AgencyService agencyService;
 
   @Mock private ReleaseToggleService releaseToggleService;
+  @Mock private de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup identities;
+
+  @Mock
+  private de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+      accountLifecycle;
 
   private Logger logger;
   private Level originalLogLevel;
@@ -54,9 +59,17 @@ class NewEnquiryEmailSupplierTest {
 
   @BeforeEach
   void setup() {
+    org.mockito.Mockito.lenient()
+        .when(identities.findEnabledById(org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(java.util.Optional.of(true));
     this.newEnquiryEmailSupplier =
         new NewEnquiryEmailSupplier(
-            consultantAgencyRepository, agencyService, releaseToggleService, null);
+            consultantAgencyRepository,
+            new de.caritas.cob.userservice.api.service.notification.NotificationAccountEligibility(
+                accountLifecycle, identities),
+            agencyService,
+            releaseToggleService,
+            null);
     this.newEnquiryEmailSupplier.setCurrentSession(session);
 
     // Attach a custom appender to the logger
@@ -78,6 +91,87 @@ class NewEnquiryEmailSupplierTest {
     if (logger != null) {
       logger.setLevel(originalLogLevel);
     }
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      de.caritas.cob.userservice.api.model.ConsultantStatus.class)
+  void onlyCreatedOrInProgressConsultantsReceiveNewEnquiries(
+      de.caritas.cob.userservice.api.model.ConsultantStatus status) {
+    var recipient = currentRecipient();
+    org.assertj.core.api.Assertions.assertThat(newEnquiryEmailSupplier.generateEmails()).hasSize(1);
+    recipient.setStatus(status);
+    org.assertj.core.api.Assertions.assertThat(newEnquiryEmailSupplier.generateEmails())
+        .hasSize(
+            status == de.caritas.cob.userservice.api.model.ConsultantStatus.CREATED
+                    || status == de.caritas.cob.userservice.api.model.ConsultantStatus.IN_PROGRESS
+                ? 1
+                : 0);
+  }
+
+  @Test
+  void deletedConsultantBehindALiveRelationReceivesNoNewEnquiry() {
+    var recipient = currentRecipient();
+    org.assertj.core.api.Assertions.assertThat(newEnquiryEmailSupplier.generateEmails()).hasSize(1);
+    recipient.setDeleteDate(java.time.LocalDateTime.now());
+    org.assertj.core.api.Assertions.assertThat(newEnquiryEmailSupplier.generateEmails()).isEmpty();
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService.Status
+          .class)
+  void inactiveLifecycleCannotReceiveNewEnquiriesDespiteRetainedAgencyMembership(
+      de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService.Status
+          status) {
+    var recipient = currentRecipient();
+    org.assertj.core.api.Assertions.assertThat(newEnquiryEmailSupplier.generateEmails()).hasSize(1);
+    var now = java.time.Instant.now();
+    when(accountLifecycle.snapshot(recipient.getId()))
+        .thenReturn(
+            java.util.Optional.of(
+                new de.caritas.cob.userservice.api.workflow.accountinactivity
+                    .AccountInactivityService.Snapshot(
+                    recipient.getId(), 7L, 12, 0, now, now, status, 0, null)));
+    org.assertj.core.api.Assertions.assertThat(newEnquiryEmailSupplier.generateEmails())
+        .hasSize(
+            status
+                    == de.caritas.cob.userservice.api.workflow.accountinactivity
+                        .AccountInactivityService.Status.ACTIVE
+                ? 1
+                : 0);
+  }
+
+  @Test
+  void disabledIdentityBehindALiveAgencyRelationCannotReceiveANewEnquiry() {
+    currentRecipient();
+    org.assertj.core.api.Assertions.assertThat(newEnquiryEmailSupplier.generateEmails()).hasSize(1);
+    org.mockito.Mockito.lenient()
+        .when(identities.findEnabledById("guard-recipient"))
+        .thenReturn(java.util.Optional.of(false));
+    org.assertj.core.api.Assertions.assertThat(newEnquiryEmailSupplier.generateEmails()).isEmpty();
+  }
+
+  @Test
+  void unavailableIdentityLookupForOneConsultantStillNotifiesTheRestOfTheAgency() {
+    var unavailable = currentRecipient();
+    var reachable = new Consultant();
+    reachable.setId("reachable-recipient");
+    reachable.setTenantId(7L);
+    reachable.setEmail("reachable@synthetic.oriso.test");
+    reachable.setLanguageCode(com.neovisionaries.i18n.LanguageCode.de);
+    reachable.setStatus(de.caritas.cob.userservice.api.model.ConsultantStatus.CREATED);
+    when(consultantAgencyRepository.findByAgencyIdAndDeleteDateIsNull(anyLong()))
+        .thenReturn(
+            List.of(
+                ConsultantAgency.builder().consultant(unavailable).agencyId(70L).build(),
+                ConsultantAgency.builder().consultant(reachable).agencyId(70L).build()));
+    when(identities.findEnabledById(unavailable.getId()))
+        .thenThrow(new IllegalStateException("identity provider down"));
+
+    assertThat(newEnquiryEmailSupplier.generateEmails())
+        .extracting(MailDTO::getEmail)
+        .containsExactly("reachable@synthetic.oriso.test");
   }
 
   @Test
@@ -261,5 +355,20 @@ class NewEnquiryEmailSupplierTest {
 
     // then
     assertTrue(testAppender.contains("is marked as absent", Level.DEBUG));
+  }
+
+  private Consultant currentRecipient() {
+    var recipient = new Consultant();
+    recipient.setId("guard-recipient");
+    recipient.setTenantId(7L);
+    recipient.setEmail("guard@synthetic.oriso.test");
+    recipient.setLanguageCode(com.neovisionaries.i18n.LanguageCode.de);
+    recipient.setStatus(de.caritas.cob.userservice.api.model.ConsultantStatus.CREATED);
+    var relation = ConsultantAgency.builder().consultant(recipient).agencyId(70L).build();
+    when(session.getAgencyId()).thenReturn(70L);
+    when(consultantAgencyRepository.findByAgencyIdAndDeleteDateIsNull(anyLong()))
+        .thenReturn(List.of(relation));
+    when(agencyService.getAgency(anyLong())).thenReturn(AGENCY_DTO_U25);
+    return recipient;
   }
 }

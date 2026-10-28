@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.config.observability.FeedSignalMetrics.Out
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.matrix.FeedSignalCoalescer.Decision;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
@@ -120,6 +121,7 @@ public class MatrixFeedUpdateSignalService {
       return;
     }
 
+    Long tenantId = TenantContext.getCurrentTenant();
     if (TransactionSynchronizationManager.isSynchronizationActive()) {
       // Defer: the feed row is not visible to the reading connection before commit, and a
       // rolled-back transaction must not nudge anyone — nor consume a coalescing window.
@@ -127,37 +129,40 @@ public class MatrixFeedUpdateSignalService {
           new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-              openWindowOrCoalesce(recipientUserId);
+              openWindowOrCoalesce(recipientUserId, tenantId);
             }
           });
       return;
     }
 
-    openWindowOrCoalesce(recipientUserId);
+    openWindowOrCoalesce(recipientUserId, tenantId);
   }
 
-  private void openWindowOrCoalesce(String recipientUserId) {
+  private void openWindowOrCoalesce(String recipientUserId, Long tenantId) {
     try {
       var now = nowMillis.getAsLong();
-      var window = coalescer.recordAndDecide(recipientUserId, now);
+      String windowKey = tenantId + ":" + recipientUserId;
+      var window = coalescer.recordAndDecide(windowKey, now);
       if (window.decision() == Decision.COALESCE) {
         // A send is already scheduled for this recipient and will cover this row too.
         metrics.record(Outcome.COALESCED);
         return;
       }
       delayScheduler.schedule(
-          () -> handOffToExecutor(recipientUserId, window.endMillis()), window.endMillis() - now);
+          () -> handOffToExecutor(recipientUserId, window.endMillis(), tenantId, windowKey),
+          window.endMillis() - now);
     } catch (Exception ex) {
       log.warn("Could not schedule feed-update signal: {}", ex.getClass().getSimpleName());
       metrics.record(Outcome.FAILED);
     }
   }
 
-  private void handOffToExecutor(String recipientUserId, long windowEndMillis) {
+  private void handOffToExecutor(
+      String recipientUserId, long windowEndMillis, Long tenantId, String windowKey) {
     // Close the window first: rows arriving from here on belong to the next signal.
-    coalescer.releaseWindow(recipientUserId, windowEndMillis);
+    coalescer.releaseWindow(windowKey, windowEndMillis);
     try {
-      executor.execute(() -> sendSignal(recipientUserId));
+      executor.execute(() -> TenantContext.runIn(tenantId, () -> sendSignal(recipientUserId)));
     } catch (RejectedExecutionException rejected) {
       // Bounded pool saturated. Drop with a warning — never run a Matrix call on the caller.
       log.warn(
