@@ -159,4 +159,13 @@ public class AskerUserAdminFacade {
     asker.setEmail(user.getEmail());
     return asker;
   }
+
+  /** Read-only startup check of the actual installed production consumers. */
+  public boolean hasScopedAccountBindings(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode,
+      de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance owner,
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ScopedAskerReactivation
+          reactivation) {
+    return identityMode == mode && preDeletion == owner && scopedReactivation == reactivation;
+  }
 }

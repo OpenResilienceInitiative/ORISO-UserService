@@ -86,4 +86,17 @@ public class DeleteUserAccountScheduler {
     userHardDeleteClaimService.releaseInterruptedClaims();
     this.deleteUserAccountService.deleteUserAccounts();
   }
+
+  /** Read-only startup check of the actual installed production consumers. */
+  public boolean hasScopedAccountBindings(
+      de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance asker,
+      de.caritas.cob.userservice.api.workflow.delete.service.ScheduledConsultantMaintenance
+          consultant,
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ScopedAskerReactivation
+          reactivation) {
+    return "FIVE_ACTORS".equals(taskIdentityModel)
+        && scopedMaintenance == asker
+        && scopedConsultants == consultant
+        && scopedReactivation == reactivation;
+  }
 }

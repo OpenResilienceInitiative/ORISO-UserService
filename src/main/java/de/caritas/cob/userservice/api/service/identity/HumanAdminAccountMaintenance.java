@@ -2743,4 +2743,17 @@ public final class HumanAdminAccountMaintenance {
   private static ServiceUnavailableException unavailable() {
     return new ServiceUnavailableException("Checked admin maintenance is unavailable");
   }
+
+  /** Read-only startup check of the actual installed production consumers. */
+  public boolean hasScopedAccountBindings(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig identity,
+      de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance proof,
+      org.springframework.orm.jpa.JpaTransactionManager manager) {
+    return mode == identity
+        && removedConsultants != null
+        && removedConsultants.getIfAvailable() == proof
+        && transactions.getTransactionManager() == manager
+        && jdbc.getDataSource() == manager.getDataSource()
+        && jpaOwner == manager.getEntityManagerFactory();
+  }
 }

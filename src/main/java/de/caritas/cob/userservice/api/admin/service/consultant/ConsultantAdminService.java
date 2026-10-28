@@ -362,4 +362,11 @@ public class ConsultantAdminService {
               sessionRepository.delete(session);
             });
   }
+
+  /** Read-only startup check of the actual installed production consumers. */
+  public boolean hasScopedAccountBindings(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode,
+      de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance owner) {
+    return identityMode == mode && preDeletion == owner;
+  }
 }

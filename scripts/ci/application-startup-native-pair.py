@@ -15,6 +15,8 @@ import shutil
 import subprocess
 import sys
 import time
+import tempfile
+import threading
 import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[2]
 KC_COMMIT = 'bf3d7f8809d829e33e930115221b122be8e8c287'
@@ -22,7 +24,7 @@ SUITE = 'de.caritas.cob.userservice.api.UserServiceStartupNativePairProof'
 CASE = 'actualServletApplicationReachesOnlyExpectedProductionStartupState'
 JAVA_SOURCE = 'src/test/java/' + SUITE.replace('.', '/') + '.java'
 COMMON_FLAGS = {'productionClasspath', 'actualApplication', 'testingProfile', 'fiveActors', 'realPolicies', 'contextClosed', 'noUnexpectedFailure'}
-OPEN_FLAGS = {'contextStarted', 'servletReady', 'securityReady', 'jpaReady', 'scopedOwnersReady', 'bothSchedulersReady', 'noLegacyFallback', 'schemaReady'}
+OPEN_FLAGS = {'contextStarted', 'servletReady', 'securityReady', 'jpaReady', 'scopedOwnersReady', 'bothSchedulersReady', 'noLegacyFallback', 'schemaReady', 'bootNoEffect', 'authenticatedMetadata', 'selfLocaleApplied', 'selfLocaleReplay', 'consultantInverseRetention', 'consultantThenAdmin', 'adminThenConsultant', 'pureTenantTwoChildren'}
 
 IMAGE = 'quay.io/keycloak/keycloak@sha256:9b0330756022422149aa6502eb2def8cd47c6e1b000c7c65cdb13e7c0133e992'
 BEAN_TYPES = {
@@ -181,6 +183,40 @@ def safe_failure_types(raw):
     return list(dict.fromkeys(value for value in values if value in known))[:30]
 
 
+def startup_source_projection(configuration, subject):
+    value = copy.deepcopy(configuration)
+    sources = [item for item in value['bindings'] if item['subject'] == subject]
+    if len(sources) != 1 or sources[0]['authority'] != 'PLATFORM' or 'platform-v1' not in sources[0]['protectedProfileIds']:
+        raise ValueError('Exact existing primary PLATFORM source required')
+    sources[0]['protectedProfileIds'] = ['platform-v1']
+    return value
+
+
+def restore_startup_source_targets(original, canonical_projection, subject):
+    # The original helper validates actual canonical mappings. Restore only its source projection;
+    # retain every original finite operation and target grant byte-for-byte.
+    expected = startup_source_projection(original, subject)
+    roles = ['agency-admin', 'tenant-admin', 'user-admin']
+    primary = next(item for item in expected['bindings'] if item['subject'] == subject)
+    primary['realmRoles'] = roles
+    profile = next(item for item in expected['profiles'] if item['id'] == 'platform-v1')
+    profile['realmRoles'] = roles
+    if canonical_projection != expected: raise ValueError('Canonical source helper changed unrelated policy')
+    result = copy.deepcopy(original)
+    next(item for item in result['profiles'] if item['id'] == 'platform-v1')['realmRoles'] = roles
+    for binding in result['bindings']:
+        if binding['authority'] == 'PLATFORM' and set(binding['realmRoles']) == {'agency-admin', 'tenant-admin'}:
+            binding['realmRoles'] = roles
+    return result
+
+
+def safe_binding_failure(raw):
+    source = (ROOT / 'src/main/java/de/caritas/cob/userservice/api/config/auth/ScopedAccountCommandInstallation.java').read_text()
+    allowed = set(re.findall(r'"([A-Za-z]+)"', source))
+    candidates = re.findall(r'Incomplete scoped account binding: ([A-Za-z]+)', raw.decode('utf-8', errors='replace'))
+    return sorted({name for name in candidates if name in allowed})
+
+
 def checked_witness(value, state):
     flags = COMMON_FLAGS | OPEN_FLAGS | {'exactFence'}
     if (state not in {'FENCED', 'OPEN'} or not isinstance(value, dict)
@@ -285,7 +321,8 @@ def native(kc, report):
     if state not in {'FENCED', 'OPEN'}: raise ValueError('Finite expected startup state required')
     module = kc / 'keycloak-image/account-lifecycle-spi'; otp = kc / 'keycloak-image/otp-config-spi'
     jars = {'LIFECYCLE_C_TEST_JAR': module / 'target/account-lifecycle-spi-1.0-SNAPSHOT.jar',
-            'OTP_C_TEST_JAR': otp / 'target/keycloak-otp-config-spi-1.0-SNAPSHOT-keycloak.jar'}
+            'OTP_C_TEST_JAR': otp / 'target/keycloak-otp-config-spi-1.0-SNAPSHOT-keycloak.jar',
+            'SCOPED_OTP_READY_FIXTURE_JAR': module / 'target/scoped-otp-ready-fixture.jar'}
     hashes = {key: hashlib.sha256(path.read_bytes()).hexdigest() for key, path in jars.items()}
     classes = ['target/test-classes/' + SUITE.replace('.', '/') + '.class'] + [
         'target/classes/de/caritas/cob/userservice/api/' + path + '.class' for path in [
@@ -310,6 +347,9 @@ def native(kc, report):
     catalog = base.source_frame_catalog([Path(__file__), *[module / 'tests' / name for name in [
         'lifecycle_fixture.py', 'test_protected_invitations.py', 'protected_peer_readiness.py', 'ordinary_admin_operations.py']]])
 
+    role_spec = importlib.util.spec_from_file_location('startup_role_source', ROOT / 'scripts/ci/role-maintenance-native.py')
+    role_source = importlib.util.module_from_spec(role_spec); role_spec.loader.exec_module(role_source)
+
     class StartupFixture(PeerFixture):
         native_issuer = ISSUER
         installer_claims = staticmethod(OperationFixture.installer_claims)
@@ -329,8 +369,7 @@ def native(kc, report):
 
         @classmethod
         def prepare_installation(cls, helper, configuration):
-            value = super().prepare_installation(helper, configuration)
-            install_policy(cls, helper, value)
+            value = OperationFixture.prepare_installation.__func__(cls, helper, configuration)
             command = cls.command.copy()
             group_index = [i for i, argument in enumerate(command) if argument.startswith('ORISO_ACCOUNT_LIFECYCLE_GROUPS=')]
             policy_index = [i for i, argument in enumerate(command) if argument.startswith('ORISO_ACCOUNT_MAINTENANCE_CONFIG=')]
@@ -340,6 +379,10 @@ def native(kc, report):
             command[group_index[0]] = 'ORISO_ACCOUNT_LIFECYCLE_GROUPS=' + json.dumps(groups, separators=(',', ':'))
             command[policy_index[0]] = 'ORISO_ACCOUNT_MAINTENANCE_CONFIG=' + json.dumps(installed, separators=(',', ':'))
             cls.ordinary_installed_configuration = installed
+            original_protected = copy.deepcopy(value)
+            source_projection = startup_source_projection(value, cls.human_subject)
+            canonical = role_source.install_canonical_platform_source(cls, helper, source_projection, installed)
+            value = restore_startup_source_targets(original_protected, canonical, cls.human_subject)
             cls.startup_reviewed_groups = groups
             index = command.index(IMAGE)
             command[index:index] = ['-v', str(jars['OTP_C_TEST_JAR'].resolve()) + ':/opt/keycloak/providers/otp-config-spi.jar:ro',
@@ -368,6 +411,22 @@ def native(kc, report):
         groups = json.loads(settings['ORISO_ACCOUNT_LIFECYCLE_GROUPS'])
         assert groups == StartupFixture.startup_reviewed_groups
         assert groups == {profile['groupPath']: profile['realmRoles'] for profile in json.loads(ordinary)['ordinaryProfiles']}
+        def verify_installed_declarations():
+            actual_env = json.loads(subprocess.run(['docker', 'inspect', '--format', '{{json .Config.Env}}', fixture.name],
+                capture_output=True, check=True, text=True, timeout=15).stdout)
+            actual = dict(value.split('=', 1) for value in actual_env)
+            if (json.loads(actual['ORISO_PROTECTED_INVITATIONS_CONFIG']) != json.loads(protected)
+                    or json.loads(actual['ORISO_ACCOUNT_MAINTENANCE_CONFIG']) != json.loads(ordinary)
+                    or json.loads(actual['ORISO_ACCOUNT_LIFECYCLE_GROUPS']) != groups):
+                raise ValueError('Actual installed policy differs from exact User inputs')
+            for profile in [*json.loads(protected)['profiles'], *json.loads(ordinary)['ordinaryProfiles']]:
+                group_id = profile.get('groupId') or fixture.group_id(profile['groupPath'])
+                roles = fixture.admin('GET', '/groups/' + group_id + '/role-mappings/realm/composite')
+                if {role['name'] for role in roles} != set(profile['realmRoles']):
+                    raise ValueError('Actual installed reviewed group roles differ from declaration')
+            return True
+        receipt['native_declarations_before'] = verify_installed_declarations()
+        receipt['canonical_platform_source'] = copy.deepcopy(StartupFixture.canonical_platform_source)
         realm = fixture.admin('GET', ''); realm['adminEventsEnabled'] = True
         realm['adminEventsDetailsEnabled'] = False; fixture.admin('PUT', '', realm)
 
@@ -379,6 +438,23 @@ def native(kc, report):
                 'roles': fixture.admin('GET', '/users/' + user['id'] + '/role-mappings'),
                 'credentials': fixture.admin('GET', '/users/' + user['id'] + '/credentials')} for user in users}
 
+        from test_protected_invitations import HUMAN_PASSWORD
+        from profile_transition_operations import committed_kind
+        primary_bearer = role_source.verify_canonical_platform_human(fixture, lifecycle, ISSUER, HUMAN_PASSWORD)
+        journey_targets = {}
+        for key in ('consultantThenAdmin', 'adminThenConsultant', 'retainedAdmin'):
+            account, creation = committed_kind(fixture, fixture, 'CONSULTANT_AGENCY_ADMIN', 'consultant-agency-admin')
+            journey_targets[key] = fixture.admin('GET', '/users/' + account)
+        tenant_account = StartupFixture.adopted_account
+        journey_targets['pureTenant'] = fixture.admin('GET', '/users/' + tenant_account)
+        journey_targets['primary'] = fixture.admin('GET', '/users/' + fixture.human_subject)
+        from adopted_self_operations import login
+        self_account, self_password = StartupFixture.adopted_self_cases['user']
+        self_native = fixture.admin('GET', '/users/' + self_account)
+        self_native.setdefault('attributes', {})['locale'] = ['en']
+        fixture.admin('PUT', '/users/' + self_account, self_native)
+        self_bearer = login(fixture, fixture, self_native, self_password)
+        pure_admin_groups = fixture.admin('GET', '/users/' + StartupFixture.adopted_self_cases['agency-admin'][0] + '/groups')
         original_accounts = native_accounts(); original_events = fixture.admin('GET', '/admin-events?max=500')
         environment = dict(os.environ)
         environment.update({'TASK_IDENTITY_MODEL': 'FIVE_ACTORS', 'ORISO_ACCOUNT_LIFECYCLE_ENABLED': 'true',
@@ -393,6 +469,7 @@ def native(kc, report):
             'ORISO_ACCOUNT_MAINTENANCE_CONFIG': ordinary, 'ORISO_PROTECTED_INVITATIONS_CONFIG': protected,
             'ORISO_PROTECTED_INVITATION_PROFILE_IDS': json.dumps({'TENANT_ADMIN': PROFILE, 'PLATFORM_ADMIN': 'platform-v1'}),
             'STARTUP_JOURNAL_FIXTURE': str(schema.resolve()),
+            'DELETION_READONLYWINDOW_TENANTOVERRIDES': '11:0',
             'STARTUP_WITNESS': str(report.with_name('application-startup-native-witness.json').resolve()),
             'STARTUP_BEAN_CATALOG': json.dumps(BEAN_TYPES),
             'STARTUP_FAILURE_TYPES': json.dumps(sorted(FAILURE_TYPES)),
@@ -409,21 +486,57 @@ def native(kc, report):
             'soleExistingTaskKey': ['ORISO_TASK_CONTEXT_KEY'],
             'nativeActualRealmAndEndpoints': ['KEYCLOAK_REALM', 'KEYCLOAK_REALM_INTERNAL_ID', 'KEYCLOAK_AUTH_SERVER_URL', 'ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL', 'IDENTITY_OPENID_CONNECT_URL'],
             'testingClasspathOnlyQuarantineNotNativeActors': ['identity.technical-user.client-id', 'identity.technical-user.client-secret', 'keycloak.config.admin-client-id', 'keycloak.config.admin-client-secret', 'keycloak.config.admin-service-subject'],
+            'disposableRetentionPolicy': 'deletion.readOnlyWindow.tenantOverrides=11:0; proves configured immediate eligibility, not elapsed48h; nonzero tests retained',
+            'pureTenantProvenance': 'Existing explicitly adopted tenant-peer-v1 target17, exact native birth; move22 with unchanged installed grant',
+            'journeyDownstreamLimit': 'Real User servlet/JPA and Keycloak; no Matrix account/room, no Consultant agency relations, Appointment feature retains configured false; AdminAgency row preserved',
             'schema': ['Hibernate testing create-drop', 'existing UserServiceDatabase.sql', 'existing AccountInactivityDatabase.sql', 'exact shipped C migration H2 fixture']})
         reports = ROOT / 'target/surefire-reports'
         for path in reports.glob('TEST-*.xml'): path.unlink()
         require_active('before-full-user-startup')
         receipt['phase'] = 'actual-full-application-startup'
         receipt['test_classpath'] = {}
-        with isolated_test_classes(ROOT, receipt['test_classpath']):
-            child = subprocess.run(['mvn', '-B', '-ntp', '-q', 'surefire:test', '-Dtest=' + SUITE + '#' + CASE,
-            '-DfailIfNoTests=true', '-Dsurefire.failIfNoSpecifiedTests=true',
-            '-DargLine=-Xmx512m -XX:MaxMetaspaceSize=256m -XX:ActiveProcessorCount=2'],
-            cwd=ROOT, env=environment, capture_output=True, timeout=180)
+        boot_phase = {'verified': False, 'failure': None}
+        with tempfile.TemporaryDirectory(prefix='oriso-startup-private-') as private:
+            exchange = Path(private)
+            os.chmod(exchange, 0o700)
+            environment['STARTUP_PRIVATE_EXCHANGE'] = str(exchange)
+            finished = threading.Event()
+            def verify_boot():
+                try:
+                    deadline = time.monotonic() + 175
+                    while not (exchange / 'boot-ready').exists():
+                        if finished.wait(0.05) or time.monotonic() >= deadline: return
+                    if (exchange / 'boot-ready').read_text() != 'BOOT_READY': raise ValueError('Exact boot marker required')
+                    if original_accounts != native_accounts(): raise ValueError('Boot changed native accounts')
+                    if original_events != fixture.admin('GET', '/admin-events?max=500'): raise ValueError('Boot changed native admin events')
+                    boot_phase['verified'] = True
+                    release = exchange / 'boot-verified.pending'
+                    payload = {'bootNoEffect': True, 'account': self_account, 'username': self_native['username'],
+                        'email': self_native['email'], 'bearer': self_bearer,
+                        'primaryBearer': primary_bearer, **journey_targets}
+                    fd = os.open(release, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                    with os.fdopen(fd, 'w') as stream: json.dump(payload, stream)
+                    release.rename(exchange / 'boot-verified.json')
+                except BaseException as error:
+                    boot_phase['failure'] = type(error).__name__
+            observer = threading.Thread(target=verify_boot, daemon=True)
+            observer.start()
+            try:
+                with isolated_test_classes(ROOT, receipt['test_classpath']):
+                    child = subprocess.run(['mvn', '-B', '-ntp', '-q', 'surefire:test', '-Dtest=' + SUITE + '#' + CASE,
+                        '-DfailIfNoTests=true', '-Dsurefire.failIfNoSpecifiedTests=true',
+                        '-DargLine=-Xmx512m -XX:MaxMetaspaceSize=256m -XX:ActiveProcessorCount=2'],
+                        cwd=ROOT, env=environment, capture_output=True, timeout=180)
+            finally:
+                finished.set(); observer.join(timeout=5)
+            if observer.is_alive(): raise ValueError('Native boot observer did not finish')
+        receipt['boot_native_accounts_and_events_unchanged'] = boot_phase['verified']
+        receipt['boot_observer_failure'] = boot_phase['failure']
         inventory = sanitize(reports, report.with_suffix('.xml')); receipt.update(inventory)
         receipt['executed'] = inventory['tests']; receipt['child_exit'] = child.returncode
         receipt['sql_input'] = safe_child_input(child.stdout + b'\n' + child.stderr)
         receipt['dependency_path'] = safe_dependency_path(child.stdout + b'\n' + child.stderr)
+        receipt['installed_binding_failure'] = safe_binding_failure(child.stdout + b'\n' + child.stderr)
         receipt['failure_types'] = safe_failure_types(child.stdout + b'\n' + child.stderr); child = None
         witness_file = report.with_name('application-startup-native-witness.json')
         witness = json.loads(witness_file.read_text()) if witness_file.exists() else {}
@@ -432,10 +545,20 @@ def native(kc, report):
             if witness_file.exists(): base.save(witness_file, {'witnessSchemaRejected': True})
             raise
         require_active('after-full-user-startup')
+        receipt['native_declarations_after'] = verify_installed_declarations()
         receipt['native_account_count_before'] = len(original_accounts)
         after_accounts = native_accounts()
         receipt['native_account_count_after'] = len(after_accounts)
-        receipt['native_accounts_unchanged'] = original_accounts == after_accounts
+        expected_accounts = copy.deepcopy(original_accounts)
+        if state == 'OPEN':
+            expected_accounts[self_account]['user']['attributes']['locale'] = ['de']
+            for key in ('consultantThenAdmin', 'adminThenConsultant'):
+                del expected_accounts[journey_targets[key]['id']]
+            expected_accounts[journey_targets['retainedAdmin']['id']]['groups'] = pure_admin_groups
+            moved = expected_accounts[tenant_account]['user']
+            moved['attributes']['tenantId'] = ['22']
+            moved.update(firstName='Grace', lastName='Hopper', email='grace@fixture.invalid', emailVerified=False)
+        receipt['native_accounts_exact_expected_effect'] = expected_accounts == after_accounts
         receipt['native_admin_events_unchanged'] = original_events == fixture.admin('GET', '/admin-events?max=500')
         receipt['installer_identity_checks'] = ProtectedOperationRead.observation.get('installerIdentityChecks', [])
         receipt['native_startup_telemetry'] = {
@@ -444,7 +567,9 @@ def native(kc, report):
             'actualSeedHumanChecks': [{key: entry[key] for key in ['stage', 'enabledNativeUser', 'enabledInteractiveClient', 'serviceAccountLinkAbsent', 'currentNativeSession', 'nativeUserinfoValidatedToken', 'actualCanonicalSubject']} for entry in StartupFixture.preconditions]}
         receipt['resource_observations'] = evidence()
         receipt['accepted'] = (inventory['accepted'] and receipt['child_exit'] == 0 and receipt['java_witness_complete']
-            and receipt['native_accounts_unchanged'] and receipt['native_admin_events_unchanged']
+            and receipt['native_accounts_exact_expected_effect'] and receipt['native_admin_events_unchanged']
+            and receipt['native_declarations_before'] and receipt['native_declarations_after']
+            and (state != 'OPEN' or receipt['boot_native_accounts_and_events_unchanged'])
             and receipt['test_classpath']['restoredByteExact'])
         receipt['phase'] = 'complete'
     except BaseException as error:

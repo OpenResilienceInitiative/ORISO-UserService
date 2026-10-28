@@ -569,4 +569,14 @@ public class CreateUserFacade {
             .getRestrictedTenantData(mainTenantSubdomainForSingleDomainMultitenancy.getValue())
             .getId());
   }
+
+  /** Read-only startup check of the actual installed production consumers. */
+  public boolean hasScopedAccountBindings(
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryRegistrationLifecycle
+          owner) {
+    return registrationLifecycle != null
+        && registrationLifecycle.getIfAvailable() == owner
+        && lifecycleEnvironment != null
+        && "FIVE_ACTORS".equals(lifecycleEnvironment.getProperty("TASK_IDENTITY_MODEL", "LEGACY"));
+  }
 }

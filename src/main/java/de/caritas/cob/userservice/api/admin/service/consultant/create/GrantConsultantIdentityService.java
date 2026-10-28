@@ -728,4 +728,19 @@ public class GrantConsultantIdentityService {
     notificationsSettingsDTO.setNewChatMessageNotificationEnabled(true);
     return notificationsSettingsDTO;
   }
+
+  /** Read-only startup check of the actual installed production consumers. */
+  public boolean hasScopedAccountBindings(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode,
+      de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance owner,
+      org.springframework.orm.jpa.JpaTransactionManager manager) {
+    return identityMode == mode
+        && maintenance == owner
+        && localWrites != null
+        && localWrites.getTransactionManager() == manager
+        && entities != null
+        && entities.getEntityManagerFactory() == manager.getEntityManagerFactory()
+        && matrixServer != null
+        && !matrixServer.isBlank();
+  }
 }

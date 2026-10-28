@@ -1425,4 +1425,18 @@ public class KeycloakService
         && tenantIds.size() == 1
         && expectedTenantId.toString().equals(tenantIds.getFirst());
   }
+
+  /** Read-only startup check of the actual installed production consumers. */
+  public boolean hasScopedAccountBindings(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode,
+      de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance human,
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ClaimedPasswordMaintenance
+          passwords,
+      de.caritas.cob.userservice.api.adapters.keycloak.maintenance.ScopedUsernameAvailability
+          availability) {
+    return identityClientConfig == mode
+        && humanAdminMaintenance == human
+        && claimedPasswordMaintenance == passwords
+        && scopedUsernameAvailability == availability;
+  }
 }

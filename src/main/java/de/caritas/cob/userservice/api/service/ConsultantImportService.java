@@ -868,4 +868,19 @@ public class ConsultantImportService {
       return null;
     }
   }
+
+  /** Read-only startup check of the actual installed production consumers. */
+  public boolean hasScopedAccountBindings(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode,
+      de.caritas.cob.userservice.api.service.identity.ExistingConsultantImportMaintenance owner,
+      de.caritas.cob.userservice.api.service.accountpolicy.CheckedAccountPolicyReads policy,
+      org.springframework.orm.jpa.JpaTransactionManager manager) {
+    return lifecycleIdentities == mode
+        && existingImports == owner
+        && checkedPolicyReads == policy
+        && existingImportRelations != null
+        && importEntities != null
+        && importEntities.getEntityManagerFactory() == manager.getEntityManagerFactory()
+        && fiveActors();
+  }
 }

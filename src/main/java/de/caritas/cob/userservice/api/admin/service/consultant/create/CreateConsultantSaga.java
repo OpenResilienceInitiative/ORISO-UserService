@@ -876,4 +876,13 @@ public class CreateConsultantSaga {
       return null;
     }
   }
+
+  /** Read-only startup check of the actual installed production consumers. */
+  public boolean hasScopedAccountBindings(
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryAccountCreation owner) {
+    return ordinaryAccountCreation != null
+        && ordinaryAccountCreation.getIfAvailable() == owner
+        && lifecycleEnvironment != null
+        && "FIVE_ACTORS".equals(lifecycleEnvironment.getProperty("TASK_IDENTITY_MODEL", "LEGACY"));
+  }
 }

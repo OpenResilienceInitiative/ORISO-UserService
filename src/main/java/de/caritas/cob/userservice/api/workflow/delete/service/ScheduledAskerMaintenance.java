@@ -64,6 +64,7 @@ public final class ScheduledAskerMaintenance {
   public void configureAcknowledgedCleanup(
       java.util.function.Consumer<AcknowledgedDeletion> cleanup) {
     this.cleanup = Objects.requireNonNull(cleanup);
+    productionCleanup = null;
   }
 
   /** Missing or foreign JPA ownership remains closed before any downstream external effect. */
@@ -1280,5 +1281,25 @@ public final class ScheduledAskerMaintenance {
       this.envelope = envelope;
       this.originalSql = originalSql;
     }
+  }
+
+  private DeleteUserAccountService productionCleanup;
+
+  /** Bind the existing production cleanup consumer, preserving its private ACK boundary. */
+  public void configureProductionCleanup(DeleteUserAccountService deletion) {
+    Objects.requireNonNull(deletion);
+    configureAcknowledgedCleanup(deletion::continueAcknowledgedDeletion);
+    productionCleanup = deletion;
+  }
+
+  public boolean hasScopedAccountBindings(
+      DeleteUserAccountService deletion,
+      org.springframework.orm.jpa.JpaTransactionManager manager) {
+    return productionCleanup == deletion
+        && cleanup != null
+        && transactions == manager
+        && jdbc.getDataSource() == manager.getDataSource()
+        && entities != null
+        && entities.getEntityManagerFactory() == manager.getEntityManagerFactory();
   }
 }

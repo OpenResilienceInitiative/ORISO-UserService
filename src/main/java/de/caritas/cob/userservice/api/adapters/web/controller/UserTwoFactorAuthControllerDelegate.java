@@ -158,4 +158,10 @@ class UserTwoFactorAuthControllerDelegate {
       throw new ConflictException("2FA is disabled for user role");
     }
   }
+
+  /** Read-only startup check of the actual installed production consumers. */
+  boolean hasScopedAccountBindings(
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance otp) {
+    return selfAppOtpMaintenance == otp;
+  }
 }

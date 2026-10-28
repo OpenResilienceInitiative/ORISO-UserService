@@ -270,4 +270,15 @@ public class UpdateAdminService {
 
     return this.adminRepository.save(patchAdminEntity(patchAdminDTO, admin));
   }
+
+  /** Read-only startup check of the actual installed production consumers. */
+  public boolean hasScopedAccountBindings(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode,
+      de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance owner,
+      org.springframework.orm.jpa.JpaTransactionManager manager) {
+    return identityMode == mode
+        && scopedMaintenance == owner
+        && scopedEntities != null
+        && scopedEntities.getEntityManagerFactory() == manager.getEntityManagerFactory();
+  }
 }

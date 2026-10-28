@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      STARTUP_EXPECTED_STATE: FENCED
+      STARTUP_EXPECTED_STATE: OPEN
       PROTECTED_PROOF_RESOURCE_PROFILE: github-ubuntu-24-amd64-v1
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -83,7 +83,7 @@ jobs:
       env:
         MAVEN_OPTS: -Xmx384m -XX:MaxMetaspaceSize=128m -XX:ActiveProcessorCount=2
       run: mvn -B -ntp -q clean install '-DargLine=-Xmx256m -XX:MaxMetaspaceSize=192m -XX:ActiveProcessorCount=2'
-    - name: Require all58 lifecycle units with exact method inventory
+    - name: Require all71 lifecycle units with exact method inventory
       if: always()
       run: 'cd native-keycloak
 
@@ -98,6 +98,12 @@ jobs:
       run: 'cd native-keycloak
 
         python keycloak-image/account-lifecycle-spi/tests/run_scoped_otp.py units --report ../target/application-startup-native/application-startup-native-otp-units.json'
+    - name: Package the existing isolated completion observer required by native operation policies
+      working-directory: native-keycloak/keycloak-image/account-lifecycle-spi
+      run: |
+        jar --create --file target/scoped-otp-ready-fixture.jar \
+          -C target/test-classes org/oriso/keycloak/lifecycle/ScopedOtpReadyCompletionFixture.class \
+          -C tests/ready-fixture-resources META-INF/beans.xml
     - name: Compile actual User application and native startup proof before container
       env:
         MAVEN_OPTS: -Xmx1024m -XX:MaxMetaspaceSize=384m -XX:ActiveProcessorCount=2

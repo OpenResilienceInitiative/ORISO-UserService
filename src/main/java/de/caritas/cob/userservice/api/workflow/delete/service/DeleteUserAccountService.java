@@ -335,4 +335,35 @@ public class DeleteUserAccountService {
 
     return deletionWorkflowDTO.getDeletionWorkflowErrors();
   }
+
+  /** Verify the same finite action containers used by acknowledged cleanup, without executing. */
+  public boolean hasScopedAccountBindings() {
+    if (acknowledgedFinalAction == null
+        || absentAppointments == null
+        || absentDrafts == null
+        || absentNotifications == null) return false;
+    actionsRegistry
+        .buildContainerForType(AskerDeletionWorkflowDTO.class)
+        .addActionToExecute(DeleteMatrixAskerAction.class)
+        .addActionToExecute(DeleteAskerRoomsAndSessionsAction.class)
+        .addActionToExecute(DeleteDatabaseAskerAgencyAction.class)
+        .addActionToExecute(DeleteAnonymousRegistryIdAction.class)
+        .addActionToExecute(DeleteAppointmentServiceAskerAction.class)
+        .addActionToExecute(DeleteAskerDraftMessagesAction.class)
+        .addActionToExecute(DeleteAskerEventNotificationsAction.class)
+        .addActionToExecute(DeleteAskerReplyEmailDeliveriesAction.class)
+        .addActionToExecute(DeleteDatabaseAskerAction.class);
+    actionsRegistry
+        .buildContainerForType(ConsultantDeletionWorkflowDTO.class)
+        .addActionToExecute(DeleteMatrixConsultantAction.class)
+        .addActionToExecute(DeleteDatabaseConsultantAgencyAction.class)
+        .addActionToExecute(DeleteChatAction.class)
+        .addActionToExecute(DeleteAppointmentServiceConsultantAction.class)
+        .addActionToExecute(DeleteCaseHandoverRequestsForConsultantAction.class)
+        .addActionToExecute(DeleteConsultantDraftMessagesAction.class)
+        .addActionToExecute(DeleteConsultantEventNotificationsAction.class)
+        .addActionToExecute(DeleteConsultantMessageEmailDeliveriesAction.class)
+        .addActionToExecute(DeleteDatabaseConsultantAction.class);
+    return true;
+  }
 }

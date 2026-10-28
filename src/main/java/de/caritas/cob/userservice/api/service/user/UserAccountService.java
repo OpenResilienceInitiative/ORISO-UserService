@@ -407,4 +407,15 @@ public class UserAccountService {
       throw new ForbiddenException("Account is in read-only safeguard mode.");
     }
   }
+
+  /** Read-only startup check of the actual installed production consumers. */
+  public boolean hasScopedAccountBindings(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode,
+      de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance owner,
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfContactEmailMaintenance
+          email) {
+    return identityClientConfig == mode
+        && preDeletion == owner
+        && selfContactEmailMaintenance == email;
+  }
 }

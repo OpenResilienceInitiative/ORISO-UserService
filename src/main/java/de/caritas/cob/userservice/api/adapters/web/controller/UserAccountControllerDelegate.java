@@ -436,4 +436,16 @@ class UserAccountControllerDelegate {
     this.userAccountProvider.addMobileAppToken(mobileTokenDTO.getToken());
     return new ResponseEntity<>(HttpStatus.OK);
   }
+
+  /** Read-only startup check of the actual installed production consumers. */
+  boolean hasScopedAccountBindings(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode,
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance otp,
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfPasswordMaintenance password,
+      de.caritas.cob.userservice.api.adapters.keycloak.maintenance.SelfLocaleMaintenance locale) {
+    return passwordIdentityConfig == mode
+        && selfAppOtpMaintenance == otp
+        && selfPasswordMaintenance == password
+        && selfLocaleMaintenance == locale;
+  }
 }

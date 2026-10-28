@@ -148,13 +148,43 @@ class ApplicationStartupPairControls(unittest.TestCase):
             for name in source['sources']:
                 self.assertTrue((ROOT / name).is_file())
 
+    def test_canonical_source_projection_preserves_full_existing_operation_grants(self):
+        import copy
+        original = {'bindings': [{'subject': 'primary', 'authority': 'PLATFORM',
+            'realmRoles': ['agency-admin', 'tenant-admin'], 'protectedProfileIds': ['platform-v1', 'tenant-peer-v1'],
+            'accountOperations': [{'operations': ['account.read', 'account.reassign-tenant'], 'targetProfiles': ['tenant-peer-v1']}]},
+            {'subject': 'variant', 'authority': 'PLATFORM', 'realmRoles': ['agency-admin', 'tenant-admin'],
+             'protectedProfileIds': ['platform-v1'], 'sourceProfileVariants': [{'profileId': 'platform-consultant-v2'}]}],
+            'profiles': [{'id': 'platform-v1', 'realmRoles': ['agency-admin', 'tenant-admin']}]}
+        projected = proof.startup_source_projection(original, 'primary')
+        projected['bindings'][0]['realmRoles'] = ['agency-admin', 'tenant-admin', 'user-admin']
+        projected['profiles'][0]['realmRoles'] = ['agency-admin', 'tenant-admin', 'user-admin']
+        restored = proof.restore_startup_source_targets(original, projected, 'primary')
+        expected = copy.deepcopy(original)
+        for binding in expected['bindings']: binding['realmRoles'] = ['agency-admin', 'tenant-admin', 'user-admin']
+        expected['profiles'][0]['realmRoles'] = ['agency-admin', 'tenant-admin', 'user-admin']
+        self.assertEqual(expected, restored)
+        changed = copy.deepcopy(projected); changed['bindings'][0]['accountOperations'][0]['operations'].append('account.delete')
+        with self.assertRaises(ValueError): proof.restore_startup_source_targets(original, changed, 'primary')
+
+    def test_binding_capsule_exports_only_fixed_installed_consumer_names(self):
+        value = proof.safe_binding_failure(b'Incomplete scoped account binding: DeleteUserAccountService password=secret Bearer abc')
+        self.assertEqual(['DeleteUserAccountService'], value)
+        self.assertEqual([], proof.safe_binding_failure(b'Incomplete scoped account binding: PasswordSecret'))
+
+    def test_open_requires_every_actual_http_and_cleanup_journey(self):
+        for flag in ['bootNoEffect', 'authenticatedMetadata', 'selfLocaleApplied', 'selfLocaleReplay',
+                     'consultantInverseRetention', 'consultantThenAdmin', 'adminThenConsultant', 'pureTenantTwoChildren']:
+            value = self.witness('OPEN'); value[flag] = False
+            self.assertFalse(proof.checked_witness(value, 'OPEN'), flag)
+
     def test_workflow_immutable_source_and_finite_default_state(self):
         import yaml
         workflow = yaml.safe_load((ROOT / '.github/workflows/scenario-c-application-startup-native-pair.yml').read_text())
         self.assertEqual(['dev'], workflow['on']['pull_request']['branches'])
         self.assertEqual(['dev', 'codex/367-c-startup-finish-20261023', 'codex/367-c-caller-finish-20261021'], workflow['on']['push']['branches'])
         job = next(iter(workflow['jobs'].values()))
-        self.assertEqual('FENCED', job['env']['STARTUP_EXPECTED_STATE'])
+        self.assertEqual('OPEN', job['env']['STARTUP_EXPECTED_STATE'])
         native = [s for s in job['steps'] if s.get('with', {}).get('repository') == 'OpenResilienceInitiative/ORISO-Keycloak']
         self.assertEqual(1, len(native)); self.assertEqual(proof.KC_COMMIT, native[0]['with']['ref'])
         self.assertEqual('bf3d7f8809d829e33e930115221b122be8e8c287', proof.KC_COMMIT)

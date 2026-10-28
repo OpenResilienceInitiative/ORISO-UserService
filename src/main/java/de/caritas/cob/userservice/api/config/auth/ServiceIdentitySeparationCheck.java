@@ -12,7 +12,8 @@ import org.springframework.stereotype.Component;
 /** Backend technical, admin and human clients must remain separate identities. */
 @Component
 @RequiredArgsConstructor
-public class ServiceIdentitySeparationCheck {
+public class ServiceIdentitySeparationCheck
+    implements org.springframework.beans.factory.SmartInitializingSingleton {
   private final @NonNull KeycloakCustomConfig keycloakCustomConfig;
   private final @NonNull IdentityClientConfig identityClientConfig;
   private final @NonNull Environment environment;
@@ -21,9 +22,18 @@ public class ServiceIdentitySeparationCheck {
   private String taskIdentityModel = "LEGACY";
 
   private volatile boolean verifiedLegacy;
+  private volatile boolean verifiedActors;
+  private volatile boolean verifiedInstallation;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  private org.springframework.context.ApplicationContext applicationContext;
 
   /** Read-only public capability; it grants no account authority. */
   public Boolean scopedAccountCommands() {
+    if (verifiedActors
+        && verifiedInstallation
+        && "FIVE_ACTORS".equals(taskIdentityModel)
+        && identityClientConfig.isFiveActorMode()) return Boolean.TRUE;
     return verifiedLegacy
             && "LEGACY".equals(taskIdentityModel)
             && !identityClientConfig.isFiveActorMode()
@@ -34,12 +44,11 @@ public class ServiceIdentitySeparationCheck {
   @PostConstruct
   public void verifyBackendClients() {
     verifiedLegacy = false;
+    verifiedActors = false;
+    verifiedInstallation = false;
     if ("FIVE_ACTORS".equals(taskIdentityModel)) {
-      // Preserve routine startup from dev while the coordinated lifecycle is still incomplete.
-      if ("true".equals(environment.getProperty("ORISO_ACCOUNT_LIFECYCLE_ENABLED"))) {
-        throw new IllegalStateException(
-            "Five-actor production activation is gated until native account, lifecycle and coordinated receiver contracts are implemented");
-      }
+      if (!identityClientConfig.isFiveActorMode())
+        throw new IllegalStateException("Inconsistent task identity model");
       // Routine callers may use the staged actors only after every actor binding is present.
       // Account lifecycle commands retain their own receiver-level gate in TaskActorTokenBroker.
       var taskActors =
@@ -47,6 +56,7 @@ public class ServiceIdentitySeparationCheck {
       for (TaskPurpose purpose : TaskPurpose.values()) {
         taskActors.require(purpose);
       }
+      verifiedActors = true;
       return;
     }
     if (!"LEGACY".equals(taskIdentityModel)) {
@@ -68,6 +78,17 @@ public class ServiceIdentitySeparationCheck {
           "Configure distinct confidential technical/admin clients and secrets, separate from the human app client");
     }
     verifiedLegacy = true;
+  }
+
+  @Override
+  public void afterSingletonsInstantiated() {
+    verifiedInstallation = false;
+    if (!verifiedActors
+        || !"true".equals(environment.getProperty("ORISO_ACCOUNT_LIFECYCLE_ENABLED"))) return;
+    if (applicationContext == null)
+      throw new IllegalStateException("Missing scoped account installation");
+    new ScopedAccountCommandInstallation(applicationContext).verify();
+    verifiedInstallation = true;
   }
 
   private static boolean blank(String value) {

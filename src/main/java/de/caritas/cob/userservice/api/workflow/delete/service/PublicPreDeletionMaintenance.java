@@ -1982,4 +1982,18 @@ public final class PublicPreDeletionMaintenance {
   private static ServiceUnavailableException unavailable() {
     return new ServiceUnavailableException("Original pre-deletion outcome is unavailable");
   }
+
+  public boolean hasScopedAccountBindings(
+      IdentityClientConfig identity,
+      de.caritas.cob.userservice.api.admin.service.agency.ConsultantAgencyDeletionValidationService
+          eligibility,
+      org.springframework.orm.jpa.JpaTransactionManager manager) {
+    return mode == identity
+        && consultantEligibility == eligibility
+        && !consultantRemovalGroups.isEmpty()
+        && !consultantRemovalProfiles.isEmpty()
+        && transactions == manager
+        && jdbc.getDataSource() == manager.getDataSource()
+        && entities.getEntityManagerFactory() == manager.getEntityManagerFactory();
+  }
 }

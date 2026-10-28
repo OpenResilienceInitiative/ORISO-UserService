@@ -1292,4 +1292,21 @@ public class AccountInactivityService {
         r.getInt("attempts"),
         r.getString("last_error"));
   }
+
+  public boolean hasScopedAccountBindings(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig identity,
+      de.caritas.cob.userservice.api.port.out.AccountInactivityIdentityTransport transport,
+      DefaultAccountInactivityEffects installedEffects,
+      org.springframework.orm.jpa.JpaTransactionManager manager) {
+    return identityMode == identity
+        && scopedTransport == transport
+        && effects == installedEffects
+        && scopedHuman != null
+        && scopedRequest != null
+        && scopedIssuer != null
+        && !scopedClients.isEmpty()
+        && tx.getTransactionManager() == manager
+        && work.getTransactionManager() == manager
+        && transactionSource == manager.getDataSource();
+  }
 }

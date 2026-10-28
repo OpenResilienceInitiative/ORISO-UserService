@@ -623,4 +623,11 @@ public class DefaultAccountInactivityEffects implements AccountInactivityEffects
                 access.locked());
         });
   }
+
+  /** Read-only startup check of the actual installed production consumers. */
+  public boolean hasScopedAccountBindings(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode,
+      de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance owner) {
+    return identityMode == mode && scopedDeletionMaintenance == owner;
+  }
 }

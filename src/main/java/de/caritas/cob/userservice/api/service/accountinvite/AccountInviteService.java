@@ -1760,4 +1760,16 @@ public class AccountInviteService {
   }
 
   public record WaiveTwoFactorCommand(String reason) {}
+
+  /** Read-only startup check of the actual installed production consumers. */
+  public boolean hasScopedAccountBindings(
+      ProtectedInvitationIssuance issuance,
+      ProtectedInvitationCancellation cancellation,
+      org.springframework.orm.jpa.JpaTransactionManager manager) {
+    return protectedInvitationIssuance == issuance
+        && protectedInvitationCancellation == cancellation
+        && protectedInviteEntityManager != null
+        && protectedInviteEntityManager.getEntityManagerFactory()
+            == manager.getEntityManagerFactory();
+  }
 }

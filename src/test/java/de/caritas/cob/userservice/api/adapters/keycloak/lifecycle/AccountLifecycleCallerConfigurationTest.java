@@ -347,6 +347,47 @@ class AccountLifecycleCallerConfigurationTest {
   }
 
   @Test
+  void installedCleanupCallbackMustRemainTheActualProductionConsumer() {
+    withEnabledCallerGraph(
+        context -> {
+          var manager = context.getBean(org.springframework.orm.jpa.JpaTransactionManager.class);
+          var consumer =
+              context.getBean(
+                  de.caritas.cob.userservice.api.workflow.delete.service.DeleteUserAccountService
+                      .class);
+          var proof =
+              context.getBean(
+                  de.caritas.cob.userservice.api.workflow.delete.service
+                      .PublicPreDeletionMaintenance.class);
+          var asker =
+              context.getBean(
+                  de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance
+                      .class);
+          var consultant =
+              context.getBean(
+                  de.caritas.cob.userservice.api.workflow.delete.service
+                      .ScheduledConsultantMaintenance.class);
+          org.junit.jupiter.api.Assertions.assertTrue(
+              asker.hasScopedAccountBindings(consumer, manager));
+          org.junit.jupiter.api.Assertions.assertTrue(
+              consultant.hasScopedAccountBindings(consumer, manager, proof));
+          asker.configureAcknowledgedCleanup(
+              ignored -> {
+                throw new AssertionError("must never execute");
+              });
+          consultant.configureAcknowledgedCleanup(
+              ignored -> {
+                throw new AssertionError("must never execute");
+              });
+          org.junit.jupiter.api.Assertions.assertFalse(
+              asker.hasScopedAccountBindings(consumer, manager));
+          org.junit.jupiter.api.Assertions.assertFalse(
+              consultant.hasScopedAccountBindings(consumer, manager, proof));
+          org.mockito.Mockito.verifyNoInteractions(consumer);
+        });
+  }
+
+  @Test
   void enabledCallerInstallsTheScopedAskerReactivationOwner() {
     withEnabledCallerGraph(
         context ->

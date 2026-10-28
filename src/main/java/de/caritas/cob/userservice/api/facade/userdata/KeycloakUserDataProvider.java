@@ -104,4 +104,11 @@ public class KeycloakUserDataProvider {
         .hasArchive(false)
         .build();
   }
+
+  /** Read-only startup check of the actual installed production consumers. */
+  public boolean hasScopedAccountBindings(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode,
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance self) {
+    return identityConfig == mode && currentSelf == self;
+  }
 }

@@ -50,7 +50,15 @@ class UserServiceStartupNativePairProof {
           "scopedOwnersReady",
           "bothSchedulersReady",
           "noLegacyFallback",
-          "schemaReady");
+          "schemaReady",
+          "bootNoEffect",
+          "authenticatedMetadata",
+          "selfLocaleApplied",
+          "selfLocaleReplay",
+          "consultantInverseRetention",
+          "consultantThenAdmin",
+          "adminThenConsultant",
+          "pureTenantTwoChildren");
 
   @Test
   void actualServletApplicationReachesOnlyExpectedProductionStartupState() throws Exception {
@@ -322,6 +330,398 @@ class UserServiceStartupNativePairProof {
     assertNotNull(
         jdbc.queryForList("SELECT last_attempt_at FROM identity_maintenance_intent WHERE 1=0"));
     witness.put("schemaReady", true);
+    verifySelfHttp(context, port, jdbc, witness);
+  }
+
+  private static void verifySelfHttp(
+      ConfigurableApplicationContext context,
+      int port,
+      JdbcTemplate jdbc,
+      Map<String, Object> witness)
+      throws Exception {
+    var readiness =
+        context.getBean(
+            de.caritas.cob.userservice.api.config.auth.ServiceIdentitySeparationCheck.class);
+    assertEquals(Boolean.TRUE, readiness.scopedAccountCommands());
+    Path exchange = Path.of(required("STARTUP_PRIVATE_EXCHANGE"));
+    Files.writeString(exchange.resolve("boot-ready"), "BOOT_READY");
+    long deadline = System.nanoTime() + java.time.Duration.ofSeconds(60).toNanos();
+    while (!Files.exists(exchange.resolve("boot-verified.json"))) {
+      if (System.nanoTime() >= deadline) fail("Native boot no-effect verification not received");
+      Thread.sleep(50);
+    }
+    var fixture = JSON.readTree(Files.readString(exchange.resolve("boot-verified.json")));
+    assertTrue(fixture.path("bootNoEffect").asBoolean(false));
+    witness.put("bootNoEffect", true);
+    String account = fixture.path("account").asText();
+    assertEquals(account, UUID.fromString(account).toString());
+    var user =
+        new de.caritas.cob.userservice.api.model.User(
+            account,
+            null,
+            fixture.path("username").asText(),
+            fixture.path("email").asText(),
+            false);
+    user.setTenantId(11L);
+    user.setLanguageCode(com.neovisionaries.i18n.LanguageCode.en);
+    user.setEncourage2fa(false);
+    user.setDeletionLifecycleState(
+        de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState.ACTIVE);
+    context.getBean(de.caritas.cob.userservice.api.port.out.UserRepository.class).save(user);
+    String token = fixture.path("bearer").asText();
+    assertFalse(token.isBlank());
+    try (var client = HttpClient.newHttpClient()) {
+      var metadata =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/users/data"))
+                  .header("Authorization", "Bearer " + token)
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(
+          200, metadata.statusCode(), "Authenticated actual GET must reach scoped metadata");
+      var body = JSON.readTree(metadata.body());
+      assertEquals(account, body.path("userId").asText());
+      assertTrue(body.path("scopedAccountCommands").isBoolean());
+      assertTrue(body.path("scopedAccountCommands").booleanValue());
+      witness.put("authenticatedMetadata", true);
+      String operation = UUID.randomUUID().toString();
+      var patch =
+          HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/users/data"))
+              .header("Authorization", "Bearer " + token)
+              .header("Idempotency-Key", operation)
+              .header("Content-Type", "application/json")
+              .method(
+                  "PATCH", HttpRequest.BodyPublishers.ofString("{\"preferredLanguage\":\"de\"}"))
+              .build();
+      var changed = client.send(patch, HttpResponse.BodyHandlers.discarding());
+      assertEquals(204, changed.statusCode(), "Actual scoped SELF locale command must succeed");
+      assertEquals(
+          "de",
+          jdbc.queryForObject(
+              "select language_code from `user` where user_id=?", String.class, account));
+      var original =
+          jdbc.queryForMap(
+              "select * from identity_account_operation_intent where operation_id=?", operation);
+      assertEquals("ACKNOWLEDGED", original.get("status"));
+      witness.put("selfLocaleApplied", true);
+      assertEquals(204, client.send(patch, HttpResponse.BodyHandlers.discarding()).statusCode());
+      assertEquals(
+          original,
+          jdbc.queryForMap(
+              "select * from identity_account_operation_intent where operation_id=?", operation));
+      witness.put("selfLocaleReplay", true);
+      verifyAccountJourneys(context, port, jdbc, fixture, client, witness);
+    }
+  }
+
+  private static void verifyAccountJourneys(
+      ConfigurableApplicationContext context,
+      int port,
+      JdbcTemplate jdbc,
+      com.fasterxml.jackson.databind.JsonNode fixture,
+      HttpClient client,
+      Map<String, Object> witness)
+      throws Exception {
+    var emf = context.getBean(jakarta.persistence.EntityManagerFactory.class);
+    seedAdministrator(emf, fixture.path("primary"), "SUPER", false);
+    for (String key : List.of("consultantThenAdmin", "adminThenConsultant", "retainedAdmin"))
+      seedAdministrator(emf, fixture.path(key), "AGENCY", true);
+    seedAdministrator(emf, fixture.path("pureTenant"), "TENANT", false);
+    String bearer = fixture.path("primaryBearer").asText();
+    var scheduler =
+        context.getBean(
+            de.caritas.cob.userservice.api.workflow.delete.service.ScheduledConsultantMaintenance
+                .class);
+    String first = fixture.path("consultantThenAdmin").path("id").asText();
+    var firstAdmin = jdbc.queryForMap("select * from admin where admin_id=?", first);
+    var firstConsultant = jdbc.queryForMap("select * from consultant where consultant_id=?", first);
+    String consultantOperation = UUID.randomUUID().toString();
+    command(client, port, bearer, "DELETE", consultantPath(first), consultantOperation, null, 200);
+    assertEquals(firstAdmin, jdbc.queryForMap("select * from admin where admin_id=?", first));
+    var retained = jdbc.queryForMap("select * from consultant where consultant_id=?", first);
+    assertEquals(firstConsultant.get("create_date"), retained.get("create_date"));
+    assertNotNull(retained.get("delete_date"));
+    command(client, port, bearer, "DELETE", consultantPath(first), consultantOperation, null, 200);
+    String adminOperation = UUID.randomUUID().toString();
+    command(client, port, bearer, "DELETE", adminPath(first), adminOperation, null, 200);
+    assertEquals(
+        retained, jdbc.queryForMap("select * from consultant where consultant_id=?", first));
+    command(client, port, bearer, "DELETE", adminPath(first), adminOperation, null, 200);
+    scheduler.performDeletionWorkflow();
+    assertEquals(
+        0,
+        jdbc.queryForObject(
+            "select count(*) from consultant where consultant_id=?", Integer.class, first));
+    command(client, port, bearer, "DELETE", adminPath(first), adminOperation, null, 200);
+    witness.put("consultantThenAdmin", true);
+
+    String second = fixture.path("adminThenConsultant").path("id").asText();
+    var secondConsultant =
+        jdbc.queryForMap("select * from consultant where consultant_id=?", second);
+    String secondAdminOperation = UUID.randomUUID().toString();
+    command(client, port, bearer, "DELETE", adminPath(second), secondAdminOperation, null, 200);
+    assertEquals(
+        secondConsultant,
+        jdbc.queryForMap("select * from consultant where consultant_id=?", second));
+    command(client, port, bearer, "DELETE", adminPath(second), secondAdminOperation, null, 200);
+    String secondConsultantOperation = UUID.randomUUID().toString();
+    command(
+        client,
+        port,
+        bearer,
+        "DELETE",
+        consultantPath(second),
+        secondConsultantOperation,
+        null,
+        200);
+    command(
+        client,
+        port,
+        bearer,
+        "DELETE",
+        consultantPath(second),
+        secondConsultantOperation,
+        null,
+        200);
+    scheduler.performDeletionWorkflow();
+    assertEquals(
+        0,
+        jdbc.queryForObject(
+            "select count(*) from consultant where consultant_id=?", Integer.class, second));
+    assertEquals(
+        0,
+        jdbc.queryForObject("select count(*) from admin where admin_id=?", Integer.class, second));
+    witness.put("adminThenConsultant", true);
+
+    String third = fixture.path("retainedAdmin").path("id").asText();
+    var thirdAdmin = jdbc.queryForMap("select * from admin where admin_id=?", third);
+    var thirdRelations =
+        jdbc.queryForList("select * from admin_agency where admin_id=? order by id", third);
+    String thirdOperation = UUID.randomUUID().toString();
+    command(client, port, bearer, "DELETE", consultantPath(third), thirdOperation, null, 200);
+    command(client, port, bearer, "DELETE", consultantPath(third), thirdOperation, null, 200);
+    scheduler.performDeletionWorkflow();
+    assertEquals(
+        0,
+        jdbc.queryForObject(
+            "select count(*) from consultant where consultant_id=?", Integer.class, third));
+    assertEquals(thirdAdmin, jdbc.queryForMap("select * from admin where admin_id=?", third));
+    assertEquals(
+        thirdRelations,
+        jdbc.queryForList("select * from admin_agency where admin_id=? order by id", third));
+    var cleanup =
+        jdbc.queryForMap(
+            "select * from identity_maintenance_intent where subject_type='CONSULTANT' and subject_id=?",
+            third);
+    assertEquals("APPLIED", cleanup.get("status"));
+    scheduler.performDeletionWorkflow();
+    assertEquals(
+        cleanup,
+        jdbc.queryForMap(
+            "select * from identity_maintenance_intent where subject_type='CONSULTANT' and subject_id=?",
+            third));
+    assertEquals(thirdAdmin, jdbc.queryForMap("select * from admin where admin_id=?", third));
+    witness.put("consultantInverseRetention", true);
+
+    String tenant = fixture.path("pureTenant").path("id").asText();
+    String tenantOperation = UUID.randomUUID().toString();
+    String body =
+        "{\"tenantId\":22,\"firstname\":\"Grace\",\"lastname\":\"Hopper\",\"email\":\"grace@fixture.invalid\"}";
+    var nativeHttp =
+        context.getBean("keycloakRestTemplate", org.springframework.web.client.RestTemplate.class);
+    var originalInterceptors = new ArrayList<>(nativeHttp.getInterceptors());
+    var dropped = new java.util.concurrent.atomic.AtomicBoolean();
+    var tenantBodies = new ArrayList<String>();
+    var profileBodies = new ArrayList<String>();
+    nativeHttp
+        .getInterceptors()
+        .add(
+            (request, bytes, execution) -> {
+              String path = request.getURI().getPath();
+              if (path.endsWith("/reassign-tenant"))
+                tenantBodies.add(new String(bytes, java.nio.charset.StandardCharsets.UTF_8));
+              if (path.endsWith("/profile"))
+                profileBodies.add(new String(bytes, java.nio.charset.StandardCharsets.UTF_8));
+              var response = execution.execute(request, bytes);
+              if (path.endsWith("/reassign-tenant")
+                  && response.getStatusCode().value() == 200
+                  && dropped.compareAndSet(false, true)) {
+                response.close();
+                throw new java.io.IOException(
+                    "Disposable fixture lost successful native tenant reply");
+              }
+              return response;
+            });
+    try {
+      command(
+          client,
+          port,
+          bearer,
+          "PUT",
+          "/useradmin/tenantadmins/" + tenant,
+          tenantOperation,
+          body,
+          503);
+      assertTrue(dropped.get());
+      assertEquals(
+          17L,
+          jdbc.queryForObject("select tenant_id from admin where admin_id=?", Long.class, tenant));
+      var pending =
+          jdbc.queryForMap(
+              "select * from general_admin_identity_intent where operation_id=?", tenantOperation);
+      assertEquals("FROZEN", pending.get("status"));
+      command(
+          client,
+          port,
+          bearer,
+          "PUT",
+          "/useradmin/tenantadmins/" + tenant,
+          tenantOperation,
+          body,
+          200);
+      assertEquals(2, tenantBodies.size());
+      assertEquals(tenantBodies.get(0), tenantBodies.get(1));
+      assertEquals(1, profileBodies.size());
+      for (boolean profile : List.of(false, true)) {
+        String child =
+            UUID.nameUUIDFromBytes(
+                    ("tenant-admin-edit/v1/"
+                            + tenantOperation
+                            + "/"
+                            + (profile ? "profile" : "tenant"))
+                        .getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                .toString();
+        var sent = JSON.readTree((profile ? profileBodies : tenantBodies).get(0));
+        assertEquals(child, sent.path("operationId").asText());
+      }
+    } finally {
+      nativeHttp.setInterceptors(originalInterceptors);
+    }
+
+    var parent =
+        jdbc.queryForMap(
+            "select * from general_admin_identity_intent where operation_id=?", tenantOperation);
+    assertEquals("APPLIED", parent.get("status"));
+    var nativeReceipts = JSON.readTree((String) parent.get("native_receipt"));
+    assertFalse(nativeReceipts.path("tenant").asText().isBlank());
+    assertFalse(nativeReceipts.path("profile").asText().isBlank());
+    var moved = jdbc.queryForMap("select * from admin where admin_id=?", tenant);
+    assertEquals(22L, ((Number) moved.get("tenant_id")).longValue());
+    assertEquals("Grace", moved.get("first_name"));
+    assertEquals("Hopper", moved.get("last_name"));
+    assertEquals("grace@fixture.invalid", moved.get("email"));
+    assertEquals(
+        0,
+        jdbc.queryForObject(
+            "select count(*) from consultant where consultant_id=?", Integer.class, tenant));
+    command(
+        client,
+        port,
+        bearer,
+        "PUT",
+        "/useradmin/tenantadmins/" + tenant,
+        tenantOperation,
+        body,
+        200);
+    assertEquals(moved, jdbc.queryForMap("select * from admin where admin_id=?", tenant));
+    witness.put("pureTenantTwoChildren", true);
+  }
+
+  private static String consultantPath(String account) {
+    return "/useradmin/consultants/" + account + "?forceDeleteSessions=true";
+  }
+
+  private static String adminPath(String account) {
+    return "/useradmin/agencyadmins/" + account;
+  }
+
+  private static void command(
+      HttpClient client,
+      int port,
+      String bearer,
+      String method,
+      String path,
+      String operation,
+      String body,
+      int expected)
+      throws Exception {
+    var request =
+        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+            .header("Authorization", "Bearer " + bearer)
+            .header("Idempotency-Key", operation);
+    if (body != null) request.header("Content-Type", "application/json");
+    var response =
+        client.send(
+            request
+                .method(
+                    method,
+                    body == null
+                        ? HttpRequest.BodyPublishers.noBody()
+                        : HttpRequest.BodyPublishers.ofString(body))
+                .build(),
+            HttpResponse.BodyHandlers.discarding());
+    assertEquals(expected, response.statusCode(), "Actual public " + method + " account command");
+  }
+
+  private static void seedAdministrator(
+      jakarta.persistence.EntityManagerFactory factory,
+      com.fasterxml.jackson.databind.JsonNode nativeUser,
+      String type,
+      boolean combined) {
+    var entities = factory.createEntityManager();
+    try {
+      entities.getTransaction().begin();
+      String account = nativeUser.path("id").asText();
+      assertEquals(account, UUID.fromString(account).toString());
+      long tenant = Long.parseLong(nativeUser.path("attributes").path("tenantId").path(0).asText());
+      var now = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC);
+      var admin =
+          de.caritas.cob.userservice.api.model.Admin.builder()
+              .id(account)
+              .type(de.caritas.cob.userservice.api.model.Admin.AdminType.valueOf(type))
+              .tenantId(tenant)
+              .username(nativeUser.path("username").asText())
+              .firstName(nativeUser.path("firstName").asText())
+              .lastName(nativeUser.path("lastName").asText())
+              .email(nativeUser.path("email").asText())
+              .createDate(now)
+              .updateDate(now)
+              .build();
+      entities.persist(admin);
+      if (combined) {
+        var consultant =
+            de.caritas.cob.userservice.api.model.Consultant.builder()
+                .id(account)
+                .tenantId(tenant)
+                .username(
+                    new de.caritas.cob.userservice.api.helper.UsernameTranscoder()
+                        .encodeUsername(admin.getUsername()))
+                .firstName(admin.getFirstName())
+                .lastName(admin.getLastName())
+                .email(admin.getEmail())
+                .languageCode(com.neovisionaries.i18n.LanguageCode.en)
+                .status(de.caritas.cob.userservice.api.model.ConsultantStatus.CREATED)
+                .encourage2fa(false)
+                .magicLinkLoginEnabled(false)
+                .notifyEnquiriesRepeating(false)
+                .notifyNewChatMessageFromAdviceSeeker(false)
+                .createDate(now)
+                .updateDate(now)
+                .build();
+        entities.persist(consultant);
+        entities.persist(
+            de.caritas.cob.userservice.api.model.AdminAgency.builder()
+                .admin(admin)
+                .agencyId(70L)
+                .createDate(now)
+                .updateDate(now)
+                .build());
+      }
+      entities.getTransaction().commit();
+    } finally {
+      entities.close();
+    }
   }
 
   private static String required(String name) {

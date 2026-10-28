@@ -939,4 +939,14 @@ public class UserController implements UsersApi {
 
     return new ResponseEntity<>(consultantDto, HttpStatus.OK);
   }
+
+  /** Read-only startup check of the actual installed production consumers. */
+  public boolean hasScopedAccountBindings(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode,
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance otp,
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfPasswordMaintenance password,
+      de.caritas.cob.userservice.api.adapters.keycloak.maintenance.SelfLocaleMaintenance locale) {
+    return userAccountControllerDelegate.hasScopedAccountBindings(mode, otp, password, locale)
+        && userTwoFactorAuthControllerDelegate.hasScopedAccountBindings(otp);
+  }
 }

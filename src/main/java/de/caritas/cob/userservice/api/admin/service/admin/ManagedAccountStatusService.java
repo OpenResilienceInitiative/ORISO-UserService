@@ -501,4 +501,20 @@ public class ManagedAccountStatusService {
   private static String string(LocalDateTime value) {
     return value == null ? null : value.toString();
   }
+
+  /** Read-only startup check of the actual installed production consumers. */
+  public boolean hasScopedAccountBindings(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode,
+      de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance owner,
+      de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance proof,
+      org.springframework.orm.jpa.JpaTransactionManager manager) {
+    return identityMode == mode
+        && scopedMaintenance == owner
+        && removedConsultants != null
+        && removedConsultants.getIfAvailable() == proof
+        && localWrites != null
+        && localWrites.getTransactionManager() == manager
+        && jdbc != null
+        && jdbc.getDataSource() == manager.getDataSource();
+  }
 }

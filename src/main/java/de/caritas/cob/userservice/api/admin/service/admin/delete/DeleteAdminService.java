@@ -174,4 +174,18 @@ public class DeleteAdminService {
       return "ScopedRemoval[source=redacted]";
     }
   }
+
+  /** Read-only startup check of the actual installed production consumers. */
+  public boolean hasScopedAccountBindings(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig identity,
+      de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance owner,
+      de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+          publicOwner,
+      org.springframework.orm.jpa.JpaTransactionManager manager) {
+    return mode == identity
+        && maintenance == owner
+        && preDeletion == publicOwner
+        && entities != null
+        && entities.getEntityManagerFactory() == manager.getEntityManagerFactory();
+  }
 }

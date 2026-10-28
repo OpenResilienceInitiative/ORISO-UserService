@@ -26,9 +26,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.web.client.RestTemplate;
 
-/**
- * Complete caller bean graph remains opt-in; the global coordinated C startup fence still applies.
- */
+/** Complete opt-in caller graph; activation also verifies the installed production consumers. */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(name = "ORISO_ACCOUNT_LIFECYCLE_ENABLED", havingValue = "true")
 public class AccountLifecycleCallerConfiguration {
@@ -394,7 +392,7 @@ public class AccountLifecycleCallerConfiguration {
             keycloak.getRealm(),
             required("KEYCLOAK_REALM_INTERNAL_ID"));
     maintenance.configureJpaCleanupOwner(entities);
-    maintenance.configureAcknowledgedCleanup(deletion::continueAcknowledgedDeletion);
+    maintenance.configureProductionCleanup(deletion);
     return maintenance;
   }
 
@@ -436,7 +434,7 @@ public class AccountLifecycleCallerConfiguration {
             required("KEYCLOAK_REALM_INTERNAL_ID"));
     maintenance.configureJpaCleanupOwner(entities);
     maintenance.configureConsultantIdentityRemoval(publicPreDeletion);
-    maintenance.configureAcknowledgedCleanup(deletion::continueAcknowledgedConsultantDeletion);
+    maintenance.configureProductionCleanup(deletion);
     return maintenance;
   }
 
