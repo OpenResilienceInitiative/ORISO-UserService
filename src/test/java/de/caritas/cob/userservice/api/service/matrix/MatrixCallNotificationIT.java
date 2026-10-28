@@ -52,6 +52,7 @@ import org.springframework.transaction.annotation.Transactional;
   EventNotificationDeduplicationWriter.class,
   MatrixCallBindingService.class,
   MatrixCallLifecycleService.class,
+  MatrixCallGuestService.class,
   MatrixCallConversationResolver.class,
   MatrixCallBindingWriter.class,
   MatrixCallInviteNotificationService.class,

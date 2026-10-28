@@ -859,6 +859,66 @@ public class MatrixRoomClient {
     }
   }
 
+  /**
+   * Removes a user's explicit entry from the room's power levels, so a former call guest keeps no
+   * elevated right (US#1477). Writes only when an entry exists.
+   */
+  public boolean clearUserPowerLevel(String roomId, String userId, String accessToken) {
+    try {
+      var url = buildUrl(ENDPOINT_POWER_LEVELS, Map.of("roomId", roomId));
+      HttpHeaders headers = getClientHttpHeaders(accessToken);
+      ResponseEntity<Map> current =
+          restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(headers), Map.class);
+      if (current.getBody() == null) return false;
+      @SuppressWarnings("unchecked")
+      Map<String, Object> powerLevels = new HashMap<>(current.getBody());
+      Map<String, Object> users = extractUsers(powerLevels);
+      if (!users.containsKey(userId)) return true;
+      users.remove(userId);
+      powerLevels.put("users", users);
+      restTemplate.put(url, new HttpEntity<>(powerLevels, headers));
+      return true;
+    } catch (Exception e) {
+      log.warn("Could not clear power level in room {}: {}", roomId, e.getMessage());
+      return false;
+    }
+  }
+
+  /** Kicks a user, which also retracts a pending invite (POST /rooms/{roomId}/kick). */
+  public boolean kickUserFromRoom(String roomId, String userId, String accessToken) {
+    try {
+      var url = buildUrl("/_matrix/client/v3/rooms/{roomId}/kick", Map.of("roomId", roomId));
+      HttpHeaders headers = getClientHttpHeaders(accessToken);
+      headers.setContentType(MediaType.APPLICATION_JSON);
+      restTemplate.postForEntity(
+          url, new HttpEntity<>(Map.of("user_id", userId), headers), Map.class);
+      return true;
+    } catch (Exception e) {
+      log.warn("Could not kick a user from room {}: {}", roomId, e.getMessage());
+      return false;
+    }
+  }
+
+  /** Reads the user's m.room.member state in the room; empty when it cannot be read. */
+  public java.util.Optional<String> getRoomMembership(
+      String roomId, String userId, String accessToken) {
+    try {
+      var url =
+          buildUrl(
+              "/_matrix/client/v3/rooms/{roomId}/state/m.room.member/{userId}",
+              Map.of("roomId", roomId, "userId", userId));
+      ResponseEntity<Map> response =
+          restTemplate.exchange(
+              url, HttpMethod.GET, new HttpEntity<>(getClientHttpHeaders(accessToken)), Map.class);
+      return response.getBody() != null && response.getBody().get("membership") instanceof String m
+          ? java.util.Optional.of(m)
+          : java.util.Optional.empty();
+    } catch (Exception e) {
+      log.warn("Could not read a membership in room {}: {}", roomId, e.getMessage());
+      return java.util.Optional.empty();
+    }
+  }
+
   public boolean removeUserFromRoom(String roomId, String userId, String accessToken) {
     try {
       var url = buildUrl(ENDPOINT_MEMBERSHIP, Map.of("roomId", roomId, "userId", userId));
