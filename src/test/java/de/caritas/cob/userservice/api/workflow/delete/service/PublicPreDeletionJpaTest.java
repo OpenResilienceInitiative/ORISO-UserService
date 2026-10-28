@@ -113,6 +113,7 @@ class PublicPreDeletionJpaTest {
   private static final String ACCOUNT = "81000000-0000-4000-8000-000000000011";
   private static final String SECOND = "81000000-0000-4000-8000-000000000015";
   private Clock ownerClock = Clock.systemUTC();
+  private String expectedNativeAuthority;
   private static final String ASKER = "81000000-0000-4000-8000-000000000013";
   private static final String SUCCESSOR = "81000000-0000-4000-8000-000000000014";
   private static final String HUMAN = "81000000-0000-4000-8000-000000000012";
@@ -429,6 +430,42 @@ class PublicPreDeletionJpaTest {
     assertNotNull(saved.getDeleteDate());
     assertEquals(DeletionLifecycleState.READ_ONLY_SAFEGUARD, saved.getDeletionLifecycleState());
     assertNotNull(saved.getDeletionReadOnlyUntil());
+  }
+
+  @Test
+  void restrictedAgencySourceKeepsItsOrdinaryAuthorityThroughConsultantPreDeletion() {
+    consultant();
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    actor.setRoles(Set.of("restricted-agency-admin", "user-admin"));
+    actor.setGrantedAuthorities(Set.of(Authority.AuthorityValue.USER_ADMIN));
+    var operator = admins.findById(HUMAN).orElseThrow();
+    assertNotNull(operator.getCreateDate());
+    operator.setType(Admin.AdminType.AGENCY);
+    admins.save(operator);
+    adminAgencies.save(
+        de.caritas.cob.userservice.api.model.AdminAgency.builder()
+            .admin(operator)
+            .agencyId(991L)
+            .build());
+    consultantAgencies.save(
+        ConsultantAgency.builder()
+            .consultant(consultants.findById(ACCOUNT).orElseThrow())
+            .agencyId(991L)
+            .tenantId(7L)
+            .build());
+    expectedNativeAuthority = "ORDINARY_ACCOUNT_OPERATIONS_V1";
+    ConsultantAdminService service = consultantService();
+    nativeHttp(true);
+
+    try {
+      assertDoesNotThrow(() -> service.markConsultantForDeletion(ACCOUNT, false));
+      assertEquals(1, nativeEffects.get());
+      assertEquals("APPLIED", status());
+      assertEquals(0, genericAttempts.get());
+      assertNotNull(consultants.findById(ACCOUNT).orElseThrow().getDeleteDate());
+    } finally {
+      adminAgencies.deleteByAdminId(HUMAN);
+    }
   }
 
   @Test
@@ -1713,6 +1750,10 @@ class PublicPreDeletionJpaTest {
               assertNotNull(raw.getHeaders().getFirst("X-ORISO-Task-Context"));
               var body = codec.read(mock.getBodyAsString(), JsonNode.class);
               assertEquals(boundAccount, body.path("target").path("accountId").textValue());
+              if (expectedNativeAuthority != null)
+                assertEquals(
+                    expectedNativeAuthority,
+                    body.path("target").path("origin").path("humanAuthority").textValue());
               String path = raw.getURI().getPath();
               if (refuseNativeReach
                   && (path.endsWith("/deactivate") || path.endsWith("/deactivate/outcome")))

@@ -141,7 +141,13 @@ public final class PublicPreDeletionMaintenance {
   }
 
   private record ActualHuman(
-      String subject, String issuer, String client, Long tenant, long expires, String bearer) {}
+      String subject,
+      String issuer,
+      String client,
+      Long tenant,
+      long expires,
+      String bearer,
+      String administrativeAuthority) {}
 
   private record Intent(
       String operation,
@@ -827,6 +833,13 @@ public final class PublicPreDeletionMaintenance {
     String suffix = routeSuffix(kind, intent.account);
     if (!Set.of(suffix, "/service" + suffix).contains(value.path("route").textValue()))
       throw unavailable();
+    var authorityNode = value.path("target").path("origin").path("humanAuthority");
+    String originalAuthority = authorityNode.textValue();
+    if (kind.equals("SELF_ASKER")
+        ? !authorityNode.isNull()
+        : originalAuthority == null
+            || !Set.of("ORDINARY_ACCOUNT_OPERATIONS_V1", "PROTECTED_ACCOUNT_OPERATIONS_V1")
+                .contains(originalAuthority)) throw unavailable();
     var originalHuman =
         new ActualHuman(
             value.path("humanSubject").asText(),
@@ -834,7 +847,8 @@ public final class PublicPreDeletionMaintenance {
             value.path("humanClient").asText(),
             tenant,
             value.path("humanValidUntil").longValue(),
-            null);
+            null,
+            originalAuthority);
     if (kind.equals("SELF_ASKER")
             && (!intent.account.equals(originalHuman.subject)
                 || !Objects.equals(intent.tenant, tenant))
@@ -952,7 +966,7 @@ public final class PublicPreDeletionMaintenance {
     origin.put("humanIssuer", current.issuer);
     origin.put("humanClient", current.client);
     if (kind.equals("SELF_ASKER")) origin.putNull("humanAuthority");
-    else origin.put("humanAuthority", "PROTECTED_ACCOUNT_OPERATIONS_V1");
+    else origin.put("humanAuthority", current.administrativeAuthority);
     return target;
   }
 
@@ -993,7 +1007,10 @@ public final class PublicPreDeletionMaintenance {
         (String) client,
         tenant,
         jwt.getExpiresAt().getEpochSecond(),
-        raw);
+        raw,
+        human.hasRestrictedAgencyPriviliges() && !human.hasTenantLevelAdminRole()
+            ? "ORDINARY_ACCOUNT_OPERATIONS_V1"
+            : "PROTECTED_ACCOUNT_OPERATIONS_V1");
   }
 
   private String projection(Intent intent, String raw) {

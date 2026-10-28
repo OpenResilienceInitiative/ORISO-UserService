@@ -461,9 +461,9 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
     origin.put("humanClient", account.humanClient());
     origin.put(
         "humanAuthority",
-        !account.selfService() || account.protectedSelf()
-            ? "PROTECTED_ACCOUNT_OPERATIONS_V1"
-            : null);
+        !account.selfService()
+            ? account.administrativeAuthority()
+            : account.protectedSelf() ? "PROTECTED_ACCOUNT_OPERATIONS_V1" : null);
     var target = new TreeMap<String, Object>();
     target.put("accountId", account.accountId());
     target.put("tenantId", account.tenantId() == null ? null : account.tenantId().toString());

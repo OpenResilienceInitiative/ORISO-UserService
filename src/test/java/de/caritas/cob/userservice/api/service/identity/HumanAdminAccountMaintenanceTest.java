@@ -186,6 +186,49 @@ class HumanAdminAccountMaintenanceTest {
   }
 
   @Test
+  void restrictedAndCombinedAgencySourcesUseTheOrdinarySelectorForTheirScopedConsultantRead() {
+    human.setGrantedAuthorities(Set.of(Authority.AuthorityValue.USER_ADMIN));
+    jdbc.update("delete from admin where admin_id=?", ACCOUNT);
+    jdbc.update(
+        "insert into consultant(consultant_id,tenant_id,username,first_name,last_name,email,delete_date,update_date,managed_paused) values(?,7,'original-admin','Old','Name','old@example.test',null,?,true)",
+        ACCOUNT,
+        java.sql.Timestamp.from(CLOCK.instant()));
+    for (var roles :
+        List.of(
+            Set.of("restricted-agency-admin", "user-admin"),
+            Set.of("restricted-agency-admin", "user-admin", "consultant"))) {
+      human.setRoles(roles);
+      server
+          .expect(requestTo(URL + "/read"))
+          .andRespond(
+              outbound -> {
+                assertFalse(
+                    org.springframework.transaction.support.TransactionSynchronizationManager
+                        .isActualTransactionActive());
+                var body =
+                    codec.read(
+                        ((MockClientHttpRequest) outbound).getBodyAsString(), JsonNode.class);
+                assertEquals(
+                    "ORDINARY_ACCOUNT_OPERATIONS_V1",
+                    body.path("target").path("origin").path("humanAuthority").textValue());
+                var reply = projection(false);
+                reply.putArray("effectiveRoles").add("consultant");
+                var response =
+                    withSuccess(codec.canonical(reply), MediaType.APPLICATION_JSON)
+                        .createResponse(outbound);
+                response.getHeaders().setCacheControl("no-store");
+                return response;
+              });
+      assertEquals(ACCOUNT, assertDoesNotThrow(() -> service.read(ACCOUNT)).id());
+      server.verify();
+      server.reset();
+    }
+    assertEquals(
+        0,
+        jdbc.queryForObject("select count(*) from general_admin_identity_intent", Integer.class));
+  }
+
+  @Test
   void completeProfileReceiptPrecedesExactSqlUpdateAndPreservesPauseTenantAndUsername() {
     readReply();
     server

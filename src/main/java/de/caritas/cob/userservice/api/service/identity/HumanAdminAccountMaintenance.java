@@ -1393,7 +1393,15 @@ public final class HumanAdminAccountMaintenance {
       }
     }
     if (!Objects.equals(tenant, actor.getTenantId())) throw forbidden();
-    return new Human(jwt.getSubject(), publicIssuer, client, raw, jwt.getExpiresAt());
+    return new Human(
+        jwt.getSubject(),
+        publicIssuer,
+        client,
+        raw,
+        jwt.getExpiresAt(),
+        actor.hasRestrictedAgencyPriviliges() && !actor.hasTenantLevelAdminRole()
+            ? "ORDINARY_ACCOUNT_OPERATIONS_V1"
+            : "PROTECTED_ACCOUNT_OPERATIONS_V1");
   }
 
   private void currentHumanMatching(Human expected) {
@@ -1689,7 +1697,12 @@ public final class HumanAdminAccountMaintenance {
   }
 
   private record Human(
-      String subject, String issuer, String client, String rawBearer, Instant expires) {
+      String subject,
+      String issuer,
+      String client,
+      String rawBearer,
+      Instant expires,
+      String administrativeAuthority) {
     @Override
     public String toString() {
       return "Human[authorization=redacted]";
@@ -1881,6 +1894,13 @@ public final class HumanAdminAccountMaintenance {
 
     public String humanClient() {
       return human.client;
+    }
+
+    /**
+     * Dispatch data only; the receiver independently checks the current native source and grant.
+     */
+    public String administrativeAuthority() {
+      return human.administrativeAuthority;
     }
 
     public String rawHumanBearer() {
