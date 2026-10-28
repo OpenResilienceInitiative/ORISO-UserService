@@ -155,6 +155,52 @@ public class MatrixCallGuestService {
         Outcome.ADMITTED, binding.getMediaRoomId(), guest.matrixId(), row.getAdmittedAt());
   }
 
+  /**
+   * A counsellor removes a guest from the running call (#1487). The seat is revoked first, so the
+   * media gate and {@link #admitAs} refuse the guest at once; the call-room removal is best effort,
+   * because without a seat the guest gets no media anyway.
+   */
+  @Transactional
+  public boolean revokeSeat(
+      MatrixCallBinding binding, String guestMatrixId, String moderatorMatrixId) {
+    if (binding == null || binding.getId() == null || blank(guestMatrixId)) return false;
+    var seat =
+        guests
+            .findByBindingIdAndMatrixUserId(binding.getId(), guestMatrixId)
+            .filter(row -> row.getRevokedAt() == null)
+            .orElse(null);
+    if (seat == null) return false;
+    seat.revoke(System.currentTimeMillis());
+    guests.save(seat);
+    String room = binding.getMediaRoomId();
+    String token =
+        blank(moderatorMatrixId) ? null : matrix.loginAsUserAccessToken(moderatorMatrixId);
+    if (token == null) {
+      log.warn(
+          "Call guest seat revoked without call-room removal in {} (no moderator token)", room);
+      return true;
+    }
+    matrix.removeUserFromRoom(room, guestMatrixId, token);
+    if (!isGone(room, guestMatrixId, token)) {
+      matrix.kickUserFromRoom(room, guestMatrixId, token);
+      if (!isGone(room, guestMatrixId, token))
+        log.warn("Call guest seat revoked but still in call room {}", room);
+    }
+    if (!matrix.clearUserPowerLevel(room, guestMatrixId, token))
+      log.warn("Call guest power level could not be cleared in call room {}", room);
+    return true;
+  }
+
+  /** True when a counsellor removed the person from this call; they cannot come back (#1487). */
+  public boolean wasRemoved(MatrixCallBinding binding, String matrixUserId) {
+    return binding.getId() != null
+        && !blank(matrixUserId)
+        && guests
+            .findByBindingIdAndMatrixUserId(binding.getId(), matrixUserId)
+            .map(row -> row.getRevokedAt() != null)
+            .orElse(false);
+  }
+
   /** True while the person holds an unrevoked guest seat in this call. */
   public boolean isActiveGuest(MatrixCallBinding binding, String matrixUserId) {
     return binding.getId() != null

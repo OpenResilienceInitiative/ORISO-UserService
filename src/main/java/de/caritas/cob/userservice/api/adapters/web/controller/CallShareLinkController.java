@@ -81,6 +81,19 @@ public class CallShareLinkController {
     return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(toResponse(link));
   }
 
+  /** 204: the guest left the call and cannot come back through the link for this call. */
+  @PostMapping("/{linkId:[0-9]+}/guests/remove")
+  public ResponseEntity<Void> removeGuest(
+      @PathVariable Long linkId, @RequestBody RemoveGuestRequest request) {
+    requireConsultant();
+    service.removeGuest(
+        authenticatedUser.getTenantId(),
+        authenticatedUser.getUserId(),
+        linkId,
+        request == null ? null : request.matrixUserId());
+    return ResponseEntity.noContent().build();
+  }
+
   /**
    * 200 in both cases: {@code callAdmitted=false} with a knock to poll ({@code GET
    * /users/call-knocks/mine/{knockId}}), then call again; or {@code callAdmitted=true} with the
@@ -142,6 +155,8 @@ public class CallShareLinkController {
       String sourceRoomId, String callId, Boolean knock, Boolean temporaryAccount) {}
 
   public record SettingsRequest(Boolean knock, Boolean temporaryAccount) {}
+
+  public record RemoveGuestRequest(String matrixUserId) {}
 
   /**
    * @param temporaryAccount effective value: the setting, and allowed by platform and Träger

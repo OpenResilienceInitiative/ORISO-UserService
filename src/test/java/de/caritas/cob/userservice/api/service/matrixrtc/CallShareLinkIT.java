@@ -144,6 +144,7 @@ class CallShareLinkIT {
   @Autowired private CallShareLinkService shareLinks;
   @Autowired private CallShareLinkSweep sweep;
   @Autowired private DirectCallKnockService knocks;
+  @Autowired private MatrixCallGuestService callGuests;
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private javax.sql.DataSource dataSource;
   @MockitoBean private MatrixSynapseService matrix;
@@ -383,6 +384,81 @@ class CallShareLinkIT {
         .andExpect(jsonPath("$.id").value(link.getId()));
   }
 
+  /** Security review of #1487: an admission can be taken back, and "Anklopfen" on again holds. */
+  @Test
+  void aRemovedGuestLosesTheCallAtOnce_AndKnockOnAgainOnlyAffectsRejoins() throws Exception {
+    var policy = policyService();
+    var link = shareLinks.create(7L, counsellor.getId(), SOURCE, "share-call", false, null).link();
+    var guest = users.findById("share-guest").orElseThrow();
+    var second = users.findById("share-guest-2").orElseThrow();
+    assertThat(shareLinks.join(link.getToken(), guest).callAdmitted()).isTrue();
+    assertThat(shareLinks.join(link.getToken(), second).callAdmitted()).isTrue();
+    assertThat(knockRows.findAll()).allSatisfy(row -> assertThat(row.getSessionId()).isNull());
+
+    // "Anklopfen" back on: whoever is in the call stays; a re-join knocks.
+    mvc(counsellor.getId(), "consultant", null)
+        .perform(
+            patch("/matrix/calls/share-links/" + link.getId())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"knock\":true}"))
+        .andExpect(status().isOk());
+    assertThat(policy.resolve(SOURCE, SECOND_GUEST, MEDIA))
+        .isEqualTo(new CallMediaPolicy(true, true));
+    var rejoin = shareLinks.join(link.getToken(), second);
+    assertThat(rejoin.callAdmitted()).isFalse();
+    assertThat(knockRows.findById(rejoin.knockId()).orElseThrow().getSessionId()).isNull();
+
+    // The counsellor removes the first guest mid-call.
+    mvc(counsellor.getId(), "consultant", null)
+        .perform(
+            post("/matrix/calls/share-links/" + link.getId() + "/guests/remove")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"matrixUserId\":\"" + GUEST + "\"}"))
+        .andExpect(status().isNoContent());
+    assertThat(policy.resolve(SOURCE, GUEST, MEDIA)).isEqualTo(CallMediaPolicy.denied());
+    verify(matrix).removeUserFromRoom(MEDIA, GUEST, "c-token");
+    assertThatThrownBy(() -> shareLinks.join(link.getToken(), guest))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    // Not even an admission brought about by switching "Anklopfen" off lets them back in.
+    shareLinks.update(7L, counsellor.getId(), link.getId(), false, null);
+    assertThatThrownBy(() -> shareLinks.join(link.getToken(), guest))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    assertThat(
+            callGuestService().admitAs(7L, counsellor.getId(), SOURCE, "share-call", "share-guest"))
+        .extracting(MatrixCallGuestService.Admission::outcome)
+        .isEqualTo(MatrixCallGuestService.Outcome.NOT_FOUND);
+    // The colleague outside the call cannot remove anybody.
+    mvc(colleague.getId(), "consultant", null)
+        .perform(
+            post("/matrix/calls/share-links/" + link.getId() + "/guests/remove")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"matrixUserId\":\"" + SECOND_GUEST + "\"}"))
+        .andExpect(status().isNotFound());
+    assertThat(policy.resolve(SOURCE, SECOND_GUEST, MEDIA))
+        .isEqualTo(new CallMediaPolicy(true, true));
+  }
+
+  /** Security review of #1487: declining an admitted knock takes the seat back too. */
+  @Test
+  void decliningAnAdmittedKnockRevokesTheSeat() {
+    var policy = policyService();
+    var link = shareLinks.create(7L, counsellor.getId(), SOURCE, "share-call", null, null).link();
+    var guest = users.findById("share-guest").orElseThrow();
+    var knockId = shareLinks.join(link.getToken(), guest).knockId();
+    var counsellorEntity = consultants.findById(counsellor.getId()).orElseThrow();
+    transaction.executeWithoutResult(s -> knocks.admit(knockId, counsellorEntity));
+    assertThat(shareLinks.join(link.getToken(), guest).callAdmitted()).isTrue();
+
+    transaction.executeWithoutResult(s -> knocks.decline(knockId, counsellorEntity));
+
+    assertThat(policy.resolve(SOURCE, GUEST, MEDIA)).isEqualTo(CallMediaPolicy.denied());
+    assertThatThrownBy(() -> shareLinks.join(link.getToken(), guest))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+  }
+
   @Test
   void aMissedHangUpStillEndsTheLink_AndNobodyKeepsWaiting() {
     var link = shareLinks.create(7L, counsellor.getId(), SOURCE, "share-call", null, null).link();
@@ -400,6 +476,10 @@ class CallShareLinkIT {
     assertThatThrownBy(
             () -> shareLinks.join(link.getToken(), users.findById("share-guest-2").orElseThrow()))
         .isInstanceOf(CallShareLinkEndedException.class);
+  }
+
+  private MatrixCallGuestService callGuestService() {
+    return callGuests;
   }
 
   private MockMvc mvc(String id, String role, Long tenant) {

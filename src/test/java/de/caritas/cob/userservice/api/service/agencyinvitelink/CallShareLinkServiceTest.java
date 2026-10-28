@@ -57,6 +57,7 @@ class CallShareLinkServiceTest {
   @Mock private DirectInvitePolicy directInvitePolicy;
   @Mock private TemporaryAccountPolicy temporaryAccountPolicy;
   @Mock private TenantService tenantService;
+  @Mock private de.caritas.cob.userservice.api.port.out.UserRepository users;
 
   private CallShareLinkService service;
   private MatrixCallBinding binding;
@@ -73,7 +74,8 @@ class CallShareLinkServiceTest {
             knocks,
             directInvitePolicy,
             temporaryAccountPolicy,
-            tenantService);
+            tenantService,
+            users);
     binding = runningCall();
     when(bindings.findById(binding.getId())).thenReturn(Optional.of(binding));
     when(callGuests.counsellorCall(TENANT, COUNSELLOR, SOURCE, CALL_ID))
@@ -89,6 +91,7 @@ class CallShareLinkServiceTest {
     guest = new User();
     guest.setUserId("guest-1");
     guest.setTenantId(TENANT);
+    guest.setMatrixUserId("@guest:example");
   }
 
   @Test
@@ -106,7 +109,10 @@ class CallShareLinkServiceTest {
     assertThat(link.isKnock()).isTrue();
     assertThat(link.getCallBindingId()).isEqualTo(binding.getId());
     assertThat(link.getTenantId()).isEqualTo(TENANT);
-    assertThat(link.getAgencyId()).isEqualTo(99L);
+    // Nothing of the conversation is copied onto the link (security review, #1487).
+    assertThat(link.getAgencyId()).isNull();
+    assertThat(link.getConsultingTypeId()).isNull();
+    assertThat(link.getTopicId()).isNull();
     assertThat(link.getConsultantId()).isEqualTo(COUNSELLOR);
     assertThat(link.getStatus()).isEqualTo("ACTIVE");
     assertThat(link.getExpiresAt()).isAfter(LocalDateTime.now());
@@ -191,7 +197,7 @@ class CallShareLinkServiceTest {
   }
 
   @Test
-  void update_Should_NotLetAnybodyIn_When_KnockIsSwitchedOn() {
+  void update_Should_CancelEarlierAdmissionsForRejoins_When_KnockIsSwitchedBackOn() {
     var link = link(false, true);
     when(links.findByIdForUpdate(5L)).thenReturn(Optional.of(link));
 
@@ -200,6 +206,51 @@ class CallShareLinkServiceTest {
     assertThat(link.isKnock()).isTrue();
     assertThat(link.isTemporaryAccount()).isFalse();
     verify(knocks, never()).admitWaitingOnCallLink(any(), any());
+    verify(knocks).cancelAdmissionsOnCallLink(5L);
+    // Guests already in the call keep their seat.
+    verify(callGuests, never()).revokeSeat(any(), any(), any());
+  }
+
+  @Test
+  void join_Should_Return403_When_ACounsellorRemovedTheGuestFromThisCall() {
+    joinable(true);
+    when(callGuests.wasRemoved(binding, "@guest:example")).thenReturn(true);
+
+    assertThatThrownBy(() -> service.join("token-5", guest)).isInstanceOf(ForbiddenException.class);
+    verify(knocks, never()).knockOnCallLink(any(), any(), anyString());
+    verify(callGuests, never()).admitAs(any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void removeGuest_Should_RevokeTheSeatAndDeclineTheGuestsKnocks() {
+    when(links.findByIdForUpdate(5L)).thenReturn(Optional.of(link(true, true)));
+    when(callGuests.revokeSeat(binding, "@guest:example", "@c:example")).thenReturn(true);
+    when(users.findByMatrixUserIdAndDeleteDateIsNull("@guest:example"))
+        .thenReturn(Optional.of(guest));
+
+    service.removeGuest(TENANT, COUNSELLOR, 5L, "@guest:example");
+
+    verify(callGuests).revokeSeat(binding, "@guest:example", "@c:example");
+    verify(knocks).declineGuestOnCallLink(5L, "guest-1", COUNSELLOR);
+  }
+
+  @Test
+  void removeGuest_Should_Return404_When_TheCounsellorIsNotInThatCall() {
+    when(links.findByIdForUpdate(5L)).thenReturn(Optional.of(link(true, true)));
+    when(callGuests.counsellorCall(TENANT, "other", SOURCE, CALL_ID))
+        .thenReturn(new CounsellorCall(Outcome.NOT_FOUND, null, null, null));
+
+    assertThatThrownBy(() -> service.removeGuest(TENANT, "other", 5L, "@guest:example"))
+        .isInstanceOf(NotFoundException.class);
+    verify(callGuests, never()).revokeSeat(any(), any(), any());
+  }
+
+  @Test
+  void removeGuest_Should_Return404_ForSomebodyWhoIsNoGuest() {
+    when(links.findByIdForUpdate(5L)).thenReturn(Optional.of(link(true, true)));
+
+    assertThatThrownBy(() -> service.removeGuest(TENANT, COUNSELLOR, 5L, "@nobody:example"))
+        .isInstanceOf(NotFoundException.class);
   }
 
   @Test
@@ -256,7 +307,7 @@ class CallShareLinkServiceTest {
   void join_Should_Knock_When_KnockIsOn() {
     var link = joinable(true);
     var knock = knock(GroupChatJoinRequest.Status.PENDING);
-    when(knocks.knockOnCallLink(5L, 500L, guest, "VIDEO")).thenReturn(knock);
+    when(knocks.knockOnCallLink(5L, guest, "VIDEO")).thenReturn(knock);
 
     var join = service.join("token-5", guest);
 
@@ -282,7 +333,7 @@ class CallShareLinkServiceTest {
     assertThat(join.callRoomId()).isEqualTo(MEDIA);
     assertThat(join.sourceRoomId()).isEqualTo(SOURCE);
     assertThat(join.callId()).isEqualTo(CALL_ID);
-    verify(knocks, never()).knockOnCallLink(any(), any(), any(), anyString());
+    verify(knocks, never()).knockOnCallLink(any(), any(), anyString());
   }
 
   @Test
@@ -298,7 +349,7 @@ class CallShareLinkServiceTest {
     assertThat(join.callAdmitted()).isTrue();
     assertThat(join.admission()).isEqualTo(InviteLinkAdmission.KNOCK);
     assertThat(join.knockStatus()).isEqualTo(GroupChatJoinRequest.Status.ADMITTED);
-    verify(knocks, never()).knockOnCallLink(any(), any(), any(), anyString());
+    verify(knocks, never()).knockOnCallLink(any(), any(), anyString());
   }
 
   @Test
@@ -325,7 +376,7 @@ class CallShareLinkServiceTest {
 
     assertThatThrownBy(() -> service.join("token-5", guest))
         .isInstanceOf(CallShareLinkEndedException.class);
-    verify(knocks, never()).knockOnCallLink(any(), any(), any(), anyString());
+    verify(knocks, never()).knockOnCallLink(any(), any(), anyString());
   }
 
   @Test

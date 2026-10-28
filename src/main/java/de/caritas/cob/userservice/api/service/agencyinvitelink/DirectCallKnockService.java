@@ -9,8 +9,12 @@ import de.caritas.cob.userservice.api.model.GroupChatJoinRequest.Via;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatJoinRequestRepository;
+import de.caritas.cob.userservice.api.port.out.MatrixCallBindingRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService;
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.EnumSet;
@@ -40,6 +44,10 @@ public class DirectCallKnockService {
   private final @NonNull GroupChatJoinRequestRepository repository;
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull AgencyInviteLinkRepository inviteLinkRepository;
+  private final @NonNull MatrixCallBindingRepository callBindings;
+  private final @NonNull MatrixCallGuestService callGuests;
+  private final @NonNull UserRepository users;
+  private final @NonNull ConsultantRepository consultants;
 
   private static final Set<Via> CALL_KNOCKS = EnumSet.of(Via.DIRECT_LINK, Via.CALL_LINK);
   private static final Comparator<GroupChatJoinRequest> BY_REQUESTED_AT =
@@ -85,10 +93,10 @@ public class DirectCallKnockService {
 
   /**
    * A guest knocks on one running call through its share link (#1487). Same rules as {@link
-   * #knock}; the caller holds the lock on the link row, so parallel visits insert one knock.
+   * #knock}; the caller holds the lock on the link row, so parallel visits insert one knock. The
+   * knock never names the conversation of the call: the guest must not learn it.
    */
-  public GroupChatJoinRequest knockOnCallLink(
-      Long linkId, Long sessionId, User user, String medium) {
+  public GroupChatJoinRequest knockOnCallLink(Long linkId, User user, String medium) {
     return repository
         .findFirstByInviteLinkIdAndUserIdAndViaAndStatusOrderByIdDesc(
             linkId, user.getUserId(), Via.CALL_LINK, Status.PENDING)
@@ -98,7 +106,6 @@ public class DirectCallKnockService {
                 repository.save(
                     GroupChatJoinRequest.builder()
                         .via(Via.CALL_LINK)
-                        .sessionId(sessionId)
                         .userId(user.getUserId())
                         .inviteLinkId(linkId)
                         .medium(medium)
@@ -116,6 +123,38 @@ public class DirectCallKnockService {
   /** "Anklopfen" switched off (#1487): everybody waiting on the link is let in at once. */
   public List<GroupChatJoinRequest> admitWaitingOnCallLink(Long linkId, String decidedBy) {
     return closeWaitingOnCallLink(linkId, Status.ADMITTED, decidedBy);
+  }
+
+  /**
+   * "Anklopfen" switched back on (#1487): earlier admissions no longer let anybody in again. Guests
+   * already in the call keep their seat; a guest who joins anew knocks.
+   */
+  public List<GroupChatJoinRequest> cancelAdmissionsOnCallLink(Long linkId) {
+    var now = LocalDateTime.now();
+    return repository
+        .findByInviteLinkIdAndViaAndStatus(linkId, Via.CALL_LINK, Status.ADMITTED)
+        .stream()
+        .map(
+            knock -> {
+              knock.setStatus(Status.CANCELLED);
+              knock.setDecidedAt(now);
+              return repository.save(knock);
+            })
+        .toList();
+  }
+
+  /** A counsellor removed the guest from the call (#1487): no open or granted knock remains. */
+  public void declineGuestOnCallLink(Long linkId, String userId, String decidedBy) {
+    var now = LocalDateTime.now();
+    repository.findByInviteLinkIdAndUserIdAndVia(linkId, userId, Via.CALL_LINK).stream()
+        .filter(knock -> knock.isPending() || knock.getStatus() == Status.ADMITTED)
+        .forEach(
+            knock -> {
+              knock.setStatus(Status.DECLINED);
+              knock.setDecidedAt(now);
+              knock.setDecidedBy(decidedBy);
+              repository.save(knock);
+            });
   }
 
   /** The call of the link ended (#1487): nobody keeps waiting for it. */
@@ -237,12 +276,48 @@ public class DirectCallKnockService {
     if (knock.getStatus() == outcome) {
       return knock;
     }
+    if (knock.getVia() == Via.CALL_LINK
+        && knock.getStatus() == Status.ADMITTED
+        && outcome == Status.DECLINED) {
+      return revokeCallLinkAdmission(knock, consultant);
+    }
     if (!knock.isPending()) {
       throw new ConflictException("Call knock is already " + knock.getStatus());
     }
     knock.setStatus(outcome);
     knock.setDecidedAt(LocalDateTime.now());
     knock.setDecidedBy(consultant.getId());
+    return repository.save(knock);
+  }
+
+  /**
+   * Declining an admitted call-link guest takes the admission back (#1487): the guest loses the
+   * call-room seat at once and cannot come back through the link for this call.
+   */
+  private GroupChatJoinRequest revokeCallLinkAdmission(
+      GroupChatJoinRequest knock, Consultant consultant) {
+    knock.setStatus(Status.DECLINED);
+    knock.setDecidedAt(LocalDateTime.now());
+    knock.setDecidedBy(consultant.getId());
+    var binding =
+        inviteLinkRepository
+            .findById(knock.getInviteLinkId())
+            .map(link -> link.getCallBindingId())
+            .flatMap(callBindings::findById)
+            .orElse(null);
+    var guestMatrixId =
+        users
+            .findByUserIdAndDeleteDateIsNull(knock.getUserId())
+            .map(User::getMatrixUserId)
+            .orElse(null);
+    var moderator =
+        consultants
+            .findByIdAndDeleteDateIsNull(consultant.getId())
+            .map(Consultant::getMatrixUserId)
+            .orElse(null);
+    if (binding != null) {
+      callGuests.revokeSeat(binding, guestMatrixId, moderator);
+    }
     return repository.save(knock);
   }
 

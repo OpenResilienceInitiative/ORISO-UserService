@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
 import de.caritas.cob.userservice.api.port.out.MatrixCallBindingRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService;
 import de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService.Outcome;
 import java.security.SecureRandom;
@@ -52,6 +53,7 @@ public class CallShareLinkService {
   private final @NonNull DirectInvitePolicy directInvitePolicy;
   private final @NonNull TemporaryAccountPolicy temporaryAccountPolicy;
   private final @NonNull TenantService tenantService;
+  private final @NonNull UserRepository users;
 
   /** Backstop when the end of a call is never observed: no link outlives this. */
   @Value("${call-share-links.max-lifetime-minutes:480}")
@@ -72,11 +74,8 @@ public class CallShareLinkService {
       return view(existing.get(), false);
     }
     var medium = mediumOf(binding);
-    var session =
-        binding.getSessionId() == null
-            ? Optional.<Session>empty()
-            : sessions.findById(binding.getSessionId());
-    Long agencyId = session.map(Session::getAgencyId).orElse(null);
+    // Policies need the Beratungsstelle; it is read from the call, never copied onto the link.
+    Long agencyId = agencyOf(binding);
     if (!directInvitePolicy.allows(tenant, agencyId, medium)) {
       throw new ForbiddenException("Direct invitations are not allowed here");
     }
@@ -86,9 +85,6 @@ public class CallShareLinkService {
         AgencyInviteLink.builder()
             .token(generateToken())
             .tenantId(tenant)
-            .agencyId(agencyId)
-            .consultingTypeId(session.map(Session::getConsultingTypeId).orElse(null))
-            .topicId(session.map(Session::getMainTopicId).orElse(null))
             .linkKind(CALL)
             .chatType(medium.name())
             .anonymity(InviteLinkAnonymity.FULL.name())
@@ -138,11 +134,14 @@ public class CallShareLinkService {
     if (temporaryAccount != null) {
       link.setTemporaryAccount(
           temporaryAccount
-              && temporaryAccountPolicy.allows(tenant, link.getAgencyId(), mediumOf(binding)));
+              && temporaryAccountPolicy.allows(tenant, agencyOf(binding), mediumOf(binding)));
     }
     if (knock != null && knock != link.isKnock()) {
       link.setKnock(knock);
-      if (!knock) {
+      if (knock) {
+        // Guests already in the call stay; whoever joins anew knocks again.
+        knocks.cancelAdmissionsOnCallLink(link.getId());
+      } else {
         knocks.admitWaitingOnCallLink(link.getId(), consultantId);
       }
     }
@@ -172,13 +171,16 @@ public class CallShareLinkService {
     }
     tenantService.requireOperationalTenant(link.getTenantId());
     var medium = mediumOf(binding);
-    if (!directInvitePolicy.allows(link.getTenantId(), link.getAgencyId(), medium)) {
+    if (!directInvitePolicy.allows(link.getTenantId(), agencyOf(binding), medium)) {
       throw new ForbiddenException("Direct invitations are not allowed here");
+    }
+    // Removed by a counsellor: neither knocking nor joining brings the guest back into this call.
+    if (callGuests.wasRemoved(binding, guest.getMatrixUserId())) {
+      throw new ForbiddenException("Removed from this call");
     }
     var admitted = knocks.callLinkAdmission(link.getId(), guest).orElse(null);
     if (link.isKnock() && admitted == null) {
-      var knock =
-          knocks.knockOnCallLink(link.getId(), binding.getSessionId(), guest, medium.name());
+      var knock = knocks.knockOnCallLink(link.getId(), guest, medium.name());
       return Join.waiting(medium, knock);
     }
     var seat =
@@ -203,6 +205,42 @@ public class CallShareLinkService {
               HttpStatus.BAD_GATEWAY, "call_state_lookup_unavailable");
       case NOT_FOUND -> throw new NotFoundException("Share link not found");
     };
+  }
+
+  /**
+   * A counsellor in the call removes a guest (#1487): the seat is revoked, every open or granted
+   * knock of that guest on the link is declined, and the guest cannot come back for this call.
+   */
+  @Transactional
+  public void removeGuest(Long tenant, String consultantId, Long linkId, String guestMatrixUserId) {
+    var link =
+        links
+            .findByIdForUpdate(linkId)
+            .filter(value -> CALL.equals(value.getLinkKind()))
+            .filter(value -> tenant != null && tenant.equals(value.getTenantId()))
+            .orElseThrow(() -> new NotFoundException("Share link %s not found", linkId));
+    var stored = bindingOf(link);
+    requireUsable(link, stored);
+    var call =
+        callGuests.counsellorCall(
+            tenant, consultantId, stored.getSourceRoomId(), stored.getCallId());
+    if (call.outcome() == Outcome.MATRIX_UNAVAILABLE) {
+      throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "call_state_lookup_unavailable");
+    }
+    if (call.outcome() != Outcome.ADMITTED) {
+      throw new NotFoundException("Share link %s not found", linkId);
+    }
+    boolean seated =
+        callGuests.revokeSeat(call.binding(), guestMatrixUserId, call.counsellorMatrixId());
+    var guest =
+        guestMatrixUserId == null
+            ? Optional.<User>empty()
+            : users.findByMatrixUserIdAndDeleteDateIsNull(guestMatrixUserId);
+    guest.ifPresent(
+        value -> knocks.declineGuestOnCallLink(link.getId(), value.getUserId(), consultantId));
+    if (!seated && guest.isEmpty()) {
+      throw new NotFoundException("Guest not found in this call");
+    }
   }
 
   /**
@@ -259,9 +297,22 @@ public class CallShareLinkService {
   }
 
   /** Whether temporary accounts may be offered; the effective value is the setting AND this. */
+  @Transactional(readOnly = true)
   public boolean temporaryAccountAllowed(AgencyInviteLink link) {
+    var binding =
+        link.getCallBindingId() == null
+            ? null
+            : bindings.findById(link.getCallBindingId()).orElse(null);
     return temporaryAccountPolicy.allows(
-        link.getTenantId(), link.getAgencyId(), InviteLinkChatType.valueOf(link.getChatType()));
+        link.getTenantId(),
+        binding == null ? null : agencyOf(binding),
+        InviteLinkChatType.valueOf(link.getChatType()));
+  }
+
+  private Long agencyOf(MatrixCallBinding binding) {
+    return binding.getSessionId() == null
+        ? null
+        : sessions.findById(binding.getSessionId()).map(Session::getAgencyId).orElse(null);
   }
 
   /** For the public link context: throws 410 once the call is over. */

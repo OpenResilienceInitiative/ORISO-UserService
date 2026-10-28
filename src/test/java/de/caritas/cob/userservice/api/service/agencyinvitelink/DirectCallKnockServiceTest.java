@@ -42,13 +42,27 @@ class DirectCallKnockServiceTest {
   @Mock
   private de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository inviteLinkRepository;
 
+  @Mock private de.caritas.cob.userservice.api.port.out.MatrixCallBindingRepository callBindings;
+
+  @Mock private de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService callGuests;
+  @Mock private de.caritas.cob.userservice.api.port.out.UserRepository users;
+  @Mock private de.caritas.cob.userservice.api.port.out.ConsultantRepository consultants;
+
   private DirectCallKnockService service;
   private Consultant counsellor;
   private User asker;
 
   @BeforeEach
   void setUp() {
-    service = new DirectCallKnockService(repository, sessionRepository, inviteLinkRepository);
+    service =
+        new DirectCallKnockService(
+            repository,
+            sessionRepository,
+            inviteLinkRepository,
+            callBindings,
+            callGuests,
+            users,
+            consultants);
     counsellor = consultant("counsellor-1");
     asker = new User();
     asker.setUserId("asker-1");
@@ -239,13 +253,15 @@ class DirectCallKnockServiceTest {
 
   @Test
   void knockOnCallLink_Should_CreateACallLinkKnock_OnTheLinkNotTheConversation() {
-    var knock = service.knockOnCallLink(5L, SESSION_ID, asker, "AUDIO");
+    var knock = service.knockOnCallLink(5L, asker, "AUDIO");
 
     assertThat(knock.getVia()).isEqualTo(Via.CALL_LINK);
     assertThat(knock.getInviteLinkId()).isEqualTo(5L);
     assertThat(knock.getUserId()).isEqualTo("asker-1");
     assertThat(knock.getStatus()).isEqualTo(Status.PENDING);
     assertThat(knock.getMedium()).isEqualTo("AUDIO");
+    // The guest must not learn the conversation of the call (security review, #1487).
+    assertThat(knock.getSessionId()).isNull();
   }
 
   @Test
@@ -255,7 +271,7 @@ class DirectCallKnockServiceTest {
             5L, "asker-1", Via.CALL_LINK, Status.PENDING))
         .thenReturn(Optional.of(open));
 
-    assertThat(service.knockOnCallLink(5L, SESSION_ID, asker, "AUDIO")).isSameAs(open);
+    assertThat(service.knockOnCallLink(5L, asker, "AUDIO")).isSameAs(open);
     verify(repository, never()).save(any());
   }
 
@@ -287,6 +303,51 @@ class DirectCallKnockServiceTest {
     when(inviteLinkRepository.findById(5L)).thenReturn(Optional.of(expired));
 
     assertThatThrownBy(() -> service.admit(1L, counsellor)).isInstanceOf(NotFoundException.class);
+  }
+
+  @Test
+  void decline_Should_RevokeAnAdmittedCallLinkGuest_AndTakeTheSeatBack() {
+    var knock = callLinkKnock(1L, Status.ADMITTED);
+    when(repository.findByIdForUpdate(1L)).thenReturn(Optional.of(knock));
+    var link = callLink("counsellor-1");
+    link.setCallBindingId(3L);
+    when(inviteLinkRepository.findById(5L)).thenReturn(Optional.of(link));
+    var binding = de.caritas.cob.userservice.api.model.MatrixCallBinding.builder().id(3L).build();
+    when(callBindings.findById(3L)).thenReturn(Optional.of(binding));
+    asker.setMatrixUserId("@asker:example");
+    when(users.findByUserIdAndDeleteDateIsNull("asker-1")).thenReturn(Optional.of(asker));
+    counsellor.setMatrixUserId("@counsellor:example");
+    when(consultants.findByIdAndDeleteDateIsNull("counsellor-1"))
+        .thenReturn(Optional.of(counsellor));
+
+    assertThat(service.decline(1L, counsellor).getStatus()).isEqualTo(Status.DECLINED);
+    verify(callGuests).revokeSeat(binding, "@asker:example", "@counsellor:example");
+  }
+
+  @Test
+  void cancelAdmissionsOnCallLink_Should_EndEarlierAdmissionsForRejoins() {
+    var admitted = callLinkKnock(1L, Status.ADMITTED);
+    when(repository.findByInviteLinkIdAndViaAndStatus(5L, Via.CALL_LINK, Status.ADMITTED))
+        .thenReturn(List.of(admitted));
+
+    service.cancelAdmissionsOnCallLink(5L);
+    assertThat(admitted.getStatus()).isEqualTo(Status.CANCELLED);
+    verify(callGuests, never()).revokeSeat(any(), any(), any());
+  }
+
+  @Test
+  void declineGuestOnCallLink_Should_DeclineOpenAndGrantedKnocksOfThatGuest() {
+    var pending = callLinkKnock(1L, Status.PENDING);
+    var admitted = callLinkKnock(2L, Status.ADMITTED);
+    var cancelled = callLinkKnock(3L, Status.CANCELLED);
+    when(repository.findByInviteLinkIdAndUserIdAndVia(5L, "asker-1", Via.CALL_LINK))
+        .thenReturn(List.of(pending, admitted, cancelled));
+
+    service.declineGuestOnCallLink(5L, "asker-1", "counsellor-1");
+
+    assertThat(pending.getStatus()).isEqualTo(Status.DECLINED);
+    assertThat(admitted.getStatus()).isEqualTo(Status.DECLINED);
+    assertThat(cancelled.getStatus()).isEqualTo(Status.CANCELLED);
   }
 
   @Test

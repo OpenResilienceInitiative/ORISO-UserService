@@ -145,7 +145,9 @@ public class DirectLinkControllerDelegate {
   private CallKnockDTO toKnockDto(GroupChatJoinRequest knock) {
     return new CallKnockDTO()
         .id(knock.getId())
-        .sessionId(knock.getSessionId())
+        // A call-link guest must never learn the conversation of the call (#1487).
+        .sessionId(
+            knock.getVia() == GroupChatJoinRequest.Via.CALL_LINK ? null : knock.getSessionId())
         .callShareLinkId(
             knock.getVia() == GroupChatJoinRequest.Via.CALL_LINK ? knock.getInviteLinkId() : null)
         .status(CallKnockStatus.valueOf(knock.getStatus().name()))

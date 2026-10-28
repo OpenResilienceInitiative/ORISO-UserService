@@ -180,6 +180,21 @@ public class AgencyInviteLinkService {
     return result;
   }
 
+  /**
+   * Public entry metadata of any link (the {@code /context} route): a call share link (#1487) has
+   * its own, smaller shape.
+   */
+  @Transactional(readOnly = true)
+  public Object getPublicContext(String token) {
+    AgencyInviteLink link =
+        repository
+            .findByToken(token)
+            .orElseThrow(() -> new NotFoundException("Invite link not found"));
+    return InviteLinkKind.CALL.name().equals(link.getLinkKind())
+        ? callShareContext(link)
+        : contextOf(link);
+  }
+
   /** Read public entry metadata without provisioning a session or changing the link. */
   @Transactional(readOnly = true)
   public InvitationContext getContext(String token) {
@@ -188,8 +203,12 @@ public class AgencyInviteLinkService {
             .findByToken(token)
             .orElseThrow(() -> new NotFoundException("Invite link not found"));
     if (InviteLinkKind.CALL.name().equals(link.getLinkKind())) {
-      return callShareContext(link);
+      throw new BadRequestException("Not a registration link");
     }
+    return contextOf(link);
+  }
+
+  private InvitationContext contextOf(AgencyInviteLink link) {
     if (InviteLinkStatus.DISABLED.name().equals(link.getStatus())) {
       throw new DirectLinkInactiveException();
     }
@@ -230,26 +249,30 @@ public class AgencyInviteLinkService {
   /**
    * Call share link (#1487): 410 once the call is over. {@code temporaryAccount} is effective (the
    * counsellor's setting, and allowed by platform and Träger); {@code admission} follows
-   * "Anklopfen" and changes while the call runs. Nothing about the call or its conversation is
-   * exposed.
+   * "Anklopfen" and changes while the call runs. Nothing about the call, its conversation,
+   * Beratungsstelle or topic is exposed.
    */
-  private InvitationContext callShareContext(AgencyInviteLink link) {
+  private CallShareContext callShareContext(AgencyInviteLink link) {
     callShareLinkService.requireUsable(link);
-    return new InvitationContext(
+    return new CallShareContext(
         link.getTenantId(),
-        link.getAgencyId(),
-        link.getConsultingTypeId(),
-        link.getTopicId(),
         link.getChatType(),
         link.isTemporaryAccount() && callShareLinkService.temporaryAccountAllowed(link),
         (link.isKnock() ? InviteLinkAdmission.KNOCK : InviteLinkAdmission.DIRECT).name(),
         InviteLinkKind.CALL.name());
   }
 
+  /** Public context of a call share link (#1487). */
+  public record CallShareContext(
+      Long tenantId,
+      String chatType,
+      boolean temporaryAccount,
+      String admission,
+      String linkKind) {}
+
   /**
    * Public context deliberately excludes credentials and invitation administration data, including
-   * the owner of a direct link. The direct-link fields are omitted for every other link; {@code
-   * linkKind} is set only for a call share link (#1487).
+   * the owner of a direct link. The direct-link fields are omitted for every other link.
    */
   public record InvitationContext(
       Long tenantId,
@@ -258,28 +281,7 @@ public class AgencyInviteLinkService {
       Long topicId,
       String chatType,
       @JsonInclude(JsonInclude.Include.NON_NULL) Boolean temporaryAccount,
-      @JsonInclude(JsonInclude.Include.NON_NULL) String admission,
-      @JsonInclude(JsonInclude.Include.NON_NULL) String linkKind) {
-
-    public InvitationContext(
-        Long tenantId,
-        Long agencyId,
-        Integer consultingTypeId,
-        Long topicId,
-        String chatType,
-        Boolean temporaryAccount,
-        String admission) {
-      this(
-          tenantId,
-          agencyId,
-          consultingTypeId,
-          topicId,
-          chatType,
-          temporaryAccount,
-          admission,
-          null);
-    }
-  }
+      @JsonInclude(JsonInclude.Include.NON_NULL) String admission) {}
 
   /**
    * Redeem the token: validate, mark USED, return tenant/agency/consulting-type/topic metadata for

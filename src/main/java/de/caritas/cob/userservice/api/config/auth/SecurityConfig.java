@@ -331,7 +331,9 @@ public class SecurityConfig {
                     "/matrix/calls/share-links",
                     "/service/matrix/calls/share-links",
                     "/matrix/calls/share-links/{linkId:[0-9]+}",
-                    "/service/matrix/calls/share-links/{linkId:[0-9]+}")
+                    "/service/matrix/calls/share-links/{linkId:[0-9]+}",
+                    "/matrix/calls/share-links/{linkId:[0-9]+}/guests/remove",
+                    "/service/matrix/calls/share-links/{linkId:[0-9]+}/guests/remove")
                 .hasAuthority(CONSULTANT_DEFAULT)
                 .requestMatchers(
                     "/users/email",

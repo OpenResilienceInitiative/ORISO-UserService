@@ -66,6 +66,9 @@ public interface GroupChatJoinRequestRepository extends CrudRepository<GroupChat
   List<GroupChatJoinRequest> findByInviteLinkIdAndViaAndStatus(
       Long inviteLinkId, Via via, Status status);
 
+  List<GroupChatJoinRequest> findByInviteLinkIdAndUserIdAndVia(
+      Long inviteLinkId, String userId, Via via);
+
   /** Waiting guests of the share links a counsellor created (#1487). */
   @Query(
       "SELECT request FROM GroupChatJoinRequest request, AgencyInviteLink link"

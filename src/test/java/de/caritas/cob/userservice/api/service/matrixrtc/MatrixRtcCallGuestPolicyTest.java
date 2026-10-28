@@ -46,6 +46,11 @@ class MatrixRtcCallGuestPolicyTest {
     jdbc.execute("CREATE TABLE user(user_id VARCHAR(36),matrix_user_id VARCHAR(255))");
     jdbc.execute("CREATE TABLE consultant(consultant_id VARCHAR(36),matrix_user_id VARCHAR(255))");
     jdbc.execute("CREATE TABLE account_inactivity(identity_id VARCHAR(36),status VARCHAR(20))");
+    // The knock-first check of #1479 runs before the guest check of #1477 (stacked in #1487).
+    jdbc.execute("CREATE TABLE session(id BIGINT PRIMARY KEY,matrix_room_id VARCHAR(255))");
+    jdbc.execute(
+        "CREATE TABLE group_chat_join_request(id BIGINT PRIMARY KEY,session_id BIGINT,"
+            + "user_id VARCHAR(36),via VARCHAR(32),status VARCHAR(16))");
     jdbc.execute(
         "CREATE TABLE matrix_call_binding(id BIGINT PRIMARY KEY,source_room_id VARCHAR(255),"
             + "media_room_id VARCHAR(255),ended_at BIGINT)");
