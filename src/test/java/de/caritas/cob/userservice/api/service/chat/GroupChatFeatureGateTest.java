@@ -10,16 +10,25 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.service.agency.EffectiveAgencySettingsLookup;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.BooleanPermissionPolicy;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.PermissionPolicyMode;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.Settings;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.web.client.ResourceAccessException;
@@ -40,6 +49,161 @@ class GroupChatFeatureGateTest {
     gate = new GroupChatFeatureGate(tenantService, effectiveAgencySettingsLookup);
   }
 
+  @Test
+  void suggestedTenantOffMayBeEnabledByTheEffectiveAgencyFormat() {
+    when(consultant.getTenantId()).thenReturn(TENANT_ID);
+    var tenant =
+        new RestrictedTenantDTO(
+                Map.of(
+                    "featureSelfHelpGroupsEnabled",
+                    new de.caritas.cob.userservice.tenantservice.generated.web.model
+                            .BooleanPermissionPolicy()
+                        .value(false)
+                        .mode(
+                            de.caritas.cob.userservice.tenantservice.generated.web.model
+                                .PermissionPolicyMode.SUGGESTED)))
+            .id(TENANT_ID)
+            .settings(new Settings().featureGroupChatV2Enabled(false));
+    when(tenantService.getRestrictedTenantDataFresh(TENANT_ID)).thenReturn(tenant);
+    givenAgencySettings(agencySettings(false, false, true));
+
+    assertThatCode(() -> gate.requireEnabled(consultant, circleRequest()))
+        .doesNotThrowAnyException();
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "SELF_HELP,false,SUGGESTED,true,true", "INTERNAL_GROUP,false,SUGGESTED,true,true",
+    "SELF_HELP,false,ENFORCED,true,false", "INTERNAL_GROUP,false,ENFORCED,true,false",
+    "SELF_HELP,true,ENFORCED,false,true", "INTERNAL_GROUP,true,ENFORCED,false,true",
+    "SELF_HELP,true,SUGGESTED,false,false", "INTERNAL_GROUP,true,SUGGESTED,false,false"
+  })
+  void canonicalFormatPolicyWinsTheLegacyMasterAndRespectsLeafChoices(
+      ConversationType format,
+      boolean parentValue,
+      PermissionPolicyMode mode,
+      boolean agencyValue,
+      boolean allowed) {
+    String key =
+        format == ConversationType.SELF_HELP
+            ? "featureSelfHelpGroupsEnabled"
+            : "featureInternalGroupChatEnabled";
+    givenTenantPolicies(
+        false,
+        Map.of(
+            key,
+            policy(parentValue, mode),
+            "featureGroupChatV2Enabled",
+            policy(false, PermissionPolicyMode.ENFORCED)));
+    if (parentValue || mode != PermissionPolicyMode.ENFORCED) {
+      givenAgencySettings(agencySettings(false, agencyValue, agencyValue));
+    }
+    var request = format == ConversationType.SELF_HELP ? circleRequest() : internalGroupRequest();
+    if (allowed)
+      assertThatCode(() -> gate.requireEnabled(consultant, request)).doesNotThrowAnyException();
+    else
+      assertThatThrownBy(() -> gate.requireEnabled(consultant, request))
+          .isInstanceOf(ForbiddenException.class);
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void exactModernPolicyIsNotGrantedOrVetoedByLegacyAgencyMasterWhenFormatIsMissing(
+      boolean enabled) {
+    givenTenantPolicies(
+        !enabled,
+        Map.of("featureSelfHelpGroupsEnabled", policy(enabled, PermissionPolicyMode.SUGGESTED)));
+    givenAgencySettings(agencySettings(!enabled, null, null));
+    if (enabled)
+      assertThatCode(() -> gate.requireEnabled(consultant, circleRequest()))
+          .doesNotThrowAnyException();
+    else
+      assertThatThrownBy(() -> gate.requireEnabled(consultant, circleRequest()))
+          .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void internalAndSelfHelpPoliciesStayIndependent() {
+    givenTenantPolicies(
+        false,
+        Map.of(
+            "featureInternalGroupChatEnabled", policy(true, PermissionPolicyMode.SUGGESTED),
+            "featureSelfHelpGroupsEnabled", policy(false, PermissionPolicyMode.ENFORCED)));
+    givenAgencySettings(agencySettings(false, true, false));
+    assertThatCode(() -> gate.requireEnabled(consultant, internalGroupRequest()))
+        .doesNotThrowAnyException();
+    assertThatThrownBy(() -> gate.requireEnabled(consultant, circleRequest()))
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void anAbsentModernKeyInheritsTheCanonicalV2Recommendation() {
+    givenTenantPolicies(
+        false, Map.of("featureGroupChatV2Enabled", policy(false, PermissionPolicyMode.SUGGESTED)));
+    givenAgencySettings(agencySettings(false, true, true));
+    assertThatCode(() -> gate.requireEnabled(consultant, circleRequest()))
+        .doesNotThrowAnyException();
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void agencyOutageUsesTheCanonicalTenantValueRatherThanTheOppositeLegacyFlag(boolean enabled) {
+    givenTenantPolicies(
+        !enabled,
+        Map.of("featureSelfHelpGroupsEnabled", policy(enabled, PermissionPolicyMode.SUGGESTED)));
+    when(effectiveAgencySettingsLookup.findEffectiveSettings(AGENCY_ID, TENANT_ID))
+        .thenThrow(new ResourceAccessException("offline"));
+    if (enabled)
+      assertThatCode(() -> gate.requireEnabled(consultant, circleRequest()))
+          .doesNotThrowAnyException();
+    else
+      assertThatThrownBy(() -> gate.requireEnabled(consultant, circleRequest()))
+          .isInstanceOf(ForbiddenException.class);
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void missingAgencySettingsUseTheCanonicalTenantDecision(boolean enabled) {
+    givenTenantPolicies(
+        !enabled,
+        Map.of("featureSelfHelpGroupsEnabled", policy(enabled, PermissionPolicyMode.SUGGESTED)));
+    when(effectiveAgencySettingsLookup.findEffectiveSettings(AGENCY_ID, TENANT_ID))
+        .thenReturn(Optional.empty());
+    if (enabled)
+      assertThatCode(() -> gate.requireEnabled(consultant, circleRequest()))
+          .doesNotThrowAnyException();
+    else
+      assertThatThrownBy(() -> gate.requireEnabled(consultant, circleRequest()))
+          .isInstanceOf(ForbiddenException.class);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"entry", "value", "mode"})
+  void malformedCanonicalPolicyCannotFallBackToLegacyOn(String missing) {
+    var entry = policy(true, PermissionPolicyMode.SUGGESTED);
+    if (missing.equals("value")) entry.setValue(null);
+    if (missing.equals("mode")) entry.setMode(null);
+    var map = new HashMap<String, BooleanPermissionPolicy>();
+    map.put("featureSelfHelpGroupsEnabled", missing.equals("entry") ? null : entry);
+    givenTenantPolicies(true, map);
+    assertThatThrownBy(() -> gate.requireEnabled(consultant, circleRequest()))
+        .isInstanceOf(ServiceUnavailableException.class);
+    verify(effectiveAgencySettingsLookup, never()).findEffectiveSettings(anyLong(), anyLong());
+  }
+
+  @Test
+  void aFreshTenantProjectionForAnotherTenantCannotAuthorizeCreation() {
+    when(consultant.getTenantId()).thenReturn(TENANT_ID);
+    when(tenantService.getRestrictedTenantDataFresh(TENANT_ID))
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(8L)
+                .settings(new Settings().featureGroupChatV2Enabled(true)));
+    assertThatThrownBy(() -> gate.requireEnabled(consultant, circleRequest()))
+        .isInstanceOf(ForbiddenException.class);
+    verify(effectiveAgencySettingsLookup, never()).findEffectiveSettings(anyLong(), anyLong());
+  }
+
   // --- Traeger (tenant) level, unchanged behaviour -------------------------------------------
 
   @Test
@@ -58,7 +222,7 @@ class GroupChatFeatureGateTest {
     assertThatThrownBy(() -> gate.requireEnabled(consultant, circleRequest()))
         .isInstanceOf(ForbiddenException.class)
         .hasMessage("Self-help group chat is disabled for this tenant");
-    verify(effectiveAgencySettingsLookup, never()).findEffectiveSettings(anyLong());
+    verify(effectiveAgencySettingsLookup, never()).findEffectiveSettings(anyLong(), anyLong());
   }
 
   @Test
@@ -175,7 +339,7 @@ class GroupChatFeatureGateTest {
   @Test
   void unknownAgencyLeavesTheTenantDecision() {
     givenTenantGroupChatV2(true);
-    when(effectiveAgencySettingsLookup.findEffectiveSettings(AGENCY_ID))
+    when(effectiveAgencySettingsLookup.findEffectiveSettings(AGENCY_ID, TENANT_ID))
         .thenReturn(Optional.empty());
 
     assertThatCode(() -> gate.requireEnabled(consultant, circleRequest()))
@@ -185,7 +349,7 @@ class GroupChatFeatureGateTest {
   @Test
   void agencyServiceFailureFallsBackToTenantThatAllows() {
     givenTenantGroupChatV2(true);
-    when(effectiveAgencySettingsLookup.findEffectiveSettings(AGENCY_ID))
+    when(effectiveAgencySettingsLookup.findEffectiveSettings(AGENCY_ID, TENANT_ID))
         .thenThrow(new ResourceAccessException("connection refused"));
 
     assertThatCode(() -> gate.requireEnabled(consultant, circleRequest()))
@@ -221,10 +385,24 @@ class GroupChatFeatureGateTest {
 
     assertThatCode(() -> gate.requireEnabled(consultant, circleRequestWithoutAgency()))
         .doesNotThrowAnyException();
-    verify(effectiveAgencySettingsLookup, never()).findEffectiveSettings(anyLong());
+    verify(effectiveAgencySettingsLookup, never()).findEffectiveSettings(anyLong(), anyLong());
   }
 
   // --- helpers ---------------------------------------------------------------------------------
+
+  private void givenTenantPolicies(
+      boolean oldMaster, Map<String, BooleanPermissionPolicy> policies) {
+    when(consultant.getTenantId()).thenReturn(TENANT_ID);
+    when(tenantService.getRestrictedTenantDataFresh(TENANT_ID))
+        .thenReturn(
+            new RestrictedTenantDTO(policies)
+                .id(TENANT_ID)
+                .settings(new Settings().featureGroupChatV2Enabled(oldMaster)));
+  }
+
+  private static BooleanPermissionPolicy policy(boolean value, PermissionPolicyMode mode) {
+    return new BooleanPermissionPolicy().value(value).mode(mode);
+  }
 
   private void givenTenantGroupChatV2(boolean enabled) {
     when(consultant.getTenantId()).thenReturn(TENANT_ID);
@@ -247,7 +425,7 @@ class GroupChatFeatureGateTest {
 
   private void givenAgencySettings(
       de.caritas.cob.userservice.agencyserivce.generated.web.model.Settings settings) {
-    when(effectiveAgencySettingsLookup.findEffectiveSettings(AGENCY_ID))
+    when(effectiveAgencySettingsLookup.findEffectiveSettings(AGENCY_ID, TENANT_ID))
         .thenReturn(Optional.of(settings));
   }
 
