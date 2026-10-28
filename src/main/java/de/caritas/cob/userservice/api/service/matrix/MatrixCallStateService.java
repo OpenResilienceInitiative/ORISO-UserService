@@ -19,6 +19,7 @@ public class MatrixCallStateService {
   private final UserRepository users;
   private final ConsultantRepository consultants;
   private final MatrixSynapseService matrix;
+  private final MatrixCallGuestService callGuests;
 
   @Transactional(readOnly = true)
   public Optional<CallState> read(AuthenticatedUser actor, String sourceRoomId, String callId) {
@@ -44,14 +45,12 @@ public class MatrixCallStateService {
                 .findByUserIdAndDeleteDateIsNull(actor.getUserId())
                 .filter(user -> actor.getTenantId().equals(user.getTenantId()))
                 .map(user -> user.getMatrixUserId());
-    if (matrixId.isEmpty()
-        || matrixId.get().isBlank()
-        || !matrix
+    if (matrixId.isEmpty() || matrixId.get().isBlank()) return Optional.empty();
+    boolean conversationMember =
+        matrix
             .getCallRoomMembers(sourceRoomId)
             .map(members -> members.contains(matrixId.get()))
-            .orElse(false)) {
-      return Optional.empty();
-    }
+            .orElse(false);
     return bindings
         .findBySourceRoomIdAndCallId(sourceRoomId, callId)
         .filter(
@@ -59,6 +58,8 @@ public class MatrixCallStateService {
                 Objects.equals(binding.getTenantId(), conversation.getTenantId())
                     && Objects.equals(binding.getSessionId(), conversation.getSessionId())
                     && Objects.equals(binding.getChatId(), conversation.getChatId()))
+        // US#1477: a call guest reads this one call while the seat is held, nothing else.
+        .filter(binding -> conversationMember || callGuests.isActiveGuest(binding, matrixId.get()))
         .map(
             binding -> {
               Long started = binding.getStartedAt();

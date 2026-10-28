@@ -91,7 +91,8 @@ public class MatrixRtcCallPolicyService {
           CallPolicyDenialReason.ROOM_MEMBERS_UNAVAILABLE);
       return CallMediaPolicy.denied();
     }
-    if (!currentMembers.get().contains(matrixUserId)) {
+    if (!currentMembers.get().contains(matrixUserId)
+        && !isActiveCallGuest(sourceRoomId, matrixUserId)) {
       log.info(
           "Call policy denied [{}]: reason={}",
           correlationId,
@@ -135,6 +136,25 @@ public class MatrixRtcCallPolicyService {
         enabled(settings.getFeatureVideoCallsEnabled())
             && enabled(videoFlag(settings, context.get().chatType()));
     return new CallMediaPolicy(audioAllowed, videoAllowed);
+  }
+
+  /**
+   * US#1477: a call guest is no member of the source conversation. The counsellor's admission to
+   * the still running call stands in for that membership, and only until the seat is revoked.
+   */
+  private boolean isActiveCallGuest(String sourceRoomId, String matrixUserId) {
+    try {
+      return !jdbc.queryForList(
+              "SELECT g.id FROM matrix_call_guest g JOIN matrix_call_binding b ON b.id = g.binding_id"
+                  + " WHERE b.source_room_id = ? AND b.ended_at IS NULL"
+                  + " AND g.matrix_user_id = ? AND g.revoked_at IS NULL",
+              Long.class,
+              sourceRoomId,
+              matrixUserId)
+          .isEmpty();
+    } catch (org.springframework.dao.DataAccessException unavailable) {
+      return false;
+    }
   }
 
   private RestrictedTenantDTO getTenant(Long tenantId) {

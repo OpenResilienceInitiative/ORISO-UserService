@@ -859,6 +859,31 @@ public class MatrixRoomClient {
     }
   }
 
+  /**
+   * Removes a user's explicit entry from the room's power levels, so a former call guest keeps no
+   * elevated right (US#1477). Writes only when an entry exists.
+   */
+  public boolean clearUserPowerLevel(String roomId, String userId, String accessToken) {
+    try {
+      var url = buildUrl(ENDPOINT_POWER_LEVELS, Map.of("roomId", roomId));
+      HttpHeaders headers = getClientHttpHeaders(accessToken);
+      ResponseEntity<Map> current =
+          restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(headers), Map.class);
+      if (current.getBody() == null) return false;
+      @SuppressWarnings("unchecked")
+      Map<String, Object> powerLevels = new HashMap<>(current.getBody());
+      Map<String, Object> users = extractUsers(powerLevels);
+      if (!users.containsKey(userId)) return true;
+      users.remove(userId);
+      powerLevels.put("users", users);
+      restTemplate.put(url, new HttpEntity<>(powerLevels, headers));
+      return true;
+    } catch (Exception e) {
+      log.warn("Could not clear power level in room {}: {}", roomId, e.getMessage());
+      return false;
+    }
+  }
+
   public boolean removeUserFromRoom(String roomId, String userId, String accessToken) {
     try {
       var url = buildUrl(ENDPOINT_MEMBERSHIP, Map.of("roomId", roomId, "userId", userId));

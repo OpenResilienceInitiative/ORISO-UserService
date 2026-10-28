@@ -2205,6 +2205,11 @@ public class MatrixSynapseService implements MatrixUserClient {
     return matrixRoomClient.removeUserFromRoom(roomId, userId, accessToken);
   }
 
+  /** Drops a user's explicit power-level entry in a room; true when none remains. */
+  public boolean clearUserPowerLevel(String roomId, String userId, String accessToken) {
+    return matrixRoomClient.clearUserPowerLevel(roomId, userId, accessToken);
+  }
+
   /**
    * Bans a user from a Matrix room using the given room-moderator access token.
    *
