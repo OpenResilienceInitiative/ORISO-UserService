@@ -87,6 +87,15 @@ class AccountInviteRoleRuleIT {
 
   @MockitoBean private ExistingAccountSetupIssuer existingAccountSetupIssuer;
 
+  // This retained SQL contract exercises the existing LEGACY identity lookup.
+  @MockitoBean
+  private de.caritas.cob.userservice.api.port.out.IdentityClientConfig legacyIdentityMode;
+
+  @org.junit.jupiter.api.BeforeEach
+  void explicitLegacyIdentityMode() {
+    org.mockito.Mockito.when(legacyIdentityMode.isFiveActorMode()).thenReturn(false);
+  }
+
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
   @MockitoBean private TenantService tenantService;

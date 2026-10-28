@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -182,6 +183,30 @@ abstract class ProtectedInvitationIssuanceJpaFixture {
 
   @MockitoBean ExistingAccountSetupIssuer existingAccountSetupIssuer;
   @MockitoBean de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
+  @MockitoBean de.caritas.cob.userservice.api.port.out.IdentityClientConfig invitationIdentityMode;
+
+  @MockitoBean
+  de.caritas.cob.userservice.api.port.out.InvitationRecipientAvailability
+      scopedRecipientAvailability;
+
+  @BeforeEach
+  void explicitInvitationIdentityMode() {
+    when(invitationIdentityMode.isFiveActorMode())
+        .thenReturn("FIVE_ACTORS".equals(environment.getProperty("TASK_IDENTITY_MODEL")));
+    when(scopedRecipientAvailability.available(eq(RECIPIENT), any())).thenReturn(true);
+    // Retain the existing ordinary-queue case's second fixed recipient and exact target.
+    when(scopedRecipientAvailability.available(
+            eq("queued-admin@example.test"),
+            eq(
+                new de.caritas.cob.userservice.api.port.out.InvitationRecipientAvailability.Target(
+                    de.caritas.cob.userservice.api.port.out.InvitationRecipientAvailability.Kind
+                        .CONSULTANT_AGENCY_ADMIN,
+                    17L,
+                    de.caritas.cob.userservice.api.port.out.InvitationRecipientAvailability
+                        .TenantMode.RESERVED_NEW))))
+        .thenReturn(true);
+  }
+
   @MockitoBean IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @MockitoBean TenantService tenantService;
   @MockitoBean TenantIdAllocationClient tenantIds;
