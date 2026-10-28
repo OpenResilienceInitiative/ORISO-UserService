@@ -87,8 +87,8 @@ public class AdminScope {
     }
 
     /**
-     * An admin account to change, delete or (un)assign agencies for. Admin accounts are managed
-     * from above: an agency admin manages none, not even its own (#1407).
+     * An admin account to change, delete, pause, re-invite or (un)assign agencies for. Admin
+     * accounts are managed from above: an agency admin manages none, not even its own (#1407).
      */
     static Target managedAdmin(String id) {
       return new ManagedAdminTarget(id);
