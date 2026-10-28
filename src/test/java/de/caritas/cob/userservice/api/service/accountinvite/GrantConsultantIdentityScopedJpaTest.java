@@ -86,6 +86,7 @@ import org.springframework.web.client.RestTemplate;
   de.caritas.cob.userservice.api.admin.service.consultant.validation
       .ConsultantTopicAgencyCompatibilityValidator.class,
   AccountInviteAccessPolicy.class,
+  AdminSelfAssignmentService.class,
   AdminScope.class,
   GrantConsultantIdentityScopedJpaTest.Configuration.class
 })
@@ -110,6 +111,7 @@ class GrantConsultantIdentityScopedJpaTest {
       service;
 
   @Autowired private HumanAdminAccountMaintenance maintenance;
+  @Autowired private AdminSelfAssignmentService selfAssignments;
   @Autowired private ConsultantRepository consultants;
   @Autowired private ConsultantAgencyRepository consultantAgencies;
   @Autowired private AdminRepository admins;
@@ -142,6 +144,7 @@ class GrantConsultantIdentityScopedJpaTest {
   private String nativeBody, nativeReply;
   private boolean lostReply, revoked;
   private boolean lostReadReply;
+  private boolean staleSelfToken;
   @MockitoBean private IdentityRoleUpdater genericRoles;
   @MockitoBean private IdentityRoleLookup genericRoleLookup;
   @MockitoBean private MatrixUserClient matrix;
@@ -250,6 +253,7 @@ class GrantConsultantIdentityScopedJpaTest {
         jdbc.queryForObject(
                 "select create_date from admin where admin_id=?", java.sql.Timestamp.class, ACCOUNT)
             .toLocalDateTime());
+    human.setRoles(null);
     human.setUserId(HUMAN);
     human.setTenantId(7L);
     human.setAccessToken("fixture-human");
@@ -388,6 +392,10 @@ class GrantConsultantIdentityScopedJpaTest {
                   assertNotNull(row.path("create_date").textValue());
                 }
                 reads.incrementAndGet();
+                if (nativeBody != null && staleSelfToken)
+                  return org.springframework.test.web.client.response.MockRestResponseCreators
+                      .withStatus(org.springframework.http.HttpStatus.FORBIDDEN)
+                      .createResponse(outbound);
                 if (lostReadReply) {
                   lostReadReply = false;
                   throw new ResourceAccessException("Synthetic lost first role read");
@@ -416,7 +424,7 @@ class GrantConsultantIdentityScopedJpaTest {
               assertEquals(
                   codec.read(codec.canonical(expectedRoleChange), JsonNode.class),
                   body.path("change"));
-              if (revoked)
+              if (revoked || nativeBody != null && staleSelfToken)
                 return org.springframework.test.web.client.response.MockRestResponseCreators
                     .withStatus(org.springframework.http.HttpStatus.FORBIDDEN)
                     .createResponse(outbound);
@@ -435,6 +443,92 @@ class GrantConsultantIdentityScopedJpaTest {
               response.getHeaders().setCacheControl("no-store");
               return response;
             });
+  }
+
+  @Test
+  void ownGrantCommitsTheVerifiedOriginalUpdatedReceiptWithoutAStaleTokenRead() {
+    human.setUserId(ACCOUNT);
+    request.setUserPrincipal(authentication(7L));
+    staleSelfToken = true;
+    assertDoesNotThrow(() -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
+    assertEquals("APPLIED", phase());
+    assertEquals(1, reads.get());
+    assertEquals(1, effects.get());
+    assertEquals(1, matrixCalls.get());
+    assertThrows(
+        RuntimeException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
+    assertEquals("APPLIED", phase());
+    staleSelfToken = false;
+    request.setUserPrincipal(authentication(7L));
+    assertDoesNotThrow(() -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
+    assertEquals(1, effects.get());
+    assertEquals(1, matrixCalls.get());
+  }
+
+  @Test
+  void lostOwnGrantKeepsTheOriginalFrozenActionUntilTheSameHumanRenewsTheirToken() {
+    human.setUserId(ACCOUNT);
+    request.setUserPrincipal(authentication(7L));
+    staleSelfToken = true;
+    lostReply = true;
+    assertThrows(
+        RuntimeException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
+    assertEquals("FROZEN", phase());
+    String body = nativeBody;
+    assertEquals(1, effects.get());
+    assertNoLocalConsultant();
+    assertThrows(
+        RuntimeException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
+    assertEquals("FROZEN", phase());
+    assertEquals(body, nativeBody);
+    assertEquals(0, matrixCalls.get());
+    staleSelfToken = false;
+    request.setUserPrincipal(authentication(7L));
+    assertDoesNotThrow(() -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
+    assertEquals("APPLIED", phase());
+    assertEquals(body, nativeBody);
+    assertEquals(1, effects.get());
+    assertEquals(1, matrixCalls.get());
+  }
+
+  @Test
+  void actualSelfAssignmentReplaysItsOriginalGrantAfterTheConsultantRowAppears() {
+    TenantContext.setCurrentTenant(7L);
+    agencies.getAgency(71L).setTopicIds(List.of(81L));
+    human.setRoles(Set.of("single-tenant-admin"));
+    human.setGrantedAuthorities(
+        Set.of(Authority.AuthorityValue.USER_ADMIN, Authority.AuthorityValue.SINGLE_TENANT_ADMIN));
+    human.setUserId(ACCOUNT);
+    request.setUserPrincipal(authentication(7L));
+    request.setRequestURI("/useradmin/self-assignments");
+    nativeDesiredRoles = Set.of("consultant", "restricted-agency-admin", "user-admin");
+    expectedRoleChange =
+        Map.of(
+            "transition",
+            "ADD_CONSULTANT_IDENTITY",
+            "group",
+            "/human-roles/consultant-agency-admin");
+    maintenance.configureReviewedOrdinaryGroups(
+        Map.of(
+            "/human-roles/agency-admin",
+            ORIGINAL,
+            "/human-roles/consultant-agency-admin",
+            nativeDesiredRoles));
+    var input =
+        new AdminSelfAssignmentService.SelfAssignmentCommand(
+            AdminSelfAssignmentService.SelfAssignmentRole.COUNSELLOR, 71L, List.of(81L));
+    assertDoesNotThrow(() -> selfAssignments.assign(input));
+    assertEquals("APPLIED", phase());
+    String body = nativeBody;
+    var sql = consultantSql();
+    assertTrue(consultants.findByIdAndDeleteDateIsNull(ACCOUNT).isPresent());
+    var result = assertDoesNotThrow(() -> selfAssignments.assign(input));
+    assertTrue(result.consultantIdentityCreated());
+    assertEquals(body, nativeBody);
+    assertEquals(sql, consultantSql());
+    assertEquals(1, effects.get());
+    assertEquals(1, matrixCalls.get());
+    assertEquals(1, joinedEvents.get());
   }
 
   @Test
@@ -947,7 +1041,7 @@ class GrantConsultantIdentityScopedJpaTest {
     var jwt =
         Jwt.withTokenValue("fixture-human")
             .header("alg", "RS256")
-            .subject(HUMAN)
+            .subject(human.getUserId())
             .issuer(ISSUER)
             .issuedAt(Instant.now().minusSeconds(2))
             .expiresAt(Instant.now().plusSeconds(300))

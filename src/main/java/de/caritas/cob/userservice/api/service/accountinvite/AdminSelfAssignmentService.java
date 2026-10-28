@@ -71,7 +71,8 @@ public class AdminSelfAssignmentService {
         throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
       var agency = checkedAgency(command);
       String userId = authenticatedUser.getUserId();
-      if (consultantRepository.findByIdAndDeleteDateIsNull(userId).isPresent())
+      if (consultantRepository.findByIdAndDeleteDateIsNull(userId).isPresent()
+          && !grantConsultantIdentityService.hasOriginalSelfAssignmentGrant(userId))
         throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
       var grant = new GrantConsultantIdentityDTO();
       grant.setAgencyIds(List.of(agency.id()));

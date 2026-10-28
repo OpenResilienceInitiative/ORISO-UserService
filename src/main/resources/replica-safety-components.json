@@ -465,9 +465,10 @@
       "owner": "identity-profile",
       "risk": "duplicate-side-effect",
       "components": [
-        "performDeletionWorkflow"
+        "performDeletionWorkflow",
+        "performReactivationSecretErasure"
       ],
-      "decision": "Lease execution and make provider cleanup idempotent.",
+      "decision": "Lease deletion execution and make provider cleanup idempotent. Reactivation secret erasure uses its dedicated five-minute shared lease, scans at most 100 original intents per call, persists its cursor in the same transaction, and retains the lease row until natural expiry. It performs local SQL only; availability and poison rows may delay a complete scan.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"

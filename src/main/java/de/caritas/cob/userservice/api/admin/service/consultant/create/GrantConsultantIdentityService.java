@@ -140,6 +140,13 @@ public class GrantConsultantIdentityService {
         : localWrites.execute(ignored -> grantLegacy(adminId, dto));
   }
 
+  /** Selects an existing owned self-assignment action without minting any mutation authority. */
+  public boolean hasOriginalSelfAssignmentGrant(String accountId) {
+    if (maintenance == null || !maintenance.isFiveActorMode())
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    return maintenance.hasOriginalSelfAssignmentGrant(accountId);
+  }
+
   private ConsultantAdminResponseDTO grantLegacy(String adminId, GrantConsultantIdentityDTO dto) {
 
     // Looked up across tenants on purpose: an admin of another Träger must be refused (403) by the

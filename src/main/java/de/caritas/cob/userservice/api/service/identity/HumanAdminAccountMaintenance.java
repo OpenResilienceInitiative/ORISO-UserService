@@ -253,6 +253,28 @@ public final class HumanAdminAccountMaintenance {
     return updateProfile(accountId, profile, edit, self, addition, null);
   }
 
+  /** Dispatch only: the original live producer still verifies its complete sealed request. */
+  public boolean hasOriginalSelfAssignmentGrant(String accountId) {
+    requireOutsideSql();
+    Human human = currentHuman();
+    if (!"POST".equals(request.getMethod())
+        || !Set.of("/useradmin/self-assignments", "/service/useradmin/self-assignments")
+            .contains(request.getRequestURI())
+        || !human.subject.equals(accountId)) throw forbidden();
+    var prior = intent(operationId(), false);
+    if (prior == null) return false;
+    if (!accountId.equals(prior.account)
+        || !human.subject.equals(prior.humanSubject)
+        || !human.issuer.equals(prior.humanIssuer)
+        || !human.client.equals(prior.humanClient)) throw conflict();
+    var desired = decode(prior.desired, com.fasterxml.jackson.databind.JsonNode.class);
+    if (!desired.isObject()
+        || desired.size() != 2
+        || !desired.has("profile")
+        || !desired.has("publicConsultantGrant")) throw conflict();
+    return true;
+  }
+
   public de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO
       grantConsultantIdentity(
           de.caritas.cob.userservice.api.admin.service.consultant.create
@@ -604,14 +626,20 @@ public final class HumanAdminAccountMaintenance {
       // No other legitimate admin-profile issuer may pass this account's pending SQL intent.
       // Confirm that the actual native fields still describe this acknowledged request.
       transport.verifyProfileReceipt(checked, frozen, receipt);
-      var currentNative = transport.read(checked);
-      requireProjection(checked, currentNative);
-      if ((checked.role != null || checked.protectedRole != null)
-          && !java.util.Set.copyOf(checked.desiredRoles())
-              .equals(java.util.Set.copyOf(currentNative.effectiveRoles()))) throw conflict();
-      if (!Objects.equals(currentNative.firstName(), profile.firstName())
-          || !Objects.equals(currentNative.lastName(), profile.lastName())
-          || !Objects.equals(currentNative.email(), profile.email())) throw conflict();
+      // A same-human role grant changes the current native source profile. The original bearer
+      // cannot pass another native read until refreshed. Its exact authenticated UPDATED receipt
+      // already authorizes this bounded callback; unknown/replayed attempts still execute the
+      // original frozen command and require current native authority before reaching this point.
+      if (grant == null || !human.subject.equals(accountId)) {
+        var currentNative = transport.read(checked);
+        requireProjection(checked, currentNative);
+        if ((checked.role != null || checked.protectedRole != null)
+            && !java.util.Set.copyOf(checked.desiredRoles())
+                .equals(java.util.Set.copyOf(currentNative.effectiveRoles()))) throw conflict();
+        if (!Objects.equals(currentNative.firstName(), profile.firstName())
+            || !Objects.equals(currentNative.lastName(), profile.lastName())
+            || !Objects.equals(currentNative.email(), profile.email())) throw conflict();
+      }
       if (addition != null) addition.validateOutsideSql();
       if (grant != null) {
         grant.validateOutsideSql();
