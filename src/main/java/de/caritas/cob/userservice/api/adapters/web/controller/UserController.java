@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AbsenceDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyAdminContactDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatInfoResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatMembersResponseDTO;
@@ -158,6 +159,8 @@ public class UserController implements UsersApi {
   private final @NotNull GroupChatRoleService groupChatRoleService;
   private final @NotNull GroupChatJoinRequestControllerDelegate groupChatJoinRequestDelegate;
   private final @NotNull AuthenticatedUser authenticatedUser;
+  private final @NonNull de.caritas.cob.userservice.api.service.AgencyAdminContactService
+      agencyAdminContactService;
   private final @NonNull RequestedContactSheetService requestedContactSheetService;
   private final @NotNull IdentitySuggestionControllerDelegate identitySuggestionControllerDelegate;
 
@@ -552,6 +555,12 @@ public class UserController implements UsersApi {
   public ResponseEntity<InternalSubsetChatResponseDTO> openInternalSubsetChat(
       @RequestBody InternalSubsetChatDTO request) {
     return userChatControllerDelegate.openInternalSubsetChat(request);
+  }
+
+  @Override
+  public ResponseEntity<List<AgencyAdminContactDTO>> getAgencyAdminContacts(Long agencyId) {
+    return ResponseEntity.ok(
+        agencyAdminContactService.contactsFor(authenticatedUser.getUserId(), agencyId));
   }
 
   @Override
