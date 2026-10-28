@@ -146,6 +146,21 @@ components:
         globalSmtpEmailThemeColor:
           allOf:
             - $ref: '#/components/schemas/SettingDTO'
+        topicDuplicateMode:
+          description: >-
+            FE#1876: what happens when an asker holds two accepted conversations on the same
+            topic. One of INFORM_EXISTING_COUNSELLOR_ONCE, INFORM_BOTH_ONCE,
+            INFORM_BOTH_EVERY_MESSAGE, FORBID. Typed as a plain string on purpose: an unknown
+            value must fall back to INFORM_EXISTING_COUNSELLOR_ONCE instead of failing the whole
+            settings read.
+          allOf:
+            - $ref: '#/components/schemas/SettingDTO'
+        furtherCounsellingPostcodeMode:
+          description: >-
+            FE#1876: postcode prefill in the further-counselling dialog. One of SMART,
+            ALWAYS_EMPTY.
+          allOf:
+            - $ref: '#/components/schemas/SettingDTO'
         releaseToggles:
           type: object
           additionalProperties:
