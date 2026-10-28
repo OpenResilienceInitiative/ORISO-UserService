@@ -364,6 +364,49 @@ public class AccountLifecycleCallerConfiguration {
   }
 
   @Bean
+  de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+      publicPreDeletionMaintenance(
+          IdentityClientConfig identities,
+          AuthenticatedUser user,
+          de.caritas.cob.userservice.api.admin.service.admin.AdminScope scope,
+          jakarta.servlet.http.HttpServletRequest request,
+          JdbcTemplate jdbc,
+          PlatformTransactionManager manager,
+          jakarta.persistence.EntityManager entities,
+          TaskActorConfiguration actors,
+          TaskActorTokenBroker broker,
+          AccountLifecycleCodec codec,
+          @Qualifier("keycloakRestTemplate") RestTemplate http,
+          de.caritas.cob.userservice.api.port.in.IdentityManaging passwords,
+          KeycloakConfig keycloak) {
+    String publicServer = keycloak.getAuthServerUrl();
+    String internalServer =
+        environment.getProperty("ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL", publicServer);
+    if (publicServer == null
+        || publicServer.isBlank()
+        || internalServer == null
+        || internalServer.isBlank()) throw invalid();
+    return new de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance(
+        identities,
+        user,
+        scope,
+        request,
+        jdbc,
+        manager,
+        entities,
+        actors,
+        broker,
+        codec,
+        http,
+        passwords,
+        Clock.systemUTC(),
+        internalServer,
+        publicServer.replaceAll("/+$", "") + "/realms/" + keycloak.getRealm(),
+        keycloak.getRealm(),
+        required("KEYCLOAK_REALM_INTERNAL_ID"));
+  }
+
+  @Bean
   ScopedAskerReactivation scopedAskerReactivation(
       IdentityClientConfig identities,
       AuthenticatedUser user,
