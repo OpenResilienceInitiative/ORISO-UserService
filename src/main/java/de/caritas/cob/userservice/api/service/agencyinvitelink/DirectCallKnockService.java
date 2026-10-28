@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -36,8 +37,10 @@ public class DirectCallKnockService {
   private long pendingMinutes = 120;
 
   /**
-   * One open knock per person and conversation: knocking again returns it. The conversation row is
-   * locked first, so two parallel visits cannot both find no knock and insert two.
+   * Let in once: an admission holds for the whole conversation and is returned on every later
+   * visit. Otherwise one open knock per person and conversation: knocking again returns it, and
+   * after a decline the next visit knocks anew. The conversation row is locked first, so two
+   * parallel visits cannot both find no knock and insert two.
    */
   @Transactional
   public GroupChatJoinRequest knock(
@@ -45,10 +48,13 @@ public class DirectCallKnockService {
     sessionRepository
         .findByIdForUpdate(sessionId)
         .orElseThrow(() -> new NotFoundException("Session %s not found", sessionId));
-    return repository
-        .findFirstBySessionIdAndUserIdAndViaAndStatusOrderByIdDesc(
-            sessionId, user.getUserId(), Via.DIRECT_LINK, Status.PENDING)
-        .filter(this::stillWaiting)
+    return admissionOf(sessionId, user)
+        .or(
+            () ->
+                repository
+                    .findFirstBySessionIdAndUserIdAndViaAndStatusOrderByIdDesc(
+                        sessionId, user.getUserId(), Via.DIRECT_LINK, Status.PENDING)
+                    .filter(this::stillWaiting))
         .orElseGet(
             () ->
                 repository.save(
@@ -65,6 +71,21 @@ public class DirectCallKnockService {
 
   public GroupChatJoinRequest getOwn(Long knockId, User user) {
     return requireOwn(knockId, user);
+  }
+
+  /** The person's admission in this conversation, else their latest knock there. */
+  public GroupChatJoinRequest ownFor(Long sessionId, User user) {
+    return admissionOf(sessionId, user)
+        .or(
+            () ->
+                repository.findFirstBySessionIdAndUserIdAndViaOrderByIdDesc(
+                    sessionId, user.getUserId(), Via.DIRECT_LINK))
+        .orElseThrow(() -> new NotFoundException("No call knock in session %s", sessionId));
+  }
+
+  private Optional<GroupChatJoinRequest> admissionOf(Long sessionId, User user) {
+    return repository.findFirstBySessionIdAndUserIdAndViaAndStatusOrderByIdDesc(
+        sessionId, user.getUserId(), Via.DIRECT_LINK, Status.ADMITTED);
   }
 
   /** Idempotent: only a pending knock changes. */

@@ -377,6 +377,8 @@ public class SecurityConfig {
                     RESTRICTED_AGENCY_ADMIN)
                 // Counsellor direct links (#1475): ownership is checked in the service.
                 .requestMatchers(
+                    "/users/call-knocks/mine",
+                    "/service/users/call-knocks/mine",
                     "/users/call-knocks/mine/{knockId:[0-9]+}",
                     "/service/users/call-knocks/mine/{knockId:[0-9]+}")
                 .hasAuthority(USER_DEFAULT)

@@ -100,7 +100,8 @@ public class DirectLinkControllerDelegate {
             .knockStatus(
                 started.knockStatus() == null
                     ? null
-                    : CallKnockStatus.valueOf(started.knockStatus()));
+                    : CallKnockStatus.valueOf(started.knockStatus()))
+            .callAdmitted(started.callAdmitted());
     return new ResponseEntity<>(dto, started.created() ? HttpStatus.CREATED : HttpStatus.OK);
   }
 
@@ -129,6 +130,11 @@ public class DirectLinkControllerDelegate {
   ResponseEntity<CallKnockDTO> getOwnCallKnock(Long knockId) {
     var user = userAccountService.retrieveValidatedUser();
     return ResponseEntity.ok(toKnockDto(knockService.getOwn(knockId, user)));
+  }
+
+  ResponseEntity<CallKnockDTO> getOwnCallKnockForSession(Long sessionId) {
+    var user = userAccountService.retrieveValidatedUser();
+    return ResponseEntity.ok(toKnockDto(knockService.ownFor(sessionId, user)));
   }
 
   ResponseEntity<CallKnockDTO> cancelOwnCallKnock(Long knockId) {

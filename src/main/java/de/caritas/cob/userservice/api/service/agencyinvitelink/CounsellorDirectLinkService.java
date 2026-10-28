@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.facade.CreateNewSessionFacade;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.GroupChatJoinRequest;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
@@ -184,7 +185,8 @@ public class CounsellorDirectLinkService {
         medium.admission(),
         response.getStatus() != HttpStatus.CONFLICT,
         knock == null ? null : knock.getId(),
-        knock == null ? null : knock.getStatus().name());
+        knock == null ? null : knock.getStatus().name(),
+        knock == null ? null : knock.getStatus() == GroupChatJoinRequest.Status.ADMITTED);
   }
 
   public static boolean defaultTemporary(InviteLinkChatType medium) {
@@ -272,5 +274,6 @@ public class CounsellorDirectLinkService {
       InviteLinkAdmission admission,
       boolean created,
       Long knockId,
-      String knockStatus) {}
+      String knockStatus,
+      Boolean callAdmitted) {}
 }

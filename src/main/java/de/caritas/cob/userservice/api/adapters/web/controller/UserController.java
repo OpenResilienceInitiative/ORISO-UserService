@@ -229,6 +229,12 @@ public class UserController implements UsersApi {
 
   @Override
   public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO>
+      getOwnCallKnockForSession(Long sessionId) {
+    return directLinkControllerDelegate.getOwnCallKnockForSession(sessionId);
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO>
       cancelOwnCallKnock(Long knockId) {
     return directLinkControllerDelegate.cancelOwnCallKnock(knockId);
   }

@@ -68,7 +68,9 @@ paths:
         Every person gets their own conversation with the link owner. It is assigned to the
         counsellor directly (like the contact link) and never enters the enquiry inbox. A second
         call by the same person returns the existing conversation. Audio and video links answer
-        admission KNOCK: the person waits until the counsellor admits them (ADR-029 §2).
+        admission KNOCK: the person waits until the counsellor admits them (ADR-029 §2). Let in
+        once: after an admission every later visit returns it (callAdmitted true) and opens no new
+        knock; after a decline the next visit knocks again.
       security:
         - Bearer: [ ]
       parameters:
@@ -168,6 +170,31 @@ paths:
         '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
         '404': {description: No knock on one of the caller's conversations with this id}
         '409': {description: The knock was already admitted or cancelled}
+  /users/call-knocks/mine:
+    get:
+      tags: [direct-link-controller]
+      operationId: getOwnCallKnockForSession
+      summary: 'The caller''s call admission in one of their conversations, on any device [Authorization: Role: user]'
+      description: >-
+        Let in once: returns the caller's ADMITTED knock in this conversation if there is one,
+        otherwise their latest knock there. ADMITTED means the person joins every later call in
+        this conversation directly, without knocking.
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: sessionId
+          in: query
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        '200':
+          description: The admission, or the latest knock
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CallKnockDTO'}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '403': {description: Caller is not a user}
+        '404': {description: The caller never knocked in this conversation}
   /users/call-knocks/mine/{knockId}:
     get:
       tags: [direct-link-controller]
@@ -3200,8 +3227,11 @@ components:
         knockId:
           type: integer
           format: int64
-          description: Audio and video only. The person's open knock; poll GET /users/call-knocks/mine/{knockId}.
+          description: 'Audio and video only. The person''s admission, else their open knock; poll GET /users/call-knocks/mine/{knockId}.'
         knockStatus: {$ref: '#/components/schemas/CallKnockStatus'}
+        callAdmitted:
+          type: boolean
+          description: 'Audio and video only. True once the counsellor let the person in: the admission holds for the whole conversation, so later calls are joined directly and no new knock is opened.'
     CallKnockStatus:
       type: string
       enum: [PENDING, ADMITTED, DECLINED, CANCELLED]

@@ -29,6 +29,9 @@ public interface GroupChatJoinRequestRepository extends CrudRepository<GroupChat
   Optional<GroupChatJoinRequest> findFirstBySessionIdAndUserIdAndViaAndStatusOrderByIdDesc(
       Long sessionId, String userId, Via via, Status status);
 
+  Optional<GroupChatJoinRequest> findFirstBySessionIdAndUserIdAndViaOrderByIdDesc(
+      Long sessionId, String userId, Via via);
+
   @Query(
       "SELECT request FROM GroupChatJoinRequest request, Session session"
           + " WHERE request.sessionId = session.id AND session.consultant.id = :consultantId"

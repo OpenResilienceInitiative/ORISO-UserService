@@ -108,6 +108,53 @@ class DirectCallKnockServiceTest {
   }
 
   @Test
+  void knock_Should_ReturnTheAdmission_When_ThePersonWasLetInBefore() {
+    var admitted = pending(1L, LocalDateTime.now().minusDays(3));
+    admitted.setStatus(Status.ADMITTED);
+    when(repository.findFirstBySessionIdAndUserIdAndViaAndStatusOrderByIdDesc(
+            SESSION_ID, "asker-1", Via.DIRECT_LINK, Status.ADMITTED))
+        .thenReturn(Optional.of(admitted));
+
+    // Let in once holds for the conversation, also long after the waiting window.
+    assertThat(service.knock(SESSION_ID, asker, 9L, InviteLinkChatType.VIDEO)).isSameAs(admitted);
+    verify(repository, never()).save(any());
+  }
+
+  @Test
+  void knock_Should_OpenANewKnock_When_TheLastOneWasDeclined() {
+    when(repository.findFirstBySessionIdAndUserIdAndViaAndStatusOrderByIdDesc(
+            any(), any(), any(), any()))
+        .thenReturn(Optional.empty());
+
+    var knock = service.knock(SESSION_ID, asker, 9L, InviteLinkChatType.VIDEO);
+
+    assertThat(knock.getStatus()).isEqualTo(Status.PENDING);
+    verify(repository).save(any());
+  }
+
+  @Test
+  void ownFor_Should_PreferTheAdmission_ThenTheLatestKnock() {
+    var admitted = pending(1L, LocalDateTime.now());
+    admitted.setStatus(Status.ADMITTED);
+    var latest = pending(2L, LocalDateTime.now());
+    when(repository.findFirstBySessionIdAndUserIdAndViaOrderByIdDesc(
+            SESSION_ID, "asker-1", Via.DIRECT_LINK))
+        .thenReturn(Optional.of(latest));
+
+    assertThat(service.ownFor(SESSION_ID, asker)).isSameAs(latest);
+
+    when(repository.findFirstBySessionIdAndUserIdAndViaAndStatusOrderByIdDesc(
+            SESSION_ID, "asker-1", Via.DIRECT_LINK, Status.ADMITTED))
+        .thenReturn(Optional.of(admitted));
+    assertThat(service.ownFor(SESSION_ID, asker)).isSameAs(admitted);
+
+    var stranger = new User();
+    stranger.setUserId("asker-2");
+    assertThatThrownBy(() -> service.ownFor(SESSION_ID, stranger))
+        .isInstanceOf(NotFoundException.class);
+  }
+
+  @Test
   void admit_And_Decline_Should_BeTheConversationsCounsellorsDecision() {
     var knock = pending(1L, LocalDateTime.now());
     when(repository.findByIdForUpdate(1L)).thenReturn(Optional.of(knock));

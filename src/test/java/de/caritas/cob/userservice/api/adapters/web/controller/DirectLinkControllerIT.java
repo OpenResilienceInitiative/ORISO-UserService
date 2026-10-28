@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.never;
@@ -276,17 +277,61 @@ class DirectLinkControllerIT {
         .andExpect(jsonPath("$.status", is("ADMITTED")));
     asAsker(get("/users/call-knocks")).andExpect(status().isForbidden());
 
-    // A new visit knocks again; "admit all" lets every waiting person in.
+    // Let in once: a later visit, on any device, gets the admission back without a new knock.
     asAsker(post("/users/invitelinks/{token}/conversations", token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.created", is(false)))
-        .andExpect(jsonPath("$.knockStatus", is("PENDING")));
+        .andExpect(jsonPath("$.knockId", is((int) knockId)))
+        .andExpect(jsonPath("$.knockStatus", is("ADMITTED")))
+        .andExpect(jsonPath("$.callAdmitted", is(true)));
+    asAsker(get("/users/call-knocks/mine").param("sessionId", session.getId().toString()))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.id", is((int) knockId)))
+        .andExpect(jsonPath("$.status", is("ADMITTED")));
+    actAsConsultant(owner);
+    asConsultant(get("/users/call-knocks")).andExpect(jsonPath("$", hasSize(0)));
+  }
+
+  @Test
+  void declinedPersonMayKnockAgain_AndAdmitAllLetsThemIn() throws Exception {
+    var session = ownersConversationWithAsker();
+    String token = callLinkOpeningInto(session.getId());
+    actAsAsker();
+    var started =
+        asAsker(post("/users/invitelinks/{token}/conversations", token))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.callAdmitted", is(false)))
+            .andReturn();
+    long firstKnock =
+        objectMapper.readTree(started.getResponse().getContentAsString()).get("knockId").asLong();
+
+    actAsConsultant(owner);
+    asConsultant(post("/users/call-knocks/{id}/decline", firstKnock)).andExpect(status().isOk());
+
+    actAsAsker();
+    asAsker(get("/users/call-knocks/mine").param("sessionId", session.getId().toString()))
+        .andExpect(jsonPath("$.status", is("DECLINED")));
+    asAsker(post("/users/invitelinks/{token}/conversations", token))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.knockStatus", is("PENDING")))
+        .andExpect(jsonPath("$.knockId", not((int) firstKnock)));
+
     actAsConsultant(owner);
     asConsultant(post("/users/call-knocks/admit-all"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$", hasSize(1)))
         .andExpect(jsonPath("$[0].status", is("ADMITTED")));
-    asConsultant(get("/users/call-knocks")).andExpect(jsonPath("$", hasSize(0)));
+  }
+
+  @Test
+  void ownCallAdmission_Should_BeOnlyThePersonsOwn() throws Exception {
+    var session = ownersConversationWithAsker();
+    actAsAsker();
+    asAsker(get("/users/call-knocks/mine").param("sessionId", session.getId().toString()))
+        .andExpect(status().isNotFound());
+    actAsConsultant(owner);
+    asConsultant(get("/users/call-knocks/mine").param("sessionId", session.getId().toString()))
+        .andExpect(status().isForbidden());
   }
 
   /**
