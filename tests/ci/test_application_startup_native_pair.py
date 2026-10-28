@@ -13,7 +13,7 @@ spec.loader.exec_module(proof)
 
 class ApplicationStartupPairControls(unittest.TestCase):
     def witness(self, state):
-        return {'state': state, 'observedBeans': [], 'failureTypes': ['BeanCreationException', 'IllegalStateException'] if state == 'FENCED' else [],
+        return {'tenantNative': {key: {'dispatches': 0, 'statuses': []} for key in ['tenant', 'profile']}, 'state': state, 'observedBeans': [], 'failureTypes': ['BeanCreationException', 'IllegalStateException'] if state == 'FENCED' else [],
                 **{key: True for key in proof.COMMON_FLAGS},
                 **{key: state == 'OPEN' for key in proof.OPEN_FLAGS},
                 'exactFence': state == 'FENCED'}
@@ -166,6 +166,31 @@ class ApplicationStartupPairControls(unittest.TestCase):
         self.assertEqual([], proof.safe_failure_types(b'org.secret.PasswordSecretException de.secret.PasswordSecretException password=secret'))
         source_type = 'de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException'
         self.assertEqual([source_type], proof.safe_failure_types((source_type + ': Bearer secret').encode()))
+
+    def test_source_frames_expose_only_existing_class_method_file_and_bounded_line(self):
+        owner = 'de.caritas.cob.userservice.api.service.identity.PureTenantAdminEdit'
+        raw = ('password=secret Bearer abc\n\tat ' + owner + '.checked(PureTenantAdminEdit.java:362)\n'
+            '\tat de.secret.Hidden.password(Hidden.java:12)\n'
+            '\tat ' + owner + '.passwordSecret(PureTenantAdminEdit.java:362)\n'
+            '\tat ' + owner + '.checked(Other.java:362)\n'
+            '\tat ' + owner + '.checked(PureTenantAdminEdit.java:999999)\n').encode()
+        self.assertEqual([{'class': owner, 'method': 'checked', 'file': 'PureTenantAdminEdit.java', 'line': 362}], proof.safe_source_frames(raw))
+        self.assertEqual([], proof.safe_source_frames(b'Bearer raw secret uuid path /private/token'))
+
+    def test_tenant_diagnostics_have_only_fixed_counts_and_http_statuses(self):
+        import copy
+        valid = {'tenant': {'dispatches': 2, 'statuses': [200, 200]}, 'profile': {'dispatches': 0, 'statuses': []}}
+        proof.checked_tenant_native(valid)
+        for change in ['field', 'kind', 'bool', 'large', 'status', 'raw', 'more-responses']:
+            bad = copy.deepcopy(valid)
+            if change == 'field': bad['tenant']['body'] = 'secret'
+            elif change == 'kind': bad['other'] = bad.pop('profile')
+            elif change == 'bool': bad['tenant']['dispatches'] = True
+            elif change == 'large': bad['tenant']['dispatches'] = 10000
+            elif change == 'status': bad['tenant']['statuses'] = [999]
+            elif change == 'raw': bad['tenant']['statuses'] = ['Bearer secret']
+            else: bad['tenant']['statuses'] = [200, 200, 200]
+            with self.subTest(change=change), self.assertRaises(ValueError): proof.checked_tenant_native(bad)
 
     def test_dependency_capsule_accepts_only_existing_production_identifiers(self):
         raw = b"bean with name 'keycloakService' password=secret Bearer abc bean with name 'selfPasswordMaintenance' bean with name 'SensitiveUnknownLabel'"

@@ -183,6 +183,40 @@ def safe_failure_types(raw):
     return list(dict.fromkeys(value for value in values if value in known))[:30]
 
 
+def safe_source_frames(raw):
+    # Class/method/file/line only; never retain exception messages, arguments, or full log lines.
+    sources = {}
+    for path in (ROOT / 'src/main/java/de/caritas').rglob('*.java'):
+        content = path.read_text()
+        package = re.search(r'^package ([A-Za-z0-9_.]+);', content, re.M)
+        if package: sources[package.group(1) + '.' + path.stem] = (path.name, content, len(content.splitlines()))
+    frames = []
+    for owner, method, filename, line in re.findall(
+            r'\bat (de\.caritas\.[A-Za-z0-9_.$]+)\.([A-Za-z_][A-Za-z0-9_]*)\(([A-Za-z0-9_]+\.java):([0-9]{1,6})\)',
+            raw.decode('utf-8', errors='replace')):
+        outer = owner.split('$', 1)[0]
+        source = sources.get(outer)
+        if (source is None or filename != source[0] or not 1 <= int(line) <= source[2]
+                or not re.search(r'\b' + re.escape(method) + r'\s*\(', source[1])): continue
+        # Emit the source class, not arbitrary runtime subclass labels.
+        frame = {'class': outer, 'method': method, 'file': filename, 'line': int(line)}
+        if frame not in frames: frames.append(frame)
+        if len(frames) >= 60: break
+    return frames
+
+
+def checked_tenant_native(value):
+    if not isinstance(value, dict) or set(value) != {'tenant', 'profile'}:
+        raise ValueError('Fixed tenant child diagnostics required')
+    for child in value.values():
+        if (not isinstance(child, dict) or set(child) != {'dispatches', 'statuses'}
+                or type(child['dispatches']) is not int or not 0 <= child['dispatches'] <= 16
+                or not isinstance(child['statuses'], list) or len(child['statuses']) > child['dispatches']
+                or any(type(status) is not int or status not in {200, 400, 401, 403, 404, 409, 500, 502, 503}
+                       for status in child['statuses'])):
+            raise ValueError('Bounded native status/count diagnostics required')
+
+
 def startup_protected_catalogue(configuration):
     """Omit only the native negative-test alias, identically before both peer installations."""
     value = copy.deepcopy(configuration)
@@ -246,7 +280,7 @@ def safe_binding_failure(raw):
 def checked_witness(value, state):
     flags = COMMON_FLAGS | OPEN_FLAGS | {'exactFence'}
     if (state not in {'FENCED', 'OPEN'} or not isinstance(value, dict)
-            or set(value) != flags | {'state', 'observedBeans', 'failureTypes'}
+            or set(value) != flags | {'state', 'observedBeans', 'failureTypes', 'tenantNative'}
             or value['state'] != state or any(type(value[key]) is not bool for key in flags)
             or not isinstance(value['observedBeans'], list)
             or value['observedBeans'] != sorted(set(value['observedBeans']))
@@ -254,6 +288,7 @@ def checked_witness(value, state):
             or not isinstance(value['failureTypes'], list)
             or any(key not in FAILURE_TYPES for key in value['failureTypes'])):
         raise ValueError('Exact finite startup witness required')
+    checked_tenant_native(value['tenantNative'])
     return (all(value[key] for key in COMMON_FLAGS)
             and value['exactFence'] == (state == 'FENCED')
             and all(value[key] == (state == 'OPEN') for key in OPEN_FLAGS)
@@ -578,7 +613,8 @@ def native(kc, report):
         receipt['sql_input'] = safe_child_input(child.stdout + b'\n' + child.stderr)
         receipt['dependency_path'] = safe_dependency_path(child.stdout + b'\n' + child.stderr)
         receipt['installed_binding_failure'] = safe_binding_failure(child.stdout + b'\n' + child.stderr)
-        receipt['failure_types'] = safe_failure_types(child.stdout + b'\n' + child.stderr); child = None
+        receipt['failure_types'] = safe_failure_types(child.stdout + b'\n' + child.stderr)
+        receipt['source_failure_frames'] = safe_source_frames(child.stdout + b'\n' + child.stderr); child = None
         witness_file = report.with_name('application-startup-native-witness.json')
         witness = json.loads(witness_file.read_text()) if witness_file.exists() else {}
         try: receipt['java_witness_complete'] = checked_witness(witness, state)

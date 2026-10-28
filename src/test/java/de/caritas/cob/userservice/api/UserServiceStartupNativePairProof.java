@@ -71,6 +71,11 @@ class UserServiceStartupNativePairProof {
     var observed = new ConcurrentSkipListSet<String>();
     var witness = new TreeMap<String, Object>();
     witness.put("state", expected);
+    witness.put(
+        "tenantNative",
+        Map.of(
+            "tenant", Map.of("dispatches", 0, "statuses", List.of()),
+            "profile", Map.of("dispatches", 0, "statuses", List.of())));
     for (String key : COMMON) witness.put(key, false);
     for (String key : OPEN) witness.put(key, false);
     witness.put("exactFence", false);
@@ -619,6 +624,8 @@ class UserServiceStartupNativePairProof {
     var dropped = new java.util.concurrent.atomic.AtomicBoolean();
     var tenantBodies = new ArrayList<String>();
     var profileBodies = new ArrayList<String>();
+    var tenantStatuses = new ArrayList<Integer>();
+    var profileStatuses = new ArrayList<Integer>();
     nativeHttp
         .getInterceptors()
         .add(
@@ -629,6 +636,9 @@ class UserServiceStartupNativePairProof {
               if (path.endsWith("/profile"))
                 profileBodies.add(new String(bytes, java.nio.charset.StandardCharsets.UTF_8));
               var response = execution.execute(request, bytes);
+              if (path.endsWith("/reassign-tenant"))
+                tenantStatuses.add(response.getStatusCode().value());
+              if (path.endsWith("/profile")) profileStatuses.add(response.getStatusCode().value());
               if (path.endsWith("/reassign-tenant")
                   && response.getStatusCode().value() == 200
                   && dropped.compareAndSet(false, true)) {
@@ -686,6 +696,18 @@ class UserServiceStartupNativePairProof {
       }
     } finally {
       nativeHttp.setInterceptors(originalInterceptors);
+      witness.put(
+          "tenantNative",
+          Map.of(
+              "tenant",
+                  Map.of(
+                      "dispatches", tenantBodies.size(), "statuses", List.copyOf(tenantStatuses)),
+              "profile",
+                  Map.of(
+                      "dispatches",
+                      profileBodies.size(),
+                      "statuses",
+                      List.copyOf(profileStatuses))));
     }
 
     var parent =
