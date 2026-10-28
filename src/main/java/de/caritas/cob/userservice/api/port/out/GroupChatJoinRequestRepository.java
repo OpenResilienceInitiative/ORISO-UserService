@@ -59,6 +59,42 @@ public interface GroupChatJoinRequestRepository extends CrudRepository<GroupChat
       @Param("status") Status status,
       @Param("since") java.time.LocalDateTime since);
 
+  /** Call share link knocks (#1487): one guest on one link. */
+  Optional<GroupChatJoinRequest> findFirstByInviteLinkIdAndUserIdAndViaAndStatusOrderByIdDesc(
+      Long inviteLinkId, String userId, Via via, Status status);
+
+  List<GroupChatJoinRequest> findByInviteLinkIdAndViaAndStatus(
+      Long inviteLinkId, Via via, Status status);
+
+  /** Waiting guests of the share links a counsellor created (#1487). */
+  @Query(
+      "SELECT request FROM GroupChatJoinRequest request, AgencyInviteLink link"
+          + " WHERE request.inviteLinkId = link.id AND link.consultantId = :consultantId"
+          + " AND link.linkKind = 'CALL' AND link.status = 'ACTIVE'"
+          + " AND request.via = :via AND request.status = :status"
+          + " AND request.requestedAt >= :since"
+          + " ORDER BY request.requestedAt ASC, request.id ASC")
+  List<GroupChatJoinRequest> findCallLinkKnocksForConsultant(
+      @Param("consultantId") String consultantId,
+      @Param("via") Via via,
+      @Param("status") Status status,
+      @Param("since") java.time.LocalDateTime since);
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "SELECT request FROM GroupChatJoinRequest request"
+          + " WHERE request.inviteLinkId IN"
+          + " (SELECT link.id FROM AgencyInviteLink link WHERE link.consultantId = :consultantId"
+          + " AND link.linkKind = 'CALL' AND link.status = 'ACTIVE')"
+          + " AND request.via = :via AND request.status = :status"
+          + " AND request.requestedAt >= :since"
+          + " ORDER BY request.requestedAt ASC, request.id ASC")
+  List<GroupChatJoinRequest> findCallLinkKnocksForConsultantForUpdate(
+      @Param("consultantId") String consultantId,
+      @Param("via") Via via,
+      @Param("status") Status status,
+      @Param("since") java.time.LocalDateTime since);
+
   List<GroupChatJoinRequest> findBySeriesIdInAndStatusOrderByRequestedAtAscIdAsc(
       Collection<Long> seriesIds, Status status);
 

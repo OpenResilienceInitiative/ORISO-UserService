@@ -39,13 +39,16 @@ class DirectCallKnockServiceTest {
   @Mock private GroupChatJoinRequestRepository repository;
   @Mock private SessionRepository sessionRepository;
 
+  @Mock
+  private de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository inviteLinkRepository;
+
   private DirectCallKnockService service;
   private Consultant counsellor;
   private User asker;
 
   @BeforeEach
   void setUp() {
-    service = new DirectCallKnockService(repository, sessionRepository);
+    service = new DirectCallKnockService(repository, sessionRepository, inviteLinkRepository);
     counsellor = consultant("counsellor-1");
     asker = new User();
     asker.setUserId("asker-1");
@@ -230,6 +233,126 @@ class DirectCallKnockServiceTest {
     assertThat(service.cancelOwn(1L, asker).getStatus()).isEqualTo(Status.ADMITTED);
     verify(repository, never()).findById(any());
     verify(repository, never()).save(any());
+  }
+
+  // --- Call share links (#1487) -------------------------------------------------------------
+
+  @Test
+  void knockOnCallLink_Should_CreateACallLinkKnock_OnTheLinkNotTheConversation() {
+    var knock = service.knockOnCallLink(5L, SESSION_ID, asker, "AUDIO");
+
+    assertThat(knock.getVia()).isEqualTo(Via.CALL_LINK);
+    assertThat(knock.getInviteLinkId()).isEqualTo(5L);
+    assertThat(knock.getUserId()).isEqualTo("asker-1");
+    assertThat(knock.getStatus()).isEqualTo(Status.PENDING);
+    assertThat(knock.getMedium()).isEqualTo("AUDIO");
+  }
+
+  @Test
+  void knockOnCallLink_Should_ReturnTheOpenKnock_When_TheGuestKnocksAgain() {
+    var open = callLinkKnock(1L, Status.PENDING);
+    when(repository.findFirstByInviteLinkIdAndUserIdAndViaAndStatusOrderByIdDesc(
+            5L, "asker-1", Via.CALL_LINK, Status.PENDING))
+        .thenReturn(Optional.of(open));
+
+    assertThat(service.knockOnCallLink(5L, SESSION_ID, asker, "AUDIO")).isSameAs(open);
+    verify(repository, never()).save(any());
+  }
+
+  @Test
+  void admit_Should_LetTheLinkOwnerDecideACallLinkKnock() {
+    var knock = callLinkKnock(1L, Status.PENDING);
+    when(repository.findByIdForUpdate(1L)).thenReturn(Optional.of(knock));
+    when(inviteLinkRepository.findById(5L)).thenReturn(Optional.of(callLink("counsellor-1")));
+
+    assertThat(service.admit(1L, counsellor).getStatus()).isEqualTo(Status.ADMITTED);
+  }
+
+  @Test
+  void admit_Should_Return404_ForACallLinkKnockOfAnotherCounsellorsLink() {
+    var knock = callLinkKnock(1L, Status.PENDING);
+    when(repository.findByIdForUpdate(1L)).thenReturn(Optional.of(knock));
+    when(inviteLinkRepository.findById(5L)).thenReturn(Optional.of(callLink("someone-else")));
+
+    assertThatThrownBy(() -> service.admit(1L, counsellor)).isInstanceOf(NotFoundException.class);
+    assertThat(knock.getStatus()).isEqualTo(Status.PENDING);
+  }
+
+  @Test
+  void admit_Should_Return404_ForACallLinkKnockOfAnExpiredLink() {
+    var knock = callLinkKnock(1L, Status.PENDING);
+    when(repository.findByIdForUpdate(1L)).thenReturn(Optional.of(knock));
+    var expired = callLink("counsellor-1");
+    expired.setStatus("EXPIRED");
+    when(inviteLinkRepository.findById(5L)).thenReturn(Optional.of(expired));
+
+    assertThatThrownBy(() -> service.admit(1L, counsellor)).isInstanceOf(NotFoundException.class);
+  }
+
+  @Test
+  void pendingFor_Should_ListDirectAndCallLinkKnocksInTheOrderTheyCameIn() {
+    var direct = pending(1L, LocalDateTime.now().minusMinutes(2));
+    var viaLink = callLinkKnock(2L, Status.PENDING);
+    viaLink.setRequestedAt(LocalDateTime.now().minusMinutes(5));
+    when(repository.findCallKnocksForConsultant(
+            eq("counsellor-1"), eq(Via.DIRECT_LINK), eq(Status.PENDING), any()))
+        .thenReturn(List.of(direct));
+    when(repository.findCallLinkKnocksForConsultant(
+            eq("counsellor-1"), eq(Via.CALL_LINK), eq(Status.PENDING), any()))
+        .thenReturn(List.of(viaLink));
+
+    assertThat(service.pendingFor(counsellor)).containsExactly(viaLink, direct);
+  }
+
+  @Test
+  void admitWaitingOnCallLink_Should_AdmitEveryPendingKnockOfTheLink() {
+    var first = callLinkKnock(1L, Status.PENDING);
+    var second = callLinkKnock(2L, Status.PENDING);
+    when(repository.findByInviteLinkIdAndViaAndStatus(5L, Via.CALL_LINK, Status.PENDING))
+        .thenReturn(List.of(first, second));
+
+    assertThat(service.admitWaitingOnCallLink(5L, "counsellor-1")).hasSize(2);
+    assertThat(first.getStatus()).isEqualTo(Status.ADMITTED);
+    assertThat(second.getDecidedBy()).isEqualTo("counsellor-1");
+  }
+
+  @Test
+  void cancelWaitingOnCallLink_Should_CancelEveryPendingKnockOfTheLink() {
+    var waiting = callLinkKnock(1L, Status.PENDING);
+    when(repository.findByInviteLinkIdAndViaAndStatus(5L, Via.CALL_LINK, Status.PENDING))
+        .thenReturn(List.of(waiting));
+
+    service.cancelWaitingOnCallLink(5L);
+    assertThat(waiting.getStatus()).isEqualTo(Status.CANCELLED);
+  }
+
+  @Test
+  void getOwn_Should_ReturnTheGuestsOwnCallLinkKnock() {
+    var knock = callLinkKnock(1L, Status.PENDING);
+    when(repository.findById(1L)).thenReturn(Optional.of(knock));
+
+    assertThat(service.getOwn(1L, asker)).isSameAs(knock);
+  }
+
+  private GroupChatJoinRequest callLinkKnock(Long id, Status status) {
+    return GroupChatJoinRequest.builder()
+        .id(id)
+        .via(Via.CALL_LINK)
+        .inviteLinkId(5L)
+        .userId("asker-1")
+        .medium("VIDEO")
+        .status(status)
+        .requestedAt(LocalDateTime.now().minusMinutes(1))
+        .build();
+  }
+
+  private static de.caritas.cob.userservice.api.model.AgencyInviteLink callLink(String owner) {
+    return de.caritas.cob.userservice.api.model.AgencyInviteLink.builder()
+        .id(5L)
+        .linkKind("CALL")
+        .status("ACTIVE")
+        .consultantId(owner)
+        .build();
   }
 
   private GroupChatJoinRequest pending(Long id, LocalDateTime requestedAt) {

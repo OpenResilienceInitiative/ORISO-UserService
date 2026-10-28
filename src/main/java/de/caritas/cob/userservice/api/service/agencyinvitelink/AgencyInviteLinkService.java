@@ -61,6 +61,9 @@ public class AgencyInviteLinkService {
   private final @NonNull de.caritas.cob.userservice.api.admin.service.tenant.TenantService
       tenantService;
 
+  /** Call share links (#1487) in the public context; not {@code @NonNull} for older test wiring. */
+  private final CallShareLinkService callShareLinkService;
+
   /** Create a new invite link. All classification fields are optional — defaults are applied. */
   public AgencyInviteLink create(CreateInviteLinkCommand cmd) {
     if (cmd == null) {
@@ -184,6 +187,9 @@ public class AgencyInviteLinkService {
         repository
             .findByToken(token)
             .orElseThrow(() -> new NotFoundException("Invite link not found"));
+    if (InviteLinkKind.CALL.name().equals(link.getLinkKind())) {
+      return callShareContext(link);
+    }
     if (InviteLinkStatus.DISABLED.name().equals(link.getStatus())) {
       throw new DirectLinkInactiveException();
     }
@@ -222,8 +228,28 @@ public class AgencyInviteLinkService {
   }
 
   /**
+   * Call share link (#1487): 410 once the call is over. {@code temporaryAccount} is effective (the
+   * counsellor's setting, and allowed by platform and Träger); {@code admission} follows
+   * "Anklopfen" and changes while the call runs. Nothing about the call or its conversation is
+   * exposed.
+   */
+  private InvitationContext callShareContext(AgencyInviteLink link) {
+    callShareLinkService.requireUsable(link);
+    return new InvitationContext(
+        link.getTenantId(),
+        link.getAgencyId(),
+        link.getConsultingTypeId(),
+        link.getTopicId(),
+        link.getChatType(),
+        link.isTemporaryAccount() && callShareLinkService.temporaryAccountAllowed(link),
+        (link.isKnock() ? InviteLinkAdmission.KNOCK : InviteLinkAdmission.DIRECT).name(),
+        InviteLinkKind.CALL.name());
+  }
+
+  /**
    * Public context deliberately excludes credentials and invitation administration data, including
-   * the owner of a direct link. The direct-link fields are omitted for every other link.
+   * the owner of a direct link. The direct-link fields are omitted for every other link; {@code
+   * linkKind} is set only for a call share link (#1487).
    */
   public record InvitationContext(
       Long tenantId,
@@ -232,7 +258,28 @@ public class AgencyInviteLinkService {
       Long topicId,
       String chatType,
       @JsonInclude(JsonInclude.Include.NON_NULL) Boolean temporaryAccount,
-      @JsonInclude(JsonInclude.Include.NON_NULL) String admission) {}
+      @JsonInclude(JsonInclude.Include.NON_NULL) String admission,
+      @JsonInclude(JsonInclude.Include.NON_NULL) String linkKind) {
+
+    public InvitationContext(
+        Long tenantId,
+        Long agencyId,
+        Integer consultingTypeId,
+        Long topicId,
+        String chatType,
+        Boolean temporaryAccount,
+        String admission) {
+      this(
+          tenantId,
+          agencyId,
+          consultingTypeId,
+          topicId,
+          chatType,
+          temporaryAccount,
+          admission,
+          null);
+    }
+  }
 
   /**
    * Redeem the token: validate, mark USED, return tenant/agency/consulting-type/topic metadata for
@@ -264,6 +311,10 @@ public class AgencyInviteLinkService {
       throw new BadRequestException("Invite link is not active");
     }
 
+    if (InviteLinkKind.CALL.name().equals(link.getLinkKind())) {
+      // A call share link opens one running call only (#1487), never a registration context.
+      throw new BadRequestException("Not a registration link");
+    }
     if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now())) {
       link.setStatus(InviteLinkStatus.EXPIRED.name());
       repository.save(link);

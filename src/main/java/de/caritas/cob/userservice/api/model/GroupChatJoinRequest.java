@@ -26,6 +26,8 @@ import lombok.Setter;
  *   <li>{@link Via#DIRECT_LINK}: a person knocks on an audio or video call in their own 1:1
  *       conversation opened through a counsellor direct link; that counsellor admits it ({@code
  *       sessionId}, {@code userId}, #1475, ADR-029 §2). Never enters the Matrix admission path.
+ *   <li>{@link Via#CALL_LINK}: a guest knocks on one running call through its share link ({@code
+ *       inviteLinkId}, {@code userId}, #1487); the link's counsellor admits it.
  * </ul>
  */
 @Entity
@@ -53,7 +55,9 @@ public class GroupChatJoinRequest {
 
   public enum Via {
     INVITE_LINK,
-    DIRECT_LINK
+    DIRECT_LINK,
+    /** A guest knocks on one running call through its share link (#1487). */
+    CALL_LINK
   }
 
   @Id

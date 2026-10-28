@@ -146,6 +146,8 @@ public class DirectLinkControllerDelegate {
     return new CallKnockDTO()
         .id(knock.getId())
         .sessionId(knock.getSessionId())
+        .callShareLinkId(
+            knock.getVia() == GroupChatJoinRequest.Via.CALL_LINK ? knock.getInviteLinkId() : null)
         .status(CallKnockStatus.valueOf(knock.getStatus().name()))
         .medium(DirectLinkMedium.valueOf(knock.getMedium()))
         .requestedAt(knock.getRequestedAt().atOffset(ZoneOffset.UTC))

@@ -55,30 +55,45 @@ public class MatrixCallGuestService {
   @Transactional
   public Admission admit(
       AuthenticatedUser actor, String sourceRoomId, String callId, String guestUserId) {
-    if (!actor.isConsultant()
-        || actor.getUserId() == null
-        || actor.getTenantId() == null
-        || blank(sourceRoomId)
-        || blank(callId)
-        || blank(guestUserId)) return Admission.of(Outcome.NOT_FOUND);
-    Long tenant = actor.getTenantId();
+    if (!actor.isConsultant()) return Admission.of(Outcome.NOT_FOUND);
+    return admitAs(actor.getTenantId(), actor.getUserId(), sourceRoomId, callId, guestUserId);
+  }
+
+  /** A running call as seen by one counsellor of its conversation (US#1477, US#1487). */
+  public record CounsellorCall(
+      Outcome outcome, MatrixCallBinding binding, String counsellorMatrixId, List<String> members) {
+    static CounsellorCall of(Outcome outcome) {
+      return new CounsellorCall(outcome, null, null, null);
+    }
+  }
+
+  /**
+   * The running call {@code callId} of {@code sourceRoomId}, locked, when {@code consultantId} is a
+   * counsellor of that Träger and in the conversation; else {@code NOT_FOUND}. Never tells another
+   * Träger's call apart from a missing one.
+   */
+  @Transactional
+  public CounsellorCall counsellorCall(
+      Long tenant, String consultantId, String sourceRoomId, String callId) {
+    if (consultantId == null || tenant == null || blank(sourceRoomId) || blank(callId))
+      return CounsellorCall.of(Outcome.NOT_FOUND);
     var conversation =
         conversations
             .resolve(sourceRoomId)
             .filter(value -> tenant.equals(value.getTenantId()))
             .orElse(null);
-    String admitter =
+    String counsellor =
         consultants
-            .findByIdAndDeleteDateIsNull(actor.getUserId())
+            .findByIdAndDeleteDateIsNull(consultantId)
             .filter(value -> tenant.equals(value.getTenantId()))
             .map(value -> value.getMatrixUserId())
             .filter(value -> !blank(value))
             .orElse(null);
-    if (conversation == null || admitter == null) return Admission.of(Outcome.NOT_FOUND);
+    if (conversation == null || counsellor == null) return CounsellorCall.of(Outcome.NOT_FOUND);
     var members = matrix.getCallRoomMembers(sourceRoomId).orElse(null);
-    if (members == null) return Admission.of(Outcome.MATRIX_UNAVAILABLE);
+    if (members == null) return CounsellorCall.of(Outcome.MATRIX_UNAVAILABLE);
     // Only a counsellor who is in the conversation may open its call to somebody else.
-    if (!members.contains(admitter)) return Admission.of(Outcome.NOT_FOUND);
+    if (!members.contains(counsellor)) return CounsellorCall.of(Outcome.NOT_FOUND);
     var binding =
         bindings
             .findBySourceRoomIdAndCallId(sourceRoomId, callId)
@@ -87,11 +102,28 @@ public class MatrixCallGuestService {
                     Objects.equals(value.getTenantId(), conversation.getTenantId())
                         && Objects.equals(value.getSessionId(), conversation.getSessionId())
                         && Objects.equals(value.getChatId(), conversation.getChatId()))
-            // Serialise with the lifecycle, so a call cannot end between the check and the invite.
+            // Serialise with the lifecycle, so a call cannot end between the check and the use.
             .flatMap(value -> bindings.lockByMediaRoomId(value.getMediaRoomId()))
             .filter(value -> value.getEndedAt() == null)
             .orElse(null);
-    if (binding == null) return Admission.of(Outcome.NOT_FOUND);
+    if (binding == null) return CounsellorCall.of(Outcome.NOT_FOUND);
+    return new CounsellorCall(Outcome.ADMITTED, binding, counsellor, members);
+  }
+
+  /**
+   * Seats {@code guestUserId} in the running call on the authority of counsellor {@code
+   * consultantId}: the counsellor's own admission (US#1477), or the share link they created
+   * (US#1487).
+   */
+  @Transactional
+  public Admission admitAs(
+      Long tenant, String consultantId, String sourceRoomId, String callId, String guestUserId) {
+    if (blank(guestUserId)) return Admission.of(Outcome.NOT_FOUND);
+    var call = counsellorCall(tenant, consultantId, sourceRoomId, callId);
+    if (call.outcome() != Outcome.ADMITTED) return Admission.of(call.outcome());
+    var binding = call.binding();
+    var members = call.members();
+    String admitter = call.counsellorMatrixId();
     var guest = identity(guestUserId, tenant).orElse(null);
     if (guest == null || !isActive(guest.id())) return Admission.of(Outcome.NOT_FOUND);
     // A member of the conversation already has the normal join path; never record them as a

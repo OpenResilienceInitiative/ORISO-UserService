@@ -26,6 +26,18 @@ public interface AgencyInviteLinkRepository extends JpaRepository<AgencyInviteLi
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   Optional<AgencyInviteLink> findByTokenAndStatus(String token, String status);
 
+  /** The share link of one running call (#1487); at most one per call. */
+  Optional<AgencyInviteLink> findByCallBindingId(Long callBindingId);
+
+  /** Locked: knocks through one share link are serialised on the link row (#1487). */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("SELECT l FROM AgencyInviteLink l WHERE l.id = :id")
+  Optional<AgencyInviteLink> findByIdForUpdate(@Param("id") Long id);
+
+  /** Active links of one kind after {@code id}, oldest first, for the expiry sweep (#1487). */
+  List<AgencyInviteLink> findByLinkKindAndStatusAndIdGreaterThanOrderByIdAsc(
+      String linkKind, String status, Long id, Pageable pageable);
+
   /**
    * Tenant-scoped, filtered, paged finder for the new invite-links list endpoint. The {@code
    * tenantId} predicate is always enforced — a tenant admin must never see another tenant's links.

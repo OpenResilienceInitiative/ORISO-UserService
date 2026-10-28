@@ -320,6 +320,19 @@ public class SecurityConfig {
                     RESTRICTED_AGENCY_ADMIN)
                 .requestMatchers(HttpMethod.GET, APPOINTMENTS_APPOINTMENT_ID + UUID_PATTERN + "}")
                 .permitAll()
+                // Call share links (#1487), ahead of /matrix/**: guests join, counsellors manage;
+                // membership of the call is checked in the service.
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/matrix/calls/share-links/*/join",
+                    "/service/matrix/calls/share-links/*/join")
+                .hasAuthority(USER_DEFAULT)
+                .requestMatchers(
+                    "/matrix/calls/share-links",
+                    "/service/matrix/calls/share-links",
+                    "/matrix/calls/share-links/{linkId:[0-9]+}",
+                    "/service/matrix/calls/share-links/{linkId:[0-9]+}")
+                .hasAuthority(CONSULTANT_DEFAULT)
                 .requestMatchers(
                     "/users/email",
                     "/users/drafts",

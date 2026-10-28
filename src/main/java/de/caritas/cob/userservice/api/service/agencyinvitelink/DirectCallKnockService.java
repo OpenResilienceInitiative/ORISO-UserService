@@ -8,12 +8,17 @@ import de.caritas.cob.userservice.api.model.GroupChatJoinRequest.Status;
 import de.caritas.cob.userservice.api.model.GroupChatJoinRequest.Via;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatJoinRequestRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import java.time.LocalDateTime;
+import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Stream;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,6 +29,9 @@ import org.springframework.transaction.annotation.Transactional;
  * Knock-first admission for audio and video direct links (#1475, ADR-029 §2), on the knock model of
  * the self-help groups: a person knocks on the call in their own 1:1 conversation, and the
  * counsellor of that conversation admits or declines, one by one or all at once.
+ *
+ * <p>Call share links (#1487) use the same queue: a guest knocks on one running call through its
+ * link ({@link Via#CALL_LINK}), and the counsellor who created the link decides.
  */
 @Service
 @RequiredArgsConstructor
@@ -31,6 +39,12 @@ public class DirectCallKnockService {
 
   private final @NonNull GroupChatJoinRequestRepository repository;
   private final @NonNull SessionRepository sessionRepository;
+  private final @NonNull AgencyInviteLinkRepository inviteLinkRepository;
+
+  private static final Set<Via> CALL_KNOCKS = EnumSet.of(Via.DIRECT_LINK, Via.CALL_LINK);
+  private static final Comparator<GroupChatJoinRequest> BY_REQUESTED_AT =
+      Comparator.comparing(GroupChatJoinRequest::getRequestedAt)
+          .thenComparing(GroupChatJoinRequest::getId);
 
   /** A person who left without cancelling must not stay in the counsellor's list for ever. */
   @Value("${direct-links.knock.pending-minutes:120}")
@@ -69,6 +83,62 @@ public class DirectCallKnockService {
                         .build()));
   }
 
+  /**
+   * A guest knocks on one running call through its share link (#1487). Same rules as {@link
+   * #knock}; the caller holds the lock on the link row, so parallel visits insert one knock.
+   */
+  public GroupChatJoinRequest knockOnCallLink(
+      Long linkId, Long sessionId, User user, String medium) {
+    return repository
+        .findFirstByInviteLinkIdAndUserIdAndViaAndStatusOrderByIdDesc(
+            linkId, user.getUserId(), Via.CALL_LINK, Status.PENDING)
+        .filter(this::stillWaiting)
+        .orElseGet(
+            () ->
+                repository.save(
+                    GroupChatJoinRequest.builder()
+                        .via(Via.CALL_LINK)
+                        .sessionId(sessionId)
+                        .userId(user.getUserId())
+                        .inviteLinkId(linkId)
+                        .medium(medium)
+                        .status(Status.PENDING)
+                        .requestedAt(LocalDateTime.now())
+                        .build()));
+  }
+
+  /** Let in once (#1487): the guest's admission on this link holds until the call ends. */
+  public Optional<GroupChatJoinRequest> callLinkAdmission(Long linkId, User user) {
+    return repository.findFirstByInviteLinkIdAndUserIdAndViaAndStatusOrderByIdDesc(
+        linkId, user.getUserId(), Via.CALL_LINK, Status.ADMITTED);
+  }
+
+  /** "Anklopfen" switched off (#1487): everybody waiting on the link is let in at once. */
+  public List<GroupChatJoinRequest> admitWaitingOnCallLink(Long linkId, String decidedBy) {
+    return closeWaitingOnCallLink(linkId, Status.ADMITTED, decidedBy);
+  }
+
+  /** The call of the link ended (#1487): nobody keeps waiting for it. */
+  public List<GroupChatJoinRequest> cancelWaitingOnCallLink(Long linkId) {
+    return closeWaitingOnCallLink(linkId, Status.CANCELLED, null);
+  }
+
+  private List<GroupChatJoinRequest> closeWaitingOnCallLink(
+      Long linkId, Status outcome, String decidedBy) {
+    var now = LocalDateTime.now();
+    return repository
+        .findByInviteLinkIdAndViaAndStatus(linkId, Via.CALL_LINK, Status.PENDING)
+        .stream()
+        .map(
+            knock -> {
+              knock.setStatus(outcome);
+              knock.setDecidedAt(now);
+              knock.setDecidedBy(decidedBy);
+              return repository.save(knock);
+            })
+        .toList();
+  }
+
   public GroupChatJoinRequest getOwn(Long knockId, User user) {
     return requireOwn(knockId, user);
   }
@@ -95,7 +165,7 @@ public class DirectCallKnockService {
     var knock =
         repository
             .findByIdForUpdate(knockId)
-            .filter(k -> k.getVia() == Via.DIRECT_LINK)
+            .filter(k -> CALL_KNOCKS.contains(k.getVia()))
             .filter(k -> Objects.equals(k.getUserId(), user.getUserId()))
             .orElseThrow(() -> new NotFoundException("Call knock %s not found", knockId));
     if (knock.isPending()) {
@@ -108,8 +178,18 @@ public class DirectCallKnockService {
   }
 
   public List<GroupChatJoinRequest> pendingFor(Consultant consultant) {
-    return repository.findCallKnocksForConsultant(
-        consultant.getId(), Via.DIRECT_LINK, Status.PENDING, waitingSince());
+    var since = waitingSince();
+    return Stream.concat(
+            repository
+                .findCallKnocksForConsultant(
+                    consultant.getId(), Via.DIRECT_LINK, Status.PENDING, since)
+                .stream(),
+            repository
+                .findCallLinkKnocksForConsultant(
+                    consultant.getId(), Via.CALL_LINK, Status.PENDING, since)
+                .stream())
+        .sorted(BY_REQUESTED_AT)
+        .toList();
   }
 
   @Transactional
@@ -127,10 +207,17 @@ public class DirectCallKnockService {
     var now = LocalDateTime.now();
     // Loaded under lock in one query, so a knock cancelled or declined meanwhile is not pending
     // any more; no earlier unlocked read can leave a stale entity in the persistence context.
-    return repository
-        .findCallKnocksForConsultantForUpdate(
-            consultant.getId(), Via.DIRECT_LINK, Status.PENDING, waitingSince())
-        .stream()
+    var since = waitingSince();
+    return Stream.concat(
+            repository
+                .findCallKnocksForConsultantForUpdate(
+                    consultant.getId(), Via.DIRECT_LINK, Status.PENDING, since)
+                .stream(),
+            repository
+                .findCallLinkKnocksForConsultantForUpdate(
+                    consultant.getId(), Via.CALL_LINK, Status.PENDING, since)
+                .stream())
+        .sorted(BY_REQUESTED_AT)
         .map(
             knock -> {
               knock.setStatus(Status.ADMITTED);
@@ -145,8 +232,7 @@ public class DirectCallKnockService {
     var knock =
         repository
             .findByIdForUpdate(knockId)
-            .filter(k -> k.getVia() == Via.DIRECT_LINK)
-            .filter(k -> isCounsellorOf(k.getSessionId(), consultant))
+            .filter(k -> decides(k, consultant))
             .orElseThrow(() -> new NotFoundException("Call knock %s not found", knockId));
     if (knock.getStatus() == outcome) {
       return knock;
@@ -158,6 +244,25 @@ public class DirectCallKnockService {
     knock.setDecidedAt(LocalDateTime.now());
     knock.setDecidedBy(consultant.getId());
     return repository.save(knock);
+  }
+
+  private boolean decides(GroupChatJoinRequest knock, Consultant consultant) {
+    return switch (knock.getVia()) {
+      case DIRECT_LINK -> isCounsellorOf(knock.getSessionId(), consultant);
+      case CALL_LINK -> isCallLinkOwner(knock.getInviteLinkId(), consultant);
+      default -> false;
+    };
+  }
+
+  /** Only the counsellor who created the share link decides, and only while it is active. */
+  private boolean isCallLinkOwner(Long linkId, Consultant consultant) {
+    return linkId != null
+        && inviteLinkRepository
+            .findById(linkId)
+            .filter(link -> InviteLinkKind.CALL.name().equals(link.getLinkKind()))
+            .filter(link -> InviteLinkStatus.ACTIVE.name().equals(link.getStatus()))
+            .map(link -> Objects.equals(link.getConsultantId(), consultant.getId()))
+            .orElse(false);
   }
 
   private boolean isCounsellorOf(Long sessionId, Consultant consultant) {
@@ -172,7 +277,7 @@ public class DirectCallKnockService {
   private GroupChatJoinRequest requireOwn(Long knockId, User user) {
     return repository
         .findById(knockId)
-        .filter(k -> k.getVia() == Via.DIRECT_LINK)
+        .filter(k -> CALL_KNOCKS.contains(k.getVia()))
         .filter(k -> Objects.equals(k.getUserId(), user.getUserId()))
         .orElseThrow(() -> new NotFoundException("Call knock %s not found", knockId));
   }
