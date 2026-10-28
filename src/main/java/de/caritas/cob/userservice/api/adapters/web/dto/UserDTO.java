@@ -156,6 +156,14 @@ public class UserDTO implements UserRegistrationDTO {
   @JsonProperty("groupChatInviteToken")
   private String groupChatInviteToken;
 
+  /**
+   * Token of the counsellor direct link that creates this temporary account (ADR-029 §3, #1476).
+   * Requires {@code temporary}; the account copies the platform lifetimes and opens no enquiry.
+   */
+  @ApiModelProperty(required = false, example = "\"a1b2c3\"")
+  @JsonProperty("directLinkToken")
+  private String directLinkToken;
+
   public Integer getUserAge() {
     return StringUtils.isNumeric(age) ? Integer.valueOf(age) : null;
   }

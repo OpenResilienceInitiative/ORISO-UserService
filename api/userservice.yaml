@@ -264,6 +264,43 @@ paths:
               schema: {$ref: '#/components/schemas/CallKnockDTO'}
         '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
         '404': {description: No own knock with this id}
+  /users/temporary-account:
+    get:
+      tags: [direct-link-controller]
+      operationId: getOwnTemporaryAccount
+      summary: 'The caller''s own temporary account from a direct link: retention mode and answer (ADR-029 §5) [Authorization: Role: user]'
+      security:
+        - Bearer: [ ]
+      responses:
+        '200':
+          description: The temporary account
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TemporaryAccountDTO'}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '404': {description: The caller has no direct-link temporary account}
+  /users/temporary-account/message-retention:
+    put:
+      tags: [direct-link-controller]
+      operationId: decideTemporaryAccountMessageRetention
+      summary: 'The guest''s once-per-conversation answer under GUEST_DECIDES: keep the messages or delete them with the account [Authorization: Role: user]'
+      security:
+        - Bearer: [ ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TemporaryAccountRetentionDecisionDTO'}
+      responses:
+        '200':
+          description: The temporary account with the answer
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TemporaryAccountDTO'}
+        '400': {description: keepMessages missing}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '404': {description: The caller has no direct-link temporary account}
+        '409': {description: The platform mode does not ask the guest, or the guest already answered}
   /users/directlinks:
     get:
       tags: [direct-link-controller]
@@ -3202,6 +3239,17 @@ components:
           nullable: true
           enum: [DIRECT, KNOCK]
           description: Direct links only. KNOCK for audio and video, DIRECT for chat (ADR-029 §2).
+        hidePasswordField:
+          type: boolean
+          nullable: true
+          description: >-
+            Links with temporaryAccount only. The platform hides the password field; the app then
+            sends a suggested password silently. The account always has one (ADR-029 §3).
+        messageRetention:
+          type: string
+          nullable: true
+          enum: [ALWAYS_TEMPORARY, GUEST_DECIDES, ALWAYS_PERSISTENT]
+          description: Links with temporaryAccount only. The mode a person joining now gets (§5).
     DirectLinkMedium:
       type: string
       enum: [CHAT, AUDIO, VIDEO]
@@ -3421,6 +3469,13 @@ components:
             The secret part of that group's invite link. Required with `groupChatId`; a missing
             or wrong token answers 403 before any account is created, the same check as joining
             by invite link.
+        directLinkToken:
+          type: string
+          description: >-
+            Token of the counsellor direct link that creates this temporary account (ADR-029 §3).
+            Requires `temporary: true` and a link with `temporaryAccount`. The account copies the
+            platform lifetimes and retention mode (`/users/admin/temporary-account-settings`) and
+            opens no enquiry; the conversation starts with `POST /users/invitelinks/{token}/conversations`.
 
 
     SessionDataDTO:
@@ -4088,6 +4143,38 @@ components:
           type: string
           description: Stored animal or motif id. Absent kind and id select the derived default; INITIALS has no motif id.
 
+    TemporaryAccountDTO:
+      type: object
+      description: >-
+        A temporary account created through a counsellor direct link (ADR-029 §3–§5). The
+        lifetimes and the retention mode were copied when the account was created.
+      required: [medium, messageRetention, keepsMessages, deleted]
+      properties:
+        medium:
+          type: string
+          enum: [CHAT, AUDIO, VIDEO]
+        messageRetention:
+          $ref: '#/components/schemas/MessageRetentionMode'
+        keepMessages:
+          type: boolean
+          description: The guest's own answer under GUEST_DECIDES; absent while undecided.
+        keepsMessages:
+          type: boolean
+          description: >-
+            What happens at deletion: true keeps the messages (sender then shows as
+            "Gast (gelöscht)"), false deletes them. Undecided under GUEST_DECIDES counts as false.
+        deleted:
+          type: boolean
+          description: The Keycloak and Matrix identities are gone.
+    TemporaryAccountRetentionDecisionDTO:
+      type: object
+      required: [keepMessages]
+      properties:
+        keepMessages:
+          type: boolean
+    MessageRetentionMode:
+      type: string
+      enum: [ALWAYS_TEMPORARY, GUEST_DECIDES, ALWAYS_PERSISTENT]
     SessionUserDTO:
       type: object
       properties:
@@ -4102,6 +4189,8 @@ components:
           example: Behutsames Pferd Jules
         isDeleted:
           type: boolean
+        temporaryAccount:
+          $ref: '#/components/schemas/TemporaryAccountDTO'
         sessionData:
           type: string
           description: LinkedHashMap<String, Object>

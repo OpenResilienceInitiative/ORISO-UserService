@@ -49,6 +49,28 @@ public class DirectLinkControllerDelegate {
 
   private final @NonNull DirectCallKnockService knockService;
   private final @NonNull UserRepository userRepository;
+  private final @NonNull de.caritas.cob.userservice.api.service.temporaryaccount
+          .TemporaryAccountService
+      temporaryAccountService;
+
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.TemporaryAccountDTO>
+      getOwnTemporaryAccount() {
+    return ResponseEntity.ok(
+        temporaryAccountService.own(userAccountService.retrieveValidatedUser()));
+  }
+
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.TemporaryAccountDTO>
+      decideTemporaryAccountMessageRetention(
+          de.caritas.cob.userservice.api.adapters.web.dto.TemporaryAccountRetentionDecisionDTO
+              decision) {
+    if (decision == null || decision.getKeepMessages() == null) {
+      throw new de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException(
+          "keepMessages is required");
+    }
+    return ResponseEntity.ok(
+        temporaryAccountService.decide(
+            userAccountService.retrieveValidatedUser(), decision.getKeepMessages()));
+  }
 
   @Value("${app.base.url}")
   private String appBaseUrl;

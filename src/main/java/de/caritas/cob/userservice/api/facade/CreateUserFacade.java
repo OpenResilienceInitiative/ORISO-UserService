@@ -94,6 +94,14 @@ public class CreateUserFacade {
 
   private final @NonNull GroupInviteRegistration groupInviteRegistration;
 
+  private final @NonNull de.caritas.cob.userservice.api.service.agencyinvitelink
+          .TemporaryAccountLinkResolver
+      temporaryAccountLinkResolver;
+
+  private final @NonNull de.caritas.cob.userservice.api.service.temporaryaccount
+          .TemporaryAccountSettingsService
+      temporaryAccountSettings;
+
   @Value("${feature.multitenancy.with.single.domain.enabled:false}")
   private boolean multitenancyWithSingleDomain;
 
@@ -129,9 +137,12 @@ public class CreateUserFacade {
         dpaPolicy.requireForAgency(userDTO.getAgencyId());
       }
       Optional<Chat> invitedGroup = groupInviteRegistration.resolveInvitedGroup(userDTO);
-      if (userDTO.isTemporary() && invitedGroup.isEmpty()) {
-        // The deletion job removes temporary accounts; only a valid group invite may ask for one.
-        throw new BadRequestException("A temporary account requires a group invite.");
+      var temporaryLink = temporaryAccountLinkResolver.resolve(userDTO);
+      if (userDTO.isTemporary() && invitedGroup.isEmpty() && temporaryLink.isEmpty()) {
+        // The deletion job removes temporary accounts; only a valid group invite or direct link
+        // may ask for one.
+        throw new BadRequestException(
+            "A temporary account requires a group invite or a direct link.");
       }
 
       RecoveryPolicySnapshot snapshot =
@@ -163,6 +174,15 @@ public class CreateUserFacade {
       User user = updateIdentityAndCreateAccount(identityUserId, userDTO, UserRole.USER, snapshot);
       if (user != null) {
         user.setTemporaryAccount(userDTO.isTemporary());
+        // ADR-029 §4: the account keeps the lifetimes valid at its creation (#1476).
+        if (temporaryLink.isPresent()) {
+          var link = temporaryLink.get();
+          user.setTemporaryAccountSnapshot(
+              temporaryAccountSettings.snapshotForNewAccount(
+                  de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkChatType
+                      .valueOf(link.getChatType()),
+                  link.getId()));
+        }
       }
       provisionedUser.set(user);
       User savedUser = userService.saveUser(user);
@@ -190,6 +210,10 @@ public class CreateUserFacade {
             identityUserId,
             () -> groupInviteRegistration.leave(group, provisionedUser.get()));
         groupInviteRegistration.join(group, user);
+        sessionId = null;
+      } else if (temporaryLink.isPresent()) {
+        // The conversation starts through the link afterwards (knock first for calls), never as
+        // an enquiry (ADR-029 §1).
         sessionId = null;
       } else {
         activeAttempt.register(

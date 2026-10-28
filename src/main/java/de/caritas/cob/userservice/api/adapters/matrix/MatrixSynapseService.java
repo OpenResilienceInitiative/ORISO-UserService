@@ -59,6 +59,8 @@ public class MatrixSynapseService implements MatrixUserClient {
   private static final String ENDPOINT_SYNC = "/_matrix/client/r0/sync";
   private static final String ENDPOINT_UPDATE_USER_ADMIN = "/_synapse/admin/v2/users/{userId}";
   private static final String ENDPOINT_DEACTIVATE_USER = "/_synapse/admin/v1/deactivate/{userId}";
+  private static final String ENDPOINT_REDACT_USER_EVENTS =
+      "/_synapse/admin/v1/user/{userId}/redact";
   private static final String ENDPOINT_PURGE_ROOM = "/_synapse/admin/v2/rooms/{roomId}";
   private static final String ENDPOINT_ROOM_MEMBERS = "/_synapse/admin/v1/rooms/{roomId}/members";
   private static final String ENDPOINT_JOINED_ROOMS = "/_matrix/client/r0/joined_rooms";
@@ -911,6 +913,14 @@ public class MatrixSynapseService implements MatrixUserClient {
    * @return true if successful, false otherwise
    */
   public boolean deactivateUser(String matrixUserId) {
+    return deactivateUser(matrixUserId, true);
+  }
+
+  /**
+   * Deactivates a Matrix user. {@code erase = false} keeps the user's events and profile for the
+   * people still in the room, used when a temporary account's messages are kept (ADR-029 §5).
+   */
+  public boolean deactivateUser(String matrixUserId, boolean erase) {
     try {
       String adminToken = getAdminToken();
       if (adminToken == null) {
@@ -927,7 +937,7 @@ public class MatrixSynapseService implements MatrixUserClient {
       headers.setBearerAuth(adminToken);
 
       var body = new java.util.HashMap<String, Object>();
-      body.put("erase", true);
+      body.put("erase", erase);
 
       var request = new HttpEntity<>(body, headers);
 
@@ -941,6 +951,46 @@ public class MatrixSynapseService implements MatrixUserClient {
     } catch (Exception ex) {
       log.warn(
           "Failed to deactivate Matrix user {}: {}",
+          redactor.pseudonym(matrixUserId),
+          redactor.scrub(ex.getMessage()));
+      return false;
+    }
+  }
+
+  /**
+   * Redacts every event the user sent in the given rooms through the Synapse admin API (Synapse
+   * 1.116+), used when a temporary account's messages are deleted with it (ADR-029 §5). Synapse
+   * runs the redaction as a background task; an accepted request counts as done.
+   */
+  public boolean redactUserEvents(String matrixUserId, java.util.List<String> roomIds) {
+    if (roomIds == null || roomIds.isEmpty()) {
+      return true;
+    }
+    try {
+      String adminToken = getAdminToken();
+      if (adminToken == null) {
+        log.warn("Could not get admin token for Matrix event redaction");
+        return false;
+      }
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_REDACT_USER_EVENTS, java.util.Map.of("userId", matrixUserId));
+      var headers = new HttpHeaders();
+      headers.setContentType(MediaType.APPLICATION_JSON);
+      headers.setBearerAuth(adminToken);
+      var body = new java.util.HashMap<String, Object>();
+      body.put("rooms", roomIds);
+      body.put("reason", "Temporary account deleted");
+      ResponseEntity<String> response =
+          restTemplate.exchange(
+              url,
+              org.springframework.http.HttpMethod.POST,
+              new HttpEntity<>(body, headers),
+              String.class);
+      return response.getStatusCode().is2xxSuccessful();
+    } catch (Exception ex) {
+      log.warn(
+          "Failed to redact Matrix events of user {}: {}",
           redactor.pseudonym(matrixUserId),
           redactor.scrub(ex.getMessage()));
       return false;

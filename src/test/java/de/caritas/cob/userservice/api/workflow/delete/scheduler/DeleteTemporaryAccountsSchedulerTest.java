@@ -49,6 +49,10 @@ class DeleteTemporaryAccountsSchedulerTest {
   @Mock private TenantContextProvider tenantContextProvider;
   @Mock private ScheduledTaskClaimService taskClaimService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.workflow.delete.service.DirectLinkTemporaryAccountCleanup
+      directLinkCleanup;
+
   @BeforeEach
   void setUp() {
     setField(scheduler, "enabled", true);
@@ -144,7 +148,13 @@ class DeleteTemporaryAccountsSchedulerTest {
     when(deletionUnit.deleteUser("a")).thenThrow(new IllegalStateException("boom"));
     when(deletionUnit.deleteUser("b")).thenReturn(List.of());
     var realScheduler =
-        new DeleteTemporaryAccountsScheduler(realService, tenantContextProvider, taskClaimService);
+        new DeleteTemporaryAccountsScheduler(
+            realService,
+            tenantContextProvider,
+            taskClaimService,
+            mock(
+                de.caritas.cob.userservice.api.workflow.delete.service
+                    .DirectLinkTemporaryAccountCleanup.class));
     setField(realScheduler, "enabled", true);
     setField(realScheduler, "claimDuration", Duration.ofMinutes(30));
 

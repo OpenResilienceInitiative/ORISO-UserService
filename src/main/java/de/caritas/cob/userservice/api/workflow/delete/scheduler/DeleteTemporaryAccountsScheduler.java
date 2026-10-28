@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeleteTemporaryAccountsService;
+import de.caritas.cob.userservice.api.workflow.delete.service.DirectLinkTemporaryAccountCleanup;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -22,10 +23,12 @@ import org.springframework.stereotype.Component;
 public class DeleteTemporaryAccountsScheduler {
 
   private static final String TASK_NAME = "temporary-account-deletion";
+  private static final String DIRECT_LINK_TASK_NAME = "direct-link-temporary-account-deletion";
 
   private final @NonNull DeleteTemporaryAccountsService deleteTemporaryAccountsService;
   private final @NonNull TenantContextProvider tenantContextProvider;
   private final @NonNull ScheduledTaskClaimService taskClaimService;
+  private final @NonNull DirectLinkTemporaryAccountCleanup directLinkCleanup;
 
   @Value("${user.temporary.deleteWorkflow.enabled}")
   private boolean enabled;
@@ -63,6 +66,42 @@ public class DeleteTemporaryAccountsScheduler {
       } catch (RuntimeException exception) {
         log.warn(
             "Could not release temporary account deletion claim ({})",
+            exception.getClass().getSimpleName());
+      }
+    }
+  }
+
+  /**
+   * Deletes direct-link temporary accounts whose own snapshotted lifetime is over (ADR-029, #1476).
+   * Runs every few minutes, because a call account goes 15 minutes after hang-up by default.
+   */
+  @Scheduled(cron = "${user.temporary.directLink.deleteWorkflow.cron}")
+  public void performDirectLinkDeletionWorkflow() {
+    if (!enabled) {
+      return;
+    }
+    var lease = taskClaimService.tryClaimLease(DIRECT_LINK_TASK_NAME, claimDuration);
+    if (lease.isEmpty()) {
+      return;
+    }
+    try {
+      tenantContextProvider.setTechnicalContextIfMultiTenancyIsEnabled();
+      List<DeletionWorkflowError> workflowErrors = new ArrayList<>();
+      var now = java.time.LocalDateTime.now();
+      for (String userId : directLinkCleanup.dueAccountIds(now)) {
+        if (!taskClaimService.runIfHeld(
+            lease.get(), () -> workflowErrors.addAll(directLinkCleanup.delete(userId, now)))) {
+          break;
+        }
+      }
+      deleteTemporaryAccountsService.notifyAbout(workflowErrors);
+    } finally {
+      TenantContext.clear();
+      try {
+        taskClaimService.release(lease.get());
+      } catch (RuntimeException exception) {
+        log.warn(
+            "Could not release direct-link temporary account deletion claim ({})",
             exception.getClass().getSimpleName());
       }
     }

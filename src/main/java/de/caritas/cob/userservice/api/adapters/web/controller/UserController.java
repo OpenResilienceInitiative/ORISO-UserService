@@ -163,6 +163,20 @@ public class UserController implements UsersApi {
   private final @NonNull DirectLinkControllerDelegate directLinkControllerDelegate;
 
   @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.TemporaryAccountDTO>
+      getOwnTemporaryAccount() {
+    return directLinkControllerDelegate.getOwnTemporaryAccount();
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.TemporaryAccountDTO>
+      decideTemporaryAccountMessageRetention(
+          de.caritas.cob.userservice.api.adapters.web.dto.TemporaryAccountRetentionDecisionDTO
+              decision) {
+    return directLinkControllerDelegate.decideTemporaryAccountMessageRetention(decision);
+  }
+
+  @Override
   public ResponseEntity<
           java.util.List<de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkDTO>>
       getOwnDirectLinks() {

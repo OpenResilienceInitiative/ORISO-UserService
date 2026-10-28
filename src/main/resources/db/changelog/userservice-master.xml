@@ -253,4 +253,5 @@
   <include file="db/changelog/changeset/20261023_account_creation_attempt/changeSet.xml"/>
   <include file="db/changelog/changeset/20261008_enquiry_rejection/changeSet.xml"/>
   <include file="db/changelog/changeset/20261028_direct_links_1475/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261028_temporary_accounts_1476/changeSet.xml"/>
 </databaseChangeLog>
