@@ -48,6 +48,11 @@ public class ScheduledTaskClaim implements Persistable<String> {
   @Column(name = "claimed_until", nullable = false, columnDefinition = "datetime(6)")
   private LocalDateTime claimedUntil;
 
+  /** Data-only progress for the dedicated reactivation-secret scan; never account authority. */
+  @Column(name = "reactivation_erasure_after_account_id", length = 36)
+  @ToString.Exclude
+  private String reactivationErasureAfterAccountId;
+
   /** True until the entity has been persisted or loaded; makes Spring Data INSERT new claims. */
   @Transient @Builder.Default @ToString.Exclude private boolean isNew = true;
 

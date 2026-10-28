@@ -86,6 +86,7 @@ class ScopedAskerReactivationFlowJpaTest {
   private MockHttpServletRequest request;
   private TaskActorTokenBroker.VerifiedMaintenanceToken checked;
   private boolean emptyNativeNames;
+  private boolean verifyExactClaimInstant;
   private String firstBody;
   private String receipt;
   private final AtomicInteger effects = new AtomicInteger();
@@ -208,6 +209,12 @@ class ScopedAskerReactivationFlowJpaTest {
   }
 
   @Test
+  void originalClaimInstantMatchesTheFrozenClockWithoutJvmZoneConversion() {
+    verifyExactClaimInstant = true;
+    completeAndReplay();
+  }
+
+  @Test
   void historicalDuplicateUsernamesStillSelectTheOneExactEmailAndTenantIncarnation() {
     for (int index = 1; index <= 2; index++) {
       String id = "85000000-0000-4000-8000-00000000006" + index;
@@ -273,6 +280,15 @@ class ScopedAskerReactivationFlowJpaTest {
                 var body = ((MockClientHttpRequest) outbound).getBodyAsString();
                 if (firstBody == null) {
                   firstBody = body;
+                  if (verifyExactClaimInstant)
+                    assertEquals(
+                        LocalDateTime.ofInstant(
+                            clock.instant().truncatedTo(java.time.temporal.ChronoUnit.MICROS),
+                            ZoneOffset.UTC),
+                        jdbc.queryForObject(
+                            "select reactivation_operation_started_at from user where user_id=?",
+                            LocalDateTime.class,
+                            ACCOUNT));
                   var saved =
                       jdbc.queryForObject(
                           "select reactivation_scoped_json from user where user_id=?",
@@ -765,7 +781,8 @@ class ScopedAskerReactivationFlowJpaTest {
     var baseline = jdbc.queryForMap("select * from user where user_id=?", ACCOUNT);
     var old = codec.read(oldCapsule, JsonNode.class);
     var postUpdate =
-        java.sql.Timestamp.from(Instant.parse(old.path("postSql").path("update_date").textValue()));
+        LocalDateTime.ofInstant(
+            Instant.parse(old.path("postSql").path("update_date").textValue()), ZoneOffset.UTC);
     for (String scenario :
         List.of(
             "new-sql-birth",
@@ -799,7 +816,7 @@ class ScopedAskerReactivationFlowJpaTest {
         case "earlier-delete" ->
             jdbc.update(
                 "update user set delete_date=? where user_id=?",
-                java.sql.Timestamp.from(postUpdate.toInstant().minusSeconds(1)),
+                postUpdate.minusSeconds(1),
                 ACCOUNT);
         case "invalid-state" ->
             jdbc.update(
@@ -818,6 +835,12 @@ class ScopedAskerReactivationFlowJpaTest {
             ((com.fasterxml.jackson.databind.node.ObjectNode) changed.path("postSql"))
                 .put("create_date", "2026-01-01T00:00:00Z");
       }
+      if (List.of("not-after", "earlier-delete").contains(scenario))
+        assertEquals(
+            "not-after".equals(scenario) ? postUpdate : postUpdate.minusSeconds(1),
+            jdbc.queryForObject(
+                "select delete_date from user where user_id=?", LocalDateTime.class, ACCOUNT),
+            "The rejection fixture must store the exact original UTC boundary");
       if (!changed.equals(old))
         jdbc.update(
             "update user set reactivation_scoped_json=? where user_id=?",

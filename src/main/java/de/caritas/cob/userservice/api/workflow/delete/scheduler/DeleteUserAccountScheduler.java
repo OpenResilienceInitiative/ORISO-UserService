@@ -35,6 +35,10 @@ public class DeleteUserAccountScheduler {
   @Autowired(required = false)
   private ScheduledConsultantMaintenance scopedConsultants;
 
+  @Autowired(required = false)
+  private de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ScopedAskerReactivation
+      scopedReactivation;
+
   @Value("${TASK_IDENTITY_MODEL:LEGACY}")
   private String taskIdentityModel = "LEGACY";
 
@@ -44,9 +48,24 @@ public class DeleteUserAccountScheduler {
   @PostConstruct
   public void verifyScopedMaintenanceAvailability() {
     if ("FIVE_ACTORS".equals(taskIdentityModel)
-        && (scopedMaintenance == null || scopedConsultants == null)) {
+        && (scopedMaintenance == null || scopedConsultants == null || scopedReactivation == null)) {
       throw new IllegalStateException("Five-actor deletion requires the complete scoped scheduler");
     }
+  }
+
+  /** Local secret retention has its own lease and never enters account deletion or native HTTP. */
+  @Scheduled(fixedDelay = 300000L, initialDelay = 300000L)
+  public void performReactivationSecretErasure() {
+    if (!"FIVE_ACTORS".equals(taskIdentityModel)) return;
+    if (scopedReactivation == null)
+      throw new IllegalStateException("Five-actor secret retention requires its scoped owner");
+    taskClaimService
+        .tryClaimLease(
+            de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ScopedAskerReactivation
+                .SECRET_ERASURE_TASK,
+            Duration.ofMinutes(5))
+        .ifPresent(scopedReactivation::eraseExpiredScopedSecrets);
+    // Keep the row and cursor; replicas must wait for the original lease's natural expiry.
   }
 
   /** Entry method to perform deletion workflow. */

@@ -33,6 +33,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 /** The existing asker saga's fixed chosen-password native boundary. */
 @RequiredArgsConstructor
 public final class ScopedAskerReactivation {
+  public static final String SECRET_ERASURE_TASK = "reactivation-secret-erasure-v1";
   private final @NonNull IdentityClientConfig mode;
   private final @NonNull AuthenticatedUser authenticated;
   private final @NonNull AdminScope scope;
@@ -49,6 +50,122 @@ public final class ScopedAskerReactivation {
   private final @NonNull String realmName;
   private final @NonNull String realmId;
   private final @NonNull IdentityReactivationSagaStore saga;
+
+  /**
+   * Local data retention after original expiry plus seven days; no human or native command. Each
+   * call scans at most 100 rows. An EOF call only resets the persisted cursor.
+   */
+  public int eraseExpiredScopedSecrets(
+      de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService.ClaimLease
+          lease) {
+    if (!mode.isFiveActorMode()
+        || lease == null
+        || !SECRET_ERASURE_TASK.equals(lease.taskName())
+        || lease.claimedUntil() == null) return 0;
+    var source = Objects.requireNonNull(jdbc.getDataSource());
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.hasResource(source)
+        || !(transactions instanceof JpaTransactionManager jpa && jpa.getDataSource() == source
+            || transactions
+                    instanceof
+                    org.springframework.jdbc.datasource.DataSourceTransactionManager local
+                && local.getDataSource() == source)) throw unavailable();
+    var actor = actors.require(TaskPurpose.ACCOUNT_MAINTENANCE);
+    return transaction(
+        () -> {
+          var held =
+              jdbc.query(
+                  "select claimed_until,reactivation_erasure_after_account_id from scheduled_task_claim where task_name=? for update",
+                  (rs, index) ->
+                      new ErasurePosition(
+                          rs.getObject(1, java.time.LocalDateTime.class), rs.getString(2)),
+                  SECRET_ERASURE_TASK);
+          if (held.size() != 1
+              || !lease.claimedUntil().equals(held.getFirst().until())
+              || !lease
+                  .claimedUntil()
+                  .isAfter(
+                      java.time.LocalDateTime.ofInstant(clock.instant(), java.time.ZoneOffset.UTC)))
+            return 0;
+          String cursor = held.getFirst().cursor();
+          if (cursor != null && cursor.length() > 36) throw unavailable();
+          List<String> selected =
+              cursor == null
+                  ? jdbc.queryForList(
+                      "select user_id from user where reactivation_scoped_json is not null order by user_id limit 100",
+                      String.class)
+                  : jdbc.queryForList(
+                      "select user_id from user where reactivation_scoped_json is not null and user_id>? order by user_id limit 100",
+                      String.class,
+                      cursor);
+          int erased = 0;
+          for (String account : selected) {
+            var rows =
+                jdbc.query(
+                    "select case when char_length(reactivation_scoped_json)<=131072 then reactivation_scoped_json else null end from user where user_id=? for update skip locked",
+                    (rs, index) -> rs.getString(1),
+                    account);
+            if (rows.isEmpty() || rows.getFirst() == null) continue;
+            JsonNode retained;
+            try {
+              String encoded = rows.getFirst();
+              var raw = codec.read(encoded, JsonNode.class);
+              if (!encoded.equals(codec.canonical(raw))) continue;
+              var tenant = raw.path("metadata").path("tenantId");
+              if (!tenant.isIntegralNumber()
+                  || !tenant.canConvertToLong()
+                  || tenant.longValue() < 0) continue;
+              var wrapper = open(raw, account, tenant.longValue(), actor);
+              String phase = phase(raw);
+              if (!"FROZEN".equals(phase)) {
+                verifyTerminal(raw, wrapper, actor);
+                requirePost(raw, wrapper.path("originalSql"), phase);
+              }
+              if (history(raw)
+                  || clock.instant().getEpochSecond()
+                      < Math.addExact(
+                          raw.path("metadata").path("authorityValidUntil").longValue(), 604800L))
+                continue;
+              retained = raw.deepCopy();
+              ((ObjectNode) retained).put("phase", phase + "_HISTORY");
+              ((ObjectNode) retained)
+                  .put(
+                      "envelope",
+                      codec.retainReactivationHistory(
+                          raw.path("metadata"),
+                          raw.path("envelope").textValue(),
+                          phase,
+                          raw.path("receipt").textValue(),
+                          actor));
+            } catch (RuntimeException malformedCustody) {
+              // Pure parsing/authentication only: preserve poison bytes and advance fairly.
+              continue;
+            }
+            // Database failures must roll back the whole cursor/erasure transaction.
+            save(account, retained);
+            erased++;
+          }
+          if (!lease
+              .claimedUntil()
+              .isAfter(
+                  java.time.LocalDateTime.ofInstant(clock.instant(), java.time.ZoneOffset.UTC)))
+            throw unavailable();
+          if (jdbc.update(
+                  "update scheduled_task_claim set reactivation_erasure_after_account_id=? where task_name=? and claimed_until=?",
+                  selected.isEmpty() ? null : selected.getLast(),
+                  SECRET_ERASURE_TASK,
+                  lease.claimedUntil())
+              != 1) throw unavailable();
+          return erased;
+        });
+  }
+
+  private record ErasurePosition(java.time.LocalDateTime until, String cursor) {
+    @Override
+    public String toString() {
+      return "ErasurePosition[redacted]";
+    }
+  }
 
   public void reactivate(AskerReactivationRequestDTO input) {
     requireOutside();
@@ -132,8 +249,9 @@ public final class ScopedAskerReactivation {
           eligible(initial.row);
           if (expiry <= clock.instant().getEpochSecond()) throw unavailable();
           var started =
-              java.sql.Timestamp.from(
-                  clock.instant().truncatedTo(java.time.temporal.ChronoUnit.MICROS));
+              java.time.LocalDateTime.ofInstant(
+                  clock.instant().truncatedTo(java.time.temporal.ChronoUnit.MICROS),
+                  java.time.ZoneOffset.UTC);
           if (jdbc.update(
                   "update user set deletion_lifecycle_state='REACTIVATION_IN_PROGRESS',reactivation_operation_id=?,reactivation_operation_started_at=? where user_id=? and reactivation_operation_id is null",
                   operation,

@@ -91,6 +91,11 @@ public class DeleteUserAccountSchedulerTest {
     var dependencies = new DefaultListableBeanFactory();
     dependencies.registerSingleton("askerMaintenance", askers);
     dependencies.registerSingleton("consultantMaintenance", scopedConsultants);
+    dependencies.registerSingleton(
+        "reactivationMaintenance",
+        mock(
+            de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ScopedAskerReactivation
+                .class));
     var injection = new AutowiredAnnotationBeanPostProcessor();
     injection.setAutowiredAnnotationType(Autowired.class);
     injection.setBeanFactory(dependencies);
@@ -130,5 +135,82 @@ public class DeleteUserAccountSchedulerTest {
         identityReactivationRepairService,
         userHardDeleteClaimService,
         deleteUserAccountService);
+  }
+
+  @Test
+  void localSecretErasureHasItsOwnFiveMinuteCadenceAndDoesNothingInLegacyMode() throws Exception {
+    var owner =
+        mock(
+            de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ScopedAskerReactivation
+                .class);
+    var entry = erasureEntry();
+    var schedule = entry.getAnnotation(org.springframework.scheduling.annotation.Scheduled.class);
+    org.junit.jupiter.api.Assertions.assertNotNull(schedule);
+    org.junit.jupiter.api.Assertions.assertEquals(300000L, schedule.fixedDelay());
+    org.junit.jupiter.api.Assertions.assertEquals(300000L, schedule.initialDelay());
+    setField(deleteUserAccountScheduler, "scopedReactivation", owner);
+
+    entry.invoke(deleteUserAccountScheduler);
+
+    verifyNoInteractions(owner, taskClaimService, deleteUserAccountService, scopedConsultants);
+  }
+
+  @Test
+  void localSecretErasurePassesTheExactFiveMinuteLeaseWithoutReleasingTheClaim() throws Exception {
+    var owner =
+        mock(
+            de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ScopedAskerReactivation
+                .class);
+    var entry = erasureEntry();
+    setField(deleteUserAccountScheduler, "taskIdentityModel", "FIVE_ACTORS");
+    setField(deleteUserAccountScheduler, "scopedReactivation", owner);
+    String task =
+        de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ScopedAskerReactivation
+            .SECRET_ERASURE_TASK;
+    var lease =
+        new ScheduledTaskClaimService.ClaimLease(
+            task, java.time.LocalDateTime.of(2026, 10, 28, 12, 5));
+    when(taskClaimService.tryClaimLease(task, Duration.ofMinutes(5)))
+        .thenReturn(java.util.Optional.of(lease));
+
+    entry.invoke(deleteUserAccountScheduler);
+
+    var ordered = inOrder(taskClaimService, owner);
+    ordered.verify(taskClaimService).tryClaimLease(task, Duration.ofMinutes(5));
+    ordered.verify(owner).eraseExpiredScopedSecrets(lease);
+    ordered.verifyNoMoreInteractions();
+    verifyNoInteractions(
+        tenantContextProvider,
+        identityReactivationRepairService,
+        userHardDeleteClaimService,
+        deleteUserAccountService,
+        scopedConsultants);
+  }
+
+  @Test
+  void aLostErasureLeaseDoesNotRunTheOwnerOrFallbackToAccountDeletion() throws Exception {
+    var owner =
+        mock(
+            de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ScopedAskerReactivation
+                .class);
+    var entry = erasureEntry();
+    setField(deleteUserAccountScheduler, "taskIdentityModel", "FIVE_ACTORS");
+    setField(deleteUserAccountScheduler, "scopedReactivation", owner);
+    String task =
+        de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ScopedAskerReactivation
+            .SECRET_ERASURE_TASK;
+    when(taskClaimService.tryClaimLease(task, Duration.ofMinutes(5)))
+        .thenReturn(java.util.Optional.empty());
+
+    entry.invoke(deleteUserAccountScheduler);
+
+    org.mockito.Mockito.verify(taskClaimService).tryClaimLease(task, Duration.ofMinutes(5));
+    org.mockito.Mockito.verifyNoMoreInteractions(taskClaimService);
+    verifyNoInteractions(owner, deleteUserAccountService, scopedConsultants);
+  }
+
+  private static java.lang.reflect.Method erasureEntry() {
+    return assertDoesNotThrow(
+        () -> DeleteUserAccountScheduler.class.getMethod("performReactivationSecretErasure"));
   }
 }
