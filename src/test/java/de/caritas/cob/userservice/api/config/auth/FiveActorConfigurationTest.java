@@ -11,6 +11,29 @@ import org.springframework.mock.env.MockEnvironment;
 
 class FiveActorConfigurationTest {
   @Test
+  void smtpConfigurationAndDeliveryUseSeparateExistingActorsAndExactTokenContracts() {
+    assertThat(TaskPurpose.SMTP_SYNC.actor()).isEqualTo(TaskActor.SETUP);
+    assertThat(TaskActor.SETUP.roles())
+        .containsExactlyInAnyOrder(
+            "config-wizard", "invitation-reservations", "consultant-import", "smtp-sync");
+    assertThat(TaskActor.SETUP.audiences())
+        .containsExactlyInAnyOrder(
+            "tenantservice",
+            "agencyservice",
+            "consultingtypeservice",
+            "userservice",
+            "oriso-task-commands");
+    assertThat(TaskActor.MAIL.roles())
+        .containsExactlyInAnyOrder(
+            "system-email-delivery", "notification-dispatch", "notifications-technical");
+    assertThat(TaskActor.MAIL.audiences())
+        .containsExactlyInAnyOrder(
+            "tenantservice", "agencyservice", "consultingtypeservice", "userservice");
+    assertThat(TaskPurpose.SYSTEM_EMAIL_DELIVERY.actor()).isEqualTo(TaskActor.MAIL);
+    assertThat(TaskPurpose.NOTIFICATION_DISPATCH.actor()).isEqualTo(TaskActor.MAIL);
+  }
+
+  @Test
   void explicitSetupBindingServesItsOperationAliasesWithoutAdditionalCredentials() {
     var configuration = configured(environment());
     var wizard = configuration.require(TaskPurpose.CONFIG_WIZARD);

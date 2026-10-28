@@ -68,11 +68,44 @@ class RealMailActorNativeGate {
   @EnumSource(
       value = TaskPurpose.class,
       names = {"SMTP_SYNC", "SYSTEM_EMAIL_DELIVERY", "NOTIFICATION_DISPATCH"})
-  void realNativeFiveAudienceMailIsAcceptedByTheActualBroker(TaskPurpose purpose) {
+  void realNativeCanonicalPurposeIsAcceptedByTheActualBroker(TaskPurpose purpose) {
     var result = broker.issue(purpose);
-    assertThat(result.actor()).isEqualTo(TaskActor.MAIL);
+    assertThat(result.actor()).isEqualTo(purpose.actor());
     assertThat(result.accessToken()).isNotBlank();
     assertThat(result.toString()).doesNotContain(result.accessToken());
+  }
+
+  @Test
+  void realDeliveryBearerCannotApplySmtpEvenWithValidSharedKeyProof() throws Exception {
+    String driver = System.getenv("ORISO_MAIL_TRANSPORT_DRIVER");
+    if (driver == null || !Files.isRegularFile(Path.of(driver))) {
+      throw new IllegalStateException("Real joined MAIL transport driver is required");
+    }
+    var token = broker.issue(TaskPurpose.SYSTEM_EMAIL_DELIVERY);
+    assertThat(token.actor()).isEqualTo(TaskActor.MAIL);
+    var process =
+        new ProcessBuilder(
+                System.getenv().getOrDefault("ORISO_NATIVE_PYTHON", "python3"),
+                driver,
+                System.getenv("ORISO_TASK_TOKEN_FIXTURE"),
+                "mail-refused")
+            .redirectErrorStream(true)
+            .start();
+    try {
+      try (var input = process.getOutputStream()) {
+        input.write(token.accessToken().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+      }
+      assertThat(process.waitFor(60, TimeUnit.SECONDS)).isTrue();
+      assertThat(process.exitValue()).isZero();
+      assertThat(
+              new String(
+                      process.getInputStream().readNBytes(1024),
+                      java.nio.charset.StandardCharsets.UTF_8)
+                  .trim())
+          .isEqualTo("NATIVE_MAIL_SMTP_REFUSED_PASSED");
+    } finally {
+      if (process.isAlive()) process.destroyForcibly().waitFor();
+    }
   }
 
   @Test

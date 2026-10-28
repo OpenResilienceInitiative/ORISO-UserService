@@ -544,7 +544,7 @@ class CheckedAccountPolicyNativeGate {
         new Captured(
             valid.proof(),
             broker
-                .issue(de.caritas.cob.userservice.api.config.auth.TaskPurpose.SMTP_SYNC)
+                .issue(de.caritas.cob.userservice.api.config.auth.TaskPurpose.SYSTEM_EMAIL_DELIVERY)
                 .accessToken()),
         valid.proof(),
         before);

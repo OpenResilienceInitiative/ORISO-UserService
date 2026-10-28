@@ -77,8 +77,8 @@ class FiveActorTokenBoundaryTest {
     var token = broker.issue(purpose);
     String expected =
         switch (purpose) {
-          case CONFIG_WIZARD, CONSULTANT_IMPORT -> "backend-setup";
-          case SMTP_SYNC, SYSTEM_EMAIL_DELIVERY, NOTIFICATION_DISPATCH -> "backend-mail";
+          case CONFIG_WIZARD, CONSULTANT_IMPORT, SMTP_SYNC -> "backend-setup";
+          case SYSTEM_EMAIL_DELIVERY, NOTIFICATION_DISPATCH -> "backend-mail";
           default -> "backend-runtime";
         };
     assertThat(issuer.lastForm.get("client_id")).isEqualTo(expected);
@@ -116,9 +116,9 @@ class FiveActorTokenBoundaryTest {
   @ParameterizedTest
   @EnumSource(
       value = TaskPurpose.class,
-      names = {"SMTP_SYNC", "SYSTEM_EMAIL_DELIVERY", "NOTIFICATION_DISPATCH"})
-  void mailPurposeAcceptsCanonicalFiveAudienceBearerWithSeparateProofAudience(TaskPurpose purpose) {
-    issuer.variant = "mail-five-audiences";
+      names = {"SYSTEM_EMAIL_DELIVERY", "NOTIFICATION_DISPATCH"})
+  void mailPurposeAcceptsCanonicalFourServiceAudiences(TaskPurpose purpose) {
+    issuer.variant = "mail-four-audiences";
     var token = broker.issue(purpose);
     assertThat(token.actor()).isEqualTo(TaskActor.MAIL);
     assertThat(issuer.lastForm.get("client_id")).isEqualTo("backend-mail");
@@ -126,10 +126,10 @@ class FiveActorTokenBoundaryTest {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = {"mail-four-audiences", "mail-proof-audience"})
+  @ValueSource(strings = {"mail-three-audiences", "mail-five-audiences", "mail-proof-audience"})
   void incompleteOrExtraProofAudienceMailBearerRefusesWithoutFallback(String variant) {
     issuer.variant = variant;
-    assertThatThrownBy(() -> broker.issue(TaskPurpose.SMTP_SYNC))
+    assertThatThrownBy(() -> broker.issue(TaskPurpose.SYSTEM_EMAIL_DELIVERY))
         .hasMessage("Task actor authentication unavailable")
         .hasNoCause();
     assertThat(issuer.calls.get()).isEqualTo(1);

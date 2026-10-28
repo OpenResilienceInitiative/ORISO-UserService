@@ -89,9 +89,15 @@ final class SyntheticTaskIssuer implements AutoCloseable {
     String subject;
     switch (client) {
       case "backend-setup" -> {
-        roles = List.of("config-wizard", "invitation-reservations", "consultant-import");
+        roles =
+            List.of("config-wizard", "invitation-reservations", "consultant-import", "smtp-sync");
         audiences =
-            List.of("tenantservice", "agencyservice", "consultingtypeservice", "userservice");
+            List.of(
+                "tenantservice",
+                "agencyservice",
+                "consultingtypeservice",
+                "userservice",
+                "oriso-task-commands");
         subject = "native-setup-subject";
       }
       case "backend-account-create" -> {
@@ -107,18 +113,9 @@ final class SyntheticTaskIssuer implements AutoCloseable {
       }
       case "backend-mail" -> {
         roles =
-            List.of(
-                "smtp-sync",
-                "system-email-delivery",
-                "notification-dispatch",
-                "notifications-technical");
+            List.of("system-email-delivery", "notification-dispatch", "notifications-technical");
         audiences =
-            List.of(
-                "tenantservice",
-                "agencyservice",
-                "consultingtypeservice",
-                "userservice",
-                "oriso-task-commands");
+            List.of("tenantservice", "agencyservice", "consultingtypeservice", "userservice");
         subject = "native-mail-subject";
       }
       case "backend-runtime" -> {
@@ -188,6 +185,8 @@ final class SyntheticTaskIssuer implements AutoCloseable {
       case "mail-four-audiences" ->
           claims.audience(
               List.of("tenantservice", "agencyservice", "consultingtypeservice", "userservice"));
+      case "mail-three-audiences" ->
+          claims.audience(List.of("tenantservice", "agencyservice", "userservice"));
       case "mail-proof-audience" ->
           claims.audience(
               List.of(
