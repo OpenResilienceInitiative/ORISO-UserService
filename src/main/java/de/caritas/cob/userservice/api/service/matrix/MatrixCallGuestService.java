@@ -35,6 +35,9 @@ public class MatrixCallGuestService {
   private final MatrixSynapseService matrix;
   private final AccountInactivityService accountLifecycle;
 
+  /** Failed removals after which every further failure is logged at ERROR for alerting. */
+  public static final int REVOKE_ALERT_THRESHOLD = 10;
+
   public enum Outcome {
     ADMITTED,
     NOT_FOUND,
@@ -140,7 +143,7 @@ public class MatrixCallGuestService {
       if (token == null && !guest.getAdmittedByMatrixId().equals(binding.getCallerMatrixId()))
         token = matrix.loginAsUserAccessToken(guest.getAdmittedByMatrixId());
       if (token == null) {
-        log.warn("Call guest removal deferred for call room {}: no moderator token", room);
+        deferRevocation(guest, room, "no moderator token");
         continue;
       }
       String guestId = guest.getMatrixUserId();
@@ -151,13 +154,26 @@ public class MatrixCallGuestService {
         // Kick also retracts a pending invite.
         matrix.kickUserFromRoom(room, guestId, token);
         if (!isGone(room, guestId, token)) {
-          log.warn("Call guest removal deferred for call room {}", room);
+          deferRevocation(guest, room, "membership is not leave or ban");
           continue;
         }
       }
       if (!matrix.clearUserPowerLevel(room, guestId, token))
         log.warn("Call guest power level could not be cleared in call room {}", room);
       guest.revoke(System.currentTimeMillis());
+    }
+  }
+
+  private void deferRevocation(MatrixCallGuest guest, String room, String reason) {
+    guest.recordFailedRevokeAttempt(System.currentTimeMillis());
+    if (guest.getRevokeAttempts() >= REVOKE_ALERT_THRESHOLD) {
+      log.error(
+          "CALL_GUEST_REVOCATION_STUCK call room {}: removal failed {} times ({})",
+          room,
+          guest.getRevokeAttempts(),
+          reason);
+    } else {
+      log.warn("Call guest removal deferred for call room {} ({})", room, reason);
     }
   }
 

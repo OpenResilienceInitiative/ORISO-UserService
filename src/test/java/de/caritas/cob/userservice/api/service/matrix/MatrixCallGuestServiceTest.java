@@ -226,11 +226,13 @@ class MatrixCallGuestServiceTest {
     when(matrix.getRoomMembership(MEDIA, GUEST, "counsellor-token"))
         .thenReturn(Optional.of("invite"));
 
-    try (var logs = de.caritas.cob.userservice.testutils.LogbackCaptor.forClass(MatrixCallGuestService.class)) {
+    try (var logs =
+        de.caritas.cob.userservice.testutils.LogbackCaptor.forClass(MatrixCallGuestService.class)) {
       for (int attempt = 1; attempt <= MatrixCallGuestService.REVOKE_ALERT_THRESHOLD; attempt++) {
         service.revokeOutstanding(binding(5000L));
       }
-      assertThat(guest.getRevokeAttempts()).isEqualTo(MatrixCallGuestService.REVOKE_ALERT_THRESHOLD);
+      assertThat(guest.getRevokeAttempts())
+          .isEqualTo(MatrixCallGuestService.REVOKE_ALERT_THRESHOLD);
       assertThat(guest.getLastRevokeAttemptAt()).isNotNull();
       assertThat(guest.getRevokedAt()).isNull();
       assertThat(logs.messages(ch.qos.logback.classic.Level.ERROR))

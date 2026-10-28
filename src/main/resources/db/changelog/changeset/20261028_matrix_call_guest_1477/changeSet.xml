@@ -11,6 +11,8 @@
       <column name="admitted_by_matrix_id" type="VARCHAR(255)"><constraints nullable="false"/></column>
       <column name="admitted_at" type="BIGINT"><constraints nullable="false"/></column>
       <column name="revoked_at" type="BIGINT"/>
+      <column name="revoke_attempts" type="INT" defaultValueNumeric="0"><constraints nullable="false"/></column>
+      <column name="last_revoke_attempt_at" type="BIGINT"/>
     </createTable>
     <addUniqueConstraint tableName="matrix_call_guest" columnNames="binding_id, matrix_user_id"
       constraintName="uk_call_guest_binding_user"/>

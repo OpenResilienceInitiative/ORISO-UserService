@@ -12,11 +12,15 @@ public interface MatrixCallGuestRepository extends JpaRepository<MatrixCallGuest
 
   boolean existsByBindingIdAndMatrixUserIdAndRevokedAtIsNull(Long bindingId, String matrixUserId);
 
-  /** Ended calls whose guest seats were not all taken back yet (reconcile sweep, US#1477). */
+  /**
+   * Ended calls whose guest seats were not all taken back yet (reconcile sweep, US#1477). Never
+   * tried first, then least recently tried, so rooms that keep failing cannot starve later ones.
+   */
   @org.springframework.data.jpa.repository.Query(
-      "select b.mediaRoomId from MatrixCallBinding b where b.endedAt is not null and exists"
-          + " (select g.id from MatrixCallGuest g where g.bindingId = b.id and g.revokedAt is null)"
-          + " order by b.id")
+      "select b.mediaRoomId from MatrixCallBinding b, MatrixCallGuest g"
+          + " where g.bindingId = b.id and b.endedAt is not null and g.revokedAt is null"
+          + " group by b.mediaRoomId"
+          + " order by coalesce(max(g.lastRevokeAttemptAt), 0), b.mediaRoomId")
   List<String> findEndedMediaRoomsWithOutstandingGuests(
       org.springframework.data.domain.Pageable page);
 }

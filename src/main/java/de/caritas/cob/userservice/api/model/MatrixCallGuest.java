@@ -38,6 +38,19 @@ public class MatrixCallGuest {
   @Column(name = "revoked_at")
   private Long revokedAt;
 
+  /** Failed removals so far; the sweep retries the least recently tried rooms first. */
+  @Column(name = "revoke_attempts", nullable = false)
+  @Builder.Default
+  private int revokeAttempts = 0;
+
+  @Column(name = "last_revoke_attempt_at")
+  private Long lastRevokeAttemptAt;
+
+  public void recordFailedRevokeAttempt(long timestamp) {
+    revokeAttempts++;
+    lastRevokeAttemptAt = timestamp;
+  }
+
   public void revoke(long timestamp) {
     if (revokedAt == null) revokedAt = timestamp;
   }

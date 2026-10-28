@@ -43,6 +43,13 @@ class MatrixCallGuestMigrationTest {
           sql.execute(
               "INSERT INTO matrix_call_guest(binding_id,matrix_user_id,admitted_by_matrix_id,admitted_at,revoked_at)"
                   + " VALUES(2,'@guest:example','@counsellor:example',1000,3000)");
+          try (var rows =
+              sql.executeQuery(
+                  "SELECT revoke_attempts, last_revoke_attempt_at FROM matrix_call_guest WHERE binding_id=2")) {
+            rows.next();
+            assertThat(rows.getInt(1)).isZero();
+            assertThat(rows.getObject(2)).isNull();
+          }
           sql.execute("DELETE FROM matrix_call_binding WHERE id=1");
           try (var rows = sql.executeQuery("SELECT binding_id FROM matrix_call_guest")) {
             assertThat(rows.next()).isTrue();
