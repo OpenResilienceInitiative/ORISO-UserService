@@ -73,8 +73,14 @@ class UserServiceStartupNativePairProof {
     witness.put("state", expected);
     var browserWitness = new TreeMap<String, Boolean>();
     for (String key :
-        List.of("frontendLocale", "ownConsultantRemoval", "peerAdminRemoval", "sourceAndCleanup"))
-      browserWitness.put(key, false);
+        List.of(
+            "frontendLocale",
+            "ownActorSeed",
+            "primaryActorSeed",
+            "ownMutationObserved",
+            "ownConsultantRemoval",
+            "peerAdminRemoval",
+            "sourceAndCleanup")) browserWitness.put(key, false);
     witness.put("currentClientBrowser", browserWitness);
     witness.put(
         "tenantNative",
@@ -498,7 +504,8 @@ class UserServiceStartupNativePairProof {
             "PATCH",
             "/users/data",
             204,
-            false);
+            false,
+            witness);
         browserWitness(witness).put("frontendLocale", true);
       }
       assertEquals(
@@ -571,7 +578,9 @@ class UserServiceStartupNativePairProof {
               "select count(*) from consultant_agency where agency_id=70 and delete_date is null",
               Integer.class));
       browser.seed("admin", "own", fixture.path("ownTokens"));
+      browserWitness(witness).put("ownActorSeed", true);
       browser.seed("admin", "primary", fixture.path("primaryTokens"));
+      browserWitness(witness).put("primaryActorSeed", true);
     }
     String bearer = fixture.path("primaryBearer").asText();
     var scheduler =
@@ -597,7 +606,8 @@ class UserServiceStartupNativePairProof {
           "DELETE",
           consultantPath(first),
           200,
-          true);
+          true,
+          witness);
       browserWitness(witness).put("ownConsultantRemoval", true);
     }
     assertEquals(firstAdmin, jdbc.queryForMap("select * from admin where admin_id=?", first));
@@ -622,7 +632,8 @@ class UserServiceStartupNativePairProof {
           "DELETE",
           adminPath(first),
           200,
-          false);
+          false,
+          witness);
       browserWitness(witness).put("peerAdminRemoval", true);
     }
     assertEquals(
@@ -908,6 +919,19 @@ class UserServiceStartupNativePairProof {
     return (Map<String, Boolean>) witness.get("currentClientBrowser");
   }
 
+  private static void recordOwnMutation(
+      Map<String, Object> witness,
+      boolean own,
+      List<com.fasterxml.jackson.databind.JsonNode> observations) {
+    if (own
+        && observations.stream()
+            .anyMatch(
+                item ->
+                    "DELETE".equals(item.path("method").asText())
+                        && item.path("status").asInt() == 200))
+      browserWitness(witness).put("ownMutationObserved", true);
+  }
+
   private static void browserRecovery(
       CurrentClientBrowserBridge browser,
       String client,
@@ -919,11 +943,13 @@ class UserServiceStartupNativePairProof {
       String method,
       String path,
       int status,
-      boolean own)
+      boolean own,
+      Map<String, Object> witness)
       throws Exception {
     var observations = new ArrayList<com.fasterxml.jackson.databind.JsonNode>();
     var result = browser.send(client, actor, kind, target, operation, payload, true);
     result.path("requests").forEach(observations::add);
+    recordOwnMutation(witness, own, observations);
     int refreshes = result.path("refreshes").asInt();
     assertTrue(
         result.path("originalIntentOnly").asBoolean(false), "Browser retained the original intent");
@@ -933,6 +959,7 @@ class UserServiceStartupNativePairProof {
           "Known success must never be replayed to repair a later postcondition");
       result = browser.send(client, actor, kind, target, operation, payload, false);
       result.path("requests").forEach(observations::add);
+      recordOwnMutation(witness, own, observations);
       refreshes += result.path("refreshes").asInt();
     }
     assertTrue(

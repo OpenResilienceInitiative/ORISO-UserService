@@ -126,6 +126,87 @@ class ApplicationStartupPairControls(unittest.TestCase):
                 **{key: state == 'OPEN' for key in proof.OPEN_FLAGS},
                 'exactFence': state == 'FENCED'}
 
+    def test_primary_adoption_preserves_existing_authority_and_requires_exact_native_identity(self):
+        import copy
+        subject = '11111111-1111-4111-8111-111111111111'
+        roles = ['agency-admin', 'tenant-admin', 'user-admin']
+        config = {'profiles': [{'id': 'platform-v1', 'kind': 'PLATFORM_ADMIN', 'version': 1,
+            'groupId': '22222222-2222-4222-8222-222222222222',
+            'groupPath': '/protected-admins/platform-admins', 'realmRoles': roles}],
+            'bindings': [{'subject': subject, 'authority': 'PLATFORM', 'authorizerTenantIds': [0],
+                'humanClientIds': ['protected-human-web'], 'audienceSets': [['userservice']],
+                'protectedProfileIds': ['platform-v1', 'tenant-peer-v1'], 'realmRoles': roles,
+                'accountOperations': [{'operations': ['account.read'], 'targetProfiles': ['platform-v1'], 'selfOnly': True}]}],
+            'adoptedAccounts': [{'accountId': 'original-tenant', 'protectedProfileId': 'tenant-peer-v1', 'profileVersion': 1}],
+            'other': {'preserved': ['exact']}}
+        native = {'id': subject, 'enabled': True, 'createdTimestamp': 123,
+            'attributes': {'tenantId': ['0']}, 'username': 'reviewed-human'}
+        original = copy.deepcopy(config)
+        desired = proof.startup_primary_adoption(config, subject, native)
+        self.assertEqual(original, config)
+        self.assertEqual({**original, 'adoptedAccounts': original['adoptedAccounts'] + [{
+            'accountId': subject, 'protectedProfileId': 'platform-v1', 'profileVersion': 1}]}, desired)
+        for key, value in [('id', 'foreign'), ('createdTimestamp', 0), ('enabled', False),
+                           ('attributes', {'tenantId': ['11']}), ('serviceAccountClientLink', 'machine'),
+                           ('federationLink', 'foreign')]:
+            bad = copy.deepcopy(native); bad[key] = value
+            with self.assertRaises(ValueError): proof.startup_primary_adoption(config, subject, bad)
+        for section, key, value in [('profiles', 'realmRoles', roles + ['extra']),
+                ('profiles', 'version', 0), ('profiles', 'groupPath', '/foreign'),
+                ('bindings', 'subject', 'foreign'), ('bindings', 'realmRoles', roles + ['extra']),
+                ('bindings', 'humanClientIds', ['foreign']), ('bindings', 'authorizerTenantIds', [11])]:
+            bad = copy.deepcopy(config); bad[section][0][key] = value
+            with self.assertRaises(ValueError): proof.startup_primary_adoption(bad, subject, native)
+        with self.assertRaises(ValueError): proof.startup_primary_adoption(desired, subject, native)
+
+    def test_primary_adoption_native_readbacks_reject_identity_credential_and_grant_drift(self):
+        import copy
+        from types import SimpleNamespace
+        subject = '11111111-1111-4111-8111-111111111111'
+        group = '22222222-2222-4222-8222-222222222222'
+        roles = ['agency-admin', 'tenant-admin', 'user-admin']
+        config = {'profiles': [{'id': 'platform-v1', 'kind': 'PLATFORM_ADMIN', 'version': 1,
+            'groupId': group, 'groupPath': '/protected-admins/platform-admins', 'realmRoles': roles}],
+            'bindings': [{'subject': subject, 'authority': 'PLATFORM', 'authorizerTenantIds': [0],
+                'humanClientIds': ['protected-human-web'], 'audienceSets': [['userservice']],
+                'protectedProfileIds': ['platform-v1'], 'realmRoles': roles,
+                'accountOperations': [{'operations': ['account.read'], 'targetProfiles': ['platform-v1'], 'selfOnly': True}]}],
+            'adoptedAccounts': []}
+        class Native:
+            def __init__(self, drift):
+                self.drift = drift; self.joined = False; self.direct = [{'name': r} for r in roles]; self.writes = []
+            def admin(self, method, path, body=None):
+                base = '/users/' + subject
+                if method == 'PUT' and path == base + '/groups/' + group:
+                    self.joined = True; self.writes.append('join'); return None
+                if method == 'DELETE' and path == base + '/role-mappings/realm':
+                    if body != self.direct: raise AssertionError('Unexpected role removal')
+                    self.direct = []; self.writes.append('remove-direct'); return None
+                if method != 'GET': raise AssertionError('Unexpected native mutation')
+                if path == base:
+                    return {'id': subject, 'enabled': True,
+                        'createdTimestamp': 124 if self.joined and self.drift == 'birth' else 123,
+                        'attributes': {'tenantId': ['11' if self.joined and self.drift == 'tenant' else '0']}}
+                if path == base + '/credentials':
+                    return [{'id': 'changed' if self.joined and self.drift == 'credential' else 'original'}]
+                if path == base + '/role-mappings/realm': return copy.deepcopy(self.direct)
+                if path == base + '/role-mappings/realm/composite':
+                    return [{'name': r} for r in roles + (['extra'] if self.joined and self.drift == 'roles' else [])]
+                if path == '/groups/' + group + '/role-mappings/realm/composite': return [{'name': r} for r in roles]
+                if path == base + '/groups':
+                    return [{'id': 'foreign' if self.drift == 'group' else group}] if self.joined else []
+                raise AssertionError('Unexpected native read')
+        for drift in [None, 'birth', 'tenant', 'credential', 'roles', 'group']:
+            setup = SimpleNamespace(human_subject=subject); native = Native(drift)
+            if drift:
+                with self.assertRaises(ValueError): proof.install_startup_primary_adoption(setup, native, config)
+                self.assertFalse(hasattr(setup, 'primary_adoption_observation'))
+            else:
+                value = proof.install_startup_primary_adoption(setup, native, config)
+                self.assertEqual(config['bindings'], value['bindings'])
+                self.assertTrue(all(setup.primary_adoption_observation.values()))
+            self.assertEqual(['join', 'remove-direct'], native.writes)
+
     def test_browser_credit_requires_exact_explicit_mode_and_every_bounded_witness(self):
         import copy
         value = self.witness('OPEN')

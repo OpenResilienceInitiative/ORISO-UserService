@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 KC_COMMIT = '05fefa772dda8b248be9531e0552aa9910e1b71e'
 SUITE = 'de.caritas.cob.userservice.api.UserServiceStartupNativePairProof'
 BROWSER_HELPER = 'de.caritas.cob.userservice.api.CurrentClientBrowserBridge'
-BROWSER_FLAGS = {'frontendLocale', 'ownConsultantRemoval', 'peerAdminRemoval', 'sourceAndCleanup'}
+BROWSER_FLAGS = {'frontendLocale', 'ownActorSeed', 'primaryActorSeed', 'ownMutationObserved', 'ownConsultantRemoval', 'peerAdminRemoval', 'sourceAndCleanup'}
 CASE = 'actualServletApplicationReachesOnlyExpectedProductionStartupState'
 JAVA_SOURCE = 'src/test/java/' + SUITE.replace('.', '/') + '.java'
 COMMON_FLAGS = {'productionClasspath', 'actualApplication', 'testingProfile', 'fiveActors', 'realPolicies', 'contextClosed', 'noUnexpectedFailure'}
@@ -338,6 +338,62 @@ def startup_protected_catalogue(configuration):
     return value
 
 
+def startup_primary_adoption(configuration, subject, native):
+    """The existing named operator becomes a managed SELF target, without changing any grant."""
+    profiles = [p for p in configuration['profiles'] if p['id'] == 'platform-v1']
+    sources = [b for b in configuration['bindings'] if b['subject'] == subject]
+    roles = {'agency-admin', 'tenant-admin', 'user-admin'}
+    if (len(profiles) != 1 or len(sources) != 1 or native.get('id') != subject
+            or native.get('enabled') is not True or type(native.get('createdTimestamp')) is not int
+            or native['createdTimestamp'] <= 0 or native.get('attributes', {}).get('tenantId') != ['0']
+            or native.get('serviceAccountClientLink') is not None or native.get('federationLink') is not None):
+        raise ValueError('Exact original native primary incarnation required')
+    profile, source = profiles[0], sources[0]
+    if (profile.get('kind') != 'PLATFORM_ADMIN' or profile.get('groupPath') != '/protected-admins/platform-admins'
+            or type(profile.get('version')) is not int or profile['version'] <= 0
+            or set(profile.get('realmRoles', [])) != roles or len(profile['realmRoles']) != 3
+            or source.get('authority') != 'PLATFORM' or source.get('authorizerTenantIds') != [0]
+            or source.get('humanClientIds') != ['protected-human-web'] or source.get('audienceSets') != [['userservice']]
+            or source.get('protectedProfileIds', []).count('platform-v1') != 1
+            or set(source.get('realmRoles', [])) != roles or len(source['realmRoles']) != 3
+            or any(a.get('accountId') == subject for a in configuration['adoptedAccounts'])):
+        raise ValueError('Exact unchanged reviewed primary source and profile required')
+    result = copy.deepcopy(configuration)
+    result['adoptedAccounts'].append({'accountId': subject, 'protectedProfileId': 'platform-v1',
+                                    'profileVersion': profile['version']})
+    return result
+
+
+def install_startup_primary_adoption(cls, helper, configuration):
+    subject = cls.human_subject
+    route = '/users/' + subject
+    before = helper.admin('GET', route)
+    credentials = helper.admin('GET', route + '/credentials')
+    direct = helper.admin('GET', route + '/role-mappings/realm')
+    roles = {'agency-admin', 'tenant-admin', 'user-admin'}
+    effective = lambda: {role['name'] for role in helper.admin('GET', route + '/role-mappings/realm/composite')}
+    if (len(direct) != 3 or {r['name'] for r in direct} != roles or effective() != roles
+            or helper.admin('GET', route + '/groups') != []):
+        raise ValueError('Exact pre-adoption canonical primary mapping required')
+    result = startup_primary_adoption(configuration, subject, before)
+    profile = next(p for p in result['profiles'] if p['id'] == 'platform-v1')
+    group_roles = helper.admin('GET', '/groups/' + profile['groupId'] + '/role-mappings/realm/composite')
+    if len(group_roles) != 3 or {r['name'] for r in group_roles} != roles:
+        raise ValueError('Existing profile group must have the identical effective role union')
+    helper.admin('PUT', route + '/groups/' + profile['groupId'])
+    helper.admin('DELETE', route + '/role-mappings/realm', direct)
+    groups = helper.admin('GET', route + '/groups')
+    if (helper.admin('GET', route) != before or helper.admin('GET', route + '/credentials') != credentials
+            or helper.admin('GET', route + '/role-mappings/realm') != [] or effective() != roles
+            or len(groups) != 1 or groups[0]['id'] != profile['groupId']):
+        raise ValueError('Primary adoption changed identity, incarnation, credentials or effective grants')
+    cls.primary_adoption_observation = {'sameNativeIdentityAndBirth': True, 'sameCredentials': True,
+        'sameEffectiveRoleUnion': True, 'exactExistingProfileGroup': True,
+        'sameSourceBindingsAndOperationGrants': result['bindings'] == configuration['bindings'],
+        'oneExplicitTargetAdoption': len(result['adoptedAccounts']) == len(configuration['adoptedAccounts']) + 1}
+    return result
+
+
 def startup_source_projection(configuration, subject):
     value = copy.deepcopy(configuration)
     sources = [item for item in value['bindings'] if item['subject'] == subject]
@@ -557,6 +613,7 @@ def native(kc, report):
             source_projection = startup_source_projection(value, cls.human_subject)
             canonical = role_source.install_canonical_platform_source(cls, helper, source_projection, installed)
             value = restore_startup_source_targets(original_protected, canonical, cls.human_subject)
+            if browser: value = install_startup_primary_adoption(cls, helper, value)
             cls.startup_reviewed_groups = groups
             index = command.index(IMAGE)
             command[index:index] = ['-v', str(jars['OTP_C_TEST_JAR'].resolve()) + ':/opt/keycloak/providers/otp-config-spi.jar:ro',
@@ -607,7 +664,9 @@ def native(kc, report):
                     raise ValueError('Actual installed reviewed group roles differ from declaration')
             return True
         receipt['native_declarations_before'] = verify_installed_declarations()
-        receipt['canonical_platform_source'] = copy.deepcopy(StartupFixture.canonical_platform_source)
+        receipt['canonical_platform_source'] = {'phase': 'PRE_ADOPTION' if browser else 'CURRENT',
+            'observations': copy.deepcopy(StartupFixture.canonical_platform_source)}
+        if browser: receipt['primary_managed_target_adoption'] = copy.deepcopy(StartupFixture.primary_adoption_observation)
         realm = fixture.admin('GET', ''); realm['adminEventsEnabled'] = True
         realm['adminEventsDetailsEnabled'] = False; fixture.admin('PUT', '', realm)
 
