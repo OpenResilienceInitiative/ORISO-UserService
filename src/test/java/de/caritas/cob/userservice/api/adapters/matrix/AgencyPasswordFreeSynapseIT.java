@@ -411,6 +411,9 @@ class AgencyPasswordFreeSynapseIT {
             mock(de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore.class),
             mock(
                 de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeDelivery
+                    .class),
+            mock(
+                de.caritas.cob.userservice.api.service.furthercounselling.TopicDuplicateService
                     .class));
     facade.assignRegisteredEnquiry(session, consultant);
     assertThat(session.getMatrixRoomId()).isEqualTo(originalRoom);

@@ -29,6 +29,10 @@ public class MatrixSessionSystemMessageService {
   public static final String USER_LEFT_CHAT_TYPE = "USER_LEFT_CHAT";
   public static final String CASE_HANDOVER_GRANTED_TYPE = "CASE_HANDOVER_GRANTED";
   public static final String FIRST_RESPONSE_TYPE = "FIRST_RESPONSE";
+  public static final String FURTHER_COUNSELLING_RECOMMENDED_TYPE =
+      "FURTHER_COUNSELLING_RECOMMENDED";
+  public static final String TOPIC_DUPLICATE_STARTED_TYPE = "TOPIC_DUPLICATE_STARTED";
+  public static final String TOPIC_DUPLICATE_ENDED_TYPE = "TOPIC_DUPLICATE_ENDED";
 
   private static final com.fasterxml.jackson.databind.ObjectMapper OBJECT_MAPPER =
       new com.fasterxml.jackson.databind.ObjectMapper();
@@ -159,7 +163,38 @@ public class MatrixSessionSystemMessageService {
         .ifPresent(credentials -> sendSystemMessage(session.getId(), roomId, body, credentials));
   }
 
-  private void sendSystemMessage(
+  /**
+   * Posts a prepared [SYSTEM_NOTIFICATION] body into the session's room (FE#1876).
+   *
+   * @param session the session whose room receives the notice
+   * @param body the full body including the prefix
+   * @param asConsultant post as the assigned consultant when possible; otherwise the usual
+   *     asker-first resolution
+   * @return true when Matrix accepted the event
+   */
+  public boolean postSystemMessage(Session session, String body, boolean asConsultant) {
+    if (session == null || session.getId() == null || isBlank(body)) {
+      return false;
+    }
+    var matrixRoomId = session.getMatrixRoomId();
+    if (isBlank(matrixRoomId)) {
+      matrixRoomId =
+          sessionService.getSession(session.getId()).map(Session::getMatrixRoomId).orElse(null);
+    }
+    if (isBlank(matrixRoomId)) {
+      return false;
+    }
+    var roomId = matrixRoomId;
+    var credentials =
+        asConsultant
+            ? resolveMatrixCredentialsPreferConsultant(session)
+            : resolveMatrixCredentials(session);
+    return credentials
+        .map(value -> sendSystemMessage(session.getId(), roomId, body, value))
+        .orElse(false);
+  }
+
+  private boolean sendSystemMessage(
       Long sessionId, String matrixRoomId, String body, MatrixCredentials credentials) {
     var accessToken = credentials.accessToken(matrixSynapseService);
     if (accessToken == null) {
@@ -167,12 +202,14 @@ public class MatrixSessionSystemMessageService {
           "Skipping Matrix system message for session {} — token unavailable for {}",
           sessionId,
           credentials.principal());
-      return;
+      return false;
     }
     var response = matrixSynapseService.sendMessage(matrixRoomId, body, accessToken);
     if (response != null && response.containsKey("error")) {
       log.warn("Matrix system message for session {} failed: {}", sessionId, response.get("error"));
+      return false;
     }
+    return true;
   }
 
   private Optional<MatrixCredentials> resolveMatrixCredentialsPreferConsultant(Session session) {

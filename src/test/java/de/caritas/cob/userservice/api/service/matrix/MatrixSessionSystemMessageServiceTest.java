@@ -462,6 +462,38 @@ class MatrixSessionSystemMessageServiceTest {
     verify(matrixSynapseService, never()).sendMessage(anyString(), anyString(), anyString());
   }
 
+  @Test
+  void postSystemMessage_asConsultant_postsWithTheAssignedConsultantsAccount() {
+    var consultant = new Consultant();
+    consultant.setId(CONSULTANT_ID);
+    consultant.setMatrixUserId(CONSULTANT_MATRIX_ID);
+    var session = sessionWithUserMatrixId(USER_MATRIX_ID, "asker");
+    session.setConsultant(consultant);
+    when(consultantService.getConsultant(CONSULTANT_ID)).thenReturn(Optional.of(consultant));
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MATRIX_ID))
+        .thenReturn(ACCESS_TOKEN);
+    when(matrixSynapseService.sendMessage(MATRIX_ROOM_ID, "[SYSTEM_NOTIFICATION]{}", ACCESS_TOKEN))
+        .thenReturn(Map.of("event_id", "$evt"));
+
+    assertThat(
+            matrixSessionSystemMessageService.postSystemMessage(
+                session, "[SYSTEM_NOTIFICATION]{}", true))
+        .isTrue();
+  }
+
+  @Test
+  void postSystemMessage_reportsAMatrixError() {
+    var session = sessionWithUserMatrixId(USER_MATRIX_ID, "asker");
+    when(matrixSynapseService.loginAsUserAccessToken(USER_MATRIX_ID)).thenReturn(ACCESS_TOKEN);
+    when(matrixSynapseService.sendMessage(MATRIX_ROOM_ID, "[SYSTEM_NOTIFICATION]{}", ACCESS_TOKEN))
+        .thenReturn(Map.of("error", "forbidden"));
+
+    assertThat(
+            matrixSessionSystemMessageService.postSystemMessage(
+                session, "[SYSTEM_NOTIFICATION]{}", false))
+        .isFalse();
+  }
+
   private Session baseSession() {
     var session = new Session();
     session.setId(SESSION_ID);
