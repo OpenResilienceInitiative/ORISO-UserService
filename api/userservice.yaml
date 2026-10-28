@@ -300,7 +300,7 @@ paths:
         '400': {description: keepMessages missing}
         '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
         '404': {description: The caller has no direct-link temporary account}
-        '409': {description: The platform mode does not ask the guest, or the guest already answered}
+        '409': {description: 'The platform mode does not ask the guest, or the guest already answered'}
   /users/directlinks:
     get:
       tags: [direct-link-controller]

@@ -137,8 +137,8 @@ public class CreateUserFacade {
         dpaPolicy.requireForAgency(userDTO.getAgencyId());
       }
       Optional<Chat> invitedGroup = groupInviteRegistration.resolveInvitedGroup(userDTO);
-      var temporaryLink = temporaryAccountLinkResolver.resolve(userDTO);
-      if (userDTO.isTemporary() && invitedGroup.isEmpty() && temporaryLink.isEmpty()) {
+      var directLink = temporaryAccountLinkResolver.resolve(userDTO);
+      if (userDTO.isTemporary() && invitedGroup.isEmpty() && directLink.isEmpty()) {
         // The deletion job removes temporary accounts; only a valid group invite or direct link
         // may ask for one.
         throw new BadRequestException(
@@ -175,8 +175,8 @@ public class CreateUserFacade {
       if (user != null) {
         user.setTemporaryAccount(userDTO.isTemporary());
         // ADR-029 §4: the account keeps the lifetimes valid at its creation (#1476).
-        if (temporaryLink.isPresent()) {
-          var link = temporaryLink.get();
+        if (directLink.isPresent() && directLink.get().isTemporaryAccount()) {
+          var link = directLink.get();
           user.setTemporaryAccountSnapshot(
               temporaryAccountSettings.snapshotForNewAccount(
                   de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkChatType
@@ -211,9 +211,9 @@ public class CreateUserFacade {
             () -> groupInviteRegistration.leave(group, provisionedUser.get()));
         groupInviteRegistration.join(group, user);
         sessionId = null;
-      } else if (temporaryLink.isPresent()) {
-        // The conversation starts through the link afterwards (knock first for calls), never as
-        // an enquiry (ADR-029 §1).
+      } else if (directLink.isPresent()) {
+        // Temporary or persistent: the conversation starts through the link afterwards (knock
+        // first for calls), never as an enquiry in Erstanfragen (ADR-029 §1).
         sessionId = null;
       } else {
         activeAttempt.register(

@@ -638,6 +638,32 @@ public class CreateUserFacadeTest {
     org.mockito.Mockito.verifyNoInteractions(createNewSessionFacade);
   }
 
+  @Test
+  void
+      createUserAccountWithInitializedConsultingType_Should_OpenNoEnquiryAndKeepTheAccount_When_RegisteringPersistentlyThroughADirectLink()
+          throws Exception {
+    when(consultingTypeManager.getConsultingTypeSettings(any()))
+        .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
+    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    givenMatrixProvisioningSucceeds();
+    User user = givenAFullyPersistedUser();
+    var link =
+        de.caritas.cob.userservice.api.model.AgencyInviteLink.builder()
+            .id(9L)
+            .chatType("CHAT")
+            .temporaryAccount(false)
+            .build();
+    when(temporaryAccountLinkResolver.resolve(any())).thenReturn(Optional.of(link));
+
+    Long sessionId =
+        createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT);
+
+    assertThat(sessionId, nullValue());
+    assertThat(user.isTemporaryAccount(), is(false));
+    assertThat(user.getTemporaryAccountSnapshot(), nullValue());
+    org.mockito.Mockito.verifyNoInteractions(createNewSessionFacade, temporaryAccountSettings);
+  }
+
   private User givenAFullyPersistedUser() {
     User user = new User();
     user.setUsername("dbUser");

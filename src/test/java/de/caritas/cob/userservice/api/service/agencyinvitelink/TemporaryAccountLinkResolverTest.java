@@ -84,9 +84,16 @@ class TemporaryAccountLinkResolverTest {
   }
 
   @Test
-  void resolve_Should_RequireTheTemporaryFlag() {
+  void resolve_Should_RequireTheTemporaryFlag_When_TheLinkCreatesTemporaryAccounts() {
     assertThatThrownBy(() -> resolver.resolve(registration("tok", false)))
         .isInstanceOf(BadRequestException.class);
+  }
+
+  @Test
+  void resolve_Should_ReturnTheLink_ForAPersistentAccount_When_TheLinkCreatesNoTemporaryAccounts() {
+    link.setTemporaryAccount(false);
+
+    assertThat(resolver.resolve(registration("tok", false))).contains(link);
   }
 
   @Test

@@ -17,7 +17,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 /**
- * Registration of a temporary account through a counsellor direct link (ADR-029 §3, #1476). The
+ * Registration through a counsellor direct link, temporary or persistent (ADR-029 §3, #1476). The
  * same checks as starting the conversation run before any Keycloak or Matrix user exists, so an
  * invalid or switched-off link never leaves an account behind.
  */
@@ -32,9 +32,6 @@ public class TemporaryAccountLinkResolver {
   public Optional<AgencyInviteLink> resolve(UserDTO userDTO) {
     if (isBlank(userDTO.getDirectLinkToken())) {
       return Optional.empty();
-    }
-    if (!userDTO.isTemporary()) {
-      throw new BadRequestException("A direct link registration creates a temporary account.");
     }
     if (userDTO.getGroupChatId() != null || userDTO.isConsultantSet()) {
       throw new BadRequestException(
@@ -55,8 +52,12 @@ public class TemporaryAccountLinkResolver {
         || (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now()))) {
       throw new BadRequestException("Invite link expired");
     }
-    if (!link.isTemporaryAccount()) {
-      throw new BadRequestException("This direct link does not create temporary accounts.");
+    if (userDTO.isTemporary() != link.isTemporaryAccount()) {
+      // The link decides the account kind; the registration must ask for the same one.
+      throw new BadRequestException(
+          link.isTemporaryAccount()
+              ? "This direct link creates temporary accounts."
+              : "This direct link does not create temporary accounts.");
     }
     var registrationTenant = TenantContext.getCurrentTenant();
     if (registrationTenant != null && !Objects.equals(registrationTenant, link.getTenantId())) {
