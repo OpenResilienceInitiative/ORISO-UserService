@@ -497,9 +497,10 @@
       "owner": "identity-profile",
       "risk": "duplicate-side-effect",
       "components": [
-        "performDeletionWorkflow"
+        "performDeletionWorkflow",
+        "performDirectLinkDeletionWorkflow"
       ],
-      "decision": "A shared lease is claimed per run and each account is deleted under the locked lease row (runIfHeld), so a second replica skips the run; the lease is released in finally. Each deletion runs in its own transaction and treats an already deleted user as done.",
+      "decision": "A shared lease is claimed per run and each account is deleted under the locked lease row (runIfHeld), so a second replica skips the run; the lease is released in finally. Each deletion runs in its own transaction and treats an already deleted user as done. The direct-link run (ADR-029) claims its own lease (direct-link-temporary-account-deletion) under the same rules, so it never blocks or overlaps the inactivity run.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
