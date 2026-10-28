@@ -58,6 +58,41 @@ public final class ExistingConsultantImportMaintenance {
         org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
   }
 
+  /** Denial-only parser guard: a changed file cannot strand an earlier original command. */
+  public void requirePendingConfiguredSource(String sourceDigest) {
+    outside();
+    for (var original : pendingConfiguredImports()) {
+      if (!sourceDigest.equals(original.path("sourceDigest").textValue())) throw unavailable();
+    }
+  }
+
+  /** A legacy skip is successful only if this exact configured record has no pending custody. */
+  public void requireNoPendingSkippedRecord(String sourceDigest, long recordNumber) {
+    outside();
+    for (var original : pendingConfiguredImports()) {
+      if (!sourceDigest.equals(original.path("sourceDigest").textValue())
+          || recordNumber == original.path("recordNumber").longValue()) throw unavailable();
+    }
+  }
+
+  public void requireNoPendingConfiguredImport() {
+    outside();
+    if (!pendingConfiguredImports().isEmpty()) throw unavailable();
+  }
+
+  private List<JsonNode> pendingConfiguredImports() {
+    return jdbc
+        .queryForList(
+            "select original_json from general_admin_identity_intent where human_subject=? and human_issuer=? and human_client=? and status not in ('APPLIED','NO_EFFECT')",
+            String.class,
+            SOURCE,
+            SOURCE,
+            SOURCE)
+        .stream()
+        .map(value -> decode(value, JsonNode.class))
+        .toList();
+  }
+
   public void apply(ScopedExistingImport source) {
     outside();
     source.requireJpaOwner(factory);

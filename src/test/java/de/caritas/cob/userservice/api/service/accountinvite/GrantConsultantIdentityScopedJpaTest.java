@@ -1052,6 +1052,75 @@ class GrantConsultantIdentityScopedJpaTest {
     assertEquals("FROZEN", phase());
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "username,false", "missing-row,false", "invalid-record,false",
+    "username,true", "missing-row,true", "invalid-record,true"
+  })
+  void configuredImportEarlySkipCannotHidePendingCustody(String change, boolean acknowledged)
+      throws Exception {
+    givenConfiguredExistingImport();
+    if (acknowledged) {
+      doAnswer(
+              call -> {
+                var saved = (de.caritas.cob.userservice.api.model.Consultant) call.callRealMethod();
+                saved.setSupervisor(true);
+                return saved;
+              })
+          .when(localConsultants)
+          .saveConsultant(any(de.caritas.cob.userservice.api.model.Consultant.class));
+    } else lostReply = true;
+    assertThrows(RuntimeException.class, this::runConfiguredImport);
+    int attempted = calls.get();
+    var original =
+        jdbc.queryForMap(
+            "select * from general_admin_identity_intent where operation_id=?", operation);
+    var before = consultantSql();
+    if (change.equals("missing-row")) {
+      org.mockito.Mockito.doReturn(java.util.Optional.empty())
+          .when(localConsultants)
+          .getConsultant(ACCOUNT);
+    } else {
+      java.nio.file.Files.writeString(
+          importSource,
+          java.nio.file.Files.readString(importSource)
+              .replace(
+                  change.equals("username") ? "owned-counsellor" : "72;ordinary",
+                  change.equals("username") ? "changed-name" : "invalid-role-set"));
+    }
+    assertThrows(RuntimeException.class, this::runConfiguredImport);
+    assertEquals(attempted, calls.get());
+    assertEquals(before, consultantSql());
+    assertEquals(
+        original,
+        jdbc.queryForMap(
+            "select * from general_admin_identity_intent where operation_id=?", operation));
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"username", "missing-row"})
+  void configuredImportOrdinarySkipsRemainSuccessfulWithoutPendingCustody(String change)
+      throws Exception {
+    givenConfiguredExistingImport();
+    int before = calls.get();
+    if (change.equals("missing-row")) {
+      org.mockito.Mockito.doReturn(java.util.Optional.empty())
+          .when(localConsultants)
+          .getConsultant(ACCOUNT);
+    } else {
+      java.nio.file.Files.writeString(
+          importSource,
+          java.nio.file.Files.readString(importSource).replace("owned-counsellor", "changed-name"));
+    }
+    runConfiguredImport();
+    assertEquals(before, calls.get());
+    assertEquals(
+        0,
+        jdbc.queryForObject(
+            "select count(*) from general_admin_identity_intent where human_subject='CONFIGURED_IMPORT'",
+            Integer.class));
+  }
+
   @Test
   void configuredImportRejectsChangedRoleSetForTheOriginalFileRecord() throws Exception {
     givenConfiguredExistingImport();

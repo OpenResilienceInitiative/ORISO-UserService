@@ -143,6 +143,9 @@ public class ConsultantImportService {
       throw new InternalServerErrorException(exception.getMessage());
     }
 
+    if (fiveActors() && existingImports != null)
+      existingImports.requirePendingConfiguredSource(sourceDigest);
+
     for (CSVRecord record : records) {
       if (fiveActors()) {
         if (trigger == null)
@@ -162,6 +165,8 @@ public class ConsultantImportService {
               String.format(
                   "Username length is invalid. Skipping import for %s",
                   importRecord.getUsername()));
+          if (fiveActors() && existingImports != null)
+            existingImports.requireNoPendingSkippedRecord(sourceDigest, record.getRecordNumber());
           continue;
         }
 
@@ -277,6 +282,8 @@ public class ConsultantImportService {
                 String.format(
                     "Consultant with username %s (%s) exists and won't be " + "imported.",
                     importRecord.getUsername(), importRecord.getUsernameEncoded()));
+            if (fiveActors() && existingImports != null)
+              existingImports.requireNoPendingSkippedRecord(sourceDigest, record.getRecordNumber());
             continue;
           }
 
@@ -287,6 +294,8 @@ public class ConsultantImportService {
                 String.format(
                     "Could not create Keycloak user for old id %s - username or e-mail address is already taken.",
                     importRecord.getIdOld()));
+            if (fiveActors() && existingImports != null)
+              existingImports.requireNoPendingSkippedRecord(sourceDigest, record.getRecordNumber());
             continue;
           }
 
@@ -314,6 +323,9 @@ public class ConsultantImportService {
                       importRecord.getConsultantId(),
                       usernameTranscoder.decodeUsername(currentConsultant.get().getUsername()),
                       importRecord.getUsername()));
+              if (fiveActors() && existingImports != null)
+                existingImports.requireNoPendingSkippedRecord(
+                    sourceDigest, record.getRecordNumber());
               continue;
             }
           } else {
@@ -321,6 +333,8 @@ public class ConsultantImportService {
                 String.format(
                     "Consultant with id %s not found. Skipped entry.",
                     importRecord.getConsultantId()));
+            if (fiveActors() && existingImports != null)
+              existingImports.requireNoPendingSkippedRecord(sourceDigest, record.getRecordNumber());
             continue;
           }
         }
@@ -404,6 +418,8 @@ public class ConsultantImportService {
         writeToImportLog(logMessage);
 
       } catch (ImportException wontImportException) {
+        if (fiveActors() && existingImports != null)
+          existingImports.requireNoPendingSkippedRecord(sourceDigest, record.getRecordNumber());
         writeToImportLog(wontImportException.getMessage());
         break;
       } catch (Exception fileNotFoundException) {
@@ -415,6 +431,7 @@ public class ConsultantImportService {
       }
     }
 
+    if (fiveActors() && existingImports != null) existingImports.requireNoPendingConfiguredImport();
     try {
       in.close();
     } catch (IOException e) {

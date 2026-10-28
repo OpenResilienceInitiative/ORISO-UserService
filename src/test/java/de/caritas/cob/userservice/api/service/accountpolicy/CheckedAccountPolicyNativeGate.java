@@ -570,7 +570,7 @@ class CheckedAccountPolicyNativeGate {
         row + ",2,nativeother,Other,Family,native-other@example.invalid,nein,,10;ordinary\r\n";
     long before = queries();
     long beforeSql = sqlQueries();
-    configuredImporter(saga, content, List.of("consultant"), false).startImport();
+    runVerifiedConfiguredImport(configuredImporter(saga, content, List.of("consultant"), false));
     assertThat(observed).hasSize(2);
     assertThat(cacheControl.get()).contains("no-store");
     assertSameExplicitBearer();
@@ -615,34 +615,52 @@ class CheckedAccountPolicyNativeGate {
               return consultant;
             });
     captured.set(null);
-    configuredImporter(stale, row, List.of("consultant"), false).startImport();
+    runVerifiedConfiguredImport(configuredImporter(stale, row, List.of("consultant"), false));
     assertThat(captured.get()).isNull();
     assertThat(queries()).isEqualTo(afterValid);
     for (boolean foreign : List.of(true, false)) {
       var refused = mock(CreateConsultantSaga.class);
-      configuredImporter(
+      runVerifiedConfiguredImport(
+          configuredImporter(
               refused,
               foreign ? row.stripTrailing() + ",2\r\n" : row,
               foreign ? List.of("consultant") : List.of("tenant-admin"),
-              foreign)
-          .startImport();
+              foreign));
       org.mockito.Mockito.verifyNoInteractions(refused);
       assertThat(queries()).isEqualTo(afterValid);
     }
     var afterPolicy = new java.util.concurrent.atomic.AtomicInteger();
-    configuredImporter(actualQuotaSaga(0, afterPolicy), row, List.of("consultant"), false)
-        .startImport();
+    assertThatThrownBy(
+            () ->
+                runVerifiedConfiguredImport(
+                    configuredImporter(
+                        actualQuotaSaga(0, afterPolicy), row, List.of("consultant"), false)))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException
+                .class);
     assertThat(afterPolicy.get()).isEqualTo(1);
     assertThat(queries()).isEqualTo(afterValid + 1);
     afterPolicy.set(0);
-    configuredImporter(actualQuotaSaga(5, afterPolicy), row, List.of("consultant"), false)
-        .startImport();
+    assertThatThrownBy(
+            () ->
+                runVerifiedConfiguredImport(
+                    configuredImporter(
+                        actualQuotaSaga(5, afterPolicy), row, List.of("consultant"), false)))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException
+                .class);
     assertThat(afterPolicy.get()).isZero();
     assertThat(queries()).isEqualTo(afterValid + 2);
     agencyMode.set("policy-outage");
     captured.set(null);
-    configuredImporter(actualQuotaSaga(0, afterPolicy), row, List.of("consultant"), false)
-        .startImport();
+    assertThatThrownBy(
+            () ->
+                runVerifiedConfiguredImport(
+                    configuredImporter(
+                        actualQuotaSaga(0, afterPolicy), row, List.of("consultant"), false)))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException
+                .class);
     assertThat(afterPolicy.get()).isZero();
     assertThat(captured.get()).isNull();
     assertThat(queries()).isEqualTo(afterValid + 2);
@@ -651,14 +669,28 @@ class CheckedAccountPolicyNativeGate {
     long beforeUnavailableSql = sqlQueries();
     try {
       Files.writeString(tenantMode, "outage");
-      configuredImporter(actualQuotaSaga(0, afterPolicy), row, List.of("consultant"), false)
-          .startImport();
+      assertThatThrownBy(
+              () ->
+                  runVerifiedConfiguredImport(
+                      configuredImporter(
+                          actualQuotaSaga(0, afterPolicy), row, List.of("consultant"), false)))
+          .isInstanceOf(
+              de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException
+                  .class);
       assertThat(afterPolicy.get()).isZero();
       assertThat(queries()).isEqualTo(afterValid + 3);
       assertThat(lastPolicyStatus.get()).isEqualTo(503);
       assertThat(sqlQueries()).isEqualTo(beforeUnavailableSql);
     } finally {
       Files.writeString(tenantMode, "live");
+    }
+  }
+
+  private void runVerifiedConfiguredImport(ConsultantImportService importer) {
+    var token =
+        broker.issue(de.caritas.cob.userservice.api.config.auth.TaskPurpose.CONSULTANT_IMPORT);
+    try (var trigger = broker.verifyConsultantImportTrigger(token.accessToken())) {
+      importer.startImport(trigger);
     }
   }
 
