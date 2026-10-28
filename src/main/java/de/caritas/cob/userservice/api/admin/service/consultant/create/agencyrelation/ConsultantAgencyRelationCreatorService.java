@@ -131,6 +131,55 @@ public class ConsultantAgencyRelationCreatorService {
     }
   }
 
+  public void validateExistingImportSources(
+      de.caritas.cob.userservice.api.service.ConsultantImportService.ScopedExistingImport source) {
+    source.requireLive();
+    if (org.springframework.transaction.support.TransactionSynchronizationManager
+        .isActualTransactionActive())
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    consultantTopicAgencyCompatibilityValidator
+        .validateCurrentTopicsAgainstAssignedAndAdditionalAgencies(
+            source.accountId(),
+            source.agencies().stream()
+                .map(
+                    de.caritas.cob.userservice.api.service.ConsultantImportService.ExistingAgency
+                        ::id)
+                .toList(),
+            source.tenantId());
+    for (var relation : source.currentRelations()) {
+      var agency = retrieveAgency(relation.getAgencyId());
+      if (!java.util.Objects.equals(agency.getTenantId(), source.tenantId()))
+        throw new BadRequestException("Existing import agency tenant changed");
+      for (var selected : source.agencies())
+        if (selected.bounded() && agency.getConsultingType() != selected.consultingType())
+          throw new BadRequestException(
+              "Existing import agencies have incompatible consulting types");
+    }
+  }
+
+  public void createCheckedExistingImportAgencies(
+      de.caritas.cob.userservice.api.service.ConsultantImportService.ScopedExistingImport source,
+      de.caritas.cob.userservice.api.service.identity.ExistingConsultantImportMaintenance
+              .CheckedImport
+          checked) {
+    checked.requireLocalCallback(source);
+    var consultant = retrieveConsultant(source.accountId());
+    for (Long id : checked.agenciesToCreate()) {
+      var relation =
+          ConsultantAgency.builder()
+              .consultant(consultant)
+              .agencyId(id)
+              .tenantId(source.tenantId())
+              .createDate(checked.creationDate())
+              .updateDate(checked.creationDate())
+              .status(ConsultantAgencyStatus.IN_PROGRESS)
+              .build();
+      relation = consultantAgencyService.saveConsultantAgency(relation);
+      consultantAgencyRelationFinalizer.finalizeConsultantAgencyRelation(consultant, relation);
+      eventPublisher.publishEvent(new ConsultantJoinedAgencyEvent(consultant.getId(), id));
+    }
+  }
+
   /** SQL only, admitted by the same actual held Grant callback after native/Matrix ACK. */
   public void createCheckedGrantAgencies(
       de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService

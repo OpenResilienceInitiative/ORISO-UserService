@@ -415,16 +415,39 @@ class ConsultantImportServiceTest {
   @Test
   void fiveActorExistingImportKeepsExactConsultantRowAndAgencyTenantBinding() throws Exception {
     configuredExistingImport(5L);
+    var owner =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.service.identity.ExistingConsultantImportMaintenance
+                .class);
+    ReflectionTestUtils.setField(consultantImportService, "existingImports", owner);
+    var captured =
+        new java.util.concurrent.atomic.AtomicReference<
+            ConsultantImportService.ScopedExistingImport>();
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              ConsultantImportService.ScopedExistingImport source = call.getArgument(0);
+              source.requireLive();
+              org.junit.jupiter.api.Assertions.assertEquals(
+                  "3057c2a7-635f-4bb9-a976-48ac82ec3dda", source.accountId());
+              org.junit.jupiter.api.Assertions.assertEquals(5L, source.tenantId());
+              org.junit.jupiter.api.Assertions.assertEquals(
+                  List.of("consultant"), source.requiredRoles());
+              org.junit.jupiter.api.Assertions.assertEquals(10L, source.agencies().getFirst().id());
+              org.junit.jupiter.api.Assertions.assertEquals(
+                  5L, source.agencies().getFirst().tenant());
+              captured.set(source);
+              return null;
+            })
+        .when(owner)
+        .apply(any());
     try (var trigger =
         de.caritas.cob.userservice.api.config.auth.ConfiguredImportTriggerFixture.verified()) {
       consultantImportService.startImport(trigger);
     }
-    verify(consultantAgencyRelationCreatorService)
-        .createConsultantAgencyRelations(
-            eq("3057c2a7-635f-4bb9-a976-48ac82ec3dda"),
-            eq(java.util.Set.of(10L)),
-            eq(java.util.Set.of("consultant")),
-            any());
+    verify(owner).apply(any());
+    assertThrows(RuntimeException.class, () -> captured.get().requireLive());
+    verify(consultantAgencyRelationCreatorService, never())
+        .createConsultantAgencyRelations(anyString(), any(), any(), any());
     verify(createConsultantSaga, never()).createNewConsultant(any(), any());
     verify(identityUsernameAvailability, never()).isUsernameAvailable(anyString());
   }

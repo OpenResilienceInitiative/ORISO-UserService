@@ -295,69 +295,17 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
       FrozenProfile original,
       String receipt) {
     current.requireCurrent();
-    if (original == null
-        || original.body() == null
-        || original.body().length() > 16384
-        || requestDigest == null
-        || !requestDigest.matches("[0-9a-f]{64}")) throw invalid();
-    JsonNode body = codec.read(original.body(), JsonNode.class);
-    var fields = new HashSet<String>();
-    body.fieldNames().forEachRemaining(fields::add);
-    if (!fields.equals(Set.of("target", "operationId", "expectedState", "change"))
-        || !original.body().equals(codec.canonical(body))
-        || !operation.toString().equals(body.path("operationId").textValue())
-        || !current.accountId().equals(body.path("target").path("accountId").textValue())
-        || !Objects.equals(
-            current.tenantId() == null ? null : current.tenantId().toString(),
-            body.path("target").path("tenantId").isNull()
-                ? null
-                : body.path("target").path("tenantId").textValue())
-        || !(current.selfService() ? "SELF" : "HUMAN_ADMIN")
-            .equals(body.path("target").path("origin").path("kind").textValue())
-        || !operation
-            .toString()
-            .equals(body.path("target").path("origin").path("workflowId").textValue())
-        || original.bindingDigest() == null
-        || !original.bindingDigest().matches("[0-9a-f]{64}")
-        || !MessageDigest.isEqual(
-            bindingDigest(requestDigest, body).getBytes(StandardCharsets.US_ASCII),
-            original.bindingDigest().getBytes(StandardCharsets.US_ASCII))) throw invalid();
-    JsonNode change = body.path("change");
-    fields.clear();
-    change.fieldNames().forEachRemaining(fields::add);
-    String command;
-    if (fields.isEmpty()) command = "delete";
-    else if (fields.equals(Set.of("firstName", "lastName", "email"))) {
-      command = "profile";
-      if (current.selfService()) {
-        // These two fixed SELF commands have the same closed body shape. Neither grants authority;
-        // the sole strict verifier must authenticate every original field before either succeeds.
-        try {
-          codec.verifyMaintenanceNoEffectReceipt(
-              receipt, realmId, actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), body, "profile");
-        } catch (IllegalArgumentException wrongProfileReceipt) {
-          codec.verifyMaintenanceNoEffectReceipt(
-              receipt, realmId, actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), body, "email");
-        }
-        return;
-      }
-    } else if (fields.equals(Set.of("group", "profile"))) command = "ordinary-profile";
-    else if (fields.equals(Set.of("transition", "group"))
-        && Set.of(
-                "ADD_AGENCY_ADMIN_IDENTITY",
-                "ADD_CONSULTANT_IDENTITY",
-                "REMOVE_ADMINISTRATOR_IDENTITY")
-            .contains(change.path("transition").textValue())
-        && change.path("group").isTextual()) command = "profile-transition";
-    else if (fields.equals(Set.of("transition", "profileId", "profileVersion"))
-        && "ADD_CONSULTANT_IDENTITY".equals(change.path("transition").textValue())
-        && change.path("profileId").isTextual()
-        && change.path("profileVersion").isIntegralNumber()
-        && change.path("profileVersion").canConvertToLong()
-        && change.path("profileVersion").longValue() > 0) command = "profile-transition";
-    else throw invalid();
-    codec.verifyMaintenanceNoEffectReceipt(
-        receipt, realmId, actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), body, command);
+    StoredMaintenanceNoEffect.verify(
+        codec,
+        realmId,
+        actors.require(TaskPurpose.ACCOUNT_MAINTENANCE),
+        current.accountId(),
+        current.tenantId(),
+        current.selfService() ? "SELF" : "HUMAN_ADMIN",
+        operation,
+        requestDigest,
+        original,
+        receipt);
   }
 
   @Override

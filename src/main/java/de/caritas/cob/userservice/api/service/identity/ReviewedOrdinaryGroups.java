@@ -75,6 +75,37 @@ final class ReviewedOrdinaryGroups {
         matches.getFirst().getKey(), original.stream().sorted().toList(), List.copyOf(desired));
   }
 
+  Transition importUnion(List<String> original, Set<String> required) {
+    requireConfigured();
+    var known =
+        Set.of("consultant", "group-chat-consultant", "restricted-agency-admin", "user-admin");
+    if (original == null
+        || !original.contains("consultant")
+        || new HashSet<>(original).size() != original.size()
+        || !known.containsAll(original)
+        || !groups.containsValue(Set.copyOf(original))
+        || original.contains("restricted-agency-admin") != original.contains("user-admin")
+        || required == null
+        || !required.contains("consultant")
+        || !known.containsAll(required)) throw new ScopedIdentityCommandRequiredException();
+    var union = new TreeSet<>(original);
+    union.addAll(required);
+    if (union.contains("restricted-agency-admin") != union.contains("user-admin"))
+      throw new ScopedIdentityCommandRequiredException();
+    var matches = groups.entrySet().stream().filter(e -> e.getValue().equals(union)).toList();
+    if (matches.size() != 1) throw new ScopedIdentityCommandRequiredException();
+    return new Transition(
+        matches.getFirst().getKey(), original.stream().sorted().toList(), List.copyOf(union));
+  }
+
+  Set<String> importDesired(String group, Set<String> required) {
+    var roles = groups.get(group);
+    if (roles == null || !roles.containsAll(required))
+      throw new ScopedIdentityCommandRequiredException();
+    importUnion(roles.stream().sorted().toList(), required);
+    return roles;
+  }
+
   Transition administratorRemoval(List<String> original) {
     requireConfigured();
     if (original == null

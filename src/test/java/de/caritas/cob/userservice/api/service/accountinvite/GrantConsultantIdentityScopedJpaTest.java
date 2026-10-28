@@ -153,6 +153,10 @@ class GrantConsultantIdentityScopedJpaTest {
   private String nativeBody, nativeReply;
   private boolean lostReply, revoked;
   private boolean lostReadReply;
+  private boolean importing;
+  private boolean importNoEffect;
+  private boolean tamperImportNoEffect;
+  private Runnable afterImportRead = () -> {};
   private boolean staleSelfToken;
   @MockitoBean private IdentityRoleUpdater genericRoles;
   @MockitoBean private IdentityRoleLookup genericRoleLookup;
@@ -382,10 +386,11 @@ class GrantConsultantIdentityScopedJpaTest {
               assertEquals(
                   "Bearer fixture-machine", outbound.getHeaders().getFirst("Authorization"));
               assertEquals(
-                  "Bearer fixture-human",
+                  importing ? null : "Bearer fixture-human",
                   outbound.getHeaders().getFirst("X-ORISO-Human-Authorization"));
               JsonNode body =
                   codec.read(((MockClientHttpRequest) outbound).getBodyAsString(), JsonNode.class);
+              if (importing) operation = body.path("workflow").path("workId").textValue();
               String command =
                   outbound.getURI().getPath().endsWith("/read") ? "read" : nativeCommand;
               verifyProof(outbound.getHeaders().getFirst("X-ORISO-Task-Context"), command, body);
@@ -399,12 +404,25 @@ class GrantConsultantIdentityScopedJpaTest {
                   assertNull(held.get("native_body"));
                   assertNull(held.get("native_receipt"));
                   var source = codec.read((String) held.get("original_json"), JsonNode.class);
-                  var tables = codec.read(source.path("sql").textValue(), JsonNode.class);
-                  var row = codec.read(tables.path("admin").get(0).textValue(), JsonNode.class);
-                  assertEquals(ACCOUNT, row.path("admin_id").textValue());
+                  var tables =
+                      importing
+                          ? source.path("originalSql")
+                          : codec.read(source.path("sql").textValue(), JsonNode.class);
+                  if (importing) {
+                    assertEquals("EXISTING_CONSULTANT_IMPORT", source.path("kind").textValue());
+                    assertEquals(1L, source.path("recordNumber").longValue());
+                    assertEquals(ACCOUNT, source.path("record").path("consultantId").textValue());
+                  }
+                  var row =
+                      codec.read(
+                          tables.path(importing ? "consultant" : "admin").get(0).textValue(),
+                          JsonNode.class);
+                  assertEquals(
+                      ACCOUNT, row.path(importing ? "consultant_id" : "admin_id").textValue());
                   assertNotNull(row.path("create_date").textValue());
                 }
                 reads.incrementAndGet();
+                if (importing) afterImportRead.run();
                 if (nativeBody != null && staleSelfToken)
                   return org.springframework.test.web.client.response.MockRestResponseCreators
                       .withStatus(org.springframework.http.HttpStatus.FORBIDDEN)
@@ -437,6 +455,7 @@ class GrantConsultantIdentityScopedJpaTest {
               assertEquals(
                   codec.read(codec.canonical(expectedRoleChange), JsonNode.class),
                   body.path("change"));
+              if (importing && importNoEffect) return importRefusal(body, outbound);
               if (revoked || nativeBody != null && staleSelfToken)
                 return org.springframework.test.web.client.response.MockRestResponseCreators
                     .withStatus(org.springframework.http.HttpStatus.FORBIDDEN)
@@ -827,6 +846,461 @@ class GrantConsultantIdentityScopedJpaTest {
             DESIRED,
             "/human-roles/consultant",
             Set.of("consultant", "group-chat-consultant")));
+  }
+
+  @org.junit.jupiter.api.io.TempDir java.nio.file.Path importDirectory;
+  private java.nio.file.Path importSource;
+  private de.caritas.cob.userservice.api.service.ConsultantImportService importer;
+
+  private void givenConfiguredExistingImport() throws Exception {
+    givenExistingSelfAssignment();
+    var settings =
+        new de.caritas.cob.userservice.consultingtypeservice.generated.web.model
+            .ExtendedConsultingTypeResponseDTO();
+    var required = new de.caritas.cob.userservice.api.manager.consultingtype.roles.Consultant();
+    required.setRoleSets(
+        new java.util.LinkedHashMap<>(
+            Map.of("ordinary", List.of("consultant", "group-chat-consultant"))));
+    settings.setRoles(
+        new de.caritas.cob.userservice.consultingtypeservice.generated.web.model.RolesDTO()
+            .consultant(required));
+    when(consultingTypes.getConsultingTypeSettings(1)).thenReturn(settings);
+    settings.setLanguageFormal(true);
+    var identities = (IdentityClientConfig) ReflectionTestUtils.getField(service, "identityMode");
+    when(identities.taskAccessToken(TaskPurpose.RUNTIME_POLICY))
+        .thenReturn("fixture-import-runtime");
+    var importAgency = agencies.getAgency(72L);
+    when(agencies.getAgenciesForOrdinaryCreation(List.of(72L), "fixture-import-runtime"))
+        .thenReturn(List.of(importAgency));
+    var userHelper = mock(de.caritas.cob.userservice.api.helper.UserHelper.class);
+    when(userHelper.isValidEmail("ada@fixture.invalid")).thenReturn(true);
+    importer =
+        new de.caritas.cob.userservice.api.service.ConsultantImportService(
+            mock(IdentityUsernameAvailability.class),
+            localConsultants,
+            consultingTypes,
+            agencies,
+            userHelper,
+            mock(
+                de.caritas.cob.userservice.api.admin.service.consultant.create.CreateConsultantSaga
+                    .class),
+            (de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation
+                    .ConsultantAgencyRelationCreatorService)
+                ReflectionTestUtils.getField(service, "consultantAgencyRelationCreatorService"));
+    var directory = importDirectory;
+    importSource = directory.resolve("configured.csv");
+    java.nio.file.Files.writeString(
+        importSource,
+        ACCOUNT + ",,owned-counsellor,Ada,Lovelace,ada@fixture.invalid,nein,,72;ordinary,7\n");
+    ReflectionTestUtils.setField(importer, "importFilename", importSource.toString());
+    ReflectionTestUtils.setField(
+        importer, "protocolFilename", directory.resolve("protocol").toString());
+    ReflectionTestUtils.setField(importer, "multiTenancyEnabled", true);
+    ReflectionTestUtils.setField(
+        importer,
+        "lifecycleEnvironment",
+        new org.springframework.mock.env.MockEnvironment()
+            .withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS"));
+    ReflectionTestUtils.setField(importer, "lifecycleIdentities", identities);
+    ReflectionTestUtils.setField(importer, "importEntities", entities);
+    ReflectionTestUtils.setField(importer, "existingImportRelations", consultantAgencies);
+    ReflectionTestUtils.setField(importer, "existingImports", newImportOwner());
+    importing = true;
+    expectedRoleChange = Map.of("group", "/human-roles/consultant-agency-admin-chat");
+  }
+
+  private de.caritas.cob.userservice.api.service.identity.ExistingConsultantImportMaintenance
+      newImportOwner() {
+    return new de.caritas.cob.userservice.api.service.identity.ExistingConsultantImportMaintenance(
+        jdbc,
+        transactions,
+        new de.caritas.cob.userservice.api.adapters.keycloak.maintenance
+            .KeycloakExistingConsultantImport(
+            http,
+            actors,
+            broker,
+            codec,
+            "https://identity.test",
+            "fixture",
+            "fixture-realm",
+            ISSUER),
+        Map.of(
+            "/human-roles/consultant-agency-admin-chat",
+            DESIRED,
+            "/human-roles/consultant-chat",
+            Set.of("consultant", "group-chat-consultant")),
+        java.time.Clock.systemUTC());
+  }
+
+  private void runConfiguredImport() throws Exception {
+    try (var trigger =
+        de.caritas.cob.userservice.api.config.auth.ConfiguredImportTriggerFixture.verified()) {
+      importer.startImport(trigger);
+    }
+  }
+
+  @Test
+  void configuredExistingImportUsesOnlyVerifiedSourceAndPreservesOriginalIdentity()
+      throws Exception {
+    givenConfiguredExistingImport();
+    var before = consultantSql();
+    runConfiguredImport();
+    assertEquals(List.of(71L, 72L), assignedAgencies());
+    before.remove("update_date");
+    var after = consultantSql();
+    after.remove("update_date");
+    assertEquals(before, after);
+    String frozen = nativeBody;
+    String originalOperation = operation;
+    runConfiguredImport();
+    assertEquals(frozen, nativeBody);
+    assertEquals(originalOperation, operation);
+    assertEquals("APPLIED", phase());
+    assertEquals(2, effects.get());
+    assertEquals(1, matrixCalls.get());
+    verifyNoInteractions(generic, genericRoles, genericRoleLookup);
+  }
+
+  @Test
+  void configuredImportLostReplyResumesOriginalCommandAfterOwnerRestart() throws Exception {
+    givenConfiguredExistingImport();
+    lostReply = true;
+    assertThrows(RuntimeException.class, this::runConfiguredImport);
+    assertEquals("FROZEN", phase());
+    assertEquals(List.of(71L), assignedAgencies());
+    String frozen = nativeBody;
+    String original = operation;
+    ReflectionTestUtils.setField(importer, "existingImports", newImportOwner());
+    runConfiguredImport();
+    assertEquals(frozen, nativeBody);
+    assertEquals(original, operation);
+    assertEquals("APPLIED", phase());
+    assertEquals(List.of(71L, 72L), assignedAgencies());
+    assertEquals(2, effects.get());
+    assertEquals(1, matrixCalls.get());
+  }
+
+  @Test
+  void configuredImportUnsignedRefusalKeepsTheSamePendingIntent() throws Exception {
+    givenConfiguredExistingImport();
+    revoked = true;
+    assertThrows(RuntimeException.class, this::runConfiguredImport);
+    assertEquals("FROZEN", phase());
+    String original = operation;
+    assertEquals(List.of(71L), assignedAgencies());
+    assertEquals(1, effects.get());
+    revoked = false;
+    runConfiguredImport();
+    assertEquals(original, operation);
+    assertEquals("APPLIED", phase());
+  }
+
+  @Test
+  void configuredImportRejectsChangedOriginalSqlBeforeAnotherNativeCall() throws Exception {
+    givenConfiguredExistingImport();
+    lostReply = true;
+    assertThrows(RuntimeException.class, this::runConfiguredImport);
+    int attempted = calls.get();
+    jdbc.update("update consultant set first_name='Changed' where consultant_id=?", ACCOUNT);
+    assertThrows(RuntimeException.class, this::runConfiguredImport);
+    assertEquals(attempted, calls.get());
+    assertEquals("FROZEN", phase());
+    assertEquals(List.of(71L), assignedAgencies());
+  }
+
+  @Test
+  void configuredImportChangedFileCannotReplaceUnknownOriginalAction() throws Exception {
+    givenConfiguredExistingImport();
+    lostReply = true;
+    assertThrows(RuntimeException.class, this::runConfiguredImport);
+    int attempted = calls.get();
+    String original = operation;
+    java.nio.file.Files.writeString(
+        importSource, java.nio.file.Files.readString(importSource).replace("Ada", "Grace"));
+    assertThrows(RuntimeException.class, this::runConfiguredImport);
+    assertEquals(attempted, calls.get());
+    assertEquals(original, operation);
+    assertEquals("FROZEN", phase());
+  }
+
+  @Test
+  void configuredImportRejectsChangedRoleSetForTheOriginalFileRecord() throws Exception {
+    givenConfiguredExistingImport();
+    lostReply = true;
+    assertThrows(RuntimeException.class, this::runConfiguredImport);
+    int attempted = calls.get();
+    consultingTypes
+        .getConsultingTypeSettings(1)
+        .getRoles()
+        .getConsultant()
+        .getRoleSets()
+        .put("ordinary", List.of("consultant"));
+    assertThrows(RuntimeException.class, this::runConfiguredImport);
+    assertEquals(attempted, calls.get());
+    assertEquals("FROZEN", phase());
+  }
+
+  @Test
+  void configuredImportRejectsForgedFrozenBindingBeforeAnotherNativeCall() throws Exception {
+    givenConfiguredExistingImport();
+    lostReply = true;
+    assertThrows(RuntimeException.class, this::runConfiguredImport);
+    int attempted = calls.get();
+    String frozen =
+        jdbc.queryForObject(
+            "select native_body from general_admin_identity_intent where operation_id=?",
+            String.class,
+            operation);
+    var body = (com.fasterxml.jackson.databind.node.ObjectNode) codec.read(frozen, JsonNode.class);
+    body.put("bindingDigest", "0".repeat(64));
+    jdbc.update(
+        "update general_admin_identity_intent set native_body=? where operation_id=?",
+        codec.canonical(body),
+        operation);
+    assertThrows(RuntimeException.class, this::runConfiguredImport);
+    assertEquals(attempted, calls.get());
+    assertEquals("FROZEN", phase());
+  }
+
+  @Test
+  void configuredImportRejectsAmbientSqlAndUnverifiedTrigger() throws Exception {
+    givenConfiguredExistingImport();
+    int attempted = calls.get();
+    clearInvocations(agencies);
+    assertThrows(
+        RuntimeException.class,
+        () ->
+            new TransactionTemplate(transactions)
+                .executeWithoutResult(
+                    status -> {
+                      try {
+                        runConfiguredImport();
+                      } catch (Exception e) {
+                        throw new IllegalStateException(e);
+                      }
+                    }));
+    assertThrows(RuntimeException.class, () -> importer.startImport());
+    assertEquals(attempted, calls.get());
+    verify(agencies, never()).getAgenciesForOrdinaryCreation(anyList(), anyString());
+    assertEquals(List.of(71L), assignedAgencies());
+  }
+
+  @Test
+  void configuredImportDetectsFileDriftAfterReadBeforeAnyNativeMutation() throws Exception {
+    givenConfiguredExistingImport();
+    int attempted = calls.get();
+    afterImportRead =
+        () -> {
+          try {
+            java.nio.file.Files.writeString(importSource, "changed configured source");
+          } catch (java.io.IOException error) {
+            throw new IllegalStateException(error);
+          }
+        };
+    try {
+      runConfiguredImport();
+    } catch (RuntimeException refused) {
+      /* The configured importer may report a bounded source refusal. */
+    }
+    assertEquals(attempted, calls.get());
+    assertEquals(1, effects.get());
+    assertEquals(List.of(71L), assignedAgencies());
+  }
+
+  @Test
+  void configuredImportLocalRollbackRetainsAcknowledgementAndOriginalCommand() throws Exception {
+    givenConfiguredExistingImport();
+    var before = consultantSql();
+    var fault = new java.util.concurrent.atomic.AtomicBoolean(true);
+    doAnswer(
+            call -> {
+              var saved = (de.caritas.cob.userservice.api.model.Consultant) call.callRealMethod();
+              if (fault.getAndSet(false)) saved.setSupervisor(true);
+              return saved;
+            })
+        .when(localConsultants)
+        .saveConsultant(any(de.caritas.cob.userservice.api.model.Consultant.class));
+    assertThrows(RuntimeException.class, this::runConfiguredImport);
+    assertEquals("ACKNOWLEDGED", phase());
+    assertEquals(before, consultantSql());
+    assertEquals(List.of(71L), assignedAgencies());
+    String frozen = nativeBody;
+    int events = joinedEvents.get();
+    runConfiguredImport();
+    assertEquals(frozen, nativeBody);
+    assertEquals("APPLIED", phase());
+    assertEquals(2, effects.get());
+    assertEquals(events + 1, joinedEvents.get());
+  }
+
+  @Test
+  void configuredImportPureConsultantPreservesExistingChatRoleBeyondSelectedRoles()
+      throws Exception {
+    givenConfiguredExistingImport();
+    jdbc.update("delete from admin_agency where admin_id=?", ACCOUNT);
+    jdbc.update("delete from admin where admin_id=?", ACCOUNT);
+    nativeRoles = Set.of("consultant", "group-chat-consultant");
+    nativeDesiredRoles = nativeRoles;
+    consultingTypes
+        .getConsultingTypeSettings(1)
+        .getRoles()
+        .getConsultant()
+        .getRoleSets()
+        .put("ordinary", List.of("consultant"));
+    expectedRoleChange = Map.of("group", "/human-roles/consultant-chat");
+    runConfiguredImport();
+    assertEquals("APPLIED", phase());
+    assertEquals(Set.of("consultant", "group-chat-consultant"), nativeRoles);
+    assertEquals(List.of(71L, 72L), assignedAgencies());
+    assertEquals(1, matrixCalls.get());
+  }
+
+  @Test
+  void configuredImportRefusesProtectedFamilyBeforeNativeMutation() throws Exception {
+    givenConfiguredExistingImport();
+    jdbc.update("update admin set type='TENANT' where admin_id=?", ACCOUNT);
+    int attempted = calls.get();
+    assertThrows(RuntimeException.class, this::runConfiguredImport);
+    assertEquals(attempted, calls.get());
+    assertEquals(List.of(71L), assignedAgencies());
+  }
+
+  @Test
+  void configuredImportClosedVerifiedTriggerCannotDispatch() throws Exception {
+    givenConfiguredExistingImport();
+    var trigger =
+        de.caritas.cob.userservice.api.config.auth.ConfiguredImportTriggerFixture.verified();
+    trigger.close();
+    int attempted = calls.get();
+    assertThrows(RuntimeException.class, () -> importer.startImport(trigger));
+    assertEquals(attempted, calls.get());
+    assertEquals(List.of(71L), assignedAgencies());
+  }
+
+  @Test
+  void configuredImportOnlyStrictNoEffectRetiresTheOriginalAction() throws Exception {
+    givenConfiguredExistingImport();
+    importNoEffect = true;
+    assertThrows(RuntimeException.class, this::runConfiguredImport);
+    assertEquals("NO_EFFECT", phase());
+    String original = operation;
+    int attempted = calls.get();
+    assertThrows(RuntimeException.class, this::runConfiguredImport);
+    assertEquals(attempted, calls.get());
+    assertEquals(original, operation);
+    java.nio.file.Files.writeString(
+        importSource, java.nio.file.Files.readString(importSource) + "\n");
+    importNoEffect = false;
+    runConfiguredImport();
+    assertNotEquals(original, operation);
+    assertEquals("APPLIED", phase());
+    assertEquals(List.of(71L, 72L), assignedAgencies());
+    assertEquals(2, effects.get());
+  }
+
+  @Test
+  void configuredImportUnverifiedTerminalReceiptCannotRetirePendingAction() throws Exception {
+    givenConfiguredExistingImport();
+    importNoEffect = true;
+    tamperImportNoEffect = true;
+    assertThrows(RuntimeException.class, this::runConfiguredImport);
+    assertEquals("FROZEN", phase());
+    assertEquals(1, effects.get());
+    assertEquals(List.of(71L), assignedAgencies());
+  }
+
+  private org.springframework.http.client.ClientHttpResponse importRefusal(
+      JsonNode body, org.springframework.http.client.ClientHttpRequest outbound)
+      throws java.io.IOException {
+    var outcome = new TreeMap<String, Object>();
+    outcome.put("realmId", "fixture-realm");
+    outcome.put("accountId", ACCOUNT);
+    outcome.put("operationId", operation);
+    outcome.put("command", nativeCommand);
+    outcome.put("ownerClient", "backend-account-admin");
+    outcome.put("ownerSubject", SUBJECT);
+    outcome.put("intentDigest", digest("maintenance-intent", body));
+    outcome.put("previousState", body.path("expectedState").textValue());
+    outcome.put("tenantId", "7");
+    outcome.put("originDigest", digest("maintenance-origin", body.path("target").path("origin")));
+    outcome.put("result", "NO_EFFECT");
+    outcome.put("status", 403);
+    String encoded =
+        Base64.getUrlEncoder()
+            .withoutPadding()
+            .encodeToString(codec.canonical(outcome).getBytes(StandardCharsets.UTF_8));
+    String proof =
+        encoded
+            + "."
+            + (tamperImportNoEffect
+                ? "0".repeat(64)
+                : mac("maintenance-no-effect-receipt/v1\n" + encoded));
+    var response =
+        org.springframework.test.web.client.response.MockRestResponseCreators.withStatus(
+                org.springframework.http.HttpStatus.FORBIDDEN)
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(
+                codec.canonical(
+                    Map.of(
+                        "operationId",
+                        operation,
+                        "accountId",
+                        ACCOUNT,
+                        "result",
+                        "NO_EFFECT",
+                        "status",
+                        403,
+                        "receipt",
+                        proof)))
+            .createResponse(outbound);
+    response.getHeaders().setCacheControl("no-store");
+    return response;
+  }
+
+  @Test
+  void strictImportNoEffectDoesNotBlockAFreshCurrentHumanSelfAssignment() throws Exception {
+    givenConfiguredExistingImport();
+    importNoEffect = true;
+    assertThrows(RuntimeException.class, this::runConfiguredImport);
+    assertEquals("NO_EFFECT", phase());
+    importing = false;
+    importNoEffect = false;
+    operation = "72000000-0000-4000-8000-000000000020";
+    request.removeHeader("Idempotency-Key");
+    request.addHeader("Idempotency-Key", operation);
+    expectedRoleChange =
+        Map.of(
+            "group",
+            "/human-roles/consultant-agency-admin-chat",
+            "profile",
+            Map.of("firstName", "Ada", "lastName", "Lovelace", "email", "ada@fixture.invalid"));
+    assertFalse(selfAssignments.assign(existingInput()).consultantIdentityCreated());
+    assertEquals("APPLIED", phase());
+    assertEquals(List.of(71L, 72L), assignedAgencies());
+    assertEquals(2, effects.get());
+    assertEquals(1, matrixCalls.get());
+  }
+
+  @Test
+  void configuredImportSourceChangeAfterAcknowledgementRemainsVisiblyPending() throws Exception {
+    givenConfiguredExistingImport();
+    var checks = new java.util.concurrent.atomic.AtomicInteger();
+    var before = consultantSql();
+    afterImportRead =
+        () -> {
+          if (checks.incrementAndGet() == 2)
+            try {
+              java.nio.file.Files.writeString(
+                  importSource, "changed source after native acknowledgement");
+            } catch (java.io.IOException error) {
+              throw new IllegalStateException(error);
+            }
+        };
+    assertThrows(RuntimeException.class, this::runConfiguredImport);
+    assertEquals("ACKNOWLEDGED", phase());
+    assertEquals(before, consultantSql());
+    assertEquals(List.of(71L), assignedAgencies());
+    assertEquals(2, effects.get());
   }
 
   @Test

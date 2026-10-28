@@ -188,6 +188,38 @@ public class AccountLifecycleCallerConfiguration {
   }
 
   @Bean
+  de.caritas.cob.userservice.api.service.identity.ExistingConsultantImportMaintenance
+      existingConsultantImportMaintenance(
+          JdbcTemplate jdbc,
+          PlatformTransactionManager manager,
+          TaskActorConfiguration actors,
+          TaskActorTokenBroker broker,
+          AccountLifecycleCodec codec,
+          @Qualifier("keycloakRestTemplate") RestTemplate http,
+          KeycloakConfig keycloak) {
+    String publicServer = keycloak.getAuthServerUrl();
+    String internalServer =
+        environment.getProperty("ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL", publicServer);
+    if (publicServer == null
+        || publicServer.isBlank()
+        || internalServer == null
+        || internalServer.isBlank()) throw invalid();
+    var transport =
+        new de.caritas.cob.userservice.api.adapters.keycloak.maintenance
+            .KeycloakExistingConsultantImport(
+            http,
+            actors,
+            broker,
+            codec,
+            internalServer,
+            keycloak.getRealm(),
+            required("KEYCLOAK_REALM_INTERNAL_ID"),
+            publicServer.replaceAll("/+$", "") + "/realms/" + keycloak.getRealm());
+    return new de.caritas.cob.userservice.api.service.identity.ExistingConsultantImportMaintenance(
+        jdbc, manager, transport, groups, Clock.systemUTC());
+  }
+
+  @Bean
   de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance
       humanAdminAccountMaintenance(
           de.caritas.cob.userservice.api.port.out.IdentityClientConfig identities,
