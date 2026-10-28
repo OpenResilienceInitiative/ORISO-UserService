@@ -182,7 +182,8 @@ class CreateEnquiryMessageFacadeErstantwortTest {
     assertThat(body.getValue())
         .contains("Willkommen beim Träger Sonnenblume")
         .contains("emergencyAddition")
-        .contains("Notruf Sonnenblume 0800");
+        .contains("Notruf Sonnenblume 0800")
+        .doesNotContain("<p>", "</p>");
   }
 
   @Test
