@@ -407,7 +407,9 @@ class AccountLifecycleRetryFairnessMariaDbIT extends AccountLifecycleRetryFairne
         ERASURE_ACCOUNT);
     assertEquals(
         original, ReactivationUserSnapshotSchema.capture(jdbc, codec, ERASURE_ACCOUNT, false));
-    return new RetentionFixture(source, jdbc, codec, original, frozen);
+    // Compare the exact stored JSON representation. A JSON integer has no Java int/long node type.
+    return new RetentionFixture(
+        source, jdbc, codec, original, codec.read(codec.canonical(frozen), ObjectNode.class));
   }
 
   private static ScopedAskerReactivation erasureOwner(RetentionFixture fixture, Instant now) {
