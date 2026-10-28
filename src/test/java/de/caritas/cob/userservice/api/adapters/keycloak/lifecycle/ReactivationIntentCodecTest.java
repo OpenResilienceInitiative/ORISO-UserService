@@ -23,6 +23,60 @@ class ReactivationIntentCodecTest {
   private final ObjectMapper json = new ObjectMapper();
   private final AccountLifecycleCodec codec = new AccountLifecycleCodec(KEY);
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"opaque\nvalue", "\t", "   "})
+  void sealedSelfAndReactivationSecretsAreOpaqueWithoutRelaxingIdentifierReaders(String secret)
+      throws Exception {
+    for (boolean self : new boolean[] {false, true}) {
+      var wrapper = (ObjectNode) json.readTree(plaintext(self));
+      var change = (ObjectNode) wrapper.path("body").path("change");
+      change.put("password", secret);
+      if (self) change.put("currentPassword", "original-" + secret);
+      byte[] original = codec.canonical(wrapper).getBytes(StandardCharsets.UTF_8);
+      var metadata = metadata(self);
+      String sealed =
+          self
+              ? codec.sealSelfPasswordIntent(metadata, original)
+              : codec.sealReactivationIntent(metadata, original);
+      assertArrayEquals(
+          original,
+          self
+              ? codec.openSelfPasswordIntent(metadata, sealed)
+              : codec.openReactivationIntent(metadata, sealed));
+      ((ObjectNode) wrapper.path("body").path("target").path("origin"))
+          .put("humanClient", "invalid\nclient");
+      byte[] badIdentifier = codec.canonical(wrapper).getBytes(StandardCharsets.UTF_8);
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> {
+            if (self) codec.sealSelfPasswordIntent(metadata, badIdentifier);
+            else codec.sealReactivationIntent(metadata, badIdentifier);
+          });
+    }
+  }
+
+  @Test
+  void opaqueSecretReadersStillRejectEmptyWrongTypeAndOversizedValues() throws Exception {
+    for (boolean self : new boolean[] {false, true})
+      for (JsonNode bad :
+          List.of(
+              json.nullNode(),
+              json.valueToTree(7),
+              json.valueToTree(""),
+              json.valueToTree("x".repeat(4097)))) {
+        var wrapper = (ObjectNode) json.readTree(plaintext(self));
+        ((ObjectNode) wrapper.path("body").path("change")).set("password", bad);
+        var metadata = metadata(self);
+        byte[] original = codec.canonical(wrapper).getBytes(StandardCharsets.UTF_8);
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> {
+              if (self) codec.sealSelfPasswordIntent(metadata, original);
+              else codec.sealReactivationIntent(metadata, original);
+            });
+      }
+  }
+
   @Test
   void exactReactivationCipherRoundTripsIndependentJcaAndKeepsAllOriginalOwnershipMetadata()
       throws Exception {
@@ -212,9 +266,11 @@ class ReactivationIntentCodecTest {
     }
   }
 
-  @Test
-  void expiredReactivationHistoryAuthenticatesItsPhaseAndOriginalBodyWithoutRetainingPassword()
-      throws Exception {
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"synthetic-chosen-password", "opaque\nvalue", "\t", "   "})
+  void expiredReactivationHistoryAuthenticatesItsPhaseAndOriginalBodyWithoutRetainingPassword(
+      String secret) throws Exception {
     var metadata = metadata(false);
     long expiry = java.time.Instant.parse("2026-10-23T12:00:00Z").getEpochSecond();
     metadata.put("authorityValidUntil", expiry);
@@ -224,6 +280,7 @@ class ReactivationIntentCodecTest {
             java.time.Clock.fixed(
                 java.time.Instant.ofEpochSecond(expiry + 604800), java.time.ZoneOffset.UTC));
     var original = json.readTree(plaintext(false));
+    ((ObjectNode) original.path("body").path("change")).put("password", secret);
     String sealed = retained.sealReactivationIntent(metadata, bytes(original));
     var actor =
         new de.caritas.cob.userservice.api.config.auth.TaskActorCredentials(
@@ -311,7 +368,7 @@ class ReactivationIntentCodecTest {
       assertEquals(
           codec.canonical(original.path("body")),
           retained.materializeReactivationHistory(
-              metadata, history, phase + "_HISTORY", receipt, actor, "synthetic-chosen-password"));
+              metadata, history, phase + "_HISTORY", receipt, actor, secret));
       assertThrows(
           IllegalArgumentException.class,
           () ->

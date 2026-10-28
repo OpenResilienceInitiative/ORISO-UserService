@@ -80,6 +80,31 @@ class ClaimedPasswordIntentCodecTest {
     return codec.canonical(wrapper).getBytes(StandardCharsets.UTF_8);
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"opaque\nvalue", "\t", "   "})
+  void bothCausalPasswordSchemasPreserveExactOpaqueSecrets(String secret) {
+    for (String kind : new String[] {"PASSWORD_RESET", "EXISTING_SETUP"}) {
+      var value = wrapper();
+      ((ObjectNode) value.path("body").path("workflow")).put("kind", kind);
+      ((ObjectNode) value.path("body").path("change")).put("password", secret);
+      var meta = metadata(value).put("workflowKind", kind);
+      String envelope = codec.sealClaimedPasswordIntent(meta, bytes(value));
+      assertThat(codec.openClaimedPasswordIntent(meta, envelope)).isEqualTo(bytes(value));
+      for (JsonNode invalid :
+          new JsonNode[] {
+            com.fasterxml.jackson.databind.node.NullNode.instance,
+            com.fasterxml.jackson.databind.node.IntNode.valueOf(1),
+            com.fasterxml.jackson.databind.node.TextNode.valueOf(""),
+            com.fasterxml.jackson.databind.node.TextNode.valueOf("x".repeat(4097))
+          }) {
+        var malformed = value.deepCopy();
+        ((ObjectNode) malformed.path("body").path("change")).set("password", invalid);
+        assertThatThrownBy(() -> codec.sealClaimedPasswordIntent(meta, bytes(malformed)))
+            .isInstanceOf(IllegalArgumentException.class);
+      }
+    }
+  }
+
   @Test
   void fixedCausalSchemaEncryptsCompleteChosenPasswordAndRoundTripsOnlyItsMetadata() {
     var wrapper = wrapper();

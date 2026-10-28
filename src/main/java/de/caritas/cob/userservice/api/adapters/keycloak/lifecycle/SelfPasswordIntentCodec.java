@@ -257,7 +257,7 @@ final class SelfPasswordIntentCodec {
     text(origin, "humanClient", 255);
     var change = body.path("change");
     fields(change, Set.of("currentPassword", "password", "temporary"));
-    String current = text(change, "currentPassword", 4096), chosen = text(change, "password", 4096);
+    String current = password(change, "currentPassword"), chosen = password(change, "password");
     if (!change.path("temporary").isBoolean()
         || change.path("temporary").booleanValue()
         || current.equals(chosen)) throw invalid();
@@ -331,7 +331,7 @@ final class SelfPasswordIntentCodec {
         password
             ? Set.of("expectedUsername", "expectedEmail", "password")
             : Set.of("expectedUsername", "expectedEmail"));
-    if (password) text(change, "password", 4096);
+    if (password) password(change, "password");
     String originalUsername = originalSql.path("username").textValue();
     if (!originalUsername.equalsIgnoreCase(text(change, "expectedUsername", 255))
         || !originalSql
@@ -362,6 +362,13 @@ final class SelfPasswordIntentCodec {
     Set<String> actual = new HashSet<>();
     value.fieldNames().forEachRemaining(actual::add);
     if (!expected.equals(actual)) throw invalid();
+  }
+
+  private static String password(JsonNode value, String field) {
+    var secret = value.path(field);
+    if (!secret.isTextual() || secret.textValue().isEmpty() || secret.textValue().length() > 4096)
+      throw invalid();
+    return secret.textValue();
   }
 
   private static String text(JsonNode value, String field, int max) {

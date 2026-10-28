@@ -17,6 +17,8 @@ CONTROLS = {LEGACY, "legacyRollbackRetainsExistingSuccessfulNativeRemoval",
             "legacyRollbackRetainsExistingBestEffortNativeFailure",
             "legacyModeRetainsExistingExactEmailOwnerAndRoleProjections"}
 CASES = {
+    "actualProductionRolePortsAreBlockedByThePersistedInactivityClaimAndResumeAfterReactivation",
+    "fiveActorsChosenPasswordReactivationRequiresScopedOwnerBeforeAnyNativeReadOrRepair",
     LEGACY,
     "fiveActorsRequiresTheScopedAdapterBeforeRead",
     "fiveActorsRequiresTheScopedAdapterBeforePasswordMutation",
@@ -76,6 +78,12 @@ def select_slice(name):
         SUITE = "de.caritas.cob.userservice.api.adapters.web.controller.UserSelfAppOtpScenarioCBoundaryTest"
         LEGACY = "missingScopedServiceKeepsActualCGuardAndLegacyAppSetupStillWorks"
         CASES = {
+            "actualGeneratedDeleteRouteReachesOwnedMaintenanceAndReopensOnlyItsInvite",
+            "actualGeneratedEmailValidationRouteReachesTheOriginalOwnedEmailStart",
+            "deleteCannotBorrowTheAppEnrollmentRouteBeforeAnyOwnedEffect",
+            "emailValidationPathMustMatchTheActualCodeBeforeAnyNewOwnedEffect",
+            "publicAppSetupValidatesThePublicIssuerWhileUsingTheConfiguredInternalTransport",
+            "publicEmailIdempotencyBindsTheCompleteEmailFieldBeforeNormalization",
             LEGACY,
             "publicAppSetupFreezesEncryptedOwnedIntentAndMarksInviteOnlyAfterVerifiedReceipt",
             "publicAppSetupLostReplyNewOwnerReplaysExactFrozenBytesWithoutSecondActivation",
@@ -152,6 +160,7 @@ def select_slice(name):
         SUITE = "de.caritas.cob.userservice.api.adapters.web.controller.UserSelfOtpReadScenarioCBoundaryTest"
         LEGACY = "missingScopedReadRetainsActualCRefusalAndLegacyCurrentUserRead"
         CASES = {
+            "mandatoryCurrentMetadataRoleDriftStopsBeforeAnyOtpRead",
             LEGACY,
             "publicCurrentSelfReadReturnsExistingAppThroughExactOriginalScopedRoute",
             "publicCurrentSelfReadPreservesUnconfiguredSecretAndQrWithoutIntentHeaderOrStorage",

@@ -142,6 +142,86 @@ class ProtectedAdminOnboardingServiceTest {
         tenants);
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"UTC", "America/New_York", "Europe/Prague"})
+  @org.junit.jupiter.api.parallel.ResourceLock("java.util.TimeZone.default")
+  void actualFactoryKeepsThePendingInvitationWallTimeAcrossPublicPhases(String zoneName) {
+    var previous = java.util.TimeZone.getDefault();
+    var zone = ZoneId.of(zoneName);
+    var now = Instant.parse("2026-10-28T14:00:00Z");
+    var expiry = LocalDateTime.ofInstant(now.plusSeconds(7200), zone);
+    try {
+      java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone(zone));
+      invite.setExpiresAt(expiry);
+      var configured = configuredAt(now, zone);
+      assertSame(invite, configured.resolve("synthetic").invite());
+      var registered = configured.register("synthetic", command, original);
+      assertEquals(secret.secret(), registered.totpSecret());
+      verify(accounts).create(prepared);
+      invite.setStatus(AccountInviteStatus.ACCEPTED);
+      when(activation.currentSetup(claim)).thenReturn(secret);
+      for (Phase phase : new Phase[] {Phase.WAITING_OTP, Phase.READY, Phase.COMMITTED}) {
+        when(activation.phase(claim)).thenReturn(phase);
+        assertSame(invite, configured.resolve("synthetic").invite());
+      }
+      assertEquals("COMPLETED", configured.register("synthetic", command, original).phase());
+      assertEquals(expiry, invite.getExpiresAt());
+      assertEquals(
+          now.plusSeconds(7200), java.sql.Timestamp.valueOf(invite.getExpiresAt()).toInstant());
+      var expired = configuredAt(now.plusSeconds(7200), zone);
+      clearInvocations(acceptance, creation, accounts, activation, otp);
+      assertEquals(
+          AccountInviteLinkException.Reason.EXPIRED,
+          assertThrows(AccountInviteLinkException.class, () -> expired.resolve("synthetic"))
+              .getReason());
+      assertEquals(
+          AccountInviteLinkException.Reason.EXPIRED,
+          assertThrows(
+                  AccountInviteLinkException.class,
+                  () -> expired.register("synthetic", command, original))
+              .getReason());
+      verifyNoInteractions(acceptance, creation, accounts, activation, otp);
+      assertEquals(expiry, invite.getExpiresAt());
+    } finally {
+      java.util.TimeZone.setDefault(previous);
+    }
+  }
+
+  private ProtectedAdminOnboardingService configuredAt(Instant now, ZoneId zone) {
+    var utc = Clock.fixed(now, ZoneOffset.UTC);
+    var local = Clock.fixed(now, zone);
+    try (var clocks = mockStatic(Clock.class, CALLS_REAL_METHODS)) {
+      clocks.when(Clock::systemUTC).thenReturn(utc);
+      clocks.when(Clock::systemDefaultZone).thenReturn(local);
+      return org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+          new ProtectedInvitationIssuanceConfiguration(
+              new org.springframework.mock.env.MockEnvironment()),
+          "protectedAdminOnboardingService",
+          invites,
+          actors,
+          acceptance,
+          codec,
+          creation,
+          accounts,
+          otp,
+          activation,
+          inactivity,
+          new UsernameTranscoder(),
+          new ProtectedInvitationProfiles(
+              "synthetic-realm",
+              Map.of(
+                  AccountInviteTargetRole.TENANT_ADMIN,
+                  "reviewed-tenant",
+                  AccountInviteTargetRole.PLATFORM_ADMIN,
+                  "reviewed-platform")),
+          dpa,
+          tenants,
+          mock(ProtectedAccountRecovery.class),
+          mock(JdbcProtectedInvitationCancellation.class));
+    }
+  }
+
   @Test
   void actualExistingTenantRegistrationCommitsOriginalCustodyBeforeDisabledCreateAndLocalStage() {
     var result = assertDoesNotThrow(() -> service.register("synthetic", command, original));

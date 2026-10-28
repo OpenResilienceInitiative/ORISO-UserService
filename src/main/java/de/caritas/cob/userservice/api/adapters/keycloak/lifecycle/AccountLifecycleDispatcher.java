@@ -45,14 +45,26 @@ public class AccountLifecycleDispatcher {
                 var request = codec.read(pending.body(), RecoverRequest.class);
                 result = commands.recover(id, request);
                 if (result == null || !id.equals(result.attemptId())) throw invalid();
-                if ("COMMITTED".equals(result.state())) {
+                boolean originalFence =
+                    request.expectedGeneration() < Long.MAX_VALUE
+                        && result.execution().generation() == request.expectedGeneration() + 1
+                        && result.execution().executionId().equals(request.recoveryId());
+                boolean historicalTerminal =
+                    java.util.Set.of("COMMITTED", "COMPENSATED").contains(result.state())
+                        || ("ABANDONED".equals(result.state())
+                            && !originalFence
+                            && result.execution().generation() == request.expectedGeneration());
+                if (historicalTerminal) {
+                  var original = pending.attempt();
+                  if (original.accountId() != null
+                      && (!java.util.Objects.equals(original.accountId(), result.accountId())
+                          || !java.util.Objects.equals(
+                              original.creationProof(), result.creationProof()))) throw invalid();
                   journal.reconcile(pending);
-                  return null; // never infer local success or delete committed user
+                  return null; // authenticated history never authorizes a new cleanup or completion
                 }
                 if (!java.util.Set.of("RECOVERY_CLAIMED", "ABANDONED").contains(result.state())
-                    || result.execution().generation() != request.expectedGeneration() + 1
-                    || !result.execution().executionId().equals(request.recoveryId()))
-                  throw invalid();
+                    || !originalFence) throw invalid();
                 journal.recovered(
                     pending, result); // immutable receiver claim saved before any cleanup
               }

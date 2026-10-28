@@ -208,7 +208,7 @@ final class ClaimedPasswordIntentCodec {
     positive(workflow, "profileVersion");
     var change = body.path("change");
     fields(change, Set.of("password", "temporary"));
-    text(change, "password", 4096);
+    password(change);
     if (!change.path("temporary").isBoolean()
         || change.path("temporary").booleanValue()
         || !raw.equals(codec.canonical(wrapper))) throw invalid();
@@ -244,6 +244,12 @@ final class ClaimedPasswordIntentCodec {
     Set<String> actual = new HashSet<>();
     value.fieldNames().forEachRemaining(actual::add);
     if (!expected.equals(actual)) throw invalid();
+  }
+
+  private static void password(JsonNode change) {
+    var secret = change.path("password");
+    if (!secret.isTextual() || secret.textValue().isEmpty() || secret.textValue().length() > 4096)
+      throw invalid();
   }
 
   private static String text(JsonNode value, String field, int max) {

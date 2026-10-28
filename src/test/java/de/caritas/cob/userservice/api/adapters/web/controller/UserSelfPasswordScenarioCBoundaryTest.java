@@ -60,6 +60,30 @@ class UserSelfPasswordScenarioCBoundaryTest {
   private static final byte[] KEY =
       "0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.UTF_8);
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"opaque\nvalue", "\t", "   "})
+  void publicSelfPasswordPreservesOpaqueCurrentAndChosenValuesAcrossUnknownRetry(String secret)
+      throws Exception {
+    for (boolean oldSecret : new boolean[] {false, true}) {
+      try (var f = new Fixture(true, true)) {
+        f.currentPasswordValue = oldSecret ? secret : "original-" + secret;
+        f.chosenPasswordValue = oldSecret ? secret + "-chosen" : secret;
+        f.expectNative(true);
+        assertThrows(
+            ServiceUnavailableException.class, () -> f.controller.updatePassword(f.password()));
+        assertEquals("FROZEN", f.status());
+        var frozen = f.frozenBodyFromIndependentDecryption();
+        assertEquals(
+            f.currentPasswordValue, frozen.path("change").path("currentPassword").textValue());
+        assertEquals(f.chosenPasswordValue, frozen.path("change").path("password").textValue());
+        assertEquals(200, f.controller.updatePassword(f.password()).getStatusCode().value());
+        assertEquals(1, f.clears());
+        verifyNoInteractions(f.legacy);
+        f.server.verify();
+      }
+    }
+  }
+
   @Test
   void publicPasswordFreezesEncryptedIntentAndClearsSetupOnlyAfterVerifiedNativeOldPasswordReceipt()
       throws Exception {
@@ -406,6 +430,7 @@ class UserSelfPasswordScenarioCBoundaryTest {
     final RestTemplate http = new RestTemplate();
     final MockRestServiceServer server = MockRestServiceServer.bindTo(http).build();
     final AtomicInteger effects = new AtomicInteger();
+    String currentPasswordValue = CURRENT, chosenPasswordValue = CHOSEN;
     SelfPasswordMaintenance maintenance;
     final java.util.concurrent.atomic.AtomicReference<Instant> now =
         new java.util.concurrent.atomic.AtomicReference<>(Instant.now());
@@ -602,8 +627,8 @@ class UserSelfPasswordScenarioCBoundaryTest {
 
     PasswordDTO password() {
       var dto = new PasswordDTO();
-      dto.setOldPassword(CURRENT);
-      dto.setNewPassword(CHOSEN);
+      dto.setOldPassword(currentPasswordValue);
+      dto.setNewPassword(chosenPasswordValue);
       return dto;
     }
 
@@ -752,8 +777,9 @@ class UserSelfPasswordScenarioCBoundaryTest {
                   return withStatus(HttpStatus.SERVICE_UNAVAILABLE).createResponse(out);
                 JsonNode body =
                     codec.read(((MockClientHttpRequest) out).getBodyAsString(), JsonNode.class);
-                assertEquals(CURRENT, body.path("change").path("currentPassword").textValue());
-                assertEquals(CHOSEN, body.path("change").path("password").textValue());
+                assertEquals(
+                    currentPasswordValue, body.path("change").path("currentPassword").textValue());
+                assertEquals(chosenPasswordValue, body.path("change").path("password").textValue());
                 assertEquals(frozenBodyFromIndependentDecryption(), body);
                 long expiry =
                     jdbc.queryForObject(

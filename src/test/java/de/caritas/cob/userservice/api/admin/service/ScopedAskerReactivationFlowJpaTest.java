@@ -87,6 +87,7 @@ class ScopedAskerReactivationFlowJpaTest {
   private TaskActorTokenBroker.VerifiedMaintenanceToken checked;
   private boolean emptyNativeNames;
   private boolean verifyExactClaimInstant;
+  private String chosenPassword = PASSWORD;
   private String firstBody;
   private String receipt;
   private final AtomicInteger effects = new AtomicInteger();
@@ -203,6 +204,13 @@ class ScopedAskerReactivationFlowJpaTest {
     TenantContext.clear();
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"opaque\nvalue", "\t", "   "})
+  void opaqueReactivationSecretKeepsItsExactOriginalNativeBytes(String secret) {
+    chosenPassword = secret;
+    completeAndReplay();
+  }
+
   @Test
   void chosenPasswordIsCipherOnlyBeforeNativeAndAcknowledgedBeforeOneLocalCancelWithExactReplay() {
     completeAndReplay();
@@ -278,6 +286,9 @@ class ScopedAskerReactivationFlowJpaTest {
               outbound -> {
                 assertOutsideSql();
                 var body = ((MockClientHttpRequest) outbound).getBodyAsString();
+                assertEquals(
+                    chosenPassword,
+                    codec.read(body, JsonNode.class).path("change").path("password").textValue());
                 if (firstBody == null) {
                   firstBody = body;
                   if (verifyExactClaimInstant)
@@ -295,7 +306,7 @@ class ScopedAskerReactivationFlowJpaTest {
                           String.class,
                           ACCOUNT);
                   assertNotNull(saved);
-                  assertFalse(saved.contains(PASSWORD));
+                  assertFalse(saved.contains(chosenPassword));
                   assertFalse(saved.contains("fixture-human"));
                   assertEquals(
                       "FROZEN", codec.read(saved, JsonNode.class).path("phase").textValue());
@@ -960,7 +971,7 @@ class ScopedAskerReactivationFlowJpaTest {
     input.setUsername(USERNAME);
     input.setEmail(EMAIL);
     input.setTenantId(7L);
-    input.setPassword(PASSWORD);
+    input.setPassword(chosenPassword);
     return input;
   }
 

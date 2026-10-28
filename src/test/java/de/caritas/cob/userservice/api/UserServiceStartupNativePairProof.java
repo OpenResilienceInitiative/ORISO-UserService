@@ -679,8 +679,9 @@ class UserServiceStartupNativePairProof {
       assertEquals(
           "fixture-22",
           JSON.readTree(tenantResponse).path("_embedded").path("tenantSubdomain").asText());
-      assertEquals(2, tenantBodies.size());
-      assertEquals(tenantBodies.get(0), tenantBodies.get(1));
+      // Lost first reply, original retry, then authenticated replay before the profile child.
+      assertEquals(3, tenantBodies.size());
+      for (String tenantBody : tenantBodies) assertEquals(tenantBodies.getFirst(), tenantBody);
       assertEquals(1, profileBodies.size());
       for (boolean profile : List.of(false, true)) {
         String child =

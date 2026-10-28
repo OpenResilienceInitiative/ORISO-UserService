@@ -221,7 +221,7 @@ class UserSelfMaintenanceNativePairProof {
       String logical = "http://maintenance-human-fixture.invalid";
       String issuer = logical + "/realms/" + realm;
       String oldPassword = required("PAIR_PASSWORD");
-      String newPassword = "Chosen-native-pair-" + UUID.randomUUID();
+      String newPassword = "Chosen-native-pair-\n\t " + UUID.randomUUID();
       String operation = UUID.randomUUID().toString();
       var base = new AtomicReference<>(required("PAIR_NATIVE_BASE"));
       assertTrue(base.get().matches("http://127\\.0\\.0\\.1:[0-9]+"));

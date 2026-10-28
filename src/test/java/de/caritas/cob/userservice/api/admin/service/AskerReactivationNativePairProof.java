@@ -131,7 +131,7 @@ class AskerReactivationNativePairProof {
         username = required("PAIR_USERNAME");
     String logical = "http://protected-fixture.invalid", issuer = logical + "/realms/" + realm;
     String oldPassword = required("PAIR_OLD_PASSWORD"),
-        chosen = "Chosen-reactivation-" + UUID.randomUUID(),
+        chosen = "Chosen-reactivation-\n\t " + UUID.randomUUID(),
         weak = "weak";
     String sqlEmail = required("PAIR_SQL_EMAIL"), nativeEmail = required("PAIR_EMAIL");
     try {

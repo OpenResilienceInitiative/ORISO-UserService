@@ -28,7 +28,7 @@ final class ClaimedPasswordRequestDigests {
     tenant(b.tenantId());
     text(b.username(), 255);
     text(b.email(), 255);
-    text(password, 4096);
+    password(password);
     var binding = new TreeMap<String, Object>();
     binding.put("inviteId", b.inviteId());
     binding.put("accountId", b.accountId());
@@ -57,7 +57,7 @@ final class ClaimedPasswordRequestDigests {
     text(b.username(), 255);
     text(b.accountVersion(), 512);
     digest(b.recipientDigest());
-    text(password, 4096);
+    password(password);
     var binding = new TreeMap<String, Object>();
     binding.put("workflowId", b.workflowId().toString());
     binding.put("subjectId", b.subjectId());
@@ -186,6 +186,10 @@ final class ClaimedPasswordRequestDigests {
 
   private static void digest(String value) {
     if (value == null || !value.matches("[0-9a-f]{64}")) throw invalid();
+  }
+
+  private static void password(String value) {
+    if (value == null || value.isEmpty() || value.length() > 4096) throw invalid();
   }
 
   private static void text(String value, int max) {

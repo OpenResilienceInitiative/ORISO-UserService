@@ -186,10 +186,10 @@ public final class SelfPasswordMaintenance {
     if (!mode.isFiveActorMode() || TransactionSynchronizationManager.isActualTransactionActive())
       throw unavailable();
     if (currentPassword == null
-        || currentPassword.isBlank()
+        || currentPassword.isEmpty()
         || currentPassword.length() > 4096
         || password == null
-        || password.isBlank()
+        || password.isEmpty()
         || password.length() > 4096) throw new BadRequestException("Both passwords are required");
     if (currentPassword.equals(password))
       throw new ConflictException("The new password must differ from the current one");

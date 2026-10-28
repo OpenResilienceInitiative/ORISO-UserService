@@ -405,7 +405,7 @@ public class ProtectedInvitationIssuanceConfiguration {
         profiles,
         dpa,
         tenants,
-        Clock.systemUTC(),
+        Clock.systemDefaultZone(),
         recovery,
         cancellation);
   }

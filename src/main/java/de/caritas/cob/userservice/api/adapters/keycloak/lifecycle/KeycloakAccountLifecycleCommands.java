@@ -148,30 +148,15 @@ public final class KeycloakAccountLifecycleCommands implements IdentityProvision
           || (method == HttpMethod.PUT && response.getStatusCode().value() == 201)))
         throw new RemoteFailure(0);
       T parsed = codec.read(codec.utf8(response.getBody()), responseType);
-      if (parsed instanceof AttemptResult receipt) {
-        CreationIdentity identity =
-            switch (request) {
-              case CreateRequest create -> create.identity();
-              case RecoverRequest recover -> recover.identity();
-              case CommitRequest commit -> commit.identity();
-              case CompensateRequest compensate -> compensate.identity();
-              default -> throw new IllegalArgumentException("Unsupported lifecycle result");
-            };
-        if (!id.equals(receipt.attemptId()))
-          throw new IllegalArgumentException("Foreign lifecycle attempt");
-        if (!"ABANDONED".equals(receipt.state())) {
-          var originalOwner = actors.require(TaskPurpose.ACCOUNT_PROVISIONING);
-          codec.verifyCreationProof(
-              receipt.creationProof(),
-              realmName,
-              realmId,
-              originalOwner.clientId(),
-              originalOwner.serviceSubject(),
-              id,
-              receipt.accountId(),
-              identity);
-        }
-      }
+      if (parsed instanceof AttemptResult receipt)
+        OrdinaryLifecycleReceipts.verify(
+            codec,
+            realmName,
+            realmId,
+            actors.require(TaskPurpose.ACCOUNT_PROVISIONING),
+            id,
+            request,
+            receipt);
       return parsed;
     } catch (RestClientResponseException failure) {
       // Provider bodies and HTTP diagnostics can contain profile data or proof material.

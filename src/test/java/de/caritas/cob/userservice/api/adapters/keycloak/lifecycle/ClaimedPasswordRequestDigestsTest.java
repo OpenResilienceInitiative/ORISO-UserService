@@ -15,6 +15,43 @@ class ClaimedPasswordRequestDigestsTest {
   private final ClaimedPasswordRequestDigests digests = new ClaimedPasswordRequestDigests(codec);
   private final String account = "00000000-0000-4000-8000-000000000001";
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"opaque\nvalue", "\t", "   "})
+  void actualResetAndSetupRequestBindingsPreserveOpaqueSecrets(String secret) {
+    var reset =
+        new PasswordResetBinding(
+            UUID.randomUUID(),
+            account,
+            1L,
+            "enc.original",
+            "CONSULTANT",
+            "v1",
+            "a".repeat(64),
+            Instant.parse("2026-10-23T12:00:00Z"));
+    var setup =
+        new ExistingSetupPasswordClaims.Binding(
+            1,
+            account,
+            "b".repeat(64),
+            LocalDateTime.parse("2026-10-23T12:00:00"),
+            AccountInviteTargetRole.COUNSELLOR,
+            1L,
+            "enc.original",
+            "original@example.org");
+    assertThat(codec.passwordResetRequestDigest(reset, secret))
+        .matches("[a-f0-9]{64}")
+        .isNotEqualTo(codec.passwordResetRequestDigest(reset, secret + " "));
+    assertThat(codec.existingSetupPasswordRequestDigest(setup, secret))
+        .matches("[a-f0-9]{64}")
+        .isNotEqualTo(codec.existingSetupPasswordRequestDigest(setup, secret + " "));
+    for (String invalid : new String[] {null, "", "x".repeat(4097)}) {
+      assertThatThrownBy(() -> codec.passwordResetRequestDigest(reset, invalid))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(() -> codec.existingSetupPasswordRequestDigest(setup, invalid))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+  }
+
   @Test
   void recipientMatchesExactNativeStringDomainWithoutNormalization() {
     assertThatCode(() -> codec.passwordResetRecipientDigest("Original+one@Example.org"))
@@ -164,7 +201,7 @@ class ClaimedPasswordRequestDigestsTest {
             "v1",
             "a".repeat(64),
             Instant.now());
-    assertThatThrownBy(() -> digests.reset(b, " ")).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> digests.reset(b, "")).isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> digests.reset(b, "a".repeat(4097)))
         .isInstanceOf(IllegalArgumentException.class);
   }

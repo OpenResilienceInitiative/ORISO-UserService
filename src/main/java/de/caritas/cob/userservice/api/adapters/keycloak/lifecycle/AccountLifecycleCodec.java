@@ -205,7 +205,7 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
     var history = verifyReactivationHistory(metadata, envelope, phase, receipt, actor);
     var body = (ObjectNode) history.template();
     ((ObjectNode) body.path("change")).put("password", originalPassword);
-    intentText(body.path("change"), "password", 4096);
+    intentPassword(body.path("change"));
     if (!java.security.MessageDigest.isEqual(
         history.intentDigest().getBytes(StandardCharsets.US_ASCII),
         digest("maintenance-intent", body).getBytes(StandardCharsets.US_ASCII)))
@@ -582,6 +582,12 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
     var actual = new java.util.HashSet<String>();
     value.fieldNames().forEachRemaining(actual::add);
     if (!actual.equals(expected)) throw invalidSecretIntent();
+  }
+
+  private static void intentPassword(JsonNode change) {
+    JsonNode secret = change.path("password");
+    if (!secret.isTextual() || secret.textValue().isEmpty() || secret.textValue().length() > 4096)
+      throw invalidSecretIntent();
   }
 
   private static String intentText(JsonNode value, String field, int limit) {
@@ -1461,7 +1467,7 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
                 : java.util.Set.of("expectedUsername", "expectedEmail", "password"));
         intentText(change, "expectedUsername", 255);
         intentText(change, "expectedEmail", 255);
-        if (!retainedReactivation) intentText(change, "password", 4096);
+        if (!retainedReactivation) intentPassword(change);
         chosenPasswordReactivation = true;
       }
       if (!status.isIntegralNumber()
@@ -1735,6 +1741,45 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
   }
 
   /** Verify receiver-owned provenance before trusting an account id returned over HTTP. */
+  record LifecycleTransitionReceipt(
+      String realmId,
+      UUID attemptId,
+      String accountId,
+      String ownerClient,
+      String ownerSubject,
+      String scope,
+      String creationFingerprint,
+      String groupId,
+      String roleFingerprint,
+      String state,
+      long generation,
+      UUID executionId,
+      String operation,
+      String commandDigest) {}
+
+  LifecycleTransitionReceipt verifyLifecycleTransitionReceipt(String value, String domain) {
+    if (!java.util.Set.of("recovery-receipt", "terminal-receipt").contains(domain)
+        || value == null
+        || value.length() > 16384) throw invalidProof();
+    try {
+      String[] parts = value.split("\\.", -1);
+      if (parts.length != 2
+          || !parts[0].matches("[A-Za-z0-9_-]+")
+          || !parts[1].matches("[0-9a-f]{64}")) throw invalidProof();
+      byte[] payload = Base64.getUrlDecoder().decode(parts[0]);
+      if (!encode(payload).equals(parts[0])
+          || !java.security.MessageDigest.isEqual(
+              HexFormat.of().parseHex(parts[1]), mac(domain + "\n" + parts[0])))
+        throw invalidProof();
+      String encoded = utf8(payload);
+      var receipt = read(encoded, LifecycleTransitionReceipt.class);
+      if (!encoded.equals(canonical(receipt))) throw invalidProof();
+      return receipt;
+    } catch (IllegalArgumentException failure) {
+      throw invalidProof();
+    }
+  }
+
   public CreationProofPayload verifyCreationProof(
       String proof,
       String realmName,

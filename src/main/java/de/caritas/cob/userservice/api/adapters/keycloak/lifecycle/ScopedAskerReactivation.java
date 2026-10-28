@@ -173,7 +173,7 @@ public final class ScopedAskerReactivation {
       throw invalidInput();
     text(input.getUsername(), 255);
     text(input.getEmail(), 255);
-    text(input.getPassword(), 4096);
+    password(input.getPassword());
     Human human = currentHuman();
     var actor = actors.require(TaskPurpose.ACCOUNT_MAINTENANCE);
     var machine = checkedMachine(actor);
@@ -872,6 +872,10 @@ public final class ScopedAskerReactivation {
     var names = new HashSet<String>();
     value.fieldNames().forEachRemaining(names::add);
     if (!value.isObject() || !expected.equals(names)) throw unavailable();
+  }
+
+  private static void password(String value) {
+    if (value == null || value.isEmpty() || value.length() > 4096) throw invalidInput();
   }
 
   private static String text(String value, int max) {

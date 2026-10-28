@@ -196,7 +196,7 @@ class MaintenanceNoEffectCodecTest {
             "nontext-username",
             "nontext-email",
             "nontext-password",
-            "blank-password",
+            "empty-password",
             "oversized-password",
             "restore")) {
       ObjectNode changed = body.deepCopy();
@@ -210,7 +210,7 @@ class MaintenanceNoEffectCodecTest {
         case "nontext-username" -> change.put("expectedUsername", 17);
         case "nontext-email" -> change.put("expectedEmail", 17);
         case "nontext-password" -> change.put("password", 17);
-        case "blank-password" -> change.put("password", " ");
+        case "empty-password" -> change.put("password", "");
         case "oversized-password" -> change.put("password", "x".repeat(4097));
         case "restore" -> {
           changed.set("change", json.createObjectNode().put("restoreEnabled", true));

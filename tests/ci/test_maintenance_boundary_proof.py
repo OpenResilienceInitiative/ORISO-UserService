@@ -1,4 +1,5 @@
 import importlib.util
+import re
 from pathlib import Path
 import tempfile
 import unittest
@@ -40,10 +41,10 @@ class MaintenanceBoundaryEvidenceTest(unittest.TestCase):
             result = PROOF.sanitize(root, root / "clean.xml")
             return result, (root / "clean.xml").read_text()
 
-    def test_exact_twelve_green_cases_pass(self):
+    def test_exact_fourteen_green_cases_pass(self):
         result, _ = self.run_case()
         self.assertTrue(result["all_passed"])
-        self.assertEqual(12, result["tests"])
+        self.assertEqual(14, result["tests"])
 
     def test_rollback_assertion_requires_both_legacy_cleanup_controls(self):
         result, _ = self.run_case(failure="fiveActorsRollbackPropagatesScopedCommandDemandBeforeNativeCleanup")
@@ -79,10 +80,10 @@ class MaintenanceBoundaryEvidenceTest(unittest.TestCase):
         result, xml = self.run_case(
             failure="fiveActorsRequiresTheScopedAdapterBeforeRead"
         )
-        self.assertEqual(12, result["tests"])
+        self.assertEqual(14, result["tests"])
         for secret in ["password", "token", "traceback", "raw-"]:
             self.assertNotIn(secret, xml)
-        self.assertEqual(12, len(ET.fromstring(xml).findall("testcase")))
+        self.assertEqual(14, len(ET.fromstring(xml).findall("testcase")))
 
 
 class DeletionBoundaryEvidenceTest(unittest.TestCase):
@@ -265,7 +266,7 @@ class SelfAppBoundaryEvidenceTest(unittest.TestCase):
 
     def test_six_public_assertions_require_actual_missing_service_and_legacy_control(self):
         proof = self.proof()
-        self.assertEqual(37, len(proof.CASES))
+        self.assertEqual(43, len(proof.CASES))
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             suite = ET.Element("testsuite", name=proof.SUITE)
@@ -278,7 +279,7 @@ class SelfAppBoundaryEvidenceTest(unittest.TestCase):
             path = root / "TEST-app.xml"
             ET.ElementTree(suite).write(path)
             result = proof.sanitize(root, root / "clean.xml")
-            self.assertEqual(33, result["failures"])
+            self.assertEqual(39, result["failures"])
             self.assertTrue(result["adapter_behavior_red"])
             self.assertFalse(result["all_passed"])
             ET.SubElement(control, "failure", type="org.opentest4j.AssertionFailedError")
@@ -353,13 +354,13 @@ class SelfOtpReadEvidenceTest(unittest.TestCase):
             ET.ElementTree(suite).write(root / "TEST-read.xml")
             return proof.sanitize(root, root / "clean.xml")
 
-    def test_exact_eight_read_cases_and_two_controls_are_required(self):
+    def test_exact_nine_read_cases_and_two_controls_are_required(self):
         proof = self.proof()
-        self.assertEqual(8, len(proof.CASES))
+        self.assertEqual(9, len(proof.CASES))
         self.assertEqual(2, len(proof.CONTROLS))
         result = self.result(failures=proof.CASES - proof.CONTROLS)
         self.assertTrue(result["adapter_behavior_red"])
-        self.assertEqual(6, result["failures"])
+        self.assertEqual(7, result["failures"])
 
     def test_legacy_and_disabled_policy_failures_cannot_be_read_red(self):
         proof = self.proof()
@@ -375,6 +376,21 @@ class SelfOtpReadEvidenceTest(unittest.TestCase):
 
     def test_exact_eight_green_cases_have_no_skip_exception(self):
         result = self.result()
-        self.assertEqual(8, result["tests"])
+        self.assertEqual(9, result["tests"])
         self.assertTrue(result["all_passed"])
         self.assertFalse(result["adapter_behavior_red"])
+
+
+class MaintenanceSourceInventoryTest(unittest.TestCase):
+    def test_all_eight_declared_inventories_equal_the_actual_java_test_methods(self):
+        root = Path(__file__).resolve().parents[2]
+        for name in ('adapter', 'locale', 'app', 'app-jpa', 'otp-read', 'availability', 'jpa', 'deletion'):
+            with self.subTest(slice=name):
+                proof = importlib.util.module_from_spec(SPEC)
+                SPEC.loader.exec_module(proof)
+                proof.select_slice(name)
+                source = (root / 'src/test/java' / (proof.SUITE.replace('.', '/') + '.java')).read_text()
+                methods = re.findall(r'@Test\s+(?:public\s+)?void\s+(\w+)\s*\(', source)
+                self.assertTrue(methods)
+                self.assertEqual(len(methods), len(set(methods)))
+                self.assertEqual(set(methods), proof.CASES)
