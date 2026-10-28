@@ -9,6 +9,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -194,14 +195,51 @@ class DirectCallKnockServiceTest {
     var first = pending(1L, LocalDateTime.now().minusMinutes(2));
     var second = pending(2L, LocalDateTime.now().minusMinutes(1));
     when(repository.findCallKnocksForConsultantForUpdate(
-            eq("counsellor-1"), eq(Via.DIRECT_LINK), eq(Status.PENDING), any()))
+            eq("counsellor-1"), eq(Via.DIRECT_LINK), eq(Status.PENDING), any(), eq(SESSION_ID)))
         .thenReturn(List.of(first, second));
 
-    var admitted = service.admitAll(counsellor);
+    var admitted = service.admitAll(counsellor, SESSION_ID, null);
 
     assertThat(admitted)
         .extracting(GroupChatJoinRequest::getStatus)
         .containsExactly(Status.ADMITTED, Status.ADMITTED);
+  }
+
+  @Test
+  void admitAll_Should_RefuseWithoutTheCurrentCall() {
+    assertThatThrownBy(() -> service.admitAll(counsellor, null, null))
+        .isInstanceOf(BadRequestException.class);
+    verify(repository, never())
+        .findCallKnocksForConsultantForUpdate(any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void pendingFor_Should_ScopeToTheCallRoom_And_KeepTheUnscopedList() {
+    var session = new Session();
+    session.setId(SESSION_ID);
+    when(sessionRepository.findByMatrixRoomId("!room:oriso")).thenReturn(Optional.of(session));
+
+    service.pendingFor(counsellor, null, "!room:oriso");
+    verify(repository)
+        .findCallKnocksForConsultant(
+            eq("counsellor-1"), eq(Via.DIRECT_LINK), eq(Status.PENDING), any(), eq(SESSION_ID));
+
+    service.pendingFor(counsellor, null, null);
+    verify(repository)
+        .findCallKnocksForConsultant(
+            eq("counsellor-1"), eq(Via.DIRECT_LINK), eq(Status.PENDING), any(), eq(null));
+  }
+
+  @Test
+  void scope_Should_RejectAContradictionAndAnUnknownRoom() {
+    var other = new Session();
+    other.setId(SESSION_ID + 1);
+    when(sessionRepository.findByMatrixRoomId("!other:oriso")).thenReturn(Optional.of(other));
+
+    assertThatThrownBy(() -> service.pendingFor(counsellor, SESSION_ID, "!other:oriso"))
+        .isInstanceOf(BadRequestException.class);
+    assertThatThrownBy(() -> service.pendingFor(counsellor, null, "!unknown:oriso"))
+        .isInstanceOf(NotFoundException.class);
   }
 
   @Test

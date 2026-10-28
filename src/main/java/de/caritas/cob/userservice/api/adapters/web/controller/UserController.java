@@ -198,15 +198,15 @@ public class UserController implements UsersApi {
   @Override
   public ResponseEntity<
           java.util.List<de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO>>
-      getPendingCallKnocks() {
-    return directLinkControllerDelegate.getPendingCallKnocks();
+      getPendingCallKnocks(Long sessionId, String matrixRoomId) {
+    return directLinkControllerDelegate.getPendingCallKnocks(sessionId, matrixRoomId);
   }
 
   @Override
   public ResponseEntity<
           java.util.List<de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO>>
-      admitAllCallKnocks() {
-    return directLinkControllerDelegate.admitAllCallKnocks();
+      admitAllCallKnocks(Long sessionId, String matrixRoomId) {
+    return directLinkControllerDelegate.admitAllCallKnocks(sessionId, matrixRoomId);
   }
 
   @Override

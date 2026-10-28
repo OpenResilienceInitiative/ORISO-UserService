@@ -8,8 +8,11 @@ import de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkMedium;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateDirectLinkDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.model.GroupChatJoinRequest;
+import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.CounsellorDirectLinkService;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.CounsellorDirectLinkService.CreateCommand;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.CounsellorDirectLinkService.UpdateCommand;
@@ -20,6 +23,7 @@ import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import java.time.ZoneOffset;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import lombok.NonNull;
@@ -41,7 +45,10 @@ public class DirectLinkControllerDelegate {
   private final @NonNull CounsellorDirectLinkService service;
   private final @NonNull UserAccountService userAccountService;
   private final @NonNull TopicService topicService;
+  private static final UsernameTranscoder USERNAMES = new UsernameTranscoder();
+
   private final @NonNull DirectCallKnockService knockService;
+  private final @NonNull UserRepository userRepository;
 
   @Value("${app.base.url}")
   private String appBaseUrl;
@@ -105,16 +112,16 @@ public class DirectLinkControllerDelegate {
     return new ResponseEntity<>(dto, started.created() ? HttpStatus.CREATED : HttpStatus.OK);
   }
 
-  ResponseEntity<List<CallKnockDTO>> getPendingCallKnocks() {
+  ResponseEntity<List<CallKnockDTO>> getPendingCallKnocks(Long sessionId, String matrixRoomId) {
     var consultant = userAccountService.retrieveValidatedConsultant();
     return ResponseEntity.ok(
-        knockService.pendingFor(consultant).stream().map(this::toKnockDto).toList());
+        toKnockDtos(knockService.pendingFor(consultant, sessionId, matrixRoomId)));
   }
 
-  ResponseEntity<List<CallKnockDTO>> admitAllCallKnocks() {
+  ResponseEntity<List<CallKnockDTO>> admitAllCallKnocks(Long sessionId, String matrixRoomId) {
     var consultant = userAccountService.retrieveValidatedConsultant();
     return ResponseEntity.ok(
-        knockService.admitAll(consultant).stream().map(this::toKnockDto).toList());
+        toKnockDtos(knockService.admitAll(consultant, sessionId, matrixRoomId)));
   }
 
   ResponseEntity<CallKnockDTO> admitCallKnock(Long knockId) {
@@ -142,8 +149,30 @@ public class DirectLinkControllerDelegate {
     return ResponseEntity.ok(toKnockDto(knockService.cancelOwn(knockId, user)));
   }
 
+  /** One user lookup for the whole list. */
+  private List<CallKnockDTO> toKnockDtos(List<GroupChatJoinRequest> knocks) {
+    var ids = knocks.stream().map(GroupChatJoinRequest::getUserId).distinct().toList();
+    var names = new HashMap<String, String>();
+    userRepository.findAllById(ids).forEach(u -> names.put(u.getUserId(), displayName(u)));
+    return knocks.stream().map(k -> toKnockDto(k, names.get(k.getUserId()))).toList();
+  }
+
   private CallKnockDTO toKnockDto(GroupChatJoinRequest knock) {
+    var name =
+        knock.getUserId() == null
+            ? null
+            : userRepository.findById(knock.getUserId()).map(this::displayName).orElse(null);
+    return toKnockDto(knock, name);
+  }
+
+  /** The pseudonym the person registered with; never the e-mail address. */
+  private String displayName(User user) {
+    return user.getUsername() == null ? null : USERNAMES.decodeUsername(user.getUsername());
+  }
+
+  private CallKnockDTO toKnockDto(GroupChatJoinRequest knock, String displayName) {
     return new CallKnockDTO()
+        .displayName(displayName)
         .id(knock.getId())
         .sessionId(knock.getSessionId())
         .status(CallKnockStatus.valueOf(knock.getStatus().name()))

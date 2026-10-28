@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.agencyinvitelink;
 
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -107,9 +108,15 @@ public class DirectCallKnockService {
     return knock;
   }
 
-  public List<GroupChatJoinRequest> pendingFor(Consultant consultant) {
+  /** Without sessionId and matrixRoomId: all of the counsellor's waiting knocks, as before. */
+  public List<GroupChatJoinRequest> pendingFor(
+      Consultant consultant, Long sessionId, String matrixRoomId) {
     return repository.findCallKnocksForConsultant(
-        consultant.getId(), Via.DIRECT_LINK, Status.PENDING, waitingSince());
+        consultant.getId(),
+        Via.DIRECT_LINK,
+        Status.PENDING,
+        waitingSince(),
+        callScope(sessionId, matrixRoomId));
   }
 
   @Transactional
@@ -122,14 +129,20 @@ public class DirectCallKnockService {
     return decide(knockId, consultant, Status.DECLINED);
   }
 
+  /** Only the current call: letting in every knock of every conversation at once is refused. */
   @Transactional
-  public List<GroupChatJoinRequest> admitAll(Consultant consultant) {
+  public List<GroupChatJoinRequest> admitAll(
+      Consultant consultant, Long sessionId, String matrixRoomId) {
+    var scope = callScope(sessionId, matrixRoomId);
+    if (scope == null) {
+      throw new BadRequestException("admit-all needs sessionId or matrixRoomId");
+    }
     var now = LocalDateTime.now();
     // Loaded under lock in one query, so a knock cancelled or declined meanwhile is not pending
     // any more; no earlier unlocked read can leave a stale entity in the persistence context.
     return repository
         .findCallKnocksForConsultantForUpdate(
-            consultant.getId(), Via.DIRECT_LINK, Status.PENDING, waitingSince())
+            consultant.getId(), Via.DIRECT_LINK, Status.PENDING, waitingSince(), scope)
         .stream()
         .map(
             knock -> {
@@ -158,6 +171,22 @@ public class DirectCallKnockService {
     knock.setDecidedAt(LocalDateTime.now());
     knock.setDecidedBy(consultant.getId());
     return repository.save(knock);
+  }
+
+  /** The conversation of the current call; the call room is the conversation's Matrix room. */
+  private Long callScope(Long sessionId, String matrixRoomId) {
+    if (matrixRoomId == null || matrixRoomId.isBlank()) {
+      return sessionId;
+    }
+    var roomSession =
+        sessionRepository
+            .findByMatrixRoomId(matrixRoomId)
+            .map(Session::getId)
+            .orElseThrow(() -> new NotFoundException("No conversation for room %s", matrixRoomId));
+    if (sessionId != null && !sessionId.equals(roomSession)) {
+      throw new BadRequestException("sessionId and matrixRoomId name different conversations");
+    }
+    return roomSession;
   }
 
   private boolean isCounsellorOf(Long sessionId, Consultant consultant) {

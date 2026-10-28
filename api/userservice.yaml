@@ -99,8 +99,22 @@ paths:
       tags: [direct-link-controller]
       operationId: getPendingCallKnocks
       summary: 'People waiting to be let into a call in one of the caller''s conversations, oldest first [Authorization: Role: consultant]'
+      description: >-
+        With sessionId or matrixRoomId only the knocks of that call; without either all of the
+        caller's waiting knocks (unchanged behaviour).
       security:
         - Bearer: [ ]
+      parameters:
+        - name: sessionId
+          in: query
+          required: false
+          description: The conversation of the current call.
+          schema: {type: integer, format: int64}
+        - name: matrixRoomId
+          in: query
+          required: false
+          description: The Matrix room of the current call (the conversation's room).
+          schema: {type: string}
       responses:
         '200':
           description: Pending knocks of the last two hours
@@ -109,15 +123,30 @@ paths:
               schema:
                 type: array
                 items: {$ref: '#/components/schemas/CallKnockDTO'}
+        '400': {description: sessionId and matrixRoomId name different conversations}
         '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
         '403': {description: Caller is not a consultant}
   /users/call-knocks/admit-all:
     post:
       tags: [direct-link-controller]
       operationId: admitAllCallKnocks
-      summary: 'Let everybody in who is waiting for the caller [Authorization: Role: consultant]'
+      summary: 'Let everybody in who is waiting for the caller''s current call [Authorization: Role: consultant]'
+      description: >-
+        Scoped to one call: sessionId or matrixRoomId is required, otherwise 400. Knocks in the
+        caller's other conversations stay waiting.
       security:
         - Bearer: [ ]
+      parameters:
+        - name: sessionId
+          in: query
+          required: false
+          description: The conversation of the current call.
+          schema: {type: integer, format: int64}
+        - name: matrixRoomId
+          in: query
+          required: false
+          description: The Matrix room of the current call (the conversation's room).
+          schema: {type: string}
       responses:
         '200':
           description: The knocks that were admitted
@@ -126,6 +155,7 @@ paths:
               schema:
                 type: array
                 items: {$ref: '#/components/schemas/CallKnockDTO'}
+        '400': {description: 'Neither sessionId nor matrixRoomId, or both naming different conversations'}
         '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
         '403': {description: Caller is not a consultant}
   /users/call-knocks/{knockId}/admit:
@@ -3241,6 +3271,9 @@ components:
       properties:
         id: {type: integer, format: int64}
         sessionId: {type: integer, format: int64}
+        displayName:
+          type: string
+          description: 'The knocking person''s username (pseudonym), decoded; never the e-mail address or a real name.'
         status: {$ref: '#/components/schemas/CallKnockStatus'}
         medium: {$ref: '#/components/schemas/DirectLinkMedium'}
         requestedAt: {type: string, format: date-time}
