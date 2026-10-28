@@ -609,6 +609,11 @@ public class MatrixSynapseService implements MatrixUserClient {
    * @return login response body, including {@code access_token}, or {@code null} when unavailable
    */
   public java.util.Map<String, Object> loginAsUser(String matrixUserId, long validForMs) {
+    return loginAsUser(matrixUserId, validForMs, false);
+  }
+
+  private java.util.Map<String, Object> loginAsUser(
+      String matrixUserId, long validForMs, boolean retryTransientFailure) {
     if (matrixUserId == null || matrixUserId.isBlank()) {
       return null;
     }
@@ -618,6 +623,9 @@ public class MatrixSynapseService implements MatrixUserClient {
       log.warn(
           "Matrix admin token unavailable; cannot create user token for {}",
           redactor.pseudonym(matrixUserId));
+      if (retryTransientFailure) {
+        throw new CallLookupUnavailableException("call user-token lookup unavailable");
+      }
       return null;
     }
 
@@ -648,12 +656,23 @@ public class MatrixSynapseService implements MatrixUserClient {
           redactor.pseudonym(matrixUserId),
           ex.getStatusCode(),
           errcodeOf(ex));
+      if (retryTransientFailure
+          && (ex.getStatusCode().value() == 401 || isRetryableCallLookupStatus(ex))) {
+        if (ex.getStatusCode().value() == 401) {
+          invalidateAdminAccessToken();
+        }
+        throw new CallLookupUnavailableException("call user-token lookup unavailable", ex);
+      }
       return null;
     } catch (Exception ex) {
       log.error(
           "Matrix Error: Could not create login token for user ({}). Reason: {}",
           redactor.pseudonym(matrixUserId),
           redactor.scrub(ex.getMessage()));
+      if (retryTransientFailure
+          && ex instanceof org.springframework.web.client.RestClientException) {
+        throw new CallLookupUnavailableException("call user-token lookup unavailable", ex);
+      }
       return null;
     }
   }
@@ -679,6 +698,12 @@ public class MatrixSynapseService implements MatrixUserClient {
     if (tokenResponse == null || tokenResponse.get("access_token") == null) {
       return null;
     }
+    return String.valueOf(tokenResponse.get("access_token"));
+  }
+
+  private String loginAsUserAccessTokenForCall(String matrixUserId) {
+    var tokenResponse = loginAsUser(matrixUserId, SERVER_OPERATION_TOKEN_TTL_MS, true);
+    if (tokenResponse == null || tokenResponse.get("access_token") == null) return null;
     return String.valueOf(tokenResponse.get("access_token"));
   }
 
@@ -816,6 +841,15 @@ public class MatrixSynapseService implements MatrixUserClient {
     } catch (Exception e) {
       log.error("Failed to get admin access token: {}", redactor.scrub(e.getMessage()));
       return null;
+    }
+  }
+
+  private void invalidateAdminAccessToken() {
+    cachedAdminToken = null;
+    adminTokenExpiry = 0;
+    String adminUsername = matrixConfig.getAdminUsername();
+    if (adminUsername != null) {
+      accessTokenCache.remove(adminUsername);
     }
   }
 
@@ -1212,6 +1246,19 @@ public class MatrixSynapseService implements MatrixUserClient {
     return createRoom(roomName, roomAlias, accessToken);
   }
 
+  /** Same as {@link #createRoomAsMatrixUser}, for a members-only chat: only the admin invites. */
+  public ResponseEntity<MatrixCreateRoomResponseDTO> createMembersOnlyRoomAsMatrixUser(
+      String roomName, String roomAlias, String matrixUserId) throws MatrixCreateRoomException {
+
+    String accessToken = loginAsUserAccessToken(matrixUserId);
+    if (accessToken == null) {
+      throw new MatrixCreateRoomException("Could not obtain access token for Matrix user");
+    }
+
+    return matrixRoomClient.createMembersOnlyRoom(
+        roomName, roomAlias, accessToken, matrixConfig.isEncryptionEnabled());
+  }
+
   /**
    * Creates a new room in Matrix Synapse.
    *
@@ -1307,6 +1354,52 @@ public class MatrixSynapseService implements MatrixUserClient {
     return joinRoom(roomId, adminToken);
   }
 
+  /** Reads the call binding with a currently joined caller's authority, without joining admin. */
+  public java.util.Optional<java.util.Map<String, Object>> getCallRoomBinding(
+      String roomId, String memberMatrixUserId) {
+    if (roomId == null
+        || roomId.isBlank()
+        || memberMatrixUserId == null
+        || !getCallRoomMembers(roomId)
+            .map(members -> members.contains(memberMatrixUserId))
+            .orElse(false)) {
+      return java.util.Optional.empty();
+    }
+    String token = loginAsUserAccessTokenForCall(memberMatrixUserId);
+    if (token == null) return java.util.Optional.empty();
+    try {
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig,
+              "/_matrix/client/v3/rooms/{roomId}/state/org.oriso.call.binding",
+              java.util.Map.of("roomId", roomId));
+      var response =
+          restTemplate.exchange(
+              url,
+              org.springframework.http.HttpMethod.GET,
+              new HttpEntity<>(getClientHttpHeaders(token)),
+              new org.springframework.core.ParameterizedTypeReference<
+                  java.util.Map<String, Object>>() {});
+      return java.util.Optional.ofNullable(response.getBody());
+    } catch (HttpStatusCodeException response) {
+      if (response.getStatusCode().value() == 401) {
+        String code = errcodeOf(response);
+        // This state request uses the member's token, not the administrative credentials.
+        if ("M_USER_LOCKED".equals(code) || "M_USER_DEACTIVATED".equals(code)) {
+          return java.util.Optional.empty();
+        }
+      }
+      if (response.getStatusCode().value() == 401 || isRetryableCallLookupStatus(response)) {
+        throw new CallLookupUnavailableException("call binding lookup unavailable", response);
+      }
+      // A successful membership check followed by 403/404 (or another permanent 4xx) is a
+      // definitive denial/absence, not a reason to poison the listener cursor forever.
+      return java.util.Optional.empty();
+    } catch (org.springframework.web.client.RestClientException unavailable) {
+      throw new CallLookupUnavailableException("call binding lookup unavailable", unavailable);
+    }
+  }
+
   /**
    * Leaves a Matrix room with the given user's own access token.
    *
@@ -1332,9 +1425,24 @@ public class MatrixSynapseService implements MatrixUserClient {
    *     "no members".
    */
   public java.util.Optional<java.util.List<String>> getRoomMembers(String matrixRoomId) {
+    return getRoomMembers(matrixRoomId, false);
+  }
+
+  /**
+   * Call ingestion variant: retries transport/auth availability without retrying definitive 4xx.
+   */
+  public java.util.Optional<java.util.List<String>> getCallRoomMembers(String matrixRoomId) {
+    return getRoomMembers(matrixRoomId, true);
+  }
+
+  private java.util.Optional<java.util.List<String>> getRoomMembers(
+      String matrixRoomId, boolean retryTransientFailure) {
     String adminToken = getAdminAccessToken();
     if (adminToken == null) {
       log.warn("Could not get admin token for reading members of Matrix room {}", matrixRoomId);
+      if (retryTransientFailure) {
+        throw new CallLookupUnavailableException("call membership lookup unavailable");
+      }
       return java.util.Optional.empty();
     }
 
@@ -1353,16 +1461,58 @@ public class MatrixSynapseService implements MatrixUserClient {
       var body = response.getBody();
       if (body == null || !(body.get("members") instanceof java.util.List<?> members)) {
         log.warn("Unexpected response reading members of Matrix room {}", matrixRoomId);
+        if (retryTransientFailure) {
+          throw new CallLookupUnavailableException("call membership lookup unavailable");
+        }
         return java.util.Optional.empty();
+      }
+      if (retryTransientFailure
+          && members.stream().anyMatch(member -> !(member instanceof String id) || id.isBlank())) {
+        throw new CallLookupUnavailableException("call membership lookup unavailable");
       }
 
       return java.util.Optional.of(members.stream().map(String::valueOf).toList());
+    } catch (HttpStatusCodeException ex) {
+      log.warn(
+          "Matrix Error: Could not read members of room {}: {}",
+          matrixRoomId,
+          redactor.scrub(ex.getMessage()));
+      if (retryTransientFailure
+          && (ex.getStatusCode().value() == 401 || isRetryableCallLookupStatus(ex))) {
+        if (ex.getStatusCode().value() == 401) {
+          invalidateAdminAccessToken();
+        }
+        throw new CallLookupUnavailableException("call membership lookup unavailable", ex);
+      }
+      return java.util.Optional.empty();
+    } catch (CallLookupUnavailableException ex) {
+      throw ex;
     } catch (Exception ex) {
       log.warn(
           "Matrix Error: Could not read members of room {}: {}",
           matrixRoomId,
           redactor.scrub(ex.getMessage()));
+      if (retryTransientFailure
+          && ex instanceof org.springframework.web.client.RestClientException) {
+        throw new CallLookupUnavailableException("call membership lookup unavailable", ex);
+      }
       return java.util.Optional.empty();
+    }
+  }
+
+  private static boolean isRetryableCallLookupStatus(HttpStatusCodeException response) {
+    int status = response.getStatusCode().value();
+    return response.getStatusCode().is5xxServerError() || status == 408 || status == 429;
+  }
+
+  /** Signals that a call lookup may succeed on replay; the listener must not advance its cursor. */
+  public static final class CallLookupUnavailableException extends RuntimeException {
+    public CallLookupUnavailableException(String message) {
+      super(message);
+    }
+
+    public CallLookupUnavailableException(String message, Throwable cause) {
+      super(message, cause);
     }
   }
 
@@ -1509,6 +1659,43 @@ public class MatrixSynapseService implements MatrixUserClient {
           roomId,
           redactor.scrub(ex.getMessage()));
       return java.util.Optional.empty();
+    }
+  }
+
+  /**
+   * Like {@link #getRoomEvent} but keeps the outcome: empty only when Synapse answers 404 (the
+   * event does not exist); every other failure throws so the caller can retry.
+   */
+  public java.util.Optional<java.util.Map<String, Object>> findRoomEvent(
+      String roomId, String eventId, String accessToken) {
+    var url =
+        MatrixUrlBuilder.buildUrl(
+            matrixConfig,
+            ENDPOINT_ROOM_EVENT,
+            java.util.Map.of("roomId", roomId, "eventId", eventId));
+    try {
+      var response =
+          restTemplate.exchange(
+              url,
+              org.springframework.http.HttpMethod.GET,
+              new HttpEntity<Void>(getClientHttpHeaders(accessToken)),
+              java.util.Map.class);
+      if (response.getBody() == null) throw new RoomEventUnavailableException(null);
+      @SuppressWarnings("unchecked")
+      java.util.Map<String, Object> body = response.getBody();
+      return java.util.Optional.of(body);
+    } catch (HttpStatusCodeException response) {
+      if (response.getStatusCode().value() == 404) return java.util.Optional.empty();
+      throw new RoomEventUnavailableException(response);
+    } catch (org.springframework.web.client.RestClientException unavailable) {
+      throw new RoomEventUnavailableException(unavailable);
+    }
+  }
+
+  /** Transient event read failure; the provider body is kept out of the message. */
+  public static final class RoomEventUnavailableException extends RuntimeException {
+    public RoomEventUnavailableException(Throwable cause) {
+      super("room event lookup unavailable", cause);
     }
   }
 

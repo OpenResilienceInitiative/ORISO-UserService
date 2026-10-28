@@ -197,6 +197,25 @@ class MatrixRtcCallPolicyServiceTest {
         .isEqualTo(new CallMediaPolicy(true, false));
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = ConversationType.class,
+      names = {"SELF_HELP", "INTERNAL_GROUP"})
+  void groupSessionsUseGroupFlagsEvenWhenTheSessionLookupWins(ConversationType type) {
+    var groupSession = session(type);
+    when(sessionRepository.findByMatrixRoomId(ROOM_ID)).thenReturn(Optional.of(groupSession));
+    when(tenantService.getRestrictedTenantDataFresh(TENANT_ID))
+        .thenReturn(
+            tenant(
+                enabledSettings()
+                    .featureAudioCallsGroupChatsEnabled(true)
+                    .featureVideoCallsGroupChatsEnabled(false)
+                    .featureAudioCallsOneOnOneChatsEnabled(false)
+                    .featureVideoCallsOneOnOneChatsEnabled(true)));
+    assertThat(service.resolve(ROOM_ID, MATRIX_USER_ID))
+        .isEqualTo(new CallMediaPolicy(true, false));
+  }
+
   @Test
   void resolvesSupervisionRoomAgainstSupervisionFlags() {
     var supervision = mock(SessionSupervisor.class);
@@ -336,6 +355,20 @@ class MatrixRtcCallPolicyServiceTest {
     } finally {
       TenantContext.clear();
     }
+  }
+
+  @Test
+  void rejectedConversationCannotObtainRtcWritePolicyDespiteRetainedMembershipAndActiveIdentity() {
+    var rejected = new Session();
+    rejected.setConversationType(ConversationType.AGENCY_COUNSELLING);
+    rejected.setTenantId(TENANT_ID);
+    rejected.setStatus(Session.SessionStatus.REJECTED);
+    when(sessionRepository.findByMatrixRoomId(ROOM_ID)).thenReturn(Optional.of(rejected));
+    org.mockito.Mockito.lenient()
+        .when(tenantService.getRestrictedTenantDataFresh(TENANT_ID))
+        .thenReturn(tenant(enabledSettings()));
+    assertThat(service.resolve(ROOM_ID, MATRIX_USER_ID)).isEqualTo(CallMediaPolicy.denied());
+    verifyNoInteractions(tenantService);
   }
 
   private MatrixRtcCorrelationIdHasher correlationIdHasher() {

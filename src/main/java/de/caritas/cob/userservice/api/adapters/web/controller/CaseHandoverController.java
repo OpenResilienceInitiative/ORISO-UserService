@@ -49,8 +49,10 @@ public class CaseHandoverController {
     "/users/case-handover/reason-policies",
     "/service/users/case-handover/reason-policies"
   })
-  public ResponseEntity<List<CaseHandoverReason>> listReasonPolicies() {
-    return ResponseEntity.ok(caseHandoverService.listReasonPolicies());
+  public ResponseEntity<List<CaseHandoverReason>> listReasonPolicies(
+      @RequestParam(value = "tenantId", required = false) Long tenantId) {
+    // tenantId = the Träger; required for platform admins (FE#1725).
+    return ResponseEntity.ok(caseHandoverService.listReasonPolicies(tenantId));
   }
 
   @PutMapping({
@@ -58,8 +60,9 @@ public class CaseHandoverController {
     "/service/users/case-handover/reason-policies"
   })
   public ResponseEntity<List<CaseHandoverReason>> updateReasonPolicies(
+      @RequestParam(value = "tenantId", required = false) Long tenantId,
       @Valid @RequestBody List<CaseHandoverReason> policies) {
-    return ResponseEntity.ok(caseHandoverService.updateReasonPolicies(policies));
+    return ResponseEntity.ok(caseHandoverService.updateReasonPolicies(tenantId, policies));
   }
 
   @GetMapping({
@@ -183,6 +186,22 @@ public class CaseHandoverController {
     return ResponseEntity.ok(
         caseHandoverService.resolveClientConsent(
             sessionId, requestId, Boolean.TRUE.equals(decision.getApproved())));
+  }
+
+  @PostMapping({
+    "/users/sessions/{sessionId}/case-handover/extend",
+    "/service/users/sessions/{sessionId}/case-handover/extend"
+  })
+  public ResponseEntity<CaseHandoverStatus> extendCoAccess(@PathVariable Long sessionId) {
+    return ResponseEntity.ok(caseHandoverService.extendCoAccess(sessionId));
+  }
+
+  @PostMapping({
+    "/users/sessions/{sessionId}/case-handover/reclaim",
+    "/service/users/sessions/{sessionId}/case-handover/reclaim"
+  })
+  public ResponseEntity<CaseHandoverStatus> reclaim(@PathVariable Long sessionId) {
+    return ResponseEntity.ok(caseHandoverService.reclaim(sessionId));
   }
 
   @PostMapping({"/users/case-handover/batch", "/service/users/case-handover/batch"})

@@ -36,4 +36,13 @@ public interface CaseHandoverMatrixRepairTaskRepository
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("SELECT task FROM CaseHandoverMatrixRepairTask task WHERE task.id = :id")
   Optional<CaseHandoverMatrixRepairTask> findByIdForUpdate(@Param("id") Long id);
+
+  /**
+   * Removes the queued kicks of one member in one session (derived delete, caller's transaction).
+   */
+  void deleteByActionAndRequesterConsultantIdAndSessionIdAndMemberId(
+      de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairAction action,
+      String requesterConsultantId,
+      Long sessionId,
+      String memberId);
 }

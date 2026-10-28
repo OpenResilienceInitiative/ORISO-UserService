@@ -34,6 +34,10 @@ import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 @SpringJUnitWebConfig(CaseHandoverConsentPreferenceHttpTest.Config.class)
 @TestPropertySource(properties = "multitenancy.enabled=false")
 class CaseHandoverConsentPreferenceHttpTest {
+  @org.springframework.test.context.bean.override.mockito.MockitoBean
+  de.caritas.cob.userservice.api.admin.service.admin.ManagedAccountStatusService
+      accountOperationalStatus;
+
   @Configuration
   @EnableWebMvc
   @Import({

@@ -79,13 +79,22 @@ public class ConsultantPreDeletionServiceTest {
   }
 
   @Test
-  public void
-      performPreDeletionSteps_Should_setConsultantInactiveInKeycloak_When_consultantCanBeDeleted() {
+  public void performPreDeletionSteps_Should_notTouchTheIdentityYet() {
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);
     when(this.sessionRepository.findByConsultantAndStatusIn(any(), any())).thenReturn(emptyList());
 
     this.consultantPreDeletionService.performPreDeletionSteps(
         consultant, FORCE_DELETE_SESSIONS, DELETED_AT);
+
+    // The irreversible step comes last, after the private rooms are left (see the admin service).
+    org.mockito.Mockito.verifyNoInteractions(this.identityDeactivator);
+  }
+
+  @Test
+  public void deactivateIdentity_Should_setConsultantInactiveInKeycloak() {
+    Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+
+    this.consultantPreDeletionService.deactivateIdentity(consultant);
 
     verify(this.identityDeactivator, times(1)).deactivateUser(consultant.getId());
   }

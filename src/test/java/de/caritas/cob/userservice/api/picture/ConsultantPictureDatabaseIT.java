@@ -88,6 +88,11 @@ class ConsultantPictureDatabaseIT {
   @MockitoBean AccountManager accountManager;
   @MockitoBean AppointmentService appointments;
   @MockitoBean TopicService topics;
+  @MockitoBean de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyAccess;
+
+  @MockitoBean
+  de.caritas.cob.userservice.api.service.chat.MembersOnlyRevocation membersOnlyRevocation;
+
   @MockitoBean CounsellorOnboardingService onboarding;
   String id;
   byte[] png;

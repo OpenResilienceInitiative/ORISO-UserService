@@ -36,7 +36,6 @@ import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTe
 import de.caritas.cob.userservice.tenantservice.generated.web.model.Theming;
 import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -244,31 +243,9 @@ class SupervisorAddedEmailNotificationServiceTest {
   @ValueSource(strings = {"PLATFORM", "OWN"})
   void contactChangeMailIsNotMutedByTheTenantNotificationSwitch(String mode) {
     var client = mock(TenantSystemEmailClient.class);
-    when(client.readTenant(40L))
+    when(client.readMailContext(40L))
         .thenReturn(
-            Map.of(
-                "settings",
-                Map.of(
-                    "featureSystemNotificationEmailsEnabled",
-                    false,
-                    "smtpMode",
-                    mode,
-                    "smtp",
-                    Map.of(
-                        "enabled",
-                        true,
-                        "host",
-                        "smtp.tenant.example",
-                        "port",
-                        587,
-                        "secure",
-                        false,
-                        "username",
-                        "sender",
-                        "from",
-                        "sender@tenant.example",
-                        "passwordSet",
-                        true))));
+            new TenantSystemEmailClient.MailContext(false, mode, null, "OWN".equals(mode), true));
     ReflectionTestUtils.setField(service, "emailRoutes", new TenantSystemEmailRouteService(client));
 
     service.notifyEmailAddressChanged(
@@ -286,24 +263,15 @@ class SupervisorAddedEmailNotificationServiceTest {
             mail.capture());
     assertThat(mail.getValue().html()).contains("https://app.example.org", "johndoe");
     assertThat(mail.getValue().text()).contains("https://app.example.org", "johndoe");
-    verify(client).readTenant(40L);
+    verify(client).readMailContext(40L);
     verifyNoMoreInteractions(client, emailDelivery);
   }
 
   @Test
   void contactChangeMailRejectsIncompleteOwnTransportWithoutPlatformFallback() {
     var client = mock(TenantSystemEmailClient.class);
-    when(client.readTenant(40L))
-        .thenReturn(
-            Map.of(
-                "settings",
-                Map.of(
-                    "featureSystemNotificationEmailsEnabled",
-                    false,
-                    "smtpMode",
-                    "OWN",
-                    "smtp",
-                    Map.of("enabled", true))));
+    when(client.readMailContext(40L))
+        .thenReturn(new TenantSystemEmailClient.MailContext(false, "OWN", null, false, true));
     ReflectionTestUtils.setField(service, "emailRoutes", new TenantSystemEmailRouteService(client));
 
     try (var logs = LogbackCaptor.forClass(SupervisorAddedEmailNotificationService.class)) {
@@ -319,18 +287,15 @@ class SupervisorAddedEmailNotificationServiceTest {
                 assertThat(event.getFormattedMessage()).doesNotContain("new@example.org");
               });
     }
-    verify(client).readTenant(40L);
+    verify(client).readMailContext(40L);
     verifyNoMoreInteractions(client);
   }
 
   @Test
   void supervisorMailRemainsMutedByTheTenantNotificationSwitch() {
     var client = mock(TenantSystemEmailClient.class);
-    when(client.readTenant(40L))
-        .thenReturn(
-            Map.of(
-                "settings",
-                Map.of("featureSystemNotificationEmailsEnabled", false, "smtpMode", "PLATFORM")));
+    when(client.readMailContext(40L))
+        .thenReturn(new TenantSystemEmailClient.MailContext(false, "PLATFORM", null, false, false));
     ReflectionTestUtils.setField(service, "emailRoutes", new TenantSystemEmailRouteService(client));
     User user = new User();
     user.setTenantId(40L);

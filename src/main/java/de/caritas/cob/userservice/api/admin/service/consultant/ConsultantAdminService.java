@@ -57,6 +57,10 @@ public class ConsultantAdminService {
   private final @NonNull ConsultantPreDeletionService consultantPreDeletionService;
 
   private final @NonNull SessionRepository sessionRepository;
+  private final @NonNull de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess
+      membersOnlyChatAccess;
+  private final @NonNull de.caritas.cob.userservice.api.service.chat.MembersOnlyRevocation
+      membersOnlyRevocation;
   private final @NonNull SessionOwnershipService sessionOwnershipService;
   private final @NonNull CaseHandoverRequestRepository caseHandoverRequestRepository;
   private final @NonNull SessionSupervisorRepository sessionSupervisorRepository;
@@ -224,11 +228,18 @@ public class ConsultantAdminService {
           consultantId);
     }
 
+    // Private rooms are left now, in this transaction and while the chat account still works.
+    membersOnlyRevocation.revokeAllAccessOf(consultant);
+
     consultant.setDeleteDate(deletedAt);
     deletionLifecycleService.beginConsultantDeletion(consultant, authenticatedUser.getUserId());
     pictureStore.removeForConsultantDeletion(consultantId);
     consultant.setStatus(ConsultantStatus.IN_DELETION);
     this.consultantRepository.save(consultant);
+
+    // Last: Keycloak is not rolled back with this transaction, so the login is only taken away
+    // once nothing that can still fail (the strict leaves of the private rooms) is left.
+    this.consultantPreDeletionService.deactivateIdentity(consultant);
   }
 
   public void pauseConsultantDeletion(
@@ -259,6 +270,12 @@ public class ConsultantAdminService {
         .findByConsultantAndStatusIn(consultant, Lists.newArrayList(IN_PROGRESS, IN_ARCHIVE))
         .forEach(
             session -> {
+              // The case of a members-only chat lives with the chat: it goes to a remaining
+              // participant, or is retired, never deleted under a chat that still exists.
+              if (membersOnlyChatAccess.concerns(session)
+                  && membersOnlyRevocation.keepCaseOnDeletionOf(session, consultant)) {
+                return;
+              }
               caseHandoverRequestRepository.deleteAllBySessionId(session.getId());
               sessionSupervisorRepository.deleteAllBySessionId(session.getId());
               sessionRepository.delete(session);

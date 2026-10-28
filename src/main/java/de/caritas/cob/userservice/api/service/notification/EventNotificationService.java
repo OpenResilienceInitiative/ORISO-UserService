@@ -897,6 +897,134 @@ public class EventNotificationService {
     signalFeedUpdatedSafely(recipientUserId);
   }
 
+  /** Keeps invite identity stable across repeated sync batches and application restarts. */
+  @Transactional
+  public void createCallInvitationNotification(
+      de.caritas.cob.userservice.api.service.matrix.MatrixCallConversation session,
+      String recipientId,
+      boolean consultantRecipient,
+      String senderId,
+      String callId,
+      String mediaRoomId,
+      boolean video) {
+    var params = callParams(session, callId, mediaRoomId);
+    params.put("callType", video ? "video" : "audio");
+    params.put("callerName", resolveSenderName(senderId));
+    String key = callEventKey("call.invited", session.getMatrixRoomId(), callId);
+    createEventOnce(
+        key,
+        recipientId,
+        "call.invited",
+        CATEGORY_SYSTEM,
+        "Call invitation",
+        "You were invited to a call.",
+        serializeParams(params),
+        session.actionPath(consultantRecipient),
+        session.getSessionId(),
+        session.getTenantId());
+  }
+
+  /**
+   * One retained start per original invitee and call, independent of devices and listener restarts.
+   */
+  @Transactional
+  public void createCallStartedNotification(
+      de.caritas.cob.userservice.api.service.matrix.MatrixCallConversation session,
+      String recipientId,
+      boolean consultantRecipient,
+      String callId,
+      String mediaRoomId,
+      boolean video) {
+    var params = callParams(session, callId, mediaRoomId);
+    params.put("callType", video ? "video" : "audio");
+    String key = callEventKey("call.started", session.getMatrixRoomId(), callId);
+    createEventOnce(
+        key,
+        recipientId,
+        "call.started",
+        CATEGORY_SYSTEM,
+        "Call started",
+        "The call has started.",
+        serializeParams(params),
+        session.actionPath(consultantRecipient),
+        session.getSessionId(),
+        session.getTenantId());
+  }
+
+  @Transactional
+  public void createCallEndedNotification(
+      de.caritas.cob.userservice.api.service.matrix.MatrixCallConversation session,
+      String recipientId,
+      boolean consultantRecipient,
+      String callId,
+      String mediaRoomId,
+      long startedAt,
+      long endedAt) {
+    var params = callParams(session, callId, mediaRoomId);
+    params.put("durationSeconds", Long.toString(Math.max(0, endedAt - startedAt) / 1000));
+    String key = callEventKey("call.ended", session.getMatrixRoomId(), callId);
+    createEventOnce(
+        key,
+        recipientId,
+        "call.ended",
+        CATEGORY_SYSTEM,
+        "Call ended",
+        "The call has ended.",
+        serializeParams(params),
+        session.actionPath(consultantRecipient),
+        session.getSessionId(),
+        session.getTenantId());
+  }
+
+  @Transactional
+  public void createCallMissedNotification(
+      de.caritas.cob.userservice.api.service.matrix.MatrixCallConversation session,
+      String recipientId,
+      boolean consultantRecipient,
+      String callId,
+      String mediaRoomId,
+      boolean video) {
+    var params = callParams(session, callId, mediaRoomId);
+    params.put("callType", video ? "video" : "audio");
+    String key = callEventKey("call.missed", session.getMatrixRoomId(), callId);
+    createEventOnce(
+        key,
+        recipientId,
+        "call.missed",
+        CATEGORY_SYSTEM,
+        "Missed call",
+        "You missed a call.",
+        serializeParams(params),
+        session.actionPath(consultantRecipient),
+        session.getSessionId(),
+        session.getTenantId());
+  }
+
+  private Map<String, Object> callParams(
+      de.caritas.cob.userservice.api.service.matrix.MatrixCallConversation conversation,
+      String callId,
+      String mediaRoomId) {
+    var params = conversation.notificationParams();
+    params.put("callId", callId);
+    params.put("callRoomId", mediaRoomId);
+    return params;
+  }
+
+  private String callEventKey(String eventType, String sourceRoom, String callId) {
+    // Keep the persisted identity exactly stable, including Java's UTF-16 room length.
+    String identity = sourceRoom.length() + ":" + sourceRoom + ":" + callId;
+    try {
+      return eventType
+          + ":"
+          + java.util.HexFormat.of()
+              .formatHex(
+                  java.security.MessageDigest.getInstance("SHA-256")
+                      .digest(identity.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    } catch (java.security.NoSuchAlgorithmException impossible) {
+      throw new IllegalStateException("SHA-256 unavailable", impossible);
+    }
+  }
+
   /** Persists an event at most once for a producer-owned key and recipient. */
   @Transactional
   public void createEventOnce(

@@ -10,6 +10,8 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResp
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.ConversationDtoMapper;
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics;
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics.AvailabilityEndpoint;
 import de.caritas.cob.userservice.api.conversation.facade.AcceptAnonymousEnquiryFacade;
 import de.caritas.cob.userservice.api.conversation.facade.CreateAnonymousEnquiryFacade;
 import de.caritas.cob.userservice.api.conversation.facade.FinishAnonymousConversationFacade;
@@ -24,6 +26,7 @@ import io.swagger.annotations.Api;
 import jakarta.validation.Valid;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -32,6 +35,7 @@ import org.springframework.web.bind.annotation.RestController;
 /** Controller for conversation API requests. */
 @RestController
 @RequiredArgsConstructor
+@Slf4j
 @Api(tags = "conversation-controller")
 public class ConversationController implements ConversationsApi {
 
@@ -43,6 +47,7 @@ public class ConversationController implements ConversationsApi {
   private final Messaging messenger;
   private final TopicConsultantRoutingService topicConsultantRoutingService;
   private final AuthenticatedUser authenticatedUser;
+  private final LiveChatDiagnosticMetrics liveChatDiagnosticMetrics;
 
   /**
    * Entry point to retrieve all anonymous enquiries for current authenticated consultant.
@@ -194,7 +199,16 @@ public class ConversationController implements ConversationsApi {
       }
       return 0;
     } catch (Exception ex) {
-      // Availability is best-effort for this poll — never fail the whole response.
+      // Availability is best-effort for this poll — never fail the whole response. But the guest
+      // cannot tell this zero from a real one, so it is logged and counted (#1270). Only the topic
+      // and the exception class: no session id, message or stack trace (KDG).
+      log.warn(
+          "Live-chat availability lookup failed; reporting nobody live (endpoint=enquiry_details,"
+              + " topicId={}, exception={})",
+          mainTopicId,
+          ex.getClass().getSimpleName());
+      liveChatDiagnosticMetrics.recordAvailabilityLookupFailure(
+          AvailabilityEndpoint.ENQUIRY_DETAILS);
       return 0;
     }
   }

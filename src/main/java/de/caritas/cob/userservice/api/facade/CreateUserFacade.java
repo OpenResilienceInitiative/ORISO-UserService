@@ -106,6 +106,7 @@ public class CreateUserFacade {
   public Long createUserAccountWithInitializedConsultingType(final UserDTO userDTO) {
 
     initializeTenantContextForRegistration(userDTO);
+    tenantService.requireOperationalTenant(TenantContext.getCurrentTenant());
 
     // MATRIX MIGRATION: Get plain credentials from ThreadLocal (captured during JSON
     // deserialization)

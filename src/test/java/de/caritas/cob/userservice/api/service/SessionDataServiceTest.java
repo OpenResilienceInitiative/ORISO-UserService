@@ -29,6 +29,9 @@ public class SessionDataServiceTest {
   @Mock private SessionDataProvider sessionDataProvider;
   @Mock private SessionService sessionService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
+
   private final EasyRandom easyRandom = new EasyRandom();
 
   @Test
@@ -53,6 +56,23 @@ public class SessionDataServiceTest {
 
     verify(sessionDataProvider, times(1)).createSessionDataList(any(), any());
     verify(sessionDataRepository, times(1)).saveAll(any());
+  }
+
+  @Test
+  public void saveSessionDataForSessionId_Should_RefuseTheSessionOfAMembersOnlyChat() {
+    SessionDataDTO sessionData = easyRandom.nextObject(SessionDataDTO.class);
+    Session session = easyRandom.nextObject(Session.class);
+    when(sessionService.getSession(any())).thenReturn(Optional.of(session));
+    org.mockito.Mockito.doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException("no"))
+        .when(membersOnlyChatAccess)
+        .requireOrdinary(org.mockito.ArgumentMatchers.eq(session), any());
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+        () -> sessionDataService.saveSessionData(SESSION_ID, sessionData));
+
+    org.mockito.Mockito.verifyNoInteractions(sessionDataRepository);
   }
 
   @Test
