@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.notification;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -238,6 +239,66 @@ class EventNotificationServiceTest {
 
     // null/blank dropped, duplicate "consultant-a" collapsed -> 2 distinct recipients.
     verify(eventNotificationRepository, times(2)).save(any());
+  }
+
+  // ---------------------------------------------------------------------------
+  // retireOpenEnquiryNotifications (ORISO-Frontend#1472)
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void retireOpenEnquiryNotifications_deletesOtherConsultantsEntriesAndNudgesTheirFeeds() {
+    Session session = sessionMock();
+    when(eventNotificationRepository.findOtherRecipientsOfSessionEvents(
+            100L, EventNotificationService.OPEN_ENQUIRY_EVENT_TYPES, "consultant-a"))
+        .thenReturn(List.of("consultant-b", "consultant-c"));
+
+    eventNotificationService.retireOpenEnquiryNotifications(session, "consultant-a");
+
+    verify(eventNotificationRepository)
+        .deleteOpenEnquiryEvents(
+            100L, EventNotificationService.OPEN_ENQUIRY_EVENT_TYPES, "consultant-a");
+    verify(feedUpdateSignalService).signalFeedUpdated("consultant-b");
+    verify(feedUpdateSignalService).signalFeedUpdated("consultant-c");
+    verify(feedUpdateSignalService, never()).signalFeedUpdated("consultant-a");
+  }
+
+  @Test
+  void retireOpenEnquiryNotifications_coversLiveChatWaitingRoomEntries() {
+    assertTrue(EventNotificationService.OPEN_ENQUIRY_EVENT_TYPES.contains("request.new"));
+    assertTrue(
+        EventNotificationService.OPEN_ENQUIRY_EVENT_TYPES.contains("waiting_room.client.joined"));
+  }
+
+  @Test
+  void retireOpenEnquiryNotifications_skipsDeleteWhenNobodyElseHoldsAnEntry() {
+    Session session = sessionMock();
+    when(eventNotificationRepository.findOtherRecipientsOfSessionEvents(any(), any(), any()))
+        .thenReturn(List.of());
+
+    eventNotificationService.retireOpenEnquiryNotifications(session, "consultant-a");
+
+    verify(eventNotificationRepository, never()).deleteOpenEnquiryEvents(any(), any(), any());
+    verify(feedUpdateSignalService, never()).signalFeedUpdated(any());
+  }
+
+  @Test
+  void retireOpenEnquiryNotifications_neverFailsTheAcceptance() {
+    Session session = sessionMock();
+    when(eventNotificationRepository.findOtherRecipientsOfSessionEvents(any(), any(), any()))
+        .thenThrow(new RuntimeException("db down"));
+
+    assertDoesNotThrow(
+        () -> eventNotificationService.retireOpenEnquiryNotifications(session, "consultant-a"));
+  }
+
+  @Test
+  void retireOpenEnquiryNotifications_doesNothingWithoutSessionOrConsultant() {
+    eventNotificationService.retireOpenEnquiryNotifications(null, "consultant-a");
+    eventNotificationService.retireOpenEnquiryNotifications(sessionMock(), null);
+    eventNotificationService.retireOpenEnquiryNotifications(sessionMock(), " ");
+
+    verify(eventNotificationRepository, never())
+        .findOtherRecipientsOfSessionEvents(any(), any(), any());
   }
 
   @Test
