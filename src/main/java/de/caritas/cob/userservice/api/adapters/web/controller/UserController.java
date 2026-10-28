@@ -196,6 +196,44 @@ public class UserController implements UsersApi {
   }
 
   @Override
+  public ResponseEntity<
+          java.util.List<de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO>>
+      getPendingCallKnocks() {
+    return directLinkControllerDelegate.getPendingCallKnocks();
+  }
+
+  @Override
+  public ResponseEntity<
+          java.util.List<de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO>>
+      admitAllCallKnocks() {
+    return directLinkControllerDelegate.admitAllCallKnocks();
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO>
+      admitCallKnock(Long knockId) {
+    return directLinkControllerDelegate.admitCallKnock(knockId);
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO>
+      declineCallKnock(Long knockId) {
+    return directLinkControllerDelegate.declineCallKnock(knockId);
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO>
+      getOwnCallKnock(Long knockId) {
+    return directLinkControllerDelegate.getOwnCallKnock(knockId);
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO>
+      cancelOwnCallKnock(Long knockId) {
+    return directLinkControllerDelegate.cancelOwnCallKnock(knockId);
+  }
+
+  @Override
   public ResponseEntity<Void> sendContactSheetEmail(Long sessionId) {
     requestedContactSheetService.send(sessionId, authenticatedUser.getUserId());
     return ResponseEntity.noContent().build();

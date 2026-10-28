@@ -1,5 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.CallKnockStatus;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateDirectLinkDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkConversationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkDTO;
@@ -7,9 +9,11 @@ import de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkMedium;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateDirectLinkDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
+import de.caritas.cob.userservice.api.model.GroupChatJoinRequest;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.CounsellorDirectLinkService;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.CounsellorDirectLinkService.CreateCommand;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.CounsellorDirectLinkService.UpdateCommand;
+import de.caritas.cob.userservice.api.service.agencyinvitelink.DirectCallKnockService;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkChatType;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkStatus;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
@@ -37,6 +41,7 @@ public class DirectLinkControllerDelegate {
   private final @NonNull CounsellorDirectLinkService service;
   private final @NonNull UserAccountService userAccountService;
   private final @NonNull TopicService topicService;
+  private final @NonNull DirectCallKnockService knockService;
 
   @Value("${app.base.url}")
   private String appBaseUrl;
@@ -90,8 +95,56 @@ public class DirectLinkControllerDelegate {
             .matrixRoomId(started.matrixRoomId())
             .medium(DirectLinkMedium.valueOf(started.medium().name()))
             .admission(DirectLinkConversationDTO.AdmissionEnum.valueOf(started.admission().name()))
-            .created(started.created());
+            .created(started.created())
+            .knockId(started.knockId())
+            .knockStatus(
+                started.knockStatus() == null
+                    ? null
+                    : CallKnockStatus.valueOf(started.knockStatus()));
     return new ResponseEntity<>(dto, started.created() ? HttpStatus.CREATED : HttpStatus.OK);
+  }
+
+  ResponseEntity<List<CallKnockDTO>> getPendingCallKnocks() {
+    var consultant = userAccountService.retrieveValidatedConsultant();
+    return ResponseEntity.ok(
+        knockService.pendingFor(consultant).stream().map(this::toKnockDto).toList());
+  }
+
+  ResponseEntity<List<CallKnockDTO>> admitAllCallKnocks() {
+    var consultant = userAccountService.retrieveValidatedConsultant();
+    return ResponseEntity.ok(
+        knockService.admitAll(consultant).stream().map(this::toKnockDto).toList());
+  }
+
+  ResponseEntity<CallKnockDTO> admitCallKnock(Long knockId) {
+    var consultant = userAccountService.retrieveValidatedConsultant();
+    return ResponseEntity.ok(toKnockDto(knockService.admit(knockId, consultant)));
+  }
+
+  ResponseEntity<CallKnockDTO> declineCallKnock(Long knockId) {
+    var consultant = userAccountService.retrieveValidatedConsultant();
+    return ResponseEntity.ok(toKnockDto(knockService.decline(knockId, consultant)));
+  }
+
+  ResponseEntity<CallKnockDTO> getOwnCallKnock(Long knockId) {
+    var user = userAccountService.retrieveValidatedUser();
+    return ResponseEntity.ok(toKnockDto(knockService.getOwn(knockId, user)));
+  }
+
+  ResponseEntity<CallKnockDTO> cancelOwnCallKnock(Long knockId) {
+    var user = userAccountService.retrieveValidatedUser();
+    return ResponseEntity.ok(toKnockDto(knockService.cancelOwn(knockId, user)));
+  }
+
+  private CallKnockDTO toKnockDto(GroupChatJoinRequest knock) {
+    return new CallKnockDTO()
+        .id(knock.getId())
+        .sessionId(knock.getSessionId())
+        .status(CallKnockStatus.valueOf(knock.getStatus().name()))
+        .medium(DirectLinkMedium.valueOf(knock.getMedium()))
+        .requestedAt(knock.getRequestedAt().atOffset(ZoneOffset.UTC))
+        .decidedAt(
+            knock.getDecidedAt() == null ? null : knock.getDecidedAt().atOffset(ZoneOffset.UTC));
   }
 
   DirectLinkDTO toDto(AgencyInviteLink link, Map<Long, TopicDTO> topics) {

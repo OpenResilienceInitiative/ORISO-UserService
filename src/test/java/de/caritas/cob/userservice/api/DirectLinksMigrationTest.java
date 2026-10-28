@@ -14,8 +14,9 @@ import liquibase.resource.ClassLoaderResourceAccessor;
 import org.junit.jupiter.api.Test;
 
 /**
- * Runs the direct-link changeset (#1475) on agency_invite_link as it stands after 0052: existing
- * admin links keep working (no name, not temporary) and the rollback removes the new columns.
+ * Runs the direct-link changesets (#1475) on agency_invite_link (after 0052) and
+ * group_chat_join_request (after 1499): existing rows keep working, a call knock without series
+ * fits, and the rollback restores both tables.
  */
 class DirectLinksMigrationTest {
 
@@ -47,11 +48,46 @@ class DirectLinksMigrationTest {
         }
         assertThat(count(c, "consultant_id = 'c1' AND link_kind = 'COUNSELLOR'")).isEqualTo(1);
 
-        liquibase.rollback(1, (String) null);
+        liquibase.rollback(2, (String) null);
         assertThat(columnCount(c, "NAME")).isZero();
         assertThat(columnCount(c, "TEMPORARY_ACCOUNT")).isZero();
         assertThat(columnCount(c, "UPDATE_DATE")).isZero();
       }
+    }
+  }
+
+  @Test
+  void update_Should_LetCallKnocksLiveBesideSeriesKnocks_And_RollbackRemovesThem()
+      throws Exception {
+    try (Connection c = newDatabase()) {
+      createTableAsBefore(c);
+      try (var sql = c.createStatement()) {
+        sql.execute(
+            "INSERT INTO group_chat_join_request (series_id, consultant_id, status, via,"
+                + " requested_at) VALUES (1, 'c1', 'PENDING', 'INVITE_LINK', NOW())");
+      }
+      try (var liquibase = liquibase(c)) {
+        liquibase.update(new Contexts(), new LabelExpression());
+        try (var sql = c.createStatement()) {
+          sql.execute(
+              "INSERT INTO group_chat_join_request (session_id, user_id, invite_link_id, medium,"
+                  + " status, via, requested_at)"
+                  + " VALUES (500, 'u1', 9, 'VIDEO', 'PENDING', 'DIRECT_LINK', NOW())");
+        }
+        assertThat(knockCount(c, "via = 'DIRECT_LINK' AND series_id IS NULL")).isEqualTo(1);
+
+        liquibase.rollback(1, (String) null);
+        assertThat(knockCount(c, "1 = 1")).as("series knock kept, call knock gone").isEqualTo(1);
+        assertThat(knockCount(c, "via = 'INVITE_LINK'")).isEqualTo(1);
+      }
+    }
+  }
+
+  private static int knockCount(Connection c, String where) throws Exception {
+    try (var sql = c.createStatement();
+        var rs = sql.executeQuery("SELECT COUNT(*) FROM group_chat_join_request WHERE " + where)) {
+      rs.next();
+      return rs.getInt(1);
     }
   }
 
@@ -89,6 +125,22 @@ class DirectLinksMigrationTest {
               + " used_at DATETIME NULL,"
               + " used_by_session_id BIGINT NULL,"
               + " status VARCHAR(20) NOT NULL,"
+              + " PRIMARY KEY (id))");
+      // 20260923_group_chat_join_request_1499 + 20260926_group_chat_admission_1499, no FK.
+      sql.execute(
+          "CREATE TABLE group_chat_join_request ("
+              + " id BIGINT NOT NULL AUTO_INCREMENT,"
+              + " series_id BIGINT UNSIGNED NOT NULL,"
+              + " consultant_id VARCHAR(36) NOT NULL,"
+              + " status VARCHAR(16) NOT NULL,"
+              + " via VARCHAR(32) NOT NULL DEFAULT 'INVITE_LINK',"
+              + " admitted_role VARCHAR(16) NULL,"
+              + " requested_at DATETIME NOT NULL,"
+              + " decided_at DATETIME NULL,"
+              + " decided_by VARCHAR(36) NULL,"
+              + " admission_requested_at DATETIME NULL,"
+              + " admission_attempt_count INT NOT NULL DEFAULT 0,"
+              + " admission_last_attempt_at DATETIME NULL,"
               + " PRIMARY KEY (id))");
     }
   }

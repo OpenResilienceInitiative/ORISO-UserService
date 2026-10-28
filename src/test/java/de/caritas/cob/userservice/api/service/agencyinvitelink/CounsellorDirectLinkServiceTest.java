@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.facade.CreateNewSessionFacade;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.GroupChatJoinRequest;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
@@ -59,6 +60,7 @@ class CounsellorDirectLinkServiceTest {
   @Mock private CreateNewSessionFacade createNewSessionFacade;
   @Mock private ConsultantRepository consultantRepository;
   @Mock private TenantService tenantService;
+  @Mock private DirectCallKnockService knockService;
 
   private CounsellorDirectLinkService service;
   private Consultant owner;
@@ -73,7 +75,8 @@ class CounsellorDirectLinkServiceTest {
             policy,
             createNewSessionFacade,
             consultantRepository,
-            tenantService);
+            tenantService,
+            knockService);
     owner = consultantIn(AGENCY);
     when(consultantRepository.findByIdAndDeleteDateIsNull(OWNER_ID)).thenReturn(Optional.of(owner));
     var agency = new AgencyDTO().id(AGENCY).tenantId(TENANT).consultingType(3).postcode("12345");
@@ -293,8 +296,25 @@ class CounsellorDirectLinkServiceTest {
     when(createNewSessionFacade.initializeNewSession(any(), any(), anyList()))
         .thenReturn(new NewRegistrationResponseDto().sessionId(503L).status(HttpStatus.CREATED));
 
-    assertThat(service.startConversation("tok", asker("a")).admission())
-        .isEqualTo(InviteLinkAdmission.KNOCK);
+    var knock =
+        GroupChatJoinRequest.builder().id(77L).status(GroupChatJoinRequest.Status.PENDING).build();
+    when(knockService.knock(eq(503L), any(), any(), eq(medium))).thenReturn(knock);
+
+    var started = service.startConversation("tok", asker("a"));
+
+    assertThat(started.admission()).isEqualTo(InviteLinkAdmission.KNOCK);
+    assertThat(started.knockId()).isEqualTo(77L);
+    assertThat(started.knockStatus()).isEqualTo("PENDING");
+  }
+
+  @Test
+  void startConversation_Should_NotKnock_ForChat() {
+    publicLink("tok", "CHAT", "ACTIVE");
+    when(createNewSessionFacade.initializeNewSession(any(), any(), anyList()))
+        .thenReturn(new NewRegistrationResponseDto().sessionId(504L).status(HttpStatus.CREATED));
+
+    assertThat(service.startConversation("tok", asker("a")).knockId()).isNull();
+    verifyNoInteractions(knockService);
   }
 
   @Test

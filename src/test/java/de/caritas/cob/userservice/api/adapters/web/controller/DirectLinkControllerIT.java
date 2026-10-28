@@ -31,6 +31,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
@@ -80,6 +81,7 @@ class DirectLinkControllerIT {
   @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
   @Autowired private UserRepository userRepository;
   @Autowired private AgencyInviteLinkRepository linkRepository;
+  @Autowired private SessionRepository sessionRepository;
 
   @MockitoBean private AuthenticatedUser authenticatedUser;
   @MockitoBean private AgencyService agencyService;
@@ -230,6 +232,70 @@ class DirectLinkControllerIT {
         .andExpect(status().isGone())
         .andExpect(jsonPath("$.reason", is("DIRECT_LINK_INACTIVE")));
     verify(createNewSessionFacade, never()).initializeNewSession(any(), any(User.class), anyList());
+  }
+
+  @Test
+  void callLinkKnocks_AndOnlyTheConversationsCounsellorLetsThePersonIn() throws Exception {
+    var session =
+        StreamSupport.stream(sessionRepository.findAll().spliterator(), false)
+            .findFirst()
+            .orElseThrow();
+    session.setConsultant(owner);
+    session.setUser(asker);
+    sessionRepository.save(session);
+    entityManager.flush();
+
+    actAsConsultant(owner);
+    long id = createLink("VIDEO");
+    String token = linkRepository.findById(id).orElseThrow().getToken();
+    when(createNewSessionFacade.initializeNewSession(any(), any(User.class), anyList()))
+        .thenReturn(
+            new NewRegistrationResponseDto().sessionId(session.getId()).status(HttpStatus.CREATED));
+
+    actAsAsker();
+    var started =
+        asAsker(post("/users/invitelinks/{token}/conversations", token))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.admission", is("KNOCK")))
+            .andExpect(jsonPath("$.knockStatus", is("PENDING")))
+            .andReturn();
+    long knockId =
+        objectMapper.readTree(started.getResponse().getContentAsString()).get("knockId").asLong();
+    // Knocking again while waiting keeps the same place in the queue.
+    asAsker(post("/users/invitelinks/{token}/conversations", token))
+        .andExpect(jsonPath("$.knockId", is((int) knockId)));
+
+    actAsConsultant(otherCounsellor);
+    asConsultant(get("/users/call-knocks")).andExpect(jsonPath("$", hasSize(0)));
+    asConsultant(post("/users/call-knocks/{id}/admit", knockId)).andExpect(status().isNotFound());
+
+    actAsConsultant(owner);
+    asConsultant(get("/users/call-knocks"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$", hasSize(1)))
+        .andExpect(jsonPath("$[0].sessionId", is(session.getId().intValue())))
+        .andExpect(jsonPath("$[0].medium", is("VIDEO")));
+    asConsultant(post("/users/call-knocks/{id}/admit", knockId))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status", is("ADMITTED")));
+    asConsultant(post("/users/call-knocks/{id}/decline", knockId)).andExpect(status().isConflict());
+
+    actAsAsker();
+    asAsker(get("/users/call-knocks/mine/{id}", knockId))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status", is("ADMITTED")));
+    asAsker(get("/users/call-knocks")).andExpect(status().isForbidden());
+
+    // A new visit knocks again; "admit all" lets every waiting person in.
+    asAsker(post("/users/invitelinks/{token}/conversations", token))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.knockStatus", is("PENDING")));
+    actAsConsultant(owner);
+    asConsultant(post("/users/call-knocks/admit-all"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$", hasSize(1)))
+        .andExpect(jsonPath("$[0].status", is("ADMITTED")));
+    asConsultant(get("/users/call-knocks")).andExpect(jsonPath("$", hasSize(0)));
   }
 
   private long createLink(String medium) throws Exception {

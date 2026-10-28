@@ -24,4 +24,37 @@
       <dropColumn tableName="agency_invite_link" columnName="name"/>
     </rollback>
   </changeSet>
+  <!-- Call knocks for direct links reuse the knock model of ORISO-Frontend#1499 (ADR-029 §2):
+       a person knocks on the call in their own 1:1 session, the counsellor admits. Series and
+       consultant become optional; a DIRECT_LINK row carries session and user instead. -->
+  <changeSet id="20261028-direct-link-call-knock-1475" author="oriso">
+    <dropNotNullConstraint tableName="group_chat_join_request" columnName="series_id"
+      columnDataType="BIGINT UNSIGNED"/>
+    <dropNotNullConstraint tableName="group_chat_join_request" columnName="consultant_id"
+      columnDataType="VARCHAR(36)"/>
+    <addColumn tableName="group_chat_join_request">
+      <column name="session_id" type="BIGINT"/>
+      <column name="user_id" type="VARCHAR(36)"/>
+      <column name="invite_link_id" type="BIGINT"/>
+      <column name="medium" type="VARCHAR(16)"/>
+    </addColumn>
+    <createIndex tableName="group_chat_join_request" indexName="idx_gcjr_session_status">
+      <column name="session_id"/>
+      <column name="status"/>
+    </createIndex>
+    <rollback>
+      <delete tableName="group_chat_join_request">
+        <where>via = 'DIRECT_LINK'</where>
+      </delete>
+      <dropIndex tableName="group_chat_join_request" indexName="idx_gcjr_session_status"/>
+      <dropColumn tableName="group_chat_join_request" columnName="medium"/>
+      <dropColumn tableName="group_chat_join_request" columnName="invite_link_id"/>
+      <dropColumn tableName="group_chat_join_request" columnName="user_id"/>
+      <dropColumn tableName="group_chat_join_request" columnName="session_id"/>
+      <addNotNullConstraint tableName="group_chat_join_request" columnName="consultant_id"
+        columnDataType="VARCHAR(36)"/>
+      <addNotNullConstraint tableName="group_chat_join_request" columnName="series_id"
+        columnDataType="BIGINT UNSIGNED"/>
+    </rollback>
+  </changeSet>
 </databaseChangeLog>

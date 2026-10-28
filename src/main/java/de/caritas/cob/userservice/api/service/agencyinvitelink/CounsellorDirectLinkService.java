@@ -50,6 +50,7 @@ public class CounsellorDirectLinkService {
   private final @NonNull CreateNewSessionFacade createNewSessionFacade;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull TenantService tenantService;
+  private final @NonNull DirectCallKnockService directCallKnockService;
 
   public List<AgencyInviteLink> listOwn(Consultant owner) {
     return repository.findAllByConsultantIdAndLinkKindAndChatTypeInOrderByCreateDateDesc(
@@ -179,12 +180,19 @@ public class CounsellorDirectLinkService {
 
     var response =
         createNewSessionFacade.initializeNewSession(registration, user, Lists.newArrayList());
+    // Calls never reach the room on their own: every visit knocks (ADR-029 §2).
+    var knock =
+        medium.admission() == InviteLinkAdmission.KNOCK
+            ? directCallKnockService.knock(response.getSessionId(), user, link.getId(), medium)
+            : null;
     return new StartedConversation(
         response.getSessionId(),
         response.getMatrixRoomId(),
         medium,
         medium.admission(),
-        response.getStatus() != HttpStatus.CONFLICT);
+        response.getStatus() != HttpStatus.CONFLICT,
+        knock == null ? null : knock.getId(),
+        knock == null ? null : knock.getStatus().name());
   }
 
   public static boolean defaultTemporary(InviteLinkChatType medium) {
@@ -270,5 +278,7 @@ public class CounsellorDirectLinkService {
       String matrixRoomId,
       InviteLinkChatType medium,
       InviteLinkAdmission admission,
-      boolean created) {}
+      boolean created,
+      Long knockId,
+      String knockStatus) {}
 }
