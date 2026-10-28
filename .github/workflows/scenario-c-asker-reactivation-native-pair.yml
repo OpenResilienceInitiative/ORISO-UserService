@@ -34,7 +34,7 @@ jobs:
       uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
       with:
         repository: OpenResilienceInitiative/ORISO-Keycloak
-        ref: 05fefa772dda8b248be9531e0552aa9910e1b71e
+        ref: 5d5db75faa1c36ff6d6ed2eb41f71ecd415e6aeb
         path: native-keycloak
         persist-credentials: false
     - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961

@@ -19,7 +19,7 @@ import tempfile
 import threading
 import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[2]
-KC_COMMIT = '05fefa772dda8b248be9531e0552aa9910e1b71e'
+KC_COMMIT = '5d5db75faa1c36ff6d6ed2eb41f71ecd415e6aeb'
 SUITE = 'de.caritas.cob.userservice.api.UserServiceStartupNativePairProof'
 BROWSER_HELPER = 'de.caritas.cob.userservice.api.CurrentClientBrowserBridge'
 BROWSER_FLAGS = {'frontendLocale', 'ownActorSeed', 'primaryActorSeed', 'ownMutationObserved', 'ownConsultantRemoval', 'peerAdminRemoval', 'sourceAndCleanup'}

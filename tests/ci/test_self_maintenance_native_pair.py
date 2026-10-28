@@ -78,7 +78,7 @@ class SelfMaintenancePairControls(unittest.TestCase):
         self.assertEqual(["password", "locale", "contact-email", "contact-email-remove", "role-agency"], job["strategy"]["matrix"]["kind"])
         native = [step for step in job["steps"] if step.get("with", {}).get("repository") == "OpenResilienceInitiative/ORISO-Keycloak"]
         self.assertEqual(1, len(native)); self.assertEqual(proof.KC_COMMIT, native[0]["with"]["ref"])
-        self.assertEqual("05fefa772dda8b248be9531e0552aa9910e1b71e", proof.KC_COMMIT)
+        self.assertEqual("5d5db75faa1c36ff6d6ed2eb41f71ecd415e6aeb", proof.KC_COMMIT)
 
 
 if __name__ == "__main__": unittest.main()

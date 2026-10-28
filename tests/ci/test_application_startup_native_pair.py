@@ -488,7 +488,7 @@ class ApplicationStartupPairControls(unittest.TestCase):
         self.assertEqual('OPEN', job['env']['STARTUP_EXPECTED_STATE'])
         native = [s for s in job['steps'] if s.get('with', {}).get('repository') == 'OpenResilienceInitiative/ORISO-Keycloak']
         self.assertEqual(1, len(native)); self.assertEqual(proof.KC_COMMIT, native[0]['with']['ref'])
-        self.assertEqual('05fefa772dda8b248be9531e0552aa9910e1b71e', proof.KC_COMMIT)
+        self.assertEqual('5d5db75faa1c36ff6d6ed2eb41f71ecd415e6aeb', proof.KC_COMMIT)
         self.assertNotIn('@MockitoBean', (ROOT / proof.JAVA_SOURCE).read_text())
         self.assertNotIn('setLazyInitialization', (ROOT / proof.JAVA_SOURCE).read_text())
 
