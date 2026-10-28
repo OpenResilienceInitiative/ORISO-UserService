@@ -109,10 +109,10 @@ class CallShareLinkServiceTest {
     assertThat(link.isKnock()).isTrue();
     assertThat(link.getCallBindingId()).isEqualTo(binding.getId());
     assertThat(link.getTenantId()).isEqualTo(TENANT);
-    // Nothing of the conversation is copied onto the link (security review, #1487).
-    assertThat(link.getAgencyId()).isNull();
-    assertThat(link.getConsultingTypeId()).isNull();
-    assertThat(link.getTopicId()).isNull();
+    // Kept for the entry room's consent and registration (finding 2 on hold, #1487).
+    assertThat(link.getAgencyId()).isEqualTo(99L);
+    assertThat(link.getConsultingTypeId()).isEqualTo(1);
+    assertThat(link.getTopicId()).isEqualTo(11L);
     assertThat(link.getConsultantId()).isEqualTo(COUNSELLOR);
     assertThat(link.getStatus()).isEqualTo("ACTIVE");
     assertThat(link.getExpiresAt()).isAfter(LocalDateTime.now());

@@ -249,13 +249,17 @@ public class AgencyInviteLinkService {
   /**
    * Call share link (#1487): 410 once the call is over. {@code temporaryAccount} is effective (the
    * counsellor's setting, and allowed by platform and Träger); {@code admission} follows
-   * "Anklopfen" and changes while the call runs. Nothing about the call, its conversation,
-   * Beratungsstelle or topic is exposed.
+   * "Anklopfen" and changes while the call runs. Beratungsstelle, consulting type and topic stay in
+   * the context for the entry room's consent and registration (decision pending, #1487); nothing
+   * about the call or its conversation is exposed.
    */
   private CallShareContext callShareContext(AgencyInviteLink link) {
     callShareLinkService.requireUsable(link);
     return new CallShareContext(
         link.getTenantId(),
+        link.getAgencyId(),
+        link.getConsultingTypeId(),
+        link.getTopicId(),
         link.getChatType(),
         link.isTemporaryAccount() && callShareLinkService.temporaryAccountAllowed(link),
         (link.isKnock() ? InviteLinkAdmission.KNOCK : InviteLinkAdmission.DIRECT).name(),
@@ -265,6 +269,9 @@ public class AgencyInviteLinkService {
   /** Public context of a call share link (#1487). */
   public record CallShareContext(
       Long tenantId,
+      Long agencyId,
+      Integer consultingTypeId,
+      Long topicId,
       String chatType,
       boolean temporaryAccount,
       String admission,

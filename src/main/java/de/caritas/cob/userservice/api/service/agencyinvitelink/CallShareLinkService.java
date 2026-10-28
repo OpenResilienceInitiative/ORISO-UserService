@@ -74,8 +74,13 @@ public class CallShareLinkService {
       return view(existing.get(), false);
     }
     var medium = mediumOf(binding);
-    // Policies need the Beratungsstelle; it is read from the call, never copied onto the link.
-    Long agencyId = agencyOf(binding);
+    var session =
+        binding.getSessionId() == null
+            ? Optional.<Session>empty()
+            : sessions.findById(binding.getSessionId());
+    // The entry room needs the Beratungsstelle for its consent and legal texts (decision pending,
+    // see the PR); policies read it from the call, not from the link.
+    Long agencyId = session.map(Session::getAgencyId).orElse(null);
     if (!directInvitePolicy.allows(tenant, agencyId, medium)) {
       throw new ForbiddenException("Direct invitations are not allowed here");
     }
@@ -85,6 +90,9 @@ public class CallShareLinkService {
         AgencyInviteLink.builder()
             .token(generateToken())
             .tenantId(tenant)
+            .agencyId(agencyId)
+            .consultingTypeId(session.map(Session::getConsultingTypeId).orElse(null))
+            .topicId(session.map(Session::getMainTopicId).orElse(null))
             .linkKind(CALL)
             .chatType(medium.name())
             .anonymity(InviteLinkAnonymity.FULL.name())

@@ -90,8 +90,8 @@ class AgencyInviteLinkContextHttpTest {
             content()
                 .json(
                     """
-            {"tenantId":83,"chatType":"AUDIO","temporaryAccount":false,"admission":"DIRECT",
-             "linkKind":"CALL"}
+            {"tenantId":83,"agencyId":99,"consultingTypeId":1,"topicId":11,"chatType":"AUDIO",
+             "temporaryAccount":false,"admission":"DIRECT","linkKind":"CALL"}
             """,
                     org.springframework.test.json.JsonCompareMode.STRICT));
     verify(callShareLinks).requireUsable(link);
