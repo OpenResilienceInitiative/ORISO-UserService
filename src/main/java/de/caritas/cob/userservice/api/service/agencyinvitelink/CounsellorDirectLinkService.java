@@ -159,15 +159,7 @@ public class CounsellorDirectLinkService {
     if (!directInvitePolicy.allows(link.getTenantId(), link.getAgencyId(), medium)) {
       throw new ForbiddenException("Direct invitations are not allowed here");
     }
-    // The owner may have left the Beratungsstelle or the platform since creating the link.
-    var ownerStillThere =
-        consultantRepository
-            .findByIdAndDeleteDateIsNull(link.getConsultantId())
-            .filter(owner -> worksFor(owner, link.getAgencyId()))
-            .isPresent();
-    if (!ownerStillThere) {
-      throw new DirectLinkInactiveException();
-    }
+    DirectLinkOwner.requireStillServing(consultantRepository, link);
 
     var agency = agencyService.getAgencyWithoutCaching(link.getAgencyId());
     var registration = new NewRegistrationDto();

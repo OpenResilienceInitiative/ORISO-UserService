@@ -33,7 +33,7 @@
     <dropNotNullConstraint tableName="group_chat_join_request" columnName="consultant_id"
       columnDataType="VARCHAR(36)"/>
     <addColumn tableName="group_chat_join_request">
-      <column name="session_id" type="BIGINT"/>
+      <column name="session_id" type="BIGINT UNSIGNED"/>
       <column name="user_id" type="VARCHAR(36)"/>
       <column name="invite_link_id" type="BIGINT"/>
       <column name="medium" type="VARCHAR(16)"/>
@@ -42,10 +42,17 @@
       <column name="session_id"/>
       <column name="status"/>
     </createIndex>
+    <!-- A knock holds a session and a user id: it goes when its conversation goes (also on
+         account deletion, which deletes the asker's sessions). -->
+    <addForeignKeyConstraint baseTableName="group_chat_join_request" baseColumnNames="session_id"
+      referencedTableName="session" referencedColumnNames="id" constraintName="fk_gcjr_session"
+      onDelete="CASCADE"/>
     <rollback>
       <delete tableName="group_chat_join_request">
         <where>via = 'DIRECT_LINK'</where>
       </delete>
+      <dropForeignKeyConstraint baseTableName="group_chat_join_request"
+        constraintName="fk_gcjr_session"/>
       <dropIndex tableName="group_chat_join_request" indexName="idx_gcjr_session_status"/>
       <dropColumn tableName="group_chat_join_request" columnName="medium"/>
       <dropColumn tableName="group_chat_join_request" columnName="invite_link_id"/>

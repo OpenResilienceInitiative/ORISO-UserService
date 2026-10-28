@@ -41,6 +41,21 @@ public interface GroupChatJoinRequestRepository extends CrudRepository<GroupChat
       @Param("status") Status status,
       @Param("since") java.time.LocalDateTime since);
 
+  /** Same knocks, locked: "admit all" decides on the current rows, not on an earlier read. */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "SELECT request FROM GroupChatJoinRequest request"
+          + " WHERE request.sessionId IN"
+          + " (SELECT session.id FROM Session session WHERE session.consultant.id = :consultantId)"
+          + " AND request.via = :via AND request.status = :status"
+          + " AND request.requestedAt >= :since"
+          + " ORDER BY request.requestedAt ASC, request.id ASC")
+  List<GroupChatJoinRequest> findCallKnocksForConsultantForUpdate(
+      @Param("consultantId") String consultantId,
+      @Param("via") Via via,
+      @Param("status") Status status,
+      @Param("since") java.time.LocalDateTime since);
+
   List<GroupChatJoinRequest> findBySeriesIdInAndStatusOrderByRequestedAtAscIdAsc(
       Collection<Long> seriesIds, Status status);
 

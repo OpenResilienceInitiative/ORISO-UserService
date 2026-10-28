@@ -193,6 +193,7 @@ public class AgencyInviteLinkService {
     if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now())) {
       throw new BadRequestException("Invite link expired");
     }
+    DirectLinkOwner.requireStillServing(consultantRepository, link);
 
     TenantData previousTenant = TenantContext.getCurrentTenantData();
     try {
@@ -268,6 +269,7 @@ public class AgencyInviteLinkService {
       repository.save(link);
       throw new BadRequestException("Invite link expired");
     }
+    DirectLinkOwner.requireStillServing(consultantRepository, link);
 
     tenantService.requireOperationalTenant(link.getTenantId());
 

@@ -13,7 +13,6 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -71,7 +70,13 @@ public class DirectCallKnockService {
   /** Idempotent: only a pending knock changes. */
   @Transactional
   public GroupChatJoinRequest cancelOwn(Long knockId, User user) {
-    var knock = requireOwn(knockId, user);
+    // Locked like decide: a cancel racing an admission must not overwrite it.
+    var knock =
+        repository
+            .findByIdForUpdate(knockId)
+            .filter(k -> k.getVia() == Via.DIRECT_LINK)
+            .filter(k -> Objects.equals(k.getUserId(), user.getUserId()))
+            .orElseThrow(() -> new NotFoundException("Call knock %s not found", knockId));
     if (knock.isPending()) {
       knock.setStatus(Status.CANCELLED);
       knock.setDecidedAt(LocalDateTime.now());
@@ -99,11 +104,12 @@ public class DirectCallKnockService {
   @Transactional
   public List<GroupChatJoinRequest> admitAll(Consultant consultant) {
     var now = LocalDateTime.now();
-    // Each row is locked and re-checked: a knock cancelled or declined meanwhile stays as it is.
-    return pendingFor(consultant).stream()
-        .map(knock -> repository.findByIdForUpdate(knock.getId()))
-        .flatMap(Optional::stream)
-        .filter(GroupChatJoinRequest::isPending)
+    // Loaded under lock in one query, so a knock cancelled or declined meanwhile is not pending
+    // any more; no earlier unlocked read can leave a stale entity in the persistence context.
+    return repository
+        .findCallKnocksForConsultantForUpdate(
+            consultant.getId(), Via.DIRECT_LINK, Status.PENDING, waitingSince())
+        .stream()
         .map(
             knock -> {
               knock.setStatus(Status.ADMITTED);

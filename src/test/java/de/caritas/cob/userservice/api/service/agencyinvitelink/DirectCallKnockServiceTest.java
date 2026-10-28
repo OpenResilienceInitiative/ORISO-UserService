@@ -146,11 +146,9 @@ class DirectCallKnockServiceTest {
   void admitAll_Should_LetEveryoneWaitingIn() {
     var first = pending(1L, LocalDateTime.now().minusMinutes(2));
     var second = pending(2L, LocalDateTime.now().minusMinutes(1));
-    when(repository.findCallKnocksForConsultant(
+    when(repository.findCallKnocksForConsultantForUpdate(
             eq("counsellor-1"), eq(Via.DIRECT_LINK), eq(Status.PENDING), any()))
         .thenReturn(List.of(first, second));
-    when(repository.findByIdForUpdate(1L)).thenReturn(Optional.of(first));
-    when(repository.findByIdForUpdate(2L)).thenReturn(Optional.of(second));
 
     var admitted = service.admitAll(counsellor);
 
@@ -160,24 +158,10 @@ class DirectCallKnockServiceTest {
   }
 
   @Test
-  void admitAll_Should_LeaveAKnockAlone_When_ItWasCancelledMeanwhile() {
-    var listed = pending(1L, LocalDateTime.now().minusMinutes(2));
-    when(repository.findCallKnocksForConsultant(
-            eq("counsellor-1"), eq(Via.DIRECT_LINK), eq(Status.PENDING), any()))
-        .thenReturn(List.of(listed));
-    var cancelled = pending(1L, listed.getRequestedAt());
-    cancelled.setStatus(Status.CANCELLED);
-    when(repository.findByIdForUpdate(1L)).thenReturn(Optional.of(cancelled));
-
-    assertThat(service.admitAll(counsellor)).isEmpty();
-    assertThat(cancelled.getStatus()).isEqualTo(Status.CANCELLED);
-    verify(repository, never()).save(any());
-  }
-
-  @Test
   void ownKnock_Should_BeReadableAndCancellableOnlyByThePerson() {
     var knock = pending(1L, LocalDateTime.now());
     when(repository.findById(1L)).thenReturn(Optional.of(knock));
+    when(repository.findByIdForUpdate(1L)).thenReturn(Optional.of(knock));
 
     assertThat(service.getOwn(1L, asker)).isSameAs(knock);
     assertThat(service.cancelOwn(1L, asker).getStatus()).isEqualTo(Status.CANCELLED);
@@ -188,6 +172,17 @@ class DirectCallKnockServiceTest {
     stranger.setUserId("asker-2");
     assertThatThrownBy(() -> service.getOwn(1L, stranger)).isInstanceOf(NotFoundException.class);
     assertThatThrownBy(() -> service.cancelOwn(1L, stranger)).isInstanceOf(NotFoundException.class);
+  }
+
+  @Test
+  void cancelOwn_Should_ReadTheKnockUnderLock_AndKeepAnAdmission() {
+    var admitted = pending(1L, LocalDateTime.now());
+    admitted.setStatus(Status.ADMITTED);
+    when(repository.findByIdForUpdate(1L)).thenReturn(Optional.of(admitted));
+
+    assertThat(service.cancelOwn(1L, asker).getStatus()).isEqualTo(Status.ADMITTED);
+    verify(repository, never()).findById(any());
+    verify(repository, never()).save(any());
   }
 
   private GroupChatJoinRequest pending(Long id, LocalDateTime requestedAt) {

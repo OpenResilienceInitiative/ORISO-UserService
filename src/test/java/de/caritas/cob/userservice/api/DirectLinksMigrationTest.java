@@ -75,16 +75,40 @@ class DirectLinksMigrationTest {
                   + " VALUES (500, 'u1', 9, 'VIDEO', 'PENDING', 'DIRECT_LINK', NOW())");
         }
         assertThat(knockCount(c, "via = 'DIRECT_LINK' AND series_id IS NULL")).isEqualTo(1);
+        // A knock goes with its conversation.
+        try (var sql = c.createStatement()) {
+          sql.execute(
+              "INSERT INTO group_chat_join_request (session_id, user_id, medium, status, via,"
+                  + " requested_at) VALUES (501, 'u2', 'AUDIO', 'PENDING', 'DIRECT_LINK', NOW())");
+          sql.execute("DELETE FROM session WHERE id = 501");
+        }
+        assertThat(knockCount(c, "via = 'DIRECT_LINK'")).isEqualTo(1);
 
         liquibase.rollback(1, (String) null);
         assertThat(knockCount(c, "1 = 1")).as("series knock kept, call knock gone").isEqualTo(1);
         assertThat(knockCount(c, "via = 'INVITE_LINK'")).isEqualTo(1);
+        // Both columns are mandatory again.
+        assertThat(insertFails(c, "NULL, 'c1'")).as("series_id NOT NULL").isTrue();
+        assertThat(insertFails(c, "1, NULL")).as("consultant_id NOT NULL").isTrue();
         // The foreign key survived the change and its rollback.
         try (var sql = c.createStatement()) {
           sql.execute("DELETE FROM chat WHERE id = 1");
         }
         assertThat(knockCount(c, "1 = 1")).as("cascade still in place").isZero();
       }
+    }
+  }
+
+  private static boolean insertFails(Connection c, String seriesAndConsultant) {
+    try (var sql = c.createStatement()) {
+      sql.execute(
+          "INSERT INTO group_chat_join_request (series_id, consultant_id, status, via,"
+              + " requested_at) VALUES ("
+              + seriesAndConsultant
+              + ", 'PENDING', 'INVITE_LINK', NOW())");
+      return false;
+    } catch (java.sql.SQLException expected) {
+      return true;
     }
   }
 
@@ -135,6 +159,8 @@ class DirectLinksMigrationTest {
       // production foreign key to chat, so the nullability change runs against it.
       sql.execute("CREATE TABLE chat (id BIGINT UNSIGNED NOT NULL, PRIMARY KEY (id))");
       sql.execute("INSERT INTO chat (id) VALUES (1)");
+      sql.execute("CREATE TABLE session (id BIGINT UNSIGNED NOT NULL, PRIMARY KEY (id))");
+      sql.execute("INSERT INTO session (id) VALUES (500), (501)");
       sql.execute(
           "CREATE TABLE group_chat_join_request ("
               + " id BIGINT NOT NULL AUTO_INCREMENT,"

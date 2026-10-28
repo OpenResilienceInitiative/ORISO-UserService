@@ -249,8 +249,11 @@ class DirectLinkControllerIT {
             .andReturn();
     long knockId =
         objectMapper.readTree(started.getResponse().getContentAsString()).get("knockId").asLong();
-    // Knocking again while waiting keeps the same place in the queue.
+    // Knocking again while waiting keeps the same place in the queue, in the same conversation.
     asAsker(post("/users/invitelinks/{token}/conversations", token))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.created", is(false)))
+        .andExpect(jsonPath("$.sessionId", is(session.getId().intValue())))
         .andExpect(jsonPath("$.knockId", is((int) knockId)));
 
     actAsConsultant(otherCounsellor);
@@ -275,7 +278,8 @@ class DirectLinkControllerIT {
 
     // A new visit knocks again; "admit all" lets every waiting person in.
     asAsker(post("/users/invitelinks/{token}/conversations", token))
-        .andExpect(status().isCreated())
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.created", is(false)))
         .andExpect(jsonPath("$.knockStatus", is("PENDING")));
     actAsConsultant(owner);
     asConsultant(post("/users/call-knocks/admit-all"))
@@ -320,9 +324,12 @@ class DirectLinkControllerIT {
   private String callLinkOpeningInto(Long sessionId) throws Exception {
     actAsConsultant(owner);
     long id = createLink("VIDEO");
+    // As in production: the first visit creates the conversation, later visits reuse it.
     when(createNewSessionFacade.initializeNewSession(any(), any(User.class), anyList()))
         .thenReturn(
-            new NewRegistrationResponseDto().sessionId(sessionId).status(HttpStatus.CREATED));
+            new NewRegistrationResponseDto().sessionId(sessionId).status(HttpStatus.CREATED))
+        .thenReturn(
+            new NewRegistrationResponseDto().sessionId(sessionId).status(HttpStatus.CONFLICT));
     return linkRepository.findById(id).orElseThrow().getToken();
   }
 
