@@ -125,6 +125,7 @@ class PublicPreDeletionJpaTest {
   @Autowired private AdminRepository admins;
   @Autowired private AdminAgencyRepository adminAgencies;
   @Autowired private ConsultantAgencyRepository consultantAgencies;
+  private AgencyService preflightAgencies;
   @Autowired private UserAgencyRepository userAgencies;
   @Autowired private SessionRepository sessions;
   @Autowired private ChatRepository chats;
@@ -232,6 +233,13 @@ class PublicPreDeletionJpaTest {
             .email("operator@fixture.invalid")
             .type(Admin.AdminType.TENANT)
             .build());
+    preflightAgencies = mock(AgencyService.class);
+    when(preflightAgencies.getAgencyWithoutCaching(anyLong()))
+        .thenAnswer(
+            call -> {
+              assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+              return new AgencyDTO().offline(true);
+            });
     mode = mock(IdentityClientConfig.class);
     when(mode.isFiveActorMode()).thenReturn(true);
     lifecycle = new DeletionLifecycleService();
@@ -412,6 +420,192 @@ class PublicPreDeletionJpaTest {
     assertNotNull(saved.getDeleteDate());
     assertEquals(DeletionLifecycleState.READ_ONLY_SAFEGUARD, saved.getDeletionLifecycleState());
     assertNotNull(saved.getDeletionReadOnlyUntil());
+  }
+
+  @Test
+  void activeSessionPreflightRetiresOnlyOriginalNeverDispatchedConsultantIntent() {
+    consultant();
+    membershipFixture(true, Session.SessionStatus.IN_PROGRESS);
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    var advice = new TerminalAdvice();
+    var web = new org.springframework.web.context.request.ServletWebRequest(request);
+    for (int retry = 0; retry < 2; retry++) {
+      var failure =
+          assertThrows(
+              de.caritas.cob.userservice.api.exception.httpresponses
+                  .CustomValidationHttpStatusException.class,
+              () ->
+                  owner()
+                      .startAdminConsultant(
+                          ACCOUNT,
+                          false,
+                          ack -> {
+                            throw new de.caritas.cob.userservice.api.exception.httpresponses
+                                .CustomValidationHttpStatusException(
+                                de.caritas.cob.userservice.api.exception.httpresponses.customheader
+                                    .HttpStatusExceptionReason
+                                    .CONSULTANT_HAS_ACTIVE_OR_ARCHIVE_SESSIONS);
+                          }));
+      var response = advice.handleCustomBadRequest(failure, web);
+      assertEquals(400, response.getStatusCode().value());
+      assertEquals("NO_EFFECT", response.getHeaders().getFirst("X-ORISO-Mutation-Outcome"));
+      assertEquals(operation, response.getHeaders().getFirst("X-ORISO-Mutation-Operation"));
+      assertEquals("no-store", response.getHeaders().getCacheControl());
+      assertEquals(
+          "CONSULTANT_HAS_ACTIVE_OR_ARCHIVE_SESSIONS", response.getHeaders().getFirst("X-Reason"));
+      assertEquals(0, nativeEffects.get());
+      assertEquals(0, nativeCalls.get());
+      assertNull(savedBody);
+      assertNull(consultants.findById(ACCOUNT).orElseThrow().getDeleteDate());
+      request.removeHeader("Idempotency-Key");
+      request.addHeader("Idempotency-Key", UUID.randomUUID().toString());
+      var foreign = advice.handleCustomBadRequest(failure, web);
+      assertNull(foreign.getHeaders().getFirst("X-ORISO-Mutation-Outcome"));
+      request.removeHeader("Idempotency-Key");
+      request.addHeader("Idempotency-Key", operation);
+    }
+    String refusedOperation = operation;
+    String forceOperation = UUID.randomUUID().toString();
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT, ACCOUNT, forceOperation);
+    http = new RestTemplate();
+    server = MockRestServiceServer.bindTo(http).build();
+    nativeHttp(true, ACCOUNT, forceOperation);
+    assertThrows(
+        ServiceUnavailableException.class,
+        () ->
+            owner()
+                .startAdminConsultant(
+                    ACCOUNT,
+                    true,
+                    ack -> {
+                      throw new ServiceUnavailableException(
+                          "Fixture stops after authorized force acknowledgement");
+                    }));
+    assertEquals("ACKNOWLEDGED", status(forceOperation));
+    assertEquals("PREFLIGHT_REFUSED", status(refusedOperation));
+    assertEquals(1, nativeEffects.get());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void lastAgencyEligibilityRefusesBeforeNativeEvenWithForce(boolean enquiries) {
+    consultant();
+    if (enquiries) {
+      var membership = membershipFixture(true);
+      var pending = sessions.findById(membership.session()).orElseThrow();
+      pending.setConsultant(null);
+      pending.setAgencyId(71L);
+      sessions.save(pending);
+    }
+    consultantAgencies.save(
+        ConsultantAgency.builder()
+            .consultant(consultants.findById(ACCOUNT).orElseThrow())
+            .agencyId(71L)
+            .tenantId(7L)
+            .createDate(LocalDateTime.of(2024, 1, 2, 3, 4))
+            .build());
+    when(preflightAgencies.getAgencyWithoutCaching(71L))
+        .thenAnswer(
+            call -> {
+              assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+              assertEquals("PREPARED", status());
+              return new AgencyDTO().offline(enquiries);
+            });
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    for (int retry = 0; retry < 2; retry++) {
+      var failure =
+          assertThrows(
+              de.caritas.cob.userservice.api.exception.httpresponses
+                  .CustomValidationHttpStatusException.class,
+              () ->
+                  owner()
+                      .startAdminConsultant(ACCOUNT, true, ack -> fail("Must refuse before ACK")));
+      var response =
+          new TerminalAdvice()
+              .handleCustomBadRequest(
+                  failure, new org.springframework.web.context.request.ServletWebRequest(request));
+      assertEquals("NO_EFFECT", response.getHeaders().getFirst("X-ORISO-Mutation-Outcome"));
+      assertEquals(operation, response.getHeaders().getFirst("X-ORISO-Mutation-Operation"));
+      assertEquals(
+          enquiries
+              ? "CONSULTANT_IS_THE_LAST_OF_AGENCY_AND_AGENCY_HAS_OPEN_ENQUIRIES"
+              : "CONSULTANT_IS_THE_LAST_OF_AGENCY_AND_AGENCY_IS_STILL_ACTIVE",
+          response.getHeaders().getFirst("X-Reason"));
+      assertEquals(0, nativeEffects.get());
+      assertEquals(0, nativeCalls.get());
+      assertNull(consultants.findById(ACCOUNT).orElseThrow().getDeleteDate());
+    }
+    verify(preflightAgencies, times(1)).getAgencyWithoutCaching(71L);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"source", "body"})
+  void tamperedPreflightCannotIssueAnAuthenticatedTerminal(String changed) {
+    consultant();
+    membershipFixture(true, Session.SessionStatus.IN_ARCHIVE);
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException
+            .class,
+        () -> owner().startAdminConsultant(ACCOUNT, false, ack -> fail("No ACK")));
+    if (changed.equals("body"))
+      jdbc.update(
+          "update identity_account_operation_intent set intent_body='{}' where operation_id=?",
+          operation);
+    else {
+      String source =
+          jdbc.queryForObject(
+              "select source_json from identity_account_operation_intent where operation_id=?",
+              String.class,
+              operation);
+      jdbc.update(
+          "update identity_account_operation_intent set source_json=? where operation_id=?",
+          source.replace(
+              "CONSULTANT_HAS_ACTIVE_OR_ARCHIVE_SESSIONS",
+              "CONSULTANT_IS_THE_LAST_OF_AGENCY_AND_AGENCY_IS_STILL_ACTIVE"),
+          operation);
+    }
+    var refused =
+        assertThrows(
+            RuntimeException.class,
+            () -> owner().startAdminConsultant(ACCOUNT, false, ack -> fail("No ACK")));
+    assertFalse(refused instanceof PublicPreDeletionMaintenance.VerifiedTerminal);
+    assertEquals(0, nativeEffects.get());
+    assertEquals(0, nativeCalls.get());
+  }
+
+  @Test
+  void sessionValidationAfterPossibleDispatchCannotRetireOriginalIntent() {
+    consultant();
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    var failure =
+        assertThrows(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class,
+            () ->
+                owner()
+                    .startAdminConsultant(
+                        ACCOUNT,
+                        false,
+                        ack -> {
+                          throw new de.caritas.cob.userservice.api.exception.httpresponses
+                              .CustomValidationHttpStatusException(
+                              de.caritas.cob.userservice.api.exception.httpresponses.customheader
+                                  .HttpStatusExceptionReason
+                                  .CONSULTANT_HAS_ACTIVE_OR_ARCHIVE_SESSIONS);
+                        }));
+    var response =
+        new TerminalAdvice()
+            .handleCustomBadRequest(
+                failure, new org.springframework.web.context.request.ServletWebRequest(request));
+    assertEquals(400, response.getStatusCode().value());
+    assertNull(response.getHeaders().getFirst("X-ORISO-Mutation-Outcome"));
+    assertEquals("ACKNOWLEDGED", status());
+    assertEquals(1, nativeEffects.get());
   }
 
   @Test
@@ -936,7 +1130,7 @@ class PublicPreDeletionJpaTest {
   @Test
   void acknowledgedSoleOwnerPreparationPurgesOutsideSqlAndRetiresOnlyItsOriginalChat() {
     consultant();
-    var fixture = membershipFixture(false);
+    var fixture = membershipFixture(false, Session.SessionStatus.IN_PROGRESS);
     authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
     nativeHttp(true);
     var shutdown = mock(MatrixChatShutdownService.class);
@@ -1568,6 +1762,10 @@ class PublicPreDeletionJpaTest {
   private record MembershipFixture(Long chat, Long session, Long participation, Long supervision) {}
 
   private MembershipFixture membershipFixture(boolean remaining) {
+    return membershipFixture(remaining, Session.SessionStatus.NEW);
+  }
+
+  private MembershipFixture membershipFixture(boolean remaining, Session.SessionStatus status) {
     var leaving = consultants.findById(ACCOUNT).orElseThrow();
     leaving.setMatrixUserId("@pre-deletion:fixture.invalid");
     consultants.save(leaving);
@@ -1601,7 +1799,7 @@ class PublicPreDeletionJpaTest {
                 .postcode("12345")
                 .languageCode(LanguageCode.de)
                 .registrationType(Session.RegistrationType.REGISTERED)
-                .status(Session.SessionStatus.IN_PROGRESS)
+                .status(status)
                 .matrixRoomId("!main:fixture.invalid")
                 .isConsultantDirectlySet(false)
                 .tenantId(7L)
@@ -1665,24 +1863,29 @@ class PublicPreDeletionJpaTest {
   }
 
   private PublicPreDeletionMaintenance owner() {
-    return new PublicPreDeletionMaintenance(
-        mode,
-        actor,
-        scope,
-        request,
-        jdbc,
-        transactions,
-        entities,
-        actors,
-        broker,
-        codec,
-        http,
-        passwords,
-        ownerClock,
-        "https://identity.test",
-        ISSUER,
-        "fixture",
-        REALM);
+    var owner =
+        new PublicPreDeletionMaintenance(
+            mode,
+            actor,
+            scope,
+            request,
+            jdbc,
+            transactions,
+            entities,
+            actors,
+            broker,
+            codec,
+            http,
+            passwords,
+            ownerClock,
+            "https://identity.test",
+            ISSUER,
+            "fixture",
+            REALM);
+    owner.configureConsultantEligibility(
+        new ConsultantAgencyDeletionValidationService(
+            consultantAgencies, preflightAgencies, sessions));
+    return owner;
   }
 
   private void authenticate(boolean self, String route) {

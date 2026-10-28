@@ -27,6 +27,25 @@ public class DeleteAdminService {
     this.maintenance = maintenance;
   }
 
+  @org.springframework.beans.factory.annotation.Autowired
+  private org.springframework.jdbc.core.JdbcTemplate legacyIdentityRows;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  private de.caritas.cob.userservice.api.helper.AuthenticatedUser legacyRemovalHuman;
+
+  private void requireLegacyPureAdministrator(String account) {
+    if (legacyIdentityRows == null || legacyRemovalHuman == null)
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    if (account.equals(legacyRemovalHuman.getUserId()))
+      throw new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException(
+          "Another authorized Administrator must remove this Administrator identity");
+    if (!legacyIdentityRows
+        .queryForList("select consultant_id from consultant where consultant_id=?", account)
+        .isEmpty())
+      throw new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException(
+          "Separate identity removal requires scoped account commands");
+  }
+
   private boolean scopedRemovalEnabled() {
     return mode != null && mode.isFiveActorMode();
   }
@@ -36,6 +55,7 @@ public class DeleteAdminService {
       removeScoped(adminId, "AGENCY");
       return;
     }
+    requireLegacyPureAdministrator(adminId);
     this.identityAccountRemover.deleteUser(adminId);
     this.adminAgencyRepository.deleteByAdminId(adminId);
     this.adminRepository.deleteById(adminId);
@@ -46,6 +66,7 @@ public class DeleteAdminService {
       removeScoped(adminId, "TENANT");
       return;
     }
+    requireLegacyPureAdministrator(adminId);
     this.identityAccountRemover.deleteUser(adminId);
     this.adminRepository.deleteById(adminId);
   }

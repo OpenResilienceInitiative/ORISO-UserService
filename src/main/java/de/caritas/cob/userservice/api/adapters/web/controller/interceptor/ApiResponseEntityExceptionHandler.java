@@ -187,11 +187,13 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
       final CustomValidationHttpStatusException ex, final WebRequest request) {
     ex.executeLogging();
     var reason = Optional.ofNullable(ex.getCustomHttpHeaders().getFirst("X-Reason"));
+    var headers = new HttpHeaders();
+    headers.addAll(ex.getCustomHttpHeaders());
 
     return handleExceptionInternal(
         ex,
         reason.map(this::reasonBody).orElse(null),
-        ex.getCustomHttpHeaders(),
+        verifiedMutationHeaders(ex, headers, ex.getHttpStatus(), request),
         ex.getHttpStatus(),
         request);
   }

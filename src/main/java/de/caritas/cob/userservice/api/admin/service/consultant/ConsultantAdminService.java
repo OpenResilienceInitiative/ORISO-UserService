@@ -281,7 +281,17 @@ public class ConsultantAdminService {
     preDeletionTransactions = java.util.Objects.requireNonNull(manager);
   }
 
+  @org.springframework.beans.factory.annotation.Autowired
+  private org.springframework.jdbc.core.JdbcTemplate legacyIdentityRows;
+
   private void markConsultantForDeletionLegacy(String consultantId, Boolean forceDeleteSessions) {
+    if (legacyIdentityRows == null)
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    if (!legacyIdentityRows
+        .queryForList("select admin_id from admin where admin_id=?", consultantId)
+        .isEmpty())
+      throw new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException(
+          "Separate identity removal requires scoped account commands");
     var consultant = pictureStore.lockActiveConsultant(consultantId);
 
     // One date for the counsellor and the relations removed with it: that pair marks the agencies

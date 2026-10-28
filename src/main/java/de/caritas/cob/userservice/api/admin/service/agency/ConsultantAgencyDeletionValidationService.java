@@ -31,6 +31,47 @@ public class ConsultantAgencyDeletionValidationService {
   private final @NonNull AgencyService agencyService;
   private final @NonNull SessionRepository sessionRepository;
 
+  /**
+   * No writes or native identity effects; the caller alone can settle its original PREPARED intent.
+   */
+  public de.caritas.cob.userservice.api.exception.httpresponses.customheader
+          .HttpStatusExceptionReason
+      validatePreflight(
+          de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+                  .PendingConsultantPreflight
+              pending) {
+    pending.requireCurrent();
+    var source = new java.util.concurrent.atomic.AtomicReference<java.util.List<Relation>>();
+    pending.runOwnedLocal(() -> source.set(capture(pending.accountId())));
+    for (var relation : source.get()) {
+      if (!relation.last()) continue;
+      pending.requireCurrent();
+      if (org.springframework.transaction.support.TransactionSynchronizationManager
+          .isActualTransactionActive())
+        throw new de.caritas.cob.userservice.api.exception.httpresponses
+            .ServiceUnavailableException("Agency reads must run outside SQL");
+      AgencyDTO agency = agencyService.getAgencyWithoutCaching(relation.agency());
+      var reason =
+          new java.util.concurrent.atomic.AtomicReference<
+              de.caritas.cob.userservice.api.exception.httpresponses.customheader
+                  .HttpStatusExceptionReason>();
+      pending.runOwnedLocal(
+          () -> {
+            requireSource(pending.accountId(), source.get());
+            if (agency != null) {
+              if (isFalse(agency.getOffline()))
+                reason.set(CONSULTANT_IS_THE_LAST_OF_AGENCY_AND_AGENCY_IS_STILL_ACTIVE);
+              else if (hasSessionWithStatus(relation.agency(), NEW)
+                  || hasSessionWithStatus(relation.agency(), INITIAL))
+                reason.set(CONSULTANT_IS_THE_LAST_OF_AGENCY_AND_AGENCY_HAS_OPEN_ENQUIRIES);
+            }
+          });
+      if (reason.get() != null) return reason.get();
+    }
+    pending.runOwnedLocal(() -> requireSource(pending.accountId(), source.get()));
+    return null;
+  }
+
   /** Fixed ACK-owned split: remote agency reads outside SQL, relation changes in final SQL. */
   public PreparedRelations prepareAcknowledgedDeletion(
       de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance

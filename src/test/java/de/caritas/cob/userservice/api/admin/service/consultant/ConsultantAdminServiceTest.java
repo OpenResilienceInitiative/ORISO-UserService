@@ -51,6 +51,32 @@ public class ConsultantAdminServiceTest {
   @InjectMocks private ConsultantAdminService consultantAdminService;
 
   @Mock private ConsultantRepository consultantRepository;
+  @Mock private org.springframework.jdbc.core.JdbcTemplate legacyIdentityRows;
+
+  @org.junit.jupiter.api.BeforeEach
+  void installActualLegacyReadDependency() {
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        consultantAdminService, "legacyIdentityRows", legacyIdentityRows);
+  }
+
+  @Test
+  void legacyCombinedConsultantRemovalRefusesBeforeAnyEffect() {
+    var consultant = new Consultant();
+    consultant.setId("c-1");
+    when(pictureStore.lockActiveConsultant("c-1")).thenReturn(consultant);
+    when(legacyIdentityRows.queryForList("select admin_id from admin where admin_id=?", "c-1"))
+        .thenReturn(List.of(Map.of("admin_id", "c-1")));
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+        () -> consultantAdminService.markConsultantForDeletion("c-1", true));
+    org.mockito.Mockito.verifyNoInteractions(
+        consultantPreDeletionService,
+        membersOnlyRevocation,
+        deletionLifecycleService,
+        consultantRepository,
+        sessionRepository);
+  }
+
   @Mock private de.caritas.cob.userservice.api.picture.ConsultantPictureStore pictureStore;
 
   @Mock private CreateConsultantSaga createConsultantSaga;

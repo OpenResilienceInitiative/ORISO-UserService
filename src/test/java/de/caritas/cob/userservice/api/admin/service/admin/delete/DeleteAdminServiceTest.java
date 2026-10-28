@@ -25,6 +25,46 @@ public class DeleteAdminServiceTest {
   @Mock private AdminRepository adminRepository;
   @Mock private AdminAgencyRepository adminAgencyRepository;
   @Mock private IdentityAccountRemover identityAccountRemover;
+  @Mock private org.springframework.jdbc.core.JdbcTemplate legacyIdentityRows;
+  @Mock private de.caritas.cob.userservice.api.helper.AuthenticatedUser legacyRemovalHuman;
+
+  @org.junit.jupiter.api.BeforeEach
+  void installActualLegacyReadDependencies() {
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        deleteAdminService, "legacyIdentityRows", legacyIdentityRows);
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        deleteAdminService, "legacyRemovalHuman", legacyRemovalHuman);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void legacyCombinedAdministratorRemovalRefusesBeforeAnyEffect(boolean tenant) {
+    org.mockito.Mockito.when(
+            legacyIdentityRows.queryForList(
+                "select consultant_id from consultant where consultant_id=?", VALID_ADMIN_ID))
+        .thenReturn(java.util.List.of(java.util.Map.of("consultant_id", VALID_ADMIN_ID)));
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+        () -> {
+          if (tenant) deleteAdminService.deleteTenantAdmin(VALID_ADMIN_ID);
+          else deleteAdminService.deleteAgencyAdmin(VALID_ADMIN_ID);
+        });
+    verifyNoInteractions(identityAccountRemover, adminAgencyRepository, adminRepository);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void legacySelfAdministratorRemovalRequiresAnotherAdministrator(boolean tenant) {
+    org.mockito.Mockito.when(legacyRemovalHuman.getUserId()).thenReturn(VALID_ADMIN_ID);
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+        () -> {
+          if (tenant) deleteAdminService.deleteTenantAdmin(VALID_ADMIN_ID);
+          else deleteAdminService.deleteAgencyAdmin(VALID_ADMIN_ID);
+        });
+    verifyNoInteractions(
+        identityAccountRemover, adminAgencyRepository, adminRepository, legacyIdentityRows);
+  }
 
   @Test
   public void deleteAgencyAdmin_Should_deleteAdminAndRelation_When_adminIdIsProvided() {

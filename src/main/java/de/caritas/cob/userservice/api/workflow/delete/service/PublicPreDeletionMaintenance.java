@@ -56,9 +56,27 @@ public final class PublicPreDeletionMaintenance {
   private final @NonNull String realmName;
   private final @NonNull String realmId;
   private static final String NAMESPACE = "PRE_DELETION";
+  private de.caritas.cob.userservice.api.admin.service.agency
+          .ConsultantAgencyDeletionValidationService
+      consultantEligibility;
+  private static final Set<String> PREFLIGHT_REASONS =
+      Set.of(
+          "CONSULTANT_HAS_ACTIVE_OR_ARCHIVE_SESSIONS",
+          "CONSULTANT_IS_THE_LAST_OF_AGENCY_AND_AGENCY_IS_STILL_ACTIVE",
+          "CONSULTANT_IS_THE_LAST_OF_AGENCY_AND_AGENCY_HAS_OPEN_ENQUIRIES");
 
-  /** Only this owner can issue the terminal after a verified native refusal is committed. */
-  public sealed interface VerifiedTerminal permits VerifiedForbidden, VerifiedConflict {
+  public void configureConsultantEligibility(
+      de.caritas.cob.userservice.api.admin.service.agency.ConsultantAgencyDeletionValidationService
+          eligibility) {
+    consultantEligibility = Objects.requireNonNull(eligibility);
+  }
+
+  /**
+   * Only this owner issues a committed native refusal or authenticated no-dispatch preflight
+   * terminal.
+   */
+  public sealed interface VerifiedTerminal
+      permits VerifiedForbidden, VerifiedConflict, VerifiedValidation {
     UUID operationId();
 
     int status();
@@ -96,6 +114,28 @@ public final class PublicPreDeletionMaintenance {
 
     public int status() {
       return 409;
+    }
+  }
+
+  public static final class VerifiedValidation extends CustomValidationHttpStatusException
+      implements VerifiedTerminal {
+    private final UUID operationId;
+
+    private VerifiedValidation(
+        UUID operationId,
+        de.caritas.cob.userservice.api.exception.httpresponses.customheader
+                .HttpStatusExceptionReason
+            reason) {
+      super(reason);
+      this.operationId = operationId;
+    }
+
+    public UUID operationId() {
+      return operationId;
+    }
+
+    public int status() {
+      return 400;
     }
   }
 
@@ -199,6 +239,29 @@ public final class PublicPreDeletionMaintenance {
             () ->
                 prepare(
                     kind, account, operation, force, digest, current, actor, authenticatedSource));
+    if ("PREPARED".equals(intent.status)) {
+      Intent original = intent;
+      intent = tx(() -> sessionPreflight(original));
+    }
+    if ("PREPARED".equals(intent.status) && kind.equals("ADMIN_CONSULTANT")) {
+      if (consultantEligibility == null) throw unavailable();
+      var preflight = new PendingConsultantPreflight(this, intent);
+      try {
+        var reason = consultantEligibility.validatePreflight(preflight);
+        if (reason != null) {
+          Intent original = intent;
+          intent = tx(() -> refusePreflight(original, reason.name()));
+        }
+      } finally {
+        preflight.active = false;
+      }
+    }
+    if ("PREFLIGHT_REFUSED".equals(intent.status))
+      throw new VerifiedValidation(
+          UUID.fromString(intent.operation),
+          de.caritas.cob.userservice.api.exception.httpresponses.customheader
+              .HttpStatusExceptionReason.valueOf(
+              source(intent).path("preflightRefusal").textValue()));
     if ("REFUSED".equals(intent.status)) throw refusal(intent, actor);
     if ("APPLIED".equals(intent.status)) {
       String result =
@@ -617,6 +680,91 @@ public final class PublicPreDeletionMaintenance {
     return find(operation, true);
   }
 
+  /** Read-only PREPARED frame issued only to the fixed agency eligibility validator. */
+  public static final class PendingConsultantPreflight {
+    private final PublicPreDeletionMaintenance owner;
+    private final Intent intent;
+    private final Thread thread = Thread.currentThread();
+    private boolean active = true;
+
+    private PendingConsultantPreflight(PublicPreDeletionMaintenance owner, Intent intent) {
+      this.owner = owner;
+      this.intent = intent;
+    }
+
+    private void checked() {
+      if (!active || thread != Thread.currentThread()) throw unavailable();
+      var held = owner.checked(intent);
+      if (!"PREPARED".equals(held.status)
+          || !"ADMIN_CONSULTANT".equals(owner.source(held).path("kind").asText()))
+        throw unavailable();
+      var human = owner.actualHuman();
+      owner.matchHuman(owner.source(held), human);
+      owner.authorize("ADMIN_CONSULTANT", held.account, human, owner.snapshot(held, true));
+    }
+
+    public String accountId() {
+      return intent.account;
+    }
+
+    public void requireCurrent() {
+      owner.outside();
+      owner.tx(
+          () -> {
+            checked();
+            return null;
+          });
+    }
+
+    public void runOwnedLocal(Runnable validation) {
+      owner.outside();
+      owner.tx(
+          () -> {
+            checked();
+            validation.run();
+            checked();
+            return null;
+          });
+    }
+  }
+
+  private Intent sessionPreflight(Intent original) {
+    var intent = checked(original);
+    if (!"PREPARED".equals(intent.status) || intent.body != null || intent.receipt != null)
+      throw conflict();
+    var data = source(intent);
+    if (!"ADMIN_CONSULTANT".equals(data.path("kind").asText())
+        || data.path("forceDeleteSessions").asBoolean()
+        || jdbc.queryForList(
+                "select id from session where consultant_id=? and status in (?,?) for update",
+                intent.account,
+                de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_PROGRESS.ordinal(),
+                de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_ARCHIVE.ordinal())
+            .isEmpty()) return intent;
+    return refusePreflight(intent, "CONSULTANT_HAS_ACTIVE_OR_ARCHIVE_SESSIONS");
+  }
+
+  private Intent refusePreflight(Intent original, String reason) {
+    var intent = checked(original);
+    if (!PREFLIGHT_REASONS.contains(reason)
+        || !"PREPARED".equals(intent.status)
+        || intent.body != null
+        || intent.receipt != null) throw conflict();
+    var refusal = (ObjectNode) source(intent).deepCopy();
+    refusal.remove("mac");
+    refusal.put("preflightRefusal", reason);
+    refusal.put("mac", codec.digest("public-pre-deletion-source/v1", refusal));
+    if (jdbc.update(
+            "update identity_account_operation_intent set status='PREFLIGHT_REFUSED',source_json=?,updated_at=? where operation_id=? and operation_kind=? and status='PREPARED' and source_json=? and intent_body is null and receipt is null",
+            codec.canonical(refusal),
+            now(),
+            intent.operation,
+            NAMESPACE,
+            intent.source)
+        != 1) throw conflict();
+    return find(intent.operation, true);
+  }
+
   private void validateCurrentPassword(JsonNode originalSql, String password) {
     outside();
     String encoded = originalSql.path("username").asText();
@@ -745,7 +893,13 @@ public final class PublicPreDeletionMaintenance {
                   || !realmId.equals(r.getString("realm_id"))
                   || !realmName.equals(r.getString("realm_name"))) throw conflict();
               String phase = r.getString("status");
-              if (!Set.of("PREPARED", "FROZEN", "ACKNOWLEDGED", "APPLIED", "REFUSED")
+              if (!Set.of(
+                          "PREPARED",
+                          "FROZEN",
+                          "ACKNOWLEDGED",
+                          "APPLIED",
+                          "REFUSED",
+                          "PREFLIGHT_REFUSED")
                       .contains(phase)
                   || r.getBoolean("domain_applied") != "APPLIED".equals(phase)
                   || "APPLIED".equals(phase) && r.getString("applied_json") == null
@@ -775,7 +929,16 @@ public final class PublicPreDeletionMaintenance {
     var value = codec.read(intent.source, ObjectNode.class);
     var fields = new HashSet<String>();
     value.fieldNames().forEachRemaining(fields::add);
-    if (!fields.equals(SOURCE)
+    boolean preflightRefused = "PREFLIGHT_REFUSED".equals(intent.status);
+    var sourceFields = new HashSet<>(SOURCE);
+    if (preflightRefused) sourceFields.add("preflightRefusal");
+    if (!fields.equals(sourceFields)
+        || preflightRefused
+            && (!"ADMIN_CONSULTANT".equals(value.path("kind").textValue())
+                || !PREFLIGHT_REASONS.contains(value.path("preflightRefusal").asText())
+                || value.path("forceDeleteSessions").asBoolean()
+                    && "CONSULTANT_HAS_ACTIVE_OR_ARCHIVE_SESSIONS"
+                        .equals(value.path("preflightRefusal").textValue()))
         || !value.path("v").isIntegralNumber()
         || !value.path("v").canConvertToInt()
         || value.path("v").intValue() != 1
@@ -854,7 +1017,7 @@ public final class PublicPreDeletionMaintenance {
                 || !Objects.equals(intent.tenant, tenant))
         || !target(kind, intent.account, intent.operation, originalHuman, original)
             .equals(value.path("target"))) throw unavailable();
-    if ("PREPARED".equals(intent.status)) {
+    if ("PREPARED".equals(intent.status) || preflightRefused) {
       if (intent.body != null || intent.receipt != null) throw unavailable();
     } else {
       var body = codec.read(intent.body, JsonNode.class);

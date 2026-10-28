@@ -161,6 +161,11 @@ class AccountLifecycleCallerConfigurationTest {
                                 .DeleteUserAccountService.class));
                     factory.registerSingleton("fixtureAdminScope", mock(AdminScope.class));
                     factory.registerSingleton(
+                        "fixtureConsultantEligibility",
+                        mock(
+                            de.caritas.cob.userservice.api.admin.service.agency
+                                .ConsultantAgencyDeletionValidationService.class));
+                    factory.registerSingleton(
                         "fixtureReactivationSaga",
                         mock(
                             de.caritas.cob.userservice.api.admin.service
