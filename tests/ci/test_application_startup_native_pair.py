@@ -63,6 +63,54 @@ class ApplicationStartupPairControls(unittest.TestCase):
         with self.assertRaises(ValueError):
             proof.native_effect_diagnostics({}, {}, {'private-unexpected': 'id'}, [], [], 'r', 'c', 's')
 
+    def test_managed_locale_is_an_exact_disposable_projection_without_unmanaged_widening(self):
+        import copy
+        original = {'attributes': [{'name': 'tenantId', 'permissions': {'view': ['admin']}}],
+            'unmanagedAttributePolicy': 'DISABLED', 'groups': [{'name': 'unchanged'}]}
+        saved = copy.deepcopy(original)
+        desired = proof.startup_locale_profile(original)
+        self.assertEqual(saved, original)
+        self.assertEqual(original['attributes'], desired['attributes'][:-1])
+        self.assertEqual('DISABLED', desired['unmanagedAttributePolicy'])
+        self.assertEqual('en|de', desired['attributes'][-1]['validations']['pattern']['pattern'])
+        self.assertTrue(proof.verified_locale_profile(desired, desired))
+        for bad in [original, {**desired, 'unmanagedAttributePolicy': 'ENABLED'},
+                    {**desired, 'attributes': desired['attributes'] + [desired['attributes'][-1]]}]:
+            self.assertFalse(proof.verified_locale_profile(bad, desired))
+        with self.assertRaises(ValueError):
+            proof.startup_locale_profile({**original, 'attributes': [{'name': 'locale'}]})
+
+    def test_audit_oracle_requires_only_eight_original_target_and_type_effects(self):
+        import copy
+        labels = {name: 'id-' + name for name in ['self', 'consultantThenAdmin',
+            'adminThenConsultant', 'retainedAdmin', 'pureTenant', 'primary']}
+        original = [{'id': 'before', 'unchanged': True}]
+        expected = [('self', 'UPDATE'), ('consultantThenAdmin', 'UPDATE'),
+            ('adminThenConsultant', 'UPDATE'), ('adminThenConsultant', 'UPDATE'),
+            ('adminThenConsultant', 'DELETE'), ('retainedAdmin', 'UPDATE'),
+            ('pureTenant', 'UPDATE'), ('pureTenant', 'UPDATE')]
+        added = [{'id': 'new-' + str(index), 'realmId': 'realm', 'operationType': kind,
+            'resourceType': 'USER', 'resourcePath': 'accounts/' + labels[name],
+            'authDetails': {'realmId': 'realm', 'clientId': 'client', 'userId': 'subject'}}
+            for index, (name, kind) in enumerate(expected)]
+        def accepted(after):
+            return proof.exact_journey_audit(original, after, labels, 'realm', 'client', 'subject')
+        self.assertTrue(accepted([*reversed(added), *original]))
+        for change in ['extra', 'missing', 'wrong-type', 'wrong-target', 'foreign-client',
+                       'foreign-subject', 'foreign-realm', 'representation', 'original-drift', 'duplicate-id']:
+            bad = copy.deepcopy([*original, *added])
+            if change == 'extra': bad.append({**added[0], 'id': 'extra'})
+            elif change == 'missing': bad.pop()
+            elif change == 'wrong-type': bad[1]['operationType'] = 'DELETE'
+            elif change == 'wrong-target': bad[1]['resourcePath'] = 'accounts/foreign'
+            elif change == 'foreign-client': bad[1]['authDetails']['clientId'] = 'foreign'
+            elif change == 'foreign-subject': bad[1]['authDetails']['userId'] = 'foreign'
+            elif change == 'foreign-realm': bad[1]['realmId'] = 'foreign'
+            elif change == 'representation': bad[1]['representation'] = 'private'
+            elif change == 'original-drift': bad[0]['unchanged'] = False
+            else: bad[1]['id'] = bad[0]['id']
+            with self.subTest(change=change): self.assertFalse(accepted(bad))
+
     def test_startup_declares_only_disposable_lowercase_h2_database(self):
         import ast
         tree = ast.parse((ROOT / 'scripts/ci/application-startup-native-pair.py').read_text())
@@ -73,10 +121,25 @@ class ApplicationStartupPairControls(unittest.TestCase):
         self.assertEqual(['jdbc:h2:mem:userservice-startup-${random.uuid};DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MariaDB;DATABASE_TO_LOWER=TRUE;NON_KEYWORDS=USER,VALUE,DAY'], values)
 
     def witness(self, state):
-        return {'tenantNative': {key: {'dispatches': 0, 'statuses': []} for key in ['tenant', 'profile']}, 'state': state, 'observedBeans': [], 'failureTypes': ['BeanCreationException', 'IllegalStateException'] if state == 'FENCED' else [],
+        return {'currentClientBrowser': {key: False for key in proof.BROWSER_FLAGS}, 'tenantNative': {key: {'dispatches': 0, 'statuses': []} for key in ['tenant', 'profile']}, 'state': state, 'observedBeans': [], 'failureTypes': ['BeanCreationException', 'IllegalStateException'] if state == 'FENCED' else [],
                 **{key: True for key in proof.COMMON_FLAGS},
                 **{key: state == 'OPEN' for key in proof.OPEN_FLAGS},
                 'exactFence': state == 'FENCED'}
+
+    def test_browser_credit_requires_exact_explicit_mode_and_every_bounded_witness(self):
+        import copy
+        value = self.witness('OPEN')
+        self.assertTrue(proof.checked_witness(value, 'OPEN'))
+        self.assertFalse(proof.checked_witness(value, 'OPEN', True))
+        value['currentClientBrowser'] = {key: True for key in proof.BROWSER_FLAGS}
+        self.assertTrue(proof.checked_witness(value, 'OPEN', True))
+        self.assertFalse(proof.checked_witness(value, 'OPEN'))
+        for key in proof.BROWSER_FLAGS:
+            incomplete = copy.deepcopy(value); incomplete['currentClientBrowser'][key] = False
+            self.assertFalse(proof.checked_witness(incomplete, 'OPEN', True))
+        for extra in ['token', 'requests', 'operationId', 'bodySHA256', 'path']:
+            private = copy.deepcopy(value); private['currentClientBrowser'][extra] = 'private'
+            with self.assertRaises(ValueError): proof.checked_witness(private, 'OPEN', True)
 
     def test_startup_installs_the_same_exact_positive_catalogue_in_both_peers(self):
         roles = {'consultant': ['consultant', 'group-chat-consultant'],
@@ -201,7 +264,7 @@ class ApplicationStartupPairControls(unittest.TestCase):
             with tempfile.TemporaryDirectory() as folder:
                 root = Path(folder); output = root / 'target/test-classes'; output.mkdir(parents=True)
                 own = proof.SUITE.replace('.', '/')
-                values = {own + '.class': b'proof', own + '$1.class': b'own anonymous',
+                values = {proof.BROWSER_HELPER.replace('.', '/') + '.class': b'private IPC utility', own + '.class': b'proof', own + '$1.class': b'own anonymous',
                     'de/caritas/cob/userservice/api/ForeignTest$Config.class': b'test replacement',
                     'application-testing-credentials.properties': b'unchanged testing resource'}
                 for name, value in values.items():
@@ -210,6 +273,7 @@ class ApplicationStartupPairControls(unittest.TestCase):
                 try:
                     with proof.isolated_test_classes(root, observation):
                         self.assertFalse((output / 'de/caritas/cob/userservice/api/ForeignTest$Config.class').exists())
+                        self.assertEqual(b'private IPC utility', (output / (proof.BROWSER_HELPER.replace('.', '/') + '.class')).read_bytes())
                         self.assertEqual(b'own anonymous', (output / (own + '$1.class')).read_bytes())
                         self.assertEqual(b'unchanged testing resource', (output / 'application-testing-credentials.properties').read_bytes())
                         if raises: raise RuntimeError('child startup failed')

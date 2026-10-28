@@ -21,6 +21,8 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[2]
 KC_COMMIT = '05fefa772dda8b248be9531e0552aa9910e1b71e'
 SUITE = 'de.caritas.cob.userservice.api.UserServiceStartupNativePairProof'
+BROWSER_HELPER = 'de.caritas.cob.userservice.api.CurrentClientBrowserBridge'
+BROWSER_FLAGS = {'frontendLocale', 'ownConsultantRemoval', 'peerAdminRemoval', 'sourceAndCleanup'}
 CASE = 'actualServletApplicationReachesOnlyExpectedProductionStartupState'
 JAVA_SOURCE = 'src/test/java/' + SUITE.replace('.', '/') + '.java'
 COMMON_FLAGS = {'productionClasspath', 'actualApplication', 'testingProfile', 'fiveActors', 'realPolicies', 'contextClosed', 'noUnexpectedFailure'}
@@ -66,6 +68,45 @@ FAILURE_TYPES = {'BeanCreationException', 'UnsatisfiedDependencyException', 'Ill
 base_spec = importlib.util.spec_from_file_location('existing_self_pair', ROOT / 'scripts/ci/self-maintenance-native-pair.py')
 base = importlib.util.module_from_spec(base_spec)
 base_spec.loader.exec_module(base)
+
+
+def startup_locale_profile(original):
+    """Declare only this fixture's original/desired locale, as in the existing SELF native fixture."""
+    result = copy.deepcopy(original)
+    locale = {'name': 'locale', 'multivalued': False,
+        'permissions': {'view': ['admin', 'user'], 'edit': ['admin', 'user']},
+        'validations': {'pattern': {'pattern': 'en|de'}}}
+    matches = [attribute for attribute in result['attributes'] if attribute.get('name') == 'locale']
+    if matches and matches != [locale]: raise ValueError('Unexpected managed locale declaration')
+    if not matches: result['attributes'].append(locale)
+    return result
+
+
+def verified_locale_profile(actual, expected):
+    return actual == expected and expected == startup_locale_profile(expected)
+
+
+def exact_journey_audit(before, after, labels, realm, client, subject):
+    """Seven UPDATE effects and the existing scheduled Consultant DELETE; replay adds none."""
+    names = ('self', 'consultantThenAdmin', 'adminThenConsultant', 'retainedAdmin', 'pureTenant', 'primary')
+    if set(labels) != set(names) or len(set(labels.values())) != len(names): return False
+    if any(not isinstance(event.get('id'), str) or not event['id'] for event in [*before, *after]): return False
+    original = {event['id']: event for event in before}; final = {event['id']: event for event in after}
+    if len(original) != len(before) or len(final) != len(after): return False
+    if any(final.get(key) != event for key, event in original.items()): return False
+    resources = {'accounts/' + account: name for name, account in labels.items()}
+    counts = {}
+    for event in after:
+        if event['id'] in original: continue
+        name = resources.get(event.get('resourcePath')); auth = event.get('authDetails', {})
+        if (name is None or event.get('realmId') != realm or event.get('resourceType') != 'USER'
+                or not isinstance(auth, dict) or auth.get('realmId') != realm
+                or auth.get('clientId') != client or auth.get('userId') != subject
+                or event.get('representation') not in (None, '')): return False
+        key = (name, event.get('operationType')); counts[key] = counts.get(key, 0) + 1
+    return counts == {('self', 'UPDATE'): 1, ('consultantThenAdmin', 'UPDATE'): 1,
+        ('adminThenConsultant', 'UPDATE'): 2, ('adminThenConsultant', 'DELETE'): 1,
+        ('retainedAdmin', 'UPDATE'): 1, ('pureTenant', 'UPDATE'): 2}
 
 
 def native_effect_diagnostics(expected, actual, labels, before_events, after_events, realm, client, subject):
@@ -169,9 +210,10 @@ def isolated_test_classes(root, observation):
     prefix = SUITE.replace('.', '/')
     original = test_output_manifest(folder)
     retained = {name: digest for name, digest in original.items()
-        if not name.endswith('.class') or name == prefix + '.class'
+        if not name.endswith('.class') or name in {prefix + '.class', BROWSER_HELPER.replace('.', '/') + '.class'}
         or re.fullmatch(re.escape(prefix) + r'\$[0-9]+\.class', name)}
-    if prefix + '.class' not in retained: raise ValueError('Actual compiled proof required')
+    if not {prefix + '.class', BROWSER_HELPER.replace('.', '/') + '.class'} <= set(retained):
+        raise ValueError('Exact compiled proof and private bridge required')
     observation.update(originalTestManifest=original, retainedTestManifest=retained, restoredByteExact=False)
     folder.rename(quarantine)
     try:
@@ -330,10 +372,10 @@ def safe_binding_failure(raw):
     return sorted({name for name in candidates if name in allowed})
 
 
-def checked_witness(value, state):
+def checked_witness(value, state, browser=False):
     flags = COMMON_FLAGS | OPEN_FLAGS | {'exactFence'}
     if (state not in {'FENCED', 'OPEN'} or not isinstance(value, dict)
-            or set(value) != flags | {'state', 'observedBeans', 'failureTypes', 'tenantNative'}
+            or set(value) != flags | {'state', 'observedBeans', 'failureTypes', 'tenantNative', 'currentClientBrowser'}
             or value['state'] != state or any(type(value[key]) is not bool for key in flags)
             or not isinstance(value['observedBeans'], list)
             or value['observedBeans'] != sorted(set(value['observedBeans']))
@@ -341,8 +383,13 @@ def checked_witness(value, state):
             or not isinstance(value['failureTypes'], list)
             or any(key not in FAILURE_TYPES for key in value['failureTypes'])):
         raise ValueError('Exact finite startup witness required')
+    browser_value = value['currentClientBrowser']
+    if (type(browser) is not bool or not isinstance(browser_value, dict) or set(browser_value) != BROWSER_FLAGS
+            or any(type(flag) is not bool for flag in browser_value.values())):
+        raise ValueError('Exact finite browser witness required')
     checked_tenant_native(value['tenantNative'])
-    return (all(value[key] for key in COMMON_FLAGS)
+    return (all(flag == browser for flag in browser_value.values())
+            and (not browser or state == 'OPEN') and all(value[key] for key in COMMON_FLAGS)
             and value['exactFence'] == (state == 'FENCED')
             and all(value[key] == (state == 'OPEN') for key in OPEN_FLAGS)
             and (state != 'OPEN' or not value['failureTypes'])
@@ -438,6 +485,12 @@ def journal_fixture(report):
 def native(kc, report):
     if platform.system() != 'Linux' or os.environ.get('GITHUB_ACTIONS') != 'true':
         raise ValueError('Fresh hosted Linux fixture required')
+    browser_mode = os.environ.get('STARTUP_CURRENT_CLIENT_BROWSER')
+    if browser_mode not in {None, 'true'}: raise ValueError('Explicit browser mode required')
+    browser = browser_mode == 'true'
+    browser_evidence = {'required': browser,
+        'clientRefs': {kind: os.environ['STARTUP_BROWSER_' + kind.upper() + '_REF'] for kind in ('admin', 'frontend')} if browser else {},
+        'metadataLimit': 'Actual same-human native roles and GET capability; Agency GET /agencies/70 uses existing testing origin http://localhost:8085/service and may degrade to empty agencies; no complete Agency content or UI availability claim'}
     state = os.environ.get('STARTUP_EXPECTED_STATE')
     if state not in {'FENCED', 'OPEN'}: raise ValueError('Finite expected startup state required')
     module = kc / 'keycloak-image/account-lifecycle-spi'; otp = kc / 'keycloak-image/otp-config-spi'
@@ -445,7 +498,7 @@ def native(kc, report):
             'OTP_C_TEST_JAR': otp / 'target/keycloak-otp-config-spi-1.0-SNAPSHOT-keycloak.jar',
             'SCOPED_OTP_READY_FIXTURE_JAR': module / 'target/scoped-otp-ready-fixture.jar'}
     hashes = {key: hashlib.sha256(path.read_bytes()).hexdigest() for key, path in jars.items()}
-    classes = ['target/test-classes/' + SUITE.replace('.', '/') + '.class'] + [
+    classes = ['target/test-classes/' + name.replace('.', '/') + '.class' for name in (SUITE, BROWSER_HELPER)] + [
         'target/classes/de/caritas/cob/userservice/api/' + path + '.class' for path in [
         'UserServiceApplication', 'config/auth/ServiceIdentitySeparationCheck', 'config/auth/SecurityConfig',
         'config/auth/TaskActorConfiguration', 'config/auth/TaskActorTokenBroker',
@@ -519,6 +572,7 @@ def native(kc, report):
         'genuine_behavior_red': False, 'before': before, 'jars': hashes, 'compiled_user_classes': compiled, 'image': IMAGE}
     original_env = {key: os.environ.get(key) for key in jars}
     for key, path in jars.items(): os.environ[key] = str(path.resolve())
+    receipt['current_client_browser'] = browser_evidence
     try:
         schema = journal_fixture(report)
         StartupFixture.setUpClass(); fixture = StartupFixture('runTest')
@@ -532,7 +586,13 @@ def native(kc, report):
         groups = json.loads(settings['ORISO_ACCOUNT_LIFECYCLE_GROUPS'])
         assert groups == StartupFixture.startup_reviewed_groups
         assert groups == {profile['groupPath']: profile['realmRoles'] for profile in json.loads(ordinary)['ordinaryProfiles']}
+        reviewed_locale_profile = startup_locale_profile(fixture.admin('GET', '/users/profile'))
+        fixture.admin('PUT', '/users/profile', reviewed_locale_profile)
+        if not verified_locale_profile(fixture.admin('GET', '/users/profile'), reviewed_locale_profile):
+            raise ValueError('Managed locale profile readback differs')
         def verify_installed_declarations():
+            if not verified_locale_profile(fixture.admin('GET', '/users/profile'), reviewed_locale_profile):
+                raise ValueError('Managed locale profile changed')
             actual_env = json.loads(subprocess.run(['docker', 'inspect', '--format', '{{json .Config.Env}}', fixture.name],
                 capture_output=True, check=True, text=True, timeout=15).stdout)
             actual = dict(value.split('=', 1) for value in actual_env)
@@ -563,9 +623,11 @@ def native(kc, report):
         from profile_transition_operations import committed_kind
         primary_bearer = role_source.verify_canonical_platform_human(fixture, lifecycle, ISSUER, HUMAN_PASSWORD)
         journey_targets = {}
+        own_creation = None
         for key in ('consultantThenAdmin', 'adminThenConsultant', 'retainedAdmin'):
             account, creation = committed_kind(fixture, fixture, 'CONSULTANT_AGENCY_ADMIN', 'consultant-agency-admin')
             journey_targets[key] = fixture.admin('GET', '/users/' + account)
+            if key == 'consultantThenAdmin': own_creation = creation
         tenant_account = StartupFixture.adopted_account
         journey_targets['pureTenant'] = fixture.admin('GET', '/users/' + tenant_account)
         journey_targets['primary'] = fixture.admin('GET', '/users/' + fixture.human_subject)
@@ -575,6 +637,31 @@ def native(kc, report):
         self_native.setdefault('attributes', {})['locale'] = ['en']
         fixture.admin('PUT', '/users/' + self_account, self_native)
         self_bearer = login(fixture, fixture, self_native, self_password)
+        self_native = fixture.admin('GET', '/users/' + self_account)
+        if self_native.get('attributes', {}).get('locale') != ['en']:
+            raise ValueError('Original managed locale was not installed')
+        browser_payload = {}
+        if browser:
+            def tokens(username, password, expected_subject):
+                status, result = lifecycle.call(fixture.base, 'POST', '/realms/' + lifecycle.REALM + '/protocol/openid-connect/token',
+                    {'client_id': 'protected-human-web', 'grant_type': 'password', 'username': username,
+                     'password': password, 'scope': 'openid'}, form=True)
+                if status != 200 or not isinstance(result.get('refresh_token'), str):
+                    raise ValueError('Actual full native browser session required')
+                claims = json.loads(base64.urlsafe_b64decode(result['access_token'].split('.')[1] + '==='))
+                if claims.get('sub') != expected_subject: raise ValueError('Actual original browser subject required')
+                return result
+            support_id, _ = StartupFixture.adopted_self_cases['consultant']
+            browser_payload = {
+                'browserConfig': {'keycloakOrigin': fixture.base, 'realm': lifecycle.REALM,
+                    **{kind: {'root': os.environ['STARTUP_BROWSER_' + kind.upper() + '_ROOT'],
+                              'ref': os.environ['STARTUP_BROWSER_' + kind.upper() + '_REF']}
+                       for kind in ('admin', 'frontend')}},
+                'selfTokens': tokens(self_native['username'], self_password, self_account),
+                'primaryTokens': tokens('reviewed-human', HUMAN_PASSWORD, fixture.human_subject),
+                'ownTokens': tokens(own_creation['account']['username'], own_creation['account']['password'],
+                                    journey_targets['consultantThenAdmin']['id']),
+                'supportConsultant': fixture.admin('GET', '/users/' + support_id)}
         pure_admin_groups = fixture.admin('GET', '/users/' + StartupFixture.adopted_self_cases['agency-admin'][0] + '/groups')
         original_accounts = native_accounts(); original_events = fixture.admin('GET', '/admin-events?max=500')
         environment = dict(os.environ)
@@ -618,7 +705,7 @@ def native(kc, report):
             'disposableTenantMetadata': 'Owned ephemeral exact GET /tenant/public/id/22, no query/body, id22/subdomain fixture-22 only; actual production response enrichment client, wire and returned subdomain asserted; no nativeTenant/policy/baseline credit',
             'disposableProtectedCatalogue': 'Five to four profiles: omit only adversarial tenant-other-v1 plus its two inherited target-ID references; retain both human bindings and every other field; identical installed/User contents, unchanged K negative suites',
             'pureTenantProvenance': 'Existing explicitly adopted tenant-peer-v1 target17, exact native birth; move22 with unchanged installed grant',
-            'journeyDownstreamLimit': 'Real User servlet/JPA and Keycloak; no Matrix account/room, no Consultant agency relations, Appointment feature retains configured false; AdminAgency row preserved',
+            'journeyDownstreamLimit': 'Real User servlet/JPA and Keycloak; no Matrix account/room; standard mode has no Consultant agency relations, browser mode seeds four real SQL agency70 relations and preserves the support Consultant; Appointment feature retains configured false; surviving AdminAgency row preserved',
             'schema': ['Hibernate testing create-drop', 'existing UserServiceDatabase.sql', 'existing AccountInactivityDatabase.sql', 'exact shipped C migration H2 fixture']})
         reports = ROOT / 'target/surefire-reports'
         for path in reports.glob('TEST-*.xml'): path.unlink()
@@ -643,7 +730,7 @@ def native(kc, report):
                     release = exchange / 'boot-verified.pending'
                     payload = {'bootNoEffect': True, 'account': self_account, 'username': self_native['username'],
                         'email': self_native['email'], 'bearer': self_bearer, 'nativeCreation': self_native['createdTimestamp'],
-                        'primaryBearer': primary_bearer, **journey_targets}
+                        'primaryBearer': primary_bearer, **journey_targets, **browser_payload}
                     fd = os.open(release, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                     with os.fdopen(fd, 'w') as stream: json.dump(payload, stream)
                     release.rename(exchange / 'boot-verified.json')
@@ -671,7 +758,7 @@ def native(kc, report):
         receipt['source_failure_frames'] = safe_source_frames(child.stdout + b'\n' + child.stderr); child = None
         witness_file = report.with_name('application-startup-native-witness.json')
         witness = json.loads(witness_file.read_text()) if witness_file.exists() else {}
-        try: receipt['java_witness_complete'] = checked_witness(witness, state)
+        try: receipt['java_witness_complete'] = checked_witness(witness, state, browser)
         except ValueError:
             if witness_file.exists(): base.save(witness_file, {'witnessSchemaRejected': True})
             raise
@@ -692,6 +779,11 @@ def native(kc, report):
         receipt['native_accounts_exact_expected_effect'] = expected_accounts == after_accounts
         after_events = fixture.admin('GET', '/admin-events?max=500')
         receipt['native_admin_events_unchanged'] = original_events == after_events
+        receipt['native_admin_events_exact_expected_effect'] = (
+            exact_journey_audit(original_events, after_events,
+                {'self': self_account, **{name: target['id'] for name, target in journey_targets.items()}},
+                fixture.realm_id, lifecycle.ACTORS['ACCOUNT_ADMIN'][0], lifecycle.SUBJECTS['ACCOUNT_ADMIN'])
+            if state == 'OPEN' else receipt['native_admin_events_unchanged'])
         receipt['native_effect_diagnostics'] = native_effect_diagnostics(expected_accounts, after_accounts,
             {'self': self_account, **{name: target['id'] for name, target in journey_targets.items()}},
             original_events, after_events, fixture.realm_id,
@@ -703,7 +795,7 @@ def native(kc, report):
             'actualSeedHumanChecks': [{key: entry[key] for key in ['stage', 'enabledNativeUser', 'enabledInteractiveClient', 'serviceAccountLinkAbsent', 'currentNativeSession', 'nativeUserinfoValidatedToken', 'actualCanonicalSubject']} for entry in StartupFixture.preconditions]}
         receipt['resource_observations'] = evidence()
         receipt['accepted'] = (inventory['accepted'] and receipt['child_exit'] == 0 and receipt['java_witness_complete']
-            and receipt['native_accounts_exact_expected_effect'] and receipt['native_admin_events_unchanged']
+            and receipt['native_accounts_exact_expected_effect'] and receipt['native_admin_events_exact_expected_effect']
             and receipt['native_declarations_before'] and receipt['native_declarations_after']
             and (state != 'OPEN' or receipt['boot_native_accounts_and_events_unchanged'])
             and receipt['test_classpath']['restoredByteExact'])

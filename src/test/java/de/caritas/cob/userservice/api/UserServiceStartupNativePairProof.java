@@ -71,6 +71,11 @@ class UserServiceStartupNativePairProof {
     var observed = new ConcurrentSkipListSet<String>();
     var witness = new TreeMap<String, Object>();
     witness.put("state", expected);
+    var browserWitness = new TreeMap<String, Boolean>();
+    for (String key :
+        List.of("frontendLocale", "ownConsultantRemoval", "peerAdminRemoval", "sourceAndCleanup"))
+      browserWitness.put(key, false);
+    witness.put("currentClientBrowser", browserWitness);
     witness.put(
         "tenantNative",
         Map.of(
@@ -149,6 +154,9 @@ class UserServiceStartupNativePairProof {
                         path -> {
                           String name = testClasses.relativize(path).toString().replace('\\', '/');
                           return name.equals(binary + ".class")
+                              || name.equals(
+                                  CurrentClientBrowserBridge.class.getName().replace('.', '/')
+                                      + ".class")
                               || name.matches(
                                   java.util.regex.Pattern.quote(binary) + "\\$[0-9]+\\.class");
                         });
@@ -446,7 +454,12 @@ class UserServiceStartupNativePairProof {
     seedInactivity(context, account, 11L, fixture.path("nativeCreation").asLong());
     String token = fixture.path("bearer").asText();
     assertFalse(token.isBlank());
-    try (var client = HttpClient.newHttpClient()) {
+    try (var browser =
+            CurrentClientBrowserBridge.required()
+                ? new CurrentClientBrowserBridge(port, fixture)
+                : null;
+        var client = HttpClient.newHttpClient()) {
+      if (browser != null) browser.seed("frontend", "self", fixture.path("selfTokens"));
       var metadata =
           client.send(
               HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/users/data"))
@@ -470,8 +483,24 @@ class UserServiceStartupNativePairProof {
               .method(
                   "PATCH", HttpRequest.BodyPublishers.ofString("{\"preferredLanguage\":\"de\"}"))
               .build();
-      var changed = client.send(patch, HttpResponse.BodyHandlers.discarding());
-      assertEquals(204, changed.statusCode(), "Actual scoped SELF locale command must succeed");
+      if (browser == null) {
+        var changed = client.send(patch, HttpResponse.BodyHandlers.discarding());
+        assertEquals(204, changed.statusCode(), "Actual scoped SELF locale command must succeed");
+      } else {
+        browserRecovery(
+            browser,
+            "frontend",
+            "self",
+            "locale",
+            account,
+            operation,
+            Map.of("preferredLanguage", "de"),
+            "PATCH",
+            "/users/data",
+            204,
+            false);
+        browserWitness(witness).put("frontendLocale", true);
+      }
       assertEquals(
           "de",
           jdbc.queryForObject(
@@ -481,14 +510,17 @@ class UserServiceStartupNativePairProof {
               "select * from identity_account_operation_intent where operation_id=?", operation);
       assertEquals("ACKNOWLEDGED", original.get("status"));
       witness.put("selfLocaleApplied", true);
-      assertEquals(204, client.send(patch, HttpResponse.BodyHandlers.discarding()).statusCode());
+      if (browser == null)
+        assertEquals(204, client.send(patch, HttpResponse.BodyHandlers.discarding()).statusCode());
       assertEquals(
           original,
           jdbc.queryForMap(
               "select * from identity_account_operation_intent where operation_id=?", operation));
       witness.put("selfLocaleReplay", true);
-      verifyAccountJourneys(context, port, jdbc, fixture, client, witness);
+      verifyAccountJourneys(context, port, jdbc, fixture, client, browser, witness);
     }
+    if (CurrentClientBrowserBridge.required())
+      browserWitness(witness).put("sourceAndCleanup", true);
   }
 
   private static void verifyAccountJourneys(
@@ -497,6 +529,7 @@ class UserServiceStartupNativePairProof {
       JdbcTemplate jdbc,
       com.fasterxml.jackson.databind.JsonNode fixture,
       HttpClient client,
+      CurrentClientBrowserBridge browser,
       Map<String, Object> witness)
       throws Exception {
     var emf = context.getBean(jakarta.persistence.EntityManagerFactory.class);
@@ -518,6 +551,28 @@ class UserServiceStartupNativePairProof {
           Long.parseLong(nativeUser.path("attributes").path("tenantId").path(0).asText()),
           nativeUser.path("createdTimestamp").asLong());
     }
+    List<Map<String, Object>> supportRows = List.of();
+    List<Map<String, Object>> supportRelations = List.of();
+    if (browser != null) {
+      var support = fixture.path("supportConsultant");
+      seedAdministrator(emf, support, null, true);
+      seedInactivity(
+          context, support.path("id").asText(), 11L, support.path("createdTimestamp").asLong());
+      supportRows =
+          jdbc.queryForList(
+              "select * from consultant where consultant_id=?", support.path("id").asText());
+      supportRelations =
+          jdbc.queryForList(
+              "select * from consultant_agency where consultant_id=? order by id",
+              support.path("id").asText());
+      assertEquals(
+          4,
+          jdbc.queryForObject(
+              "select count(*) from consultant_agency where agency_id=70 and delete_date is null",
+              Integer.class));
+      browser.seed("admin", "own", fixture.path("ownTokens"));
+      browser.seed("admin", "primary", fixture.path("primaryTokens"));
+    }
     String bearer = fixture.path("primaryBearer").asText();
     var scheduler =
         context.getBean(
@@ -527,17 +582,53 @@ class UserServiceStartupNativePairProof {
     var firstAdmin = jdbc.queryForMap("select * from admin where admin_id=?", first);
     var firstConsultant = jdbc.queryForMap("select * from consultant where consultant_id=?", first);
     String consultantOperation = UUID.randomUUID().toString();
-    command(client, port, bearer, "DELETE", consultantPath(first), consultantOperation, null, 200);
+    if (browser == null)
+      command(
+          client, port, bearer, "DELETE", consultantPath(first), consultantOperation, null, 200);
+    else {
+      browserRecovery(
+          browser,
+          "admin",
+          "own",
+          "consultant-delete",
+          first,
+          consultantOperation,
+          Map.of("forceDeleteSessions", true),
+          "DELETE",
+          consultantPath(first),
+          200,
+          true);
+      browserWitness(witness).put("ownConsultantRemoval", true);
+    }
     assertEquals(firstAdmin, jdbc.queryForMap("select * from admin where admin_id=?", first));
     var retained = jdbc.queryForMap("select * from consultant where consultant_id=?", first);
     assertEquals(firstConsultant.get("create_date"), retained.get("create_date"));
     assertNotNull(retained.get("delete_date"));
-    command(client, port, bearer, "DELETE", consultantPath(first), consultantOperation, null, 200);
+    if (browser == null)
+      command(
+          client, port, bearer, "DELETE", consultantPath(first), consultantOperation, null, 200);
     String adminOperation = UUID.randomUUID().toString();
-    command(client, port, bearer, "DELETE", adminPath(first), adminOperation, null, 200);
+    if (browser == null)
+      command(client, port, bearer, "DELETE", adminPath(first), adminOperation, null, 200);
+    else {
+      browserRecovery(
+          browser,
+          "admin",
+          "primary",
+          "admin-delete",
+          first,
+          adminOperation,
+          Map.of("forceDeleteSessions", true),
+          "DELETE",
+          adminPath(first),
+          200,
+          false);
+      browserWitness(witness).put("peerAdminRemoval", true);
+    }
     assertEquals(
         retained, jdbc.queryForMap("select * from consultant where consultant_id=?", first));
-    command(client, port, bearer, "DELETE", adminPath(first), adminOperation, null, 200);
+    if (browser == null)
+      command(client, port, bearer, "DELETE", adminPath(first), adminOperation, null, 200);
     scheduler.performDeletionWorkflow();
     assertEquals(
         0,
@@ -738,6 +829,20 @@ class UserServiceStartupNativePairProof {
         200);
     assertEquals(moved, jdbc.queryForMap("select * from admin where admin_id=?", tenant));
     witness.put("pureTenantTwoChildren", true);
+    if (browser != null) {
+      String support = fixture.path("supportConsultant").path("id").asText();
+      assertEquals(
+          supportRows,
+          jdbc.queryForList("select * from consultant where consultant_id=?", support));
+      assertEquals(
+          supportRelations,
+          jdbc.queryForList(
+              "select * from consultant_agency where consultant_id=? order by id", support));
+      assertEquals(
+          0,
+          jdbc.queryForObject(
+              "select count(*) from admin where admin_id=?", Integer.class, support));
+    }
   }
 
   private static String consultantPath(String account) {
@@ -798,6 +903,94 @@ class UserServiceStartupNativePairProof {
         row.status());
   }
 
+  @SuppressWarnings("unchecked")
+  private static Map<String, Boolean> browserWitness(Map<String, Object> witness) {
+    return (Map<String, Boolean>) witness.get("currentClientBrowser");
+  }
+
+  private static void browserRecovery(
+      CurrentClientBrowserBridge browser,
+      String client,
+      String actor,
+      String kind,
+      String target,
+      String operation,
+      Map<String, Object> payload,
+      String method,
+      String path,
+      int status,
+      boolean own)
+      throws Exception {
+    var observations = new ArrayList<com.fasterxml.jackson.databind.JsonNode>();
+    var result = browser.send(client, actor, kind, target, operation, payload, true);
+    result.path("requests").forEach(observations::add);
+    int refreshes = result.path("refreshes").asInt();
+    assertTrue(
+        result.path("originalIntentOnly").asBoolean(false), "Browser retained the original intent");
+    if (!result.path("ok").asBoolean(false)) {
+      assertFalse(
+          result.path("acknowledged").asBoolean(false),
+          "Known success must never be replayed to repair a later postcondition");
+      result = browser.send(client, actor, kind, target, operation, payload, false);
+      result.path("requests").forEach(observations::add);
+      refreshes += result.path("refreshes").asInt();
+    }
+    assertTrue(
+        result.path("ok").asBoolean(false)
+            && result.path("acknowledged").asBoolean(false)
+            && result.path("postconditions").asBoolean(false)
+            && result.path("originalIntentOnly").asBoolean(false),
+        "Actual browser must acknowledge the original operation and its postconditions");
+    var mutations =
+        observations.stream().filter(item -> !"GET".equals(item.path("method").asText())).toList();
+    assertTrue(
+        mutations.size() == 2 || (own && mutations.size() == 3),
+        "Bounded original browser recovery requests required");
+    var statuses = mutations.stream().map(item -> item.path("status").asInt()).toList();
+    assertTrue(
+        statuses.equals(List.of(status, status))
+            || own
+                && (statuses.equals(List.of(200, 403, 200))
+                    || statuses.equals(List.of(200, 503, 200))),
+        "Only original success, optional stale-token denial, then original success is accepted");
+    assertTrue(
+        mutations.getFirst().path("dropped").asBoolean(false),
+        "The first successful reply must be the lost reply");
+    String body = mutations.getFirst().path("bodySHA256").asText();
+    assertTrue(body.matches("[0-9a-f]{64}"), "Captured exact browser request digest required");
+    assertTrue(
+        mutations.stream()
+            .allMatch(
+                item ->
+                    method.equals(item.path("method").asText())
+                        && path.equals(item.path("path").asText())
+                        && operation.equals(item.path("operationId").asText())
+                        && body.equals(item.path("bodySHA256").asText())
+                        && (item.path("status").asInt() == status
+                            || own && Set.of(403, 503).contains(item.path("status").asInt()))),
+        "Every browser retry must retain the original method, URL, operation and body");
+    assertTrue(
+        mutations.stream().filter(item -> item.path("status").asInt() == status).count() == 2,
+        "Exactly two successful original browser requests required");
+    assertTrue(
+        mutations.stream().filter(item -> item.path("dropped").asBoolean(false)).count() == 1
+            && mutations.stream()
+                .filter(item -> item.path("dropped").asBoolean(false))
+                .allMatch(item -> item.path("status").asInt() == status),
+        "Exactly the first successful upstream reply is lost");
+    if (own)
+      assertTrue(
+          refreshes >= 1
+              && result.path("sameHuman").asBoolean(false)
+              && result.path("roleRenewed").asBoolean(false)
+              && result.path("metadataRead").asBoolean(false),
+          "Own removal must renew the same human and read actual surviving Admin metadata");
+    if ("frontend".equals(client))
+      assertTrue(
+          result.path("sameHuman").asBoolean(false) && result.path("metadataRead").asBoolean(false),
+          "Frontend must retain the human and read actual metadata");
+  }
+
   private static void seedAdministrator(
       jakarta.persistence.EntityManagerFactory factory,
       com.fasterxml.jackson.databind.JsonNode nativeUser,
@@ -813,7 +1006,10 @@ class UserServiceStartupNativePairProof {
       var admin =
           de.caritas.cob.userservice.api.model.Admin.builder()
               .id(account)
-              .type(de.caritas.cob.userservice.api.model.Admin.AdminType.valueOf(type))
+              .type(
+                  type == null
+                      ? null
+                      : de.caritas.cob.userservice.api.model.Admin.AdminType.valueOf(type))
               .tenantId(tenant)
               .username(nativeUser.path("username").asText())
               .firstName(nativeUser.path("firstName").asText())
@@ -822,7 +1018,7 @@ class UserServiceStartupNativePairProof {
               .createDate(now)
               .updateDate(now)
               .build();
-      entities.persist(admin);
+      if (type != null) entities.persist(admin);
       if (combined) {
         var consultant =
             de.caritas.cob.userservice.api.model.Consultant.builder()
@@ -844,13 +1040,24 @@ class UserServiceStartupNativePairProof {
                 .updateDate(now)
                 .build();
         entities.persist(consultant);
-        entities.persist(
-            de.caritas.cob.userservice.api.model.AdminAgency.builder()
-                .admin(admin)
-                .agencyId(70L)
-                .createDate(now)
-                .updateDate(now)
-                .build());
+        if (CurrentClientBrowserBridge.required())
+          entities.persist(
+              de.caritas.cob.userservice.api.model.ConsultantAgency.builder()
+                  .consultant(consultant)
+                  .agencyId(70L)
+                  .tenantId(tenant)
+                  .status(de.caritas.cob.userservice.api.model.ConsultantAgencyStatus.CREATED)
+                  .createDate(now)
+                  .updateDate(now)
+                  .build());
+        if (type != null)
+          entities.persist(
+              de.caritas.cob.userservice.api.model.AdminAgency.builder()
+                  .admin(admin)
+                  .agencyId(70L)
+                  .createDate(now)
+                  .updateDate(now)
+                  .build());
       }
       entities.getTransaction().commit();
     } finally {
