@@ -88,6 +88,33 @@ class UserAccountControllerDelegateTest {
 
   @InjectMocks private UserAccountControllerDelegate delegate;
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.NullSource
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void currentUserPublishesOnlyTheReadOnlyStartupCapability(Boolean readiness) throws Exception {
+    var partial = new UserDataResponseDTO();
+    var full = new UserDataResponseDTO();
+    full.setUserId("74000000-0000-4000-8000-000000000001");
+    when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
+    when(keycloakUserDataProvider.retrieveAuthenticatedUserData()).thenReturn(partial);
+    when(userDtoMapper.userDataOf(eq(partial), isNull(), anyBoolean(), anyBoolean()))
+        .thenReturn(full);
+    var state =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.config.auth.ServiceIdentitySeparationCheck.class);
+    when(state.scopedAccountCommands()).thenReturn(readiness);
+    delegate.setAccountCommandReadiness(state);
+    var result = delegate.getUserData();
+    assertThat(result.getBody().getScopedAccountCommands()).isEqualTo(readiness);
+    assertThat(result.getBody().getUserId()).isEqualTo(full.getUserId());
+    var json = new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(result.getBody());
+    assertThat(json.has("scopedAccountCommands")).isTrue();
+    if (readiness == null) assertThat(json.path("scopedAccountCommands").isNull()).isTrue();
+    else assertThat(json.path("scopedAccountCommands").booleanValue()).isEqualTo(readiness);
+    verify(state).scopedAccountCommands();
+    org.mockito.Mockito.verifyNoMoreInteractions(state);
+  }
+
   @Test
   void getUserDataShouldResolveAssignedAgenciesForRestrictedAgencyAdmin() {
     var roles = Set.of(UserRole.RESTRICTED_AGENCY_ADMIN.getValue(), UserRole.USER_ADMIN.getValue());

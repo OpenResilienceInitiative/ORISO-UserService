@@ -26,6 +26,10 @@ public class UserDataResponseDTO {
   @ApiModelProperty(example = "ajsd89-sdf9-sadk-as8j-asdf8jo")
   private String userId;
 
+  /** Receipt handling capability only; null means activation has not been verified. */
+  @ApiModelProperty(readOnly = true)
+  private Boolean scopedAccountCommands;
+
   @ApiModelProperty(readOnly = true)
   private String chatRecoveryMode;
 

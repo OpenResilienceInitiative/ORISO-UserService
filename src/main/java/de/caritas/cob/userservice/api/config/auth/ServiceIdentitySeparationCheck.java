@@ -20,8 +20,20 @@ public class ServiceIdentitySeparationCheck {
   @Value("${TASK_IDENTITY_MODEL:LEGACY}")
   private String taskIdentityModel = "LEGACY";
 
+  private volatile boolean verifiedLegacy;
+
+  /** Read-only public capability; it grants no account authority. */
+  public Boolean scopedAccountCommands() {
+    return verifiedLegacy
+            && "LEGACY".equals(taskIdentityModel)
+            && !identityClientConfig.isFiveActorMode()
+        ? Boolean.FALSE
+        : null;
+  }
+
   @PostConstruct
   public void verifyBackendClients() {
+    verifiedLegacy = false;
     if ("FIVE_ACTORS".equals(taskIdentityModel)) {
       // Preserve routine startup from dev while the coordinated lifecycle is still incomplete.
       if ("true".equals(environment.getProperty("ORISO_ACCOUNT_LIFECYCLE_ENABLED"))) {
@@ -55,6 +67,7 @@ public class ServiceIdentitySeparationCheck {
       throw new IllegalStateException(
           "Configure distinct confidential technical/admin clients and secrets, separate from the human app client");
     }
+    verifiedLegacy = true;
   }
 
   private static boolean blank(String value) {

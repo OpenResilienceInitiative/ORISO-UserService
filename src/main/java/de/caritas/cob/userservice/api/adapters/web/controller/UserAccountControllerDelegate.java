@@ -70,6 +70,15 @@ class UserAccountControllerDelegate {
   private final @NonNull AgencyAdminDataProvider agencyAdminDataProvider;
   private final @NonNull UsernameTranscoder usernameTranscoder;
 
+  private de.caritas.cob.userservice.api.config.auth.ServiceIdentitySeparationCheck
+      accountCommandReadiness;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  void setAccountCommandReadiness(
+      de.caritas.cob.userservice.api.config.auth.ServiceIdentitySeparationCheck readiness) {
+    this.accountCommandReadiness = java.util.Objects.requireNonNull(readiness);
+  }
+
   private de.caritas.cob.userservice.api.adapters.keycloak.maintenance.SelfLocaleMaintenance
       selfLocaleMaintenance;
 
@@ -174,6 +183,8 @@ class UserAccountControllerDelegate {
             videoChatConfig.getE2eEncryptionEnabled(),
             identityPolicy.isConsultantDisplayNameAllowed());
 
+    fullUserData.setScopedAccountCommands(
+        accountCommandReadiness == null ? null : accountCommandReadiness.scopedAccountCommands());
     return new ResponseEntity<>(fullUserData, HttpStatus.OK);
   }
 

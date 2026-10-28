@@ -32,7 +32,22 @@ class ServiceIdentitySeparationCheckTest {
   @Test
   void distinctClientsAndSecretsAreAccepted() {
     configure();
+    org.junit.jupiter.api.Assertions.assertNull(check.scopedAccountCommands());
     check.verifyBackendClients();
+    org.junit.jupiter.api.Assertions.assertEquals(Boolean.FALSE, check.scopedAccountCommands());
+  }
+
+  @Test
+  void failedRevalidationRevokesTheLegacyCapabilityWithoutAuthenticationSideEffects() {
+    configure();
+    check.verifyBackendClients();
+    org.junit.jupiter.api.Assertions.assertEquals(Boolean.FALSE, check.scopedAccountCommands());
+    technical.setClientSecret("");
+    org.junit.jupiter.api.Assertions.assertThrows(
+        IllegalStateException.class, check::verifyBackendClients);
+    org.junit.jupiter.api.Assertions.assertNull(check.scopedAccountCommands());
+    org.mockito.Mockito.verify(identity, org.mockito.Mockito.never())
+        .taskAccessToken(org.mockito.ArgumentMatchers.any());
   }
 
   @Test
@@ -50,6 +65,7 @@ class ServiceIdentitySeparationCheckTest {
           .thenReturn("fixture-subject-" + actor.name());
     }
     org.junit.jupiter.api.Assertions.assertDoesNotThrow(check::verifyBackendClients);
+    org.junit.jupiter.api.Assertions.assertNull(check.scopedAccountCommands());
   }
 
   @Test
@@ -62,6 +78,7 @@ class ServiceIdentitySeparationCheckTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessage(
             "Five-actor production activation is gated until native account, lifecycle and coordinated receiver contracts are implemented");
+    org.junit.jupiter.api.Assertions.assertNull(check.scopedAccountCommands());
   }
 
   @ParameterizedTest
