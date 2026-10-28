@@ -119,6 +119,7 @@ class CheckedAccountPolicyNativeGate {
   private String receiver;
   private byte[] key;
   private long inviteId;
+  private boolean platformRuntimeRead;
   @TempDir Path temporary;
 
   private record Captured(String proof, String bearer) {
@@ -305,6 +306,8 @@ class CheckedAccountPolicyNativeGate {
         Path.of(required("ORISO_POLICY_OBSERVATIONS")),
         JSON.writeValueAsString(
             Map.of(
+                "platformRuntimeRead",
+                platformRuntimeRead,
                 "lastPolicyHttpStatus",
                 lastPolicyStatus.get(),
                 "policyFacadeEntries",
@@ -359,6 +362,29 @@ class CheckedAccountPolicyNativeGate {
     assertThat(fields).isEqualTo(Set.of("id", "allowedNumberOfUsers"));
     assertThat(response.getHeaders().getCacheControl()).contains("no-store");
     assertThatThrownBy(() -> policies.read(1)).isInstanceOf(AccessDeniedException.class);
+    var platformHttp = boundedHttp();
+    var platformNoStore = new AtomicReference<String>();
+    var runtimeActor = new AtomicReference<String>();
+    platformHttp
+        .getInterceptors()
+        .add(
+            (request, body, execution) -> {
+              var header = request.getHeaders().getFirst("Authorization");
+              if (header != null && header.startsWith("Bearer "))
+                runtimeActor.set(decoder.decode(header.substring(7)).getClaimAsString("azp"));
+              var actual = execution.execute(request, body);
+              platformNoStore.set(actual.getHeaders().getCacheControl());
+              return actual;
+            });
+    var platform =
+        new CheckedPlatformInactivityPolicyReads(
+                platformHttp, broker, decoder, environment, java.time.Clock.systemUTC(), receiver)
+            .capture();
+    assertThat(platform.months()).isEqualTo(18);
+    assertThat(platform.revision()).isGreaterThanOrEqualTo(1);
+    assertThat(platformNoStore.get()).contains("no-store");
+    assertThat(runtimeActor.get()).isEqualTo("backend-runtime");
+    platformRuntimeRead = true;
   }
 
   @Test

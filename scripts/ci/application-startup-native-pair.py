@@ -495,6 +495,8 @@ def native(kc, report):
             'soleExistingTaskKey': ['ORISO_TASK_CONTEXT_KEY'],
             'nativeActualRealmAndEndpoints': ['KEYCLOAK_REALM', 'KEYCLOAK_REALM_INTERNAL_ID', 'KEYCLOAK_AUTH_SERVER_URL', 'ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL', 'IDENTITY_OPENID_CONNECT_URL'],
             'testingClasspathOnlyQuarantineNotNativeActors': ['identity.technical-user.client-id', 'identity.technical-user.client-secret', 'keycloak.config.admin-client-id', 'keycloak.config.admin-client-secret', 'keycloak.config.admin-service-subject'],
+            'disposableInactivityBaseline': 'Actual seeded human UUIDs/tenants/native creation times, existing assignAtCreation with explicit fixture18months/revision1; baseline only, not onboarding policy integration',
+            'disposableConsultingTypeMetadata': 'Loopback ephemeral exact GET /consultingtypes/basic, no query/body, empty list for unassigned seeds; actual production client; no CTS-native or external delivery credit',
             'disposableInactivityScheduler': 'ACCOUNT_INACTIVITY_ENABLED=true; unchanged dry-run default; instantiation and binding only, not inactivity effects',
             'disposableMatrixName': 'MATRIX_SERVER_NAME=startup-fixture.invalid; required grant owner configuration only, not Matrix reachability or delivery',
             'disposableRetentionPolicy': 'deletion.readOnlyWindow.tenantOverrides=11:0; proves configured immediate eligibility, not elapsed48h; nonzero tests retained',
@@ -523,7 +525,7 @@ def native(kc, report):
                     boot_phase['verified'] = True
                     release = exchange / 'boot-verified.pending'
                     payload = {'bootNoEffect': True, 'account': self_account, 'username': self_native['username'],
-                        'email': self_native['email'], 'bearer': self_bearer,
+                        'email': self_native['email'], 'bearer': self_bearer, 'nativeCreation': self_native['createdTimestamp'],
                         'primaryBearer': primary_bearer, **journey_targets}
                     fd = os.open(release, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                     with os.fdopen(fd, 'w') as stream: json.dump(payload, stream)

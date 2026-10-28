@@ -78,7 +78,32 @@ class UserServiceStartupNativePairProof {
     witness.put("failureTypes", List.of());
     var context = new AtomicReference<ConfigurableApplicationContext>();
     Throwable startupFailure = null;
+    var consultingTypes =
+        com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+    var consultingTypeReads = new java.util.concurrent.atomic.AtomicInteger();
+    var unexpectedConsultingTypeRequest = new java.util.concurrent.atomic.AtomicBoolean();
     try {
+      consultingTypes.createContext(
+          "/",
+          exchange -> {
+            try {
+              if (!"GET".equals(exchange.getRequestMethod())
+                  || !"/consultingtypes/basic".equals(exchange.getRequestURI().toString())
+                  || exchange.getRequestBody().readNBytes(1).length != 0) {
+                unexpectedConsultingTypeRequest.set(true);
+                exchange.sendResponseHeaders(403, -1);
+                return;
+              }
+              consultingTypeReads.incrementAndGet();
+              exchange.getResponseHeaders().set("Content-Type", "application/json");
+              exchange.getResponseHeaders().set("Cache-Control", "no-store");
+              exchange.sendResponseHeaders(200, 2);
+              exchange.getResponseBody().write(new byte[] {'[', ']'});
+            } finally {
+              exchange.close();
+            }
+          });
+      consultingTypes.start();
       String binary = UserServiceStartupNativePairProof.class.getName().replace('.', '/');
       Path testClasses = Path.of(required("STARTUP_TEST_CLASSES"));
       boolean onlyThisProof;
@@ -187,10 +212,15 @@ class UserServiceStartupNativePairProof {
             application.run(
                 "--server.port=0",
                 "--spring.profiles.active=testing",
+                "--consulting.type.service.api.url=http://127.0.0.1:"
+                    + consultingTypes.getAddress().getPort(),
                 "--spring.sql.init.data-locations=classpath:database/UserServiceDatabase.sql,classpath:database/AccountInactivityDatabase.sql,file:"
                     + required("STARTUP_JOURNAL_FIXTURE"));
         witness.put("contextStarted", started.isActive());
         verifyOpen(started, catalog, witness);
+        assertTrue(
+            consultingTypeReads.get() > 0, "Actual public metadata client must reach the fixture");
+        assertFalse(unexpectedConsultingTypeRequest.get());
       } catch (RuntimeException failure) {
         startupFailure = failure;
         var types = new ArrayList<String>();
@@ -232,6 +262,7 @@ class UserServiceStartupNativePairProof {
         held.close();
         witness.put("contextClosed", !held.isActive());
       }
+      consultingTypes.stop(0);
       witness.put("observedBeans", List.copyOf(observed));
       Files.writeString(Path.of(required("STARTUP_WITNESS")), JSON.writeValueAsString(witness));
     }
@@ -372,6 +403,7 @@ class UserServiceStartupNativePairProof {
     user.setDeletionLifecycleState(
         de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState.ACTIVE);
     context.getBean(de.caritas.cob.userservice.api.port.out.UserRepository.class).save(user);
+    seedInactivity(context, account, 11L, fixture.path("nativeCreation").asLong());
     String token = fixture.path("bearer").asText();
     assertFalse(token.isBlank());
     try (var client = HttpClient.newHttpClient()) {
@@ -432,6 +464,20 @@ class UserServiceStartupNativePairProof {
     for (String key : List.of("consultantThenAdmin", "adminThenConsultant", "retainedAdmin"))
       seedAdministrator(emf, fixture.path(key), "AGENCY", true);
     seedAdministrator(emf, fixture.path("pureTenant"), "TENANT", false);
+    for (String key :
+        List.of(
+            "primary",
+            "consultantThenAdmin",
+            "adminThenConsultant",
+            "retainedAdmin",
+            "pureTenant")) {
+      var nativeUser = fixture.path(key);
+      seedInactivity(
+          context,
+          nativeUser.path("id").asText(),
+          Long.parseLong(nativeUser.path("attributes").path("tenantId").path(0).asText()),
+          nativeUser.path("createdTimestamp").asLong());
+    }
     String bearer = fixture.path("primaryBearer").asText();
     var scheduler =
         context.getBean(
@@ -666,6 +712,27 @@ class UserServiceStartupNativePairProof {
                 .build(),
             HttpResponse.BodyHandlers.discarding());
     assertEquals(expected, response.statusCode(), "Actual public " + method + " account command");
+  }
+
+  private static void seedInactivity(
+      ConfigurableApplicationContext context, String account, Long tenant, long nativeCreation) {
+    assertTrue(nativeCreation > 0, "Original native fixture creation time required");
+    var lifecycle =
+        context.getBean(
+            de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+                .class);
+    assertTrue(lifecycle.snapshot(account).isEmpty());
+    var creation = java.time.Instant.ofEpochMilli(nativeCreation);
+    lifecycle.assignAtCreation(account, tenant, 18, 1, creation);
+    var row = lifecycle.snapshot(account).orElseThrow();
+    assertEquals(tenant, row.tenantId());
+    assertEquals(18, row.assignedMonths());
+    assertEquals(1, row.revision());
+    assertEquals(creation, row.lastActivity());
+    assertEquals(
+        de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService.Status
+            .ACTIVE,
+        row.status());
   }
 
   private static void seedAdministrator(

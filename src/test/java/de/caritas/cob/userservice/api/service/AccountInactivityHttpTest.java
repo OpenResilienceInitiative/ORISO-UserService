@@ -57,6 +57,15 @@ class AccountInactivityHttpTest {
                                 .AccountInactivityBootstrap.class)))
             .addFilters(new AccountInactivityAccessFilter(lifecycle))
             .build();
+    var missingUser =
+        new JwtAuthenticationToken(
+            Jwt.withTokenValue("missing-user-token")
+                .header("alg", "RS256")
+                .subject("missing-user")
+                .claim("realm_access", Map.of("roles", List.of("user")))
+                .build());
+    mvc.perform(get("/users/account-inactivity").principal(missingUser))
+        .andExpect(status().isForbidden());
     mvc.perform(get("/users/account-inactivity").principal(auth)).andExpect(status().isOk());
     assertThat(lifecycle.snapshot("person").orElseThrow().lastActivity()).isEqualTo(login);
     mvc.perform(post("/users/account-inactivity/activity").principal(auth))
