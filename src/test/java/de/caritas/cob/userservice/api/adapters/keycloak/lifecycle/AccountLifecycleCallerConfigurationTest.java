@@ -109,6 +109,70 @@ class AccountLifecycleCallerConfigurationTest {
             });
   }
 
+  private String fullSelfOperationsPolicy(String variant) throws Exception {
+    var json = new com.fasterxml.jackson.databind.ObjectMapper();
+    var policy = json.readTree(ordinaryPolicy());
+    var allowed =
+        java.util.List.of(
+            "account.read",
+            "account.locale",
+            "account.profile",
+            "account.email",
+            "account.password",
+            "account.deactivate",
+            "otp.read",
+            "otp.app-setup",
+            "otp.delete",
+            "otp.email-start",
+            "otp.email-finish");
+    for (var profile : policy.path("ordinaryProfiles")) {
+      var operations =
+          ((com.fasterxml.jackson.databind.node.ObjectNode) profile).putArray("selfOperations");
+      allowed.forEach(operations::add);
+      if ("duplicate".equals(variant))
+        operations.set(10, com.fasterxml.jackson.databind.node.TextNode.valueOf("account.read"));
+      if ("unknown".equals(variant))
+        operations.set(
+            10, com.fasterxml.jackson.databind.node.TextNode.valueOf("account.unapproved"));
+    }
+    return policy.toString();
+  }
+
+  @Test
+  void theFullExistingElevenSelfOperationsCatalogStartsTheActualCallerGraph() throws Exception {
+    withEnabledCallerGraph(
+        valid().withProperty("ORISO_ACCOUNT_MAINTENANCE_CONFIG", fullSelfOperationsPolicy(null)),
+        context ->
+            assertNotNull(
+                context.getBean(
+                    de.caritas.cob.userservice.api.port.out.InvitationRecipientAvailability
+                        .class)));
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"duplicate", "unknown"})
+  void aFullSizeSelfOperationsCatalogStillRejectsDuplicatesAndUnknownOperations(String variant)
+      throws Exception {
+    var environment =
+        valid().withProperty("ORISO_ACCOUNT_MAINTENANCE_CONFIG", fullSelfOperationsPolicy(variant));
+    var keycloak = mock(KeycloakConfig.class);
+    when(keycloak.getRealm()).thenReturn("fixture");
+    var initial =
+        new de.caritas.cob.userservice.api.service.accountinvite.ProtectedInvitationProfiles(
+            "22222222-2222-4222-8222-222222222222",
+            java.util.Map.of(
+                de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole
+                        .TENANT_ADMIN,
+                    "tenant",
+                de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole
+                        .PLATFORM_ADMIN,
+                    "platform"));
+    var configuration = new AccountLifecycleCallerConfiguration(environment);
+    assertThrows(
+        IllegalStateException.class,
+        () -> configuration.reviewedMaintenanceProfiles(initial, keycloak));
+  }
+
   private void withEnabledCallerGraph(
       java.util.function.Consumer<org.springframework.context.ApplicationContext> assertions) {
     withEnabledCallerGraph(valid(), assertions);

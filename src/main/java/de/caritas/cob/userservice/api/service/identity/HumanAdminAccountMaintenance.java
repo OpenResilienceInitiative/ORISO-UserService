@@ -1786,6 +1786,18 @@ public final class HumanAdminAccountMaintenance {
     return row;
   }
 
+  /** Uses the same fresh request binding; it does not authorize a target or disclose an account. */
+  public de.caritas.cob.userservice.api.port.out.InvitationRecipientAvailability.Human
+      invitationEmailOrigin() {
+    var current = currentHuman();
+    return new de.caritas.cob.userservice.api.port.out.InvitationRecipientAvailability.Human(
+        current.subject,
+        current.issuer,
+        current.client,
+        current.administrativeAuthority,
+        current.rawBearer);
+  }
+
   private Human currentHuman() {
     if (!mode.isFiveActorMode()
         || !(request.getUserPrincipal() instanceof JwtAuthenticationToken authentication)

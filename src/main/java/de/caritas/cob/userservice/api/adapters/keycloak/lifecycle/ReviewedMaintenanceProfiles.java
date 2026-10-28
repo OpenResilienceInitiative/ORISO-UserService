@@ -20,10 +20,28 @@ public final class ReviewedMaintenanceProfiles {
           .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
   private static final Set<String> SQL_KINDS =
       Set.of("USER", "CONSULTANT", "AGENCY_ADMIN", "TENANT_ADMIN", "PLATFORM_ADMIN");
+  private static final Set<String> SELF_OPERATIONS =
+      Set.of(
+          "account.read",
+          "account.locale",
+          "account.profile",
+          "account.email",
+          "account.password",
+          "account.deactivate",
+          "otp.read",
+          "otp.app-setup",
+          "otp.delete",
+          "otp.email-start",
+          "otp.email-finish");
 
   public record Profile(String family, String id, long version, Set<String> realmRoles) {
     public Profile {
       realmRoles = Set.copyOf(realmRoles);
+    }
+
+    /** Classify only the same closed role unions used by the existing ordinary creator. */
+    public String ordinaryKind() {
+      return "ORDINARY".equals(family) ? OrdinaryAccountCreation.kind(realmRoles) : null;
     }
   }
 
@@ -85,23 +103,11 @@ public final class ReviewedMaintenanceProfiles {
             || !java.util.Collections.disjoint(roles, technical)
             || !profile.path("allowUnassignedTenant").isBoolean()) throw invalid();
         clientRoles(profile.path("clientRoles"));
-        var operations = array(profile.path("selfOperations"), 10);
+        var operations = array(profile.path("selfOperations"), SELF_OPERATIONS.size());
         var uniqueOperations = new HashSet<String>();
         for (var operation : operations) {
           if (!operation.isTextual()
-              || !Set.of(
-                      "account.read",
-                      "account.locale",
-                      "account.profile",
-                      "account.email",
-                      "account.password",
-                      "account.deactivate",
-                      "otp.read",
-                      "otp.app-setup",
-                      "otp.delete",
-                      "otp.email-start",
-                      "otp.email-finish")
-                  .contains(operation.textValue())
+              || !SELF_OPERATIONS.contains(operation.textValue())
               || !uniqueOperations.add(operation.textValue())) throw invalid();
         }
         String sqlKind =

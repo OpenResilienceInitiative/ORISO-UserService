@@ -26,7 +26,7 @@ BROWSER_FLAGS = {'frontendLocale', 'ownActorSeed', 'primaryActorSeed', 'ownMutat
 CASE = 'actualServletApplicationReachesOnlyExpectedProductionStartupState'
 JAVA_SOURCE = 'src/test/java/' + SUITE.replace('.', '/') + '.java'
 COMMON_FLAGS = {'productionClasspath', 'actualApplication', 'testingProfile', 'fiveActors', 'realPolicies', 'contextClosed', 'noUnexpectedFailure'}
-OPEN_FLAGS = {'contextStarted', 'servletReady', 'securityReady', 'jpaReady', 'scopedOwnersReady', 'bothSchedulersReady', 'noLegacyFallback', 'schemaReady', 'bootNoEffect', 'authenticatedMetadata', 'selfLocaleApplied', 'selfLocaleReplay', 'consultantInverseRetention', 'consultantThenAdmin', 'adminThenConsultant', 'pureTenantTwoChildren'}
+OPEN_FLAGS = {'contextStarted', 'servletReady', 'securityReady', 'jpaReady', 'scopedOwnersReady', 'bothSchedulersReady', 'noLegacyFallback', 'schemaReady', 'bootNoEffect', 'authenticatedMetadata', 'selfLocaleApplied', 'selfLocaleReplay', 'consultantInverseRetention', 'consultantThenAdmin', 'adminThenConsultant', 'pureTenantTwoChildren', 'invitationRecipientScoped', 'invitationDraftNoMail', 'invitationOccupiedNoEffect'}
 
 IMAGE = 'quay.io/keycloak/keycloak@sha256:9b0330756022422149aa6502eb2def8cd47c6e1b000c7c65cdb13e7c0133e992'
 BEAN_TYPES = {
@@ -47,6 +47,7 @@ BEAN_TYPES = {
     'selfLocaleMaintenance': 'adapters.keycloak.maintenance.SelfLocaleMaintenance',
     'selfAppOtpMaintenance': 'adapters.keycloak.lifecycle.SelfAppOtpMaintenance',
     'humanAdminAccountMaintenance': 'service.identity.HumanAdminAccountMaintenance',
+    'invitationRecipientAvailability': 'adapters.keycloak.maintenance.KeycloakInvitationRecipientAvailability',
     'scheduledAskerMaintenance': 'workflow.delete.service.ScheduledAskerMaintenance',
     'scheduledConsultantMaintenance': 'workflow.delete.service.ScheduledConsultantMaintenance',
     'deleteUserAccountScheduler': 'workflow.delete.scheduler.DeleteUserAccountScheduler',
@@ -312,6 +313,17 @@ def checked_tenant_native(value):
             raise ValueError('Bounded native status/count diagnostics required')
 
 
+def checked_invitation_native(value, state):
+    if (not isinstance(value, dict) or set(value) != {'dispatches', 'statuses'}
+            or type(value['dispatches']) is not int or not 0 <= value['dispatches'] <= 2
+            or not isinstance(value['statuses'], list) or len(value['statuses']) > value['dispatches']
+            or any(type(status) is not int or status not in {200, 400, 401, 403, 404, 409, 500, 502, 503}
+                   for status in value['statuses'])):
+        raise ValueError('Fixed invitation status/count diagnostics required')
+    return value == ({'dispatches': 2, 'statuses': [200, 200]}
+                     if state == 'OPEN' else {'dispatches': 0, 'statuses': []})
+
+
 def startup_protected_catalogue(configuration):
     """Omit only the native negative-test alias, identically before both peer installations."""
     value = copy.deepcopy(configuration)
@@ -431,7 +443,7 @@ def safe_binding_failure(raw):
 def checked_witness(value, state, browser=False):
     flags = COMMON_FLAGS | OPEN_FLAGS | {'exactFence'}
     if (state not in {'FENCED', 'OPEN'} or not isinstance(value, dict)
-            or set(value) != flags | {'state', 'observedBeans', 'failureTypes', 'tenantNative', 'currentClientBrowser'}
+            or set(value) != flags | {'state', 'observedBeans', 'failureTypes', 'tenantNative', 'invitationNative', 'currentClientBrowser'}
             or value['state'] != state or any(type(value[key]) is not bool for key in flags)
             or not isinstance(value['observedBeans'], list)
             or value['observedBeans'] != sorted(set(value['observedBeans']))
@@ -444,7 +456,8 @@ def checked_witness(value, state, browser=False):
             or any(type(flag) is not bool for flag in browser_value.values())):
         raise ValueError('Exact finite browser witness required')
     checked_tenant_native(value['tenantNative'])
-    return (all(flag == browser for flag in browser_value.values())
+    return (checked_invitation_native(value['invitationNative'], state)
+            and all(flag == browser for flag in browser_value.values())
             and (not browser or state == 'OPEN') and all(value[key] for key in COMMON_FLAGS)
             and value['exactFence'] == (state == 'FENCED')
             and all(value[key] == (state == 'OPEN') for key in OPEN_FLAGS)
@@ -560,6 +573,14 @@ def native(kc, report):
         'config/auth/TaskActorConfiguration', 'config/auth/TaskActorTokenBroker',
         'adapters/keycloak/lifecycle/AccountLifecycleCallerConfiguration',
         'adapters/keycloak/lifecycle/ReviewedMaintenanceProfiles',
+        'adapters/keycloak/lifecycle/AccountLifecycleCodec',
+        'adapters/keycloak/maintenance/KeycloakInvitationRecipientAvailability',
+        'port/out/InvitationRecipientAvailability', 'port/out/InvitationRecipientAvailability$Human',
+        'port/out/InvitationRecipientAvailability$Target', 'port/out/InvitationRecipientAvailability$Kind',
+        'port/out/InvitationRecipientAvailability$TenantMode',
+        'port/out/InvitationRecipientAvailabilityUnavailableException',
+        'service/accountinvite/AccountInviteService', 'service/appointment/AppointmentService',
+        'service/identity/HumanAdminAccountMaintenance',
         'workflow/delete/service/ScheduledAskerMaintenance', 'workflow/delete/service/ScheduledConsultantMaintenance',
         'workflow/delete/scheduler/DeleteUserAccountScheduler', 'workflow/accountinactivity/AccountInactivityScheduler']]
     compiled = {path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest() for path in classes}

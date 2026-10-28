@@ -30,6 +30,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClientException;
 
@@ -74,6 +76,7 @@ public class AppointmentService {
   }
 
   /** Creation ledger owns the exact returned native account and the captured original tenant. */
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
   public void createOwnedConsultant(ConsultantAdminResponseDTO response, Long capturedTenant) {
     requireOwnedOutsideSql();
     if (!appointmentFeatureEnabled

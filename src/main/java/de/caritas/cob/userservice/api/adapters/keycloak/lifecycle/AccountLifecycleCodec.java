@@ -1249,6 +1249,33 @@ public final class AccountLifecycleCodec implements MagicLinkCapabilityDigest {
     }
   }
 
+  /** Fixed invitation read binding; existing username and account proof encodings stay intact. */
+  public String invitationEmailAvailabilityProof(
+      String realmName, String realmId, TaskActorCredentials actor, Object body) {
+    if (actor == null
+        || actor.actor() != de.caritas.cob.userservice.api.config.auth.TaskActor.ACCOUNT_ADMIN)
+      throw new IllegalArgumentException("Invalid invitation availability actor");
+    long now = clock.instant().getEpochSecond();
+    Map<String, Object> claims = new TreeMap<>();
+    claims.put("iss", "userservice");
+    claims.put("aud", "oriso-account-maintenance");
+    claims.put("purpose", TaskPurpose.ACCOUNT_MAINTENANCE.name());
+    claims.put("operation", "account.invitation-email-availability");
+    claims.put("method", "POST");
+    claims.put("actor", actor.actor().name());
+    claims.put("realm", realmName);
+    claims.put("target", "realm/" + realmId + "/availability/invitation-email");
+    claims.put("taskClient", actor.clientId());
+    claims.put("taskSubject", actor.serviceSubject());
+    claims.put("payloadDigest", digest("payload", body));
+    claims.put("jti", UUID.randomUUID().toString());
+    claims.put("nonce", UUID.randomUUID().toString().replace("-", ""));
+    claims.put("iat", now);
+    claims.put("exp", now + 60);
+    String encoded = encode(canonical(claims).getBytes(StandardCharsets.UTF_8));
+    return encoded + "." + encode(mac("proof\n" + encoded));
+  }
+
   /** Finite maintenance proof encoding; only the checked private domain writer issues a scope. */
   public String maintenanceProof(
       String command,

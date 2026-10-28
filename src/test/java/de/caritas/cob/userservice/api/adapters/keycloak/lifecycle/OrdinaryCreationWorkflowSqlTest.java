@@ -109,6 +109,10 @@ class OrdinaryCreationWorkflowSqlTest {
   }
 
   private OrdinaryAccountCreation restarted() {
+    return restarted(mock(AppointmentService.class));
+  }
+
+  private OrdinaryAccountCreation restarted(AppointmentService appointments) {
     var effects =
         new JdbcOwnedLifecycleEffects(
             jdbc, manager, mock(JdbcOwnedLifecycleEffects.CleanupOperations.class), codec);
@@ -122,7 +126,7 @@ class OrdinaryCreationWorkflowSqlTest {
         codec,
         mock(MatrixSynapseService.class),
         mock(MatrixConfig.class),
-        mock(AppointmentService.class),
+        appointments,
         mock(AuthenticatedUser.class),
         "https://issuer.example/realms/oriso",
         Set.of("human-admin"),
@@ -292,6 +296,214 @@ class OrdinaryCreationWorkflowSqlTest {
     verifyNoInteractions(cleanup);
     verify(remote, never()).commit(any(), any());
     assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM local_created", Integer.class));
+  }
+
+  @Test
+  void ownedAppointmentUsesActualHttpOutsideSqlAndResumesTheOriginalSaga() throws Exception {
+    when(remote.commit(any(), any()))
+        .thenAnswer(
+            call -> {
+              CommitRequest request = call.getArgument(1);
+              return new AttemptResult(
+                  call.getArgument(0),
+                  "owned-account",
+                  "COMMITTED",
+                  request.execution(),
+                  "proof",
+                  null,
+                  "terminal");
+            });
+    try (var fixture = ownedAppointment(200)) {
+      var ordinary = restarted(fixture.service());
+      assertDoesNotThrow(
+          () ->
+              new TransactionTemplate(manager)
+                  .execute(
+                      status ->
+                          ordinary.create(
+                              scope,
+                              account,
+                              pending -> {
+                                jdbc.update(
+                                    "INSERT INTO local_created(id) VALUES (?)",
+                                    pending.accountId());
+                                assertTrue(
+                                    org.springframework.transaction.support
+                                        .TransactionSynchronizationManager
+                                        .isActualTransactionActive());
+                                ordinary.createAppointment(pending, appointmentResponse());
+                                assertTrue(
+                                    org.springframework.transaction.support
+                                        .TransactionSynchronizationManager
+                                        .isActualTransactionActive());
+                                return "done";
+                              })));
+      assertAll(
+          () -> assertEquals(1, fixture.requests().get()),
+          () -> assertEquals(Boolean.FALSE, fixture.transactionAtTransport().get()),
+          () -> assertEquals(0, fixture.visibleLocalRows().get()),
+          () -> assertEquals("owned-account", fixture.receivedAccount().get()),
+          () -> assertEquals("7", fixture.receivedTenant().get()),
+          () ->
+              assertEquals(
+                  "ACKNOWLEDGED",
+                  jdbc.queryForObject("SELECT state FROM identity_lifecycle_effect", String.class)),
+          () ->
+              assertEquals(
+                  "COMMITTED",
+                  jdbc.queryForObject(
+                      "SELECT status FROM identity_lifecycle_attempt", String.class)),
+          () ->
+              assertEquals(
+                  1, jdbc.queryForObject("SELECT COUNT(*) FROM local_created", Integer.class)));
+      verify(remote).commit(any(), any());
+    }
+  }
+
+  @Test
+  void unknownOwnedAppointmentHttpOutcomeKeepsTheDurableEffectAndRollsBackLocalWrites()
+      throws Exception {
+    try (var fixture = ownedAppointment(503)) {
+      var ordinary = restarted(fixture.service());
+      assertThrows(
+          IllegalStateException.class,
+          () ->
+              ordinary.create(
+                  scope,
+                  account,
+                  pending -> {
+                    jdbc.update("INSERT INTO local_created(id) VALUES (?)", pending.accountId());
+                    ordinary.createAppointment(pending, appointmentResponse());
+                    return "done";
+                  }));
+      assertAll(
+          () -> assertEquals(1, fixture.requests().get()),
+          () -> assertEquals(Boolean.FALSE, fixture.transactionAtTransport().get()),
+          () ->
+              assertEquals(
+                  "STARTED",
+                  jdbc.queryForObject("SELECT state FROM identity_lifecycle_effect", String.class)),
+          () ->
+              assertEquals(
+                  0, jdbc.queryForObject("SELECT COUNT(*) FROM local_created", Integer.class)));
+      verify(remote, never()).commit(any(), any());
+      verify(remote, never()).compensate(any(), any());
+    }
+  }
+
+  private de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO
+      appointmentResponse() {
+    var response = new de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO();
+    var consultant = new de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO();
+    consultant.setId("owned-account");
+    response.setEmbedded(consultant);
+    return response;
+  }
+
+  private OwnedAppointmentHttp ownedAppointment(int responseStatus) throws Exception {
+    var requests = new java.util.concurrent.atomic.AtomicInteger();
+    var transaction = new AtomicReference<Boolean>();
+    var visibleRows = new java.util.concurrent.atomic.AtomicInteger(-1);
+    var receivedAccount = new AtomicReference<String>();
+    var receivedTenant = new AtomicReference<String>();
+    var server =
+        com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+    server.createContext(
+        "/consultants",
+        exchange -> {
+          try (exchange) {
+            requests.incrementAndGet();
+            receivedTenant.set(exchange.getRequestHeaders().getFirst("tenantId"));
+            receivedAccount.set(
+                new com.fasterxml.jackson.databind.ObjectMapper()
+                    .readTree(exchange.getRequestBody())
+                    .path("id")
+                    .asText());
+            visibleRows.set(
+                jdbc.queryForObject("SELECT COUNT(*) FROM local_created", Integer.class));
+            byte[] body = "{}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(responseStatus, body.length);
+            exchange.getResponseBody().write(body);
+          }
+        });
+    server.start();
+    try {
+      var requestFactory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
+      requestFactory.setConnectTimeout(2000);
+      requestFactory.setReadTimeout(5000);
+      var rest = new RestTemplate(requestFactory);
+      rest.getInterceptors()
+          .add(
+              (request, body, execution) -> {
+                transaction.set(
+                    org.springframework.transaction.support.TransactionSynchronizationManager
+                        .isActualTransactionActive());
+                return execution.execute(request, body);
+              });
+      var factory =
+          new de.caritas.cob.userservice.api.config.apiclient
+              .AppointmentConsultantServiceApiControllerFactory();
+      org.springframework.test.util.ReflectionTestUtils.setField(factory, "restTemplate", rest);
+      org.springframework.test.util.ReflectionTestUtils.setField(
+          factory, "appointmentServiceApiUrl", "http://127.0.0.1:" + server.getAddress().getPort());
+      var config = mock(de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
+      when(config.isFiveActorMode()).thenReturn(true);
+      when(config.taskAccessToken(
+              de.caritas.cob.userservice.api.config.auth.TaskPurpose.APPOINTMENT_SYNC))
+          .thenReturn("synthetic-appointment-token");
+      var headers =
+          mock(de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier.class);
+      when(headers.getKeycloakAndCsrfHttpHeaders("synthetic-appointment-token"))
+          .thenReturn(new org.springframework.http.HttpHeaders());
+      var service =
+          new AppointmentService(
+              factory,
+              mock(
+                  de.caritas.cob.userservice.api.config.apiclient
+                      .AppointmentAgencyServiceApiControllerFactory.class),
+              mock(
+                  de.caritas.cob.userservice.api.config.apiclient
+                      .AppointmentAskerServiceApiControllerFactory.class),
+              headers,
+              mock(de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier.class),
+              mock(de.caritas.cob.userservice.api.port.out.IdentityAuthentication.class),
+              config);
+      org.springframework.test.util.ReflectionTestUtils.setField(
+          service, "appointmentFeatureEnabled", true);
+      var proxy = new org.springframework.aop.framework.ProxyFactory(service);
+      proxy.setProxyTargetClass(true);
+      proxy.addAdvice(
+          new org.springframework.transaction.interceptor.TransactionInterceptor(
+              manager,
+              new org.springframework.transaction.annotation
+                  .AnnotationTransactionAttributeSource()));
+      return new OwnedAppointmentHttp(
+          (AppointmentService) proxy.getProxy(),
+          server,
+          requests,
+          transaction,
+          visibleRows,
+          receivedAccount,
+          receivedTenant);
+    } catch (Exception | Error failure) {
+      server.stop(0);
+      throw failure;
+    }
+  }
+
+  private record OwnedAppointmentHttp(
+      AppointmentService service,
+      com.sun.net.httpserver.HttpServer server,
+      java.util.concurrent.atomic.AtomicInteger requests,
+      AtomicReference<Boolean> transactionAtTransport,
+      java.util.concurrent.atomic.AtomicInteger visibleLocalRows,
+      AtomicReference<String> receivedAccount,
+      AtomicReference<String> receivedTenant)
+      implements AutoCloseable {
+    public void close() {
+      server.stop(0);
+    }
   }
 
   @Test

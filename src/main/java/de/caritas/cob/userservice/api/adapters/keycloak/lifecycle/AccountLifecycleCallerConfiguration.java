@@ -104,6 +104,36 @@ public class AccountLifecycleCallerConfiguration {
   }
 
   @Bean
+  de.caritas.cob.userservice.api.port.out.InvitationRecipientAvailability
+      invitationRecipientAvailability(
+          @Qualifier("keycloakRestTemplate") RestTemplate http,
+          TaskActorConfiguration actors,
+          TaskActorTokenBroker broker,
+          AccountLifecycleCodec codec,
+          KeycloakConfig keycloak,
+          ReviewedMaintenanceProfiles reviewed,
+          de.caritas.cob.userservice.api.service.accountinvite.ProtectedInvitationProfiles initial,
+          de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance human) {
+    String server =
+        environment.getProperty(
+            "ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL", keycloak.getAuthServerUrl());
+    if (server == null || server.isBlank()) throw invalid();
+    actors.require(de.caritas.cob.userservice.api.config.auth.TaskPurpose.ACCOUNT_MAINTENANCE);
+    return new de.caritas.cob.userservice.api.adapters.keycloak.maintenance
+        .KeycloakInvitationRecipientAvailability(
+        http,
+        actors,
+        broker,
+        codec,
+        server,
+        keycloak.getRealm(),
+        required("KEYCLOAK_REALM_INTERNAL_ID"),
+        human::invitationEmailOrigin,
+        reviewed,
+        initial);
+  }
+
+  @Bean
   ClaimedPasswordMaintenance claimedPasswordMaintenance(
       IdentityClientConfig identities,
       JdbcTemplate jdbc,

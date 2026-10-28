@@ -136,6 +136,31 @@ class HumanAdminAccountMaintenanceTest {
   }
 
   @Test
+  void invitationEmailOriginReusesTheFreshHumanBoundaryWithoutLookingUpATarget() {
+    var origin = service.invitationEmailOrigin();
+    assertAll(
+        () -> assertEquals(HUMAN, origin.subject()),
+        () -> assertEquals(ISSUER, origin.issuer()),
+        () -> assertEquals("admin", origin.client()),
+        () -> assertEquals("PROTECTED_ACCOUNT_OPERATIONS_V1", origin.authority()),
+        () -> assertEquals("Bearer synthetic-current-human", origin.rawBearer()),
+        () -> assertFalse(origin.toString().contains("synthetic-current-human")));
+    verifyNoInteractions(actors, broker);
+    server.verify();
+  }
+
+  @Test
+  void invitationEmailOriginRejectsAMismatchedRequestBearerBeforeAnyNativeRead() {
+    request.removeHeader("Authorization");
+    request.addHeader("Authorization", "Bearer different-human");
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+        () -> service.invitationEmailOrigin());
+    verifyNoInteractions(actors, broker);
+    server.verify();
+  }
+
+  @Test
   void actualAdminSqlAndCurrentHumanReachOnlyTheFixedScopedNativeRead() {
     readReply();
     List<String> malformed =

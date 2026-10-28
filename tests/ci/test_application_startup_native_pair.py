@@ -121,7 +121,9 @@ class ApplicationStartupPairControls(unittest.TestCase):
         self.assertEqual(['jdbc:h2:mem:userservice-startup-${random.uuid};DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MariaDB;DATABASE_TO_LOWER=TRUE;NON_KEYWORDS=USER,VALUE,DAY'], values)
 
     def witness(self, state):
-        return {'currentClientBrowser': {key: False for key in proof.BROWSER_FLAGS}, 'tenantNative': {key: {'dispatches': 0, 'statuses': []} for key in ['tenant', 'profile']}, 'state': state, 'observedBeans': [], 'failureTypes': ['BeanCreationException', 'IllegalStateException'] if state == 'FENCED' else [],
+        return {'currentClientBrowser': {key: False for key in proof.BROWSER_FLAGS}, 'tenantNative': {key: {'dispatches': 0, 'statuses': []} for key in ['tenant', 'profile']},
+                'invitationNative': {'dispatches': 2, 'statuses': [200, 200]} if state == 'OPEN' else {'dispatches': 0, 'statuses': []},
+                'state': state, 'observedBeans': [], 'failureTypes': ['BeanCreationException', 'IllegalStateException'] if state == 'FENCED' else [],
                 **{key: True for key in proof.COMMON_FLAGS},
                 **{key: state == 'OPEN' for key in proof.OPEN_FLAGS},
                 'exactFence': state == 'FENCED'}
@@ -289,6 +291,26 @@ class ApplicationStartupPairControls(unittest.TestCase):
         self.assertFalse(proof.checked_witness(value, 'FENCED'))
         value = self.witness('OPEN'); value['securityReady'] = False
         self.assertFalse(proof.checked_witness(value, 'OPEN'))
+
+    def test_actual_invitation_reader_and_both_outcomes_require_all_three_strict_flags(self):
+        for flag in ['invitationRecipientScoped', 'invitationDraftNoMail', 'invitationOccupiedNoEffect']:
+            value = self.witness('OPEN'); value[flag] = False
+            self.assertFalse(proof.checked_witness(value, 'OPEN'), flag)
+        for observation in [{'dispatches': 0, 'statuses': []}, {'dispatches': 1, 'statuses': [200]},
+                            {'dispatches': 2, 'statuses': [200, 403]}, {'dispatches': 2, 'statuses': [200]}]:
+            value = self.witness('OPEN'); value['invitationNative'] = observation
+            self.assertFalse(proof.checked_witness(value, 'OPEN'))
+        value = self.witness('FENCED'); value['invitationNative'] = {'dispatches': 2, 'statuses': [200, 200]}
+        self.assertFalse(proof.checked_witness(value, 'FENCED'))
+
+    def test_invitation_native_diagnostics_reject_unbounded_or_private_fields(self):
+        valid = {'dispatches': 2, 'statuses': [200, 200]}
+        self.assertTrue(proof.checked_invitation_native(valid, 'OPEN'))
+        for bad in [{**valid, 'email': 'private-email'}, {**valid, 'dispatches': True},
+                    {**valid, 'dispatches': 3}, {**valid, 'dispatches': -1},
+                    {**valid, 'statuses': [200, 200, 200]}, {**valid, 'statuses': [200, 'private-token']},
+                    {**valid, 'statuses': [200, 201]}, {**valid, 'statuses': [True, 200]}]:
+            with self.assertRaises(ValueError): proof.checked_invitation_native(bad, 'OPEN')
 
     def test_fence_does_not_imply_uncreated_graph_and_open_cannot_accept_fence(self):
         value = self.witness('OPEN'); value['exactFence'] = True

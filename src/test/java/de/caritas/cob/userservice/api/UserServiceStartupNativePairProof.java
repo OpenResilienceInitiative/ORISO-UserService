@@ -58,7 +58,10 @@ class UserServiceStartupNativePairProof {
           "consultantInverseRetention",
           "consultantThenAdmin",
           "adminThenConsultant",
-          "pureTenantTwoChildren");
+          "pureTenantTwoChildren",
+          "invitationRecipientScoped",
+          "invitationDraftNoMail",
+          "invitationOccupiedNoEffect");
 
   @Test
   void actualServletApplicationReachesOnlyExpectedProductionStartupState() throws Exception {
@@ -82,6 +85,7 @@ class UserServiceStartupNativePairProof {
             "peerAdminRemoval",
             "sourceAndCleanup")) browserWitness.put(key, false);
     witness.put("currentClientBrowser", browserWitness);
+    witness.put("invitationNative", Map.of("dispatches", 0, "statuses", List.of()));
     witness.put(
         "tenantNative",
         Map.of(
@@ -583,6 +587,7 @@ class UserServiceStartupNativePairProof {
       browserWitness(witness).put("primaryActorSeed", true);
     }
     String bearer = fixture.path("primaryBearer").asText();
+    verifyInvitationDraft(context, port, jdbc, fixture, client, bearer, witness);
     var scheduler =
         context.getBean(
             de.caritas.cob.userservice.api.workflow.delete.service.ScheduledConsultantMaintenance
@@ -854,6 +859,196 @@ class UserServiceStartupNativePairProof {
           jdbc.queryForObject(
               "select count(*) from admin where admin_id=?", Integer.class, support));
     }
+  }
+
+  /** Actual servlet, production scoped reader and native endpoint; no template or mail dispatch. */
+  private static void verifyInvitationDraft(
+      ConfigurableApplicationContext context,
+      int port,
+      JdbcTemplate jdbc,
+      com.fasterxml.jackson.databind.JsonNode fixture,
+      HttpClient client,
+      String bearer,
+      Map<String, Object> witness)
+      throws Exception {
+    var reader =
+        context.getBean(
+            de.caritas.cob.userservice.api.port.out.InvitationRecipientAvailability.class);
+    assertEquals(
+        PREFIX + "adapters.keycloak.maintenance.KeycloakInvitationRecipientAvailability",
+        AopUtils.getTargetClass(reader).getName());
+    witness.put("invitationRecipientScoped", true);
+    var keycloak =
+        context.getBean(
+            de.caritas.cob.userservice.api.adapters.keycloak.config.KeycloakConfig.class);
+    String server =
+        context
+            .getEnvironment()
+            .getProperty("ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL", keycloak.getAuthServerUrl());
+    var endpoint =
+        org.springframework.web.util.UriComponentsBuilder.fromUriString(server)
+            .pathSegment(
+                "realms",
+                keycloak.getRealm(),
+                "oriso-account-maintenance",
+                "v1",
+                "availability",
+                "invitation-email")
+            .build()
+            .encode()
+            .toUri();
+    var http =
+        context.getBean("keycloakRestTemplate", org.springframework.web.client.RestTemplate.class);
+    var originalInterceptors = new ArrayList<>(http.getInterceptors());
+    var dispatches = new java.util.concurrent.atomic.AtomicInteger();
+    var statuses = new ArrayList<Integer>();
+    var observers = new ArrayList<>(originalInterceptors);
+    observers.add(
+        (request, body, execution) -> {
+          if (request.getMethod() != org.springframework.http.HttpMethod.POST
+              || !endpoint.equals(request.getURI())) return execution.execute(request, body);
+          dispatches.incrementAndGet();
+          var response = execution.execute(request, body);
+          statuses.add(response.getStatusCode().value());
+          return response;
+        });
+    var untouched = invitationEffects(jdbc);
+    var beforeInvites = jdbc.queryForList("select * from account_invite order by id");
+    String email = "startup-invite@fixture.invalid";
+    String occupied = fixture.path("primary").path("email").asText();
+    assertTrue(!occupied.isBlank() && !occupied.equals(email), "Existing synthetic owner required");
+    assertTrue(
+        beforeInvites.stream()
+            .noneMatch(
+                row ->
+                    email.equals(row.get("recipient_email"))
+                        || occupied.equals(row.get("recipient_email"))),
+        "Native recipient checks must not be satisfied by a pre-existing local claim");
+    http.setInterceptors(observers);
+    try {
+      var created = invitationRequest(client, port, bearer, email);
+      assertEquals(201, created.statusCode(), "Actual no-mail invitation create");
+      var afterCreate = jdbc.queryForList("select * from account_invite order by id");
+      assertTrue(
+          afterCreate.size() == beforeInvites.size() + 1 && afterCreate.containsAll(beforeInvites),
+          "Only one new invitation row is permitted");
+      var rows =
+          afterCreate.stream().filter(row -> email.equals(row.get("recipient_email"))).toList();
+      assertEquals(1, rows.size());
+      var row = rows.getFirst();
+      for (String key :
+          List.of(
+              "target_role",
+              "purpose",
+              "tenant_id",
+              "status",
+              "provisioning_status",
+              "active_recipient_key",
+              "created_by_user_id",
+              "expires_at"))
+        assertTrue(row.containsKey(key), "Required invitation SQL field " + key);
+      assertTrue(
+          "PLATFORM_ADMIN".equals(row.get("target_role"))
+              && "INVITE".equals(row.get("purpose"))
+              && row.get("tenant_id") instanceof Number tenant
+              && tenant.longValue() == 0
+              && "DRAFT".equals(row.get("status"))
+              && "PENDING".equals(row.get("provisioning_status"))
+              && email.equals(row.get("active_recipient_key"))
+              && fixture.path("primary").path("id").asText().equals(row.get("created_by_user_id"))
+              && row.get("expires_at") != null,
+          "Exact pending platform invitation SQL state required");
+      for (String key :
+          List.of(
+              "token_hash",
+              "tenant_id_reservation_token",
+              "tenant_id_allocation_mode",
+              "agency_id",
+              "agency_id_allocation_mode",
+              "department_id",
+              "queued_template_id",
+              "waiting_for_unit",
+              "provisioned_user_id",
+              "initial_password_verifier",
+              "totp_pending_secret",
+              "accepted_at",
+              "accepted_by_user_id",
+              "unit_created_at",
+              "dpa_signed_at",
+              "dpa_forwarded_at",
+              "superseded_by_invite_id",
+              "revoked_at"))
+        assertTrue(
+            row.containsKey(key) && row.get(key) == null,
+            "Draft must not allocate or populate protected field " + key);
+      assertTrue(
+          untouched.equals(invitationEffects(jdbc)),
+          "No delivery, approval, outbox, lifecycle intent or reservation state may change");
+      witness.put("invitationDraftNoMail", true);
+      var refused = invitationRequest(client, port, bearer, occupied);
+      assertEquals(409, refused.statusCode(), "Existing native email owner must refuse the draft");
+      assertEquals("EMAIL_NOT_AVAILABLE", refused.headers().firstValue("X-Reason").orElse(null));
+      assertTrue(
+          afterCreate.equals(jdbc.queryForList("select * from account_invite order by id"))
+              && untouched.equals(invitationEffects(jdbc)),
+          "Occupied native recipient must leave all SQL rows unchanged");
+      assertTrue(
+          dispatches.get() == 2 && statuses.equals(List.of(200, 200)),
+          "Both actual servlet paths require the fixed native boolean read");
+      witness.put("invitationOccupiedNoEffect", true);
+    } finally {
+      http.setInterceptors(originalInterceptors);
+      assertTrue(
+          http.getInterceptors().equals(originalInterceptors),
+          "Restore every original HTTP interceptor");
+      witness.put(
+          "invitationNative",
+          Map.of("dispatches", dispatches.get(), "statuses", List.copyOf(statuses)));
+    }
+  }
+
+  private static HttpResponse<Void> invitationRequest(
+      HttpClient client, int port, String bearer, String email) throws Exception {
+    String body =
+        JSON.writeValueAsString(
+            Map.of(
+                "targetRole",
+                "PLATFORM_ADMIN",
+                "recipientEmail",
+                email,
+                "firstName",
+                "Invite",
+                "lastName",
+                "Probe",
+                "expiresInDays",
+                1));
+    return client.send(
+        HttpRequest.newBuilder(
+                URI.create("http://127.0.0.1:" + port + "/useradmin/account-invites"))
+            .header("Authorization", "Bearer " + bearer)
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(body))
+            .build(),
+        HttpResponse.BodyHandlers.discarding());
+  }
+
+  private static Map<String, List<Map<String, Object>>> invitationEffects(JdbcTemplate jdbc) {
+    var rows = new TreeMap<String, List<Map<String, Object>>>();
+    for (String table :
+        List.of(
+            "invite_email_delivery",
+            "protected_invitation_authorization",
+            "protected_invitation_mail_outbox",
+            "protected_invitation_acceptance",
+            "protected_account_creation",
+            "identity_lifecycle_attempt",
+            "identity_lifecycle_outbox",
+            "identity_lifecycle_effect",
+            "identity_account_operation_intent",
+            "id_reservation_lock",
+            "id_reservation_release_task"))
+      rows.put(table, jdbc.queryForList("select * from " + table + " order by 1"));
+    return rows;
   }
 
   private static String consultantPath(String account) {

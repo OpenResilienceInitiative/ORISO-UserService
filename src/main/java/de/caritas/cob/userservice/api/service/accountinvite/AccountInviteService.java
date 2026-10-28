@@ -14,7 +14,13 @@ import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.InvitationRecipientAvailability;
+import de.caritas.cob.userservice.api.port.out.InvitationRecipientAvailability.Kind;
+import de.caritas.cob.userservice.api.port.out.InvitationRecipientAvailability.Target;
+import de.caritas.cob.userservice.api.port.out.InvitationRecipientAvailability.TenantMode;
+import de.caritas.cob.userservice.api.port.out.InvitationRecipientAvailabilityUnavailableException;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteAccessPolicy.InviteListScope;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteDelivery.Prepared;
@@ -105,6 +111,18 @@ public class AccountInviteService {
   private final @NonNull ExistingAccountSetupIssuer existingAccountSetupIssuer;
   private ProtectedInvitationIssuance protectedInvitationIssuance;
   private ProtectedInvitationCancellation protectedInvitationCancellation;
+  private IdentityClientConfig recipientIdentityMode;
+  private org.springframework.beans.factory.ObjectProvider<InvitationRecipientAvailability>
+      recipientAvailability;
+
+  @Autowired
+  void configureRecipientAvailability(
+      IdentityClientConfig mode,
+      org.springframework.beans.factory.ObjectProvider<InvitationRecipientAvailability>
+          availability) {
+    recipientIdentityMode = Objects.requireNonNull(mode);
+    recipientAvailability = Objects.requireNonNull(availability);
+  }
 
   @jakarta.persistence.PersistenceContext
   private jakarta.persistence.EntityManager protectedInviteEntityManager;
@@ -176,7 +194,7 @@ public class AccountInviteService {
       throw new BadRequestException("recipientEmail is required");
     }
     InviteTarget target = targets.resolve(command, agency);
-    verifyRecipientEmailAvailable(command.recipientEmail());
+    verifyRecipientEmailAvailable(command, target);
     TopicPermission topicPermission =
         TopicPermissionPolicy.decide(
             command.targetRole(),
@@ -400,9 +418,18 @@ public class AccountInviteService {
    * invite table (promised addresses). Checked on the admin-only create call, so it is no
    * enumeration oracle; the unique active-recipient key closes the race between replicas.
    */
-  private void verifyRecipientEmailAvailable(String recipientEmail) {
-    String normalized = normalizeEmail(recipientEmail);
-    if (identityEmailOwnerLookup.findByEmail(normalized).isPresent()) {
+  private void verifyRecipientEmailAvailable(
+      CreateAccountInviteCommand command, InviteTarget target) {
+    String normalized = normalizeEmail(command.recipientEmail());
+    if (recipientEmailInUse(
+        normalized,
+        () ->
+            recipientTarget(
+                command.targetRole(),
+                command.alsoCounsellor(),
+                target.tenantId(),
+                target.reservation().newTenant()
+                    || IdAllocationMode.reservesAnId(command.tenantIdAllocationMode())))) {
       throw emailNotAvailable(null);
     }
     LocalDateTime now = LocalDateTime.now();
@@ -426,18 +453,56 @@ public class AccountInviteService {
         normalizedEmail, ADDRESS_HOLDING_INVITE_STATUSES, now);
   }
 
-  private void verifyRecipientEmailAvailableExcluding(
-      String recipientEmail, Long excludedInviteId, LocalDateTime now) {
-    String normalized = normalizeEmail(recipientEmail);
-    if (identityEmailOwnerLookup.findByEmail(normalized).isPresent()) {
+  private void verifyRecipientEmailAvailableExcluding(AccountInvite invite, LocalDateTime now) {
+    String normalized = normalizeEmail(invite.getRecipientEmail());
+    if (recipientEmailInUse(
+        normalized,
+        () ->
+            recipientTarget(
+                invite.getTargetRole(),
+                invite.getAlsoCounsellor(),
+                invite.getTenantId(),
+                IdAllocationMode.reservesAnId(invite.getTenantIdAllocationMode())
+                    || invite.getTargetRole() == AccountInviteTargetRole.TENANT_ADMIN
+                        && invite.getTenantIdAllocationMode() != IdAllocationMode.EXISTING))) {
       throw emailNotAvailable(null);
     }
     expireElapsedRecipientClaims(normalized, now);
     if (accountInviteRepository.countNonTerminalInvitesForRecipientEmailExcludingId(
-            normalized, excludedInviteId, ADDRESS_HOLDING_INVITE_STATUSES, now)
+            normalized, invite.getId(), ADDRESS_HOLDING_INVITE_STATUSES, now)
         > 0) {
       throw emailNotAvailable(null);
     }
+  }
+
+  private boolean recipientEmailInUse(String normalized, Supplier<Target> target) {
+    if (recipientIdentityMode != null && recipientIdentityMode.isFiveActorMode()) {
+      var scoped = recipientAvailability == null ? null : recipientAvailability.getIfAvailable();
+      if (scoped == null) throw new InvitationRecipientAvailabilityUnavailableException();
+      return !scoped.available(normalized, target.get());
+    }
+    return identityEmailOwnerLookup.findByEmail(normalized).isPresent();
+  }
+
+  private static Target recipientTarget(
+      AccountInviteTargetRole role, Boolean alsoCounsellor, Long tenantId, boolean reservedNew) {
+    Kind kind =
+        switch (role) {
+          case COUNSELLOR -> Kind.CONSULTANT;
+          case AGENCY_ADMIN ->
+              Boolean.FALSE.equals(alsoCounsellor)
+                  ? Kind.AGENCY_ADMIN
+                  : Kind.CONSULTANT_AGENCY_ADMIN;
+          case TENANT_ADMIN -> Kind.TENANT_ADMIN;
+          case PLATFORM_ADMIN -> Kind.PLATFORM_ADMIN;
+            // The enum alone never supplied an ADVICE_SEEKER invitation provisioner.
+          case ADVICE_SEEKER -> throw new InvitationRecipientAvailabilityUnavailableException();
+        };
+    TenantMode mode =
+        reservedNew
+            ? TenantMode.RESERVED_NEW
+            : tenantId == null ? TenantMode.UNASSIGNED : TenantMode.EXISTING;
+    return new Target(kind, tenantId, mode);
   }
 
   @Transactional(readOnly = true)
@@ -675,7 +740,7 @@ public class AccountInviteService {
                 return findAuthorizedInviteForUpdate(old.getSupersededByInviteId());
               }
               LocalDateTime now = LocalDateTime.now();
-              verifyRecipientEmailAvailableExcluding(old.getRecipientEmail(), old.getId(), now);
+              verifyRecipientEmailAvailableExcluding(old, now);
               AccountInvite next =
                   AccountInvite.builder()
                       .targetRole(old.getTargetRole())
@@ -739,8 +804,7 @@ public class AccountInviteService {
               }
 
               LocalDateTime now = LocalDateTime.now();
-              verifyRecipientEmailAvailableExcluding(
-                  initialOldInvite.getRecipientEmail(), initialOldInvite.getId(), now);
+              verifyRecipientEmailAvailableExcluding(initialOldInvite, now);
               // The expiry cleanup is a clearing bulk update, so reload the old row before the
               // durable handover.
               AccountInvite oldInvite = findInvite(command.inviteId());
