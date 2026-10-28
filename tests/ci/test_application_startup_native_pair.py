@@ -18,6 +18,30 @@ class ApplicationStartupPairControls(unittest.TestCase):
                 **{key: state == 'OPEN' for key in proof.OPEN_FLAGS},
                 'exactFence': state == 'FENCED'}
 
+    def test_startup_installs_the_same_exact_positive_catalogue_in_both_peers(self):
+        roles = {'consultant': ['consultant', 'group-chat-consultant'],
+                 'consultant-basic': ['consultant'], 'user': ['user'],
+                 'agency-admin': ['restricted-agency-admin', 'user-admin'],
+                 'consultant-agency-admin': ['consultant', 'group-chat-consultant', 'restricted-agency-admin', 'user-admin'],
+                 'consultant-agency-admin-basic': ['consultant', 'restricted-agency-admin', 'user-admin']}
+        groups = {'/human-roles/' + name: value for name, value in roles.items()}
+        profiles = [{'id': name + '-v1', 'groupPath': '/human-roles/' + name, 'realmRoles': value} for name, value in roles.items()]
+        groups['/human-roles/consultant-agency-admin-unacknowledged'] = roles['consultant-agency-admin']
+        profiles.append({'id': 'combined-unacknowledged-v1', 'groupPath': '/human-roles/consultant-agency-admin-unacknowledged', 'realmRoles': roles['consultant-agency-admin']})
+        config = {'ordinaryProfiles': profiles, 'ordinaryAdminOperations': [{'sourceProfiles': ['consultant-agency-admin-basic-v1']}]}
+        installed, selected = proof.startup_fixture_catalogue(config, groups)
+        self.assertEqual(6, len(selected))
+        self.assertEqual(selected, {p['groupPath']: p['realmRoles'] for p in installed['ordinaryProfiles']})
+        self.assertEqual(config['ordinaryAdminOperations'], installed['ordinaryAdminOperations'])
+        self.assertEqual(7, len(groups))
+        self.assertEqual(7, len(config['ordinaryProfiles']))
+        for bad in [profiles[1:], profiles + [profiles[0]], [{**p, 'groupPath': '/unreviewed'} if p['id'] == 'consultant-v1' else p for p in profiles]]:
+            with self.assertRaises(ValueError): proof.startup_fixture_catalogue({'ordinaryProfiles': bad}, groups)
+        changed = dict(groups); changed['/human-roles/consultant'] = ['technical']
+        with self.assertRaises(ValueError): proof.startup_fixture_catalogue(config, changed)
+        config['ordinaryAdminOperations'].append({'targetProfiles': ['combined-unacknowledged-v1']})
+        with self.assertRaises(ValueError): proof.startup_fixture_catalogue(config, groups)
+
     def test_two_exact_expected_states_have_different_acceptance(self):
         for state in ['FENCED', 'OPEN']:
             self.assertTrue(proof.checked_witness(self.witness(state), state))

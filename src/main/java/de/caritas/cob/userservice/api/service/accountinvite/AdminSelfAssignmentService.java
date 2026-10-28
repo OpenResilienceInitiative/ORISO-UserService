@@ -71,9 +71,19 @@ public class AdminSelfAssignmentService {
         throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
       var agency = checkedAgency(command);
       String userId = authenticatedUser.getUserId();
-      if (consultantRepository.findByIdAndDeleteDateIsNull(userId).isPresent()
-          && !grantConsultantIdentityService.hasOriginalSelfAssignmentGrant(userId))
-        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+      var originalKind = grantConsultantIdentityService.originalSelfAssignmentKind(userId);
+      boolean extend =
+          originalKind == null
+              ? consultantRepository.findByIdAndDeleteDateIsNull(userId).isPresent()
+              : originalKind
+                  == de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance
+                      .SelfAssignmentKind.EXTEND;
+      if (extend) {
+        try (var assignment = new ScopedAssignment(command, agency)) {
+          grantConsultantIdentityService.assignExistingConsultant(assignment);
+        }
+        return new SelfAssignmentResult(command.role(), agency.id(), userId, false);
+      }
       var grant = new GrantConsultantIdentityDTO();
       grant.setAgencyIds(List.of(agency.id()));
       grant.setTopicIds(resolveTopics(command.topicIds(), agency));
@@ -84,6 +94,122 @@ public class AdminSelfAssignmentService {
     return localWrites == null
         ? assignLegacy(command)
         : localWrites.execute(ignored -> assignLegacy(command));
+  }
+
+  @jakarta.persistence.PersistenceContext private jakarta.persistence.EntityManager entities;
+
+  /** Only this public self-assignment flow can construct the held existing-identity callback. */
+  public final class ScopedAssignment implements AutoCloseable {
+    private final SelfAssignmentCommand command;
+    private final AgencyFacts.Agency agency;
+    private final String account = authenticatedUser.getUserId();
+    private final Thread thread = Thread.currentThread();
+    private boolean active = true;
+
+    private ScopedAssignment(SelfAssignmentCommand requested, AgencyFacts.Agency agency) {
+      this.command =
+          new SelfAssignmentCommand(
+              requested.role(),
+              requested.agencyId(),
+              List.copyOf(resolveTopics(requested.topicIds(), agency)));
+      this.agency = agency;
+    }
+
+    public void requireActive() {
+      if (!active
+          || thread != Thread.currentThread()
+          || !account.equals(authenticatedUser.getUserId()))
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    }
+
+    public String accountId() {
+      requireActive();
+      return account;
+    }
+
+    public GrantConsultantIdentityDTO grantInput() {
+      requireActive();
+      var input = new GrantConsultantIdentityDTO();
+      input.setAgencyIds(List.of(agency.id()));
+      input.setTopicIds(command.topicIds());
+      return input;
+    }
+
+    public java.util.Map<String, Object> sourceFacts() {
+      requireActive();
+      return java.util.Map.of(
+          "agencyId", agency.id(),
+          "tenantId", agency.tenantId(),
+          "topicIds",
+              agency.topicIds() == null ? List.of() : agency.topicIds().stream().sorted().toList());
+    }
+
+    public void requireJpaOwner(jakarta.persistence.EntityManagerFactory factory) {
+      requireActive();
+      if (entities == null || factory == null || entities.getEntityManagerFactory() != factory)
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    }
+
+    public void validateOutsideSql() {
+      requireActive();
+      if (org.springframework.transaction.support.TransactionSynchronizationManager
+          .isActualTransactionActive())
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+      if (!agency.equals(checkedAgency(command)))
+        throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(
+            "Self-assignment agency changed");
+      topicAgencyCompatibilityValidator.validateCurrentTopicsAgainstAssignedAndAdditionalAgencies(
+          account, List.of(agency.id()), agency.tenantId());
+    }
+
+    public void validate() {
+      requireActive();
+      var current =
+          consultantRepository
+              .findByIdAndDeleteDateIsNull(account)
+              .orElseThrow(
+                  () ->
+                      new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(
+                          "Self-assignment consultant changed"));
+      if (!Objects.equals(agency.tenantId(), current.getTenantId()))
+        throw new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException(
+            "Self-assignment tenant changed");
+      if (consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
+          account, agency.id())) throw alreadyAssigned();
+    }
+
+    public void apply(GrantConsultantIdentityService.ScopedGrant grant) {
+      requireActive();
+      grant.requireAssignmentCallback(this);
+      if (!entities.isJoinedToTransaction())
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+      validate();
+      var current = consultantRepository.findById(account).orElseThrow();
+      if (entities.contains(current)) entities.refresh(current);
+      current.setStatus(de.caritas.cob.userservice.api.model.ConsultantStatus.IN_PROGRESS);
+      current.addTopicsForAgency(agency.id(), grant.topicsByAgency().get(agency.id()));
+      current.getConsultantTopics().stream()
+          .filter(topic -> topic.getId() == null && agency.id().equals(topic.getAgencyId()))
+          .forEach(
+              topic -> {
+                topic.setCreateDate(grant.creationDate());
+                topic.setUpdateDate(grant.creationDate());
+              });
+      if (grant.agencies().stream()
+          .anyMatch(ConsultantAgencyRelationCreatorService.GrantAgency::team))
+        current.setTeamConsultant(true);
+      consultantRepository.save(current);
+    }
+
+    @Override
+    public void close() {
+      active = false;
+    }
+
+    @Override
+    public String toString() {
+      return "ScopedAssignment[source=redacted]";
+    }
   }
 
   private SelfAssignmentResult assignLegacy(SelfAssignmentCommand command) {

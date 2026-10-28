@@ -130,6 +130,8 @@ class GrantConsultantIdentityScopedJpaTest {
   @MockitoBean private AgencyFacts selectedAgency;
   private JdbcTemplate jdbc;
   private MockRestServiceServer server;
+  private String operation = OPERATION;
+  private String nativeCommand = "profile-transition";
   private final AtomicInteger reads = new AtomicInteger();
   private final AtomicInteger calls = new AtomicInteger();
   private final AtomicInteger effects = new AtomicInteger();
@@ -262,7 +264,7 @@ class GrantConsultantIdentityScopedJpaTest {
     request.setMethod("POST");
     request.setRequestURI("/useradmin/admins/" + ACCOUNT + "/grant-consultant-identity");
     request.removeHeader("Idempotency-Key");
-    request.addHeader("Idempotency-Key", OPERATION);
+    request.addHeader("Idempotency-Key", operation);
     request.removeHeader("Authorization");
     request.addHeader("Authorization", "Bearer fixture-human");
     request.setUserPrincipal(authentication(7L));
@@ -360,7 +362,10 @@ class GrantConsultantIdentityScopedJpaTest {
             manyTimes(),
             outbound ->
                 assertTrue(
-                    Set.of(ENDPOINT + "/read", ENDPOINT + "/profile-transition")
+                    Set.of(
+                            ENDPOINT + "/read",
+                            ENDPOINT + "/profile-transition",
+                            ENDPOINT + "/ordinary-profile")
                         .contains(outbound.getURI().toString())))
         .andRespond(
             outbound -> {
@@ -374,14 +379,14 @@ class GrantConsultantIdentityScopedJpaTest {
               JsonNode body =
                   codec.read(((MockClientHttpRequest) outbound).getBodyAsString(), JsonNode.class);
               String command =
-                  outbound.getURI().getPath().endsWith("/read") ? "read" : "profile-transition";
+                  outbound.getURI().getPath().endsWith("/read") ? "read" : nativeCommand;
               verifyProof(outbound.getHeaders().getFirst("X-ORISO-Task-Context"), command, body);
               if ("read".equals(command)) {
                 if (nativeBody == null) {
                   var held =
                       jdbc.queryForMap(
                           "select status,original_json,native_body,native_receipt from general_admin_identity_intent where operation_id=?",
-                          OPERATION);
+                          operation);
                   assertEquals("PREPARED", held.get("status"));
                   assertNull(held.get("native_body"));
                   assertNull(held.get("native_receipt"));
@@ -420,7 +425,7 @@ class GrantConsultantIdentityScopedJpaTest {
                 return response;
               }
               calls.incrementAndGet();
-              assertEquals(OPERATION, body.path("operationId").textValue());
+              assertEquals(operation, body.path("operationId").textValue());
               assertEquals(
                   codec.read(codec.canonical(expectedRoleChange), JsonNode.class),
                   body.path("change"));
@@ -532,6 +537,248 @@ class GrantConsultantIdentityScopedJpaTest {
   }
 
   @Test
+  void actualExistingSelfAssignmentAddsOnlyItsAgencyTopicsAndReplaysWithoutAnotherMatrixCreate() {
+    givenExistingSelfAssignment();
+    var beforeAdmin = adminSql();
+    var beforeConsultant = consultantSql();
+    var input =
+        new AdminSelfAssignmentService.SelfAssignmentCommand(
+            AdminSelfAssignmentService.SelfAssignmentRole.COUNSELLOR, 72L, List.of(82L));
+    var result = assertDoesNotThrow(() -> selfAssignments.assign(input));
+    assertFalse(result.consultantIdentityCreated());
+    assertEquals("APPLIED", phase());
+    assertEquals(beforeAdmin, adminSql());
+    var afterConsultant = consultantSql();
+    beforeConsultant.remove("update_date");
+    afterConsultant.remove("update_date");
+    assertEquals(beforeConsultant, afterConsultant);
+    assertEquals(
+        List.of(71L, 72L),
+        jdbc.queryForList(
+            "select agency_id from consultant_agency where consultant_id=? order by agency_id",
+            Long.class,
+            ACCOUNT));
+    assertEquals(
+        List.of(82L),
+        jdbc.queryForList(
+            "select topic_id from consultant_topic where consultant_id=? and agency_id=72",
+            Long.class,
+            ACCOUNT));
+    assertEquals(1, matrixCalls.get());
+    assertEquals(2, joinedEvents.get());
+    String body = nativeBody;
+    assertFalse(
+        assertDoesNotThrow(() -> selfAssignments.assign(input)).consultantIdentityCreated());
+    assertEquals(body, nativeBody);
+    assertEquals(2, effects.get());
+    assertEquals(1, matrixCalls.get());
+    assertEquals(2, joinedEvents.get());
+  }
+
+  @Test
+  void existingSelfAssignmentLostReplyRetainsOriginalBytesAndAllOriginalSqlUntilExactRetry() {
+    givenExistingSelfAssignment();
+    var before = consultantSql();
+    lostReply = true;
+    assertThrows(RuntimeException.class, () -> selfAssignments.assign(existingInput()));
+    assertEquals("FROZEN", phase());
+    assertEquals(before, consultantSql());
+    assertEquals(List.of(71L), assignedAgencies());
+    assertEquals(1, joinedEvents.get());
+    assertEquals(1, matrixCalls.get());
+    String frozen = nativeBody;
+    staleSelfToken = true;
+    assertThrows(RuntimeException.class, () -> selfAssignments.assign(existingInput()));
+    assertEquals("FROZEN", phase());
+    assertEquals(frozen, nativeBody);
+    assertEquals(before, consultantSql());
+    staleSelfToken = false;
+    request.setUserPrincipal(authentication(7L));
+    assertFalse(selfAssignments.assign(existingInput()).consultantIdentityCreated());
+    assertEquals("APPLIED", phase());
+    assertEquals(frozen, nativeBody);
+    assertEquals(2, effects.get());
+    assertEquals(2, joinedEvents.get());
+    assertEquals(1, matrixCalls.get());
+    assertEquals(List.of(71L, 72L), assignedAgencies());
+  }
+
+  @Test
+  void existingSelfAssignmentRejectsFrozenConsultantDriftBeforeAnotherNativeCommand() {
+    givenExistingSelfAssignment();
+    lostReply = true;
+    assertThrows(RuntimeException.class, () -> selfAssignments.assign(existingInput()));
+    int attempted = calls.get();
+    jdbc.update(
+        "update consultant set admin_remarks=? where consultant_id=?", "changed locally", ACCOUNT);
+    assertThrows(RuntimeException.class, () -> selfAssignments.assign(existingInput()));
+    assertEquals(attempted, calls.get());
+    assertEquals("FROZEN", phase());
+    assertEquals(List.of(71L), assignedAgencies());
+    assertEquals("changed locally", consultantSql().get("admin_remarks"));
+    assertEquals(1, joinedEvents.get());
+  }
+
+  @Test
+  void existingSelfAssignmentRejectsChangedFrozenTopicSourceWithoutSwitchingOperation() {
+    givenExistingSelfAssignment();
+    lostReply = true;
+    assertThrows(RuntimeException.class, () -> selfAssignments.assign(existingInput()));
+    int attempted = calls.get();
+    when(selectedAgency.find(72L))
+        .thenReturn(Optional.of(new AgencyFacts.Agency(72L, 7L, false, List.of(83L))));
+    assertThrows(RuntimeException.class, () -> selfAssignments.assign(existingInput()));
+    assertEquals(attempted, calls.get());
+    assertEquals("FROZEN", phase());
+    assertEquals(List.of(71L), assignedAgencies());
+    assertEquals(1, joinedEvents.get());
+  }
+
+  @Test
+  void existingSelfAssignmentRequiresSelectedDefaultRolesWithoutDroppingOriginalRoles() {
+    nativeDesiredRoles = Set.of("consultant", "restricted-agency-admin", "user-admin");
+    expectedRoleChange =
+        Map.of(
+            "transition",
+            "ADD_CONSULTANT_IDENTITY",
+            "group",
+            "/human-roles/consultant-agency-admin");
+    maintenance.configureReviewedOrdinaryGroups(
+        Map.of(
+            "/human-roles/agency-admin",
+            ORIGINAL,
+            "/human-roles/consultant-agency-admin",
+            nativeDesiredRoles,
+            "/human-roles/consultant-agency-admin-chat",
+            DESIRED));
+    givenExistingSelfAssignment(false);
+    human.setRoles(nativeRoles);
+    nativeDesiredRoles = DESIRED;
+    var required = new java.util.LinkedHashMap<String, java.util.List<String>>();
+    required.put(null, List.of("group-chat-consultant"));
+    required.put("unselected", List.of("technical"));
+    var consultantRoles =
+        new de.caritas.cob.userservice.api.manager.consultingtype.roles.Consultant();
+    consultantRoles.setRoleSets(required);
+    var settings =
+        new de.caritas.cob.userservice.consultingtypeservice.generated.web.model
+            .ExtendedConsultingTypeResponseDTO();
+    settings.setRoles(
+        new de.caritas.cob.userservice.consultingtypeservice.generated.web.model.RolesDTO()
+            .consultant(consultantRoles));
+    when(consultingTypes.getConsultingTypeSettings(1)).thenReturn(settings);
+    assertFalse(selfAssignments.assign(existingInput()).consultantIdentityCreated());
+    assertEquals(DESIRED, nativeRoles);
+    assertEquals("APPLIED", phase());
+    assertEquals(1, matrixCalls.get());
+    assertEquals(2, joinedEvents.get());
+  }
+
+  @Test
+  void protectedExistingSelfAssignmentKeepsExactReviewedFamilyAndAllExistingData() {
+    givenProtectedTenant();
+    maintenance.configureReviewedProtectedProfiles(protectedCatalog(true));
+    givenExistingSelfAssignment();
+    human.setRoles(nativeRoles);
+    human.setGrantedAuthorities(
+        Set.of(Authority.AuthorityValue.USER_ADMIN, Authority.AuthorityValue.TENANT_ADMIN));
+    request.setUserPrincipal(authentication(7L));
+    nativeCommand = "profile-transition";
+    expectedRoleChange =
+        Map.of(
+            "transition",
+            "ADD_CONSULTANT_IDENTITY",
+            "profileId",
+            "tenant-dual-v2",
+            "profileVersion",
+            2147483648L);
+    var before = adminSql();
+    assertFalse(selfAssignments.assign(existingInput()).consultantIdentityCreated());
+    assertEquals(before, adminSql());
+    assertEquals("APPLIED", phase());
+    assertEquals(nativeDesiredRoles, nativeRoles);
+    assertEquals(List.of(71L, 72L), assignedAgencies());
+    assertEquals(1, matrixCalls.get());
+    assertEquals(2, joinedEvents.get());
+    assertFalse(selfAssignments.assign(existingInput()).consultantIdentityCreated());
+    assertEquals(2, effects.get());
+    assertEquals(2, joinedEvents.get());
+  }
+
+  private void givenExistingSelfAssignment() {
+    givenExistingSelfAssignment(true);
+  }
+
+  private void givenExistingSelfAssignment(boolean chat) {
+    var first = command();
+    first.setGroupchatConsultant(chat);
+    assertDoesNotThrow(() -> service.grantConsultantIdentityToAdmin(ACCOUNT, first));
+    TenantContext.setCurrentTenant(7L);
+    human.setUserId(ACCOUNT);
+    human.setRoles(
+        Set.of("consultant", "group-chat-consultant", "restricted-agency-admin", "user-admin"));
+    human.setGrantedAuthorities(Set.of(Authority.AuthorityValue.USER_ADMIN));
+    request.setUserPrincipal(authentication(7L));
+    request.setRequestURI("/useradmin/self-assignments");
+    operation = "72000000-0000-4000-8000-000000000009";
+    request.removeHeader("Idempotency-Key");
+    request.addHeader("Idempotency-Key", operation);
+    new TransactionTemplate(transactions)
+        .executeWithoutResult(
+            ignored -> {
+              for (Long id : List.of(71L, 72L)) {
+                entities.persist(
+                    de.caritas.cob.userservice.api.model.AdminAgency.builder()
+                        .admin(admins.findById(ACCOUNT).orElseThrow())
+                        .agencyId(id)
+                        .build());
+              }
+              entities.flush();
+              entities.clear();
+            });
+    var nextAgency =
+        new de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO()
+            .id(72L)
+            .tenantId(7L)
+            .consultingType(1)
+            .teamAgency(false)
+            .topicIds(List.of(82L));
+    when(selectedAgency.find(72L))
+        .thenReturn(Optional.of(new AgencyFacts.Agency(72L, 7L, false, List.of(82L))));
+    when(agencies.getAgency(72L)).thenReturn(nextAgency);
+    when(agencies.getAgenciesWithoutCaching(anyList()))
+        .thenAnswer(
+            invocation -> {
+              assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+              List<Long> ids = invocation.getArgument(0);
+              return ids.stream()
+                  .map(id -> id == 72L ? nextAgency : agencies.getAgency(71L))
+                  .toList();
+            });
+    nativeBody = null;
+    nativeReply = null;
+    nativeCommand = "ordinary-profile";
+    expectedRoleChange =
+        Map.of(
+            "group",
+            "/human-roles/consultant-agency-admin-chat",
+            "profile",
+            Map.of("firstName", "Ada", "lastName", "Lovelace", "email", "ada@fixture.invalid"));
+  }
+
+  private AdminSelfAssignmentService.SelfAssignmentCommand existingInput() {
+    return new AdminSelfAssignmentService.SelfAssignmentCommand(
+        AdminSelfAssignmentService.SelfAssignmentRole.COUNSELLOR, 72L, List.of(82L));
+  }
+
+  private List<Long> assignedAgencies() {
+    return jdbc.queryForList(
+        "select agency_id from consultant_agency where consultant_id=? order by agency_id",
+        Long.class,
+        ACCOUNT);
+  }
+
+  @Test
   void nonUtcHostPreservesTheOriginalCreationInstantThroughTheWholeGrantAndReplay() {
     var previousZone = java.util.TimeZone.getDefault();
     java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Pacific/Auckland"));
@@ -549,7 +796,7 @@ class GrantConsultantIdentityScopedJpaTest {
           jdbc.queryForObject(
               "select created_at from general_admin_identity_intent where operation_id=?",
               (row, index) -> row.getObject(1, LocalDateTime.class),
-              OPERATION);
+              operation);
       assertNotNull(created);
       assertEquals(
           original.path("creation").textValue(), created.toInstant(ZoneOffset.UTC).toString());
@@ -647,7 +894,7 @@ class GrantConsultantIdentityScopedJpaTest {
         jdbc.queryForObject(
             "select native_receipt from general_admin_identity_intent where operation_id=?",
             String.class,
-            OPERATION));
+            operation));
     assertDoesNotThrow(() -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
     assertEquals(1, matrixCalls.get());
     verify(matrix, never()).findUserId(anyString());
@@ -719,7 +966,7 @@ class GrantConsultantIdentityScopedJpaTest {
         jdbc.queryForObject(
             "select native_receipt from general_admin_identity_intent where operation_id=?",
             String.class,
-            OPERATION);
+            operation);
     var originalSql = jdbc.queryForMap("select * from consultant where consultant_id=?", ACCOUNT);
     revoked = true;
     assertThrows(
@@ -739,7 +986,7 @@ class GrantConsultantIdentityScopedJpaTest {
         jdbc.queryForObject(
             "select native_receipt from general_admin_identity_intent where operation_id=?",
             String.class,
-            OPERATION));
+            operation));
     assertEquals(1, matrixCalls.get());
     assertEquals(1, joinedEvents.get());
     assertEquals(
@@ -772,7 +1019,7 @@ class GrantConsultantIdentityScopedJpaTest {
         jdbc.queryForObject(
             "select matrix_result_json from general_admin_identity_intent where operation_id=?",
             String.class,
-            OPERATION);
+            operation);
     var tampered =
         (com.fasterxml.jackson.databind.node.ObjectNode) codec.read(original, JsonNode.class);
     tampered.put("phase", "NO_EFFECT");
@@ -780,7 +1027,7 @@ class GrantConsultantIdentityScopedJpaTest {
     jdbc.update(
         "update general_admin_identity_intent set matrix_result_json=? where operation_id=?",
         codec.canonical(tampered),
-        OPERATION);
+        operation);
     assertThrows(
         RuntimeException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
     assertEquals(1, matrixCalls.get());
@@ -789,7 +1036,7 @@ class GrantConsultantIdentityScopedJpaTest {
     jdbc.update(
         "update general_admin_identity_intent set matrix_result_json=? where operation_id=?",
         original,
-        OPERATION);
+        operation);
     assertDoesNotThrow(() -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
     assertEquals("APPLIED", phase());
     assertEquals(
@@ -811,7 +1058,7 @@ class GrantConsultantIdentityScopedJpaTest {
         jdbc.queryForObject(
             "select original_json from general_admin_identity_intent where operation_id=?",
             String.class,
-            OPERATION);
+            operation);
     var original =
         (com.fasterxml.jackson.databind.node.ObjectNode) codec.read(originalJson, JsonNode.class);
     var changed = java.time.Instant.parse(original.path("creation").textValue()).plusSeconds(1);
@@ -820,7 +1067,7 @@ class GrantConsultantIdentityScopedJpaTest {
         "update general_admin_identity_intent set original_json=?,created_at=? where operation_id=?",
         codec.canonical(original),
         java.sql.Timestamp.from(changed),
-        OPERATION);
+        operation);
     assertThrows(
         RuntimeException.class, () -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
     assertEquals(1, reads.get());
@@ -1025,7 +1272,7 @@ class GrantConsultantIdentityScopedJpaTest {
         jdbc.queryForObject(
             "select matrix_result_json from general_admin_identity_intent where operation_id=?",
             String.class,
-            OPERATION);
+            operation);
     assertNotNull(raw);
     return codec.read(raw, JsonNode.class).path("phase").textValue();
   }
@@ -1055,7 +1302,7 @@ class GrantConsultantIdentityScopedJpaTest {
     return jdbc.queryForObject(
         "select status from general_admin_identity_intent where operation_id=?",
         String.class,
-        OPERATION);
+        operation);
   }
 
   private Map<String, Object> consultantSql() {
@@ -1067,8 +1314,8 @@ class GrantConsultantIdentityScopedJpaTest {
     var value = new TreeMap<String, Object>();
     value.put("realmId", "fixture-realm");
     value.put("accountId", ACCOUNT);
-    value.put("operationId", OPERATION);
-    value.put("command", "profile-transition");
+    value.put("operationId", operation);
+    value.put("command", nativeCommand);
     value.put("ownerClient", "backend-account-admin");
     value.put("ownerSubject", SUBJECT);
     value.put("intentDigest", digest("maintenance-intent", body));
@@ -1083,7 +1330,7 @@ class GrantConsultantIdentityScopedJpaTest {
     return codec.canonical(
         Map.of(
             "operationId",
-            OPERATION,
+            operation,
             "accountId",
             ACCOUNT,
             "result",

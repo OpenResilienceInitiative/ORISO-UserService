@@ -103,6 +103,34 @@ final class ReviewedOrdinaryGroups {
         matches.getFirst().getKey(), original.stream().sorted().toList(), List.copyOf(desired));
   }
 
+  Transition consultantAssignment(List<String> original, Set<String> required) {
+    requireConfigured();
+    if (original == null
+        || new HashSet<>(original).size() != original.size()
+        || !original.containsAll(Set.of("consultant", "restricted-agency-admin", "user-admin"))
+        || !Set.of("consultant", "group-chat-consultant", "restricted-agency-admin", "user-admin")
+            .containsAll(original)
+        || !groups.containsValue(Set.copyOf(original))
+        || required == null
+        || !required.contains("consultant")
+        || !Set.of("consultant", "group-chat-consultant", "restricted-agency-admin", "user-admin")
+            .containsAll(required)) throw new ScopedIdentityCommandRequiredException();
+    var desired = new TreeSet<>(original);
+    desired.addAll(required);
+    var matches =
+        groups.entrySet().stream().filter(entry -> entry.getValue().equals(desired)).toList();
+    if (matches.size() != 1) throw new ScopedIdentityCommandRequiredException();
+    return new Transition(
+        matches.getFirst().getKey(), original.stream().sorted().toList(), List.copyOf(desired));
+  }
+
+  Transition frozenConsultantAssignment(String group, Set<String> required) {
+    var selected = groups.get(group);
+    if (selected == null || !selected.containsAll(required))
+      throw new ScopedIdentityCommandRequiredException();
+    return consultantAssignment(selected.stream().sorted().toList(), required);
+  }
+
   Transition frozenConsultantAddition(String group, Set<String> required) {
     requireConfigured();
     var selected = groups.get(group);

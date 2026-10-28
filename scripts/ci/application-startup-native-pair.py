@@ -134,6 +134,39 @@ def isolated_test_classes(root, observation):
         if restored != original: raise ValueError('Exact original compiled test restoration failed')
 
 
+def startup_fixture_catalogue(configuration, groups):
+    # K's independent negative suite retains its deliberately ambiguous destination alias.
+    # This startup fixture installs one coherent, explicit positive catalogue in both peers.
+    approved = {'consultant-v1': '/human-roles/consultant',
+                'consultant-basic-v1': '/human-roles/consultant-basic',
+                'user-v1': '/human-roles/user',
+                'agency-admin-v1': '/human-roles/agency-admin',
+                'consultant-agency-admin-v1': '/human-roles/consultant-agency-admin',
+                'consultant-agency-admin-basic-v1': '/human-roles/consultant-agency-admin-basic'}
+    negative = 'combined-unacknowledged-v1'
+    profiles = configuration['ordinaryProfiles']
+    if len(profiles) != len(approved) + 1 or {p['id'] for p in profiles} != set(approved) | {negative}:
+        raise ValueError('Exact startup fixture profile inventory is required')
+    alias = next(p for p in profiles if p['id'] == negative)
+    full = next(p for p in profiles if p['id'] == 'consultant-agency-admin-v1')
+    if alias['groupPath'] != '/human-roles/consultant-agency-admin-unacknowledged' or alias['realmRoles'] != full['realmRoles']:
+        raise ValueError('Unexpected native negative fixture alias')
+    result = {}
+    for profile in profiles:
+        if profile['id'] == negative: continue
+        path = approved[profile['id']]
+        if profile['groupPath'] != path or path not in groups or set(groups[path]) != set(profile['realmRoles']):
+            raise ValueError('Reviewed startup profile differs from installed lifecycle group')
+        result[path] = groups[path]
+    if len({frozenset(roles) for roles in result.values()}) != len(result):
+        raise ValueError('Reviewed startup catalogue contains ambiguous role unions')
+    installed = copy.deepcopy(configuration)
+    installed['ordinaryProfiles'] = [p for p in installed['ordinaryProfiles'] if p['id'] != negative]
+    if negative in json.dumps(installed):
+        raise ValueError('Native negative alias unexpectedly participates in startup grants')
+    return installed, result
+
+
 def safe_failure_types(raw):
     # Fixed library types plus independently named production exception source files only.
     families = ['org.springframework.beans.factory.', 'org.springframework.beans.',
@@ -298,7 +331,17 @@ def native(kc, report):
         def prepare_installation(cls, helper, configuration):
             value = super().prepare_installation(helper, configuration)
             install_policy(cls, helper, value)
-            command = cls.command.copy(); index = command.index(IMAGE)
+            command = cls.command.copy()
+            group_index = [i for i, argument in enumerate(command) if argument.startswith('ORISO_ACCOUNT_LIFECYCLE_GROUPS=')]
+            policy_index = [i for i, argument in enumerate(command) if argument.startswith('ORISO_ACCOUNT_MAINTENANCE_CONFIG=')]
+            if len(group_index) != 1 or len(policy_index) != 1: raise ValueError('Exact startup policy environment is required')
+            installed, groups = startup_fixture_catalogue(cls.ordinary_installed_configuration,
+                json.loads(command[group_index[0]].split('=', 1)[1]))
+            command[group_index[0]] = 'ORISO_ACCOUNT_LIFECYCLE_GROUPS=' + json.dumps(groups, separators=(',', ':'))
+            command[policy_index[0]] = 'ORISO_ACCOUNT_MAINTENANCE_CONFIG=' + json.dumps(installed, separators=(',', ':'))
+            cls.ordinary_installed_configuration = installed
+            cls.startup_reviewed_groups = groups
+            index = command.index(IMAGE)
             command[index:index] = ['-v', str(jars['OTP_C_TEST_JAR'].resolve()) + ':/opt/keycloak/providers/otp-config-spi.jar:ro',
                 '-e', 'IDENTITY_ACCOUNT_ADMIN_CLIENT_ID=backend-account-admin',
                 '-e', 'ORISO_APP_BASE_URL=https://otp-fixture.internal', '-e', 'EMAIL_BRANDING_NAME=OTP Fixture',
@@ -323,9 +366,8 @@ def native(kc, report):
         assert json.loads(protected) == StartupFixture.startup_protected_configuration
         assert json.loads(ordinary) == StartupFixture.ordinary_installed_configuration
         groups = json.loads(settings['ORISO_ACCOUNT_LIFECYCLE_GROUPS'])
-        # Catalog uses exactly installed ordinary profile paths; lifecycle may contain more creation-only groups.
-        reviewed_paths = {p['groupPath'] for p in json.loads(ordinary)['ordinaryProfiles']}
-        groups = {key: value for key, value in groups.items() if key in reviewed_paths}
+        assert groups == StartupFixture.startup_reviewed_groups
+        assert groups == {profile['groupPath']: profile['realmRoles'] for profile in json.loads(ordinary)['ordinaryProfiles']}
         realm = fixture.admin('GET', ''); realm['adminEventsEnabled'] = True
         realm['adminEventsDetailsEnabled'] = False; fixture.admin('PUT', '', realm)
 

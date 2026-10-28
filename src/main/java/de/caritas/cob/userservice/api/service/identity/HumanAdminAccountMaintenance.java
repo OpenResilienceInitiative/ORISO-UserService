@@ -254,7 +254,12 @@ public final class HumanAdminAccountMaintenance {
   }
 
   /** Dispatch only: the original live producer still verifies its complete sealed request. */
-  public boolean hasOriginalSelfAssignmentGrant(String accountId) {
+  public enum SelfAssignmentKind {
+    CREATE,
+    EXTEND
+  }
+
+  public SelfAssignmentKind originalSelfAssignmentKind(String accountId) {
     requireOutsideSql();
     Human human = currentHuman();
     if (!"POST".equals(request.getMethod())
@@ -262,7 +267,7 @@ public final class HumanAdminAccountMaintenance {
             .contains(request.getRequestURI())
         || !human.subject.equals(accountId)) throw forbidden();
     var prior = intent(operationId(), false);
-    if (prior == null) return false;
+    if (prior == null) return null;
     if (!accountId.equals(prior.account)
         || !human.subject.equals(prior.humanSubject)
         || !human.issuer.equals(prior.humanIssuer)
@@ -272,7 +277,13 @@ public final class HumanAdminAccountMaintenance {
         || desired.size() != 2
         || !desired.has("profile")
         || !desired.has("publicConsultantGrant")) throw conflict();
-    return true;
+    var grant =
+        decode(
+            desired.path("publicConsultantGrant").textValue(),
+            com.fasterxml.jackson.databind.JsonNode.class);
+    if (!grant.has("selfAssignment")) return SelfAssignmentKind.CREATE;
+    if (!"EXISTING_CONSULTANT".equals(grant.path("selfAssignment").textValue())) throw conflict();
+    return SelfAssignmentKind.EXTEND;
   }
 
   public de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO
@@ -372,9 +383,10 @@ public final class HumanAdminAccountMaintenance {
     if (grant != null) {
       grant.bindCreation(grantCreation);
       var initial = decode(fullSql, com.fasterxml.jackson.databind.JsonNode.class);
-      for (String table :
-          List.of("consultant", "language", "consultant_topic", "consultant_agency"))
-        if (!initial.path(table).isArray() || !initial.path(table).isEmpty()) throw conflict();
+      if (grant.identityCreation())
+        for (String table :
+            List.of("consultant", "language", "consultant_topic", "consultant_agency"))
+          if (!initial.path(table).isArray() || !initial.path(table).isEmpty()) throw conflict();
       if (prior == null || !"APPLIED".equals(prior.status)) grant.validate();
     }
     if (edit != null && (prior == null || !"APPLIED".equals(prior.status))) edit.validate();
@@ -399,8 +411,9 @@ public final class HumanAdminAccountMaintenance {
         var change = body.path("change");
         var fields = new java.util.HashSet<String>();
         change.fieldNames().forEachRemaining(fields::add);
-        if (!(grant == null ? "ADD_AGENCY_ADMIN_IDENTITY" : "ADD_CONSULTANT_IDENTITY")
-            .equals(change.path("transition").textValue())) throw conflict();
+        if (!checked.existingOrdinaryAssignment()
+            && !(grant == null ? "ADD_AGENCY_ADMIN_IDENTITY" : "ADD_CONSULTANT_IDENTITY")
+                .equals(change.path("transition").textValue())) throw conflict();
         if (grant != null && Set.of("TENANT", "SUPER").contains(original.type)) {
           if (!fields.equals(Set.of("transition", "profileId", "profileVersion"))
               || !change.path("profileId").isTextual()
@@ -414,13 +427,19 @@ public final class HumanAdminAccountMaintenance {
                   change.path("profileVersion").longValue(),
                   grant.requiredRoles());
         } else {
-          if (!fields.equals(Set.of("transition", "group")) || !change.path("group").isTextual())
-            throw conflict();
+          if (!fields.equals(
+                  checked.existingOrdinaryAssignment()
+                      ? Set.of("group", "profile")
+                      : Set.of("transition", "group"))
+              || !change.path("group").isTextual()) throw conflict();
           checked.role =
               grant == null
                   ? reviewedGroups.frozenAgencyAdminAddition(change.path("group").textValue())
-                  : reviewedGroups.frozenConsultantAddition(
-                      change.path("group").textValue(), grant.requiredRoles());
+                  : checked.existingOrdinaryAssignment()
+                      ? reviewedGroups.frozenConsultantAssignment(
+                          change.path("group").textValue(), grant.requiredRoles())
+                      : reviewedGroups.frozenConsultantAddition(
+                          change.path("group").textValue(), grant.requiredRoles());
         }
       }
       HumanAdminMaintenanceTransport.Projection initialRoleProjection = null;
@@ -486,7 +505,7 @@ public final class HumanAdminAccountMaintenance {
           recoverCommit(
               () -> transaction(() -> prepare(checked, digest, originalJson, desiredJson)),
               () -> transaction(() -> checkedIntent(checked, digest, originalJson, desiredJson)));
-      if (grant != null && "ACKNOWLEDGED".equals(intent.status)) {
+      if (grant != null && grant.identityCreation() && "ACKNOWLEDGED".equals(intent.status)) {
         transaction(
             () -> {
               var found =
@@ -533,8 +552,11 @@ public final class HumanAdminAccountMaintenance {
             checked.role =
                 grant == null
                     ? reviewedGroups.agencyAdminAddition(state.effectiveRoles())
-                    : reviewedGroups.consultantAddition(
-                        state.effectiveRoles(), grant.requiredRoles());
+                    : checked.existingOrdinaryAssignment()
+                        ? reviewedGroups.consultantAssignment(
+                            state.effectiveRoles(), grant.requiredRoles())
+                        : reviewedGroups.consultantAddition(
+                            state.effectiveRoles(), grant.requiredRoles());
           }
         }
         if ((checked.role != null || checked.protectedRole != null)
@@ -643,7 +665,8 @@ public final class HumanAdminAccountMaintenance {
       if (addition != null) addition.validateOutsideSql();
       if (grant != null) {
         grant.validateOutsideSql();
-        prepareConsultantMatrix(checked, digest, originalJson, desiredJson, receipt);
+        if (grant.identityCreation())
+          prepareConsultantMatrix(checked, digest, originalJson, desiredJson, receipt);
       }
       try {
         transaction(
@@ -872,7 +895,7 @@ public final class HumanAdminAccountMaintenance {
             || intent.applied == null
             || !Objects.equals(intent.applied, consultantSnapshot(checked.actual.account, true))))
       throw conflict();
-    if (checked.grant != null) {
+    if (checked.grant != null && checked.grant.identityCreation()) {
       var matrix = requireConsultantMatrix(checked, intent.digest, intent);
       String actual =
           jdbc.queryForObject(
@@ -1125,8 +1148,10 @@ public final class HumanAdminAccountMaintenance {
     if (!"ACKNOWLEDGED".equals(found.status) || !row.equals(checked.original)) throw conflict();
     var profile = checked.profile;
     if (checked.grant != null) {
-      checked.matrixResult = requireConsultantMatrix(checked, digest, found);
-      checked.grant.bindMatrixResult(checked.matrixResult.result);
+      if (checked.grant.identityCreation()) {
+        checked.matrixResult = requireConsultantMatrix(checked, digest, found);
+        checked.grant.bindMatrixResult(checked.matrixResult.result);
+      }
       TransactionSynchronizationManager.bindResource(checked.grant, checked.grant);
       try {
         de.caritas.cob.userservice.api.tenant.TenantContext.runIn(
@@ -1559,15 +1584,52 @@ public final class HumanAdminAccountMaintenance {
             com.fasterxml.jackson.databind.JsonNode.class);
     if (!before.path("admin").equals(after.path("admin"))
         || !before.path("admin_agency").equals(after.path("admin_agency"))
-        || !after.path("language").isEmpty()
+        || !before.path("language").equals(after.path("language"))
         || after.path("consultant").size() != 1) throw conflict();
+    if (!checked.grant.identityCreation()) {
+      if (before.path("consultant").size() != 1) throw conflict();
+      var oldRow =
+          (com.fasterxml.jackson.databind.node.ObjectNode)
+              decode(
+                  before.path("consultant").get(0).textValue(),
+                  com.fasterxml.jackson.databind.JsonNode.class);
+      var newRow =
+          (com.fasterxml.jackson.databind.node.ObjectNode)
+              decode(
+                  after.path("consultant").get(0).textValue(),
+                  com.fasterxml.jackson.databind.JsonNode.class);
+      boolean expectedTeam =
+          oldRow.path("is_team_consultant").asBoolean()
+              || checked.grant.agencies().stream()
+                  .anyMatch(
+                      de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation
+                              .ConsultantAgencyRelationCreatorService.GrantAgency
+                          ::team);
+      boolean pending = false;
+      for (var encoded : before.path("consultant_agency")) {
+        var relation = decode(encoded.textValue(), com.fasterxml.jackson.databind.JsonNode.class);
+        if (relation.path("delete_date").isNull()
+            && "IN_PROGRESS".equals(relation.path("status").textValue())) pending = true;
+      }
+      if (newRow.path("is_team_consultant").asBoolean() != expectedTeam
+          || !(pending ? "IN_PROGRESS" : "CREATED").equals(newRow.path("status").textValue()))
+        throw conflict();
+      for (String field : List.of("update_date", "status", "is_team_consultant")) {
+        oldRow.remove(field);
+        newRow.remove(field);
+      }
+      if (!oldRow.equals(newRow)) throw conflict();
+    }
+    var newAgencies =
+        appendedRows(before.path("consultant_agency"), after.path("consultant_agency"));
+    var newTopics = appendedRows(before.path("consultant_topic"), after.path("consultant_topic"));
     var expectedAgencies = new java.util.HashSet<>(checked.grant.agencyIds());
     String date =
         Timestamp.valueOf(
                 java.time.LocalDateTime.ofInstant(checked.grantCreation, java.time.ZoneOffset.UTC))
             .toInstant()
             .toString();
-    for (var encoded : after.path("consultant_agency")) {
+    for (var encoded : newAgencies) {
       var row = decode(encoded.textValue(), com.fasterxml.jackson.databind.JsonNode.class);
       if (row.size() != 8
           || !checked.actual.account.equals(row.path("consultant_id").textValue())
@@ -1592,7 +1654,12 @@ public final class HumanAdminAccountMaintenance {
         .topicsByAgency()
         .forEach(
             (agency, topics) -> topics.forEach(topic -> expectedTopics.add(agency + "/" + topic)));
-    for (var encoded : after.path("consultant_topic")) {
+    for (var encoded : before.path("consultant_topic")) {
+      var retained = decode(encoded.textValue(), com.fasterxml.jackson.databind.JsonNode.class);
+      expectedTopics.remove(
+          retained.path("agency_id").longValue() + "/" + retained.path("topic_id").longValue());
+    }
+    for (var encoded : newTopics) {
       var row = decode(encoded.textValue(), com.fasterxml.jackson.databind.JsonNode.class);
       if (row.size() != 6
           || !checked.actual.account.equals(row.path("consultant_id").textValue())
@@ -1608,8 +1675,22 @@ public final class HumanAdminAccountMaintenance {
     if (!expectedTopics.isEmpty()) throw conflict();
   }
 
+  private List<com.fasterxml.jackson.databind.JsonNode> appendedRows(
+      com.fasterxml.jackson.databind.JsonNode before,
+      com.fasterxml.jackson.databind.JsonNode after) {
+    var remaining = new java.util.ArrayList<com.fasterxml.jackson.databind.JsonNode>();
+    after.forEach(remaining::add);
+    for (var row : before) if (!remaining.remove(row)) throw conflict();
+    return remaining;
+  }
+
   private void requireDesired(CheckedAccount checked, AdminRow row) {
     if (checked.grant != null) {
+      if (!checked.grant.identityCreation()) {
+        requireDesired(row, checked.original, checked.profile);
+        if (!Objects.equals(row.updated, checked.original.updated)) throw conflict();
+        return;
+      }
       var original = checked.original;
       if (!row.account.equals(original.account)
           || !Objects.equals(row.tenant, original.tenant)
@@ -1900,7 +1981,12 @@ public final class HumanAdminAccountMaintenance {
       return self && Set.of("TENANT", "SUPER").contains(actual.type);
     }
 
+    public boolean existingOrdinaryAssignment() {
+      return grant != null && !grant.identityCreation() && "AGENCY".equals(original.type);
+    }
+
     public String profileCommand() {
+      if (existingOrdinaryAssignment()) return "ordinary-profile";
       if (addition != null || grant != null) return "profile-transition";
       if (role != null) return "ordinary-profile";
       return self && profile != null && !Objects.equals(original.email, profile.email())

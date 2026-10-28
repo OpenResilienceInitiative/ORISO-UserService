@@ -75,6 +75,7 @@ public class AppointmentService {
 
   /** Creation ledger owns the exact returned native account and the captured original tenant. */
   public void createOwnedConsultant(ConsultantAdminResponseDTO response, Long capturedTenant) {
+    requireOwnedOutsideSql();
     if (!appointmentFeatureEnabled
         || response == null
         || response.getEmbedded() == null
@@ -97,6 +98,7 @@ public class AppointmentService {
 
   /** Cleanup does not depend on a consultant row which may already have rolled back. */
   public void deleteOwnedCreationConsultant(String accountId, Long capturedTenant) {
+    requireOwnedOutsideSql();
     if (!appointmentFeatureEnabled
         || accountId == null
         || accountId.isBlank()
@@ -106,13 +108,21 @@ public class AppointmentService {
     var api = appointmentConsultantServiceApiControllerFactory.createControllerApi();
     addCapturedTaskHeaders(api.getApiClient(), TaskPurpose.APPOINTMENT_CLEANUP, capturedTenant);
     try {
-      api.deleteConsultant(accountId);
+      var result = api.deleteConsultantWithHttpInfo(accountId);
+      if (result == null || !HttpStatus.OK.equals(result.getStatusCode()))
+        throw new IllegalStateException("Owned appointment cleanup remains unacknowledged");
     } catch (HttpClientErrorException failure) {
       if (!HttpStatus.NOT_FOUND.equals(failure.getStatusCode()))
         throw new IllegalStateException("Owned appointment cleanup outcome is unconfirmed");
     } catch (RestClientException failure) {
       throw new IllegalStateException("Owned appointment cleanup outcome is unconfirmed");
     }
+  }
+
+  private static void requireOwnedOutsideSql() {
+    if (org.springframework.transaction.support.TransactionSynchronizationManager
+        .isActualTransactionActive())
+      throw new IllegalStateException("Owned appointment transport cannot run inside SQL");
   }
 
   private void addCapturedTaskHeaders(ApiClient api, TaskPurpose purpose, Long tenant) {

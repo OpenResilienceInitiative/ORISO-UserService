@@ -80,7 +80,11 @@ class ProtectedPublicTenantFixture {
                 assertEquals("0", request.getHeaders().getFirst("tenantId"));
                 assertEquals(
                     Set.of(
-                        "tenantservice", "agencyservice", "consultingtypeservice", "userservice"),
+                        "tenantservice",
+                        "agencyservice",
+                        "consultingtypeservice",
+                        "userservice",
+                        "oriso-task-commands"),
                     Set.copyOf(actual.getAudience()));
                 JsonNode command =
                     json.read(((MockClientHttpRequest) request).getBodyAsString(), JsonNode.class);

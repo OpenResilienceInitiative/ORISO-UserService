@@ -420,7 +420,10 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
     change.put("lastName", profile.lastName());
     change.put("email", profile.email());
     Object completeChange;
-    if (account.consultantIdentityAddition() && account.reviewedProtectedProfile() != null) {
+    if (account.existingOrdinaryAssignment()) {
+      completeChange =
+          Map.of("group", Objects.requireNonNull(account.reviewedGroup()), "profile", change);
+    } else if (account.consultantIdentityAddition() && account.reviewedProtectedProfile() != null) {
       var selector = account.reviewedProtectedProfile();
       completeChange =
           Map.of(

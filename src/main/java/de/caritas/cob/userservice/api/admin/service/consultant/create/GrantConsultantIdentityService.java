@@ -141,10 +141,31 @@ public class GrantConsultantIdentityService {
   }
 
   /** Selects an existing owned self-assignment action without minting any mutation authority. */
-  public boolean hasOriginalSelfAssignmentGrant(String accountId) {
+  public de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance
+          .SelfAssignmentKind
+      originalSelfAssignmentKind(String accountId) {
     if (maintenance == null || !maintenance.isFiveActorMode())
       throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
-    return maintenance.hasOriginalSelfAssignmentGrant(accountId);
+    return maintenance.originalSelfAssignmentKind(accountId);
+  }
+
+  public ConsultantAdminResponseDTO assignExistingConsultant(
+      de.caritas.cob.userservice.api.service.accountinvite.AdminSelfAssignmentService
+              .ScopedAssignment
+          assignment) {
+    Objects.requireNonNull(assignment).requireActive();
+    if (identityMode == null
+        || !identityMode.isFiveActorMode()
+        || maintenance == null
+        || !maintenance.isFiveActorMode()
+        || entities == null
+        || org.springframework.transaction.support.TransactionSynchronizationManager
+            .isActualTransactionActive())
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    assignment.requireJpaOwner(entities.getEntityManagerFactory());
+    try (var grant = new ScopedGrant(assignment.accountId(), assignment.grantInput(), assignment)) {
+      return maintenance.grantConsultantIdentity(grant);
+    }
   }
 
   private ConsultantAdminResponseDTO grantLegacy(String adminId, GrantConsultantIdentityDTO dto) {
@@ -198,6 +219,9 @@ public class GrantConsultantIdentityService {
 
   /** Only the actual Grant producer can issue this complete immutable callback. */
   public final class ScopedGrant implements AutoCloseable {
+    private final de.caritas.cob.userservice.api.service.accountinvite.AdminSelfAssignmentService
+            .ScopedAssignment
+        assignment;
     private final String account;
     private final GrantConsultantIdentityDTO input;
     private final de.caritas.cob.userservice.api.model.Admin source;
@@ -213,6 +237,16 @@ public class GrantConsultantIdentityService {
     private String matrixIdentity;
 
     private ScopedGrant(String account, GrantConsultantIdentityDTO requested) {
+      this(account, requested, null);
+    }
+
+    private ScopedGrant(
+        String account,
+        GrantConsultantIdentityDTO requested,
+        de.caritas.cob.userservice.api.service.accountinvite.AdminSelfAssignmentService
+                .ScopedAssignment
+            assignment) {
+      this.assignment = assignment;
       this.account = account;
       server = matrixServer;
       if (requested == null
@@ -253,7 +287,10 @@ public class GrantConsultantIdentityService {
       var copied = new java.util.TreeMap<Long, Set<Long>>();
       resolved.forEach((id, values) -> copied.put(id, Set.copyOf(values)));
       topics = java.util.Collections.unmodifiableMap(copied);
-      recovery = chatRecoveryEnrollmentPolicyService.forNewConsultant(source.getTenantId());
+      recovery =
+          assignment == null
+              ? chatRecoveryEnrollmentPolicyService.forNewConsultant(source.getTenantId())
+              : null;
       agencies = consultantAgencyRelationCreatorService.resolveGrantAgencies(this);
       var roles = new java.util.TreeSet<String>();
       roles.add(CONSULTANT.getValue());
@@ -265,6 +302,10 @@ public class GrantConsultantIdentityService {
       required = Set.copyOf(roles);
       var fields = new java.util.TreeMap<String, Object>();
       fields.put("request", input);
+      if (assignment != null) {
+        fields.put("selfAssignment", "EXISTING_CONSULTANT");
+        fields.put("selfAssignmentAgency", assignment.sourceFacts());
+      }
       var stableAgencies = new java.util.ArrayList<java.util.Map<String, Object>>();
       for (var agency : agencies) {
         var data = new java.util.TreeMap<String, Object>();
@@ -291,6 +332,7 @@ public class GrantConsultantIdentityService {
     }
 
     private void requireActive() {
+      if (assignment != null) assignment.requireActive();
       if (!active || thread != Thread.currentThread())
         throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
     }
@@ -304,6 +346,20 @@ public class GrantConsultantIdentityService {
               .isActualTransactionActive()
           && entities.contains(found)) entities.refresh(found);
       return found;
+    }
+
+    public boolean identityCreation() {
+      requireActive();
+      return assignment == null;
+    }
+
+    public void requireAssignmentCallback(
+        de.caritas.cob.userservice.api.service.accountinvite.AdminSelfAssignmentService
+                .ScopedAssignment
+            source) {
+      requireLocalCurrent();
+      if (source == null || source != assignment)
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
     }
 
     public String accountId() {
@@ -401,13 +457,15 @@ public class GrantConsultantIdentityService {
           || !Objects.equals(admin.getUpdateDate(), source.getUpdateDate())
           || !Objects.equals(admin.getOldId(), source.getOldId())
           || admin.isManagedPaused() != source.isManagedPaused()
-          || consultantRepository.findById(account).isPresent()
-          || consultantRepository
-              .findByUsernameAndDeleteDateIsNull(
-                  usernameTranscoder.encodeUsername(source.getUsername()))
-              .isPresent())
+          || assignment == null
+              && (consultantRepository.findById(account).isPresent()
+                  || consultantRepository
+                      .findByUsernameAndDeleteDateIsNull(
+                          usernameTranscoder.encodeUsername(source.getUsername()))
+                      .isPresent()))
         throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(
             "Consultant grant source changed");
+      if (assignment != null) assignment.validate();
     }
 
     public void validateOutsideSql() {
@@ -417,6 +475,15 @@ public class GrantConsultantIdentityService {
         throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
       adminScope.assertMay(Target.admin(account));
       adminScope.assertMay(Target.agencies(input.getAgencyIds()));
+      if (assignment != null) {
+        assignment.validateOutsideSql();
+        consultantAgencyRelationCreatorService.validateExistingGrantAgencies(this);
+      }
+      if (!topics.equals(
+          consultantTopicAgencyCompatibilityValidator.validateGrantTopicsAgainstSelectedAgencies(
+              input.getTopicIds(), input.getAgencyIds(), source.getTenantId())))
+        throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(
+            "Consultant grant topics changed");
       if (!agencies.equals(consultantAgencyRelationCreatorService.resolveGrantAgencies(this)))
         throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(
             "Consultant grant agencies changed");
@@ -465,7 +532,8 @@ public class GrantConsultantIdentityService {
     public void apply() {
       requireLocalCurrent();
       validate();
-      consultantService.saveConsultant(expectedConsultant());
+      if (assignment == null) consultantService.saveConsultant(expectedConsultant());
+      else assignment.apply(this);
       consultantAgencyRelationCreatorService.createCheckedGrantAgencies(this);
     }
 
@@ -477,6 +545,7 @@ public class GrantConsultantIdentityService {
     public void flushAndRequireResult() {
       requireLocalCurrent();
       entities.flush();
+      if (assignment != null) return;
       var actual = consultantRepository.findById(account).orElseThrow();
       entities.refresh(actual);
       var expected = expectedConsultant();

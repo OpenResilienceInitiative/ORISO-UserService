@@ -108,6 +108,29 @@ public class ConsultantAgencyRelationCreatorService {
     return java.util.List.copyOf(result);
   }
 
+  public void validateExistingGrantAgencies(
+      de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService
+              .ScopedGrant
+          grant) {
+    if (grant.identityCreation()
+        || org.springframework.transaction.support.TransactionSynchronizationManager
+            .isActualTransactionActive())
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    var assigned =
+        consultantAgencyService.getConsultantAgenciesByConsultantIds(
+            java.util.List.of(grant.accountId()));
+    for (var relation : assigned) {
+      var current = retrieveAgency(relation.getAgencyId());
+      if (!java.util.Objects.equals(current.getTenantId(), grant.tenantId()))
+        throw new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException(
+            "Self-assignment current agency tenant changed");
+      for (var agency : grant.agencies())
+        if (agency.bounded() && current.getConsultingType() != agency.consultingType())
+          throw new BadRequestException(
+              "Self-assignment agencies have incompatible consulting types");
+    }
+  }
+
   /** SQL only, admitted by the same actual held Grant callback after native/Matrix ACK. */
   public void createCheckedGrantAgencies(
       de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService
