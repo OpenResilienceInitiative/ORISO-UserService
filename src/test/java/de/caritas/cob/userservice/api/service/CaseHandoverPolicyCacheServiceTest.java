@@ -55,6 +55,178 @@ class CaseHandoverPolicyCacheServiceTest {
     lenient().when(transactionManager.getTransaction(any())).thenReturn(transactionStatus);
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "true,ENFORCED",
+    "false,ENFORCED",
+    "true,SUGGESTED",
+    "false,SUGGESTED"
+  })
+  void runtimeReadsTheCanonicalMasterValueInBothModes(boolean enabled, String mode) {
+    when(repository.findById(42L)).thenReturn(Optional.empty());
+    var response = authoritative(42L, enabled);
+    response
+        .getPolicies()
+        .get("caseHandoverEnabled")
+        .setMode(
+            de.caritas.cob.userservice.tenantadminservice.generated.web.model.PermissionPolicyMode
+                .valueOf(mode));
+    when(tenantControllerApi.getTenantPermissionPolicies(42L)).thenReturn(response);
+
+    assertThat(service.getCurrent(42L).enabled()).isEqualTo(enabled);
+    var saved = ArgumentCaptor.forClass(TenantCaseHandoverPolicyCache.class);
+    verify(repository).save(saved.capture());
+    assertThat(saved.getValue().getPolicies())
+        .contains("caseHandoverEnabled", "caseHandoverPolicies", "tenantId");
+  }
+
+  @Test
+  void runtimeFreshReadObservesOnOffOnWithoutARefreshLease() {
+    var stored = useInMemorySnapshots();
+    lenient().when(scheduledTaskClaimService.tryClaim(anyString(), any())).thenReturn(false);
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenReturn(authoritative(42L, true), authoritative(42L, false), authoritative(42L, true));
+
+    assertThat(service.getCurrent(42L).enabled()).isTrue();
+    assertThat(service.getCurrent(42L).enabled()).isFalse();
+    assertThat(service.getCurrent(42L).enabled()).isTrue();
+    verify(tenantControllerApi, org.mockito.Mockito.times(3)).getTenantPermissionPolicies(42L);
+    assertThat(stored.get(42L).getStaleSince()).isNull();
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+  void runtimeOutageRetainsValidatedFullMasterAndMarksItStale(boolean enabled) {
+    var stored = useInMemorySnapshots();
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenReturn(authoritative(42L, enabled))
+        .thenThrow(new RestClientException("synthetic-sensitive-provider-body"));
+    service.getCurrent(42L);
+
+    assertThat(service.getCurrent(42L).enabled()).isEqualTo(enabled);
+    assertThat(stored.get(42L).getStaleSince()).isEqualTo(LocalDateTime.now(clock));
+  }
+
+  @Test
+  void runtimeTenantIsolationSurvivesRestartAndTransportFailure() {
+    var stored = useInMemorySnapshots();
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenReturn(authoritative(42L, false));
+    when(tenantControllerApi.getTenantPermissionPolicies(43L)).thenReturn(authoritative(43L, true));
+    service.getCurrent(42L);
+    service.getCurrent(43L);
+    when(tenantControllerApi.getTenantPermissionPolicies(any()))
+        .thenThrow(new RestClientException("offline"));
+    var restarted =
+        new CaseHandoverPolicyCacheService(
+            repository, tenantControllerApi, scheduledTaskClaimService, clock, transactionManager);
+
+    assertThat(restarted.getCurrent(42L).enabled()).isFalse();
+    assertThat(restarted.getCurrent(43L).enabled()).isTrue();
+    assertThat(stored.keySet()).containsExactlyInAnyOrder(42L, 43L);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"absent", "legacy", "wrongTenant", "malformed"})
+  void runtimeOutageCannotUseMissingLegacyWrongTenantOrMalformedAuthority(String kind)
+      throws Exception {
+    var stored = useInMemorySnapshots();
+    if (!kind.equals("absent")) {
+      String json =
+          kind.equals("legacy")
+              ? "{\"reasons\":{}}"
+              : kind.equals("malformed")
+                  ? "invalid json"
+                  : new com.fasterxml.jackson.databind.ObjectMapper()
+                      .writeValueAsString(authoritative(43L, true));
+      stored.put(42L, TenantCaseHandoverPolicyCache.builder().tenantId(42L).policies(json).build());
+    }
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenThrow(new RestClientException("offline"));
+
+    assertThatThrownBy(() -> service.getCurrent(42L))
+        .isInstanceOf(ServiceUnavailableException.class);
+    verify(repository, never()).save(any());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"missing", "value", "mode", "tenant", "reasons"})
+  void malformedLiveAuthorityFailsClosedInsteadOfUsingAnOlderAllowedSnapshot(String field) {
+    useInMemorySnapshots();
+    when(tenantControllerApi.getTenantPermissionPolicies(42L)).thenReturn(authoritative(42L, true));
+    service.getCurrent(42L);
+    var invalid = authoritative(42L, true);
+    switch (field) {
+      case "missing" -> invalid.setPolicies(Map.of());
+      case "value" -> invalid.getPolicies().get("caseHandoverEnabled").setValue(null);
+      case "mode" -> invalid.getPolicies().get("caseHandoverEnabled").setMode(null);
+      case "tenant" -> invalid.setTenantId(43L);
+      case "reasons" -> invalid.setCaseHandoverPolicies(null);
+      default -> throw new AssertionError();
+    }
+    when(tenantControllerApi.getTenantPermissionPolicies(42L)).thenReturn(invalid);
+
+    assertThatThrownBy(() -> service.getCurrent(42L))
+        .isInstanceOf(ServiceUnavailableException.class);
+  }
+
+  @Test
+  void configurationReadDoesNotExposeAFullSnapshotForAnotherTenant() throws Exception {
+    var stored = useInMemorySnapshots();
+    stored.put(
+        42L,
+        TenantCaseHandoverPolicyCache.builder()
+            .tenantId(42L)
+            .policies(
+                new com.fasterxml.jackson.databind.ObjectMapper()
+                    .writeValueAsString(authoritative(43L, true)))
+            .build());
+    var actual = authoritative(42L, false);
+    when(tenantControllerApi.getTenantPermissionPolicies(42L)).thenReturn(actual);
+
+    assertThat(service.getEffective(42L)).isSameAs(actual.getCaseHandoverPolicies());
+    verify(tenantControllerApi).getTenantPermissionPolicies(42L);
+    assertThat(stored.get(42L).getPolicies()).contains("\"tenantId\":42");
+  }
+
+  private Map<Long, TenantCaseHandoverPolicyCache> useInMemorySnapshots() {
+    var stored = new java.util.HashMap<Long, TenantCaseHandoverPolicyCache>();
+    when(repository.findById(any()))
+        .thenAnswer(call -> Optional.ofNullable(stored.get(call.getArgument(0))));
+    lenient()
+        .when(repository.save(any()))
+        .thenAnswer(
+            call -> {
+              TenantCaseHandoverPolicyCache value = call.getArgument(0);
+              stored.put(value.getTenantId(), value);
+              return value;
+            });
+    return stored;
+  }
+
+  private TenantPermissionPolicies authoritative(Long tenantId, boolean enabled) {
+    return new TenantPermissionPolicies()
+        .tenantId(tenantId)
+        .policies(master(enabled))
+        .caseHandoverPolicies(new CaseHandoverPolicies().reasons(Map.of()));
+  }
+
+  private Map<
+          String,
+          de.caritas.cob.userservice.tenantadminservice.generated.web.model.BooleanPermissionPolicy>
+      master(boolean enabled) {
+    return Map.of(
+        "caseHandoverEnabled",
+        new de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                .BooleanPermissionPolicy(null)
+            .value(enabled)
+            .mode(
+                de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                    .PermissionPolicyMode.ENFORCED));
+  }
+
   @Test
   void publicScheduledEntryPreservesSnapshotWhenAnotherReplicaOwnsLease() throws Exception {
     assertThat(
@@ -80,7 +252,7 @@ class CaseHandoverPolicyCacheServiceTest {
         .thenReturn(
             new TenantPermissionPolicies()
                 .tenantId(42L)
-                .policies(Map.of())
+                .policies(master(true))
                 .caseHandoverPolicies(policies));
 
     assertThat(service.refresh(42L)).isSameAs(policies);
@@ -172,7 +344,7 @@ class CaseHandoverPolicyCacheServiceTest {
         .thenReturn(
             new TenantPermissionPolicies()
                 .tenantId(43L)
-                .policies(Map.of())
+                .policies(master(true))
                 .caseHandoverPolicies(new CaseHandoverPolicies().reasons(Map.of())));
 
     assertThatThrownBy(() -> service.refresh(42L))
@@ -218,7 +390,7 @@ class CaseHandoverPolicyCacheServiceTest {
         .thenReturn(
             new TenantPermissionPolicies()
                 .tenantId(42L)
-                .policies(Map.of())
+                .policies(master(true))
                 .caseHandoverPolicies(policies));
 
     service.refresh(42L);
@@ -235,7 +407,7 @@ class CaseHandoverPolicyCacheServiceTest {
         .thenReturn(
             new TenantPermissionPolicies()
                 .tenantId(42L)
-                .policies(Map.of())
+                .policies(master(true))
                 .caseHandoverPolicies(policies));
 
     assertThat(service.getEffective(42L)).isSameAs(policies);
@@ -254,7 +426,7 @@ class CaseHandoverPolicyCacheServiceTest {
     var current =
         new TenantPermissionPolicies()
             .tenantId(42L)
-            .policies(Map.of("somePolicy", generalPolicy))
+            .policies(Map.of("somePolicy", generalPolicy, "caseHandoverEnabled", generalPolicy))
             .caseHandoverPolicies(new CaseHandoverPolicies().reasons(Map.of()));
     var requested = new CaseHandoverPolicies().reasons(Map.of());
     when(tenantControllerApi.getTenantPermissionPoliciesAsCaller(42L)).thenReturn(current);
@@ -299,7 +471,7 @@ class CaseHandoverPolicyCacheServiceTest {
         .thenReturn(
             new TenantPermissionPolicies()
                 .tenantId(42L)
-                .policies(Map.of())
+                .policies(master(true))
                 .caseHandoverPolicies(policies));
 
     assertThat(service.getEffective(42L)).isSameAs(policies);
@@ -336,7 +508,7 @@ class CaseHandoverPolicyCacheServiceTest {
         .thenReturn(
             new TenantPermissionPolicies()
                 .tenantId(42L)
-                .policies(Map.of())
+                .policies(master(true))
                 .caseHandoverPolicies(new CaseHandoverPolicies().reasons(Map.of())));
 
     service.refreshKnownTenants();

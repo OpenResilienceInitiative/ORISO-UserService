@@ -142,6 +142,11 @@ class CaseHandoverRequiredConsentMailIT {
     when(actor.retrieveValidatedConsultant()).thenReturn(incoming);
     when(toggles.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS)).thenReturn(true);
     when(policies.getEffective(7L)).thenReturn(policy(CaseHandoverConsentValue.OPT_IN));
+    when(policies.getCurrent(7L))
+        .thenAnswer(
+            call ->
+                new de.caritas.cob.userservice.api.service.CaseHandoverPolicyCacheService
+                    .CurrentPolicy(true, policies.getEffective(7L)));
   }
 
   @AfterEach

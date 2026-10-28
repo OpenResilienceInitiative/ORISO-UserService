@@ -17,8 +17,13 @@ import de.caritas.cob.userservice.api.model.*;
 import de.caritas.cob.userservice.api.port.out.*;
 import de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairScheduler;
 import de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairService;
+import de.caritas.cob.userservice.api.service.TenantCaseHandoverPolicyReadClient;
 import de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
+import de.caritas.cob.userservice.tenantadminservice.generated.web.model.BooleanPermissionPolicy;
+import de.caritas.cob.userservice.tenantadminservice.generated.web.model.CaseHandoverPolicies;
+import de.caritas.cob.userservice.tenantadminservice.generated.web.model.PermissionPolicyMode;
+import de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantPermissionPolicies;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
@@ -136,6 +141,8 @@ class CaseHandoverCoAccessHttpSynapseIT {
   @Autowired PlatformTransactionManager transactionManager;
   @Autowired JdbcTemplate jdbc;
   @MockitoBean JwtDecoder jwtDecoder;
+  @MockitoBean TenantCaseHandoverPolicyReadClient policyReader;
+  private TenantPermissionPolicies resolvedPolicy;
   private TransactionTemplate transactions;
   private Long sessionId;
   private Long secondSessionId;
@@ -228,7 +235,7 @@ class CaseHandoverCoAccessHttpSynapseIT {
   }
 
   @BeforeEach
-  void createFixture() {
+  void createFixture() throws Exception {
     DOMAIN_TIME.set(Instant.now().truncatedTo(ChronoUnit.SECONDS));
     transactions = new TransactionTemplate(transactionManager);
     String selmaId = createMatrixUser(OWNER_A_ID + "-" + UUID.randomUUID());
@@ -313,6 +320,20 @@ class CaseHandoverCoAccessHttpSynapseIT {
               secondSessionId = sessionRepository.save(proofSession(user, ownerB, now)).getId();
               return first.getId();
             });
+    // The external provider is this fixture's authority; runtime must refresh a legacy row
+    // before it can use it. Matrix and persistence remain real in these HTTP contracts.
+    var legacy = policyCache.findById(7L).orElseThrow();
+    resolvedPolicy =
+        new TenantPermissionPolicies()
+            .tenantId(7L)
+            .policies(
+                Map.of(
+                    "caseHandoverEnabled",
+                    new BooleanPermissionPolicy(null)
+                        .value(true)
+                        .mode(PermissionPolicyMode.ENFORCED)))
+            .caseHandoverPolicies(JSON.readValue(legacy.getPolicies(), CaseHandoverPolicies.class));
+    when(policyReader.getTenantPermissionPolicies(7L)).thenReturn(resolvedPolicy);
     for (String id : List.of(OWNER_A_ID, OWNER_B_ID, OWNER_C_ID, USER_ID))
       inactivity.assignAtCreation(id, 7L, 12, 1L, Instant.now());
   }
@@ -347,6 +368,35 @@ class CaseHandoverCoAccessHttpSynapseIT {
       for (String id : List.of(OWNER_A_ID, OWNER_B_ID, OWNER_C_ID, USER_ID))
         jdbc.update("DELETE FROM account_inactivity WHERE identity_id=?", id);
     }
+  }
+
+  @Test
+  void canonicalMasterOffRefusesPublicGrantWithoutOwnershipOrMatrixChanges() throws Exception {
+    resolvedPolicy.getPolicies().get("caseHandoverEnabled").setValue(false);
+    var beforePower =
+        matrixGet("/_matrix/client/v3/rooms/" + roomId + "/state/m.room.power_levels", selmaToken);
+
+    mvc.perform(
+            post(route())
+                .header("Authorization", "Bearer " + OWNER_A_ID)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                {"reasonCode":"ADVICE_REQUESTED","explanation":"Please review this case","expectedOwnershipRevision":0,"operationId":"35259c37-b5f7-49b5-9648-86fe76e9fb17"}
+                """))
+        .andExpect(status().isForbidden());
+
+    assertThat(caseHandoverRequestRepository.findBySessionId(sessionId)).isEmpty();
+    var unchanged = sessionRepository.findById(sessionId).orElseThrow();
+    assertThat(unchanged.getConsultant().getId()).isEqualTo(OWNER_B_ID);
+    assertThat(unchanged.getOwnershipRevision()).isZero();
+    assertThat(
+            matrixGet(
+                "/_matrix/client/v3/rooms/" + roomId + "/state/m.room.power_levels", selmaToken))
+        .isEqualTo(beforePower);
+    mvc.perform(get(route()).header("Authorization", "Bearer " + OWNER_A_ID))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.canViewContent").value(false));
   }
 
   @ParameterizedTest

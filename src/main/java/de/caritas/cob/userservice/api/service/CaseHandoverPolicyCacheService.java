@@ -38,6 +38,93 @@ public class CaseHandoverPolicyCacheService {
   @Value("${case.handover.policy-refresh-claim-duration:PT1M}")
   private Duration policyRefreshClaimDuration = Duration.ofMinutes(1);
 
+  /**
+   * One fresh, complete authority for a runtime action; only a validated full snapshot may replace
+   * an unavailable provider. Legacy reason-only snapshots remain configuration-readable.
+   */
+  public CurrentPolicy getCurrent(Long tenantId) {
+    if (tenantId == null || tenantId <= 0) {
+      throw new ServiceUnavailableException("A tenant is required for Case Handover policy");
+    }
+    var existing = inNewTransaction(() -> repository.findById(tenantId));
+    TenantPermissionPolicies response;
+    try {
+      response = tenantPolicyReadClient.getTenantPermissionPolicies(tenantId);
+    } catch (TenantCaseHandoverPolicyReadClient.InvalidPolicyResponseException invalid) {
+      throw new ServiceUnavailableException("Tenant Case Handover policy response is invalid");
+    } catch (RuntimeException unavailable) {
+      log.warn(
+          "Tenant {} current Case Handover policy unavailable: {}",
+          tenantId,
+          TenantCaseHandoverPolicyReadClient.failureSummary(unavailable));
+      if (existing.isEmpty()) {
+        throw new ServiceUnavailableException("Tenant Case Handover policy is unavailable");
+      }
+      var cache = existing.get();
+      CurrentPolicy fallback;
+      try {
+        if (!tenantId.equals(cache.getTenantId())) throw new IllegalStateException();
+        fallback =
+            validateCurrent(
+                tenantId,
+                objectMapper.readValue(cache.getPolicies(), TenantPermissionPolicies.class));
+      } catch (RuntimeException | JsonProcessingException invalid) {
+        throw new ServiceUnavailableException(
+            "No complete tenant Case Handover snapshot is available");
+      }
+      markStale(cache);
+      return fallback;
+    }
+    // A malformed live authority must not fall back to an older permissive snapshot.
+    CurrentPolicy current = validateCurrent(tenantId, response);
+    putEffective(tenantId, response);
+    return current;
+  }
+
+  public record CurrentPolicy(boolean enabled, CaseHandoverPolicies policies) {
+    public void requireEnabled() {
+      if (!enabled)
+        throw new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException(
+            "Case Handover is disabled for this tenant");
+    }
+  }
+
+  private CurrentPolicy validateCurrent(Long tenantId, TenantPermissionPolicies response) {
+    var master =
+        response == null || response.getPolicies() == null
+            ? null
+            : response.getPolicies().get("caseHandoverEnabled");
+    if (response == null
+        || !tenantId.equals(response.getTenantId())
+        || master == null
+        || master.getValue() == null
+        || master.getMode() == null
+        || response.getCaseHandoverPolicies() == null
+        || response.getCaseHandoverPolicies().getReasons() == null
+        || response.getCaseHandoverPolicies().getReasons().values().stream()
+            .anyMatch(policy -> policy == null || policy.getCode() == null)) {
+      throw new ServiceUnavailableException("No complete tenant Case Handover policy is available");
+    }
+    return new CurrentPolicy(master.getValue(), response.getCaseHandoverPolicies());
+  }
+
+  private void markStale(TenantCaseHandoverPolicyCache cache) {
+    if (cache.getStaleSince() != null) return;
+    inNewTransaction(
+        () -> {
+          repository
+              .findById(cache.getTenantId())
+              .ifPresent(
+                  current -> {
+                    if (current.getStaleSince() == null) {
+                      current.setStaleSince(LocalDateTime.now(clock));
+                      repository.save(current);
+                    }
+                  });
+          return null;
+        });
+  }
+
   public CaseHandoverPolicies getEffective(Long tenantId) {
     // An unreadable snapshot is not a usable snapshot. Falling through to refresh is what the
     // last-known-good contract promises; propagating the deserialize failure here would instead
@@ -64,23 +151,8 @@ public class CaseHandoverPolicyCacheService {
     }
     try {
       var response = tenantPolicyReadClient.getTenantPermissionPolicies(tenantId);
-      if (response == null
-          || !tenantId.equals(response.getTenantId())
-          || response.getCaseHandoverPolicies() == null
-          || response.getCaseHandoverPolicies().getReasons() == null) {
-        throw new IllegalStateException("TenantService returned no matching Case Handover policy");
-      }
-      String serialized = serialize(response.getCaseHandoverPolicies());
-      inNewTransaction(
-          () -> {
-            var cache = repository.findById(tenantId).orElseGet(TenantCaseHandoverPolicyCache::new);
-            cache.setTenantId(tenantId);
-            cache.setPolicies(serialized);
-            cache.setRefreshedAt(LocalDateTime.now(clock));
-            cache.setStaleSince(null);
-            repository.save(cache);
-            return null;
-          });
+      validateCurrent(tenantId, response);
+      putEffective(tenantId, response);
       return response.getCaseHandoverPolicies();
     } catch (RuntimeException exception) {
       if (existing.isEmpty()) {
@@ -126,11 +198,14 @@ public class CaseHandoverPolicyCacheService {
   }
 
   /** Persists a provider-confirmed response without another downstream round trip. */
-  public CaseHandoverPolicies putEffective(Long tenantId, CaseHandoverPolicies policies) {
-    if (policies == null || policies.getReasons() == null) {
-      throw new ServiceUnavailableException("Tenant Case Handover policy is unavailable");
+  public CaseHandoverPolicies putEffective(Long tenantId, TenantPermissionPolicies response) {
+    validateCurrent(tenantId, response);
+    String serialized;
+    try {
+      serialized = objectMapper.writeValueAsString(response);
+    } catch (JsonProcessingException invalid) {
+      throw new ServiceUnavailableException("Tenant Case Handover policy could not be cached");
     }
-    String serialized = serialize(policies);
     inNewTransaction(
         () -> {
           var cache = repository.findById(tenantId).orElseGet(TenantCaseHandoverPolicyCache::new);
@@ -141,7 +216,7 @@ public class CaseHandoverPolicyCacheService {
           repository.save(cache);
           return null;
         });
-    return policies;
+    return response.getCaseHandoverPolicies();
   }
 
   /**
@@ -163,7 +238,7 @@ public class CaseHandoverPolicyCacheService {
         || resolved.getCaseHandoverPolicies() == null) {
       throw new ServiceUnavailableException("Tenant Case Handover policy update failed");
     }
-    return putEffective(tenantId, resolved.getCaseHandoverPolicies());
+    return putEffective(tenantId, resolved);
   }
 
   @Scheduled(fixedDelayString = "${case.handover.policy-cache-refresh-delay-ms:300000}")
@@ -198,17 +273,16 @@ public class CaseHandoverPolicyCacheService {
     }
   }
 
-  private String serialize(CaseHandoverPolicies policies) {
-    try {
-      return objectMapper.writeValueAsString(policies);
-    } catch (JsonProcessingException exception) {
-      throw new IllegalStateException("Case Handover policy could not be cached", exception);
-    }
-  }
-
   private CaseHandoverPolicies deserialize(TenantCaseHandoverPolicyCache cache) {
     try {
-      var policies = objectMapper.readValue(cache.getPolicies(), CaseHandoverPolicies.class);
+      var tree = objectMapper.readTree(cache.getPolicies());
+      var policies =
+          tree.has("caseHandoverPolicies")
+              ? validateCurrent(
+                      cache.getTenantId(),
+                      objectMapper.treeToValue(tree, TenantPermissionPolicies.class))
+                  .policies()
+              : objectMapper.treeToValue(tree, CaseHandoverPolicies.class);
       if (policies == null || policies.getReasons() == null) {
         throw new IllegalStateException("Cached Case Handover policy has no reasons");
       }

@@ -135,11 +135,38 @@ public class TenantCaseHandoverPolicyReadClient {
           .forEach(
               (name, values) ->
                   values.forEach(value -> api.getApiClient().addDefaultHeader(name, value)));
-      return operation.apply(api);
+      try {
+        return operation.apply(api);
+      } catch (RuntimeException responseFailure) {
+        if (isInvalidPolicyResponse(responseFailure)) throw new InvalidPolicyResponseException();
+        throw responseFailure;
+      }
+    } catch (InvalidPolicyResponseException invalid) {
+      throw invalid;
     } catch (RuntimeException exception) {
       // Neither downstream response bodies nor identity credentials may enter fallback logs.
       throw new IllegalStateException(operationName + " failed: " + failureSummary(exception));
     }
+  }
+
+  /**
+   * A successful HTTP response could not be decoded as policy authority. Contains no body/cause.
+   */
+  public static final class InvalidPolicyResponseException extends RuntimeException {
+    private static final long serialVersionUID = 1L;
+
+    private InvalidPolicyResponseException() {
+      super("Tenant policy response is invalid");
+    }
+  }
+
+  private boolean isInvalidPolicyResponse(RuntimeException failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof org.springframework.http.converter.HttpMessageConversionException
+          || cause instanceof org.springframework.web.client.UnknownContentTypeException)
+        return true;
+    }
+    return false;
   }
 
   public static String failureSummary(RuntimeException exception) {

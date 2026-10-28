@@ -369,10 +369,17 @@ public class CaseHandoverService {
   private Duration coAccessClaimDuration = Duration.ofMinutes(2);
 
   public List<CaseHandoverReason> listReasons() {
-    return listReasons(TenantContext.getCurrentTenant());
+    Long tenantId = TenantContext.getCurrentTenant();
+    // Single-tenant deployments do not run HttpTenantFilter; use the validated stored actor,
+    // never a global/default permission or a caller-supplied tenant header.
+    if (tenantId == null || tenantId <= 0) tenantId = retrieveCurrentConsultant().getTenantId();
+    return listReasons(tenantId);
   }
 
   public List<CaseHandoverReason> listReasons(Long tenantId) {
+    if (tenantId == null || tenantId <= 0) {
+      throw new ServiceUnavailableException("No tenant is available for Case Handover policy");
+    }
     return listReasons(tenantId, "de", false, false);
   }
 
@@ -381,7 +388,13 @@ public class CaseHandoverService {
     if (tenantId != null && tenantId > 0) {
       de.caritas.cob.userservice.tenantadminservice.generated.web.model.CaseHandoverPolicies cached;
       try {
-        cached = caseHandoverPolicyCacheService.getEffective(tenantId);
+        if (allowLegacyFallback) {
+          cached = caseHandoverPolicyCacheService.getEffective(tenantId);
+        } else {
+          var current = caseHandoverPolicyCacheService.getCurrent(tenantId);
+          if (!current.enabled()) return List.of();
+          cached = current.policies();
+        }
       } catch (RuntimeException exception) {
         var legacy =
             allowLegacyFallback ? legacyReasons(includeDisabled) : List.<CaseHandoverReason>of();
@@ -672,6 +685,7 @@ public class CaseHandoverService {
             .filter(this::isExtendable)
             .findFirst()
             .orElseThrow(() -> new ConflictException("No active co-access to extend"));
+    currentPolicy(session).requireEnabled();
     return toStatus(applyCoAccessExtension(grant));
   }
 
@@ -1016,7 +1030,7 @@ public class CaseHandoverService {
         attachStandingSupervisorAfterCommit(session.getId(), requester);
       }
       saved = caseHandoverRequestRepository.save(request);
-      notifyGranted(saved);
+      notifyGranted(saved, reason);
       if (status == Status.GRANTED_PENDING_CLIENT_OPTOUT) {
         notifyPendingConsent(saved);
       }
@@ -1233,6 +1247,7 @@ public class CaseHandoverService {
       throw new ForbiddenException("Recipient is no longer eligible for this case");
     }
 
+    CaseHandoverReason reason = approved ? findReason(session, request.getReasonCode()) : null;
     LocalDateTime now = LocalDateTime.now(clock);
     request.setRecipientDecisionAt(now);
     if (!approved) {
@@ -1242,7 +1257,6 @@ public class CaseHandoverService {
       return toStatus(caseHandoverRequestRepository.save(request));
     }
 
-    CaseHandoverReason reason = findReason(session, request.getReasonCode());
     if (accessType(reason.getCode()) == AccessType.CO_ACCESS || !isAccessAllowed(reason)) {
       request.setStatus(Status.DENIED);
       request.setAuditOutcome(OUTCOME_ACCESS_DENIED);
@@ -1287,7 +1301,7 @@ public class CaseHandoverService {
     sessionOwnershipService.updateOwner(session, liveRecipient, session.getStatus(), now);
     attachStandingSupervisorAfterCommit(session.getId(), liveRecipient);
     CaseHandoverRequest saved = caseHandoverRequestRepository.save(request);
-    notifyGranted(saved);
+    notifyGranted(saved, reason);
     if (consent == CaseHandoverConsentMode.OPT_OUT) {
       notifyPendingConsent(saved);
     }
@@ -1329,6 +1343,8 @@ public class CaseHandoverService {
           HttpStatusExceptionReason.CASE_OWNER_CHANGED);
     }
 
+    CaseHandoverReason reason =
+        approved && !optOutDecision ? findReason(session, request.getReasonCode(), true) : null;
     LocalDateTime now = LocalDateTime.now(clock);
     request.setResolvedAt(now);
     if (approved) {
@@ -1352,8 +1368,7 @@ public class CaseHandoverService {
       if (request.getAccessType() == AccessType.CO_ACCESS) {
         Integer capturedDuration = request.getMaxAccessDurationMinutes();
         if (capturedDuration == null) {
-          capturedDuration =
-              maxAccessDurationMinutes(findReason(session, request.getReasonCode(), true));
+          capturedDuration = maxAccessDurationMinutes(reason);
         }
         request.setMaxAccessDurationMinutes(
             validateMaxAccessDuration(request.getReasonCode(), capturedDuration));
@@ -1375,7 +1390,7 @@ public class CaseHandoverService {
         attachStandingSupervisorAfterCommit(session.getId(), request.getRequesterConsultant());
       }
       CaseHandoverRequest saved = caseHandoverRequestRepository.save(request);
-      notifyGranted(saved);
+      notifyGranted(saved, reason);
       return toClientStatus(saved);
     }
 
@@ -2004,18 +2019,24 @@ public class CaseHandoverService {
   private CaseHandoverReason findReason(
       Session session, String reasonCode, boolean includeDisabled) {
     String normalized = CaseHandoverReasonCodes.canonical(reasonCode);
-    Long tenantId = session == null ? null : session.getTenantId();
-    if (tenantId == null || tenantId <= 0) {
-      tenantId = TenantContext.getCurrentTenant();
-    }
-    if (tenantId == null || tenantId <= 0) {
-      throw new ServiceUnavailableException("No tenant is available for Case Handover policy");
-    }
+    var current = currentPolicy(session);
+    current.requireEnabled();
     String language = session == null ? "de" : resolveSessionLanguage(session);
-    return listReasons(tenantId, language, includeDisabled, false).stream()
+    return current.policies().getReasons().values().stream()
+        .map(policy -> toReason(policy, language))
+        .filter(reason -> includeDisabled || reason.isEnabled())
         .filter(reason -> reason.getCode().equals(normalized))
         .findFirst()
         .orElseThrow(() -> new BadRequestException("Unknown handover reason"));
+  }
+
+  private CaseHandoverPolicyCacheService.CurrentPolicy currentPolicy(Session session) {
+    Long tenantId = session == null ? null : session.getTenantId();
+    if (tenantId == null || tenantId <= 0) tenantId = TenantContext.getCurrentTenant();
+    if (tenantId == null || tenantId <= 0) {
+      throw new ServiceUnavailableException("No tenant is available for Case Handover policy");
+    }
+    return caseHandoverPolicyCacheService.getCurrent(tenantId);
   }
 
   private CaseHandoverReason toReason(CaseHandoverReasonPolicy policy) {
@@ -2456,7 +2477,7 @@ public class CaseHandoverService {
         });
   }
 
-  private void notifyGranted(CaseHandoverRequest request) {
+  private void notifyGranted(CaseHandoverRequest request, CaseHandoverReason reason) {
     caseHandoverEmailNotification.ownershipGranted(request);
     Session session = request.getSession();
     Consultant requester = request.getRequesterConsultant();
@@ -2464,7 +2485,7 @@ public class CaseHandoverService {
     ClientHandoverCopy clientCopy = resolveClientHandoverCopy(session);
     boolean coAccess = effectiveAccessType(request) == AccessType.CO_ACCESS;
     String clientDescription =
-        resolveTenantClientTemplate(request)
+        resolveTenantClientTemplate(request, reason)
             .map(template -> renderClientTemplate(template, requesterName, request, session))
             .orElseGet(
                 () ->
@@ -2575,15 +2596,15 @@ public class CaseHandoverService {
 
   /**
    * Tenant-configured client notification template for the request's reason, resolved through the
-   * last-known-good policy cache. Only a TenantService-resolved policy may override the built-in
-   * client-safe copy; the built-in defaults keep the generic wording that the PR #1053 privacy
-   * contract asserts. Resolution failures fall back to the built-in copy - a notification must
-   * never fail the grant.
+   * same resolved snapshot that authorized this grant. Only a TenantService-resolved policy may
+   * override the built-in client-safe copy; the built-in defaults keep the generic wording that the
+   * PR #1053 privacy contract asserts. Resolution failures fall back to the built-in copy - a
+   * notification must never fail the grant.
    */
-  private Optional<String> resolveTenantClientTemplate(CaseHandoverRequest request) {
+  private Optional<String> resolveTenantClientTemplate(
+      CaseHandoverRequest request, CaseHandoverReason reason) {
     try {
       Session requestSession = request.getSession();
-      CaseHandoverReason reason = findReason(requestSession, request.getReasonCode(), true);
       if (!TENANT_POLICY_AUTHORITY.equals(reason.getPolicyAuthority())) {
         return Optional.empty();
       }

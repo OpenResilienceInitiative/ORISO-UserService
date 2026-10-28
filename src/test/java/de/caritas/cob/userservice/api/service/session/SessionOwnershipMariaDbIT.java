@@ -714,6 +714,11 @@ class SessionOwnershipMariaDbIT {
             new de.caritas.cob.userservice.tenantadminservice.generated.web.model
                     .CaseHandoverPolicies()
                 .reasons(java.util.Map.of("COUNSELLOR_IS_ILL", policy)));
+    when(cache.getCurrent(7L))
+        .thenAnswer(
+            call ->
+                new de.caritas.cob.userservice.api.service.CaseHandoverPolicyCacheService
+                    .CurrentPolicy(true, cache.getEffective(7L)));
     return new CaseHandoverService(
         requests,
         mock(SessionSupervisorFacade.class),
