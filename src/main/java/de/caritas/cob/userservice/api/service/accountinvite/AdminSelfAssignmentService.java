@@ -27,7 +27,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 /**
  * An admin adds THEIR OWN account as counsellor of an agency, without an invite. Agency admin is
@@ -51,8 +50,49 @@ public class AdminSelfAssignmentService {
   private final @NonNull ConsultantTopicAgencyCompatibilityValidator
       topicAgencyCompatibilityValidator;
 
-  @Transactional
+  private de.caritas.cob.userservice.api.port.out.IdentityClientConfig identityMode;
+  private org.springframework.transaction.support.TransactionTemplate localWrites;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  public void setIdentityMode(de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode) {
+    identityMode = Objects.requireNonNull(mode);
+  }
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public void setLocalTransactionManager(
+      org.springframework.transaction.PlatformTransactionManager manager) {
+    localWrites = new org.springframework.transaction.support.TransactionTemplate(manager);
+  }
+
   public SelfAssignmentResult assign(SelfAssignmentCommand command) {
+    if (identityMode != null && identityMode.isFiveActorMode()) {
+      if (org.springframework.transaction.support.TransactionSynchronizationManager
+          .isActualTransactionActive())
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+      var agency = checkedAgency(command);
+      String userId = authenticatedUser.getUserId();
+      if (consultantRepository.findByIdAndDeleteDateIsNull(userId).isPresent())
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+      var grant = new GrantConsultantIdentityDTO();
+      grant.setAgencyIds(List.of(agency.id()));
+      grant.setTopicIds(resolveTopics(command.topicIds(), agency));
+      grant.setFormalLanguage(true);
+      grantConsultantIdentityService.grantConsultantIdentityToAdmin(userId, grant);
+      return new SelfAssignmentResult(command.role(), agency.id(), userId, true);
+    }
+    return localWrites == null
+        ? assignLegacy(command)
+        : localWrites.execute(ignored -> assignLegacy(command));
+  }
+
+  private SelfAssignmentResult assignLegacy(SelfAssignmentCommand command) {
+    var agency = checkedAgency(command);
+    String userId = authenticatedUser.getUserId();
+    boolean identityCreated = assignAsCounsellor(userId, agency, command.topicIds());
+    return new SelfAssignmentResult(command.role(), agency.id(), userId, identityCreated);
+  }
+
+  private AgencyFacts.Agency checkedAgency(SelfAssignmentCommand command) {
     if (command == null || command.role() == null) {
       throw new BadRequestException("role is required");
     }
@@ -67,9 +107,7 @@ public class AdminSelfAssignmentService {
                 () -> new NotFoundException("agencyId " + command.agencyId() + " does not exist"));
     accessPolicy.authorizeSelfAssignment(agency.id(), agency.tenantId());
 
-    String userId = authenticatedUser.getUserId();
-    boolean identityCreated = assignAsCounsellor(userId, agency, command.topicIds());
-    return new SelfAssignmentResult(command.role(), agency.id(), userId, identityCreated);
+    return agency;
   }
 
   public SelfAssignments current() {
