@@ -538,6 +538,7 @@ def native(kc, report):
             'ORISO_PROTECTED_INVITATION_PROFILE_IDS': json.dumps({'TENANT_ADMIN': PROFILE, 'PLATFORM_ADMIN': 'platform-v1'}),
             'STARTUP_JOURNAL_FIXTURE': str(schema.resolve()),
             'MATRIX_SERVER_NAME': 'startup-fixture.invalid',
+            'SPRING_DATASOURCE_URL': 'jdbc:h2:mem:userservice-startup-${random.uuid};DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MariaDB;DATABASE_TO_LOWER=TRUE;NON_KEYWORDS=USER,VALUE,DAY',
             'ACCOUNT_INACTIVITY_ENABLED': 'true',
             'DELETION_READONLYWINDOW_TENANTOVERRIDES': '11:0',
             'STARTUP_WITNESS': str(report.with_name('application-startup-native-witness.json').resolve()),

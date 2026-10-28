@@ -646,7 +646,8 @@ public class AccountLifecycleCallerConfiguration {
 
   @Bean
   JdbcExistingSetupPasswordClaims existingSetupPasswordClaims(JdbcTemplate jdbc) {
-    return new JdbcExistingSetupPasswordClaims(jdbc, Clock.systemUTC());
+    // Existing invitation LocalDateTime and native expiry retain the JVM wall-time contract.
+    return new JdbcExistingSetupPasswordClaims(jdbc, Clock.systemDefaultZone());
   }
 
   @Bean

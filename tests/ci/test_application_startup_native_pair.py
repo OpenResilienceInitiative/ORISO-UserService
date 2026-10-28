@@ -12,6 +12,15 @@ spec.loader.exec_module(proof)
 
 
 class ApplicationStartupPairControls(unittest.TestCase):
+    def test_startup_declares_only_disposable_lowercase_h2_database(self):
+        import ast
+        tree = ast.parse((ROOT / 'scripts/ci/application-startup-native-pair.py').read_text())
+        values = [value.value for node in ast.walk(tree) if isinstance(node, ast.Dict)
+                  for key, value in zip(node.keys, node.values)
+                  if isinstance(key, ast.Constant) and key.value == 'SPRING_DATASOURCE_URL'
+                  and isinstance(value, ast.Constant)]
+        self.assertEqual(['jdbc:h2:mem:userservice-startup-${random.uuid};DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MariaDB;DATABASE_TO_LOWER=TRUE;NON_KEYWORDS=USER,VALUE,DAY'], values)
+
     def witness(self, state):
         return {'tenantNative': {key: {'dispatches': 0, 'statuses': []} for key in ['tenant', 'profile']}, 'state': state, 'observedBeans': [], 'failureTypes': ['BeanCreationException', 'IllegalStateException'] if state == 'FENCED' else [],
                 **{key: True for key in proof.COMMON_FLAGS},
