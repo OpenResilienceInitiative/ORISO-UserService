@@ -132,6 +132,13 @@ class GrantConsultantIdentityScopedJpaTest {
   private final AtomicInteger calls = new AtomicInteger();
   private final AtomicInteger effects = new AtomicInteger();
   private Set<String> nativeRoles = ORIGINAL;
+  private Set<String> nativeDesiredRoles = DESIRED;
+  private Map<String, Object> expectedRoleChange =
+      Map.of(
+          "transition",
+          "ADD_CONSULTANT_IDENTITY",
+          "group",
+          "/human-roles/consultant-agency-admin-chat");
   private String nativeBody, nativeReply;
   private boolean lostReply, revoked;
   private boolean lostReadReply;
@@ -407,19 +414,15 @@ class GrantConsultantIdentityScopedJpaTest {
               calls.incrementAndGet();
               assertEquals(OPERATION, body.path("operationId").textValue());
               assertEquals(
-                  Map.of(
-                      "transition",
-                      "ADD_CONSULTANT_IDENTITY",
-                      "group",
-                      "/human-roles/consultant-agency-admin-chat"),
-                  codec.read(codec.canonical(body.path("change")), Map.class));
+                  codec.read(codec.canonical(expectedRoleChange), JsonNode.class),
+                  body.path("change"));
               if (revoked)
                 return org.springframework.test.web.client.response.MockRestResponseCreators
                     .withStatus(org.springframework.http.HttpStatus.FORBIDDEN)
                     .createResponse(outbound);
               if (nativeBody == null) {
                 nativeBody = codec.canonical(body);
-                nativeRoles = DESIRED;
+                nativeRoles = nativeDesiredRoles;
                 effects.incrementAndGet();
                 nativeReply = receipt(body);
               } else assertEquals(nativeBody, codec.canonical(body));
@@ -432,6 +435,38 @@ class GrantConsultantIdentityScopedJpaTest {
               response.getHeaders().setCacheControl("no-store");
               return response;
             });
+  }
+
+  @Test
+  void nonUtcHostPreservesTheOriginalCreationInstantThroughTheWholeGrantAndReplay() {
+    var previousZone = java.util.TimeZone.getDefault();
+    java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Pacific/Auckland"));
+    try {
+      var before = adminSql();
+      assertDoesNotThrow(() -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
+      var original =
+          codec.read(
+              jdbc.queryForObject(
+                  "select original_json from general_admin_identity_intent where operation_id=?",
+                  String.class,
+                  OPERATION),
+              JsonNode.class);
+      var created =
+          jdbc.queryForObject(
+              "select created_at from general_admin_identity_intent where operation_id=?",
+              (row, index) -> row.getObject(1, LocalDateTime.class),
+              OPERATION);
+      assertNotNull(created);
+      assertEquals(
+          original.path("creation").textValue(), created.toInstant(ZoneOffset.UTC).toString());
+      assertEquals("APPLIED", phase());
+      assertEquals(before, adminSql());
+      assertDoesNotThrow(() -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
+      assertEquals(1, effects.get());
+      assertEquals(1, matrixCalls.get());
+    } finally {
+      java.util.TimeZone.setDefault(previousZone);
+    }
   }
 
   @Test
@@ -740,6 +775,141 @@ class GrantConsultantIdentityScopedJpaTest {
     assertEquals(1, effects.get());
     assertEquals(1, matrixCalls.get());
     assertEquals(1, joinedEvents.get());
+  }
+
+  @Test
+  void reviewedSingleTenantAdminGrantKeepsItsProtectedFamilyAndUsesTheExplicitLongVersion() {
+    givenProtectedTenant();
+    var before = adminSql();
+    assertDoesNotThrow(
+        () -> {
+          maintenance.configureReviewedOrdinaryGroups(Map.of());
+          var catalog = new java.util.HashMap<>(protectedCatalog(true));
+          var entries = new java.util.ArrayList<>(catalog.get("TENANT_ADMIN"));
+          var mutableRoles = new java.util.HashSet<>(nativeDesiredRoles);
+          entries.set(
+              1,
+              new HumanAdminAccountMaintenance.ProtectedProfileSelector(
+                  "tenant-dual-v2", 2147483648L, mutableRoles));
+          catalog.put("TENANT_ADMIN", entries);
+          maintenance.configureReviewedProtectedProfiles(catalog);
+          catalog.clear();
+          entries.clear();
+          mutableRoles.clear();
+          service.grantConsultantIdentityToAdmin(ACCOUNT, command());
+        });
+    assertEquals("APPLIED", phase());
+    assertEquals(before, adminSql());
+    assertEquals(nativeDesiredRoles, nativeRoles);
+    assertEquals(1, effects.get());
+    assertEquals(1, matrixCalls.get());
+    assertEquals(1, joinedEvents.get());
+    assertDoesNotThrow(() -> service.grantConsultantIdentityToAdmin(ACCOUNT, command()));
+    assertEquals(1, effects.get());
+    assertEquals(1, matrixCalls.get());
+    assertEquals(1, joinedEvents.get());
+    verifyNoInteractions(generic, genericRoles, genericRoleLookup);
+  }
+
+  @Test
+  void protectedGrantWithoutItsExactDesiredReviewedRoleUnionCannotMutateOrCreateMatrix() {
+    givenProtectedTenant();
+    assertThrows(
+        RuntimeException.class,
+        () -> {
+          maintenance.configureReviewedProtectedProfiles(protectedCatalog(false));
+          service.grantConsultantIdentityToAdmin(ACCOUNT, command());
+        });
+    assertEquals(1, reads.get());
+    assertEquals("PREPARED", phase());
+    assertEquals(0, calls.get());
+    assertEquals(0, matrixCalls.get());
+    assertNoLocalConsultant();
+  }
+
+  @Test
+  void protectedGrantRequiresTheActualCompleteCurrentProfileInTheSameSqlOwnerKind() {
+    givenProtectedTenant();
+    nativeRoles = Set.of("single-tenant-admin", "tenant-admin");
+    assertThrows(
+        RuntimeException.class,
+        () -> {
+          maintenance.configureReviewedProtectedProfiles(protectedCatalog(true));
+          service.grantConsultantIdentityToAdmin(ACCOUNT, command());
+        });
+    assertEquals(1, reads.get());
+    assertEquals("PREPARED", phase());
+    assertEquals(0, calls.get());
+    assertEquals(0, matrixCalls.get());
+    assertNoLocalConsultant();
+  }
+
+  @Test
+  void reviewedProtectedCatalogRejectsUnknownKindsAmbiguousRolesIdsAndInvalidVersions() {
+    var current =
+        new HumanAdminAccountMaintenance.ProtectedProfileSelector(
+            "tenant-current-v1", 17L, Set.of("single-tenant-admin"));
+    var other =
+        new HumanAdminAccountMaintenance.ProtectedProfileSelector(
+            "tenant-other-v1", 18L, Set.of("single-tenant-admin"));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            maintenance.configureReviewedProtectedProfiles(Map.of("CONSULTANT", List.of(current))));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            maintenance.configureReviewedProtectedProfiles(
+                Map.of("TENANT_ADMIN", List.of(current, current))));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            maintenance.configureReviewedProtectedProfiles(
+                Map.of("TENANT_ADMIN", List.of(current, other))));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            maintenance.configureReviewedProtectedProfiles(
+                Map.of(
+                    "TENANT_ADMIN",
+                    List.of(
+                        new HumanAdminAccountMaintenance.ProtectedProfileSelector(
+                            "tenant-invalid", 0L, Set.of("single-tenant-admin"))))));
+  }
+
+  private void givenProtectedTenant() {
+    TenantContext.runIn(
+        7L,
+        () ->
+            new TransactionTemplate(transactions)
+                .executeWithoutResult(
+                    ignored -> {
+                      var admin = admins.findById(ACCOUNT).orElseThrow();
+                      admin.setType(de.caritas.cob.userservice.api.model.Admin.AdminType.TENANT);
+                      entities.flush();
+                      entities.clear();
+                    }));
+    nativeRoles = Set.of("single-tenant-admin");
+    nativeDesiredRoles = Set.of("single-tenant-admin", "consultant", "group-chat-consultant");
+    expectedRoleChange =
+        Map.of(
+            "transition",
+            "ADD_CONSULTANT_IDENTITY",
+            "profileId",
+            "tenant-dual-v2",
+            "profileVersion",
+            2147483648L);
+  }
+
+  private Map<String, List<HumanAdminAccountMaintenance.ProtectedProfileSelector>> protectedCatalog(
+      boolean withDesired) {
+    var current =
+        new HumanAdminAccountMaintenance.ProtectedProfileSelector(
+            "tenant-current-v1", 17L, Set.of("single-tenant-admin"));
+    var desired =
+        new HumanAdminAccountMaintenance.ProtectedProfileSelector(
+            "tenant-dual-v2", 2147483648L, nativeDesiredRoles);
+    return Map.of("TENANT_ADMIN", withDesired ? List.of(current, desired) : List.of(current));
   }
 
   private de.caritas.cob.userservice.api.adapters.web.dto.GrantConsultantIdentityDTO command() {

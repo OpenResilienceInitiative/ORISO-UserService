@@ -243,6 +243,38 @@ public class AccountLifecycleCallerConfiguration {
                         .distinct()
                         .toList()));
     maintenance.configureReviewedSelfProfileRoles(selfRoles);
+    var protectedProfiles =
+        new TreeMap<
+            String,
+            List<
+                de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance
+                    .ProtectedProfileSelector>>();
+    profiles
+        .profiles()
+        .forEach(
+            (kind, configured) -> {
+              if (Set.of("TENANT_ADMIN", "PLATFORM_ADMIN").contains(kind))
+                protectedProfiles.put(
+                    kind,
+                    configured.stream()
+                        // SELF may allow several profile ids with identical roles. A role
+                        // transition must resolve one exact selector; never choose an id for it.
+                        .filter(
+                            profile ->
+                                configured.stream()
+                                        .filter(
+                                            candidate ->
+                                                candidate.realmRoles().equals(profile.realmRoles()))
+                                        .count()
+                                    == 1)
+                        .map(
+                            profile ->
+                                new de.caritas.cob.userservice.api.service.identity
+                                    .HumanAdminAccountMaintenance.ProtectedProfileSelector(
+                                    profile.id(), profile.version(), profile.realmRoles()))
+                        .toList());
+            });
+    maintenance.configureReviewedProtectedProfiles(protectedProfiles);
     return maintenance;
   }
 

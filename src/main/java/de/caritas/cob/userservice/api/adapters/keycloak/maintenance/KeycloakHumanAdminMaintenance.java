@@ -343,6 +343,12 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
         && Set.of("ADD_AGENCY_ADMIN_IDENTITY", "ADD_CONSULTANT_IDENTITY")
             .contains(change.path("transition").textValue())
         && change.path("group").isTextual()) command = "profile-transition";
+    else if (fields.equals(Set.of("transition", "profileId", "profileVersion"))
+        && "ADD_CONSULTANT_IDENTITY".equals(change.path("transition").textValue())
+        && change.path("profileId").isTextual()
+        && change.path("profileVersion").isIntegralNumber()
+        && change.path("profileVersion").canConvertToLong()
+        && change.path("profileVersion").longValue() > 0) command = "profile-transition";
     else throw invalid();
     codec.verifyMaintenanceNoEffectReceipt(
         receipt, realmId, actors.require(TaskPurpose.ACCOUNT_MAINTENANCE), body, command);
@@ -413,18 +419,28 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
     change.put("firstName", profile.firstName());
     change.put("lastName", profile.lastName());
     change.put("email", profile.email());
-    Object completeChange =
-        account.agencyAdminAddition() || account.consultantIdentityAddition()
-            ? Map.of(
-                "transition",
-                account.consultantIdentityAddition()
-                    ? "ADD_CONSULTANT_IDENTITY"
-                    : "ADD_AGENCY_ADMIN_IDENTITY",
-                "group",
-                Objects.requireNonNull(account.reviewedGroup()))
-            : account.reviewedGroup() == null
-                ? change
-                : Map.of("group", account.reviewedGroup(), "profile", change);
+    Object completeChange;
+    if (account.consultantIdentityAddition() && account.reviewedProtectedProfile() != null) {
+      var selector = account.reviewedProtectedProfile();
+      completeChange =
+          Map.of(
+              "transition", "ADD_CONSULTANT_IDENTITY",
+              "profileId", selector.id(),
+              "profileVersion", selector.version());
+    } else {
+      completeChange =
+          account.agencyAdminAddition() || account.consultantIdentityAddition()
+              ? Map.of(
+                  "transition",
+                  account.consultantIdentityAddition()
+                      ? "ADD_CONSULTANT_IDENTITY"
+                      : "ADD_AGENCY_ADMIN_IDENTITY",
+                  "group",
+                  Objects.requireNonNull(account.reviewedGroup()))
+              : account.reviewedGroup() == null
+                  ? change
+                  : Map.of("group", account.reviewedGroup(), "profile", change);
+    }
     return Map.of(
         "target",
         target(account),
