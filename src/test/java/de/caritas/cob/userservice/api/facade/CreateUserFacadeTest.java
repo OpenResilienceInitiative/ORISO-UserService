@@ -98,6 +98,18 @@ public class CreateUserFacadeTest {
 
   @org.junit.jupiter.api.BeforeEach
   void recoveryPolicyFixture() {
+    TenantContext.setCurrentTenant(1L);
+    org.mockito.Mockito.lenient()
+        .when(tenantService.getRestrictedTenantDataFresh(org.mockito.ArgumentMatchers.anyLong()))
+        .thenAnswer(
+            invocation ->
+                new de.caritas.cob.userservice.tenantservice.generated.web.model
+                        .RestrictedTenantDTO()
+                    .id(invocation.getArgument(0))
+                    .settings(
+                        new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
+                            .featureAskerEmailEnabled(true)));
+
     createUserFacade =
         new CreateUserFacade(
             chatRecoveryEnrollmentPolicyService,
@@ -148,6 +160,11 @@ public class CreateUserFacadeTest {
         .thenReturn(inactivityPolicy);
   }
 
+  @org.junit.jupiter.api.AfterEach
+  void clearIdentityTenant() {
+    TenantContext.clear();
+  }
+
   private CreateUserFacade createUserFacade;
   @Mock private IdentityClient identityClient;
   @Mock private IdentityAccountRemover identityAccountRemover;
@@ -178,6 +195,30 @@ public class CreateUserFacadeTest {
   @Spy
   private ProvisioningCompensator provisioningCompensator =
       new ProvisioningCompensator(new SimpleMeterRegistry());
+
+  @Test
+  void disabledEmailCollectionStopsRegistrationBeforeIdentityProvisioning() {
+    TenantContext.setCurrentTenant(79L);
+    var request = new UserDTO();
+    request.setEmail("new@example.org");
+    org.mockito.Mockito.lenient()
+        .when(tenantService.getRestrictedTenantDataFresh(79L))
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(79L)
+                .settings(
+                    new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
+                        .featureAskerEmailEnabled(false)));
+    try {
+      org.assertj.core.api.Assertions.assertThatThrownBy(
+              () -> createUserFacade.createUserAccountWithInitializedConsultingType(request))
+          .isInstanceOf(
+              de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+      org.mockito.Mockito.verifyNoInteractions(identityClient, userService, matrixSynapseService);
+    } finally {
+      TenantContext.clear();
+    }
+  }
 
   @Test
   void pausedTenantStopsRegisteredCreationBeforeIdentityRowsOrChatWork() {
@@ -527,7 +568,6 @@ public class CreateUserFacadeTest {
             .build();
     when(groupInviteRegistration.resolveInvitedGroup(any())).thenReturn(Optional.of(group));
     // Without it the event would fail to build and be swallowed, hiding a regression.
-    when(agencyService.getAgencyWithoutCaching(any())).thenReturn(new AgencyDTO());
 
     Long sessionId =
         createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT);
@@ -598,13 +638,13 @@ public class CreateUserFacadeTest {
   }
 
   private void givenBasicRegistrationStubs() throws Exception {
+    lenient().when(agencyService.getAgencyWithoutCaching(any())).thenReturn(new AgencyDTO());
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
     when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
     when(createNewSessionFacade.initializeNewSession(
             any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
         .thenReturn(mock(NewRegistrationResponseDto.class));
-    when(agencyService.getAgencyWithoutCaching(any())).thenReturn(new AgencyDTO());
     givenMatrixProvisioningSucceeds();
   }
 
@@ -666,7 +706,6 @@ public class CreateUserFacadeTest {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
     when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
-    when(agencyService.getAgencyWithoutCaching(any())).thenReturn(new AgencyDTO());
     // userService.createUser/saveUser left unstubbed -> null user, no username to resolve
 
     assertThrows(
@@ -688,7 +727,6 @@ public class CreateUserFacadeTest {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
     when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
-    when(agencyService.getAgencyWithoutCaching(any())).thenReturn(new AgencyDTO());
     User user = givenAFullyPersistedUser();
     when(matrixSynapseService.createUser(any(), any(), any()))
         .thenThrow(new MatrixCreateUserException("boom"));
@@ -712,7 +750,6 @@ public class CreateUserFacadeTest {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
     when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
-    when(agencyService.getAgencyWithoutCaching(any())).thenReturn(new AgencyDTO());
     User user = givenAFullyPersistedUser();
     when(matrixSynapseService.createUser(any(), any(), any())).thenReturn(ResponseEntity.ok(null));
 
@@ -874,7 +911,10 @@ public class CreateUserFacadeTest {
     ArgumentCaptor<RegistrationStatisticsEvent> eventCaptor =
         ArgumentCaptor.forClass(RegistrationStatisticsEvent.class);
 
-    createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT);
+    var withoutCollectedEmail = new UserDTO();
+    org.springframework.beans.BeanUtils.copyProperties(USER_DTO_SUCHT, withoutCollectedEmail);
+    withoutCollectedEmail.setEmail(null);
+    createUserFacade.createUserAccountWithInitializedConsultingType(withoutCollectedEmail);
 
     verify(tenantService, never()).getRestrictedTenantData(any(Long.class));
     verify(statisticsService).fireEvent(eventCaptor.capture());
