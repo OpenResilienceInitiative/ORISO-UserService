@@ -14,7 +14,7 @@ class TemporaryAccountExpiryPolicyTest {
 
   private static TemporaryAccountSnapshot call() {
     return TemporaryAccountSnapshot.builder()
-        .medium("VIDEO")
+        .medium(de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkChatType.VIDEO)
         .callDeleteAfterMinutes(15)
         .callMaxLifetimeHours(24)
         .chatInactivityDays(30)
@@ -24,7 +24,7 @@ class TemporaryAccountExpiryPolicyTest {
 
   private static TemporaryAccountSnapshot chat(int days) {
     return TemporaryAccountSnapshot.builder()
-        .medium("CHAT")
+        .medium(de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkChatType.CHAT)
         .callDeleteAfterMinutes(15)
         .callMaxLifetimeHours(24)
         .chatInactivityDays(days)

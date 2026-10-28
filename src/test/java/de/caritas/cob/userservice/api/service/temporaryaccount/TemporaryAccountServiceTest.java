@@ -31,7 +31,8 @@ class TemporaryAccountServiceTest {
     user.setTemporaryAccount(true);
     user.setTemporaryAccountSnapshot(
         TemporaryAccountSnapshot.builder()
-            .medium("AUDIO")
+            .medium(
+                de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkChatType.AUDIO)
             .callDeleteAfterMinutes(15)
             .callMaxLifetimeHours(24)
             .chatInactivityDays(30)

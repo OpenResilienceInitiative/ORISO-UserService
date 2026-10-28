@@ -87,7 +87,11 @@ class DirectLinkTemporaryAccountCleanupTest {
 
   private static TemporaryAccountSnapshot snapshot(String medium, MessageRetentionMode mode) {
     return TemporaryAccountSnapshot.builder()
-        .medium(medium)
+        .medium(
+            medium == null
+                ? null
+                : de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkChatType
+                    .valueOf(medium))
         .inviteLinkId(9L)
         .callDeleteAfterMinutes(15)
         .callMaxLifetimeHours(24)

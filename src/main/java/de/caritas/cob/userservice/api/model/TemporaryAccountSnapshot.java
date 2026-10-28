@@ -27,7 +27,8 @@ public class TemporaryAccountSnapshot {
 
   /** CHAT, AUDIO or VIDEO: the medium of the direct link the account was created for. */
   @Column(name = "temporary_medium", length = 16)
-  private String medium;
+  @jakarta.persistence.Enumerated(jakarta.persistence.EnumType.STRING)
+  private de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkChatType medium;
 
   /** The only direct link this account may start a conversation through. No FK: links go. */
   @Column(name = "temporary_invite_link_id")
@@ -55,7 +56,10 @@ public class TemporaryAccountSnapshot {
   private LocalDateTime deletedAt;
 
   public boolean isCall() {
-    return "AUDIO".equals(medium) || "VIDEO".equals(medium);
+    return medium
+            == de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkChatType.AUDIO
+        || medium
+            == de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkChatType.VIDEO;
   }
 
   /** Whether this account's messages stay after deletion. Undecided counts as deleted. */

@@ -86,7 +86,7 @@ class DirectLinkTemporaryAccountDeletionIT {
 
   private static TemporaryAccountSnapshot snapshot(MessageRetentionMode mode) {
     return TemporaryAccountSnapshot.builder()
-        .medium("CHAT")
+        .medium(de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkChatType.CHAT)
         .inviteLinkId(9L)
         .callDeleteAfterMinutes(15)
         .callMaxLifetimeHours(24)
@@ -164,7 +164,8 @@ class DirectLinkTemporaryAccountDeletionIT {
   @Test
   void theSnapshotSurvivesAReload_AndTheSelfHelpGroupJobLeavesDirectLinkGuestsAlone() {
     var copy = userRepository.findById(USER_ID).orElseThrow().getTemporaryAccountSnapshot();
-    assertThat(copy.getMedium()).isEqualTo("CHAT");
+    assertThat(copy.getMedium())
+        .isEqualTo(de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkChatType.CHAT);
     assertThat(copy.getChatInactivityDays()).isEqualTo(36500);
     assertThat(copy.getMessageRetention()).isEqualTo(MessageRetentionMode.ALWAYS_PERSISTENT);
 

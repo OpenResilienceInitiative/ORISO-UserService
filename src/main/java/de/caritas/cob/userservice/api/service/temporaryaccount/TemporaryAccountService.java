@@ -49,7 +49,10 @@ public class TemporaryAccountService {
     var dto = new TemporaryAccountDTO();
     dto.setMedium(
         java.util.Arrays.stream(TemporaryAccountDTO.MediumEnum.values())
-            .filter(medium -> medium.getValue().equals(snapshot.getMedium()))
+            .filter(
+                medium ->
+                    snapshot.getMedium() != null
+                        && medium.getValue().equals(snapshot.getMedium().name()))
             .findFirst()
             .orElse(null));
     dto.setMessageRetention(

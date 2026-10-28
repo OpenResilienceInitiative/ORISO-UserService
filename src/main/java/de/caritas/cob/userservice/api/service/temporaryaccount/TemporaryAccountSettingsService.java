@@ -59,7 +59,7 @@ public class TemporaryAccountSettingsService {
       InviteLinkChatType medium, Long inviteLinkId) {
     var settings = current();
     return TemporaryAccountSnapshot.builder()
-        .medium(medium.name())
+        .medium(medium)
         .inviteLinkId(inviteLinkId)
         .callDeleteAfterMinutes(settings.callDeleteAfterMinutes())
         .callMaxLifetimeHours(settings.callMaxLifetimeHours())

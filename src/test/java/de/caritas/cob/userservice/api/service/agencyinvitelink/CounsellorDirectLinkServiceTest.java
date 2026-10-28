@@ -364,7 +364,7 @@ class CounsellorDirectLinkServiceTest {
     var guest = asker("g");
     guest.setTemporaryAccountSnapshot(
         de.caritas.cob.userservice.api.model.TemporaryAccountSnapshot.builder()
-            .medium("CHAT")
+            .medium(de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkChatType.CHAT)
             .inviteLinkId(10L)
             .build());
 

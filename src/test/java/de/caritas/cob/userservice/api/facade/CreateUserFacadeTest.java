@@ -614,7 +614,8 @@ public class CreateUserFacadeTest {
     when(temporaryAccountLinkResolver.resolve(any())).thenReturn(Optional.of(link));
     var snapshot =
         de.caritas.cob.userservice.api.model.TemporaryAccountSnapshot.builder()
-            .medium("AUDIO")
+            .medium(
+                de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkChatType.AUDIO)
             .inviteLinkId(9L)
             .callDeleteAfterMinutes(15)
             .callMaxLifetimeHours(24)

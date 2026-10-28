@@ -116,7 +116,9 @@ class TemporaryAccountSettingsServiceTest {
         service.snapshotForNewAccount(
             de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkChatType.VIDEO, 42L);
 
-    assertThat(snapshot.getMedium()).isEqualTo("VIDEO");
+    assertThat(snapshot.getMedium())
+        .isEqualTo(
+            de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkChatType.VIDEO);
     assertThat(snapshot.getInviteLinkId()).isEqualTo(42L);
     assertThat(snapshot.getCallDeleteAfterMinutes()).isEqualTo(5);
     assertThat(snapshot.getCallMaxLifetimeHours()).isEqualTo(24);
