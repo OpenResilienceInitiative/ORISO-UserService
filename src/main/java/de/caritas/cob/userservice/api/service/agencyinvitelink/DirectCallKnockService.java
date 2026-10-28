@@ -19,10 +19,12 @@ import de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService;
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.stream.Stream;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -36,7 +38,9 @@ import org.springframework.transaction.annotation.Transactional;
  * counsellor of that conversation admits or declines, one by one or all at once.
  *
  * <p>Call share links (#1487) use the same queue: a guest knocks on one running call through its
- * link ({@link Via#CALL_LINK}), and the counsellor who created the link decides.
+ * link ({@link Via#CALL_LINK}), and every counsellor in that call decides, not only the one who
+ * created the link (Frank, 2026-10-28). Membership is the share link's own rule ({@link
+ * MatrixCallGuestService#counsellorCall}): in the call room, same Träger. Fail closed.
  */
 @Service
 @RequiredArgsConstructor
@@ -218,9 +222,11 @@ public class DirectCallKnockService {
   }
 
   /**
-   * Without sessionId and matrixRoomId: all of the counsellor's waiting knocks, as before. With
-   * either, only the current call's: direct-link knocks of that conversation and call-link knocks
-   * (#1487) whose share link belongs to a call in that conversation's room.
+   * Without sessionId and matrixRoomId: all of the counsellor's waiting knocks, as before
+   * (call-link knocks only of links they created). With either, only the current call's:
+   * direct-link knocks of that conversation and call-link knocks (#1487) of any share link of a
+   * call in that room. Either way a call-link knock is shown only to a counsellor who is in its
+   * call.
    */
   public List<GroupChatJoinRequest> pendingFor(
       Consultant consultant, Long sessionId, String matrixRoomId) {
@@ -242,6 +248,7 @@ public class DirectCallKnockService {
                     .findCallLinkKnocksForConsultant(
                         consultant.getId(), Via.CALL_LINK, Status.PENDING, since, scope.roomId())
                     .stream()
+                    .filter(inCallOf(consultant))
                 : Stream.<GroupChatJoinRequest>empty())
         .sorted(BY_REQUESTED_AT)
         .toList();
@@ -285,6 +292,7 @@ public class DirectCallKnockService {
                     .findCallLinkKnocksForConsultantForUpdate(
                         consultant.getId(), Via.CALL_LINK, Status.PENDING, since, scope.roomId())
                     .stream()
+                    .filter(inCallOf(consultant))
                 : Stream.<GroupChatJoinRequest>empty())
         .sorted(BY_REQUESTED_AT)
         .map(
@@ -354,19 +362,42 @@ public class DirectCallKnockService {
   private boolean decides(GroupChatJoinRequest knock, Consultant consultant) {
     return switch (knock.getVia()) {
       case DIRECT_LINK -> isCounsellorOf(knock.getSessionId(), consultant);
-      case CALL_LINK -> isCallLinkOwner(knock.getInviteLinkId(), consultant);
+      case CALL_LINK -> isInCallOfLink(knock.getInviteLinkId(), consultant);
       default -> false;
     };
   }
 
-  /** Only the counsellor who created the share link decides, and only while it is active. */
-  private boolean isCallLinkOwner(Long linkId, Consultant consultant) {
+  /** One membership lookup per share link, however many guests knock on it. */
+  private Predicate<GroupChatJoinRequest> inCallOf(Consultant consultant) {
+    var byLink = new HashMap<Long, Boolean>();
+    return knock ->
+        knock.getInviteLinkId() != null
+            && byLink.computeIfAbsent(
+                knock.getInviteLinkId(), linkId -> isInCallOfLink(linkId, consultant));
+  }
+
+  /**
+   * Any counsellor in the link's running call decides, whoever created the link, and only while the
+   * link is active. Same rule as changing the link; Matrix unreachable counts as not in it.
+   */
+  private boolean isInCallOfLink(Long linkId, Consultant consultant) {
     return linkId != null
+        && consultant.getTenantId() != null
         && inviteLinkRepository
             .findById(linkId)
             .filter(link -> InviteLinkKind.CALL.name().equals(link.getLinkKind()))
             .filter(link -> InviteLinkStatus.ACTIVE.name().equals(link.getStatus()))
-            .map(link -> Objects.equals(link.getConsultantId(), consultant.getId()))
+            .filter(link -> consultant.getTenantId().equals(link.getTenantId()))
+            .map(link -> link.getCallBindingId())
+            .flatMap(callBindings::findById)
+            .map(
+                binding ->
+                    callGuests.counsellorCall(
+                        consultant.getTenantId(),
+                        consultant.getId(),
+                        binding.getSourceRoomId(),
+                        binding.getCallId()))
+            .map(call -> call.outcome() == MatrixCallGuestService.Outcome.ADMITTED)
             .orElse(false);
   }
 

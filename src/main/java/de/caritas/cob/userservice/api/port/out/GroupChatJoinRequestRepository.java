@@ -73,10 +73,15 @@ public interface GroupChatJoinRequestRepository extends CrudRepository<GroupChat
   List<GroupChatJoinRequest> findByInviteLinkIdAndUserIdAndVia(
       Long inviteLinkId, String userId, Via via);
 
-  /** Waiting guests of the share links a counsellor created (#1487). */
+  /**
+   * Waiting guests on call share links (#1487). Scoped to a room: every link of a call there, for
+   * any counsellor of that call (the caller checks call membership). Unscoped: the links the
+   * counsellor created.
+   */
   @Query(
       "SELECT request FROM GroupChatJoinRequest request, AgencyInviteLink link"
-          + " WHERE request.inviteLinkId = link.id AND link.consultantId = :consultantId"
+          + " WHERE request.inviteLinkId = link.id"
+          + " AND (:roomId IS NOT NULL OR link.consultantId = :consultantId)"
           + " AND link.linkKind = 'CALL' AND link.status = 'ACTIVE'"
           + " AND request.via = :via AND request.status = :status"
           + " AND request.requestedAt >= :since"
@@ -95,7 +100,8 @@ public interface GroupChatJoinRequestRepository extends CrudRepository<GroupChat
   @Query(
       "SELECT request FROM GroupChatJoinRequest request"
           + " WHERE request.inviteLinkId IN"
-          + " (SELECT link.id FROM AgencyInviteLink link WHERE link.consultantId = :consultantId"
+          + " (SELECT link.id FROM AgencyInviteLink link"
+          + " WHERE (:roomId IS NOT NULL OR link.consultantId = :consultantId)"
           + " AND link.linkKind = 'CALL' AND link.status = 'ACTIVE')"
           + " AND request.via = :via AND request.status = :status"
           + " AND request.requestedAt >= :since"

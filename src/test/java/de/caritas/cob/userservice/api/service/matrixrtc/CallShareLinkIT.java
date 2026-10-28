@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.web.controller.CallShareLinkController;
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -440,6 +441,38 @@ class CallShareLinkIT {
         .andExpect(status().isNotFound());
     assertThat(policy.resolve(SOURCE, SECOND_GUEST, MEDIA))
         .isEqualTo(new CallMediaPolicy(true, true));
+  }
+
+  /** Frank, 2026-10-28: a knock on the share link reaches every counsellor in the call. */
+  @Test
+  void aCoModeratorInTheCallSeesAndDecidesTheKnock_ACounsellorOutsideItDoesNot() {
+    var link = shareLinks.create(7L, counsellor.getId(), SOURCE, "share-call", null, null).link();
+    var guest = users.findById("share-guest").orElseThrow();
+    var knockId = shareLinks.join(link.getToken(), guest).knockId();
+    var colleagueEntity = consultants.findById(colleague.getId()).orElseThrow();
+
+    // Not in the call: nothing listed, deciding is a 404.
+    assertThat(knocks.pendingFor(colleagueEntity, null, SOURCE)).isEmpty();
+    assertThatThrownBy(
+            () -> transaction.executeWithoutResult(s -> knocks.admit(knockId, colleagueEntity)))
+        .isInstanceOf(NotFoundException.class);
+
+    // Joins the call: sees the knock in the per-call list and lets the guest in.
+    var members = List.of(ASKER, counsellor.getMatrixUserId(), colleague.getMatrixUserId());
+    when(matrix.getCallRoomMembers(SOURCE)).thenReturn(Optional.of(members));
+    when(matrix.getRoomMembers(SOURCE)).thenReturn(Optional.of(members));
+    when(matrix.loginAsUserAccessToken(colleague.getMatrixUserId())).thenReturn("c-token");
+    assertThat(knocks.pendingFor(colleagueEntity, null, SOURCE))
+        .extracting(GroupChatJoinRequest::getId)
+        .containsExactly(knockId);
+    assertThat(knocks.pendingFor(colleagueEntity, null, null))
+        .as("the unscoped list stays with the link's creator")
+        .isEmpty();
+    transaction.executeWithoutResult(s -> knocks.admit(knockId, colleagueEntity));
+
+    assertThat(knockRows.findById(knockId).orElseThrow().getDecidedBy())
+        .isEqualTo(colleague.getId());
+    assertThat(shareLinks.join(link.getToken(), guest).callAdmitted()).isTrue();
   }
 
   /** Security review of #1487: declining an admitted knock takes the seat back too. */

@@ -353,6 +353,33 @@ class CallShareLinkServiceTest {
   }
 
   @Test
+  void join_Should_SeatAnAdmittedGuest_OnTheAdmittingCoModeratorsAuthority() {
+    joinable(true);
+    var admitted = knock(GroupChatJoinRequest.Status.ADMITTED);
+    admitted.setDecidedBy("co-moderator");
+    when(knocks.callLinkAdmission(5L, guest)).thenReturn(Optional.of(admitted));
+    when(callGuests.admitAs(TENANT, "co-moderator", SOURCE, CALL_ID, "guest-1"))
+        .thenReturn(new Admission(Outcome.ADMITTED, MEDIA, "@guest:example", 1L));
+
+    assertThat(service.join("token-5", guest).callAdmitted()).isTrue();
+    verify(callGuests, never()).admitAs(TENANT, COUNSELLOR, SOURCE, CALL_ID, "guest-1");
+  }
+
+  @Test
+  void join_Should_FallBackToTheLinkOwner_When_TheAdmittingCoModeratorLeftTheCall() {
+    joinable(true);
+    var admitted = knock(GroupChatJoinRequest.Status.ADMITTED);
+    admitted.setDecidedBy("co-moderator");
+    when(knocks.callLinkAdmission(5L, guest)).thenReturn(Optional.of(admitted));
+    when(callGuests.admitAs(TENANT, "co-moderator", SOURCE, CALL_ID, "guest-1"))
+        .thenReturn(new Admission(Outcome.NOT_FOUND, null, null, null));
+    when(callGuests.admitAs(TENANT, COUNSELLOR, SOURCE, CALL_ID, "guest-1"))
+        .thenReturn(new Admission(Outcome.ADMITTED, MEDIA, "@guest:example", 1L));
+
+    assertThat(service.join("token-5", guest).callAdmitted()).isTrue();
+  }
+
+  @Test
   void join_Should_Return403_ForAGuestOfAnotherTraeger() {
     joinable(false);
     guest.setTenantId(8L);
