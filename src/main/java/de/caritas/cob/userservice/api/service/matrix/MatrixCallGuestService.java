@@ -143,20 +143,35 @@ public class MatrixCallGuestService {
         log.warn("Call guest removal deferred for call room {}: no moderator token", room);
         continue;
       }
-      boolean removed =
-          matrix.removeUserFromRoom(room, guest.getMatrixUserId(), token)
-              || matrix
-                  .getRoomMembers(room)
-                  .map(m -> !m.contains(guest.getMatrixUserId()))
-                  .orElse(false);
-      if (!removed) {
-        log.warn("Call guest removal deferred for call room {}", room);
-        continue;
+      String guestId = guest.getMatrixUserId();
+      // The returned flag is not trusted: only the guest's m.room.member state proves removal.
+      // A pending invite never shows in the joined list, so that list cannot prove it either.
+      matrix.removeUserFromRoom(room, guestId, token);
+      if (!isGone(room, guestId, token)) {
+        // Kick also retracts a pending invite.
+        matrix.kickUserFromRoom(room, guestId, token);
+        if (!isGone(room, guestId, token)) {
+          log.warn("Call guest removal deferred for call room {}", room);
+          continue;
+        }
       }
-      if (!matrix.clearUserPowerLevel(room, guest.getMatrixUserId(), token))
+      if (!matrix.clearUserPowerLevel(room, guestId, token))
         log.warn("Call guest power level could not be cleared in call room {}", room);
       guest.revoke(System.currentTimeMillis());
     }
+  }
+
+  /** Media rooms of ended calls that still hold an unrevoked guest seat (reconcile sweep). */
+  public List<String> endedRoomsWithOutstandingGuests() {
+    return guests.findEndedMediaRoomsWithOutstandingGuests(
+        org.springframework.data.domain.PageRequest.of(0, 100));
+  }
+
+  private boolean isGone(String room, String matrixId, String token) {
+    return matrix
+        .getRoomMembership(room, matrixId, token)
+        .map(membership -> "leave".equals(membership) || "ban".equals(membership))
+        .orElse(false);
   }
 
   private boolean isMember(String room, String matrixId) {

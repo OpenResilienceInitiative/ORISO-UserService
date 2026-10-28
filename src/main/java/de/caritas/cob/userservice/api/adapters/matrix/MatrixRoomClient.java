@@ -884,6 +884,41 @@ public class MatrixRoomClient {
     }
   }
 
+  /** Kicks a user, which also retracts a pending invite (POST /rooms/{roomId}/kick). */
+  public boolean kickUserFromRoom(String roomId, String userId, String accessToken) {
+    try {
+      var url = buildUrl("/_matrix/client/v3/rooms/{roomId}/kick", Map.of("roomId", roomId));
+      HttpHeaders headers = getClientHttpHeaders(accessToken);
+      headers.setContentType(MediaType.APPLICATION_JSON);
+      restTemplate.postForEntity(
+          url, new HttpEntity<>(Map.of("user_id", userId), headers), Map.class);
+      return true;
+    } catch (Exception e) {
+      log.warn("Could not kick a user from room {}: {}", roomId, e.getMessage());
+      return false;
+    }
+  }
+
+  /** Reads the user's m.room.member state in the room; empty when it cannot be read. */
+  public java.util.Optional<String> getRoomMembership(
+      String roomId, String userId, String accessToken) {
+    try {
+      var url =
+          buildUrl(
+              "/_matrix/client/v3/rooms/{roomId}/state/m.room.member/{userId}",
+              Map.of("roomId", roomId, "userId", userId));
+      ResponseEntity<Map> response =
+          restTemplate.exchange(
+              url, HttpMethod.GET, new HttpEntity<>(getClientHttpHeaders(accessToken)), Map.class);
+      return response.getBody() != null && response.getBody().get("membership") instanceof String m
+          ? java.util.Optional.of(m)
+          : java.util.Optional.empty();
+    } catch (Exception e) {
+      log.warn("Could not read a membership in room {}: {}", roomId, e.getMessage());
+      return java.util.Optional.empty();
+    }
+  }
+
   public boolean removeUserFromRoom(String roomId, String userId, String accessToken) {
     try {
       var url = buildUrl(ENDPOINT_MEMBERSHIP, Map.of("roomId", roomId, "userId", userId));

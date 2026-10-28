@@ -90,14 +90,16 @@ class MatrixRtcCallGuestPolicyTest {
   void admittedGuestOfTheRunningCallGetsMediaWithoutSourceMembership() {
     guest(1, null);
 
-    assertThat(service.resolve(SOURCE, GUEST, "!media:example")).isEqualTo(new CallMediaPolicy(true, true));
+    assertThat(service.resolve(SOURCE, GUEST, "!media:example"))
+        .isEqualTo(new CallMediaPolicy(true, true));
   }
 
   @Test
   void revokedGuestIsDenied() {
     guest(1, 5000L);
 
-    assertThat(service.resolve(SOURCE, GUEST, "!media:example")).isEqualTo(CallMediaPolicy.denied());
+    assertThat(service.resolve(SOURCE, GUEST, "!media:example"))
+        .isEqualTo(CallMediaPolicy.denied());
   }
 
   @Test
@@ -105,7 +107,8 @@ class MatrixRtcCallGuestPolicyTest {
     guest(1, null);
     jdbc.update("UPDATE matrix_call_binding SET ended_at=5000 WHERE id=1");
 
-    assertThat(service.resolve(SOURCE, GUEST, "!media:example")).isEqualTo(CallMediaPolicy.denied());
+    assertThat(service.resolve(SOURCE, GUEST, "!media:example"))
+        .isEqualTo(CallMediaPolicy.denied());
   }
 
   @Test
@@ -113,18 +116,22 @@ class MatrixRtcCallGuestPolicyTest {
     jdbc.update("INSERT INTO matrix_call_binding VALUES (2,'!other:example','!m2:example',NULL)");
     guest(2, null);
 
-    assertThat(service.resolve(SOURCE, GUEST, "!media:example")).isEqualTo(CallMediaPolicy.denied());
+    assertThat(service.resolve(SOURCE, GUEST, "!media:example"))
+        .isEqualTo(CallMediaPolicy.denied());
   }
 
   /** Security finding 1: a seat in one call is no seat in another call of the conversation. */
   @Test
   void guestOfOneCallIsDeniedForAnotherCallFromTheSameConversation() {
-    jdbc.update("INSERT INTO matrix_call_binding VALUES (3,?,'!second-media:example',NULL)", SOURCE);
+    jdbc.update(
+        "INSERT INTO matrix_call_binding VALUES (3,?,'!second-media:example',NULL)", SOURCE);
     guest(1, null);
 
     assertThat(service.resolve(SOURCE, GUEST, "!second-media:example"))
         .isEqualTo(CallMediaPolicy.denied());
-    assertThat(service.resolve(SOURCE, GUEST)).as("no call room named").isEqualTo(CallMediaPolicy.denied());
+    assertThat(service.resolve(SOURCE, GUEST))
+        .as("no call room named")
+        .isEqualTo(CallMediaPolicy.denied());
     assertThat(service.resolve(SOURCE, GUEST, "!media:example"))
         .isEqualTo(new CallMediaPolicy(true, true));
   }

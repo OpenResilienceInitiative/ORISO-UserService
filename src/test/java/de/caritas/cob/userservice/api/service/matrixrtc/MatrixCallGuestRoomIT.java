@@ -127,6 +127,7 @@ class MatrixCallGuestRoomIT {
   @Autowired
   private de.caritas.cob.userservice.api.service.matrix.MatrixCallInviteNotificationService
       callReconciler;
+
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private javax.sql.DataSource dataSource;
   @MockitoBean private MatrixSynapseService matrix;
@@ -310,7 +311,9 @@ class MatrixCallGuestRoomIT {
     lifecycle.handleRoom(MEDIA, Map.of("timeline", Map.of("events", List.of(leave()))));
 
     assertThat(bindings.findByMediaRoomId(MEDIA).orElseThrow().getEndedAt()).isNotNull();
-    assertThat(guests.findAll()).singleElement().satisfies(row -> assertThat(row.getRevokedAt()).isNull());
+    assertThat(guests.findAll())
+        .singleElement()
+        .satisfies(row -> assertThat(row.getRevokedAt()).isNull());
 
     // The homeserver recovers; no further event arrives for the call room, only the scan runs.
     when(matrix.kickUserFromRoom(MEDIA, GUEST, "counsellor-token")).thenReturn(true);

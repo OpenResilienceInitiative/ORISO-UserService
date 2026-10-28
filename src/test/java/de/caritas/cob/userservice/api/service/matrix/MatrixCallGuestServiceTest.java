@@ -184,7 +184,8 @@ class MatrixCallGuestServiceTest {
     var guest = guest();
     when(guests.findByBindingIdAndRevokedAtIsNull(binding.getId())).thenReturn(List.of(guest));
     when(matrix.removeUserFromRoom(MEDIA, GUEST, "counsellor-token")).thenReturn(false);
-    when(matrix.getRoomMembership(MEDIA, GUEST, "counsellor-token")).thenReturn(Optional.of("join"));
+    when(matrix.getRoomMembership(MEDIA, GUEST, "counsellor-token"))
+        .thenReturn(Optional.of("join"));
 
     service.revokeOutstanding(binding(5000L));
 
