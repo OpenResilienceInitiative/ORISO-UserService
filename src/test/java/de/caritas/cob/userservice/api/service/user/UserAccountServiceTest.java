@@ -109,6 +109,26 @@ public class UserAccountServiceTest {
   }
 
   @Test
+  void legacySingleTenantEmailChangeStillEnforcesConfiguredCollectionProhibition() {
+    var user = EASY_RANDOM.nextObject(User.class);
+    user.setTenantId(null);
+    user.setEmail("old@example.org");
+    when(authenticatedUser.getUserId()).thenReturn("user");
+    when(userService.getUser("user")).thenReturn(Optional.of(user));
+    when(tenantService.getSingleTenancyTenantDataFresh())
+        .thenReturn(
+            new de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO()
+                .id(42L)
+                .settings(
+                    new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
+                        .featureAskerEmailEnabled(false)));
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> accountProvider.changeUserAccountEmailAddress(Optional.of("new@example.org")))
+        .isInstanceOf(ForbiddenException.class);
+    verifyNoInteractions(identityEmailAddressUpdater, appointmentService);
+  }
+
+  @Test
   public void findUserByEmail_Should_CallUserService() {
     // given
     String email = "mail@mail.de";

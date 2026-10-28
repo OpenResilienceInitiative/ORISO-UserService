@@ -12,8 +12,11 @@ permission to collect an address.
   account creation, profile updates and email-OTP enrollment. Reusing the exact
   existing address and deleting an address/second factor remain available.
 - Mutation checks fetch the current restricted tenant projection without the
-  tenant cache, using the stored session/user tenant identity. A missing tenant or
-  settings projection, upstream failure or a mismatched tenant fails closed with
+  tenant cache, using the stored session/user tenant identity. Only in configured
+  single-tenant mode may a legacy missing stored ID resolve through the fresh
+  configured-single-tenant endpoint. Its response still requires a positive ID
+  and settings. Multi-tenant missing IDs, technical/negative IDs, a missing
+  projection, upstream failure or a mismatched explicit tenant fail closed with
   503. An omitted individual legacy flag keeps its enabled opt-out default. Policy
   refusal is 403; nonempty whitespace-only or overlong aliases are 400. Null and
   empty aliases retain the existing no-change behavior. Legacy asker account PATCH display-name

@@ -221,6 +221,29 @@ public class CreateUserFacadeTest {
   }
 
   @Test
+  void singleTenantRegistrationEnforcesConfiguredEmailPolicyBeforeProvisioning() {
+    TenantContext.clear();
+    var request = new UserDTO();
+    request.setEmail("new@example.org");
+    when(tenantService.getSingleTenancyTenantDataFresh())
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(42L)
+                .settings(
+                    new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
+                        .featureAskerEmailEnabled(false)));
+    try {
+      org.assertj.core.api.Assertions.assertThatThrownBy(
+              () -> createUserFacade.createUserAccountWithInitializedConsultingType(request))
+          .isInstanceOf(
+              de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+      org.mockito.Mockito.verifyNoInteractions(identityClient, userService, matrixSynapseService);
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Test
   void pausedTenantStopsRegisteredCreationBeforeIdentityRowsOrChatWork() {
     org.springframework.test.util.ReflectionTestUtils.setField(
         createUserFacade,

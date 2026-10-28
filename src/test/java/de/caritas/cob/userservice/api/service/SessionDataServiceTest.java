@@ -238,6 +238,19 @@ public class SessionDataServiceTest {
     org.mockito.Mockito.verifyNoInteractions(sessionDataRepository);
   }
 
+  @Test
+  void singleTenantLegacyOwnerMayChangeAliasUsingConfiguredPolicy() {
+    var session = aliasSession();
+    session.setTenantId(null);
+    session.getUser().setTenantId(null);
+    when(tenantService.getSingleTenancyTenantDataFresh()).thenReturn(tenant(true));
+    sessionDataService.saveSessionData(session, new SessionDataDTO().displayName("A chosen alias"));
+    verify(sessionDataRepository).saveAll(any());
+    verify(tenantService).getSingleTenancyTenantDataFresh();
+    org.mockito.Mockito.verify(tenantService, org.mockito.Mockito.never())
+        .getRestrictedTenantDataFresh(any());
+  }
+
   private Session aliasSession() {
     var session = new Session();
     var user = new de.caritas.cob.userservice.api.model.User();

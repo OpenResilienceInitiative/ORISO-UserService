@@ -117,6 +117,17 @@ class AskerEmailCollectionGuardTest {
     verifyNoInteractions(tenants, secondFactor);
   }
 
+  @Test
+  void legacySingleTenantOtpFinishUsesConfiguredPolicyBeforeProviderEffects() {
+    var user = new User();
+    user.setUserId("asker");
+    when(users.findByUserIdAndDeleteDateIsNull("asker")).thenReturn(Optional.of(user));
+    when(tenants.getSingleTenancyTenantDataFresh()).thenReturn(tenant(true));
+    guard.beforeFinish();
+    verify(tenants).getSingleTenancyTenantDataFresh();
+    verifyNoInteractions(secondFactor);
+  }
+
   private void disabled() {
     when(tenants.getRestrictedTenantDataFresh(42L)).thenReturn(tenant(false));
   }

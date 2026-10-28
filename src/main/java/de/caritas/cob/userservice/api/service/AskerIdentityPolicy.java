@@ -27,12 +27,18 @@ public final class AskerIdentityPolicy {
 
   private static Settings currentSettings(TenantService tenants, Long tenantId) {
     try {
-      if (tenantId == null || tenantId <= 0) {
+      if ((tenantId == null && tenants.isMultitenancyEnabled())
+          || (tenantId != null && tenantId <= 0)) {
         throw new IllegalStateException("Concrete tenant required");
       }
-      var tenant = tenants.getRestrictedTenantDataFresh(tenantId);
+      var tenant =
+          tenantId == null
+              ? tenants.getSingleTenancyTenantDataFresh()
+              : tenants.getRestrictedTenantDataFresh(tenantId);
       if (tenant == null
-          || !Objects.equals(tenantId, tenant.getId())
+          || tenant.getId() == null
+          || tenant.getId() <= 0
+          || (tenantId != null && !Objects.equals(tenantId, tenant.getId()))
           || tenant.getSettings() == null) {
         throw new IllegalStateException("Tenant identity settings unavailable");
       }
