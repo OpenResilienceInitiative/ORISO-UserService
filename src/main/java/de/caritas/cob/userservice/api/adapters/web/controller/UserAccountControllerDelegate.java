@@ -148,6 +148,13 @@ class UserAccountControllerDelegate {
   }
 
   ResponseEntity<UserDataResponseDTO> getUserData() {
+    if ((passwordIdentityConfig != null && passwordIdentityConfig.isFiveActorMode())
+        || (selfAppOtpMaintenance != null && selfAppOtpMaintenance.isFiveActorMode())) {
+      if (selfAppOtpMaintenance == null || !selfAppOtpMaintenance.isFiveActorMode())
+        throw new ServiceUnavailableException("Current SELF profile owner unavailable");
+      // Required even when OTP is disabled or local consultant data supplies the visible profile.
+      selfAppOtpMaintenance.readCurrentProfile();
+    }
     UserDataResponseDTO partialUserData;
     if (authenticatedUser.isConsultant()) {
       var consultant = userAccountProvider.retrieveValidatedConsultant();

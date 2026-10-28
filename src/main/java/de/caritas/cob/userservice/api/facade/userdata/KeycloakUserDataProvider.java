@@ -21,8 +21,31 @@ public class KeycloakUserDataProvider {
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull IdentityProfileLookup identityProfileLookup;
 
+  private de.caritas.cob.userservice.api.port.out.IdentityClientConfig identityConfig;
+
+  private de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance
+      currentSelf;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  void configureIdentityModel(de.caritas.cob.userservice.api.port.out.IdentityClientConfig config) {
+    this.identityConfig = java.util.Objects.requireNonNull(config);
+  }
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void configureCurrentSelf(
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance owner) {
+    this.currentSelf = java.util.Objects.requireNonNull(owner);
+  }
+
   public UserDataResponseDTO retrieveAuthenticatedUserData() {
     assertCalledInAuthenticatedUserContext();
+    if ((identityConfig != null && identityConfig.isFiveActorMode())
+        || (currentSelf != null && currentSelf.isFiveActorMode())) {
+      if (currentSelf == null || !currentSelf.isFiveActorMode())
+        throw new de.caritas.cob.userservice.api.exception.httpresponses
+            .ServiceUnavailableException("Current SELF profile owner unavailable");
+      return userDataResponseDtoOf(currentSelf.readCurrentProfile());
+    }
     var userId = authenticatedUser.getUserId();
     var profile = Optional.<IdentityProfile>empty();
     try {

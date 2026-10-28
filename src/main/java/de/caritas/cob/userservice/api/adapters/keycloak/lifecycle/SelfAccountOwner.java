@@ -36,9 +36,19 @@ public final class SelfAccountOwner {
   }
 
   private final JdbcTemplate jdbc;
+  private final de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+      removedConsultants;
 
   SelfAccountOwner(JdbcTemplate jdbc) {
+    this(jdbc, null);
+  }
+
+  SelfAccountOwner(
+      JdbcTemplate jdbc,
+      de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+          removedConsultants) {
     this.jdbc = Objects.requireNonNull(jdbc);
+    this.removedConsultants = removedConsultants;
   }
 
   Owner require(String account, Long tenant) {
@@ -67,10 +77,15 @@ public final class SelfAccountOwner {
     if (!Objects.equals(tenant, number(admin.get("tenant_id")))) throw forbidden();
     // A consultant may deliberately share the Admin's native account. Both SQL identities
     // must remain current and in the same tenant; native permission still checks its exact profile.
-    if (!consultants.isEmpty()) {
+    boolean activeConsultant = !consultants.isEmpty();
+    if (activeConsultant) {
       var consultant = consultants.getFirst();
-      if (consultant.get("delete_date") != null
-          || !Objects.equals(tenant, number(consultant.get("tenant_id")))) throw forbidden();
+      if (!Objects.equals(tenant, number(consultant.get("tenant_id")))) throw forbidden();
+      if (consultant.get("delete_date") != null) {
+        if (removedConsultants == null) throw forbidden();
+        removedConsultants.requireRetainedConsultantRemoved(account, tenant);
+        activeConsultant = false;
+      }
     }
     Kind kind;
     if (tenant > 0 && "AGENCY".equals(admin.get("type"))) kind = Kind.AGENCY_ADMIN;
@@ -79,9 +94,9 @@ public final class SelfAccountOwner {
     else throw forbidden();
     return new Owner(
         kind,
-        !consultants.isEmpty(),
+        activeConsultant,
         email(admin.get("email")),
-        consultants.isEmpty() ? null : email(consultants.getFirst().get("email")));
+        activeConsultant ? email(consultants.getFirst().get("email")) : null);
   }
 
   void replaceAdminEmail(String account, Long tenant, Owner original, String desired) {

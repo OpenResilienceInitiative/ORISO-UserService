@@ -116,6 +116,64 @@ class UserAccountControllerDelegateTest {
   }
 
   @Test
+  void scopedCurrentUserWithOtpDisabledRequiresInstalledCurrentSelfOwner() {
+    var mode =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
+    when(mode.isFiveActorMode()).thenReturn(true);
+    delegate.setPasswordIdentityConfig(mode);
+    assertThatThrownBy(delegate::getUserData).isInstanceOf(ServiceUnavailableException.class);
+    org.mockito.Mockito.verifyNoInteractions(
+        userAccountProvider, keycloakUserDataProvider, agencyAdminDataProvider, identityManager);
+  }
+
+  @Test
+  void scopedCurrentUserReadsNativeSelfEvenWithOtpDisabled() {
+    var mode =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
+    var owner =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance.class);
+    when(mode.isFiveActorMode()).thenReturn(true);
+    when(owner.isFiveActorMode()).thenReturn(true);
+    delegate.setPasswordIdentityConfig(mode);
+    delegate.setSelfAppOtpMaintenance(owner);
+    var partial = new UserDataResponseDTO();
+    var full = new UserDataResponseDTO();
+    when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
+    when(keycloakUserDataProvider.retrieveAuthenticatedUserData()).thenReturn(partial);
+    when(userDtoMapper.userDataOf(eq(partial), isNull(), anyBoolean(), anyBoolean()))
+        .thenReturn(full);
+    assertThat(delegate.getUserData().getBody()).isSameAs(full);
+    org.mockito.InOrder order = org.mockito.Mockito.inOrder(owner, keycloakUserDataProvider);
+    order.verify(owner).isFiveActorMode();
+    order.verify(owner).readCurrentProfile();
+    order.verify(keycloakUserDataProvider).retrieveAuthenticatedUserData();
+    verify(owner, never()).readCredential();
+    org.mockito.Mockito.verifyNoInteractions(identityManager);
+  }
+
+  @Test
+  void scopedCurrentUserCannotUseLocalConsultantDataAfterNativeSelfRefusal() {
+    var mode =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
+    var owner =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance.class);
+    when(mode.isFiveActorMode()).thenReturn(true);
+    when(owner.isFiveActorMode()).thenReturn(true);
+    when(owner.readCurrentProfile())
+        .thenThrow(new ServiceUnavailableException("native current identity unavailable"));
+    delegate.setPasswordIdentityConfig(mode);
+    delegate.setSelfAppOtpMaintenance(owner);
+    assertThatThrownBy(delegate::getUserData).isInstanceOf(ServiceUnavailableException.class);
+    org.mockito.Mockito.verifyNoInteractions(
+        userAccountProvider, consultantDataProvider, identityManager);
+  }
+
+  @Test
   void getUserDataShouldResolveAssignedAgenciesForRestrictedAgencyAdmin() {
     var roles = Set.of(UserRole.RESTRICTED_AGENCY_ADMIN.getValue(), UserRole.USER_ADMIN.getValue());
     var partialUserData = new UserDataResponseDTO();

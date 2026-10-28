@@ -162,7 +162,9 @@ public class AccountLifecycleCallerConfiguration {
       TaskActorTokenBroker broker,
       AccountLifecycleCodec codec,
       @Qualifier("keycloakRestTemplate") RestTemplate http,
-      KeycloakConfig keycloak) {
+      KeycloakConfig keycloak,
+      de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+          removedConsultants) {
     String publicServer = keycloak.getAuthServerUrl();
     String internalServer =
         environment.getProperty("ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL", publicServer);
@@ -170,21 +172,24 @@ public class AccountLifecycleCallerConfiguration {
         || publicServer.isBlank()
         || internalServer == null
         || internalServer.isBlank()) throw invalid();
-    return new SelfAppOtpMaintenance(
-        identities,
-        user,
-        request,
-        jdbc,
-        manager,
-        actors,
-        broker,
-        codec,
-        http,
-        Clock.systemUTC(),
-        internalServer,
-        keycloak.getRealm(),
-        required("KEYCLOAK_REALM_INTERNAL_ID"),
-        publicServer.replaceAll("/+$", "") + "/realms/" + keycloak.getRealm());
+    var maintenance =
+        new SelfAppOtpMaintenance(
+            identities,
+            user,
+            request,
+            jdbc,
+            manager,
+            actors,
+            broker,
+            codec,
+            http,
+            Clock.systemUTC(),
+            internalServer,
+            keycloak.getRealm(),
+            required("KEYCLOAK_REALM_INTERNAL_ID"),
+            publicServer.replaceAll("/+$", "") + "/realms/" + keycloak.getRealm());
+    maintenance.configureRemovedConsultantProofs(removedConsultants);
+    return maintenance;
   }
 
   @Bean
@@ -233,7 +238,11 @@ public class AccountLifecycleCallerConfiguration {
           AccountLifecycleCodec codec,
           @Qualifier("keycloakRestTemplate") RestTemplate http,
           KeycloakConfig keycloak,
-          ReviewedMaintenanceProfiles profiles) {
+          ReviewedMaintenanceProfiles profiles,
+          org.springframework.beans.factory.ObjectProvider<
+                  de.caritas.cob.userservice.api.workflow.delete.service
+                      .PublicPreDeletionMaintenance>
+              removedConsultants) {
     String publicServer = keycloak.getAuthServerUrl();
     String internalServer =
         environment.getProperty("ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL", publicServer);
@@ -262,6 +271,7 @@ public class AccountLifecycleCallerConfiguration {
             transport,
             Clock.systemUTC(),
             publicServer.replaceAll("/+$", "") + "/realms/" + keycloak.getRealm());
+    maintenance.configureRemovedConsultantProofs(removedConsultants);
     maintenance.configureReviewedOrdinaryGroups(groups);
     var selfRoles = new TreeMap<String, List<Set<String>>>();
     profiles
@@ -532,7 +542,9 @@ public class AccountLifecycleCallerConfiguration {
       TaskActorTokenBroker broker,
       AccountLifecycleCodec codec,
       @Qualifier("keycloakRestTemplate") RestTemplate http,
-      KeycloakConfig keycloak) {
+      KeycloakConfig keycloak,
+      de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+          removedConsultants) {
     String publicServer = keycloak.getAuthServerUrl();
     String internalServer =
         environment.getProperty("ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL", publicServer);
@@ -540,21 +552,24 @@ public class AccountLifecycleCallerConfiguration {
         || publicServer.isBlank()
         || internalServer == null
         || internalServer.isBlank()) throw invalid();
-    return new SelfPasswordMaintenance(
-        identities,
-        user,
-        request,
-        jdbc,
-        manager,
-        actors,
-        broker,
-        codec,
-        http,
-        Clock.systemUTC(),
-        internalServer,
-        publicServer.replaceAll("/+$", "") + "/realms/" + keycloak.getRealm(),
-        keycloak.getRealm(),
-        required("KEYCLOAK_REALM_INTERNAL_ID"));
+    var maintenance =
+        new SelfPasswordMaintenance(
+            identities,
+            user,
+            request,
+            jdbc,
+            manager,
+            actors,
+            broker,
+            codec,
+            http,
+            Clock.systemUTC(),
+            internalServer,
+            publicServer.replaceAll("/+$", "") + "/realms/" + keycloak.getRealm(),
+            keycloak.getRealm(),
+            required("KEYCLOAK_REALM_INTERNAL_ID"));
+    maintenance.configureRemovedConsultantProofs(removedConsultants);
+    return maintenance;
   }
 
   @Bean

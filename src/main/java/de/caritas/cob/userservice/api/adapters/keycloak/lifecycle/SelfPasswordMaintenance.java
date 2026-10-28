@@ -50,6 +50,14 @@ public final class SelfPasswordMaintenance {
   private final @NonNull String realmName;
   private final @NonNull String realmId;
 
+  private de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+      removedConsultants;
+
+  public void configureRemovedConsultantProofs(
+      de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance owner) {
+    removedConsultants = Objects.requireNonNull(owner);
+  }
+
   /** Existing secret retention only. No operation or authority may be allocated by a sweep. */
   public int expireSecretCustody() {
     if (!mode.isFiveActorMode() || TransactionSynchronizationManager.isActualTransactionActive())
@@ -407,7 +415,13 @@ public final class SelfPasswordMaintenance {
     }
     if (!"FROZEN".equals(current.status)) throw unavailable();
     // Historical success records its receipt but cannot clear a newer local setup incarnation.
-    if (codec.canonical(local).equals(codec.canonical(wrapper.path("localSetup")))) callback.run();
+    boolean pureAdministrator =
+        Set.of("AGENCY_ADMIN", "TENANT_ADMIN", "PLATFORM_ADMIN")
+                .contains(local.path("kind").textValue())
+            && !local.path("consultant").booleanValue();
+    if (!pureAdministrator
+        && codec.canonical(local).equals(codec.canonical(wrapper.path("localSetup"))))
+      callback.run();
     if (jdbc.update(
             "update identity_self_password_intent set status='ACKNOWLEDGED',receipt=?,updated_at=? where operation_id=? and status='FROZEN'",
             verified,
@@ -537,7 +551,7 @@ public final class SelfPasswordMaintenance {
   }
 
   private JsonNode lockedDomain(Self self) {
-    var owner = SelfAccountOwner.inspect(jdbc, self.account, self.tenant);
+    var owner = new SelfAccountOwner(jdbc, removedConsultants).require(self.account, self.tenant);
     var local = codec.read("{}", ObjectNode.class);
     local.put("kind", owner.kind().name());
     local.put("consultant", owner.consultant());
@@ -601,8 +615,10 @@ public final class SelfPasswordMaintenance {
     origin.put("humanSubject", self.account);
     origin.put("humanIssuer", self.issuer);
     origin.put("humanClient", self.client);
-    if (SelfAccountOwner.inspect(jdbc, self.account, self.tenant).kind().protectedTarget())
-      origin.put("humanAuthority", "PROTECTED_ACCOUNT_OPERATIONS_V1");
+    if (new SelfAccountOwner(jdbc, removedConsultants)
+        .require(self.account, self.tenant)
+        .kind()
+        .protectedTarget()) origin.put("humanAuthority", "PROTECTED_ACCOUNT_OPERATIONS_V1");
     else origin.putNull("humanAuthority");
     return value;
   }

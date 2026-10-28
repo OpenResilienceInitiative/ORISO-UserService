@@ -92,6 +92,55 @@ class KeycloakUserDataProviderTest {
     assertOtherDtoAttributesSetToDefaults(userDataResponseDTO);
   }
 
+  @Test
+  void scopedCurrentUserNeverFallsBackToLegacyProfileOrTokenWhenOwnerMissing() {
+    var mode = Mockito.mock(de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
+    Mockito.when(mode.isFiveActorMode()).thenReturn(true);
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        keycloakUserDataProvider, "identityConfig", mode);
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException.class,
+        () -> keycloakUserDataProvider.retrieveAuthenticatedUserData());
+    Mockito.verifyNoInteractions(identityProfileLookup);
+  }
+
+  @Test
+  void scopedCurrentProfileUsesOnlyTheInstalledSelfReader() {
+    var mode = Mockito.mock(de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
+    var owner =
+        Mockito.mock(
+            de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance.class);
+    Mockito.when(mode.isFiveActorMode()).thenReturn(true);
+    Mockito.when(owner.isFiveActorMode()).thenReturn(true);
+    Mockito.when(owner.readCurrentProfile()).thenReturn(givenIdentityProfile());
+    keycloakUserDataProvider.configureIdentityModel(mode);
+    keycloakUserDataProvider.configureCurrentSelf(owner);
+    assertIdentityProfileAttributesConverted(
+        givenIdentityProfile(), keycloakUserDataProvider.retrieveAuthenticatedUserData());
+    Mockito.verify(owner).readCurrentProfile();
+    Mockito.verifyNoInteractions(identityProfileLookup);
+  }
+
+  @Test
+  void scopedNativeReadFailureCannotReturnTokenMetadata() {
+    var mode = Mockito.mock(de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
+    var owner =
+        Mockito.mock(
+            de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance.class);
+    Mockito.when(mode.isFiveActorMode()).thenReturn(true);
+    Mockito.when(owner.isFiveActorMode()).thenReturn(true);
+    Mockito.when(owner.readCurrentProfile())
+        .thenThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException(
+                "unknown"));
+    keycloakUserDataProvider.configureIdentityModel(mode);
+    keycloakUserDataProvider.configureCurrentSelf(owner);
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException.class,
+        () -> keycloakUserDataProvider.retrieveAuthenticatedUserData());
+    Mockito.verifyNoInteractions(identityProfileLookup);
+  }
+
   private void assertRolesTakenFromAuthenticatedUserBean(UserDataResponseDTO userDataResponseDTO) {
     assertThat(userDataResponseDTO.getUserRoles()).isEqualTo(authenticatedUser.getRoles());
     assertThat(userDataResponseDTO.getGrantedAuthorities())

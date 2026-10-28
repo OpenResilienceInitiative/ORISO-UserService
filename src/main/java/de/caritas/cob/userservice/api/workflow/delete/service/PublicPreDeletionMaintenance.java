@@ -979,6 +979,22 @@ public final class PublicPreDeletionMaintenance {
                 data.path("receipt").asText(), realmId, actor(), body))) throw unavailable();
   }
 
+  /**
+   * Historical proof changes only local active-identity classification; native SELF authorization
+   * is independent.
+   */
+  public void requireRetainedConsultantRemoved(String account, Long tenant) {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || !TransactionSynchronizationManager.hasResource(jdbc.getDataSource())
+        || !entities.isJoinedToTransaction()) throw unavailable();
+    var completed = completedConsultantRemoval(account);
+    if (completed == null || !Objects.equals(tenant, completed.original.tenant))
+      throw unavailable();
+    completed.requireRetainedConsultant(false);
+    if (completed.applied.has("administratorDeletion")) throw unavailable();
+    completed.captureAdministrator();
+  }
+
   public String retainedConsultantRemovalBinding(
       de.caritas.cob.userservice.api.admin.service.admin.delete.DeleteAdminService.ScopedRemoval
           removal) {

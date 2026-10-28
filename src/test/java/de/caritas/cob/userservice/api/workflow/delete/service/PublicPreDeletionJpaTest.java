@@ -63,6 +63,7 @@ import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
@@ -118,6 +119,7 @@ class PublicPreDeletionJpaTest {
   private static final String ACCOUNT = "81000000-0000-4000-8000-000000000011";
   private static final String SECOND = "81000000-0000-4000-8000-000000000015";
   private Clock ownerClock = Clock.systemUTC();
+  private Runnable managementReadEffect = () -> {};
   private String expectedNativeAuthority;
   private String nativeCommand = "deactivate";
   private Set<String> nativeRoles;
@@ -1207,6 +1209,10 @@ class PublicPreDeletionJpaTest {
                 http, actors, broker, codec, "https://identity.test", "fixture", REALM),
             Clock.systemUTC(),
             ISSUER);
+    var proofBeans = new org.springframework.beans.factory.support.StaticListableBeanFactory();
+    proofBeans.addBean("publicPreDeletionMaintenance", owner());
+    maintenance.configureRemovedConsultantProofs(
+        proofBeans.getBeanProvider(PublicPreDeletionMaintenance.class));
     maintenance.configureReviewedOrdinaryGroups(removalGroups);
     var profiles =
         new TreeMap<
@@ -1292,6 +1298,11 @@ class PublicPreDeletionJpaTest {
                                 : List.of("tenant-admin"));
                 value.put("passwordChangeRequired", false);
                 value.put("state", "b".repeat(64));
+                if ("TWO_FACTOR_STATUS_V1".equals(body.path("include").asText()))
+                  value.put("twoFactor", Map.of("configured", true, "active", true));
+                var effect = managementReadEffect;
+                managementReadEffect = () -> {};
+                effect.run();
                 return withSuccess(codec.canonical(value), MediaType.APPLICATION_JSON)
                     .header("Cache-Control", "no-store")
                     .createResponse(raw);
@@ -1621,6 +1632,490 @@ class PublicPreDeletionJpaTest {
     assertThrows(RuntimeException.class, () -> remainingAdminService().deleteAgencyAdmin(ACCOUNT));
     assertEquals(calls, nativeCalls.get());
     assertEquals(2, nativeEffects.get());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = Admin.AdminType.class,
+      names = {"AGENCY", "TENANT"})
+  void remainingAdministratorRetainsAuthenticatedSelfOtpReadAfterConsultantRemoval(
+      Admin.AdminType type) {
+    var self = remainingAdminSelfFixture(type);
+    var retained = jdbc.queryForMap("select * from consultant where consultant_id=?", ACCOUNT);
+    var profile = assertDoesNotThrow(self::readCurrentProfile);
+    assertEquals(ACCOUNT, profile.id());
+    assertEquals("Fixture", profile.firstName());
+    assertEquals("Admin", profile.lastName());
+    assertTrue(assertDoesNotThrow(self::readCredential).setup());
+    assertEquals(
+        retained, jdbc.queryForMap("select * from consultant where consultant_id=?", ACCOUNT));
+    assertEquals(1, nativeEffects.get());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {
+        "missing-proof",
+        "consultant-birth",
+        "delete-date",
+        "admin-birth",
+        "missing-admin",
+        "native-combined",
+        "foreign-human",
+        "no-owner"
+      })
+  void remainingAdminMetadataRejectsUnprovedOrRecreatedIdentity(String changed) {
+    var self = remainingAdminSelfFixture(Admin.AdminType.AGENCY);
+    switch (changed) {
+      case "missing-proof" ->
+          jdbc.update("delete from identity_account_operation_intent where account_id=?", ACCOUNT);
+      case "consultant-birth" ->
+          jdbc.update(
+              "update consultant set create_date=dateadd('SECOND',1,create_date) where consultant_id=?",
+              ACCOUNT);
+      case "delete-date" ->
+          jdbc.update(
+              "update consultant set delete_date=dateadd('SECOND',1,delete_date) where consultant_id=?",
+              ACCOUNT);
+      case "admin-birth" ->
+          jdbc.update(
+              "update admin set create_date=dateadd('SECOND',1,create_date) where admin_id=?",
+              ACCOUNT);
+      case "missing-admin" -> {
+        jdbc.update("delete from admin_agency where admin_id=?", ACCOUNT);
+        jdbc.update("delete from admin where admin_id=?", ACCOUNT);
+      }
+      case "native-combined" ->
+          actor.setRoles(Set.of("consultant", "restricted-agency-admin", "user-admin"));
+      case "foreign-human" -> actor.setUserId(HUMAN);
+      case "no-owner" ->
+          org.springframework.test.util.ReflectionTestUtils.setField(
+              self, "removedConsultants", null);
+      default -> throw new AssertionError(changed);
+    }
+    assertThrows(RuntimeException.class, self::readCurrentProfile);
+    assertEquals(1, nativeEffects.get());
+  }
+
+  private de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance
+      remainingAdminSelfFixture(Admin.AdminType type) {
+    return remainingAdminSelfFixture(type, false);
+  }
+
+  private de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance
+      remainingAdminSelfFixture(Admin.AdminType type, boolean passwordRequired) {
+    givenCombinedConsultantRemoval(type);
+    if (passwordRequired)
+      jdbc.update(
+          "update consultant set password_change_required=true where consultant_id=?", ACCOUNT);
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    consultantService().markConsultantForDeletion(ACCOUNT, true);
+    actor.setUserId(ACCOUNT);
+    actor.setUsername("pre-deletion");
+    actor.setTenantId(7L);
+    actor.setRoles(
+        type == Admin.AdminType.AGENCY
+            ? Set.of("restricted-agency-admin", "user-admin")
+            : Set.of("tenant-admin"));
+    authenticate(false, "/service/users/data");
+    request.setMethod("GET");
+    var machine = actors.require(TaskPurpose.ACCOUNT_MAINTENANCE);
+    when(actors.require(TaskPurpose.OTP)).thenReturn(machine);
+    var token = mock(TaskActorTokenBroker.VerifiedMaintenanceToken.class);
+    when(token.purpose()).thenReturn(TaskPurpose.OTP);
+    when(token.actor()).thenReturn(TaskActor.ACCOUNT_ADMIN);
+    when(token.clientId()).thenReturn(machine.clientId());
+    when(token.subject()).thenReturn(MACHINE);
+    when(token.issuer()).thenReturn(ISSUER);
+    when(token.accessToken()).thenReturn("checked-otp");
+    when(token.validatedJwtExpiresAt())
+        .thenAnswer(ignored -> Instant.now().plusSeconds(60).getEpochSecond());
+    when(broker.issueCheckedMaintenance(TaskPurpose.OTP)).thenReturn(token);
+    server.reset();
+    server
+        .expect(manyTimes(), ignored -> {})
+        .andRespond(
+            raw -> {
+              assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+              assertEquals(
+                  "Bearer fixture-human", raw.getHeaders().getFirst("X-ORISO-Human-Authorization"));
+              if (raw.getMethod() == HttpMethod.GET) {
+                assertTrue(raw.getURI().getPath().contains("/otp-config/fetch-otp-setup-info/"));
+                assertEquals("Bearer checked-otp", raw.getHeaders().getFirst("Authorization"));
+                return withSuccess(
+                        "{\"otpSetup\":true,\"otpType\":\"APP\"}", MediaType.APPLICATION_JSON)
+                    .createResponse(raw);
+              }
+              assertTrue(raw.getURI().getPath().endsWith("/read"));
+              var value = new TreeMap<String, Object>();
+              value.put("id", ACCOUNT);
+              value.put("username", "pre-deletion");
+              value.put("email", "consultant@fixture.invalid");
+              value.put("firstName", "Fixture");
+              value.put("lastName", "Admin");
+              value.put("enabled", true);
+              value.put("emailVerified", false);
+              value.put("tenantId", "7");
+              value.put("preferredLanguage", "en");
+              value.put("effectiveRoles", actor.getRoles());
+              value.put("passwordChangeRequired", false);
+              value.put("state", "a".repeat(64));
+              return withSuccess(codec.canonical(value), MediaType.APPLICATION_JSON)
+                  .header("Cache-Control", "no-store")
+                  .createResponse(raw);
+            });
+    var self =
+        new de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance(
+            mode,
+            actor,
+            request,
+            jdbc,
+            transactions,
+            actors,
+            broker,
+            codec,
+            http,
+            Clock.systemUTC(),
+            "https://identity.test",
+            "fixture",
+            REALM,
+            ISSUER);
+    self.configureRemovedConsultantProofs(owner());
+    return self;
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = Admin.AdminType.class,
+      names = {"AGENCY", "TENANT"})
+  void remainingAdministratorKeepsExistingAuthorizedManagementRead(Admin.AdminType type) {
+    givenCombinedConsultantRemoval(type);
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    consultantService().markConsultantForDeletion(ACCOUNT, true);
+    remainingAdminHttp(type);
+    request.setMethod("GET");
+    request.setRequestURI("/service/useradmin/accounts/" + ACCOUNT + "/status");
+    var deletion = remainingAdminService();
+    var maintenance =
+        (de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance)
+            org.springframework.test.util.ReflectionTestUtils.getField(deletion, "maintenance");
+    var before = jdbc.queryForMap("select * from consultant where consultant_id=?", ACCOUNT);
+    assertEquals(ACCOUNT, assertDoesNotThrow(() -> maintenance.read(ACCOUNT)).id());
+    assertTrue(assertDoesNotThrow(() -> maintenance.factorStatus(ACCOUNT)).active());
+    var status = remainingAdminStatus(maintenance);
+    assertTrue(assertDoesNotThrow(() -> status.read(ACCOUNT)).active());
+    assertTrue(status.activeForList(ACCOUNT, true, new java.util.HashMap<>()));
+    assertFalse(status.read(ACCOUNT).lifecycleRestricted());
+    assertFalse(status.read(ACCOUNT).absent());
+    assertThrows(RuntimeException.class, () -> status.update(ACCOUNT, false));
+    assertEquals(
+        before, jdbc.queryForMap("select * from consultant where consultant_id=?", ACCOUNT));
+    assertEquals(1, nativeEffects.get());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"admin-birth", "delete-date"})
+  void survivingAdminReadRevalidatesInverseAfterNativeReply(String changed) {
+    givenCombinedConsultantRemoval(Admin.AdminType.AGENCY);
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    consultantService().markConsultantForDeletion(ACCOUNT, true);
+    remainingAdminHttp();
+    request.setMethod("GET");
+    request.setRequestURI("/service/useradmin/accounts/" + ACCOUNT + "/status");
+    var maintenance =
+        (de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance)
+            org.springframework.test.util.ReflectionTestUtils.getField(
+                remainingAdminService(), "maintenance");
+    var reads = new AtomicInteger();
+    managementReadEffect =
+        () -> {
+          reads.incrementAndGet();
+          if (changed.equals("admin-birth"))
+            jdbc.update(
+                "update admin set create_date=dateadd('SECOND',1,create_date) where admin_id=?",
+                ACCOUNT);
+          else
+            jdbc.update(
+                "update consultant set delete_date=dateadd('SECOND',1,delete_date) where consultant_id=?",
+                ACCOUNT);
+        };
+    assertThrows(RuntimeException.class, () -> maintenance.read(ACCOUNT));
+    assertEquals(1, reads.get());
+    assertEquals(1, nativeEffects.get());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = Admin.AdminType.class,
+      names = {"AGENCY", "TENANT"})
+  void survivingAdminCanChangeOwnPasswordWithoutClearingRetainedConsultant(Admin.AdminType type) {
+    var password = remainingAdminPasswordFixture(type);
+    var retained = jdbc.queryForMap("select * from consultant where consultant_id=?", ACCOUNT);
+    var callbacks = new AtomicInteger();
+    assertTrue(
+        assertDoesNotThrow(
+            () ->
+                password.change(
+                    "Synthetic-old-password",
+                    "Synthetic-new-password",
+                    () -> {
+                      callbacks.incrementAndGet();
+                      jdbc.update(
+                          "update consultant set password_change_required=false where consultant_id=?",
+                          ACCOUNT);
+                    })));
+    assertEquals(0, callbacks.get(), "Pure active Admin cannot clear the removed Consultant setup");
+    assertEquals(
+        retained, jdbc.queryForMap("select * from consultant where consultant_id=?", ACCOUNT));
+    assertEquals(2, nativeEffects.get());
+  }
+
+  @Test
+  void survivingAdminPasswordUnknownReplyRestartsOriginalAttemptAndNeverClearsRetainedData() {
+    var password = remainingAdminPasswordFixture(Admin.AdminType.AGENCY);
+    var retained = jdbc.queryForMap("select * from consultant where consultant_id=?", ACCOUNT);
+    loseReply = true;
+    assertThrows(
+        RuntimeException.class,
+        () ->
+            password.change(
+                "Synthetic-old-password",
+                "Synthetic-new-password",
+                () -> fail("Removed Consultant callback")));
+    var original =
+        jdbc.queryForMap(
+            "select operation_id,request_digest,target_json,metadata_json,intent_envelope from identity_self_password_intent");
+    String originalBody = savedBody;
+    var restarted = restartedRemainingAdminPassword();
+    assertTrue(
+        restarted.change(
+            "Synthetic-old-password",
+            "Synthetic-new-password",
+            () -> fail("Removed Consultant callback")));
+    assertTrue(
+        restartedRemainingAdminPassword()
+            .change(
+                "Synthetic-old-password",
+                "Synthetic-new-password",
+                () -> fail("Replayed callback")));
+    assertEquals(originalBody, savedBody);
+    assertEquals(
+        original,
+        jdbc.queryForMap(
+            "select operation_id,request_digest,target_json,metadata_json,intent_envelope from identity_self_password_intent"));
+    assertEquals(
+        "ACKNOWLEDGED",
+        jdbc.queryForObject("select status from identity_self_password_intent", String.class));
+    assertEquals(
+        retained, jdbc.queryForMap("select * from consultant where consultant_id=?", ACCOUNT));
+    assertEquals(2, nativeEffects.get());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {
+        "missing-proof",
+        "consultant-birth",
+        "admin-birth",
+        "delete-date",
+        "foreign-human"
+      })
+  void survivingAdminPasswordRequiresOriginalRemovedIdentityProof(String changed) {
+    var password = remainingAdminPasswordFixture(Admin.AdminType.AGENCY);
+    switch (changed) {
+      case "missing-proof" ->
+          jdbc.update("delete from identity_account_operation_intent where account_id=?", ACCOUNT);
+      case "consultant-birth" ->
+          jdbc.update(
+              "update consultant set create_date=dateadd('SECOND',1,create_date) where consultant_id=?",
+              ACCOUNT);
+      case "admin-birth" ->
+          jdbc.update(
+              "update admin set create_date=dateadd('SECOND',1,create_date) where admin_id=?",
+              ACCOUNT);
+      case "delete-date" ->
+          jdbc.update(
+              "update consultant set delete_date=dateadd('SECOND',1,delete_date) where consultant_id=?",
+              ACCOUNT);
+      case "foreign-human" -> actor.setUserId(HUMAN);
+      default -> throw new AssertionError(changed);
+    }
+    assertThrows(
+        RuntimeException.class,
+        () ->
+            password.change(
+                "Synthetic-old-password", "Synthetic-new-password", () -> fail("No callback")));
+    assertEquals(
+        0L, jdbc.queryForObject("select count(*) from identity_self_password_intent", Long.class));
+    assertEquals(1, nativeEffects.get());
+  }
+
+  @Test
+  void survivingAdminPasswordUnknownKeepsCustodyWhenRemovedIdentityProofChanges() {
+    var password = remainingAdminPasswordFixture(Admin.AdminType.AGENCY);
+    loseReply = true;
+    assertThrows(
+        RuntimeException.class,
+        () ->
+            password.change(
+                "Synthetic-old-password", "Synthetic-new-password", () -> fail("No callback")));
+    var original = jdbc.queryForMap("select * from identity_self_password_intent");
+    int calls = nativeCalls.get();
+    jdbc.update(
+        "update consultant set create_date=dateadd('SECOND',1,create_date) where consultant_id=?",
+        ACCOUNT);
+    assertThrows(
+        RuntimeException.class,
+        () ->
+            restartedRemainingAdminPassword()
+                .change(
+                    "Synthetic-old-password", "Synthetic-new-password", () -> fail("No callback")));
+    assertEquals(original, jdbc.queryForMap("select * from identity_self_password_intent"));
+    assertEquals(calls, nativeCalls.get());
+    assertEquals(2, nativeEffects.get());
+  }
+
+  private de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfPasswordMaintenance
+      remainingAdminPasswordFixture(Admin.AdminType type) {
+    remainingAdminSelfFixture(type, true);
+    jdbc.execute("drop table if exists identity_self_password_intent");
+    new ResourceDatabasePopulator(
+            new ClassPathResource(
+                "db/changelog/changeset/20261022_identity_self_password_367/migrate.sql"),
+            new ClassPathResource(
+                "db/changelog/changeset/20261023_identity_self_password_retention_367/migrate.sql"))
+        .execute(dataSource);
+    request.setMethod("PUT");
+    request.setRequestURI("/service/users/password/change");
+    request.removeHeader("Idempotency-Key");
+    request.addHeader("Idempotency-Key", UUID.randomUUID().toString());
+    remainingAdminHttp(type);
+    nativeCommand = "self-password";
+    return restartedRemainingAdminPassword();
+  }
+
+  private de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfPasswordMaintenance
+      restartedRemainingAdminPassword() {
+    var password =
+        new de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfPasswordMaintenance(
+            mode,
+            actor,
+            request,
+            jdbc,
+            transactions,
+            actors,
+            broker,
+            codec,
+            http,
+            Clock.systemUTC(),
+            "https://identity.test",
+            ISSUER,
+            "fixture",
+            REALM);
+    password.configureRemovedConsultantProofs(owner());
+    return password;
+  }
+
+  private de.caritas.cob.userservice.api.admin.service.admin.ManagedAccountStatusService
+      remainingAdminStatus(
+          de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance
+              maintenance) {
+    var lifecycle =
+        mock(
+            de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+                .class);
+    when(lifecycle.snapshot(ACCOUNT))
+        .thenReturn(
+            Optional.of(
+                new de.caritas.cob.userservice.api.workflow.accountinactivity
+                    .AccountInactivityService.Snapshot(
+                    ACCOUNT,
+                    7L,
+                    6,
+                    1L,
+                    Instant.now(),
+                    Instant.now().plusSeconds(999),
+                    de.caritas.cob.userservice.api.workflow.accountinactivity
+                        .AccountInactivityService.Status.ACTIVE,
+                    0,
+                    null)));
+    var tenants = mock(de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class);
+    when(tenants.getRestrictedTenantDataFresh(7L))
+        .thenReturn(
+            new de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO()
+                .active(true));
+    var status =
+        new de.caritas.cob.userservice.api.admin.service.admin.ManagedAccountStatusService(
+            actor,
+            scope,
+            admins,
+            consultants,
+            account -> Optional.of(maintenance.read(account).enabled()),
+            mock(de.caritas.cob.userservice.api.port.out.IdentityProfileLookup.class),
+            mock(de.caritas.cob.userservice.api.port.out.IdentitySecondFactor.class),
+            lifecycle,
+            tenants);
+    status.setScopedLocalWrites(mode, jdbc, transactions);
+    status.setHumanAdminMaintenance(maintenance);
+    var proofs = new org.springframework.beans.factory.support.StaticListableBeanFactory();
+    proofs.addBean("publicPreDeletionMaintenance", owner());
+    status.configureRemovedConsultantProofs(
+        proofs.getBeanProvider(PublicPreDeletionMaintenance.class));
+    return status;
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {
+        "missing-proof",
+        "consultant-birth",
+        "admin-birth",
+        "foreign-tenant",
+        "native-combined"
+      })
+  void survivingAdminManagementReadDoesNotBorrowRemovedOrForeignIdentity(String changed) {
+    givenCombinedConsultantRemoval(Admin.AdminType.AGENCY);
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    consultantService().markConsultantForDeletion(ACCOUNT, true);
+    remainingAdminHttp(
+        Admin.AdminType.AGENCY,
+        changed.equals("native-combined") ? "ADMINISTRATOR_IDENTITY" : "ADMIN_ONLY");
+    request.setMethod("GET");
+    request.setRequestURI("/service/useradmin/accounts/" + ACCOUNT + "/status");
+    var maintenance =
+        (de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance)
+            org.springframework.test.util.ReflectionTestUtils.getField(
+                remainingAdminService(), "maintenance");
+    var status = remainingAdminStatus(maintenance);
+    switch (changed) {
+      case "missing-proof" ->
+          jdbc.update("delete from identity_account_operation_intent where account_id=?", ACCOUNT);
+      case "consultant-birth" ->
+          jdbc.update(
+              "update consultant set create_date=dateadd('SECOND',1,create_date) where consultant_id=?",
+              ACCOUNT);
+      case "admin-birth" ->
+          jdbc.update(
+              "update admin set create_date=dateadd('SECOND',1,create_date) where admin_id=?",
+              ACCOUNT);
+      case "foreign-tenant" ->
+          jdbc.update("update admin set tenant_id=8 where admin_id=?", ACCOUNT);
+      case "native-combined" -> {}
+      default -> throw new AssertionError(changed);
+    }
+    assertThrows(RuntimeException.class, () -> maintenance.read(ACCOUNT));
+    assertThrows(RuntimeException.class, () -> maintenance.factorStatus(ACCOUNT));
+    if (!changed.equals("native-combined")) {
+      assertThrows(RuntimeException.class, () -> status.read(ACCOUNT));
+      assertThrows(
+          RuntimeException.class,
+          () -> status.activeForList(ACCOUNT, true, new java.util.HashMap<>()));
+    } else assertNull(status.read(ACCOUNT).active());
+    assertEquals(1, nativeEffects.get());
   }
 
   private void givenCombinedConsultantRemoval(Admin.AdminType type) {

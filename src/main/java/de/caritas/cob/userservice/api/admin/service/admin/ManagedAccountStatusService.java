@@ -65,6 +65,36 @@ public class ManagedAccountStatusService {
     this.localWrites = new TransactionTemplate(manager);
   }
 
+  private org.springframework.beans.factory.ObjectProvider<
+          de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance>
+      removedConsultants;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public void configureRemovedConsultantProofs(
+      org.springframework.beans.factory.ObjectProvider<
+              de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance>
+          owners) {
+    removedConsultants = Objects.requireNonNull(owners);
+  }
+
+  private Target activeReadTarget(String id, Target target) {
+    if (identityMode == null
+        || !identityMode.isFiveActorMode()
+        || target.admin() == null
+        || target.consultant() == null
+        || target.consultant().getDeleteDate() == null) return target;
+    var proof = removedConsultants == null ? null : removedConsultants.getIfAvailable();
+    if (proof == null || localWrites == null)
+      throw new de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException(
+          "Retained Consultant proof unavailable");
+    localWrites.execute(
+        ignored -> {
+          proof.requireRetainedConsultantRemoved(id, target.admin().getTenantId());
+          return true;
+        });
+    return new Target(target.admin(), null);
+  }
+
   public record TwoFactor(Boolean required, Boolean configured, Boolean active) {}
 
   public record AccountStatus(
@@ -110,7 +140,7 @@ public class ManagedAccountStatusService {
 
   public AccountStatus read(String id) {
     Target target = authorizedTarget(id, false);
-    return status(id, target);
+    return status(id, activeReadTarget(id, target));
   }
 
   public AccountStatus update(String id, boolean active) {
@@ -360,7 +390,13 @@ public class ManagedAccountStatusService {
     var admin = TenantContext.supplyAcrossTenants(() -> admins.findById(id)).orElse(null);
     var consultant = TenantContext.supplyAcrossTenants(() -> consultants.findById(id)).orElse(null);
     if (admin == null && consultant == null) return null;
-    return status(id, new Target(admin, consultant), loginEnabled, false, tenantStates).active();
+    return status(
+            id,
+            activeReadTarget(id, new Target(admin, consultant)),
+            loginEnabled,
+            false,
+            tenantStates)
+        .active();
   }
 
   private AccountStatus status(

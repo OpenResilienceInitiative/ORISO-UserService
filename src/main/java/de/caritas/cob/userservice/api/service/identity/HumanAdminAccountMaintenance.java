@@ -132,6 +132,30 @@ public final class HumanAdminAccountMaintenance {
     this.transactions.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
   }
 
+  private org.springframework.beans.factory.ObjectProvider<
+          de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance>
+      removedConsultants;
+
+  public void configureRemovedConsultantProofs(
+      org.springframework.beans.factory.ObjectProvider<
+              de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance>
+          owners) {
+    removedConsultants = Objects.requireNonNull(owners);
+  }
+
+  private AdminRow readableRow(String account) {
+    return transaction(
+        () -> {
+          var row = authorizedRow(account, true, false, true);
+          if (row.secondary != null && row.secondary.deleted != null) {
+            var owner = removedConsultants == null ? null : removedConsultants.getIfAvailable();
+            if (owner == null) throw unavailable();
+            owner.requireRetainedConsultantRemoved(account, row.tenant);
+          }
+          return row;
+        });
+  }
+
   public boolean isFiveActorMode() {
     return mode.isFiveActorMode();
   }
@@ -139,10 +163,11 @@ public final class HumanAdminAccountMaintenance {
   public HumanAdminMaintenanceTransport.Projection read(String accountId) {
     requireOutsideSql();
     Human human = currentHuman();
-    AdminRow row = authorizedRow(accountId, false);
+    AdminRow row = readableRow(accountId);
     try (var checked = new CheckedAccount(row, row, human, UUID.randomUUID(), null)) {
+      checked.retainedRead = row.secondary != null && row.secondary.deleted != null;
       var result = transport.read(checked);
-      requireProjection(row, result);
+      requireReadProjection(checked, result);
       return result;
     }
   }
@@ -150,11 +175,12 @@ public final class HumanAdminAccountMaintenance {
   public HumanAdminMaintenanceTransport.FactorStatus factorStatus(String accountId) {
     requireOutsideSql();
     Human human = currentHuman();
-    AdminRow row = authorizedRow(accountId, false);
+    AdminRow row = readableRow(accountId);
     try (var checked = new CheckedAccount(row, row, human, UUID.randomUUID(), null)) {
+      checked.retainedRead = row.secondary != null && row.secondary.deleted != null;
       var result = transport.factorStatus(checked);
       if (result == null || result.twoFactor() == null) throw unavailable();
-      requireProjection(row, result.account());
+      requireReadProjection(checked, result.account());
       return result.twoFactor();
     }
   }
@@ -1839,6 +1865,15 @@ public final class HumanAdminAccountMaintenance {
     }
   }
 
+  private static void requireReadProjection(
+      CheckedAccount checked, HumanAdminMaintenanceTransport.Projection projection) {
+    requireProjection(checked.actual, projection);
+    if (checked.retainedRead
+        && (projection.effectiveRoles() == null
+            || projection.effectiveRoles().contains("consultant"))) throw unavailable();
+    checked.requireCurrent();
+  }
+
   private static void requireProjection(
       AdminRow row, HumanAdminMaintenanceTransport.Projection projection) {
     if (projection == null
@@ -2268,7 +2303,7 @@ public final class HumanAdminAccountMaintenance {
     private boolean tenantProfileStep;
     private String tenantExpectedSql;
     private MatrixResult matrixResult;
-    private boolean applied, terminalOnly;
+    private boolean applied, terminalOnly, retainedRead;
     private String retainedConsultantRemoval;
     private java.util.Map<String, StoredTerminal> terminals = java.util.Map.of();
     private ReviewedOrdinaryGroups.Transition role;
@@ -2675,8 +2710,11 @@ public final class HumanAdminAccountMaintenance {
       }
 
       if (!actual.equals(
-          removal == null ? authorizedRow(actual.account, false, self) : ownedRow(this, false)))
-        throw conflict();
+          retainedRead
+              ? readableRow(actual.account)
+              : removal == null
+                  ? authorizedRow(actual.account, false, self)
+                  : ownedRow(this, false))) throw conflict();
       if ((edit != null || addition != null || grant != null || removal != null)
           && !applied
           && !terminalOnly

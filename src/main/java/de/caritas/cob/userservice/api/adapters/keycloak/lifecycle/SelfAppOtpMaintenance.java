@@ -60,6 +60,14 @@ public final class SelfAppOtpMaintenance {
   private final @NonNull String realmId;
   private final @NonNull String humanIssuer;
 
+  private de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+      removedConsultants;
+
+  public void configureRemovedConsultantProofs(
+      de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance owner) {
+    removedConsultants = Objects.requireNonNull(owner);
+  }
+
   public SelfAppOtpMaintenance(
       IdentityClientConfig mode,
       AuthenticatedUser authenticatedUser,
@@ -93,6 +101,49 @@ public final class SelfAppOtpMaintenance {
 
   public boolean isFiveActorMode() {
     return mode.isFiveActorMode();
+  }
+
+  /** Actual authenticated GET /users/data; native SELF validates current grants on every read. */
+  public de.caritas.cob.userservice.api.port.out.IdentityProfile readCurrentProfile() {
+    if (!mode.isFiveActorMode() || TransactionSynchronizationManager.isActualTransactionActive())
+      throw unavailable();
+    var self = actualSelf("GET", Set.of("/users/data", "/service/users/data"));
+    var actor = actors.require(TaskPurpose.ACCOUNT_MAINTENANCE);
+    if (!canonicalUuid(actor.serviceSubject())) throw unavailable();
+    var projection = readProjection(self, target(self, UUID.randomUUID().toString()), actor);
+    var roles = new java.util.HashSet<String>();
+    var nativeRoles = projection.path("effectiveRoles");
+    if (!nativeRoles.isArray() || nativeRoles.isEmpty() || nativeRoles.size() > 200)
+      throw unavailable();
+    for (var role : nativeRoles) {
+      if (!role.isTextual() || !text(role.textValue(), 255) || !roles.add(role.textValue()))
+        throw unavailable();
+    }
+    // A retained, removed Consultant is not an active identity. Native permission is independent;
+    // this check prevents metadata from describing a locally removed identity as active again.
+    if (!roles.equals(authenticatedUser.getRoles())
+        || roles.contains("consultant")
+            != (self.kind == SelfAccountOwner.Kind.CONSULTANT || self.consultant)
+        || roles.contains("user") != (self.kind == SelfAccountOwner.Kind.USER)) throw forbidden();
+    transaction(
+        () -> {
+          lockedDomain(self);
+          return true;
+        });
+    return new de.caritas.cob.userservice.api.port.out.IdentityProfile(
+        self.account,
+        projection.path("username").textValue(),
+        profileText(projection.get("firstName"), 255),
+        profileText(projection.get("lastName"), 255),
+        profileText(projection.get("email"), 320));
+  }
+
+  private static String profileText(JsonNode value, int maximum) {
+    if (value == null || value.isNull()) return null;
+    if (!value.isTextual()
+        || value.textValue().length() > maximum
+        || value.textValue().chars().anyMatch(c -> c < 32 || c == 127)) throw unavailable();
+    return value.textValue();
   }
 
   public de.caritas.cob.userservice.api.identity.IdentityOtpCredential readCredential() {
@@ -400,7 +451,7 @@ public final class SelfAppOtpMaintenance {
     command.put("username", projection.path("username").textValue());
     command.set("body", body);
     command.set("localState", localState(self));
-    var owner = new SelfAccountOwner(jdbc).require(self.account, self.tenant);
+    var owner = new SelfAccountOwner(jdbc, removedConsultants).require(self.account, self.tenant);
     var local = command.putObject("localAccount");
     local.put("kind", owner.kind().name());
     local.put("consultant", owner.consultant());
@@ -473,7 +524,7 @@ public final class SelfAppOtpMaintenance {
           if (!outcome.belongsToEmailStart(delivered.operation)
               || !outcome.sameEmailIdentity(delivered.outcome)
               || applyEmailAndInvite == null) throw unavailable();
-          var owners = new SelfAccountOwner(jdbc);
+          var owners = new SelfAccountOwner(jdbc, removedConsultants);
           var before = owners.require(self.account, self.tenant);
           if (command.has("localAccount")) {
             var original = command.path("localAccount");
@@ -722,25 +773,25 @@ public final class SelfAppOtpMaintenance {
     try {
       if (TransactionSynchronizationManager.isActualTransactionActive()
           || self.expires <= clock.instant().getEpochSecond()) throw unavailable();
-      String reply =
+      var response =
           http.exchange(
-                  UriComponentsBuilder.fromUriString(authServer)
-                      .pathSegment(
-                          "realms",
-                          realmName,
-                          "oriso-account-maintenance",
-                          "v1",
-                          "accounts",
-                          self.account,
-                          "read")
-                      .build()
-                      .encode()
-                      .toUri(),
-                  HttpMethod.POST,
-                  new HttpEntity<>(codec.canonical(body), headers),
-                  String.class)
-              .getBody();
-      projection = SelfOtpReadWire.projection(codec, reply, self.account, self.tenant);
+              UriComponentsBuilder.fromUriString(authServer)
+                  .pathSegment(
+                      "realms",
+                      realmName,
+                      "oriso-account-maintenance",
+                      "v1",
+                      "accounts",
+                      self.account,
+                      "read")
+                  .build()
+                  .encode()
+                  .toUri(),
+              HttpMethod.POST,
+              new HttpEntity<>(codec.canonical(body), headers),
+              String.class);
+      if (response.getStatusCode().value() != 200) throw unavailable();
+      projection = SelfOtpReadWire.projection(codec, response.getBody(), self.account, self.tenant);
     } catch (RuntimeException unknown) {
       throw unavailable();
     }
@@ -837,7 +888,7 @@ public final class SelfAppOtpMaintenance {
   }
 
   private void lockedDomain(Self self) {
-    var current = new SelfAccountOwner(jdbc).require(self.account, self.tenant);
+    var current = new SelfAccountOwner(jdbc, removedConsultants).require(self.account, self.tenant);
     if (current.kind() != self.kind || current.consultant() != self.consultant) throw forbidden();
   }
 
@@ -924,7 +975,9 @@ public final class SelfAppOtpMaintenance {
     else if (tenant instanceof Integer value && value >= 0) tenantId = value.longValue();
     else throw forbidden();
     if (!Objects.equals(tenantId, authenticatedUser.getTenantId())) throw forbidden();
-    var owner = transaction(() -> new SelfAccountOwner(jdbc).require(account, tenantId));
+    var owner =
+        transaction(
+            () -> new SelfAccountOwner(jdbc, removedConsultants).require(account, tenantId));
     return new Self(
         account,
         issuer,
