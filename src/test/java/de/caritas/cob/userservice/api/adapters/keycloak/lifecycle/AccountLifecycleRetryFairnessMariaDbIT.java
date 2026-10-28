@@ -275,6 +275,8 @@ class AccountLifecycleRetryFairnessMariaDbIT extends AccountLifecycleRetryFairne
             ERASURE_NOW.minusSeconds(2592000), java.time.ZoneOffset.UTC);
     user.setCreateDate(born);
     user.setUpdateDate(born.plusDays(1));
+    user.setTermsAndConditionsConfirmation(born.plusHours(1));
+    user.setDataPrivacyConfirmation(born.plusHours(2));
     user.setTenantId(7L);
     user.setLanguageCode(com.neovisionaries.i18n.LanguageCode.en);
     user.setDeleteDate(born.plusDays(2));
