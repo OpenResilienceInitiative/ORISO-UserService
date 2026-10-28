@@ -80,6 +80,17 @@ class FurtherCounsellingRecommendationServiceTest {
     lenient()
         .when(systemMessages.postSystemMessage(any(), anyString(), anyBoolean()))
         .thenReturn(true);
+    lenient().when(systemMessages.hasConsultantMatrixIdentity(session)).thenReturn(true);
+  }
+
+  @Test
+  void consultantWithoutMatrixIdentityIsAConflictAndNothingIsPosted() {
+    // Never fall back to the asker's account: the card must come from the counsellor.
+    when(systemMessages.hasConsultantMatrixIdentity(session)).thenReturn(false);
+
+    assertThatThrownBy(() -> service.recommend(SESSION_ID, TOPIC_ID, null))
+        .isInstanceOf(ConflictException.class);
+    verify(systemMessages, never()).postSystemMessage(any(), anyString(), anyBoolean());
   }
 
   @Test

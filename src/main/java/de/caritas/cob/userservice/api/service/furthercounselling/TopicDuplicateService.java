@@ -2,15 +2,12 @@ package de.caritas.cob.userservice.api.service.furthercounselling;
 
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_PROGRESS;
 
-import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.SupervisorAddedEmailNotificationService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
-import java.time.LocalDateTime;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import lombok.NonNull;
@@ -27,13 +24,6 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class TopicDuplicateService {
 
-  /** Older first; equal create dates fall back to the id so the order is total. */
-  static final Comparator<Session> AGE =
-      Comparator.comparing(
-              Session::getCreateDate,
-              Comparator.nullsFirst(Comparator.<LocalDateTime>naturalOrder()))
-          .thenComparing(Session::getId, Comparator.nullsFirst(Comparator.<Long>naturalOrder()));
-
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull FurtherCounsellingSettings settings;
   private final @NonNull MatrixSessionSystemMessageService systemMessages;
@@ -42,10 +32,16 @@ public class TopicDuplicateService {
 
   /** A conversation between one asker and their counsellor: no group, no members-only chat. */
   public static boolean isOneToOne(Session session) {
-    var type = session.getConversationType();
-    return type == null
-        || type == ConversationType.AGENCY_COUNSELLING
-        || type == ConversationType.LIVE_CHAT;
+    return TopicDuplicateRule.isOneToOne(session.getConversationType());
+  }
+
+  static TopicDuplicateRule.Facts facts(Session session) {
+    return new TopicDuplicateRule.Facts(
+        session.getId(),
+        session.getMainTopicId(),
+        session.getStatus() == IN_PROGRESS,
+        session.getConversationType(),
+        session.getCreateDate());
   }
 
   /** The asker's other accepted 1:1 conversations on the same topic. */
@@ -57,23 +53,21 @@ public class TopicDuplicateService {
         .findByUserAndMainTopicId(session.getUser(), session.getMainTopicId())
         .stream()
         .filter(other -> !Objects.equals(other.getId(), session.getId()))
-        .filter(other -> other.getStatus() == IN_PROGRESS)
-        .filter(TopicDuplicateService::isOneToOne)
+        .filter(other -> TopicDuplicateRule.counts(facts(other)))
         .toList();
   }
 
   /** Accepted same-topic conversations that started before this one. */
   public List<Session> olderActiveSameTopicSessions(Session session) {
     return otherActiveSameTopicSessions(session).stream()
-        .filter(other -> AGE.compare(other, session) < 0)
+        .filter(other -> TopicDuplicateRule.isOlderSameTopic(facts(other), facts(session)))
         .toList();
   }
 
   /** True when the session is accepted and an older accepted one shares its topic. */
   public boolean isNewerDuplicate(Session session) {
     return session != null
-        && session.getStatus() == IN_PROGRESS
-        && isOneToOne(session)
+        && TopicDuplicateRule.counts(facts(session))
         && !olderActiveSameTopicSessions(session).isEmpty();
   }
 
@@ -91,20 +85,41 @@ public class TopicDuplicateService {
       log.warn("Topic duplicate mode {} is not implemented; no notice sent", mode);
       return;
     }
-    var body =
-        FurtherCounsellingNotices.duplicateStarted(accepted.getMainTopicId(), accepted.getId());
+    var body = FurtherCounsellingNotices.duplicateStarted(accepted.getMainTopicId());
     for (var existing : otherActiveSameTopicSessions(accepted)) {
-      // The bell entry is the idempotency marker: only its first writer posts and mails.
-      if (!eventNotificationService.createTopicDuplicateStartedNotification(
-          existing, accepted.getId())) {
-        continue;
+      try {
+        notifyOnce(existing, accepted.getId(), body);
+      } catch (RuntimeException failure) {
+        log.warn(
+            "Topic duplicate notice for session {} failed ({})",
+            existing.getId(),
+            failure.getClass().getSimpleName());
       }
-      if (!systemMessages.postSystemMessage(existing, body, false)) {
-        log.warn("Topic duplicate notice for session {} was not delivered", existing.getId());
-      }
-      emailNotifications.notifyTopicDuplicateStarted(
-          existing.getConsultant(), existing.getId(), TenantContext.getCurrentTenantData());
     }
+  }
+
+  /**
+   * The bell entry is the once-per-pair marker. It is claimed first, so two runs cannot both post,
+   * and released again when the post fails, so a later run can still deliver.
+   */
+  private void notifyOnce(Session existing, Long acceptedId, String body) {
+    if (!eventNotificationService.createTopicDuplicateStartedNotification(existing, acceptedId)) {
+      return;
+    }
+    boolean posted;
+    try {
+      posted = systemMessages.postSystemMessage(existing, body, false);
+    } catch (RuntimeException failure) {
+      eventNotificationService.removeTopicDuplicateStartedNotification(existing, acceptedId);
+      throw failure;
+    }
+    if (!posted) {
+      eventNotificationService.removeTopicDuplicateStartedNotification(existing, acceptedId);
+      log.warn("Topic duplicate notice for session {} was not delivered", existing.getId());
+      return;
+    }
+    emailNotifications.notifyTopicDuplicateStarted(
+        existing.getConsultant(), existing.getId(), TenantContext.getCurrentTenantData());
   }
 
   /** Posts the "duplicate ended" notice into each given older conversation. */

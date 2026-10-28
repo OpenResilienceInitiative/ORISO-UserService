@@ -27,11 +27,10 @@ class FurtherCounsellingNoticesTest {
   }
 
   @Test
-  void duplicateStartedNamesOnlyTopicAndNewSession() {
-    assertThat(FurtherCounsellingNotices.duplicateStarted(3L, 99L))
-        .isEqualTo(
-            "[SYSTEM_NOTIFICATION]{\"type\":\"TOPIC_DUPLICATE_STARTED\",\"topicId\":3,"
-                + "\"newSessionId\":99}");
+  void duplicateStartedNamesOnlyTheTopic() {
+    // The old room must learn nothing about the new conversation, not even its id.
+    assertThat(FurtherCounsellingNotices.duplicateStarted(3L))
+        .isEqualTo("[SYSTEM_NOTIFICATION]{\"type\":\"TOPIC_DUPLICATE_STARTED\",\"topicId\":3}");
   }
 
   @Test

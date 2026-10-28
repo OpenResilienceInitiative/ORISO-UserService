@@ -32,11 +32,11 @@ public final class FurtherCounsellingNotices {
     return encode(payload);
   }
 
-  public static String duplicateStarted(long topicId, long newSessionId) {
+  /** Topic only: the old room learns nothing about the new conversation. */
+  public static String duplicateStarted(long topicId) {
     var payload = new LinkedHashMap<String, Object>();
     payload.put("type", TOPIC_DUPLICATE_STARTED_TYPE);
     payload.put("topicId", topicId);
-    payload.put("newSessionId", newSessionId);
     return encode(payload);
   }
 

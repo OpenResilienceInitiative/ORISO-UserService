@@ -1,54 +1,66 @@
 package de.caritas.cob.userservice.api.facade.sessionlist;
 
-import de.caritas.cob.userservice.api.adapters.web.dto.ConversationType;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
-import java.util.Comparator;
+import de.caritas.cob.userservice.api.service.furthercounselling.TopicDuplicateRule;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Objects;
 
 /**
  * FE#1876: sets {@code isTopicDuplicate} on the asker's list from data already in it — no extra
- * query. Mirrors {@code TopicDuplicateService.isNewerDuplicate}: accepted 1:1 session with an older
- * accepted 1:1 session on the same topic.
+ * query. Uses {@link TopicDuplicateRule}, the same rule as the end-duplicate endpoint.
  */
 final class TopicDuplicateMarker {
-
-  // createDate is the fixed-width ISO format from CustomLocalDateTime, so it sorts as text.
-  private static final Comparator<SessionDTO> AGE =
-      Comparator.comparing(SessionDTO::getCreateDate, Comparator.nullsFirst(String::compareTo))
-          .thenComparing(SessionDTO::getId, Comparator.nullsFirst(Long::compareTo));
 
   private TopicDuplicateMarker() {}
 
   static void mark(List<UserSessionResponseDTO> userSessions) {
-    var candidates =
+    var sessions =
         userSessions.stream()
             .map(UserSessionResponseDTO::getSession)
             .filter(Objects::nonNull)
-            .filter(TopicDuplicateMarker::isActiveOneToOneWithTopic)
             .toList();
-    for (var session : candidates) {
-      boolean newer =
-          candidates.stream()
-              .anyMatch(
-                  other ->
-                      other != session
-                          && Objects.equals(other.getTopic().getId(), session.getTopic().getId())
-                          && AGE.compare(other, session) < 0);
-      session.setIsTopicDuplicate(newer);
+    var facts = sessions.stream().map(TopicDuplicateMarker::facts).toList();
+    for (int i = 0; i < sessions.size(); i++) {
+      if (TopicDuplicateRule.counts(facts.get(i))) {
+        sessions
+            .get(i)
+            .setIsTopicDuplicate(TopicDuplicateRule.isNewerDuplicate(facts.get(i), facts));
+      }
     }
   }
 
-  private static boolean isActiveOneToOneWithTopic(SessionDTO session) {
+  private static TopicDuplicateRule.Facts facts(SessionDTO session) {
     var nullable = session.getConversationType();
-    var type = nullable != null && nullable.isPresent() ? nullable.get() : null;
-    return Objects.equals(session.getStatus(), SessionStatus.IN_PROGRESS.getValue())
-        && session.getTopic() != null
-        && session.getTopic().getId() != null
-        && (type == null
-            || type == ConversationType.AGENCY_COUNSELLING
-            || type == ConversationType.LIVE_CHAT);
+    var type =
+        nullable != null && nullable.isPresent() && nullable.get() != null
+            ? ConversationType.valueOf(nullable.get().getValue())
+            : null;
+    return new TopicDuplicateRule.Facts(
+        session.getId(),
+        session.getTopic() == null ? null : session.getTopic().getId(),
+        Objects.equals(session.getStatus(), SessionStatus.IN_PROGRESS.getValue()),
+        type,
+        parse(session.getCreateDate()));
+  }
+
+  /** createDate is the ISO format from CustomLocalDateTime.toIsoTime, in UTC. */
+  private static LocalDateTime parse(String createDate) {
+    if (createDate == null) {
+      return null;
+    }
+    try {
+      return OffsetDateTime.parse(createDate)
+          .withOffsetSameInstant(ZoneOffset.UTC)
+          .toLocalDateTime();
+    } catch (DateTimeParseException unparseable) {
+      return null;
+    }
   }
 }

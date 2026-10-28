@@ -168,8 +168,8 @@ public class MatrixSessionSystemMessageService {
    *
    * @param session the session whose room receives the notice
    * @param body the full body including the prefix
-   * @param asConsultant post as the assigned consultant when possible; otherwise the usual
-   *     asker-first resolution
+   * @param asConsultant post strictly as the assigned consultant, never as anyone else; false uses
+   *     the usual asker-first resolution
    * @return true when Matrix accepted the event
    */
   public boolean postSystemMessage(Session session, String body, boolean asConsultant) {
@@ -186,9 +186,7 @@ public class MatrixSessionSystemMessageService {
     }
     var roomId = matrixRoomId;
     var credentials =
-        asConsultant
-            ? resolveMatrixCredentialsPreferConsultant(session)
-            : resolveMatrixCredentials(session);
+        asConsultant ? consultantMatrixCredentials(session) : resolveMatrixCredentials(session);
     return credentials
         .map(value -> sendSystemMessage(session.getId(), roomId, body, value))
         .orElse(false);
@@ -212,7 +210,16 @@ public class MatrixSessionSystemMessageService {
     return true;
   }
 
+  /** Whether the assigned consultant has a Matrix account to post with (FE#1876). */
+  public boolean hasConsultantMatrixIdentity(Session session) {
+    return session != null && consultantMatrixCredentials(session).isPresent();
+  }
+
   private Optional<MatrixCredentials> resolveMatrixCredentialsPreferConsultant(Session session) {
+    return consultantMatrixCredentials(session).or(() -> resolveMatrixCredentials(session));
+  }
+
+  private Optional<MatrixCredentials> consultantMatrixCredentials(Session session) {
     Consultant consultant = session.getConsultant();
     if (consultant != null && isNotBlank(consultant.getId())) {
       consultant = consultantService.getConsultant(consultant.getId()).orElse(consultant);
@@ -220,7 +227,7 @@ public class MatrixSessionSystemMessageService {
         return Optional.of(MatrixCredentials.forMatrixUser(consultant.getMatrixUserId()));
       }
     }
-    return resolveMatrixCredentials(session);
+    return Optional.empty();
   }
 
   private String buildCaseHandoverGrantedBody(

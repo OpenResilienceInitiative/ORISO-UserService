@@ -108,7 +108,7 @@ public class EventNotificationService {
       return false;
     }
     String recipientId = existing.getConsultant().getId();
-    String key = TOPIC_DUPLICATE_STARTED_EVENT + ":" + existing.getId() + ":" + newSessionId;
+    String key = topicDuplicateStartedKey(existing, newSessionId);
     Map<String, Object> params = baseParams(existing);
     params.put("topicId", existing.getMainTopicId());
     return persistOnce(
@@ -123,6 +123,27 @@ public class EventNotificationService {
         buildSessionActionPath(existing),
         existing.getId(),
         existing.getTenantId());
+  }
+
+  /**
+   * FE#1876: releases the once-per-pair marker when the room notice was not delivered, so a later
+   * acceptance run can deliver it. Commits on its own, like the write.
+   */
+  public void removeTopicDuplicateStartedNotification(Session existing, Long newSessionId) {
+    if (existing == null
+        || existing.getId() == null
+        || newSessionId == null
+        || existing.getConsultant() == null
+        || existing.getConsultant().getId() == null
+        || existing.getConsultant().getId().isBlank()) {
+      return;
+    }
+    deduplicationWriter.deleteInNewTransaction(
+        existing.getConsultant().getId(), topicDuplicateStartedKey(existing, newSessionId));
+  }
+
+  private static String topicDuplicateStartedKey(Session existing, Long newSessionId) {
+    return TOPIC_DUPLICATE_STARTED_EVENT + ":" + existing.getId() + ":" + newSessionId;
   }
 
   @Transactional

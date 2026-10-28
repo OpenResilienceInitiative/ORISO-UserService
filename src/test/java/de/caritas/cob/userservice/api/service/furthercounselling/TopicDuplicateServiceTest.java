@@ -77,10 +77,8 @@ class TopicDuplicateServiceTest {
     var body = ArgumentCaptor.forClass(String.class);
     verify(systemMessages).postSystemMessage(eq(old), body.capture(), eq(false));
     assertThat(body.getValue())
-        .isEqualTo(
-            "[SYSTEM_NOTIFICATION]{\"type\":\"TOPIC_DUPLICATE_STARTED\",\"topicId\":3,"
-                + "\"newSessionId\":2}")
-        .doesNotContain("777", "79098");
+        .isEqualTo("[SYSTEM_NOTIFICATION]{\"type\":\"TOPIC_DUPLICATE_STARTED\",\"topicId\":3}")
+        .doesNotContain("777", "79098", "newSessionId");
     verify(eventNotificationService).createTopicDuplicateStartedNotification(old, 2L);
     verify(emailNotifications).notifyTopicDuplicateStarted(eq(old.getConsultant()), eq(1L), any());
   }
@@ -101,6 +99,52 @@ class TopicDuplicateServiceTest {
 
     verify(systemMessages, never()).postSystemMessage(any(), anyString(), anyBoolean());
     verifyNoInteractions(emailNotifications);
+  }
+
+  @Test
+  void aThrowingPostDoesNotStopTheNextOldSession() {
+    var second =
+        session(5L, SessionStatus.IN_PROGRESS, LocalDateTime.of(2026, 10, 5, 9, 0), "second-c");
+    when(sessionRepository.findByUserAndMainTopicId(asker, TOPIC))
+        .thenReturn(List.of(old, second, accepted));
+    when(systemMessages.postSystemMessage(eq(old), anyString(), anyBoolean()))
+        .thenThrow(new IllegalStateException("matrix down"));
+
+    service.notifyDuplicateStarted(2L);
+
+    verify(systemMessages).postSystemMessage(eq(second), anyString(), eq(false));
+    verify(emailNotifications)
+        .notifyTopicDuplicateStarted(eq(second.getConsultant()), eq(5L), any());
+    verify(emailNotifications, never())
+        .notifyTopicDuplicateStarted(eq(old.getConsultant()), eq(1L), any());
+  }
+
+  @Test
+  void aThrowingPostLeavesNoMarkerSoARetryCanDeliver() {
+    when(systemMessages.postSystemMessage(eq(old), anyString(), anyBoolean()))
+        .thenThrow(new IllegalStateException("matrix down"));
+
+    service.notifyDuplicateStarted(2L);
+
+    verify(eventNotificationService).removeTopicDuplicateStartedNotification(old, 2L);
+    verifyNoInteractions(emailNotifications);
+  }
+
+  @Test
+  void anUndeliveredPostLeavesNoMarkerSoARetryCanDeliver() {
+    when(systemMessages.postSystemMessage(eq(old), anyString(), anyBoolean())).thenReturn(false);
+
+    service.notifyDuplicateStarted(2L);
+
+    verify(eventNotificationService).removeTopicDuplicateStartedNotification(old, 2L);
+    verifyNoInteractions(emailNotifications);
+  }
+
+  @Test
+  void aDeliveredPostKeepsTheMarker() {
+    service.notifyDuplicateStarted(2L);
+
+    verify(eventNotificationService, never()).removeTopicDuplicateStartedNotification(any(), any());
   }
 
   @Test

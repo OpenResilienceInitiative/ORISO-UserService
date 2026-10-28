@@ -93,7 +93,7 @@ class TopicDuplicateServiceIT {
     verify(systemMessages)
         .postSystemMessage(
             argThat(s -> s.getId().equals(older.getId())),
-            eq(FurtherCounsellingNotices.duplicateStarted(TOPIC, newer.getId())),
+            eq(FurtherCounsellingNotices.duplicateStarted(TOPIC)),
             eq(false));
     verify(systemMessages, never())
         .postSystemMessage(

@@ -60,6 +60,11 @@ public class FurtherCounsellingRecommendationService {
     if (topicId == null || topicService.getTopicById(topicId) == null) {
       throw new BadRequestException(String.format("Topic %s does not exist", topicId));
     }
+    // The card must come from the counsellor; never post it under the asker's account.
+    if (!systemMessages.hasConsultantMatrixIdentity(session)) {
+      throw new ConflictException(
+          String.format("The counsellor of session %s has no Matrix account", sessionId));
+    }
     var body =
         FurtherCounsellingNotices.recommended(
             topicId,
