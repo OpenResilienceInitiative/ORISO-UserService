@@ -157,6 +157,7 @@ class PublicPreDeletionJpaTest {
   private RestTemplate http;
   private MockRestServiceServer server;
   private String savedBody, savedReply;
+  private int nativeTerminalStatus;
   private boolean loseReply,
       loseReadReply,
       forgedReceipt,
@@ -308,6 +309,80 @@ class PublicPreDeletionJpaTest {
     assertEquals(DeletionLifecycleState.READ_ONLY_SAFEGUARD, saved.getDeletionLifecycleState());
     assertNotNull(saved.getDeletionReadOnlyUntil());
     verify(statistics, times(1)).fireEvent(any());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(ints = {403, 409})
+  void verifiedCommittedRefusalRetiresOnlyItsOriginalBrowserOperation(int statusCode) {
+    asker();
+    actor.setUserId(ACCOUNT);
+    actor.setUsername("pre-deletion");
+    actor.setRoles(Set.of("user"));
+    actor.setGrantedAuthorities(Set.of("ROLE_USER"));
+    authenticate(true, "/service/users/account");
+    var service = selfService();
+    nativeTerminalStatus = statusCode;
+    nativeHttp(false);
+    var advice = new TerminalAdvice();
+    var web = new org.springframework.web.context.request.ServletWebRequest(request);
+    for (int retry = 0; retry < 2; retry++) {
+      var refused =
+          assertThrows(
+              RuntimeException.class,
+              () -> service.deactivateAndFlagUserAccountForDeletion("chosen-original-password"));
+      var response =
+          statusCode == 403
+              ? advice.handleForbidden(assertInstanceOf(ForbiddenException.class, refused), web)
+              : advice.conflict(assertInstanceOf(ConflictException.class, refused), web);
+      assertEquals(statusCode, response.getStatusCode().value());
+      assertEquals("NO_EFFECT", response.getHeaders().getFirst("X-ORISO-Mutation-Outcome"));
+      assertEquals(operation, response.getHeaders().getFirst("X-ORISO-Mutation-Operation"));
+      assertEquals("no-store", response.getHeaders().getCacheControl());
+      assertEquals("REFUSED", status());
+      assertEquals(1, nativeCalls.get());
+      assertEquals(0, nativeEffects.get());
+      assertNull(users.findById(ACCOUNT).orElseThrow().getDeleteDate());
+      verifyNoInteractions(statistics);
+      request.removeHeader("Idempotency-Key");
+      request.addHeader("Idempotency-Key", UUID.randomUUID().toString());
+      var foreignResponse =
+          statusCode == 403
+              ? advice.handleForbidden((ForbiddenException) refused, web)
+              : advice.conflict((ConflictException) refused, web);
+      assertNull(foreignResponse.getHeaders().getFirst("X-ORISO-Mutation-Outcome"));
+      assertNull(foreignResponse.getHeaders().getFirst("X-ORISO-Mutation-Operation"));
+      request.removeHeader("Idempotency-Key");
+      request.addHeader("Idempotency-Key", operation);
+    }
+  }
+
+  @Test
+  void unsignedNativeRefusalRetainsFrozenOwnershipAndEveryLocalAccountRow() {
+    asker();
+    actor.setUserId(ACCOUNT);
+    actor.setUsername("pre-deletion");
+    actor.setRoles(Set.of("user"));
+    actor.setGrantedAuthorities(Set.of("ROLE_USER"));
+    authenticate(true, "/service/users/account");
+    var service = selfService();
+    refuseNativeReach = true;
+    nativeHttp(false);
+    assertThrows(
+        ServiceUnavailableException.class,
+        () -> service.deactivateAndFlagUserAccountForDeletion("chosen-original-password"));
+    assertEquals("FROZEN", status());
+    assertEquals(0, nativeEffects.get());
+    assertNull(users.findById(ACCOUNT).orElseThrow().getDeleteDate());
+    verifyNoInteractions(statistics);
+  }
+
+  private static final class TerminalAdvice
+      extends de.caritas.cob.userservice.api.adapters.web.controller.interceptor
+          .ApiResponseEntityExceptionHandler {
+    org.springframework.http.ResponseEntity<Object> conflict(
+        ConflictException refused, org.springframework.web.context.request.WebRequest web) {
+      return super.handleCustomConflict(refused, web);
+    }
   }
 
   @Test
@@ -1693,6 +1768,12 @@ class PublicPreDeletionJpaTest {
               assertTrue(path.endsWith("/deactivate"));
               assertEquals(boundOperation, body.path("operationId").textValue());
               nativeCalls.incrementAndGet();
+              if (nativeTerminalStatus != 0)
+                return org.springframework.test.web.client.response.MockRestResponseCreators
+                    .withStatus(org.springframework.http.HttpStatus.valueOf(nativeTerminalStatus))
+                    .body(signedReply(body, nativeTerminalStatus))
+                    .header("Cache-Control", "no-store")
+                    .createResponse(raw);
               if (savedBody == null) {
                 assertNull(
                     jdbc.queryForObject(
@@ -1732,6 +1813,11 @@ class PublicPreDeletionJpaTest {
   }
 
   private String signedReply(JsonNode body) throws java.io.IOException {
+    return signedReply(body, null);
+  }
+
+  private String signedReply(JsonNode body, Integer terminalStatus) throws java.io.IOException {
+    String result = terminalStatus == null ? "UPDATED" : "NO_EFFECT";
     var payload = new TreeMap<String, Object>();
     payload.put("realmId", REALM);
     payload.put("accountId", body.path("target").path("accountId").textValue());
@@ -1743,23 +1829,30 @@ class PublicPreDeletionJpaTest {
     payload.put("previousState", body.path("expectedState").textValue());
     payload.put("tenantId", "7");
     payload.put("originDigest", digest("maintenance-origin", body.path("target").path("origin")));
-    payload.put("result", "UPDATED");
+    payload.put("result", result);
+    if (terminalStatus != null) payload.put("status", terminalStatus);
     String encoded =
         Base64.getUrlEncoder()
             .withoutPadding()
             .encodeToString(codec.canonical(payload).getBytes(StandardCharsets.UTF_8));
-    String receipt =
-        encoded + "." + HexFormat.of().formatHex(hmac("maintenance-operation-receipt\n" + encoded));
-    return codec.canonical(
-        Map.of(
-            "operationId",
-            body.path("operationId").textValue(),
-            "accountId",
-            body.path("target").path("accountId").textValue(),
-            "result",
-            "UPDATED",
-            "receipt",
-            receipt));
+    String domain =
+        terminalStatus == null
+            ? "maintenance-operation-receipt"
+            : "maintenance-no-effect-receipt/v1";
+    String receipt = encoded + "." + HexFormat.of().formatHex(hmac(domain + "\n" + encoded));
+    var reply =
+        new TreeMap<String, Object>(
+            Map.of(
+                "operationId",
+                body.path("operationId").textValue(),
+                "accountId",
+                body.path("target").path("accountId").textValue(),
+                "result",
+                result,
+                "receipt",
+                receipt));
+    if (terminalStatus != null) reply.put("status", terminalStatus);
+    return codec.canonical(reply);
   }
 
   private String digest(String domain, Object value) {

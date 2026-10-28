@@ -56,6 +56,49 @@ public final class PublicPreDeletionMaintenance {
   private final @NonNull String realmName;
   private final @NonNull String realmId;
   private static final String NAMESPACE = "PRE_DELETION";
+
+  /** Only this owner can issue the terminal after a verified native refusal is committed. */
+  public sealed interface VerifiedTerminal permits VerifiedForbidden, VerifiedConflict {
+    UUID operationId();
+
+    int status();
+  }
+
+  public static final class VerifiedForbidden extends ForbiddenException
+      implements VerifiedTerminal {
+    private final UUID operationId;
+
+    private VerifiedForbidden(UUID operationId) {
+      super("Pre-deletion was refused");
+      this.operationId = operationId;
+    }
+
+    public UUID operationId() {
+      return operationId;
+    }
+
+    public int status() {
+      return 403;
+    }
+  }
+
+  public static final class VerifiedConflict extends ConflictException implements VerifiedTerminal {
+    private final UUID operationId;
+
+    private VerifiedConflict(UUID operationId) {
+      super("Pre-deletion was refused");
+      this.operationId = operationId;
+    }
+
+    public UUID operationId() {
+      return operationId;
+    }
+
+    public int status() {
+      return 409;
+    }
+  }
+
   private static final Set<String> SOURCE =
       Set.of(
           "v",
@@ -1150,12 +1193,13 @@ public final class PublicPreDeletionMaintenance {
   }
 
   private RuntimeException refusal(Intent intent, TaskActorCredentials actor) {
+    if (intent == null || !"REFUSED".equals(intent.status)) throw unavailable();
     var result =
         codec.verifyMaintenanceNoEffectReceipt(
             intent.receipt, realmId, actor, codec.read(intent.body, JsonNode.class), "deactivate");
     return result.status() == 403
-        ? new ForbiddenException("Pre-deletion was refused")
-        : new ConflictException("Pre-deletion was refused");
+        ? new VerifiedForbidden(UUID.fromString(intent.operation))
+        : new VerifiedConflict(UUID.fromString(intent.operation));
   }
 
   private TaskActorCredentials actor() {
