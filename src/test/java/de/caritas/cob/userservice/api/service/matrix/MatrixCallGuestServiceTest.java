@@ -169,6 +169,7 @@ class MatrixCallGuestServiceTest {
     when(matrix.loginAsUserAccessToken(COUNSELLOR)).thenReturn("caller-token");
     when(matrix.removeUserFromRoom(MEDIA, GUEST, "caller-token")).thenReturn(true);
     when(matrix.clearUserPowerLevel(MEDIA, GUEST, "caller-token")).thenReturn(true);
+    when(matrix.getRoomMembership(MEDIA, GUEST, "caller-token")).thenReturn(Optional.of("leave"));
 
     service.revokeOutstanding(binding(5000L));
 
@@ -183,11 +184,37 @@ class MatrixCallGuestServiceTest {
     var guest = guest();
     when(guests.findByBindingIdAndRevokedAtIsNull(binding.getId())).thenReturn(List.of(guest));
     when(matrix.removeUserFromRoom(MEDIA, GUEST, "counsellor-token")).thenReturn(false);
-    when(matrix.getRoomMembers(MEDIA)).thenReturn(Optional.of(List.of(GUEST)));
+    when(matrix.getRoomMembership(MEDIA, GUEST, "counsellor-token")).thenReturn(Optional.of("join"));
 
     service.revokeOutstanding(binding(5000L));
 
     assertThat(guest.getRevokedAt()).isNull();
+  }
+
+  /** Security finding 2: a pending invite is not in the joined list, yet the guest is not gone. */
+  @Test
+  void pendingInviteCountsAsGoneOnlyOnceItsMembershipIsLeave() {
+    var guest = guest();
+    when(guests.findByBindingIdAndRevokedAtIsNull(binding.getId())).thenReturn(List.of(guest));
+    when(matrix.removeUserFromRoom(MEDIA, GUEST, "counsellor-token")).thenReturn(false);
+    when(matrix.getRoomMembers(MEDIA)).thenReturn(Optional.of(List.of(COUNSELLOR)));
+    when(matrix.getRoomMembership(MEDIA, GUEST, "counsellor-token"))
+        .thenReturn(Optional.of("invite"));
+    when(matrix.kickUserFromRoom(MEDIA, GUEST, "counsellor-token")).thenReturn(false);
+
+    service.revokeOutstanding(binding(5000L));
+
+    verify(matrix).kickUserFromRoom(MEDIA, GUEST, "counsellor-token");
+    assertThat(guest.getRevokedAt()).as("invite still pending").isNull();
+
+    when(matrix.kickUserFromRoom(MEDIA, GUEST, "counsellor-token")).thenReturn(true);
+    when(matrix.getRoomMembership(MEDIA, GUEST, "counsellor-token"))
+        .thenReturn(Optional.of("invite"), Optional.of("leave"));
+    when(matrix.clearUserPowerLevel(MEDIA, GUEST, "counsellor-token")).thenReturn(true);
+
+    service.revokeOutstanding(binding(5000L));
+
+    assertThat(guest.getRevokedAt()).as("invite retracted").isNotNull();
   }
 
   @Test

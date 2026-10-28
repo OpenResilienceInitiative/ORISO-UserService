@@ -83,6 +83,9 @@ import org.springframework.transaction.support.TransactionTemplate;
   MatrixCallConversationResolver.class,
   MatrixCallStateService.class,
   MatrixCallGuestService.class,
+  de.caritas.cob.userservice.api.service.matrix.MatrixCallBindingService.class,
+  de.caritas.cob.userservice.api.service.matrix.MatrixCallBindingWriter.class,
+  de.caritas.cob.userservice.api.service.matrix.MatrixCallInviteNotificationService.class,
   MatrixCallGuestRoomIT.AccountFixture.class
 })
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -120,6 +123,10 @@ class MatrixCallGuestRoomIT {
   @Autowired private MatrixCallLifecycleService lifecycle;
   @Autowired private MatrixCallStateService callStates;
   @Autowired private MatrixCallGuestService callGuests;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.service.matrix.MatrixCallInviteNotificationService
+      callReconciler;
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private javax.sql.DataSource dataSource;
   @MockitoBean private MatrixSynapseService matrix;
@@ -192,6 +199,8 @@ class MatrixCallGuestRoomIT {
     when(matrix.loginAsUserAccessToken(counsellorMatrixId)).thenReturn("counsellor-token");
     when(matrix.removeUserFromRoom(MEDIA, GUEST, "counsellor-token")).thenReturn(true);
     when(matrix.clearUserPowerLevel(MEDIA, GUEST, "counsellor-token")).thenReturn(true);
+    when(matrix.getRoomMembership(MEDIA, GUEST, "counsellor-token"))
+        .thenReturn(Optional.of("leave"));
   }
 
   @AfterEach
@@ -210,7 +219,7 @@ class MatrixCallGuestRoomIT {
   @Test
   void guestEntersTheCallRoomOnlyAndLosesItWhenTheCallEnds() throws Exception {
     var policy = policyService();
-    assertThat(policy.resolve(SOURCE, GUEST))
+    assertThat(policy.resolve(SOURCE, GUEST, MEDIA))
         .as("before admission the guest has no call access")
         .isEqualTo(CallMediaPolicy.denied());
 
@@ -231,7 +240,7 @@ class MatrixCallGuestRoomIT {
     verify(matrix).inviteUserToRoom(MEDIA, GUEST, "counsellor-token");
     verify(matrix, never()).inviteUserToRoom(eq(SOURCE), anyString(), anyString());
     verify(matrix, never()).joinRoom(eq(SOURCE), anyString());
-    assertThat(policy.resolve(SOURCE, GUEST)).isEqualTo(new CallMediaPolicy(true, true));
+    assertThat(policy.resolve(SOURCE, GUEST, MEDIA)).isEqualTo(new CallMediaPolicy(true, true));
 
     var guest = actor("call-guest", "user");
     mvc(guest)
@@ -271,7 +280,7 @@ class MatrixCallGuestRoomIT {
     assertThat(guests.findAll())
         .singleElement()
         .satisfies(row -> assertThat(row.getRevokedAt()).isNotNull());
-    assertThat(policy.resolve(SOURCE, GUEST)).isEqualTo(CallMediaPolicy.denied());
+    assertThat(policy.resolve(SOURCE, GUEST, MEDIA)).isEqualTo(CallMediaPolicy.denied());
     mvc(guest)
         .perform(
             get("/matrix/calls/state").param("sourceRoomId", SOURCE).param("callId", "guest-call"))
@@ -285,6 +294,49 @@ class MatrixCallGuestRoomIT {
                         + SOURCE
                         + "\",\"callId\":\"guest-call\",\"guestUserId\":\"call-guest\"}"))
         .andExpect(status().isNotFound());
+  }
+
+  /** Security finding 2: an ended call whose guest removal failed is swept by the expiry scan. */
+  @Test
+  void endedCallWithAnUnremovedGuestIsSweptByTheReconcileScan() throws Exception {
+    var admission =
+        callGuests.admit(actor(counsellorId, "consultant"), SOURCE, "guest-call", "call-guest");
+    assertThat(admission.outcome()).isEqualTo(MatrixCallGuestService.Outcome.ADMITTED);
+    when(matrix.removeUserFromRoom(MEDIA, GUEST, "counsellor-token")).thenReturn(false);
+    when(matrix.kickUserFromRoom(MEDIA, GUEST, "counsellor-token")).thenReturn(false);
+    when(matrix.getRoomMembership(MEDIA, GUEST, "counsellor-token"))
+        .thenReturn(Optional.of("invite"));
+
+    lifecycle.handleRoom(MEDIA, Map.of("timeline", Map.of("events", List.of(leave()))));
+
+    assertThat(bindings.findByMediaRoomId(MEDIA).orElseThrow().getEndedAt()).isNotNull();
+    assertThat(guests.findAll()).singleElement().satisfies(row -> assertThat(row.getRevokedAt()).isNull());
+
+    // The homeserver recovers; no further event arrives for the call room, only the scan runs.
+    when(matrix.kickUserFromRoom(MEDIA, GUEST, "counsellor-token")).thenReturn(true);
+    when(matrix.getRoomMembership(MEDIA, GUEST, "counsellor-token"))
+        .thenReturn(Optional.of("invite"), Optional.of("leave"));
+    callReconciler.reconcileMediaRooms();
+
+    assertThat(guests.findAll())
+        .singleElement()
+        .satisfies(row -> assertThat(row.getRevokedAt()).isNotNull());
+  }
+
+  private Map<String, Object> leave() {
+    return Map.of(
+        "type",
+        "org.matrix.msc3401.call.member",
+        "sender",
+        counsellorMatrixId,
+        "state_key",
+        "_" + counsellorMatrixId + "_device",
+        "event_id",
+        "$leave",
+        "origin_server_ts",
+        System.currentTimeMillis(),
+        "content",
+        Map.of());
   }
 
   private MockMvc mvc(AuthenticatedUser actor) {
