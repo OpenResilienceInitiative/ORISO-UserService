@@ -56,6 +56,11 @@ public final class ScheduledConsultantMaintenance {
   private final @NonNull String realmId;
   private java.util.function.Consumer<AcknowledgedConsultantDeletion> cleanup;
   private jakarta.persistence.EntityManager entities;
+  private PublicPreDeletionMaintenance publicPreDeletion;
+
+  public void configureConsultantIdentityRemoval(PublicPreDeletionMaintenance owner) {
+    publicPreDeletion = Objects.requireNonNull(owner);
+  }
 
   /** The configured finite consumer receives only a freshly verified private ACK frame. */
   public void configureAcknowledgedCleanup(
@@ -234,7 +239,7 @@ public final class ScheduledConsultantMaintenance {
       String state = read(checked);
       frozen = transaction(() -> freeze(checked, state));
     } else {
-      frozen = frozen(checked, checked.intent.frozen);
+      frozen = transaction(() -> frozen(checked, checked.intent.frozen));
     }
     if (frozen == null) return;
     if (!"ACKNOWLEDGED".equals(checked.intent.status)) {
@@ -246,8 +251,10 @@ public final class ScheduledConsultantMaintenance {
     }
     var durable = transaction(() -> lockedIntent(checked));
     String receipt =
-        codec.verifyMaintenanceDeleteReceipt(
-            durable.receipt, realmId, actor(checked), codec.read(frozen.body, JsonNode.class));
+        consultantOnly(frozen)
+            ? transaction(() -> requireConsultantOnlyReceipt(frozen, durable.receipt))
+            : codec.verifyMaintenanceDeleteReceipt(
+                durable.receipt, realmId, actor(checked), codec.read(frozen.body, JsonNode.class));
     var frame = new AcknowledgedConsultantDeletion(this, frozen, receipt);
     try {
       frame.requireCurrent();
@@ -262,7 +269,15 @@ public final class ScheduledConsultantMaintenance {
     if (!held(lease)) return null;
     Consultant consultant = lockedConsultant(account);
     if (consultant == null || consultant.getDeleteDate() == null) return null;
-    requireExclusiveLocalConsultant(account);
+    var removal =
+        publicPreDeletion == null ? null : publicPreDeletion.completedConsultantRemoval(account);
+    JsonNode preservedAdmin = null;
+    if (removal == null) requireExclusiveLocalConsultant(account);
+    else {
+      requireNoAsker(account);
+      removal.requireRetainedConsultant(false);
+      preservedAdmin = removal.captureAdministrator();
+    }
     if (!UUID.fromString(account).toString().equals(account)) throw unavailable();
     // All existing operations for this UUID fence reincarnation/date reminting, including UNKNOWN.
     var rows =
@@ -295,9 +310,30 @@ public final class ScheduledConsultantMaintenance {
           consultant.getTenantId(),
           UUID.randomUUID().toString(),
           lease.claimedUntil(),
-          envelope(actual, com.fasterxml.jackson.databind.node.NullNode.instance),
+          envelope(
+              actual,
+              removal == null
+                  ? com.fasterxml.jackson.databind.node.NullNode.instance
+                  : codec.read(
+                      codec.canonical(
+                          Map.of(
+                              "operationId",
+                              operation,
+                              "removalOperation",
+                              removal.operation(),
+                              "removalBinding",
+                              removal.binding(),
+                              "preservedAdmin",
+                              preservedAdmin)),
+                      JsonNode.class)),
           actor.clientId(),
           actor.serviceSubject());
+      if (removal != null
+          && jdbc.update(
+                  "update identity_maintenance_intent set status='ACKNOWLEDGED',receipt_json=? where operation_id=? and status='PREPARED'",
+                  removal.receipt(),
+                  operation)
+              != 1) throw unavailable();
       intent =
           jdbc.queryForObject(
               "select * from identity_maintenance_intent where operation_id=? for update",
@@ -481,6 +517,40 @@ public final class ScheduledConsultantMaintenance {
           != 0L) throw unavailable();
   }
 
+  private void requireNoAsker(String account) {
+    if (jdbc.queryForObject("select count(*) from user where user_id=?", Long.class, account) != 0L)
+      throw unavailable();
+  }
+
+  private boolean consultantOnly(FrozenConsultantDeletion frozen) {
+    return codec
+        .read(frozen.envelope, JsonNode.class)
+        .path("representation")
+        .asText()
+        .equals("CLAIMED_RETAINED_CONSULTANT_CLEANUP_V1");
+  }
+
+  private String requireConsultantOnlyReceipt(FrozenConsultantDeletion frozen, String receipt) {
+    if (publicPreDeletion == null || !consultantOnly(frozen)) throw unavailable();
+    requireNoAsker(frozen.claim.account);
+    // Denial only: unresolved work on this same account still needs its retained Consultant.
+    if (!jdbc.queryForList(
+            "select operation_id from general_admin_identity_intent where account_id=? and status not in ('APPLIED','NO_EFFECT') for update",
+            String.class,
+            frozen.claim.account)
+        .isEmpty()) throw unavailable();
+    var body = codec.read(frozen.body, JsonNode.class);
+    var removal = publicPreDeletion.completedConsultantRemoval(frozen.claim.account);
+    if (removal == null
+        || !removal.operation().equals(body.path("removalOperation").asText())
+        || !removal.binding().equals(body.path("removalBinding").asText())
+        || !removal.receipt().equals(receipt)) throw unavailable();
+    removal.requireRetainedConsultant(true);
+    var preserved = AdministratorPreservation.require(body.path("preservedAdmin"));
+    removal.requireAdministratorPreserved(preserved);
+    return receipt;
+  }
+
   private boolean sameSnapshot(JsonNode original, JsonNode actual) {
     return original != null
         && actual != null
@@ -519,8 +589,14 @@ public final class ScheduledConsultantMaintenance {
         || !frame.frozen.envelope.equals(intent.frozen)
         || !frame.receipt.equals(intent.receipt)) throw unavailable();
     var saved = frozen(frame.frozen.claim, intent.frozen);
-    if (!frame.frozen.originalSql.equals(saved.originalSql)
-        || !Objects.equals(
+    if (!frame.frozen.originalSql.equals(saved.originalSql)) throw unavailable();
+    if (consultantOnly(saved)) {
+      if (intent.expectedState != null
+          || !frame.receipt.equals(requireConsultantOnlyReceipt(saved, intent.receipt)))
+        throw unavailable();
+      return intent;
+    }
+    if (!Objects.equals(
             intent.expectedState,
             codec.read(saved.body, JsonNode.class).path("expectedState").textValue())
         || !frame.receipt.equals(
@@ -642,6 +718,16 @@ public final class ScheduledConsultantMaintenance {
     String body = codec.canonical(value);
     var fields = new java.util.HashSet<String>();
     value.fieldNames().forEachRemaining(fields::add);
+    if ("CLAIMED_RETAINED_CONSULTANT_CLEANUP_V1".equals(saved.path("representation").asText())) {
+      if (!fields.equals(
+              Set.of("operationId", "removalOperation", "removalBinding", "preservedAdmin"))
+          || !claim.intent.operation.equals(value.path("operationId").asText()))
+        throw unavailable();
+      AdministratorPreservation.require(value.path("preservedAdmin"));
+      var frozen = new FrozenConsultantDeletion(claim, body, envelope, saved.path("originalSql"));
+      requireConsultantOnlyReceipt(frozen, claim.intent.receipt);
+      return frozen;
+    }
     if (!fields.equals(Set.of("target", "operationId", "expectedState", "change"))
         || !claim.intent.operation.equals(value.path("operationId").asText())
         || !codec.canonical(target(claim)).equals(codec.canonical(value.path("target")))
@@ -659,7 +745,9 @@ public final class ScheduledConsultantMaintenance {
             codec.canonical(
                 Map.of(
                     "representation",
-                    "CLAIMED_SCHEDULED_CONSULTANT_DELETE_V1",
+                    body.has("removalOperation")
+                        ? "CLAIMED_RETAINED_CONSULTANT_CLEANUP_V1"
+                        : "CLAIMED_SCHEDULED_CONSULTANT_DELETE_V1",
                     "originalSql",
                     original,
                     "body",

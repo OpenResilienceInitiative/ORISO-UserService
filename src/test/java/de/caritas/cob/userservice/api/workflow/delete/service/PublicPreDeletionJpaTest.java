@@ -107,13 +107,28 @@ import org.springframework.web.client.RestTemplate;
 @DataJpaTest
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import(JpaAuditingConfiguration.class)
+@Import({
+  JpaAuditingConfiguration.class,
+  de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimWriter.class,
+  de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService.class,
+  ConsultantDeletionContinuationJpaTest.TimeConfiguration.class
+})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PublicPreDeletionJpaTest {
   private static final String ACCOUNT = "81000000-0000-4000-8000-000000000011";
   private static final String SECOND = "81000000-0000-4000-8000-000000000015";
   private Clock ownerClock = Clock.systemUTC();
   private String expectedNativeAuthority;
+  private String nativeCommand = "deactivate";
+  private Set<String> nativeRoles;
+  private Map<String, Set<String>> removalGroups = Map.of();
+  private Map<
+          String,
+          List<
+              de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ReviewedMaintenanceProfiles
+                  .Profile>>
+      removalProfiles = Map.of();
+
   private static final String ASKER = "81000000-0000-4000-8000-000000000013";
   private static final String SUCCESSOR = "81000000-0000-4000-8000-000000000014";
   private static final String HUMAN = "81000000-0000-4000-8000-000000000012";
@@ -187,6 +202,14 @@ class PublicPreDeletionJpaTest {
     TenantContext.clear();
     jdbc = new JdbcTemplate(dataSource);
     jdbc.execute("drop table if exists identity_account_operation_intent");
+    jdbc.execute("drop table if exists general_admin_identity_intent");
+    new ResourceDatabasePopulator(
+            new ClassPathResource(
+                "db/changelog/changeset/20261022_general_admin_identity_367/migrate.sql"))
+        .execute(dataSource);
+    jdbc.execute(
+        "alter table general_admin_identity_intent add column if not exists matrix_result_json varchar(1024) null");
+    jdbc.execute("drop table if exists sequential_admin_block");
     new ResourceDatabasePopulator(
             new ClassPathResource(
                 "db/changelog/changeset/20260923_user_temporary_account/migrate.sql"),
@@ -212,6 +235,7 @@ class PublicPreDeletionJpaTest {
     consultants.findById(SUCCESSOR).ifPresent(consultants::delete);
     users.findById(ACCOUNT).ifPresent(users::delete);
     consultants.findById(ACCOUNT).ifPresent(consultants::delete);
+    jdbc.update("delete from admin_agency where admin_id=?", ACCOUNT);
     admins.findById(ACCOUNT).ifPresent(admins::delete);
     admins.findById(HUMAN).ifPresent(admins::delete);
     actor =
@@ -778,6 +802,882 @@ class PublicPreDeletionJpaTest {
     assertEquals("FROZEN", status());
     assertNull(users.findById(ACCOUNT).orElseThrow().getDeleteDate());
     verifyNoInteractions(statistics);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = Admin.AdminType.class,
+      names = {"AGENCY", "TENANT", "SUPER"})
+  void combinedConsultantRemovalPreservesAdministratorAndOwnsOriginalReplay(Admin.AdminType type) {
+    givenCombinedConsultantRemoval(type);
+    var before = jdbc.queryForMap("select * from admin where admin_id=?", ACCOUNT);
+    var beforeRelations =
+        jdbc.queryForList("select * from admin_agency where admin_id=? order by id", ACCOUNT);
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    assertDoesNotThrow(() -> consultantService().markConsultantForDeletion(ACCOUNT, true));
+    assertEquals("APPLIED", status());
+    assertEquals(before, jdbc.queryForMap("select * from admin where admin_id=?", ACCOUNT));
+    assertEquals(
+        beforeRelations,
+        jdbc.queryForList("select * from admin_agency where admin_id=? order by id", ACCOUNT));
+    assertNotNull(consultants.findById(ACCOUNT).orElseThrow().getDeleteDate());
+    assertEquals(
+        DeletionLifecycleState.READ_ONLY_SAFEGUARD,
+        consultants.findById(ACCOUNT).orElseThrow().getDeletionLifecycleState());
+    var expectedChange =
+        type == Admin.AdminType.AGENCY
+            ? Map.of(
+                "transition", "REMOVE_CONSULTANT_IDENTITY", "group", "/human-roles/agency-admin")
+            : Map.of(
+                "transition",
+                "REMOVE_CONSULTANT_IDENTITY",
+                "profileId",
+                "pure-admin",
+                "profileVersion",
+                1);
+    assertEquals(
+        codec.read(codec.canonical(expectedChange), JsonNode.class),
+        codec.read(savedBody, JsonNode.class).path("change"));
+    assertEquals(1, nativeEffects.get());
+    String original = savedBody;
+    assertDoesNotThrow(() -> consultantService().markConsultantForDeletion(ACCOUNT, true));
+    assertEquals(original, savedBody);
+    assertEquals(1, nativeEffects.get());
+    assertEquals(0, genericAttempts.get());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void combinedConsultantRemovalResumesExactNativeOrLocalUnknownAfterRestart(boolean acknowledged) {
+    givenCombinedConsultantRemoval(Admin.AdminType.AGENCY);
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    if (acknowledged) {
+      assertThrows(
+          ServiceUnavailableException.class,
+          () ->
+              owner()
+                  .startAdminConsultant(
+                      ACCOUNT,
+                      true,
+                      ack -> {
+                        throw new ServiceUnavailableException(
+                            "Fixture process loss after native ACK");
+                      }));
+    } else {
+      loseReply = true;
+      assertThrows(
+          ServiceUnavailableException.class,
+          () -> consultantService().markConsultantForDeletion(ACCOUNT, true));
+    }
+    assertEquals(acknowledged ? "ACKNOWLEDGED" : "FROZEN", status());
+    String original = savedBody;
+    var admin = jdbc.queryForMap("select * from admin where admin_id=?", ACCOUNT);
+    assertNull(consultants.findById(ACCOUNT).orElseThrow().getDeleteDate());
+    assertDoesNotThrow(() -> consultantService().markConsultantForDeletion(ACCOUNT, true));
+    assertEquals("APPLIED", status());
+    assertEquals(original, savedBody);
+    assertEquals(1, nativeEffects.get());
+    assertEquals(admin, jdbc.queryForMap("select * from admin where admin_id=?", ACCOUNT));
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"admin", "admin-agency", "consultant-birth", "force", "human"})
+  void combinedOriginalCannotAdoptChangedAdminSourceOrTarget(String changed) {
+    givenCombinedConsultantRemoval(Admin.AdminType.AGENCY);
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    loseReply = true;
+    assertThrows(
+        ServiceUnavailableException.class,
+        () -> consultantService().markConsultantForDeletion(ACCOUNT, true));
+    int before = nativeCalls.get();
+    String original = savedBody;
+    switch (changed) {
+      case "admin" ->
+          jdbc.update("update admin set first_name='Changed' where admin_id=?", ACCOUNT);
+      case "admin-agency" ->
+          jdbc.update("update admin_agency set agency_id=99 where admin_id=?", ACCOUNT);
+      case "consultant-birth" ->
+          jdbc.update(
+              "update consultant set create_date='2025-01-02 03:04:05' where consultant_id=?",
+              ACCOUNT);
+      case "human" -> {
+        actor.setUserId(SECOND);
+        authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+      }
+      default -> {}
+    }
+    assertThrows(
+        RuntimeException.class,
+        () -> consultantService().markConsultantForDeletion(ACCOUNT, !changed.equals("force")));
+    assertEquals(before, nativeCalls.get());
+    assertEquals(original, savedBody);
+    assertEquals("FROZEN", status());
+    assertNull(consultants.findById(ACCOUNT).orElseThrow().getDeleteDate());
+  }
+
+  @Autowired
+  private de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService
+      cleanupClaims;
+
+  @Test
+  void completedConsultantOnlyRemovalRetainsAdminThroughScheduledCleanup() {
+    givenCombinedConsultantRemoval(Admin.AdminType.AGENCY);
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    consultantService().markConsultantForDeletion(ACCOUNT, true);
+    var admin = jdbc.queryForMap("select * from admin where admin_id=?", ACCOUNT);
+    var relations = jdbc.queryForList("select * from admin_agency where admin_id=?", ACCOUNT);
+    prepareRetainedCleanup();
+    var cleanup = retainedCleanup();
+    var callbacks = new AtomicInteger();
+    cleanup.configureAcknowledgedCleanup(
+        ack -> {
+          callbacks.incrementAndGet();
+          ack.runOwnedLocal(
+              () -> jdbc.update("delete from consultant_agency where consultant_id=?", ACCOUNT));
+          ack.completeOwnedLocalDeletion(
+              () -> jdbc.update("delete from consultant where consultant_id=?", ACCOUNT));
+        });
+    cleanup.performDeletionWorkflow();
+    assertEquals(1, callbacks.get());
+    assertEquals(
+        0L,
+        jdbc.queryForObject(
+            "select count(*) from consultant where consultant_id=?", Long.class, ACCOUNT));
+    assertEquals(admin, jdbc.queryForMap("select * from admin where admin_id=?", ACCOUNT));
+    assertEquals(
+        relations, jdbc.queryForList("select * from admin_agency where admin_id=?", ACCOUNT));
+    assertEquals(1, nativeEffects.get());
+    assertEquals(
+        "APPLIED",
+        jdbc.queryForObject(
+            "select status from identity_maintenance_intent where subject_id=?",
+            String.class,
+            ACCOUNT));
+  }
+
+  private void prepareRetainedCleanup() {
+    jdbc.execute("drop table if exists identity_maintenance_intent");
+    new ResourceDatabasePopulator(
+            new ClassPathResource(
+                "db/changelog/changeset/20261021_identity_maintenance_367/migrate.sql"),
+            new ClassPathResource(
+                "db/changelog/changeset/20261022_identity_maintenance_retry_367/migrate.sql"))
+        .execute(dataSource);
+    jdbc.update("delete from scheduled_task_claim where task_name='account-deletion'");
+    // The original delete date is immutable. Only the established retention policy expires.
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        lifecycle, "globalReadOnlyHours", 0L);
+    jdbc.update(
+        "update consultant set deletion_read_only_until=delete_date where consultant_id=?",
+        ACCOUNT);
+  }
+
+  private ScheduledConsultantMaintenance retainedCleanup() {
+    var cleanup =
+        new ScheduledConsultantMaintenance(
+            jdbc,
+            transactions,
+            cleanupClaims,
+            Clock.systemUTC(),
+            lifecycle,
+            actors,
+            broker,
+            codec,
+            http,
+            "https://identity.test",
+            "fixture",
+            REALM);
+    cleanup.configureJpaCleanupOwner(entities);
+    cleanup.configureConsultantIdentityRemoval(owner());
+    return cleanup;
+  }
+
+  @Test
+  void consultantOnlyCleanupResumesOriginalAfterLostExternalReplyAndRestart() {
+    givenCombinedConsultantRemoval(Admin.AdminType.AGENCY);
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    consultantService().markConsultantForDeletion(ACCOUNT, true);
+    prepareRetainedCleanup();
+    var originalAdmin = jdbc.queryForMap("select * from admin where admin_id=?", ACCOUNT);
+    var first = retainedCleanup();
+    var calls = new AtomicInteger();
+    first.configureAcknowledgedCleanup(
+        ack -> {
+          ack.requireCurrent();
+          calls.incrementAndGet();
+          throw new IllegalStateException("External reply lost");
+        });
+    first.performDeletionWorkflow();
+    var frozen =
+        jdbc.queryForMap(
+            "select operation_id,frozen_body,receipt_json from identity_maintenance_intent where subject_id=?",
+            ACCOUNT);
+    assertEquals(
+        "ACKNOWLEDGED",
+        jdbc.queryForObject(
+            "select status from identity_maintenance_intent where subject_id=?",
+            String.class,
+            ACCOUNT));
+    var restarted = retainedCleanup();
+    restarted.configureAcknowledgedCleanup(
+        ack -> {
+          ack.requireCurrent();
+          calls.incrementAndGet();
+          ack.runOwnedLocal(
+              () -> jdbc.update("delete from consultant_agency where consultant_id=?", ACCOUNT));
+          ack.completeOwnedLocalDeletion(
+              () -> jdbc.update("delete from consultant where consultant_id=?", ACCOUNT));
+        });
+    restarted.performDeletionWorkflow();
+    restarted.performDeletionWorkflow();
+    assertEquals(2, calls.get());
+    assertEquals(
+        frozen,
+        jdbc.queryForMap(
+            "select operation_id,frozen_body,receipt_json from identity_maintenance_intent where subject_id=?",
+            ACCOUNT));
+    assertEquals(originalAdmin, jdbc.queryForMap("select * from admin where admin_id=?", ACCOUNT));
+    assertEquals(1, nativeEffects.get());
+    assertEquals(
+        "APPLIED",
+        jdbc.queryForObject(
+            "select status from identity_maintenance_intent where subject_id=?",
+            String.class,
+            ACCOUNT));
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"admin", "adminAgency", "consultantBirth", "deleteDate", "receipt", "applied"})
+  void retainedCleanupRejectsDriftWithoutAnotherExternalOrNativeEffect(String drift) {
+    givenCombinedConsultantRemoval(Admin.AdminType.AGENCY);
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    consultantService().markConsultantForDeletion(ACCOUNT, true);
+    prepareRetainedCleanup();
+    var calls = new AtomicInteger();
+    var first = retainedCleanup();
+    first.configureAcknowledgedCleanup(
+        ack -> {
+          ack.requireCurrent();
+          calls.incrementAndGet();
+          throw new IllegalStateException("External reply lost");
+        });
+    first.performDeletionWorkflow();
+    assertEquals(1, calls.get());
+    var frozen =
+        jdbc.queryForMap(
+            "select operation_id,frozen_body,receipt_json from identity_maintenance_intent where subject_id=?",
+            ACCOUNT);
+    switch (drift) {
+      case "admin" ->
+          jdbc.update("update admin set first_name='changed' where admin_id=?", ACCOUNT);
+      case "adminAgency" ->
+          jdbc.update("update admin_agency set agency_id=72 where admin_id=?", ACCOUNT);
+      case "consultantBirth" ->
+          jdbc.update(
+              "update consultant set create_date=dateadd('SECOND',1,create_date) where consultant_id=?",
+              ACCOUNT);
+      case "deleteDate" ->
+          jdbc.update(
+              "update consultant set delete_date=dateadd('SECOND',1,delete_date) where consultant_id=?",
+              ACCOUNT);
+      case "receipt" ->
+          jdbc.update(
+              "update identity_account_operation_intent set receipt='{}' where operation_id=?",
+              operation);
+      case "applied" ->
+          jdbc.update(
+              "update identity_account_operation_intent set applied_json='{}' where operation_id=?",
+              operation);
+      default -> fail("unknown test case");
+    }
+    var restarted = retainedCleanup();
+    restarted.configureAcknowledgedCleanup(
+        ack -> {
+          calls.incrementAndGet();
+          fail("Drift cannot reach cleanup");
+        });
+    restarted.performDeletionWorkflow();
+    assertEquals(1, calls.get());
+    assertEquals(1, nativeEffects.get());
+    assertEquals(
+        frozen,
+        jdbc.queryForMap(
+            "select operation_id,frozen_body,receipt_json from identity_maintenance_intent where subject_id=?",
+            ACCOUNT));
+    assertEquals(
+        1L,
+        jdbc.queryForObject(
+            "select count(*) from consultant where consultant_id=?", Long.class, ACCOUNT));
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = Admin.AdminType.class,
+      names = {"AGENCY", "TENANT"})
+  void remainingAdministratorCanBeDeletedSeparatelyWithoutLosingRetainedConsultantCleanup(
+      Admin.AdminType type) {
+    completeConsultantFirstSequence(type);
+  }
+
+  private void completeConsultantFirstSequence(Admin.AdminType type) {
+    givenCombinedConsultantRemoval(type);
+    jdbc.update("update admin set last_name='Consultant' where admin_id=?", ACCOUNT);
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    consultantService().markConsultantForDeletion(ACCOUNT, true);
+    var retained = jdbc.queryForMap("select * from consultant where consultant_id=?", ACCOUNT);
+    String publicOperation = operation;
+    String adminOperation = UUID.randomUUID().toString();
+    authenticate(
+        false,
+        "/service/useradmin/"
+            + (type == Admin.AdminType.AGENCY ? "agencyadmins/" : "tenantadmins/")
+            + ACCOUNT,
+        ACCOUNT,
+        adminOperation);
+    var remove = remainingAdminService();
+    remainingAdminHttp(type);
+    assertDoesNotThrow(() -> removeRemainingAdmin(remove, type));
+    assertEquals(
+        0L,
+        jdbc.queryForObject("select count(*) from admin where admin_id=?", Long.class, ACCOUNT));
+    assertEquals(
+        retained, jdbc.queryForMap("select * from consultant where consultant_id=?", ACCOUNT));
+    assertEquals(
+        "APPLIED",
+        jdbc.queryForObject(
+            "select status from identity_account_operation_intent where operation_id=?",
+            String.class,
+            publicOperation));
+    assertDoesNotThrow(() -> removeRemainingAdmin(remainingAdminService(), type));
+    assertEquals(2, nativeEffects.get());
+    prepareRetainedCleanup();
+    var cleanup = retainedCleanup();
+    cleanup.configureAcknowledgedCleanup(
+        ack -> {
+          ack.runOwnedLocal(
+              () -> jdbc.update("delete from consultant_agency where consultant_id=?", ACCOUNT));
+          ack.completeOwnedLocalDeletion(
+              () -> jdbc.update("delete from consultant where consultant_id=?", ACCOUNT));
+        });
+    cleanup.performDeletionWorkflow();
+    assertEquals(
+        0L,
+        jdbc.queryForObject(
+            "select count(*) from consultant where consultant_id=?", Long.class, ACCOUNT));
+    assertEquals(2, nativeEffects.get());
+    assertDoesNotThrow(() -> removeRemainingAdmin(remainingAdminService(), type));
+    assertEquals(
+        2,
+        nativeEffects.get(),
+        "Exact second removal replay after legitimate purge has no new effect");
+  }
+
+  private de.caritas.cob.userservice.api.admin.service.admin.delete.DeleteAdminService
+      remainingAdminService() {
+    if (!Boolean.TRUE.equals(
+        jdbc.queryForObject(
+            "select count(*)>0 from information_schema.tables where lower(table_name)='general_admin_identity_intent'",
+            Boolean.class))) {
+      new ResourceDatabasePopulator(
+              new ClassPathResource(
+                  "db/changelog/changeset/20261022_general_admin_identity_367/migrate.sql"))
+          .execute(dataSource);
+      jdbc.execute(
+          "alter table general_admin_identity_intent add column if not exists matrix_result_json varchar(1024) null");
+    }
+    var maintenance =
+        new de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance(
+            mode,
+            actor,
+            scope,
+            jdbc,
+            transactions,
+            request,
+            new de.caritas.cob.userservice.api.adapters.keycloak.maintenance
+                .KeycloakHumanAdminMaintenance(
+                http, actors, broker, codec, "https://identity.test", "fixture", REALM),
+            Clock.systemUTC(),
+            ISSUER);
+    maintenance.configureReviewedOrdinaryGroups(removalGroups);
+    var profiles =
+        new TreeMap<
+            String,
+            List<
+                de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance
+                    .ProtectedProfileSelector>>();
+    removalProfiles.forEach(
+        (kind, values) ->
+            profiles.put(
+                kind,
+                values.stream()
+                    .map(
+                        value ->
+                            new de.caritas.cob.userservice.api.service.identity
+                                .HumanAdminAccountMaintenance.ProtectedProfileSelector(
+                                value.id(), value.version(), value.realmRoles()))
+                    .toList()));
+    maintenance.configureReviewedProtectedProfiles(profiles);
+    var service =
+        new de.caritas.cob.userservice.api.admin.service.admin.delete.DeleteAdminService(
+            admins,
+            adminAgencies,
+            mock(de.caritas.cob.userservice.api.port.out.IdentityAccountRemover.class));
+    service.setScopedMaintenance(mode, maintenance);
+    service.setPublicPreDeletion(owner());
+    org.springframework.test.util.ReflectionTestUtils.setField(service, "entities", entities);
+    return service;
+  }
+
+  private void removeRemainingAdmin(
+      de.caritas.cob.userservice.api.admin.service.admin.delete.DeleteAdminService service,
+      Admin.AdminType type) {
+    if (type == Admin.AdminType.AGENCY) service.deleteAgencyAdmin(ACCOUNT);
+    else service.deleteTenantAdmin(ACCOUNT);
+  }
+
+  private void remainingAdminHttp() {
+    remainingAdminHttp(Admin.AdminType.AGENCY);
+  }
+
+  private void remainingAdminHttp(Admin.AdminType type) {
+    remainingAdminHttp(type, "ADMIN_ONLY");
+  }
+
+  private void remainingAdminHttp(Admin.AdminType type, String stage) {
+    assertTrue(Set.of("ADMIN_ONLY", "ADMINISTRATOR_IDENTITY", "CONSULTANT_ONLY").contains(stage));
+    server.reset();
+    savedBody = null;
+    savedReply = null;
+    nativeCommand = stage.equals("ADMINISTRATOR_IDENTITY") ? "profile-transition" : "delete";
+    server
+        .expect(manyTimes(), ignored -> {})
+        .andRespond(
+            raw -> {
+              assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
+              var mock = (MockClientHttpRequest) raw;
+              var body = codec.read(mock.getBodyAsString(), JsonNode.class);
+              if (raw.getURI().getPath().endsWith("/read")) {
+                var value = new TreeMap<String, Object>();
+                value.put("id", ACCOUNT);
+                value.put("username", "pre-deletion");
+                value.put("email", "consultant@fixture.invalid");
+                value.put("firstName", "Fixture");
+                value.put("lastName", "Consultant");
+                value.put("tenantId", "7");
+                value.put("enabled", true);
+                value.put("emailVerified", false);
+                value.put("preferredLanguage", "en");
+                value.put(
+                    "effectiveRoles",
+                    stage.equals("CONSULTANT_ONLY")
+                            || stage.equals("ADMINISTRATOR_IDENTITY") && savedReply != null
+                        ? List.of("consultant", "group-chat-consultant")
+                        : stage.equals("ADMINISTRATOR_IDENTITY")
+                            ? List.of(
+                                "consultant",
+                                "group-chat-consultant",
+                                "restricted-agency-admin",
+                                "user-admin")
+                            : type == Admin.AdminType.AGENCY
+                                ? List.of("restricted-agency-admin", "user-admin")
+                                : List.of("tenant-admin"));
+                value.put("passwordChangeRequired", false);
+                value.put("state", "b".repeat(64));
+                return withSuccess(codec.canonical(value), MediaType.APPLICATION_JSON)
+                    .header("Cache-Control", "no-store")
+                    .createResponse(raw);
+              }
+              assertTrue(raw.getURI().getPath().endsWith("/" + nativeCommand));
+              nativeCalls.incrementAndGet();
+              if (savedBody == null) {
+                savedBody = mock.getBodyAsString();
+                savedReply = signedReply(body);
+                nativeEffects.incrementAndGet();
+              } else assertEquals(savedBody, mock.getBodyAsString());
+              if (loseReply) {
+                loseReply = false;
+                throw new ResourceAccessException("Original Admin delete reply lost");
+              }
+              return withSuccess(savedReply, MediaType.APPLICATION_JSON)
+                  .header("Cache-Control", "no-store")
+                  .createResponse(raw);
+            });
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void sequentialUnknownKeepsOriginalCleanupUntilSecondRemovalCommits(boolean localRollback) {
+    givenCombinedConsultantRemoval(Admin.AdminType.AGENCY);
+    jdbc.update("update admin set last_name='Consultant' where admin_id=?", ACCOUNT);
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    consultantService().markConsultantForDeletion(ACCOUNT, true);
+    prepareRetainedCleanup();
+    var pending = retainedCleanup();
+    var callbacks = new AtomicInteger();
+    pending.configureAcknowledgedCleanup(
+        ack -> {
+          ack.requireCurrent();
+          callbacks.incrementAndGet();
+          throw new IllegalStateException("External cleanup reply lost");
+        });
+    pending.performDeletionWorkflow();
+    assertEquals(1, callbacks.get());
+    var originalCleanup =
+        jdbc.queryForMap(
+            "select operation_id,frozen_body,receipt_json from identity_maintenance_intent where subject_id=?",
+            ACCOUNT);
+    String adminOperation = UUID.randomUUID().toString();
+    authenticate(false, "/service/useradmin/agencyadmins/" + ACCOUNT, ACCOUNT, adminOperation);
+    remainingAdminHttp();
+    if (localRollback) {
+      jdbc.execute(
+          "create table sequential_admin_block(admin_id varchar(255) references admin(admin_id))");
+      jdbc.update("insert into sequential_admin_block(admin_id) values(?)", ACCOUNT);
+    } else loseReply = true;
+    assertThrows(RuntimeException.class, () -> remainingAdminService().deleteAgencyAdmin(ACCOUNT));
+    assertEquals(
+        localRollback ? "ACKNOWLEDGED" : "FROZEN",
+        jdbc.queryForObject(
+            "select status from general_admin_identity_intent where operation_id=?",
+            String.class,
+            adminOperation));
+    assertEquals(2, nativeEffects.get());
+    var originalAdminCommand = savedBody;
+    var probe = retainedCleanup();
+    probe.configureAcknowledgedCleanup(ack -> callbacks.incrementAndGet());
+    probe.performDeletionWorkflow();
+    assertEquals(
+        1,
+        callbacks.get(),
+        "Unresolved second deletion must retain the first cleanup's original Consultant");
+    assertEquals(
+        1L,
+        jdbc.queryForObject("select count(*) from admin where admin_id=?", Long.class, ACCOUNT));
+    if (localRollback) jdbc.execute("drop table sequential_admin_block");
+    assertDoesNotThrow(() -> remainingAdminService().deleteAgencyAdmin(ACCOUNT));
+    assertEquals(originalAdminCommand, savedBody);
+    assertEquals(2, nativeEffects.get());
+    var restarted = retainedCleanup();
+    restarted.configureAcknowledgedCleanup(
+        ack -> {
+          callbacks.incrementAndGet();
+          ack.runOwnedLocal(
+              () -> jdbc.update("delete from consultant_agency where consultant_id=?", ACCOUNT));
+          ack.completeOwnedLocalDeletion(
+              () -> jdbc.update("delete from consultant where consultant_id=?", ACCOUNT));
+        });
+    restarted.performDeletionWorkflow();
+    assertEquals(2, callbacks.get());
+    assertEquals(
+        originalCleanup,
+        jdbc.queryForMap(
+            "select operation_id,frozen_body,receipt_json from identity_maintenance_intent where subject_id=?",
+            ACCOUNT));
+    assertEquals(
+        "APPLIED",
+        jdbc.queryForObject(
+            "select status from identity_maintenance_intent where subject_id=?",
+            String.class,
+            ACCOUNT));
+    assertEquals(2, nativeEffects.get());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"human", "tenant", "consultantBirth", "administratorBirth", "originalProof"})
+  void unknownSequentialAdministratorRemovalCannotBorrowChangedAuthorityOrIncarnation(
+      String drift) {
+    givenCombinedConsultantRemoval(Admin.AdminType.AGENCY);
+    jdbc.update("update admin set last_name='Consultant' where admin_id=?", ACCOUNT);
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    consultantService().markConsultantForDeletion(ACCOUNT, true);
+    String next = UUID.randomUUID().toString();
+    authenticate(false, "/service/useradmin/agencyadmins/" + ACCOUNT, ACCOUNT, next);
+    remainingAdminHttp();
+    loseReply = true;
+    assertThrows(RuntimeException.class, () -> remainingAdminService().deleteAgencyAdmin(ACCOUNT));
+    int beforeCalls = nativeCalls.get();
+    String original = savedBody;
+    switch (drift) {
+      case "human" -> {
+        actor.setUserId(SECOND);
+        authenticate(false, "/service/useradmin/agencyadmins/" + ACCOUNT, ACCOUNT, next);
+      }
+      case "tenant" -> {
+        actor.setTenantId(999L);
+        authenticate(false, "/service/useradmin/agencyadmins/" + ACCOUNT, ACCOUNT, next);
+      }
+      case "consultantBirth" ->
+          jdbc.update(
+              "update consultant set create_date=dateadd('SECOND',1,create_date) where consultant_id=?",
+              ACCOUNT);
+      case "administratorBirth" ->
+          jdbc.update(
+              "update admin set create_date=dateadd('SECOND',1,create_date) where admin_id=?",
+              ACCOUNT);
+      case "originalProof" ->
+          jdbc.update(
+              "update identity_account_operation_intent set applied_json='{}' where operation_id=?",
+              operation);
+      default -> fail("unknown fixture");
+    }
+    assertThrows(RuntimeException.class, () -> remainingAdminService().deleteAgencyAdmin(ACCOUNT));
+    assertEquals(beforeCalls, nativeCalls.get());
+    assertEquals(original, savedBody);
+    assertEquals(2, nativeEffects.get());
+    assertEquals(
+        "FROZEN",
+        jdbc.queryForObject(
+            "select status from general_admin_identity_intent where operation_id=?",
+            String.class,
+            next));
+    assertEquals(
+        1L,
+        jdbc.queryForObject("select count(*) from admin where admin_id=?", Long.class, ACCOUNT));
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {
+        "missingSecondReceipt",
+        "tamperedSecondReceipt",
+        "rebornAdmin",
+        "rebornConsultant"
+      })
+  void scheduledAdministratorAbsenceRequiresExactSecondReceiptAndSameIncarnation(String drift) {
+    givenCombinedConsultantRemoval(Admin.AdminType.AGENCY);
+    jdbc.update("update admin set last_name='Consultant' where admin_id=?", ACCOUNT);
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    consultantService().markConsultantForDeletion(ACCOUNT, true);
+    authenticate(
+        false, "/service/useradmin/agencyadmins/" + ACCOUNT, ACCOUNT, UUID.randomUUID().toString());
+    remainingAdminHttp();
+    remainingAdminService().deleteAgencyAdmin(ACCOUNT);
+    prepareRetainedCleanup();
+    if (drift.equals("rebornAdmin")) {
+      admins.save(
+          Admin.builder()
+              .id(ACCOUNT)
+              .tenantId(7L)
+              .username("pre-deletion")
+              .firstName("Fixture")
+              .lastName("Consultant")
+              .email("consultant@fixture.invalid")
+              .type(Admin.AdminType.AGENCY)
+              .build());
+    } else if (drift.equals("rebornConsultant"))
+      jdbc.update(
+          "update consultant set create_date=dateadd('SECOND',1,create_date) where consultant_id=?",
+          ACCOUNT);
+    else {
+      var applied =
+          codec.read(
+              jdbc.queryForObject(
+                  "select applied_json from identity_account_operation_intent where operation_id=?",
+                  String.class,
+                  operation),
+              com.fasterxml.jackson.databind.node.ObjectNode.class);
+      if (drift.equals("missingSecondReceipt")) applied.remove("administratorDeletion");
+      else
+        ((com.fasterxml.jackson.databind.node.ObjectNode) applied.path("administratorDeletion"))
+            .put("receipt", "{}");
+      jdbc.update(
+          "update identity_account_operation_intent set applied_json=? where operation_id=?",
+          codec.canonical(applied),
+          operation);
+    }
+    var cleanup = retainedCleanup();
+    var callbacks = new AtomicInteger();
+    cleanup.configureAcknowledgedCleanup(ack -> callbacks.incrementAndGet());
+    cleanup.performDeletionWorkflow();
+    assertEquals(0, callbacks.get());
+    assertEquals(2, nativeEffects.get());
+    assertEquals(
+        1L,
+        jdbc.queryForObject(
+            "select count(*) from consultant where consultant_id=?", Long.class, ACCOUNT));
+  }
+
+  @Test
+  void administratorFirstThenConsultantDeletionKeepsBothOriginalOperationsAndNativeCleanup() {
+    givenCombinedConsultantRemoval(Admin.AdminType.AGENCY);
+    jdbc.update("update admin set last_name='Consultant' where admin_id=?", ACCOUNT);
+    String first = UUID.randomUUID().toString();
+    authenticate(false, "/service/useradmin/agencyadmins/" + ACCOUNT, ACCOUNT, first);
+    remainingAdminHttp(Admin.AdminType.AGENCY, "ADMINISTRATOR_IDENTITY");
+    remainingAdminService().deleteAgencyAdmin(ACCOUNT);
+    assertEquals(
+        0L,
+        jdbc.queryForObject("select count(*) from admin where admin_id=?", Long.class, ACCOUNT));
+    assertNull(consultants.findById(ACCOUNT).orElseThrow().getDeleteDate());
+    assertEquals(1, nativeEffects.get());
+    server.reset();
+    savedBody = null;
+    savedReply = null;
+    nativeCommand = "deactivate";
+    nativeRoles = Set.of("consultant", "group-chat-consultant");
+    authenticate(false, "/service/useradmin/consultants/" + ACCOUNT);
+    nativeHttp(true);
+    consultantService().markConsultantForDeletion(ACCOUNT, true);
+    assertEquals(2, nativeEffects.get());
+    assertEquals("APPLIED", status());
+    prepareRetainedCleanup();
+    remainingAdminHttp(Admin.AdminType.AGENCY, "CONSULTANT_ONLY");
+    var cleanup = retainedCleanup();
+    cleanup.configureAcknowledgedCleanup(
+        ack -> {
+          ack.runOwnedLocal(
+              () -> jdbc.update("delete from consultant_agency where consultant_id=?", ACCOUNT));
+          ack.completeOwnedLocalDeletion(
+              () -> jdbc.update("delete from consultant where consultant_id=?", ACCOUNT));
+        });
+    cleanup.performDeletionWorkflow();
+    assertEquals(3, nativeEffects.get());
+    assertEquals(
+        0L,
+        jdbc.queryForObject(
+            "select count(*) from consultant where consultant_id=?", Long.class, ACCOUNT));
+    assertEquals(
+        "APPLIED",
+        jdbc.queryForObject(
+            "select status from general_admin_identity_intent where operation_id=?",
+            String.class,
+            first));
+    assertEquals(
+        "APPLIED",
+        jdbc.queryForObject(
+            "select status from identity_maintenance_intent where subject_id=?",
+            String.class,
+            ACCOUNT));
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {
+        "scheduledStatus",
+        "scheduledBody",
+        "scheduledReceipt",
+        "secondReceipt",
+        "rebornConsultant",
+        "withdrawnAuthority",
+        "differentOperation"
+      })
+  void postPurgeReplayCannotBorrowMissingProofRecreatedRowsOrWithdrawnAuthority(String change) {
+    completeConsultantFirstSequence(Admin.AdminType.AGENCY);
+    int calls = nativeCalls.get();
+    switch (change) {
+      case "scheduledStatus" ->
+          jdbc.update(
+              "update identity_maintenance_intent set status='ACKNOWLEDGED' where subject_id=?",
+              ACCOUNT);
+      case "scheduledBody" ->
+          jdbc.update(
+              "update identity_maintenance_intent set frozen_body='{}' where subject_id=?",
+              ACCOUNT);
+      case "scheduledReceipt" ->
+          jdbc.update(
+              "update identity_maintenance_intent set receipt_json='{}' where subject_id=?",
+              ACCOUNT);
+      case "secondReceipt" -> {
+        var applied =
+            codec.read(
+                jdbc.queryForObject(
+                    "select applied_json from identity_account_operation_intent where operation_id=?",
+                    String.class,
+                    operation),
+                com.fasterxml.jackson.databind.node.ObjectNode.class);
+        ((com.fasterxml.jackson.databind.node.ObjectNode) applied.path("administratorDeletion"))
+            .put("receipt", "{}");
+        jdbc.update(
+            "update identity_account_operation_intent set applied_json=? where operation_id=?",
+            codec.canonical(applied),
+            operation);
+      }
+      case "rebornConsultant" -> {
+        consultant();
+        jdbc.update(
+            "update consultant set create_date='2027-01-01 00:00:00' where consultant_id=?",
+            ACCOUNT);
+      }
+      case "withdrawnAuthority" -> actor.setGrantedAuthorities(Set.of());
+      case "differentOperation" -> {
+        request.removeHeader("Idempotency-Key");
+        request.addHeader("Idempotency-Key", UUID.randomUUID().toString());
+      }
+      default -> fail("unknown fixture");
+    }
+    assertThrows(RuntimeException.class, () -> remainingAdminService().deleteAgencyAdmin(ACCOUNT));
+    assertEquals(calls, nativeCalls.get());
+    assertEquals(2, nativeEffects.get());
+  }
+
+  private void givenCombinedConsultantRemoval(Admin.AdminType type) {
+    consultant();
+    var admin =
+        admins.save(
+            Admin.builder()
+                .id(ACCOUNT)
+                .tenantId(7L)
+                .username("pre-deletion")
+                .firstName("Fixture")
+                .lastName("Admin")
+                .email("consultant@fixture.invalid")
+                .type(type)
+                .build());
+    adminAgencies.save(
+        de.caritas.cob.userservice.api.model.AdminAgency.builder()
+            .admin(admin)
+            .agencyId(71L)
+            .build());
+    nativeCommand = "profile-transition";
+    Set<String> pureRoles =
+        type == Admin.AdminType.AGENCY
+            ? Set.of("restricted-agency-admin", "user-admin")
+            : type == Admin.AdminType.TENANT
+                ? Set.of("tenant-admin")
+                : Set.of("tenant-admin", "agency-admin");
+    var combined = new java.util.TreeSet<>(pureRoles);
+    combined.add("consultant");
+    combined.add("group-chat-consultant");
+    nativeRoles = Set.copyOf(combined);
+    if (type == Admin.AdminType.AGENCY) {
+      removalGroups =
+          Map.of(
+              "/human-roles/agency-admin",
+              pureRoles,
+              "/human-roles/consultant-agency-admin",
+              nativeRoles,
+              "/human-roles/consultant",
+              Set.of("consultant", "group-chat-consultant"));
+    } else {
+      String family = type == Admin.AdminType.TENANT ? "TENANT_ADMIN" : "PLATFORM_ADMIN";
+      removalProfiles =
+          Map.of(
+              family,
+              List.of(
+                  new de.caritas.cob.userservice.api.adapters.keycloak.lifecycle
+                      .ReviewedMaintenanceProfiles.Profile("PROTECTED", "pure-admin", 1, pureRoles),
+                  new de.caritas.cob.userservice.api.adapters.keycloak.lifecycle
+                      .ReviewedMaintenanceProfiles.Profile(
+                      "PROTECTED", "combined-admin", 2, nativeRoles)));
+    }
+    actor.setTenantId(0L);
+    actor.setRoles(Set.of("agency-admin", "tenant-admin"));
+    actor.setGrantedAuthorities(
+        Set.of(Authority.AuthorityValue.USER_ADMIN, Authority.AuthorityValue.TENANT_ADMIN));
+    jdbc.update("update admin set tenant_id=0,type='SUPER' where admin_id=?", HUMAN);
   }
 
   @Test
@@ -1885,6 +2785,7 @@ class PublicPreDeletionJpaTest {
     owner.configureConsultantEligibility(
         new ConsultantAgencyDeletionValidationService(
             consultantAgencies, preflightAgencies, sessions));
+    owner.configureConsultantRemovalProfiles(removalGroups, removalProfiles);
     return owner;
   }
 
@@ -1912,7 +2813,7 @@ class PublicPreDeletionJpaTest {
             .subject(actor.getUserId())
             .issuer(ISSUER)
             .claim("azp", self ? "app" : "admin")
-            .claim("tenantId", "7")
+            .claim("tenantId", actor.getTenantId().toString())
             .issuedAt(Instant.now().minusSeconds(10))
             .expiresAt(Instant.now().plusSeconds(300))
             .build();
@@ -1959,7 +2860,7 @@ class PublicPreDeletionJpaTest {
                     body.path("target").path("origin").path("humanAuthority").textValue());
               String path = raw.getURI().getPath();
               if (refuseNativeReach
-                  && (path.endsWith("/deactivate") || path.endsWith("/deactivate/outcome")))
+                  && (path.endsWith("/" + nativeCommand) || path.endsWith("/deactivate/outcome")))
                 return org.springframework.test.web.client.response.MockRestResponseCreators
                     .withStatus(org.springframework.http.HttpStatus.FORBIDDEN)
                     .body("{\"error\":\"Maintenance request rejected\"}")
@@ -1988,7 +2889,10 @@ class PublicPreDeletionJpaTest {
                 projection.put("emailVerified", false);
                 projection.put("preferredLanguage", "en");
                 projection.put(
-                    "effectiveRoles", consultant ? List.of("consultant") : List.of("user"));
+                    "effectiveRoles",
+                    nativeRoles != null
+                        ? nativeRoles
+                        : consultant ? List.of("consultant") : List.of("user"));
                 projection.put("passwordChangeRequired", false);
                 projection.put("state", "a".repeat(64));
                 return withSuccess(codec.canonical(projection), MediaType.APPLICATION_JSON)
@@ -2009,7 +2913,7 @@ class PublicPreDeletionJpaTest {
                     .header("Cache-Control", "no-store")
                     .createResponse(raw);
               }
-              assertTrue(path.endsWith("/deactivate"));
+              assertTrue(path.endsWith("/" + nativeCommand));
               assertEquals(boundOperation, body.path("operationId").textValue());
               nativeCalls.incrementAndGet();
               if (nativeTerminalStatus != 0)
@@ -2061,12 +2965,15 @@ class PublicPreDeletionJpaTest {
   }
 
   private String signedReply(JsonNode body, Integer terminalStatus) throws java.io.IOException {
-    String result = terminalStatus == null ? "UPDATED" : "NO_EFFECT";
+    String result =
+        terminalStatus == null
+            ? (nativeCommand.equals("delete") ? "DELETED" : "UPDATED")
+            : "NO_EFFECT";
     var payload = new TreeMap<String, Object>();
     payload.put("realmId", REALM);
     payload.put("accountId", body.path("target").path("accountId").textValue());
     payload.put("operationId", body.path("operationId").textValue());
-    payload.put("command", "deactivate");
+    payload.put("command", nativeCommand);
     payload.put("ownerClient", "backend-account-admin");
     payload.put("ownerSubject", MACHINE);
     payload.put("intentDigest", digest("maintenance-intent", body));

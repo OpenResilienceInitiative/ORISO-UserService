@@ -46,6 +46,15 @@ public class DeleteAdminService {
           "Separate identity removal requires scoped account commands");
   }
 
+  private de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+      preDeletion;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  public void setPublicPreDeletion(
+      de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance owner) {
+    preDeletion = java.util.Objects.requireNonNull(owner);
+  }
+
   private boolean scopedRemovalEnabled() {
     return mode != null && mode.isFiveActorMode();
   }
@@ -113,6 +122,28 @@ public class DeleteAdminService {
       requireActive();
       if (owner == null || entities == null || owner != entities.getEntityManagerFactory())
         throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    }
+
+    public String retainedConsultantRemovalBinding() {
+      requireActive();
+      if (preDeletion == null)
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+      return preDeletion.retainedConsultantRemovalBinding(this);
+    }
+
+    public void requireCompletedRetainedConsultantPurge() {
+      requireActive();
+      if (preDeletion == null)
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+      preDeletion.requireCompletedRetainedConsultantPurge(this);
+    }
+
+    public void applyRetainedConsultantAdministratorDeletion(
+        String binding, String nativeBody, String receipt) {
+      if (!retainedConsultantRemovalBinding().equals(binding))
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+      apply();
+      preDeletion.recordSubsequentAdministratorDeletion(this, binding, nativeBody, receipt);
     }
 
     public void apply() {

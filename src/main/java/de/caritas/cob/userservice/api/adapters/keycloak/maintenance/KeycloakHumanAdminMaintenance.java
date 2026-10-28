@@ -233,6 +233,8 @@ public final class KeycloakHumanAdminMaintenance implements HumanAdminMaintenanc
       binding.put("sourceKind", "TENANT_ADMIN_EDIT_V1");
     } else if (account.administratorRemoval()) {
       binding.put("sourceKind", "ADMINISTRATOR_REMOVAL_V1");
+      if (account.retainedConsultantRemovalBinding() != null)
+        binding.put("retainedConsultantRemoval", account.retainedConsultantRemovalBinding());
     } else if (account.agencyAdminAddition() || account.consultantIdentityAddition()) {
       binding.put("publicRoleAddition", codec.read(account.roleAdditionIntent(), JsonNode.class));
       binding.put(

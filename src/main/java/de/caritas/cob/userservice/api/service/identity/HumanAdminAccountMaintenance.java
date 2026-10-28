@@ -315,16 +315,20 @@ public final class HumanAdminAccountMaintenance {
       throw new ForbiddenException(
           "Another authorized administrator must remove your administrator identity");
     UUID operation = operationId();
-    String desired =
-        encode(
-            java.util.Map.of(
-                "sourceKind", "ADMINISTRATOR_REMOVAL_V1", "adminType", removal.adminType()));
     Intent prior = intent(operation, false);
-    if (prior != null && !desired.equals(prior.desired)) throw conflict();
     RemovalOriginal saved = prior == null ? null : decode(prior.original, RemovalOriginal.class);
-    AdminRow original = saved == null ? authorizedRow(account, false) : saved.row;
+    AdminRow original = saved == null ? authorizedRow(account, false, false, true) : saved.row;
     if (!account.equals(original.account) || !removal.adminType().equals(original.type))
       throw conflict();
+    boolean retainedConsultant = original.secondary != null && original.secondary.deleted != null;
+    String retainedBinding =
+        retainedConsultant ? transaction(removal::retainedConsultantRemovalBinding) : null;
+    var desiredSource = new java.util.TreeMap<String, Object>();
+    desiredSource.put("sourceKind", "ADMINISTRATOR_REMOVAL_V1");
+    desiredSource.put("adminType", removal.adminType());
+    if (retainedBinding != null) desiredSource.put("retainedConsultantRemoval", retainedBinding);
+    String desired = encode(desiredSource);
+    if (prior != null && !desired.equals(prior.desired)) throw conflict();
     String fullSql = saved == null ? consultantSnapshot(account, false) : saved.sql;
     String originalJson = encode(new RemovalOriginal(original, fullSql));
     var originalTables = decode(fullSql, com.fasterxml.jackson.databind.JsonNode.class);
@@ -334,9 +338,13 @@ public final class HumanAdminAccountMaintenance {
           List.of("consultant", "language", "consultant_topic", "consultant_agency"))
         if (!originalTables.path(table).isEmpty()) throw conflict();
     try (var checked = new CheckedAccount(original, human, operation, fullSql, removal)) {
+      checked.retainedConsultantRemoval = retainedBinding;
       checked.applied = prior != null && "APPLIED".equals(prior.status);
       checked.terminalOnly = prior != null && "NO_EFFECT".equals(prior.status);
-      if (prior != null && prior.body != null && original.secondary != null) {
+      if (prior != null
+          && prior.body != null
+          && original.secondary != null
+          && !retainedConsultant) {
         var change =
             decode(frozen(prior).body(), com.fasterxml.jackson.databind.JsonNode.class)
                 .path("change");
@@ -374,7 +382,8 @@ public final class HumanAdminAccountMaintenance {
             || !Objects.equals(original.lastName, state.lastName())
             || !Objects.equals(original.email, state.email())) throw conflict();
         var roles = Set.copyOf(state.effectiveRoles());
-        if (original.secondary != null != roles.contains("consultant")) throw conflict();
+        if ((original.secondary != null && !retainedConsultant) != roles.contains("consultant"))
+          throw conflict();
         if ("AGENCY".equals(original.type)) {
           if (!roles.containsAll(Set.of("restricted-agency-admin", "user-admin"))
               || !Set.of(
@@ -386,7 +395,7 @@ public final class HumanAdminAccountMaintenance {
         } else {
           reviewedProtected.requireCurrent(selfKind(original), state.effectiveRoles());
         }
-        if (original.secondary != null)
+        if (original.secondary != null && !retainedConsultant)
           checked.role = reviewedGroups.administratorRemoval(state.effectiveRoles());
         var frozen = transport.freezeProfile(checked, checked.profile, operation, state.state());
         String body = encode(frozen);
@@ -444,7 +453,7 @@ public final class HumanAdminAccountMaintenance {
                         || !receipt.equals(found.receipt)) throw unavailable();
                     return found;
                   }));
-      if (original.secondary != null) {
+      if (original.secondary != null && !retainedConsultant) {
         var current = transport.read(checked);
         requireProjection(original, current);
         if (!Set.copyOf(checked.desiredRoles()).equals(Set.copyOf(current.effectiveRoles()))
@@ -483,6 +492,20 @@ public final class HumanAdminAccountMaintenance {
             consultantSnapshot(checked.actual.account, false),
             com.fasterxml.jackson.databind.JsonNode.class);
     if (!after.path("admin").isEmpty() || !after.path("admin_agency").isEmpty()) throw conflict();
+    if (checked.retainedConsultantRemoval != null && after.path("consultant").isEmpty()) {
+      for (String table :
+          List.of("consultant", "language", "consultant_topic", "consultant_agency"))
+        if (!after.path(table).isEmpty()) throw conflict();
+      if (TransactionSynchronizationManager.isActualTransactionActive())
+        checked.removal.requireCompletedRetainedConsultantPurge();
+      else
+        transaction(
+            () -> {
+              checked.removal.requireCompletedRetainedConsultantPurge();
+              return null;
+            });
+      return;
+    }
     for (String table : List.of("consultant", "language", "consultant_topic", "consultant_agency"))
       if (!before.path(table).equals(after.path(table))) throw conflict();
   }
@@ -501,7 +524,16 @@ public final class HumanAdminAccountMaintenance {
       requireRemovalPostcondition(checked);
       return checked.original;
     }
-    var current = authorizedRow(checked.actual.account, lock, false);
+    if (checked.retainedConsultantRemoval != null) {
+      String binding =
+          TransactionSynchronizationManager.isActualTransactionActive()
+              ? checked.removal.retainedConsultantRemovalBinding()
+              : transaction(checked.removal::retainedConsultantRemovalBinding);
+      if (!checked.retainedConsultantRemoval.equals(binding)) throw conflict();
+    }
+    var current =
+        authorizedRow(
+            checked.actual.account, lock, false, checked.retainedConsultantRemoval != null);
     if (!current.equals(checked.original)) throw conflict();
     return current;
   }
@@ -1441,7 +1473,10 @@ public final class HumanAdminAccountMaintenance {
     if (checked.removal != null) {
       TransactionSynchronizationManager.bindResource(checked.removal, checked.removal);
       try {
-        checked.removal.apply();
+        if (checked.retainedConsultantRemoval == null) checked.removal.apply();
+        else
+          checked.removal.applyRetainedConsultantAdministratorDeletion(
+              checked.retainedConsultantRemoval, frozen(found).body(), receipt);
       } finally {
         TransactionSynchronizationManager.unbindResource(checked.removal);
       }
@@ -1628,6 +1663,11 @@ public final class HumanAdminAccountMaintenance {
   }
 
   private AdminRow authorizedRow(String account, boolean lock, boolean self) {
+    return authorizedRow(account, lock, self, false);
+  }
+
+  private AdminRow authorizedRow(
+      String account, boolean lock, boolean self, boolean retainedRemoval) {
     if (self && !TransactionSynchronizationManager.isActualTransactionActive())
       return transaction(() -> authorizedRow(account, true, true));
     canonicalUuid(account);
@@ -1707,7 +1747,7 @@ public final class HumanAdminAccountMaintenance {
                 && authorities.contains(Authority.AuthorityValue.TENANT_ADMIN))) throw forbidden();
     var secondary = row.secondary;
     if (secondary != null
-        && (secondary.deleted != null
+        && (secondary.deleted != null && !retainedRemoval
             || !row.account.equals(secondary.account)
             || !Objects.equals(row.tenant, secondary.tenant)
             || !decodedUsername(row.username).equals(decodedUsername(secondary.username))))
@@ -2229,6 +2269,7 @@ public final class HumanAdminAccountMaintenance {
     private String tenantExpectedSql;
     private MatrixResult matrixResult;
     private boolean applied, terminalOnly;
+    private String retainedConsultantRemoval;
     private java.util.Map<String, StoredTerminal> terminals = java.util.Map.of();
     private ReviewedOrdinaryGroups.Transition role;
     private ReviewedProtectedProfiles.Transition protectedRole;
@@ -2371,13 +2412,18 @@ public final class HumanAdminAccountMaintenance {
       return removal != null;
     }
 
+    public String retainedConsultantRemovalBinding() {
+      requireCurrent();
+      return retainedConsultantRemoval;
+    }
+
     public boolean combinedAdministratorRemoval() {
-      return removal != null && original.secondary != null;
+      return removal != null && original.secondary != null && retainedConsultantRemoval == null;
     }
 
     public String profileCommand() {
       if (tenantEdit != null) return tenantProfileStep ? "profile" : "reassign-tenant";
-      if (removal != null) return original.secondary == null ? "delete" : "profile-transition";
+      if (removal != null) return combinedAdministratorRemoval() ? "profile-transition" : "delete";
       if (existingOrdinaryAssignment()) return "ordinary-profile";
       if (addition != null || grant != null) return "profile-transition";
       if (role != null) return "ordinary-profile";

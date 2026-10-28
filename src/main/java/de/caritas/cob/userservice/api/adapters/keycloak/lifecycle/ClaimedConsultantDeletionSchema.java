@@ -127,8 +127,11 @@ final class ClaimedConsultantDeletionSchema {
 
   static JsonNode envelope(JsonNode value) {
     keys(value, Set.of("representation", "originalSql", "body"));
-    if (!"CLAIMED_SCHEDULED_CONSULTANT_DELETE_V1".equals(value.path("representation").textValue()))
-      throw invalid();
+    boolean retained =
+        "CLAIMED_RETAINED_CONSULTANT_CLEANUP_V1".equals(value.path("representation").textValue());
+    if (!retained
+        && !"CLAIMED_SCHEDULED_CONSULTANT_DELETE_V1"
+            .equals(value.path("representation").textValue())) throw invalid();
     var original = value.path("originalSql");
     keys(
         original,
@@ -152,6 +155,39 @@ final class ClaimedConsultantDeletionSchema {
     if (!original.path("matrixUserId").isNull()) text(original.path("matrixUserId"), 255, true);
     if (!text(original.path("rowDigest"), 64, false).matches("[0-9a-f]{64}")) throw invalid();
     var body = value.path("body");
+    if (retained) {
+      keys(body, Set.of("operationId", "removalOperation", "removalBinding", "preservedAdmin"));
+      uuid(body.path("operationId"));
+      uuid(body.path("removalOperation"));
+      if (!text(body.path("removalBinding"), 64, false).matches("[0-9a-f]{64}")) throw invalid();
+      var admin = body.path("preservedAdmin");
+      keys(
+          admin,
+          Set.of(
+              "v",
+              "accountId",
+              "tenantId",
+              "type",
+              "username",
+              "createDate",
+              "rowDigest",
+              "relationCount",
+              "relationsDigest"));
+      if (!account.equals(uuid(admin.path("accountId")))
+          || !original.path("tenantId").equals(admin.path("tenantId"))) throw invalid();
+      timestamp(admin.path("createDate"));
+      tenant(admin.path("tenantId"));
+      if (!Set.of("AGENCY", "TENANT", "SUPER").contains(text(admin.path("type"), 6, false))
+          || !admin.path("v").canConvertToInt()
+          || admin.path("v").intValue() != 1
+          || !admin.path("relationCount").isIntegralNumber()
+          || !admin.path("relationCount").canConvertToLong()
+          || admin.path("relationCount").longValue() < 0) throw invalid();
+      text(admin.path("username"), 255, false);
+      for (String field : Set.of("rowDigest", "relationsDigest"))
+        if (!text(admin.path(field), 64, false).matches("[0-9a-f]{64}")) throw invalid();
+      return value;
+    }
     // A descriptor is data only. The private journal owner enforces PREPARED before using it.
     if (body.isNull()) return value;
     keys(body, Set.of("target", "operationId", "expectedState", "change"));

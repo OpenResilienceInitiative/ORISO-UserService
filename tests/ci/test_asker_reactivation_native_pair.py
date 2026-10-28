@@ -82,7 +82,7 @@ class AskerReactivationPairControls(unittest.TestCase):
         value = yaml.safe_load((ROOT / ".github/workflows/scenario-c-asker-reactivation-native-pair.yml").read_text())
         job = next(iter(value["jobs"].values())); self.assertEqual(30, job["timeout-minutes"]); self.assertNotIn("strategy", job)
         native = [s for s in job["steps"] if s.get("with", {}).get("repository") == "OpenResilienceInitiative/ORISO-Keycloak"]
-        self.assertEqual([proof.KC_COMMIT], [s["with"]["ref"] for s in native]); self.assertEqual("9b575dedb7eefaa509c023042ad534da6d1926cf", proof.KC_COMMIT)
+        self.assertEqual([proof.KC_COMMIT], [s["with"]["ref"] for s in native]); self.assertEqual("bf3d7f8809d829e33e930115221b122be8e8c287", proof.KC_COMMIT)
         actual = [s for s in job["steps"] if s.get("timeout-minutes") == 10]; self.assertEqual(1, len(actual)); self.assertEqual("github-ubuntu-24-amd64-v1", actual[0]["env"]["PROTECTED_PROOF_RESOURCE_PROFILE"])
         source = (ROOT / "scripts/ci/asker-reactivation-native-pair.py").read_text()
         for required in ["timeout=180", "OperationFixture.memoryStart()", "require_active(\"before-actual-reactivation-jpa\")", "check.get(\"sameActualEnabledMasterInstallerAndNativeSessionVerified\")", "no diagnostic"]:

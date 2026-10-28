@@ -400,7 +400,9 @@ public class AccountLifecycleCallerConfiguration {
       @Qualifier("keycloakRestTemplate") RestTemplate http,
       KeycloakConfig keycloak,
       jakarta.persistence.EntityManager entities,
-      de.caritas.cob.userservice.api.workflow.delete.service.DeleteUserAccountService deletion) {
+      de.caritas.cob.userservice.api.workflow.delete.service.DeleteUserAccountService deletion,
+      de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+          publicPreDeletion) {
     String publicServer = keycloak.getAuthServerUrl();
     String internalServer =
         environment.getProperty("ORISO_IDENTITY_INTERNAL_AUTH_SERVER_URL", publicServer);
@@ -423,6 +425,7 @@ public class AccountLifecycleCallerConfiguration {
             keycloak.getRealm(),
             required("KEYCLOAK_REALM_INTERNAL_ID"));
     maintenance.configureJpaCleanupOwner(entities);
+    maintenance.configureConsultantIdentityRemoval(publicPreDeletion);
     maintenance.configureAcknowledgedCleanup(deletion::continueAcknowledgedConsultantDeletion);
     return maintenance;
   }
@@ -443,6 +446,7 @@ public class AccountLifecycleCallerConfiguration {
           @Qualifier("keycloakRestTemplate") RestTemplate http,
           de.caritas.cob.userservice.api.port.in.IdentityManaging passwords,
           KeycloakConfig keycloak,
+          ReviewedMaintenanceProfiles profiles,
           de.caritas.cob.userservice.api.admin.service.agency
                   .ConsultantAgencyDeletionValidationService
               eligibility) {
@@ -473,6 +477,7 @@ public class AccountLifecycleCallerConfiguration {
             keycloak.getRealm(),
             required("KEYCLOAK_REALM_INTERNAL_ID"));
     owner.configureConsultantEligibility(eligibility);
+    owner.configureConsultantRemovalProfiles(groups, profiles.profiles());
     return owner;
   }
 

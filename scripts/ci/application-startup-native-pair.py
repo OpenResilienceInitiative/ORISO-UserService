@@ -17,7 +17,7 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[2]
-KC_COMMIT = '9b575dedb7eefaa509c023042ad534da6d1926cf'
+KC_COMMIT = 'bf3d7f8809d829e33e930115221b122be8e8c287'
 SUITE = 'de.caritas.cob.userservice.api.UserServiceStartupNativePairProof'
 CASE = 'actualServletApplicationReachesOnlyExpectedProductionStartupState'
 JAVA_SOURCE = 'src/test/java/' + SUITE.replace('.', '/') + '.java'

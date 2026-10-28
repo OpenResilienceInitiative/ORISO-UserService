@@ -56,6 +56,36 @@ public final class PublicPreDeletionMaintenance {
   private final @NonNull String realmName;
   private final @NonNull String realmId;
   private static final String NAMESPACE = "PRE_DELETION";
+  private Map<String, Set<String>> consultantRemovalGroups = Map.of();
+  private Map<
+          String,
+          List<
+              de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ReviewedMaintenanceProfiles
+                  .Profile>>
+      consultantRemovalProfiles = Map.of();
+
+  public void configureConsultantRemovalProfiles(
+      Map<String, Set<String>> groups,
+      Map<
+              String,
+              List<
+                  de.caritas.cob.userservice.api.adapters.keycloak.lifecycle
+                      .ReviewedMaintenanceProfiles.Profile>>
+          profiles) {
+    var immutable = new TreeMap<String, Set<String>>();
+    groups.forEach((name, roles) -> immutable.put(name, Set.copyOf(roles)));
+    if (new HashSet<>(immutable.values()).size() != immutable.size()) throw unavailable();
+    consultantRemovalGroups = Map.copyOf(immutable);
+    var selectors =
+        new TreeMap<
+            String,
+            List<
+                de.caritas.cob.userservice.api.adapters.keycloak.lifecycle
+                    .ReviewedMaintenanceProfiles.Profile>>();
+    profiles.forEach((kind, values) -> selectors.put(kind, List.copyOf(values)));
+    consultantRemovalProfiles = Map.copyOf(selectors);
+  }
+
   private de.caritas.cob.userservice.api.admin.service.agency
           .ConsultantAgencyDeletionValidationService
       consultantEligibility;
@@ -267,7 +297,7 @@ public final class PublicPreDeletionMaintenance {
       String result =
           kind.equals("SELF_ASKER")
               ? call(intent, "deactivate/outcome", null)
-              : call(intent, "deactivate", current);
+              : call(intent, command(intent), current);
       verifySameResult(intent, result);
       return;
     }
@@ -281,7 +311,7 @@ public final class PublicPreDeletionMaintenance {
           validateCurrentPassword(source.path("originalSql"), password);
       }
       String read = call(intent, "read", current);
-      String state = projection(intent, read);
+      NativePreparation state = projection(intent, read);
       Intent original = intent;
       intent = tx(() -> freeze(original, state));
       frozenInThisCall = true;
@@ -292,9 +322,9 @@ public final class PublicPreDeletionMaintenance {
         response = frozenInThisCall ? null : savedOutcome(intent);
         if (response == null) {
           requireOriginalDeadline(source(intent));
-          response = call(intent, "deactivate", current);
+          response = call(intent, command(intent), current);
         }
-      } else response = call(intent, "deactivate", current);
+      } else response = call(intent, command(intent), current);
       String verified = verify(intent, response);
       Intent original = intent;
       intent = tx(() -> acknowledge(original, verified));
@@ -305,7 +335,7 @@ public final class PublicPreDeletionMaintenance {
       String result =
           kind.equals("SELF_ASKER")
               ? call(intent, "deactivate/outcome", null)
-              : call(intent, "deactivate", current);
+              : call(intent, command(intent), current);
       verifySameResult(intent, result);
     }
     var frame = new AcknowledgedPreDeletion(this, intent);
@@ -552,12 +582,13 @@ public final class PublicPreDeletionMaintenance {
               }
             } else action.run();
             entities.flush();
+            requireAdministratorPreserved(intent);
             var after = snapshot(intent, true);
             if (complete) {
               requirePostState(before, after, consultant);
               if (jdbc.update(
                       "update identity_account_operation_intent set status='APPLIED',domain_applied=true,applied_json=?,updated_at=? where operation_id=? and operation_kind=? and status='ACKNOWLEDGED' and intent_body=? and receipt=?",
-                      codec.canonical(after.core()),
+                      completedSql(intent, after),
                       now(),
                       intent.operation,
                       NAMESPACE,
@@ -656,6 +687,20 @@ public final class PublicPreDeletionMaintenance {
     value.put("humanValidUntil", current.expires);
     value.set("forceDeleteSessions", codec.read(codec.canonical(force), JsonNode.class));
     value.set("originalSql", actual.core());
+    if (kind.equals("ADMIN_CONSULTANT")) {
+      var preserved = AdministratorPreservation.capture(jdbc, codec, account, true);
+      if (preserved != null) {
+        requireRemovalCatalogue(preserved);
+        if (!preserved.path("tenantId").equals(actual.core().path("tenantId"))
+            || !new UsernameTranscoder()
+                .decodeUsername(preserved.path("username").asText())
+                .equals(
+                    new UsernameTranscoder()
+                        .decodeUsername(actual.core().path("username").asText())))
+          throw forbidden();
+        value.set("preservedAdmin", preserved);
+      }
+    }
     value.set("target", target);
     value.put("requestDigest", digest);
     value.put("realmId", realmId);
@@ -787,14 +832,14 @@ public final class PublicPreDeletionMaintenance {
       throw conflict();
   }
 
-  private Intent freeze(Intent original, String state) {
+  private Intent freeze(Intent original, NativePreparation state) {
     Intent found = checked(original);
     if (!"PREPARED".equals(found.status) || found.body != null) throw conflict();
     var body = codec.read("{}", ObjectNode.class);
     body.set("target", codec.read(found.target, JsonNode.class));
     body.put("operationId", found.operation);
-    body.put("expectedState", state);
-    body.putObject("change");
+    body.put("expectedState", state.state());
+    body.set("change", codec.read(codec.canonical(state.change()), JsonNode.class));
     if (jdbc.update(
             "update identity_account_operation_intent set intent_body=?,status='FROZEN',updated_at=? where operation_id=? and operation_kind=? and status='PREPARED' and intent_body is null",
             codec.canonical(body),
@@ -834,6 +879,7 @@ public final class PublicPreDeletionMaintenance {
     var data = source(original);
     boolean consultant = data.path("kind").asText().equals("ADMIN_CONSULTANT");
     exclusive(original.account, consultant);
+    requireAdministratorPreserved(original);
     var actual = PreDeletionSqlSnapshot.capture(jdbc, codec, consultant, original.account, true);
     Intent found = find(original.operation, true);
     if (found == null
@@ -842,9 +888,7 @@ public final class PublicPreDeletionMaintenance {
         || !original.digest.equals(found.digest)
         || original.body != null && !original.body.equals(found.body)) throw conflict();
     JsonNode expected =
-        "APPLIED".equals(found.status)
-            ? codec.read(found.applied, JsonNode.class)
-            : data.path("originalSql");
+        "APPLIED".equals(found.status) ? appliedCore(found) : data.path("originalSql");
     if (!PreDeletionSqlSnapshot.requireCore(expected).equals(actual.core())) throw conflict();
     if (Set.of("ACKNOWLEDGED", "APPLIED").contains(found.status)) verify(found, found.receipt);
     if ("ACKNOWLEDGED".equals(found.status)) {
@@ -852,6 +896,362 @@ public final class PublicPreDeletionMaintenance {
       else if (found.applied != null) throw conflict();
     }
     return found;
+  }
+
+  private String completedSql(Intent intent, PreDeletionSqlSnapshot.Snapshot after) {
+    if (!source(intent).has("preservedAdmin")) return codec.canonical(after.core());
+    var value =
+        codec.read(
+            codec.canonical(
+                Map.of(
+                    "representation",
+                    "CONSULTANT_IDENTITY_REMOVED_V1",
+                    "operationId",
+                    intent.operation,
+                    "binding",
+                    relatedBinding(intent),
+                    "consultant",
+                    after.core(),
+                    "deleteDate",
+                    after.full().path("delete_date"))),
+            ObjectNode.class);
+    value.put("mac", codec.digest("public-pre-deletion-source/v1", value));
+    return codec.canonical(value);
+  }
+
+  private JsonNode completedRemoval(Intent intent) {
+    if (!"APPLIED".equals(intent.status) || !source(intent).has("preservedAdmin"))
+      throw unavailable();
+    var value = codec.read(intent.applied, ObjectNode.class);
+    JsonNode administratorDeletion = value.remove("administratorDeletion");
+    var fields = new HashSet<String>();
+    value.fieldNames().forEachRemaining(fields::add);
+    if (!fields.equals(
+            Set.of("representation", "operationId", "binding", "consultant", "deleteDate", "mac"))
+        || !"CONSULTANT_IDENTITY_REMOVED_V1".equals(value.path("representation").asText())
+        || !intent.operation.equals(value.path("operationId").asText())
+        || !relatedBinding(intent).equals(value.path("binding"))
+        || !value.path("deleteDate").isTextual()
+        || Instant.parse(value.path("deleteDate").asText()).getEpochSecond() <= 0)
+      throw unavailable();
+    String mac = value.remove("mac").asText();
+    if (!mac.equals(codec.digest("public-pre-deletion-source/v1", value))) throw unavailable();
+    value.put("mac", mac);
+    if (administratorDeletion != null) {
+      requireAdministratorDeletion(intent, mac, administratorDeletion);
+      value.set("administratorDeletion", administratorDeletion);
+    }
+    var original = source(intent).path("originalSql");
+    var result = PreDeletionSqlSnapshot.requireCore(value.path("consultant"));
+    for (String field :
+        Set.of("kind", "accountId", "tenantId", "createDate", "username", "matrixUserId"))
+      if (!original.path(field).equals(result.path(field))) throw unavailable();
+    if (!intent.receipt.equals(verify(intent, intent.receipt))) throw unavailable();
+    return value;
+  }
+
+  private void requireAdministratorDeletion(Intent original, String binding, JsonNode value) {
+    var data = value.deepCopy();
+    var fields = new HashSet<String>();
+    data.fieldNames().forEachRemaining(fields::add);
+    if (!fields.equals(
+            Set.of("representation", "removalBinding", "administrator", "body", "receipt", "mac"))
+        || !"SUBSEQUENT_ADMINISTRATOR_DELETION_V1".equals(data.path("representation").asText())
+        || !binding.equals(data.path("removalBinding").asText())
+        || !source(original).path("preservedAdmin").equals(data.path("administrator")))
+      throw unavailable();
+    String mac = ((ObjectNode) data).remove("mac").asText();
+    if (!mac.equals(codec.digest("public-pre-deletion-source/v1", data))) throw unavailable();
+    var body = data.path("body");
+    if (!original.account.equals(body.path("target").path("accountId").asText())
+        || !source(original)
+            .path("target")
+            .path("tenantId")
+            .equals(body.path("target").path("tenantId"))
+        || !"HUMAN_ADMIN".equals(body.path("target").path("origin").path("kind").asText())
+        || original.account.equals(body.path("target").path("origin").path("humanSubject").asText())
+        || !body.path("change").isObject()
+        || !body.path("change").isEmpty()) throw unavailable();
+    if (!data.path("receipt")
+        .asText()
+        .equals(
+            codec.verifyMaintenanceDeleteReceipt(
+                data.path("receipt").asText(), realmId, actor(), body))) throw unavailable();
+  }
+
+  public String retainedConsultantRemovalBinding(
+      de.caritas.cob.userservice.api.admin.service.admin.delete.DeleteAdminService.ScopedRemoval
+          removal) {
+    removal.requireActive();
+    removal.requireJpaOwner(entities.getEntityManagerFactory());
+    var completed = completedConsultantRemoval(removal.accountId());
+    if (completed == null) throw unavailable();
+    if (jdbc.queryForObject(
+            "select count(*) from consultant where consultant_id=?",
+            Long.class,
+            removal.accountId())
+        == 0L) {
+      requireCompletedRetainedConsultantPurge(removal, completed);
+    } else {
+      completed.requireRetainedConsultant(false);
+      completed.captureAdministrator();
+    }
+    return completed.binding();
+  }
+
+  public void requireCompletedRetainedConsultantPurge(
+      de.caritas.cob.userservice.api.admin.service.admin.delete.DeleteAdminService.ScopedRemoval
+          removal) {
+    removal.requireActive();
+    removal.requireJpaOwner(entities.getEntityManagerFactory());
+    var completed = completedConsultantRemoval(removal.accountId());
+    if (completed == null) throw unavailable();
+    requireCompletedRetainedConsultantPurge(removal, completed);
+  }
+
+  private void requireCompletedRetainedConsultantPurge(
+      de.caritas.cob.userservice.api.admin.service.admin.delete.DeleteAdminService.ScopedRemoval
+          removal,
+      CompletedConsultantRemoval completed) {
+    if (!completed.applied.has("administratorDeletion")) throw unavailable();
+    var subsequent = completed.applied.path("administratorDeletion");
+    requireAdministratorDeletion(completed.original, completed.binding(), subsequent);
+    if (!subsequent
+        .path("body")
+        .path("operationId")
+        .asText()
+        .equals(request.getHeader("Idempotency-Key"))) throw unavailable();
+    for (String table : Set.of("consultant", "language", "consultant_topic", "consultant_agency"))
+      if (jdbc.queryForObject(
+              "select count(*) from " + table + " where consultant_id=?",
+              Long.class,
+              removal.accountId())
+          != 0L) throw unavailable();
+    if (AdministratorPreservation.capture(jdbc, codec, removal.accountId(), true) != null
+        || jdbc.queryForObject(
+                "select count(*) from admin_agency where admin_id=?",
+                Long.class,
+                removal.accountId())
+            != 0L) throw unavailable();
+    var rows =
+        jdbc.queryForList(
+            "select * from identity_maintenance_intent where subject_type='CONSULTANT' and subject_id=? for update",
+            removal.accountId());
+    if (rows.size() != 1) throw unavailable();
+    var row = rows.getFirst();
+    if (!"APPLIED".equals(row.get("status"))
+        || !realmId.equals(row.get("realm_id"))
+        || !realmName.equals(row.get("realm_name"))
+        || !completed.original.ownerClient.equals(row.get("owner_client"))
+        || !completed.original.ownerSubject.equals(row.get("owner_subject"))
+        || !Objects.equals(
+            completed.original.tenant,
+            row.get("tenant_id") == null ? null : ((Number) row.get("tenant_id")).longValue())
+        || !completed.receipt().equals(row.get("receipt_json"))
+        || row.get("expected_state") != null) throw unavailable();
+    String raw = (String) row.get("frozen_body");
+    var envelope = codec.read(raw, ObjectNode.class);
+    var fields = new HashSet<String>();
+    envelope.fieldNames().forEachRemaining(fields::add);
+    if (!fields.equals(Set.of("representation", "originalSql", "body", "bindingDigest"))
+        || !raw.equals(codec.canonical(envelope))) throw unavailable();
+    String mac = envelope.remove("bindingDigest").asText();
+    if (!mac.equals(codec.claimedScheduledConsultantDeletionIntentDigest(envelope))
+        || !"CLAIMED_RETAINED_CONSULTANT_CLEANUP_V1"
+            .equals(envelope.path("representation").asText())) throw unavailable();
+    var local = envelope.path("originalSql");
+    var body = envelope.path("body");
+    if (!removal.accountId().equals(local.path("consultantId").asText())
+        || !completed.applied.path("deleteDate").equals(local.path("deleteDate"))
+        || !completed
+            .applied
+            .path("deleteDate")
+            .asText()
+            .equals(
+                ((java.sql.Timestamp) row.get("deletion_started_at"))
+                    .toLocalDateTime()
+                    .toInstant(java.time.ZoneOffset.UTC)
+                    .toString())
+        || !completed.operation().equals(body.path("removalOperation").asText())
+        || !completed.binding().equals(body.path("removalBinding").asText())
+        || !row.get("operation_id").equals(body.path("operationId").asText())
+        || !AdministratorPreservation.sameBirth(
+            completed.preservedAdministrator(), body.path("preservedAdmin"))) throw unavailable();
+    for (String field : Set.of("tenantId", "createDate", "username", "matrixUserId"))
+      if (!completed.applied.path("consultant").path(field).equals(local.path(field)))
+        throw unavailable();
+  }
+
+  /** Called only inside the actual private Administrator producer's verified DELETED callback. */
+  public void recordSubsequentAdministratorDeletion(
+      de.caritas.cob.userservice.api.admin.service.admin.delete.DeleteAdminService.ScopedRemoval
+          removal,
+      String binding,
+      String nativeBody,
+      String receipt) {
+    removal.requireActive();
+    removal.requireJpaOwner(entities.getEntityManagerFactory());
+    if (TransactionSynchronizationManager.getResource(removal) != removal
+        || !entities.isJoinedToTransaction()) throw unavailable();
+    var completed = completedConsultantRemoval(removal.accountId());
+    if (completed == null || !completed.binding().equals(binding)) throw unavailable();
+    completed.requireRetainedConsultant(false);
+    if (AdministratorPreservation.capture(jdbc, codec, removal.accountId(), true) != null
+        || jdbc.queryForObject(
+                "select count(*) from admin_agency where admin_id=?",
+                Long.class,
+                removal.accountId())
+            != 0L) throw unavailable();
+    var value =
+        codec.read(
+            codec.canonical(
+                Map.of(
+                    "representation",
+                    "SUBSEQUENT_ADMINISTRATOR_DELETION_V1",
+                    "removalBinding",
+                    binding,
+                    "administrator",
+                    completed.preservedAdministrator(),
+                    "body",
+                    codec.read(nativeBody, JsonNode.class),
+                    "receipt",
+                    receipt)),
+            ObjectNode.class);
+    value.put("mac", codec.digest("public-pre-deletion-source/v1", value));
+    requireAdministratorDeletion(completed.original, binding, value);
+    var applied = codec.read(completed.original.applied, ObjectNode.class);
+    if (applied.has("administratorDeletion")) {
+      if (!applied.path("administratorDeletion").equals(value)) throw unavailable();
+      return;
+    }
+    applied.set("administratorDeletion", value);
+    if (jdbc.update(
+            "update identity_account_operation_intent set applied_json=? where operation_id=? and operation_kind=? and status='APPLIED' and applied_json=?",
+            codec.canonical(applied),
+            completed.operation(),
+            NAMESPACE,
+            completed.original.applied)
+        != 1) throw unavailable();
+  }
+
+  private JsonNode appliedCore(Intent intent) {
+    return source(intent).has("preservedAdmin")
+        ? completedRemoval(intent).path("consultant")
+        : codec.read(intent.applied, JsonNode.class);
+  }
+
+  /**
+   * Fixed retained-Consultant proof only. It confers no authority over the remaining native Admin.
+   */
+  static final class CompletedConsultantRemoval {
+    private final PublicPreDeletionMaintenance owner;
+    private final Intent original;
+    private final JsonNode applied;
+
+    private CompletedConsultantRemoval(
+        PublicPreDeletionMaintenance owner, Intent original, JsonNode applied) {
+      this.owner = owner;
+      this.original = original;
+      this.applied = applied;
+    }
+
+    String operation() {
+      return original.operation;
+    }
+
+    String binding() {
+      return applied.path("mac").asText();
+    }
+
+    String receipt() {
+      return original.receipt;
+    }
+
+    JsonNode preservedAdministrator() {
+      return sourceAdministrator();
+    }
+
+    private JsonNode sourceAdministrator() {
+      return owner.source(original).path("preservedAdmin");
+    }
+
+    JsonNode captureAdministrator() {
+      var current =
+          AdministratorPreservation.capture(owner.jdbc, owner.codec, original.account, true);
+      if (current == null) {
+        if (!applied.has("administratorDeletion")) throw unavailable();
+        owner.requireAdministratorDeletion(
+            original, binding(), applied.path("administratorDeletion"));
+        return sourceAdministrator();
+      }
+      if (applied.has("administratorDeletion")
+          || !AdministratorPreservation.sameBirth(sourceAdministrator(), current))
+        throw unavailable();
+      return current;
+    }
+
+    void requireAdministratorPreserved(JsonNode captured) {
+      var current = captureAdministrator();
+      if (applied.has("administratorDeletion")) {
+        if (!AdministratorPreservation.sameBirth(captured, current)) throw unavailable();
+      } else if (!captured.equals(current)) throw unavailable();
+    }
+
+    void requireRetainedConsultant(boolean mayBeAbsent) {
+      if (!TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
+      Intent actual = owner.find(original.operation, true);
+      if (actual == null
+          || !original.source.equals(actual.source)
+          || !original.body.equals(actual.body)
+          || !original.receipt.equals(actual.receipt)
+          || !applied.equals(owner.completedRemoval(actual))) throw unavailable();
+      var rows =
+          owner.jdbc.queryForList(
+              "select consultant_id,tenant_id,create_date,delete_date,username from consultant where consultant_id=? for update",
+              original.account);
+      if (rows.isEmpty() && mayBeAbsent) return;
+      if (rows.size() != 1) throw unavailable();
+      var row = rows.getFirst();
+      var core = applied.path("consultant");
+      if (!original.account.equals(row.get("consultant_id"))
+          || !Objects.equals(
+              original.tenant,
+              row.get("tenant_id") == null ? null : ((Number) row.get("tenant_id")).longValue())
+          || !core.path("username").asText().equals(row.get("username"))
+          || !core.path("createDate")
+              .asText()
+              .equals(
+                  ((java.sql.Timestamp) row.get("create_date"))
+                      .toLocalDateTime()
+                      .toInstant(java.time.ZoneOffset.UTC)
+                      .toString())
+          || row.get("delete_date") == null
+          || !applied
+              .path("deleteDate")
+              .asText()
+              .equals(
+                  ((java.sql.Timestamp) row.get("delete_date"))
+                      .toLocalDateTime()
+                      .toInstant(java.time.ZoneOffset.UTC)
+                      .toString())) throw unavailable();
+    }
+  }
+
+  CompletedConsultantRemoval completedConsultantRemoval(String account) {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
+    CompletedConsultantRemoval result = null;
+    for (String operation :
+        jdbc.queryForList(
+            "select operation_id from identity_account_operation_intent where operation_kind=? and account_id=? and status='APPLIED' order by operation_id for update",
+            String.class,
+            NAMESPACE,
+            account)) {
+      Intent intent = find(operation, true);
+      if (!source(intent).has("preservedAdmin")) continue;
+      if (result != null) throw unavailable();
+      result = new CompletedConsultantRemoval(this, intent, completedRemoval(intent));
+    }
+    return result;
   }
 
   private JsonNode relatedBinding(Intent intent) {
@@ -932,6 +1332,14 @@ public final class PublicPreDeletionMaintenance {
     boolean preflightRefused = "PREFLIGHT_REFUSED".equals(intent.status);
     var sourceFields = new HashSet<>(SOURCE);
     if (preflightRefused) sourceFields.add("preflightRefusal");
+    if (value.has("preservedAdmin")) {
+      sourceFields.add("preservedAdmin");
+      var preserved = AdministratorPreservation.require(value.path("preservedAdmin"));
+      if (!"ADMIN_CONSULTANT".equals(value.path("kind").asText())
+          || !intent.account.equals(preserved.path("accountId").asText())
+          || !value.path("originalSql").path("tenantId").equals(preserved.path("tenantId")))
+        throw unavailable();
+    }
     if (!fields.equals(sourceFields)
         || preflightRefused
             && (!"ADMIN_CONSULTANT".equals(value.path("kind").textValue())
@@ -1029,8 +1437,7 @@ public final class PublicPreDeletionMaintenance {
           || !intent.operation.equals(body.path("operationId").textValue())
           || !body.path("expectedState").isTextual()
           || !body.path("expectedState").asText().matches("[0-9a-f]{64}")
-          || !body.path("change").isObject()
-          || !body.path("change").isEmpty()
+          || !validPreDeletionChange(value, body.path("change"))
           || "FROZEN".equals(intent.status) && intent.receipt != null
           || !"FROZEN".equals(intent.status) && intent.receipt == null) throw unavailable();
     }
@@ -1090,8 +1497,9 @@ public final class PublicPreDeletionMaintenance {
   }
 
   private void exclusive(String account, boolean consultant) {
-    if (!jdbc.queryForList("select admin_id from admin where admin_id=? for update", account)
-            .isEmpty()
+    if (!consultant
+            && !jdbc.queryForList("select admin_id from admin where admin_id=? for update", account)
+                .isEmpty()
         || !jdbc.queryForList(
                 consultant
                     ? "select user_id from user where user_id=? for update"
@@ -1176,7 +1584,9 @@ public final class PublicPreDeletionMaintenance {
             : "PROTECTED_ACCOUNT_OPERATIONS_V1");
   }
 
-  private String projection(Intent intent, String raw) {
+  private record NativePreparation(String state, Map<String, Object> change) {}
+
+  private NativePreparation projection(Intent intent, String raw) {
     var node = codec.read(raw, JsonNode.class);
     var fields = new HashSet<String>();
     node.fieldNames().forEachRemaining(fields::add);
@@ -1227,13 +1637,105 @@ public final class PublicPreDeletionMaintenance {
           || !roles.add(role.asText())) throw forbidden();
     }
     boolean consultant = source(intent).path("kind").asText().equals("ADMIN_CONSULTANT");
-    if (!(consultant
+    Map<String, Object> change = Map.of();
+    if (source(intent).has("preservedAdmin")) {
+      change = consultantRemovalChange(source(intent).path("preservedAdmin"), roles);
+    } else if (!(consultant
         ? roles.equals(Set.of("consultant"))
             || roles.equals(Set.of("consultant", "group-chat-consultant"))
         : roles.equals(Set.of("user")))) throw forbidden();
     for (String field : List.of("enabled", "emailVerified", "passwordChangeRequired"))
       if (!node.path(field).isBoolean()) throw unavailable();
-    return node.path("state").textValue();
+    return new NativePreparation(node.path("state").textValue(), change);
+  }
+
+  private String command(Intent intent) {
+    return source(intent).has("preservedAdmin") ? "profile-transition" : "deactivate";
+  }
+
+  private void requireAdministratorPreserved(Intent intent) {
+    var source = source(intent);
+    if (!"ADMIN_CONSULTANT".equals(source.path("kind").asText())) return;
+    var actual = AdministratorPreservation.capture(jdbc, codec, intent.account, true);
+    if (source.has("preservedAdmin")
+        ? !source.path("preservedAdmin").equals(actual)
+        : actual != null) throw conflict();
+  }
+
+  private String protectedFamily(JsonNode preserved) {
+    return switch (preserved.path("type").asText()) {
+      case "TENANT" -> "TENANT_ADMIN";
+      case "SUPER" -> "PLATFORM_ADMIN";
+      default -> throw forbidden();
+    };
+  }
+
+  private void requireRemovalCatalogue(JsonNode preserved) {
+    if (preserved.path("type").asText().equals("AGENCY")) {
+      if (consultantRemovalGroups.isEmpty()) throw forbidden();
+    } else if (consultantRemovalProfiles
+        .getOrDefault(protectedFamily(preserved), List.of())
+        .isEmpty()) throw forbidden();
+  }
+
+  private Map<String, Object> consultantRemovalChange(JsonNode preserved, Set<String> current) {
+    requireRemovalCatalogue(preserved);
+    if (!current.contains("consultant")) throw forbidden();
+    var desired = new TreeSet<>(current);
+    desired.remove("consultant");
+    desired.remove("group-chat-consultant");
+    if (preserved.path("type").asText().equals("AGENCY")) {
+      if (!desired.contains("restricted-agency-admin")
+          || consultantRemovalGroups.values().stream().filter(current::equals).count() != 1)
+        throw forbidden();
+      var groups =
+          consultantRemovalGroups.entrySet().stream()
+              .filter(e -> e.getValue().equals(desired))
+              .toList();
+      if (groups.size() != 1) throw forbidden();
+      return Map.of(
+          "transition", "REMOVE_CONSULTANT_IDENTITY", "group", groups.getFirst().getKey());
+    }
+    var profiles = consultantRemovalProfiles.get(protectedFamily(preserved));
+    if (profiles.stream().filter(p -> p.realmRoles().equals(current)).count() != 1)
+      throw forbidden();
+    var next = profiles.stream().filter(p -> p.realmRoles().equals(desired)).toList();
+    if (next.size() != 1) throw forbidden();
+    return Map.of(
+        "transition",
+        "REMOVE_CONSULTANT_IDENTITY",
+        "profileId",
+        next.getFirst().id(),
+        "profileVersion",
+        next.getFirst().version());
+  }
+
+  private boolean validPreDeletionChange(JsonNode source, JsonNode change) {
+    if (!change.isObject()) return false;
+    if (!source.has("preservedAdmin")) return change.isEmpty();
+    var fields = new HashSet<String>();
+    change.fieldNames().forEachRemaining(fields::add);
+    if (!"REMOVE_CONSULTANT_IDENTITY".equals(change.path("transition").asText())) return false;
+    var preserved = source.path("preservedAdmin");
+    if ("AGENCY".equals(preserved.path("type").asText())) {
+      var roles = consultantRemovalGroups.get(change.path("group").asText());
+      return fields.equals(Set.of("transition", "group"))
+          && roles != null
+          && roles.contains("restricted-agency-admin")
+          && !roles.contains("consultant")
+          && !roles.contains("group-chat-consultant");
+    }
+    return fields.equals(Set.of("transition", "profileId", "profileVersion"))
+        && change.path("profileVersion").isIntegralNumber()
+        && consultantRemovalProfiles.getOrDefault(protectedFamily(preserved), List.of()).stream()
+                .filter(
+                    p ->
+                        p.id().equals(change.path("profileId").asText())
+                            && p.version() == change.path("profileVersion").longValue()
+                            && !p.realmRoles().contains("consultant")
+                            && !p.realmRoles().contains("group-chat-consultant"))
+                .count()
+            == 1;
   }
 
   private String savedOutcome(Intent intent) {
@@ -1311,7 +1813,7 @@ public final class PublicPreDeletionMaintenance {
     } catch (HttpStatusCodeException refused) {
       if (command.equals("deactivate/outcome") && refused.getStatusCode().value() == 409)
         throw new UnknownOutcome();
-      if (command.equals("deactivate")
+      if (command.equals(command(intent))
           && Set.of(403, 409).contains(refused.getStatusCode().value())) {
         try {
           var terminal =
@@ -1320,7 +1822,7 @@ public final class PublicPreDeletionMaintenance {
                   realmId,
                   actor,
                   codec.read(body, JsonNode.class),
-                  "deactivate");
+                  command);
           if (terminal.status() != refused.getStatusCode().value()
               || refused.getResponseHeaders() == null
               || !"no-store".equals(refused.getResponseHeaders().getCacheControl()))
@@ -1361,8 +1863,11 @@ public final class PublicPreDeletionMaintenance {
 
   private String verify(Intent intent, String response) {
     try {
-      return codec.verifyMaintenancePreDeletionReceipt(
-          response, realmId, actor(), codec.read(intent.body, JsonNode.class));
+      return source(intent).has("preservedAdmin")
+          ? codec.verifyMaintenanceProfileTransitionReceipt(
+              response, realmId, actor(), codec.read(intent.body, JsonNode.class))
+          : codec.verifyMaintenancePreDeletionReceipt(
+              response, realmId, actor(), codec.read(intent.body, JsonNode.class));
     } catch (RuntimeException invalid) {
       throw unavailable();
     }
@@ -1376,7 +1881,11 @@ public final class PublicPreDeletionMaintenance {
     if (intent == null || !"REFUSED".equals(intent.status)) throw unavailable();
     var result =
         codec.verifyMaintenanceNoEffectReceipt(
-            intent.receipt, realmId, actor, codec.read(intent.body, JsonNode.class), "deactivate");
+            intent.receipt,
+            realmId,
+            actor,
+            codec.read(intent.body, JsonNode.class),
+            command(intent));
     return result.status() == 403
         ? new VerifiedForbidden(UUID.fromString(intent.operation))
         : new VerifiedConflict(UUID.fromString(intent.operation));
