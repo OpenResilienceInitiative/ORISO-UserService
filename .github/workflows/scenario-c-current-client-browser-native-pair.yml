@@ -32,7 +32,7 @@ jobs:
       STARTUP_CURRENT_CLIENT_BROWSER: 'true'
       STARTUP_BROWSER_ADMIN_ROOT: ${{ github.workspace }}/current-admin
       STARTUP_BROWSER_FRONTEND_ROOT: ${{ github.workspace }}/current-frontend
-      STARTUP_BROWSER_ADMIN_REF: 654b561884258663532e127245c8c2e99cc2a42d
+      STARTUP_BROWSER_ADMIN_REF: 8cbfd256f16cb7c20f92885651b9ccd994ac6794
       STARTUP_BROWSER_FRONTEND_REF: 514820c515cd0ea1a3219274664ccf70f4eef9af
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -50,7 +50,7 @@ jobs:
       uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
       with:
         repository: OpenResilienceInitiative/ORISO-Admin
-        ref: 654b561884258663532e127245c8c2e99cc2a42d
+        ref: 8cbfd256f16cb7c20f92885651b9ccd994ac6794
         path: current-admin
         persist-credentials: false
     - name: Checkout exact current Frontend client without stored credentials
