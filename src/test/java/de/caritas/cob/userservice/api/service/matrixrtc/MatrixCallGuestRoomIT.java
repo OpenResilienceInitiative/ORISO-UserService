@@ -326,6 +326,61 @@ class MatrixCallGuestRoomIT {
         .satisfies(row -> assertThat(row.getRevokedAt()).isNotNull());
   }
 
+  /** Security finding 3: rooms that keep failing must not starve a later room of the sweep. */
+  @Test
+  void failingRoomsMoveToTheBackSoALaterRoomIsStillSwept() {
+    long now = System.currentTimeMillis();
+    String late = "!zz-late-media:example";
+    transaction.executeWithoutResult(
+        status -> {
+          for (int i = 0; i < 101; i++) endedCallWithGuest(String.format("!a%03d:example", i), now);
+          endedCallWithGuest(late, now);
+        });
+    when(matrix.getRoomMembership(anyString(), eq(GUEST), eq("counsellor-token")))
+        .thenAnswer(call -> Optional.of(late.equals(call.getArgument(0)) ? "leave" : "invite"));
+
+    callReconciler.reconcileMediaRooms();
+    callReconciler.reconcileMediaRooms();
+
+    var rows = guests.findAll();
+    assertThat(rows).hasSize(102);
+    var lateBinding = bindings.findByMediaRoomId(late).orElseThrow();
+    assertThat(rows)
+        .filteredOn(row -> row.getBindingId().equals(lateBinding.getId()))
+        .singleElement()
+        .satisfies(row -> assertThat(row.getRevokedAt()).isNotNull());
+    assertThat(rows)
+        .filteredOn(row -> row.getRevokedAt() == null)
+        .hasSize(101)
+        .allSatisfy(row -> assertThat(row.getRevokeAttempts()).isPositive());
+  }
+
+  private void endedCallWithGuest(String media, long now) {
+    var binding =
+        bindings.save(
+            MatrixCallBinding.builder()
+                .sourceRoomId(SOURCE)
+                .callId("ended-" + media)
+                .mediaRoomId(media)
+                .callerMatrixId(counsellorMatrixId)
+                .sessionId(sessionId)
+                .tenantId(7L)
+                .invitedAt(now - 5000)
+                .inviteExpiresAt(now - 4000)
+                .startedAt(now - 4000)
+                .endedAt(now - 1000)
+                .mediaObservedAt(now - 4000)
+                .video(true)
+                .build());
+    guests.save(
+        de.caritas.cob.userservice.api.model.MatrixCallGuest.builder()
+            .bindingId(binding.getId())
+            .matrixUserId(GUEST)
+            .admittedByMatrixId(counsellorMatrixId)
+            .admittedAt(now - 3000)
+            .build());
+  }
+
   private Map<String, Object> leave() {
     return Map.of(
         "type",

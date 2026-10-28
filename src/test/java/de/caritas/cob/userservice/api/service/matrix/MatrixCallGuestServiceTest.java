@@ -218,6 +218,27 @@ class MatrixCallGuestServiceTest {
     assertThat(guest.getRevokedAt()).as("invite retracted").isNotNull();
   }
 
+  /** Security finding 3: a removal that keeps failing is counted and raised at ERROR. */
+  @Test
+  void repeatedRemovalFailureIsCountedAndLoggedAtErrorPastTheThreshold() {
+    var guest = guest();
+    when(guests.findByBindingIdAndRevokedAtIsNull(binding.getId())).thenReturn(List.of(guest));
+    when(matrix.getRoomMembership(MEDIA, GUEST, "counsellor-token"))
+        .thenReturn(Optional.of("invite"));
+
+    try (var logs = de.caritas.cob.userservice.testutils.LogbackCaptor.forClass(MatrixCallGuestService.class)) {
+      for (int attempt = 1; attempt <= MatrixCallGuestService.REVOKE_ALERT_THRESHOLD; attempt++) {
+        service.revokeOutstanding(binding(5000L));
+      }
+      assertThat(guest.getRevokeAttempts()).isEqualTo(MatrixCallGuestService.REVOKE_ALERT_THRESHOLD);
+      assertThat(guest.getLastRevokeAttemptAt()).isNotNull();
+      assertThat(guest.getRevokedAt()).isNull();
+      assertThat(logs.messages(ch.qos.logback.classic.Level.ERROR))
+          .singleElement()
+          .satisfies(message -> assertThat(message).contains("CALL_GUEST_REVOCATION_STUCK"));
+    }
+  }
+
   @Test
   void runningCallRevokesNothing() {
     service.revokeOutstanding(binding);
