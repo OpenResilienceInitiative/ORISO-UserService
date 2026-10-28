@@ -507,6 +507,33 @@ class GrantConsultantIdentityScopedJpaTest {
   }
 
   @Test
+  void installedGrantReadinessRequiresItsActualMatrixNameAndJpaOwnerWithoutEffects() {
+    server.reset(); // Readiness must not request the token expected by mutation fixtures.
+    var mode =
+        (de.caritas.cob.userservice.api.port.out.IdentityClientConfig)
+            ReflectionTestUtils.getField(service, "identityMode");
+    var manager = (org.springframework.orm.jpa.JpaTransactionManager) transactions;
+    assertTrue(service.hasScopedAccountBindings(mode, maintenance, manager));
+    var missingName = new MatrixConfig();
+    try {
+      service.setMatrixConfiguration(missingName);
+      assertFalse(service.hasScopedAccountBindings(mode, maintenance, manager));
+      missingName.setServerName(" ");
+      service.setMatrixConfiguration(missingName);
+      assertFalse(service.hasScopedAccountBindings(mode, maintenance, manager));
+    } finally {
+      service.setMatrixConfiguration(configuredMatrix);
+    }
+    assertTrue(service.hasScopedAccountBindings(mode, maintenance, manager));
+    assertFalse(service.hasScopedAccountBindings(mode, null, manager));
+    assertFalse(
+        service.hasScopedAccountBindings(
+            mode, maintenance, new org.springframework.orm.jpa.JpaTransactionManager()));
+    verifyNoInteractions(generic, genericRemoval, genericProfile);
+    server.verify();
+  }
+
+  @Test
   void actualCombinedAdministratorRemovalPreservesAllConsultantDataAndExactReplay() {
     givenAdministratorRemoval(true);
     var before = consultantSql();
