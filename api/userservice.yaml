@@ -321,6 +321,78 @@ paths:
           description: INTERNAL SERVER ERROR - unexpected failure
       security:
         - Bearer: [ ]
+  /users/sessions/{sessionId}/further-counselling-recommendation:
+    post:
+      tags:
+        - user-controller
+      summary: 'Recommend further counselling on a topic (FE#1876) [Authorization: Role:
+        consultant]'
+      description: >-
+        Posts a FURTHER_COUNSELLING_RECOMMENDED system notice into the room. Only the assigned
+        counsellor of an accepted 1:1 conversation may call it. The notice carries no postcode
+        and no asker data.
+      operationId: recommendFurtherCounselling
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FurtherCounsellingRecommendationDTO'
+        required: true
+      responses:
+        204:
+          description: NO CONTENT - notice posted
+        400:
+          description: BAD REQUEST - topic missing or unknown, or note longer than 1000 characters
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - caller is not the assigned counsellor
+        404:
+          description: NOT FOUND - session not found
+        409:
+          description: CONFLICT - session is no accepted 1:1 conversation (enquiry, group, archived)
+        500:
+          description: INTERNAL SERVER ERROR - the notice could not be posted
+      security:
+        - Bearer: [ ]
+  /users/askers/sessions/{sessionId}/end-duplicate:
+    put:
+      tags:
+        - user-controller
+      summary: 'End the newer of two accepted same-topic conversations (FE#1876) [Authorization:
+        Role: user]'
+      description: >-
+        Archives the session like the counsellor archive does and posts TOPIC_DUPLICATE_ENDED
+        into every older accepted conversation of the asker on the same topic.
+      operationId: endTopicDuplicate
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        204:
+          description: NO CONTENT - session archived
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - caller does not own the session
+        404:
+          description: NOT FOUND - session not found
+        409:
+          description: CONFLICT - session is not accepted, or there is no older accepted
+            conversation on the same topic
+      security:
+        - Bearer: [ ]
   /users/sessions/new/{sessionId}:
     put:
       tags:
@@ -3245,6 +3317,12 @@ components:
         isTeamSession:
           type: boolean
           example: false
+        isTopicDuplicate:
+          type: boolean
+          description: >-
+            FE#1876, asker session list only: this accepted conversation is the newer of two on
+            the same topic, so the asker may end it (PUT /users/askers/sessions/{id}/end-duplicate).
+          example: false
         registrationType:
           type: string
           example: ANONYMOUS
@@ -3775,6 +3853,21 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/UserSessionResponseDTO'
+
+    FurtherCounsellingRecommendationDTO:
+      type: object
+      required:
+        - topicId
+      properties:
+        topicId:
+          type: integer
+          format: int64
+          example: 3
+        note:
+          type: string
+          description: >-
+            Optional counsellor note. Trimmed first; blank means none; more than 1000 characters
+            after trimming is a 400.
 
     UserSessionResponseDTO:
       type: object

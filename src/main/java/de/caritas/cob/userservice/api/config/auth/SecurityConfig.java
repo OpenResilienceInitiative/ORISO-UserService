@@ -405,6 +405,18 @@ public class SecurityConfig {
                     "/users/sessions/{sessionId:[0-9]+}/supervision/opt-out",
                     "/service/users/sessions/{sessionId:[0-9]+}/supervision/opt-out")
                 .hasAuthority(USER_DEFAULT)
+                // FE#1876 S6: ownership and duplicate state are checked in SessionArchiveService.
+                .requestMatchers(
+                    HttpMethod.PUT,
+                    "/users/askers/sessions/{sessionId:[0-9]+}/end-duplicate",
+                    "/service/users/askers/sessions/{sessionId:[0-9]+}/end-duplicate")
+                .hasAuthority(USER_DEFAULT)
+                // FE#1876 S2: assignment and state are checked in the recommendation service.
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/users/sessions/{sessionId:[0-9]+}/further-counselling-recommendation",
+                    "/service/users/sessions/{sessionId:[0-9]+}/further-counselling-recommendation")
+                .hasAuthority(CONSULTANT_DEFAULT)
                 /* Gate 2 consent pointer (ADR-022 decision 2). Anonymous help-seekers are the
                 main case — they hold ANONYMOUS_DEFAULT, not USER_DEFAULT — but a registered
                 help-seeker passes the same gate in the room. Ownership of the session is

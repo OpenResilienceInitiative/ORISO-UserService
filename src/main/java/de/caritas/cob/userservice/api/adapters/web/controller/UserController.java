@@ -117,6 +117,29 @@ public class UserController implements UsersApi {
         : ResponseEntity.status(503).build();
   }
 
+  private final @NonNull de.caritas.cob.userservice.api.service.furthercounselling
+          .FurtherCounsellingRecommendationService
+      furtherCounsellingRecommendationService;
+
+  /** FE#1876 S2: the assigned counsellor recommends further counselling on a topic. */
+  @Override
+  public ResponseEntity<Void> recommendFurtherCounselling(
+      @PathVariable Long sessionId,
+      @RequestBody
+          de.caritas.cob.userservice.api.adapters.web.dto.FurtherCounsellingRecommendationDTO
+              recommendation) {
+    furtherCounsellingRecommendationService.recommend(
+        sessionId, recommendation.getTopicId(), recommendation.getNote());
+    return ResponseEntity.noContent().build();
+  }
+
+  /** FE#1876 S6: the asker ends the newer of two accepted same-topic conversations. */
+  @Override
+  public ResponseEntity<Void> endTopicDuplicate(@PathVariable Long sessionId) {
+    sessionArchiveService.endTopicDuplicate(sessionId);
+    return ResponseEntity.noContent().build();
+  }
+
   private final @NotNull UserAccountService userAccountProvider;
   private final @NotNull UserRegistrationControllerDelegate userRegistrationControllerDelegate;
   private final @NotNull UserSessionControllerDelegate userSessionControllerDelegate;
