@@ -79,6 +79,11 @@ class DirectLinksMigrationTest {
         liquibase.rollback(1, (String) null);
         assertThat(knockCount(c, "1 = 1")).as("series knock kept, call knock gone").isEqualTo(1);
         assertThat(knockCount(c, "via = 'INVITE_LINK'")).isEqualTo(1);
+        // The foreign key survived the change and its rollback.
+        try (var sql = c.createStatement()) {
+          sql.execute("DELETE FROM chat WHERE id = 1");
+        }
+        assertThat(knockCount(c, "1 = 1")).as("cascade still in place").isZero();
       }
     }
   }
@@ -126,7 +131,10 @@ class DirectLinksMigrationTest {
               + " used_by_session_id BIGINT NULL,"
               + " status VARCHAR(20) NOT NULL,"
               + " PRIMARY KEY (id))");
-      // 20260923_group_chat_join_request_1499 + 20260926_group_chat_admission_1499, no FK.
+      // 20260923_group_chat_join_request_1499 + 20260926_group_chat_admission_1499, with the
+      // production foreign key to chat, so the nullability change runs against it.
+      sql.execute("CREATE TABLE chat (id BIGINT UNSIGNED NOT NULL, PRIMARY KEY (id))");
+      sql.execute("INSERT INTO chat (id) VALUES (1)");
       sql.execute(
           "CREATE TABLE group_chat_join_request ("
               + " id BIGINT NOT NULL AUTO_INCREMENT,"
@@ -141,7 +149,9 @@ class DirectLinksMigrationTest {
               + " admission_requested_at DATETIME NULL,"
               + " admission_attempt_count INT NOT NULL DEFAULT 0,"
               + " admission_last_attempt_at DATETIME NULL,"
-              + " PRIMARY KEY (id))");
+              + " PRIMARY KEY (id),"
+              + " CONSTRAINT fk_gcjr_series FOREIGN KEY (series_id) REFERENCES chat (id)"
+              + " ON DELETE CASCADE)");
     }
   }
 

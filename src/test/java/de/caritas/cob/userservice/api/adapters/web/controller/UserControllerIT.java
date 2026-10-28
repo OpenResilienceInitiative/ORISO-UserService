@@ -437,6 +437,10 @@ class UserControllerIT {
 
   @MockitoBean
   @SuppressWarnings("unused")
+  private DirectLinkControllerDelegate directLinkControllerDelegate;
+
+  @MockitoBean
+  @SuppressWarnings("unused")
   private MagicLinkLoginService magicLinkLoginService;
 
   @MockitoBean private SessionDeleteService sessionDeleteService;

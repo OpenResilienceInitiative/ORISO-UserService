@@ -27,6 +27,7 @@ import de.caritas.cob.userservice.api.facade.CreateNewSessionFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
@@ -236,21 +237,8 @@ class DirectLinkControllerIT {
 
   @Test
   void callLinkKnocks_AndOnlyTheConversationsCounsellorLetsThePersonIn() throws Exception {
-    var session =
-        StreamSupport.stream(sessionRepository.findAll().spliterator(), false)
-            .findFirst()
-            .orElseThrow();
-    session.setConsultant(owner);
-    session.setUser(asker);
-    sessionRepository.save(session);
-    entityManager.flush();
-
-    actAsConsultant(owner);
-    long id = createLink("VIDEO");
-    String token = linkRepository.findById(id).orElseThrow().getToken();
-    when(createNewSessionFacade.initializeNewSession(any(), any(User.class), anyList()))
-        .thenReturn(
-            new NewRegistrationResponseDto().sessionId(session.getId()).status(HttpStatus.CREATED));
+    var session = ownersConversationWithAsker();
+    String token = callLinkOpeningInto(session.getId());
 
     actAsAsker();
     var started =
@@ -278,7 +266,6 @@ class DirectLinkControllerIT {
     asConsultant(post("/users/call-knocks/{id}/admit", knockId))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status", is("ADMITTED")));
-    asConsultant(post("/users/call-knocks/{id}/decline", knockId)).andExpect(status().isConflict());
 
     actAsAsker();
     asAsker(get("/users/call-knocks/mine/{id}", knockId))
@@ -296,6 +283,47 @@ class DirectLinkControllerIT {
         .andExpect(jsonPath("$", hasSize(1)))
         .andExpect(jsonPath("$[0].status", is("ADMITTED")));
     asConsultant(get("/users/call-knocks")).andExpect(jsonPath("$", hasSize(0)));
+  }
+
+  /**
+   * Kept apart from the flow above: the 409 marks the test-wide transaction rollback-only, so no
+   * later request in the same test may depend on it.
+   */
+  @Test
+  void decliningAnAdmittedKnock_Should_Conflict() throws Exception {
+    String token = callLinkOpeningInto(ownersConversationWithAsker().getId());
+    actAsAsker();
+    var started =
+        asAsker(post("/users/invitelinks/{token}/conversations", token))
+            .andExpect(status().isCreated())
+            .andReturn();
+    long knockId =
+        objectMapper.readTree(started.getResponse().getContentAsString()).get("knockId").asLong();
+
+    actAsConsultant(owner);
+    asConsultant(post("/users/call-knocks/{id}/admit", knockId)).andExpect(status().isOk());
+    asConsultant(post("/users/call-knocks/{id}/decline", knockId)).andExpect(status().isConflict());
+  }
+
+  private Session ownersConversationWithAsker() {
+    var session =
+        StreamSupport.stream(sessionRepository.findAll().spliterator(), false)
+            .findFirst()
+            .orElseThrow();
+    session.setConsultant(owner);
+    session.setUser(asker);
+    sessionRepository.save(session);
+    entityManager.flush();
+    return session;
+  }
+
+  private String callLinkOpeningInto(Long sessionId) throws Exception {
+    actAsConsultant(owner);
+    long id = createLink("VIDEO");
+    when(createNewSessionFacade.initializeNewSession(any(), any(User.class), anyList()))
+        .thenReturn(
+            new NewRegistrationResponseDto().sessionId(sessionId).status(HttpStatus.CREATED));
+    return linkRepository.findById(id).orElseThrow().getToken();
   }
 
   private long createLink(String medium) throws Exception {

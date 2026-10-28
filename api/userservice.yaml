@@ -87,9 +87,9 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/DirectLinkConversationDTO'}
-        '400': {description: Expired link, or not a counsellor direct link}
+        '400': {description: 'Expired link, or not a counsellor direct link'}
         '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
-        '403': {description: Direct invitations are not allowed here, or the caller belongs to another Träger}
+        '403': {description: 'Direct invitations are not allowed here, or the caller belongs to another Träger'}
         '404': {description: Unknown link}
         '410': {description: 'The link was switched off; body {"reason":"DIRECT_LINK_INACTIVE"}'}
   /users/call-knocks:
@@ -241,9 +241,9 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/DirectLinkDTO'}
-        '400': {description: Missing or invalid field, or agencyId needed because the caller works for several Beratungsstellen}
+        '400': {description: 'Missing or invalid field, or agencyId needed because the caller works for several Beratungsstellen'}
         '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
-        '403': {description: Caller is not a consultant, not in the agency, or direct invitations are not allowed here}
+        '403': {description: 'Caller is not a consultant, not in the agency, or direct invitations are not allowed here'}
         '404': {description: Unknown topic}
   /users/directlinks/{linkId}:
     patch:

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -52,6 +53,7 @@ class DirectCallKnockServiceTest {
     session.setId(SESSION_ID);
     session.setConsultant(counsellor);
     when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
+    when(sessionRepository.findByIdForUpdate(SESSION_ID)).thenReturn(Optional.of(session));
     when(repository.save(any())).thenAnswer(i -> i.getArgument(0));
   }
 
@@ -68,6 +70,18 @@ class DirectCallKnockServiceTest {
     // Never part of the Matrix admission path of the self-help groups.
     assertThat(knock.getSeriesId()).isNull();
     assertThat(knock.getAdmissionRequestedAt()).isNull();
+  }
+
+  @Test
+  void knock_Should_LockTheConversationBeforeLookingForAnOpenKnock() {
+    service.knock(SESSION_ID, asker, 9L, InviteLinkChatType.VIDEO);
+
+    var order = inOrder(sessionRepository, repository);
+    order.verify(sessionRepository).findByIdForUpdate(SESSION_ID);
+    order
+        .verify(repository)
+        .findFirstBySessionIdAndUserIdAndViaAndStatusOrderByIdDesc(
+            SESSION_ID, "asker-1", Via.DIRECT_LINK, Status.PENDING);
   }
 
   @Test
@@ -135,12 +149,29 @@ class DirectCallKnockServiceTest {
     when(repository.findCallKnocksForConsultant(
             eq("counsellor-1"), eq(Via.DIRECT_LINK), eq(Status.PENDING), any()))
         .thenReturn(List.of(first, second));
+    when(repository.findByIdForUpdate(1L)).thenReturn(Optional.of(first));
+    when(repository.findByIdForUpdate(2L)).thenReturn(Optional.of(second));
 
     var admitted = service.admitAll(counsellor);
 
     assertThat(admitted)
         .extracting(GroupChatJoinRequest::getStatus)
         .containsExactly(Status.ADMITTED, Status.ADMITTED);
+  }
+
+  @Test
+  void admitAll_Should_LeaveAKnockAlone_When_ItWasCancelledMeanwhile() {
+    var listed = pending(1L, LocalDateTime.now().minusMinutes(2));
+    when(repository.findCallKnocksForConsultant(
+            eq("counsellor-1"), eq(Via.DIRECT_LINK), eq(Status.PENDING), any()))
+        .thenReturn(List.of(listed));
+    var cancelled = pending(1L, listed.getRequestedAt());
+    cancelled.setStatus(Status.CANCELLED);
+    when(repository.findByIdForUpdate(1L)).thenReturn(Optional.of(cancelled));
+
+    assertThat(service.admitAll(counsellor)).isEmpty();
+    assertThat(cancelled.getStatus()).isEqualTo(Status.CANCELLED);
+    verify(repository, never()).save(any());
   }
 
   @Test

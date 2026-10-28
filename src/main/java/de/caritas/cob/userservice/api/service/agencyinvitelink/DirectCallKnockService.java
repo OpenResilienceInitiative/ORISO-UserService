@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -35,10 +36,16 @@ public class DirectCallKnockService {
   @Value("${direct-links.knock.pending-minutes:120}")
   private long pendingMinutes = 120;
 
-  /** One open knock per person and conversation: knocking again returns it. */
+  /**
+   * One open knock per person and conversation: knocking again returns it. The conversation row is
+   * locked first, so two parallel visits cannot both find no knock and insert two.
+   */
   @Transactional
   public GroupChatJoinRequest knock(
       Long sessionId, User user, Long inviteLinkId, InviteLinkChatType medium) {
+    sessionRepository
+        .findByIdForUpdate(sessionId)
+        .orElseThrow(() -> new NotFoundException("Session %s not found", sessionId));
     return repository
         .findFirstBySessionIdAndUserIdAndViaAndStatusOrderByIdDesc(
             sessionId, user.getUserId(), Via.DIRECT_LINK, Status.PENDING)
@@ -92,7 +99,11 @@ public class DirectCallKnockService {
   @Transactional
   public List<GroupChatJoinRequest> admitAll(Consultant consultant) {
     var now = LocalDateTime.now();
+    // Each row is locked and re-checked: a knock cancelled or declined meanwhile stays as it is.
     return pendingFor(consultant).stream()
+        .map(knock -> repository.findByIdForUpdate(knock.getId()))
+        .flatMap(Optional::stream)
+        .filter(GroupChatJoinRequest::isPending)
         .map(
             knock -> {
               knock.setStatus(Status.ADMITTED);
