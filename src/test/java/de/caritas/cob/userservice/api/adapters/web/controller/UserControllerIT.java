@@ -372,6 +372,11 @@ class UserControllerIT {
   @MockitoBean private SessionArchiveService sessionArchiveService;
 
   @MockitoBean
+  private de.caritas.cob.userservice.api.service.furthercounselling
+          .FurtherCounsellingRecommendationService
+      furtherCounsellingRecommendationService;
+
+  @MockitoBean
   @SuppressWarnings("unused")
   private IdentityPolicy identityPolicy;
 
