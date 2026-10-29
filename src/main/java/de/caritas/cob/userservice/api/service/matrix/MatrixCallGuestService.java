@@ -102,30 +102,35 @@ public class MatrixCallGuestService {
       return Admission.of(Outcome.NOT_FOUND);
     String token = matrix.loginAsUserAccessToken(admitter);
     if (token == null) return Admission.of(Outcome.MATRIX_UNAVAILABLE);
+    // Seat first: a write that fails must never leave an invited guest the cleanup cannot find.
+    var reserved =
+        existing.isEmpty()
+            ? guests.saveAndFlush(
+                MatrixCallGuest.builder()
+                    .bindingId(binding.getId())
+                    .matrixUserId(guest.matrixId())
+                    .admittedByMatrixId(admitter)
+                    .admittedAt(System.currentTimeMillis())
+                    .build())
+            : null;
     try {
       matrix.inviteUserToRoom(binding.getMediaRoomId(), guest.matrixId(), token);
     } catch (MatrixInviteUserException failed) {
       // An earlier admission may already have seated the guest; anything else is a failure.
-      if (!isMember(binding.getMediaRoomId(), guest.matrixId()))
+      if (!isMember(binding.getMediaRoomId(), guest.matrixId())) {
+        if (reserved != null) guests.delete(reserved);
         return Admission.of(Outcome.MATRIX_UNAVAILABLE);
+      }
     }
-    var row =
-        existing.orElseGet(
-            () ->
-                guests.save(
-                    MatrixCallGuest.builder()
-                        .bindingId(binding.getId())
-                        .matrixUserId(guest.matrixId())
-                        .admittedByMatrixId(admitter)
-                        .admittedAt(System.currentTimeMillis())
-                        .build()));
+    var row = reserved != null ? reserved : existing.get();
     return new Admission(
         Outcome.ADMITTED, binding.getMediaRoomId(), guest.matrixId(), row.getAdmittedAt());
   }
 
-  /** True while the person holds an unrevoked guest seat in this call. */
+  /** True while the call runs and the person holds an unrevoked guest seat in it. */
   public boolean isActiveGuest(MatrixCallBinding binding, String matrixUserId) {
     return binding.getId() != null
+        && binding.getEndedAt() == null
         && !blank(matrixUserId)
         && guests.existsByBindingIdAndMatrixUserIdAndRevokedAtIsNull(binding.getId(), matrixUserId);
   }
@@ -139,29 +144,46 @@ public class MatrixCallGuestService {
     List<MatrixCallGuest> outstanding = guests.findByBindingIdAndRevokedAtIsNull(binding.getId());
     for (MatrixCallGuest guest : outstanding) {
       String room = binding.getMediaRoomId();
-      String token = matrix.loginAsUserAccessToken(binding.getCallerMatrixId());
-      if (token == null && !guest.getAdmittedByMatrixId().equals(binding.getCallerMatrixId()))
-        token = matrix.loginAsUserAccessToken(guest.getAdmittedByMatrixId());
-      if (token == null) {
-        deferRevocation(guest, room, "no moderator token");
-        continue;
-      }
       String guestId = guest.getMatrixUserId();
-      // The returned flag is not trusted: only the guest's m.room.member state proves removal.
-      // A pending invite never shows in the joined list, so that list cannot prove it either.
-      matrix.removeUserFromRoom(room, guestId, token);
-      if (!isGone(room, guestId, token)) {
-        // Kick also retracts a pending invite.
-        matrix.kickUserFromRoom(room, guestId, token);
-        if (!isGone(room, guestId, token)) {
-          deferRevocation(guest, room, "membership is not leave or ban");
-          continue;
+      // The caller first, then the admitting counsellor, whose token may hold the needed rights.
+      String token = null;
+      boolean gone = false;
+      for (String moderator :
+          java.util.stream.Stream.of(binding.getCallerMatrixId(), guest.getAdmittedByMatrixId())
+              .filter(value -> !blank(value))
+              .distinct()
+              .toList()) {
+        String candidate = matrix.loginAsUserAccessToken(moderator);
+        if (candidate == null) continue;
+        token = candidate;
+        if (remove(room, guestId, candidate)) {
+          gone = true;
+          break;
         }
       }
-      if (!matrix.clearUserPowerLevel(room, guestId, token))
-        log.warn("Call guest power level could not be cleared in call room {}", room);
-      guest.revoke(System.currentTimeMillis());
+      if (token == null) {
+        deferRevocation(guest, room, "no moderator token");
+      } else if (!gone) {
+        deferRevocation(guest, room, "membership is not leave or ban");
+      } else if (!matrix.clearUserPowerLevel(room, guestId, token)) {
+        // A kept power level would apply again if the account were ever invited back.
+        deferRevocation(guest, room, "power level not cleared");
+      } else {
+        guest.revoke(System.currentTimeMillis());
+      }
     }
+  }
+
+  /**
+   * The returned flags are not trusted: only the guest's m.room.member state proves removal. A
+   * pending invite never shows in the joined list, so that list cannot prove it either.
+   */
+  private boolean remove(String room, String guestId, String token) {
+    matrix.removeUserFromRoom(room, guestId, token);
+    if (isGone(room, guestId, token)) return true;
+    // Kick also retracts a pending invite.
+    matrix.kickUserFromRoom(room, guestId, token);
+    return isGone(room, guestId, token);
   }
 
   private void deferRevocation(MatrixCallGuest guest, String room, String reason) {

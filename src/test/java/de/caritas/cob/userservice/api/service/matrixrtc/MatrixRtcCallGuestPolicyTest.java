@@ -94,6 +94,22 @@ class MatrixRtcCallGuestPolicyTest {
         .isEqualTo(new CallMediaPolicy(true, true));
   }
 
+  /** A database outage still denies, but says so, without any Matrix identifier. */
+  @Test
+  void unreadableGuestSeatsDenyAndAreLoggedWithoutIdentifiers() {
+    jdbc.execute("DROP TABLE matrix_call_guest");
+
+    try (var logs =
+        de.caritas.cob.userservice.testutils.LogbackCaptor.forClass(
+            MatrixRtcCallPolicyService.class)) {
+      assertThat(service.resolve(SOURCE, GUEST, "!media:example"))
+          .isEqualTo(CallMediaPolicy.denied());
+      assertThat(logs.messages(ch.qos.logback.classic.Level.WARN))
+          .anySatisfy(message -> assertThat(message).contains("Call guest seat lookup failed"))
+          .allSatisfy(message -> assertThat(message).doesNotContain(GUEST, SOURCE));
+    }
+  }
+
   @Test
   void revokedGuestIsDenied() {
     guest(1, 5000L);

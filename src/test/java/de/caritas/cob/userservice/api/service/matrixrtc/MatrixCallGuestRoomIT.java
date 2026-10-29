@@ -338,6 +338,8 @@ class MatrixCallGuestRoomIT {
         });
     when(matrix.getRoomMembership(anyString(), eq(GUEST), eq("counsellor-token")))
         .thenAnswer(call -> Optional.of(late.equals(call.getArgument(0)) ? "leave" : "invite"));
+    when(matrix.clearUserPowerLevel(anyString(), eq(GUEST), eq("counsellor-token")))
+        .thenReturn(true);
 
     callReconciler.reconcileMediaRooms();
     callReconciler.reconcileMediaRooms();

@@ -166,6 +166,8 @@ public class MatrixRtcCallPolicyService {
               matrixUserId)
           .isEmpty();
     } catch (org.springframework.dao.DataAccessException unavailable) {
+      // Deny, but visibly: an outage must not read as an ordinary non-member denial.
+      log.warn("Call guest seat lookup failed: {}", unavailable.getClass().getSimpleName());
       return false;
     }
   }
