@@ -2248,6 +2248,22 @@ public class MatrixSynapseService implements MatrixUserClient {
     return matrixRoomClient.removeUserFromRoom(roomId, userId, accessToken);
   }
 
+  /** Kicks a user from a room; also retracts a pending invite. Never throws. */
+  public boolean kickUserFromRoom(String roomId, String userId, String accessToken) {
+    return matrixRoomClient.kickUserFromRoom(roomId, userId, accessToken);
+  }
+
+  /** The user's m.room.member membership in the room, or empty when unreadable. Never throws. */
+  public java.util.Optional<String> getRoomMembership(
+      String roomId, String userId, String accessToken) {
+    return matrixRoomClient.getRoomMembership(roomId, userId, accessToken);
+  }
+
+  /** Drops a user's explicit power-level entry in a room; true when none remains. */
+  public boolean clearUserPowerLevel(String roomId, String userId, String accessToken) {
+    return matrixRoomClient.clearUserPowerLevel(roomId, userId, accessToken);
+  }
+
   /**
    * Bans a user from a Matrix room using the given room-moderator access token.
    *
