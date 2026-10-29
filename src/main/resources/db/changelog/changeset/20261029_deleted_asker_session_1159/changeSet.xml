@@ -4,6 +4,8 @@
   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
   <!-- ORISO-Frontend#1159: placeholder without personal data for a deleted advice-seeker chat. -->
   <changeSet id="20261029-deleted-asker-session-1159" author="oriso">
+    <!-- Environments without Liquibase (Pre-Dev) create the table by hand; see the PR. -->
+    <preConditions onFail="MARK_RAN"><not><tableExists tableName="deleted_asker_session"/></not></preConditions>
     <createTable tableName="deleted_asker_session">
       <column name="id" type="BIGINT" autoIncrement="true"><constraints primaryKey="true" nullable="false"/></column>
       <column name="consultant_id" type="VARCHAR(36)"><constraints nullable="false"/></column>

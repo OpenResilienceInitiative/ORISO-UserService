@@ -1,7 +1,6 @@
 package de.caritas.cob.userservice.api.workflow.delete.action.asker;
 
 import de.caritas.cob.userservice.api.actions.ActionCommand;
-import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.SessionDataRepository;
@@ -55,17 +54,25 @@ public class DeleteAskerRoomsAndSessionsAction extends DeleteRoomsAndSessionActi
         .findByUser(actionTarget.getUser())
         .forEach(
             session -> {
-              // ORISO-Frontend#1159: leave the counsellor a placeholder before the case vanishes.
-              recordPlaceholder(session);
+              // ORISO-Frontend#1159: capture what the counsellor's placeholder needs while the
+              // session still exists, and record it only if the session really was deleted.
+              var placeholder = DeletedAskerSessionService.Placeholder.of(session);
+              var errorsBefore = actionTarget.getDeletionWorkflowErrors().size();
               performSessionDeletion(session, actionTarget.getDeletionWorkflowErrors());
+              if (actionTarget.getDeletionWorkflowErrors().size() == errorsBefore) {
+                placeholder.ifPresent(this::recordPlaceholder);
+              }
             });
   }
 
-  private void recordPlaceholder(Session session) {
+  private void recordPlaceholder(DeletedAskerSessionService.Placeholder placeholder) {
     try {
-      deletedAskerSessionService.recordDeletion(session);
+      deletedAskerSessionService.recordDeletionAfterCommit(placeholder);
     } catch (RuntimeException ex) {
-      log.warn("Could not record deleted-asker placeholder for session {}", session.getId(), ex);
+      log.warn(
+          "Could not record deleted-asker placeholder for session {}",
+          placeholder.formerSessionId(),
+          ex);
     }
   }
 }

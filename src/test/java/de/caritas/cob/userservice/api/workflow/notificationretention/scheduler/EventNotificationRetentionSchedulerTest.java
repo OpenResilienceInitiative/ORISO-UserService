@@ -48,6 +48,22 @@ class EventNotificationRetentionSchedulerTest {
     verify(deletedAskerSessionService).purgeExpired();
   }
 
+  /** ORISO-Frontend#1159: a failing notification purge must not keep placeholders past 30 days. */
+  @Test
+  void purgeExpiredNotifications_stillPurgesPlaceholders_When_theNotificationPurgeFails() {
+    when(taskClaimService.tryClaim("event-notification-retention", Duration.ofHours(12)))
+        .thenReturn(true);
+    org.mockito.Mockito.doThrow(new RuntimeException("db down"))
+        .when(eventNotificationRetentionService)
+        .purgeExpiredNotifications();
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        RuntimeException.class,
+        () -> eventNotificationRetentionScheduler.purgeExpiredNotifications());
+
+    verify(deletedAskerSessionService).purgeExpired();
+  }
+
   /** Every replica runs the same cron, so exactly one of them may do the deleting. */
   @Test
   void purgeExpiredNotifications_skipsAllDownstreamCalls_When_claimIsLost() {

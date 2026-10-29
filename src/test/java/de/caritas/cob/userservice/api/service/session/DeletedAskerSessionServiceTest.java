@@ -27,6 +27,9 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** ORISO-Frontend#1159: placeholder for a deleted advice-seeker chat. */
 @ExtendWith(MockitoExtension.class)
@@ -35,6 +38,7 @@ class DeletedAskerSessionServiceTest {
   @InjectMocks private DeletedAskerSessionService underTest;
   @Mock private DeletedAskerSessionRepository repository;
   @Mock private EventNotificationService eventNotificationService;
+  @Mock private PlatformTransactionManager transactionManager;
 
   @BeforeEach
   void setUp() {
@@ -56,7 +60,7 @@ class DeletedAskerSessionServiceTest {
   void recordDeletion_savesAPlaceholderWithoutPersonalDataAndOneTimelineEntry() {
     var captor = ArgumentCaptor.forClass(DeletedAskerSession.class);
 
-    underTest.recordDeletion(assignedSession());
+    underTest.recordDeletion(placeholder());
 
     verify(repository).save(captor.capture());
     var saved = captor.getValue();
@@ -79,32 +83,84 @@ class DeletedAskerSessionServiceTest {
             eq(3L));
   }
 
+  private static DeletedAskerSessionService.Placeholder placeholder() {
+    return DeletedAskerSessionService.Placeholder.of(assignedSession()).orElseThrow();
+  }
+
+  @Test
+  void placeholder_capturesOnlyCounsellorCentreTenantAndFormerId() {
+    assertThat(placeholder())
+        .isEqualTo(new DeletedAskerSessionService.Placeholder("consultant-1", 77L, 5L, 3L));
+  }
+
+  @Test
+  void placeholder_isEmpty_When_noCounsellorHadAcceptedTheCase() {
+    var session = assignedSession();
+    session.setConsultant(null);
+
+    assertThat(DeletedAskerSessionService.Placeholder.of(session)).isEmpty();
+    assertThat(DeletedAskerSessionService.Placeholder.of(null)).isEmpty();
+  }
+
   @Test
   void recordDeletion_addsNoSecondPlaceholder_When_theDeletionIsRetried() {
     when(repository.existsByConsultantIdAndFormerSessionId("consultant-1", 77L)).thenReturn(true);
 
-    underTest.recordDeletion(assignedSession());
+    underTest.recordDeletion(placeholder());
 
     verify(repository, never()).save(any());
   }
 
   @Test
-  void recordDeletion_leavesNothing_When_noCounsellorHadAcceptedTheCase() {
-    var session = assignedSession();
-    session.setConsultant(null);
-
-    underTest.recordDeletion(session);
-    underTest.recordDeletion(null);
-
-    verifyNoInteractions(repository, eventNotificationService);
-  }
-
-  @Test
-  void recordDeletion_neverThrows() {
+  void recordDeletion_stillCreatesTheTimelineEntry_When_savingThePlaceholderFails() {
     when(repository.existsByConsultantIdAndFormerSessionId(any(), any()))
         .thenThrow(new RuntimeException("db down"));
 
-    assertDoesNotThrow(() -> underTest.recordDeletion(assignedSession()));
+    assertDoesNotThrow(() -> underTest.recordDeletion(placeholder()));
+    verify(eventNotificationService)
+        .createEventOnce(any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void recordDeletion_keepsThePlaceholder_When_theTimelineEntryFails() {
+    org.mockito.Mockito.doThrow(new RuntimeException("feed down"))
+        .when(eventNotificationService)
+        .createEventOnce(any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+
+    assertDoesNotThrow(() -> underTest.recordDeletion(placeholder()));
+    verify(repository).save(any());
+  }
+
+  @Test
+  void recordDeletionAfterCommit_waitsForTheDeletionToCommit() {
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      underTest.recordDeletionAfterCommit(placeholder());
+
+      verifyNoInteractions(repository, eventNotificationService);
+
+      TransactionSynchronizationManager.getSynchronizations()
+          .forEach(TransactionSynchronization::afterCommit);
+
+      verify(repository).save(any());
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+  }
+
+  @Test
+  void recordDeletionAfterCommit_recordsNothing_When_theDeletionRollsBack() {
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      underTest.recordDeletionAfterCommit(placeholder());
+
+      TransactionSynchronizationManager.getSynchronizations()
+          .forEach(sync -> sync.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+
+      verifyNoInteractions(repository, eventNotificationService);
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
   }
 
   @Test
@@ -136,8 +192,11 @@ class DeletedAskerSessionServiceTest {
 
   @Test
   void purgeExpired_deletesPlaceholdersOlderThanTheRetention() {
-    when(repository.deleteDeletedBefore(any())).thenReturn(2);
+    var cutoff = ArgumentCaptor.forClass(LocalDateTime.class);
+    when(repository.deleteDeletedBefore(cutoff.capture())).thenReturn(2);
 
     assertThat(underTest.purgeExpired()).isEqualTo(2);
+    var expected = LocalDateTime.now(ZoneOffset.UTC).minusDays(30);
+    assertThat(cutoff.getValue()).isBetween(expected.minusMinutes(1), expected.plusMinutes(1));
   }
 }

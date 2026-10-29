@@ -82,17 +82,20 @@ public class SessionDeleteService {
 
     // ORISO-Frontend#1159: the assigned counsellor keeps a placeholder whoever deletes the chat —
     // the advice seeker, a colleague or the counsellor themselves (product decision 29 Oct).
-    try {
-      deletedAskerSessionService.recordDeletion(session);
-    } catch (RuntimeException e) {
-      log.warn("Could not record deleted-asker placeholder for session {}", sessionId, e);
-    }
+    // Captured now, recorded only once the deletion below has committed.
+    var placeholder = DeletedAskerSessionService.Placeholder.of(session);
 
     var deleteSession = new SessionDeletionWorkflowDTO(session, null);
     actionsRegistry
         .buildContainerForType(SessionDeletionWorkflowDTO.class)
         .addActionToExecute(DeleteSingleRoomAndSessionAction.class)
         .executeActions(deleteSession);
+
+    try {
+      placeholder.ifPresent(deletedAskerSessionService::recordDeletionAfterCommit);
+    } catch (RuntimeException e) {
+      log.warn("Could not record deleted-asker placeholder for session {}", sessionId, e);
+    }
 
     fireArchiveOrDeleteSessionEvent(session);
     log.info("Session with id {} deleted", sessionId);

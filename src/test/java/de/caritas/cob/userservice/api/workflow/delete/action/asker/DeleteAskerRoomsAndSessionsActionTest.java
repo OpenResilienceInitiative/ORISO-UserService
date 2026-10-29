@@ -117,18 +117,37 @@ class DeleteAskerRoomsAndSessionsActionTest {
   }
 
   @Test
-  void execute_Should_recordThePlaceholderBeforeTheSessionIsDeleted() {
+  void execute_Should_recordThePlaceholderAfterTheSessionWasDeleted() {
     Session session = new EasyRandom().nextObject(Session.class);
     when(this.sessionRepository.findByUser(any())).thenReturn(singletonList(session));
 
     this.deleteAskerRoomsAndSessionsAction.execute(
         new AskerDeletionWorkflowDTO(new User(), new ArrayList<>()));
 
-    // ORISO-Frontend#1159: the placeholder needs the session's counsellor and centre, so it must
-    // be written while the row still exists.
-    InOrder order = inOrder(deletedAskerSessionService, this.sessionRepository);
-    order.verify(deletedAskerSessionService).recordDeletion(session);
+    // ORISO-Frontend#1159: captured while the row exists, recorded once it is gone.
+    InOrder order = inOrder(this.sessionRepository, deletedAskerSessionService);
     order.verify(this.sessionRepository).delete(session);
+    order
+        .verify(deletedAskerSessionService)
+        .recordDeletionAfterCommit(
+            new de.caritas.cob.userservice.api.service.session.DeletedAskerSessionService
+                .Placeholder(
+                session.getConsultant().getId(),
+                session.getId(),
+                session.getAgencyId(),
+                session.getTenantId()));
+  }
+
+  @Test
+  void execute_Should_recordNoPlaceholder_When_theSessionCouldNotBeDeleted() {
+    Session session = new EasyRandom().nextObject(Session.class);
+    when(this.sessionRepository.findByUser(any())).thenReturn(singletonList(session));
+    doThrow(new RuntimeException()).when(this.sessionRepository).delete(any());
+
+    this.deleteAskerRoomsAndSessionsAction.execute(
+        new AskerDeletionWorkflowDTO(new User(), new ArrayList<>()));
+
+    org.mockito.Mockito.verifyNoInteractions(deletedAskerSessionService);
   }
 
   @Test
@@ -137,7 +156,7 @@ class DeleteAskerRoomsAndSessionsActionTest {
     when(this.sessionRepository.findByUser(any())).thenReturn(singletonList(session));
     doThrow(new RuntimeException("placeholder failed"))
         .when(deletedAskerSessionService)
-        .recordDeletion(any());
+        .recordDeletionAfterCommit(any());
     AskerDeletionWorkflowDTO workflowDTO =
         new AskerDeletionWorkflowDTO(new User(), new ArrayList<>());
 

@@ -151,7 +151,7 @@ class SessionDeleteServiceTest {
 
     sessionDeleteService.deleteSession(sessionId);
 
-    verify(deletedAskerSessionService).recordDeletion(any(Session.class));
+    verify(deletedAskerSessionService).recordDeletionAfterCommit(any());
   }
 
   @Test
@@ -162,7 +162,7 @@ class SessionDeleteServiceTest {
 
     sessionDeleteService.deleteSession(sessionId);
 
-    verify(deletedAskerSessionService).recordDeletion(any(Session.class));
+    verify(deletedAskerSessionService).recordDeletionAfterCommit(any());
   }
 
   @Test
@@ -171,7 +171,7 @@ class SessionDeleteServiceTest {
     givenActionRegistryDeletesSession();
     org.mockito.Mockito.doThrow(new RuntimeException("placeholder failed"))
         .when(deletedAskerSessionService)
-        .recordDeletion(any());
+        .recordDeletionAfterCommit(any());
 
     sessionDeleteService.deleteSession(sessionId);
 
