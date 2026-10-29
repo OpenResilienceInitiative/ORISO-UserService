@@ -45,13 +45,13 @@ public class AccountCreationAttempt {
       unique = true)
   private UUID operationKey;
 
-  @Column(name = "owner_id", nullable = false, updatable = false, length = 36)
+  @Column(name = "owner_id", nullable = false, updatable = false, length = 255)
   private String ownerId;
 
   @Column(name = "tenant_id", nullable = false, updatable = false)
   private Long tenantId;
 
-  @Column(name = "native_identity_id", length = 36)
+  @Column(name = "native_identity_id", length = 255)
   private String nativeIdentityId;
 
   @Enumerated(EnumType.STRING)
@@ -63,4 +63,48 @@ public class AccountCreationAttempt {
 
   @Column(name = "updated_at", nullable = false)
   private LocalDateTime updatedAt;
+
+  // Nullable on the retained storage-foundation rows: migration never grants dispatch.
+  @JdbcTypeCode(SqlTypes.CHAR)
+  @Column(name = "receipt_id", columnDefinition = "char(36)", unique = true, updatable = false)
+  private UUID receiptId;
+
+  @Column(name = "agency_ids", columnDefinition = "LONGTEXT", updatable = false)
+  private String agencyIds;
+
+  @Column(name = "creation_role", length = 32, updatable = false)
+  private String creationRole;
+
+  @Column(name = "fingerprint_version", updatable = false)
+  private Short fingerprintVersion;
+
+  @Column(name = "request_fingerprint", length = 64, updatable = false)
+  private String requestFingerprint;
+
+  @Column(name = "receipt_version")
+  private Long receiptVersion;
+
+  @Column(name = "dispatched_at")
+  private LocalDateTime dispatchedAt;
+
+  @Column(name = "captured_at")
+  private LocalDateTime capturedAt;
+
+  @Column(length = 32)
+  private String dispatch;
+
+  @Column(length = 32)
+  private String workflow;
+
+  @Column(name = "consultant_row", length = 32)
+  private String consultantRow;
+
+  @Column(length = 32)
+  private String onboarding;
+
+  @Column(length = 32)
+  private String compensation;
+
+  @Column(length = 64)
+  private String reason;
 }

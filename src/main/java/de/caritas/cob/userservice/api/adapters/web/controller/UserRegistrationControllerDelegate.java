@@ -86,8 +86,11 @@ class UserRegistrationControllerDelegate {
   }
 
   ResponseEntity<MagicLinkSessionResponseDTO> consumeMagicLink(MagicLinkConsumeDTO consumeDTO) {
-    return magicLinkLoginService
-        .consumeMagicLink(consumeDTO.getToken())
+    var session =
+        consumeDTO.getOtp() == null
+            ? magicLinkLoginService.consumeMagicLink(consumeDTO.getToken())
+            : magicLinkLoginService.consumeMagicLink(consumeDTO.getToken(), consumeDTO.getOtp());
+    return session
         .map(MagicLinkSessionResponseDTO::from)
         .map(ResponseEntity::ok)
         .orElseGet(() -> ResponseEntity.badRequest().build());

@@ -36,6 +36,20 @@ import org.springframework.stereotype.Service;
 @Slf4j
 public class UserAccountService {
 
+  private de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfContactEmailMaintenance
+      selfContactEmailMaintenance;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public void configureSelfContactEmailMaintenance(
+      org.springframework.beans.factory.ObjectProvider<
+              de.caritas.cob.userservice.api.adapters.keycloak.lifecycle
+                  .SelfContactEmailMaintenance>
+          owners) {
+    selfContactEmailMaintenance = owners.getIfAvailable();
+    if (identityClientConfig.isFiveActorMode() && selfContactEmailMaintenance == null)
+      throw new IllegalStateException("Scoped contact-email owner is required");
+  }
+
   private final @NonNull UserService userService;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull AppointmentService appointmentService;
@@ -51,6 +65,47 @@ public class UserAccountService {
   private final @NonNull SupervisorAddedEmailNotificationService
       supervisorAddedEmailNotificationService;
   private final @NonNull DeletionLifecycleService deletionLifecycleService;
+
+  private de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+      preDeletion;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public void setScopedPreDeletion(
+      @org.springframework.lang.Nullable
+          de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+              owner) {
+    preDeletion = owner;
+  }
+
+  public void deactivateAndFlagUserAccountForDeletion(String password) {
+    if (!identityClientConfig.isFiveActorMode()) {
+      deactivateAndFlagUserAccountForDeletion();
+      return;
+    }
+    if (preDeletion == null || !preDeletion.isFiveActorMode())
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    preDeletion.startSelfAsker(password, this::completeAcknowledgedSelfDeletion);
+  }
+
+  public int resumeSelfAskerDeletions(int limit) {
+    if (!identityClientConfig.isFiveActorMode() || preDeletion == null)
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    return preDeletion.recoverSelfAskerOutcomes(limit, this::completeAcknowledgedSelfDeletion);
+  }
+
+  private void completeAcknowledgedSelfDeletion(
+      de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+              .AcknowledgedPreDeletion
+          acknowledged) {
+    var completed = new java.util.concurrent.atomic.AtomicReference<User>();
+    acknowledged.completeUser(
+        user -> {
+          deletionLifecycleService.beginUserDeletion(user, user.getUserId());
+          userService.saveUser(user);
+          completed.set(user);
+        });
+    fireAccountDeletionStatisticsEvent(completed.get());
+  }
 
   public Optional<User> findUserByEmail(String email) {
     return this.userService.findUserByEmail(email);
@@ -134,6 +189,10 @@ public class UserAccountService {
    * @param optionalEmail the new email address, potentially empty
    */
   public void changeUserAccountEmailAddress(Optional<String> optionalEmail) {
+    if (identityClientConfig.isFiveActorMode()) {
+      changeScopedContactEmail(optionalEmail);
+      return;
+    }
     ensureCurrentAccountIsWritable();
     var userId = authenticatedUser.getUserId();
     var email = optionalEmail.orElseGet(() -> userHelper.getDummyEmail(userId));
@@ -187,9 +246,53 @@ public class UserAccountService {
 
   void updateUserEmail(User user, String email) {
     this.appointmentService.updateAskerEmail(user.getUserId(), email);
+    updateUserEmailData(user, email);
+  }
+
+  private void updateUserEmailData(User user, String email) {
     setInitialEmailNotificationsSettingsForNewEmailAddress(user, email);
     user.setEmail(email);
     this.userService.saveUser(user);
+  }
+
+  private void changeScopedContactEmail(Optional<String> optionalEmail) {
+    if (selfContactEmailMaintenance == null)
+      throw new de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException(
+          "Scoped contact-email owner is unavailable");
+    String id = authenticatedUser.getUserId();
+    String email = optionalEmail.orElseGet(() -> userHelper.getDummyEmail(id));
+    boolean completed =
+        selfContactEmailMaintenance.change(
+            email,
+            optionalEmail.isEmpty(),
+            () -> {
+              consultantService.getConsultant(id).ifPresent(c -> updateConsultantEmail(c, email));
+              userService.getUser(id).ifPresent(u -> updateUserEmailData(u, email));
+            });
+    if (!completed) return;
+    var user = userService.getUser(id);
+    var consultant = consultantService.getConsultant(id);
+    user.ifPresent(u -> appointmentService.updateAskerEmail(id, email));
+    if (optionalEmail.isEmpty()) return;
+    LanguageCode language =
+        user.map(User::getLanguageCode)
+            .orElseGet(() -> consultant.map(Consultant::getLanguageCode).orElse(null));
+    try {
+      OrisoEmailRenderer.Tone.of(language);
+    } catch (IllegalArgumentException unsupported) {
+      language = LanguageCode.de;
+    }
+    Long tenant =
+        user.map(User::getTenantId).orElse(consultant.map(Consultant::getTenantId).orElse(null));
+    String username =
+        user.map(User::getUsername).orElse(consultant.map(Consultant::getUsername).orElse(id));
+    supervisorAddedEmailNotificationService.notifyEmailAddressChanged(
+        username,
+        email,
+        tenant,
+        TenantContext.getCurrentTenantData(),
+        authenticatedUser.getAccessToken(),
+        language);
   }
 
   private void setInitialEmailNotificationsSettingsForNewEmailAddress(User user, String email) {
@@ -222,6 +325,8 @@ public class UserAccountService {
    * deletion.
    */
   public void deactivateAndFlagUserAccountForDeletion() {
+    if (identityClientConfig.isFiveActorMode())
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
     User user = retrieveValidatedUser();
     this.identityDeactivator.deactivateUser(user.getUserId());
     deletionLifecycleService.beginUserDeletion(user, user.getUserId());
@@ -301,5 +406,16 @@ public class UserAccountService {
     if (consultant.getDeletionLifecycleState() == DeletionLifecycleState.READ_ONLY_SAFEGUARD) {
       throw new ForbiddenException("Account is in read-only safeguard mode.");
     }
+  }
+
+  /** Read-only startup check of the actual installed production consumers. */
+  public boolean hasScopedAccountBindings(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode,
+      de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance owner,
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfContactEmailMaintenance
+          email) {
+    return identityClientConfig == mode
+        && preDeletion == owner
+        && selfContactEmailMaintenance == email;
   }
 }

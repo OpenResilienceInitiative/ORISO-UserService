@@ -53,6 +53,15 @@ class ConsultantPictureHttpTest {
   })
   static class Config {
     @Bean
+    de.caritas.cob.userservice.api.port.out.IdentityClientConfig identityClientConfig() {
+      var legacy =
+          org.mockito.Mockito.mock(
+              de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
+      org.mockito.Mockito.when(legacy.isFiveActorMode()).thenReturn(false);
+      return legacy;
+    }
+
+    @Bean
     de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
         inactivity() {
       var ds =

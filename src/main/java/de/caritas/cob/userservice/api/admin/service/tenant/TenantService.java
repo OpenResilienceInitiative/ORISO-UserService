@@ -59,6 +59,15 @@ public class TenantService {
         .getRestrictedSingleTenancyTenantData();
   }
 
+  /** Explicit bounded RUNTIME read; the caller never supplies an ambient human/legacy token. */
+  public RestrictedTenantDTO getSingleTenancyTenantDataFresh(String boundedAccessToken) {
+    if (boundedAccessToken == null || boundedAccessToken.isBlank())
+      throw new IllegalArgumentException("A bounded service token is required");
+    var api = tenantServiceApiControllerFactory.createControllerApi();
+    api.getApiClient().addDefaultHeader("Authorization", "Bearer " + boundedAccessToken);
+    return api.getRestrictedSingleTenancyTenantData();
+  }
+
   /** Explicit platform-branding lookup; generic tenant operations still reject technical id 0. */
   @Cacheable(cacheNames = CacheManagerConfig.TENANT_CACHE, key = "'platform-branding'")
   public RestrictedTenantDTO getPlatformTenantData() {

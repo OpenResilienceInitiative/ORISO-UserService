@@ -88,6 +88,76 @@ class CreateAdminServiceTest {
   }
 
   @Test
+  void fiveActorSingleTenantAdminKeepsTheTrustedConcreteTenantInTheCreatedRow() {
+    var flow =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryAccountCreation
+                .class);
+    var provider = org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class);
+    when(provider.getIfAvailable()).thenReturn(flow);
+    ReflectionTestUtils.setField(createAdminService, "ordinaryAccountCreation", provider);
+    ReflectionTestUtils.setField(
+        createAdminService,
+        "lifecycleEnvironment",
+        new org.springframework.mock.env.MockEnvironment()
+            .withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS"));
+    ReflectionTestUtils.setField(createAdminService, "multiTenancyEnabled", false);
+    when(flow.resolveSingleTenant(null, List.of())).thenReturn(79L);
+    var scope =
+        new de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleDtos
+            .CreationScope(
+            "79",
+            "AGENCY_ADMIN",
+            "/human-roles/centre-admin",
+            new de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleDtos
+                .Origin(
+                "HUMAN_ADMIN",
+                "human:one",
+                "human:verified",
+                "https://issuer.example/realms/oriso",
+                "human-subject",
+                "user-admin",
+                List.of()));
+    when(flow.humanScope(
+            org.mockito.ArgumentMatchers.eq(adminScope),
+            org.mockito.ArgumentMatchers.nullable(Long.class),
+            any(),
+            anyString(),
+            any()))
+        .thenReturn(scope);
+    var pending =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryAccountCreation
+                .Pending.class);
+    when(pending.accountId()).thenReturn("created-admin");
+    when(flow.create(any(), any(), any()))
+        .thenAnswer(
+            call -> {
+              java.util.function.Function<
+                      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle
+                          .OrdinaryAccountCreation.Pending,
+                      Admin>
+                  writes = call.getArgument(2);
+              return writes.apply(pending);
+            });
+    when(adminRepository.saveAndFlush(any(Admin.class))).thenAnswer(call -> call.getArgument(0));
+    var dto = givenValidCreateAdminDTO(null);
+    dto.setUsername("agency-admin+demo");
+    dto.setPassword("synthetic-chosen-secret");
+
+    var created = createAdminService.createNewAgencyAdmin(dto);
+
+    assertThat(created.getTenantId()).isEqualTo(79L);
+    var account =
+        org.mockito.ArgumentCaptor.forClass(
+            de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleDtos
+                .AccountCreation.class);
+    verify(flow).create(org.mockito.ArgumentMatchers.eq(scope), account.capture(), any());
+    assertThat(account.getValue().username()).isEqualTo("enc.MFTWK3TDPEWWCZDNNFXCWZDFNVXQ....");
+    verifyNoInteractions(identityClient, identityPasswordUpdater, identityAccountRemover);
+  }
+
+  @Test
   void capturesAndPersistsTheAdminInactivityPolicy() {
     givenKeycloakCreatesUser();
     var admin = givenValidCreateAdminDTO(42);

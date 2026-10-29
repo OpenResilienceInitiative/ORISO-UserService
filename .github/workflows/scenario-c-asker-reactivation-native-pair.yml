@@ -1,0 +1,151 @@
+name: Scenario C chosen-password ASKER native pair
+'on':
+  pull_request:
+    branches:
+    - dev
+  push:
+    branches:
+    - dev
+    - codex/367-c-caller-finish-20261021
+    - codex/367-c-maintenance-user-20261021
+    - codex/367-c-reactivation-finish-20261023
+    paths:
+    - src/**
+    - pom.xml
+    - scripts/ci/asker-reactivation-native-pair.py
+    - scripts/ci/self-maintenance-native-pair.py
+    - tests/ci/test_asker_reactivation_native_pair.py
+    - .github/workflows/scenario-c-asker-reactivation-native-pair.yml
+permissions:
+  contents: read
+concurrency:
+  group: asker-reactivation-native-pair-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  asker-reactivation-native-pair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Checkout immutable actual Keycloak source for native pairing
+      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      with:
+        repository: OpenResilienceInitiative/ORISO-Keycloak
+        ref: 5d5db75faa1c36ff6d6ed2eb41f71ecd415e6aeb
+        path: native-keycloak
+        persist-credentials: false
+    - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+      with:
+        distribution: temurin
+        java-version: 21.0.12+8.0.LTS
+        cache: maven
+        cache-dependency-path: 'pom.xml
+
+          native-keycloak/keycloak-image/account-lifecycle-spi/pom.xml
+
+          native-keycloak/keycloak-image/otp-config-spi/pom.xml'
+    - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      with:
+        python-version: 3.12.13
+    - name: Install checksum-verified Maven 3.9.14
+      shell: bash
+      run: "set -euo pipefail\ncurl --fail --silent --show-error --location --retry 3 \\\n  https://archive.apache.org/dist/maven/maven-3/3.9.14/binaries/apache-maven-3.9.14-bin.tar.gz\
+        \ \\\n  --output \"$RUNNER_TEMP/maven.tar.gz\"\nprintf '%s  %s\\n' \\\n  d50af8ab5e6005b46a07f0ce9d3719e67cfdf898da988a84871304cd59fb1af0fef2f99dea709e6e66f21f732f905979b5c2dce6b6860406f60a70e84d9cf0b8\
+        \ \\\n  \"$RUNNER_TEMP/maven.tar.gz\" | sha512sum --check\ntar -xzf \"$RUNNER_TEMP/maven.tar.gz\" -C \"$RUNNER_TEMP\"\
+        \necho \"$RUNNER_TEMP/apache-maven-3.9.14/bin\" >> \"$GITHUB_PATH\"\n"
+    - name: Verify nonsecret evidence gates without JVM or native fixtures
+      run: python -m unittest discover -s tests/ci -p test_maintenance_boundary_proof.py -v
+    - name: Install exact existing CI YAML parser dependency
+      run: python -m pip install --disable-pip-version-check PyYAML==6.0.3
+    - name: Check native pair proof fail-closed offline controls
+      run: python -m unittest discover -s tests/ci -p test_asker_reactivation_native_pair.py -v
+    - name: Require committed formatting for actual native-pair test
+      env:
+        MAVEN_OPTS: -Xmx768m -XX:MaxMetaspaceSize=256m -XX:ActiveProcessorCount=2
+      run: 'set -euo pipefail
+
+        mkdir -p target/asker-reactivation-native
+
+        mvn -B -ntp -q spotless:apply "-DspotlessFiles=$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/admin/service/AskerReactivationNativePairProof.java"
+
+        git diff --binary -- src/test/java/de/caritas/cob/userservice/api/admin/service/AskerReactivationNativePairProof.java
+        > target/asker-reactivation-native/asker-reactivation-native-format.patch
+
+        git diff --exit-code -- src/test/java/de/caritas/cob/userservice/api/admin/service/AskerReactivationNativePairProof.java'
+    - name: Bind both exact source checkouts before builds
+      run: python scripts/ci/asker-reactivation-native-pair.py snapshot --keycloak native-keycloak
+    - name: Build same-source lifecycle before its provided OTP consumer
+      working-directory: native-keycloak/keycloak-image/account-lifecycle-spi
+      env:
+        MAVEN_OPTS: -Xmx384m -XX:MaxMetaspaceSize=128m -XX:ActiveProcessorCount=2
+      run: mvn -B -ntp -q clean install '-DargLine=-Xmx256m -XX:MaxMetaspaceSize=192m -XX:ActiveProcessorCount=2'
+    - name: Require all58 lifecycle units with exact method inventory
+      if: always()
+      run: 'cd native-keycloak
+
+        python keycloak-image/account-lifecycle-spi/tests/run_maintenance.py units --report ../target/asker-reactivation-native/asker-reactivation-native-lifecycle-units.json'
+    - name: Build actual provided OTP module and all170 units
+      working-directory: native-keycloak/keycloak-image/otp-config-spi
+      env:
+        MAVEN_OPTS: -Xmx512m -XX:MaxMetaspaceSize=192m -XX:ActiveProcessorCount=2
+      run: mvn -B -ntp -q clean package '-DargLine=-Xmx256m -XX:MaxMetaspaceSize=192m -XX:ActiveProcessorCount=2'
+    - name: Require all170 OTP units with exact method inventory
+      if: always()
+      run: 'cd native-keycloak
+
+        python keycloak-image/account-lifecycle-spi/tests/run_scoped_otp.py units --report ../target/asker-reactivation-native/asker-reactivation-native-otp-units.json'
+    - name: Package existing isolated completion observer required by OperationFixture
+      working-directory: native-keycloak/keycloak-image/account-lifecycle-spi
+      run: jar --create --file target/scoped-otp-ready-fixture.jar -C target/test-classes org/oriso/keycloak/lifecycle/ScopedOtpReadyCompletionFixture.class
+        -C tests/ready-fixture-resources META-INF/beans.xml
+    - name: Compile actual User controller, owned caller and native paired proof before container
+      env:
+        MAVEN_OPTS: -Xmx1024m -XX:MaxMetaspaceSize=384m -XX:ActiveProcessorCount=2
+      run: mvn -B -ntp -q test-compile -DskipTests "-DspotlessFiles=$GITHUB_WORKSPACE/src/test/java/de/caritas/cob/userservice/api/admin/service/AskerReactivationNativePairProof.java"
+    - name: Run one bounded real facade JPA and native Keycloak saved-authority pair
+      timeout-minutes: 10
+      env:
+        MAVEN_OPTS: -Xmx384m -XX:MaxMetaspaceSize=192m -XX:ActiveProcessorCount=2
+        PROTECTED_PROOF_RESOURCE_PROFILE: github-ubuntu-24-amd64-v1
+      run: 'set -euo pipefail
+
+        docker info > /dev/null
+
+        docker pull quay.io/keycloak/keycloak@sha256:9b0330756022422149aa6502eb2def8cd47c6e1b000c7c65cdb13e7c0133e992 > /dev/null
+
+        python scripts/ci/asker-reactivation-native-pair.py native --keycloak native-keycloak'
+    - name: Keep absent/native setup failure distinct from behavior assertions
+      if: always()
+      run: python scripts/ci/asker-reactivation-native-pair.py finalize --keycloak native-keycloak
+    - name: Remove only this isolated job labelled native resources
+      if: always()
+      run: 'python - <<''PYCODE''
+
+        import subprocess
+
+        names=subprocess.run([''docker'',''ps'',''-aq'',''--filter'',''label=oriso-c-lifecycle-test=true''],capture_output=True,text=True,check=True).stdout.split()
+
+        if names:subprocess.run([''docker'',''rm'',''-fv'',*names],capture_output=True,check=True,timeout=45)
+
+        volumes=subprocess.run([''docker'',''volume'',''ls'',''-q'',''--filter'',''label=oriso-protected-receiver-test=true''],capture_output=True,text=True,check=True).stdout.split()
+
+        if volumes:subprocess.run([''docker'',''volume'',''rm'',*volumes],capture_output=True,check=True,timeout=45)
+
+        PYCODE'
+    - name: Upload only source hashes, sanitized XML/JSON and exact formatter patch
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: scenario-c-asker-reactivation-native-pair
+        path: 'target/asker-reactivation-native/asker-reactivation-native-*.json
+
+
+          target/asker-reactivation-native/asker-reactivation-native-*.xml
+
+
+          target/asker-reactivation-native/asker-reactivation-native-format.patch'
+        if-no-files-found: error
+        retention-days: 14

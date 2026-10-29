@@ -10,6 +10,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
@@ -106,6 +107,19 @@ public class RedisOneTimeTokenStore implements OneTimeTokenStore {
   }
 
   @Override
+  public void storeMagicLink(String token, TokenClaim claim) {
+    requireSegment("token", token);
+    String value = encodeMagicClaim(claim);
+    long ttlMillis = remainingTtlMillis(claim.expiresAt());
+    if (claim.expiresAt().isAfter(Instant.now().plusSeconds(900))) {
+      throw new IllegalArgumentException("Invalid scoped magic-link expiry");
+    }
+    redisTemplate
+        .opsForValue()
+        .set(tokenKey("magic-login", token), value, Duration.ofMillis(ttlMillis));
+  }
+
+  @Override
   public Optional<TokenClaim> claim(String scope, String token) {
     requireSegment("scope", scope);
     requireSegment("token", token);
@@ -115,7 +129,14 @@ public class RedisOneTimeTokenStore implements OneTimeTokenStore {
       return Optional.empty();
     }
 
-    TokenClaim claim = decode(encoded);
+    TokenClaim claim;
+    if (encoded.startsWith("m1.")) {
+      if (!"magic-login".equals(scope))
+        throw new IllegalStateException("Invalid scoped token namespace");
+      claim = decodeMagicClaim(encoded);
+    } else {
+      claim = decode(encoded);
+    }
     clearSubjectIndexIfOwned(scope, claim.subjectId(), tokenKey);
     if (!claim.expiresAt().isAfter(Instant.now())) {
       return Optional.empty();
@@ -134,7 +155,15 @@ public class RedisOneTimeTokenStore implements OneTimeTokenStore {
     }
 
     String tokenKey = tokenKey(scope, token);
-    String value = encode(claim.subjectId(), claim.expiresAt());
+    boolean scoped =
+        claim.workflowId() != null || claim.tenantId() != null || claim.capabilityDigest() != null;
+    if (scoped && (!"magic-login".equals(scope) || singlePerSubject)) {
+      throw new IllegalArgumentException("Invalid scoped token restoration");
+    }
+    String value = scoped ? encodeMagicClaim(claim) : encode(claim.subjectId(), claim.expiresAt());
+    if (scoped && claim.expiresAt().isAfter(Instant.now().plusSeconds(900))) {
+      throw new IllegalArgumentException("Invalid scoped magic-link expiry");
+    }
     if (!singlePerSubject) {
       redisTemplate.opsForValue().set(tokenKey, value, Duration.ofMillis(ttlMillis));
       return true;
@@ -160,6 +189,50 @@ public class RedisOneTimeTokenStore implements OneTimeTokenStore {
     clearSubjectIndexIfOwned(scope, subjectId, tokenKey);
   }
 
+  @Override
+  public void storePasswordReset(String token, PasswordResetBinding binding) {
+    resetCustody().store(token, binding);
+  }
+
+  @Override
+  public Optional<PasswordResetBinding> passwordResetIssuance(String token) {
+    return resetCustody().issuance(token);
+  }
+
+  @Override
+  public void passwordResetDelivery(PasswordResetBinding binding, String delivery) {
+    resetCustody().delivery(binding, delivery);
+  }
+
+  @Override
+  public Optional<PasswordResetClaim> claimPasswordReset(String token, String requestDigest) {
+    return resetCustody().claim(token, requestDigest);
+  }
+
+  @Override
+  public void requirePasswordResetClaim(PasswordResetClaim claim) {
+    resetCustody().requireCurrent(claim);
+  }
+
+  @Override
+  public void requireFreshPasswordResetClaim(PasswordResetClaim claim) {
+    resetCustody().requireFresh(claim);
+  }
+
+  @Override
+  public void refusePasswordResetClaim(PasswordResetClaim claim) {
+    resetCustody().refuse(claim);
+  }
+
+  @Override
+  public void finishPasswordResetClaim(PasswordResetClaim claim, boolean accepted) {
+    resetCustody().finish(claim, accepted);
+  }
+
+  private RedisPasswordResetCustody resetCustody() {
+    return new RedisPasswordResetCustody(redisTemplate, keyPrefix);
+  }
+
   private void clearSubjectIndexIfOwned(String scope, String subjectId, String tokenKey) {
     redisTemplate.execute(CLEAR_INDEX_SCRIPT, List.of(subjectIndexKey(scope, subjectId)), tokenKey);
   }
@@ -173,6 +246,48 @@ public class RedisOneTimeTokenStore implements OneTimeTokenStore {
         + requireSegment("scope", scope)
         + ":subject:"
         + sha256(requireSegment("subjectId", subjectId));
+  }
+
+  private static String encodeMagicClaim(TokenClaim claim) {
+    if (claim == null
+        || claim.subjectId() == null
+        || claim.workflowId() == null
+        || claim.expiresAt() == null
+        || !claim.expiresAt().equals(claim.expiresAt().truncatedTo(ChronoUnit.MILLIS))
+        || !UUID.fromString(claim.subjectId()).toString().equals(claim.subjectId())
+        || claim.tenantId() != null && claim.tenantId() < 0
+        || claim.capabilityDigest() == null
+        || !claim.capabilityDigest().matches("[0-9a-f]{64}")) {
+      throw new IllegalArgumentException("Invalid scoped magic-link metadata");
+    }
+    return "m1."
+        + claim.expiresAt().toEpochMilli()
+        + "."
+        + Base64.getUrlEncoder().withoutPadding().encodeToString(claim.subjectId().getBytes(UTF_8))
+        + "."
+        + claim.workflowId()
+        + "."
+        + (claim.tenantId() == null ? "null" : claim.tenantId())
+        + "."
+        + claim.capabilityDigest();
+  }
+
+  private static TokenClaim decodeMagicClaim(String encoded) {
+    String[] values = encoded.split("\\.", -1);
+    if (values.length != 6 || !"m1".equals(values[0])) {
+      throw new IllegalStateException("Stored scoped token has an invalid format");
+    }
+    var claim =
+        new TokenClaim(
+            new String(Base64.getUrlDecoder().decode(values[2]), UTF_8),
+            Instant.ofEpochMilli(Long.parseLong(values[1])),
+            UUID.fromString(values[3]),
+            "null".equals(values[4]) ? null : Long.valueOf(values[4]),
+            values[5]);
+    if (!encodeMagicClaim(claim).equals(encoded)) {
+      throw new IllegalStateException("Stored scoped token is not canonical");
+    }
+    return claim;
   }
 
   private static String encode(String subjectId, Instant expiresAt) {

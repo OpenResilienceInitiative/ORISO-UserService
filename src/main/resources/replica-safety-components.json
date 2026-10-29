@@ -363,6 +363,22 @@
       "status": "safe"
     },
     {
+      "id": "protected-invitation-terminal-recovery",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/accountinvite/ProtectedInvitationRecoverySweep.java",
+      "kind": "scheduler",
+      "owner": "identity-profile",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "retryPending"
+      ],
+      "decision": "Claims a shared five-minute database lease and stops selecting work at its deadline; release compares the acquired lease version. An in-flight RPC may outlive the lease, so correctness also relies on locked invitation/custody rows, immutable recovery identifiers and native idempotent receipts. Reservation and recipient-key release require independently verified final status inside the owning SQL transaction. Failed accounts retain durable retry state and a last-attempt fairness marker. The supported one-replica ceiling is unchanged; this inventory does not claim two-instance execution proof.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
       "id": "enquiry-notification-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/workflow/enquirynotification/scheduler/EnquiryNotificationScheduler.java",
       "kind": "scheduler",
@@ -449,9 +465,10 @@
       "owner": "identity-profile",
       "risk": "duplicate-side-effect",
       "components": [
-        "performDeletionWorkflow"
+        "performDeletionWorkflow",
+        "performReactivationSecretErasure"
       ],
-      "decision": "Lease execution and make provider cleanup idempotent.",
+      "decision": "Lease deletion execution and make provider cleanup idempotent. Reactivation secret erasure uses its dedicated five-minute shared lease, scans at most 100 original intents per call, persists its cursor in the same transaction, and retains the lease row until natural expiry. It performs local SQL only; availability and poison rows may delay a complete scan.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"

@@ -84,6 +84,19 @@ class IdentityObservationHttpTest {
   @Autowired WebApplicationContext context;
   @Autowired AuthenticatedUser caller;
   @MockitoSpyBean IdentityObservationService observationService;
+
+  @MockitoBean
+  de.caritas.cob.userservice.api.service.creationoutcome.CreationOperationAccess
+      creationOperationAccess;
+
+  @MockitoBean
+  de.caritas.cob.userservice.api.service.creationoutcome.CreationOperationWriter
+      creationOperationWriter;
+
+  @MockitoBean
+  de.caritas.cob.userservice.api.adapters.web.controller.ConsultantCreationOperationController
+      creationOperationController;
+
   @MockitoBean JwtDecoder decoder;
   @MockitoBean KeycloakIdentityOccupancyLookup provider;
   @MockitoBean IdentityOccupancyRawReader reader;

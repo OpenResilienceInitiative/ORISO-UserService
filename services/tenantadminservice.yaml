@@ -1545,6 +1545,13 @@ components:
           $ref: '#/components/schemas/Settings'
         onboardingDpaAcceptance:
           $ref: '#/components/schemas/OnboardingDpaAcceptanceDTO'
+        active:
+          type: boolean
+          description: Operational status of this Träger. Existing and new tenants start active; omission
+            on update preserves the stored status. Only the matching Träger-admin may change status
+            after creation. Independent of legal agreement state.
+        dataProtectionOfficer:
+          $ref: '#/components/schemas/TenantDataProtectionOfficerDTO'
     OnboardingDpaAcceptanceDTO:
       type: object
       description: 'Creation-only: the data processing agreement acceptance a tenant admin gave
@@ -1658,6 +1665,40 @@ components:
         secondaryColor:
           type: string
           example: '#FFFFFF'
+        assistantName:
+          type: string
+          maxLength: 80
+          description: Tenant assistant name; absent uses the established Carimat default.
+        assistantIcon:
+          type: string
+          description: Predefined robot identifier or validated SVG/PNG data URI.
+        accent:
+          type: string
+          example: '#FFB3C7'
+          description: The LIGHT accent ("Helle Akzentfarbe"). Used on DARK-MODE surfaces, where a light
+            colour carries the contrast. May be null for tenants configured before this field existed;
+            consumers then derive a light accent from `primaryColor` and must present that as a derived
+            value, never as a configured one.
+        loginEffect:
+          type: string
+          enum:
+          - NONE
+          - LINES
+          - CONNECTED_DOTS
+          - CRACKS
+          example: CRACKS
+          description: Which decorative effect the tenant's login stage runs. `NONE` (the default, and
+            what an unset value means) keeps the plain stage with its cursor light cone. The other three
+            are mutually exclusive looks; the frontend loads the code for exactly the one named here
+            and never the others, so this field also decides what a visitor downloads. Desktop only
+            — the stage is not rendered on small viewports, so no effect code is fetched there regardless
+            of this value.
+        signal:
+          type: string
+          example: '#D93025'
+          description: Optional signal/attention colour of the tenant seed set (errors, warnings, destructive
+            actions). Persisted so nothing the Admin panel submits is silently dropped; may be null
+            when the tenant has never configured one.
     Content:
       type: object
       required:
@@ -1944,6 +1985,39 @@ components:
           example: 'false'
         tenantAdminControls:
           $ref: '#/components/schemas/TenantAdminControls'
+        featureInternalGroupChatEnabled:
+          type: boolean
+          description: Internal group chats (counsellors only), switched separately from conversation
+            circles (#250). When the tenant never stored a value, this reads the tenant's featureGroupChatV2Enabled.
+          example: 'true'
+        featureSelfHelpGroupsEnabled:
+          type: boolean
+          description: Conversation circles / self-help groups (advice seekers take part), switched
+            separately from internal group chats (#250). When the tenant never stored a value, this
+            reads the tenant's featureGroupChatV2Enabled.
+          example: 'true'
+        featureDisplayNameEditable:
+          type: boolean
+          example: 'true'
+          description: 'ORISO-Admin#602 switch 1. Whether an advice seeker may type their own Anzeigename
+            (displayName), or may only re-roll the generated one. Never governs the Anmeldename (userName),
+            which is immutable at every layer. Opt-out: defaults to true.'
+        smtpMode:
+          type: string
+          enum:
+          - PLATFORM
+          - OWN
+          description: Explicit mail transport selection. Absent on legacy tenants until audited.
+        emailVisible:
+          type: boolean
+          default: false
+          example: 'false'
+          description: Whether the registration flow shows an email field at all.
+        emailRequired:
+          type: boolean
+          default: false
+          example: 'false'
+          description: Whether the email field, when shown, must be filled in.
     TenantAdminControls:
       type: object
       properties:
@@ -1960,6 +2034,12 @@ components:
             $ref: '#/components/schemas/BooleanPermissionPolicy'
         caseHandoverPolicies:
           $ref: '#/components/schemas/CaseHandoverPolicies'
+        accountInactivitySettings:
+          $ref: '#/components/schemas/AccountInactivitySettings'
+        chatRecoverySettings:
+          $ref: '#/components/schemas/ChatRecoverySettings'
+        internalGroupChat:
+          $ref: '#/components/schemas/InternalGroupChatPolicies'
     PermissionPolicyMode:
       type: string
       enum: [ENFORCED, SUGGESTED]
@@ -2218,6 +2298,12 @@ components:
         mediaAiScanSupervisionChats:
           type: boolean
           example: 'true'
+        internalGroupChat:
+          type: boolean
+          example: 'true'
+        selfHelpGroups:
+          type: boolean
+          example: 'true'
     TenantMediaResponseDTO:
       type: object
       properties:
@@ -2258,6 +2344,17 @@ components:
         emailThemeColor:
           type: string
           example: '#0f3b8f'
+        nonstandardTransportConfirmed:
+          type: boolean
+          writeOnly: true
+          description: Write-only acknowledgement when a changed OWN SMTP port and TLS mode are not
+            the usual 465/implicit-TLS or 587/STARTTLS pair. Not stored or returned. An unchanged legacy
+            pair does not require a new acknowledgement.
+          example: false
+        passwordSet:
+          type: boolean
+          description: Read-only. True if an SMTP password is stored for this tenant. Ignored on create/update.
+          example: true
     MultilingualContent:
       type: object
       required:
@@ -2287,6 +2384,43 @@ components:
           type: object
           additionalProperties:
             $ref: '#/components/schemas/DataProtectionContactTemplateDTO'
+        erstantwortGreeting:
+          type: object
+          additionalProperties:
+            type: string
+          description: ORISO-Admin#601 / ADR-018. Träger-authored Erstantwort Baustein as a `<lang>`
+            → HTML map, the same shape the legal texts use, so machine translation on publish applies
+            unchanged. Absent means the Träger authored nothing and the resolution chain falls through
+            to the platform text — not the same as an empty string.
+        erstantwortWhoReadsAlong:
+          type: object
+          additionalProperties:
+            type: string
+          description: 'Mandatory by decision: the Träger is the controller and ORISO the processor,
+            so the platform must not derive a claim about who can read a counselling room.'
+        erstantwortEmergencyAddition:
+          type: object
+          additionalProperties:
+            type: string
+          description: Addition to the platform emergency numbers, never a replacement — those carry
+            no toggle at all (ADR-018 §6).
+        erstantwortFreeNotice:
+          type: object
+          additionalProperties:
+            type: string
+          description: The single "Freier Hinweis" (ADR-018 §2). Exactly one, enforced by the schema.
+        erstantwortClosing:
+          type: object
+          additionalProperties:
+            type: string
+        erstantwortResponseDeadlineDays:
+          type: integer
+          example: 2
+          minimum: 1
+          maximum: 30
+          description: The Antwortfrist in working days — a NUMBER, never prose (ADR-018). Absent means
+            the platform default (2) applies, deliberately distinguishable from a Träger that chose
+            2.
     DataProtectionContactTemplateDTO:
       type: object
       properties:
@@ -2417,6 +2551,9 @@ components:
         welcomeMessage:
           allOf:
             - $ref: '#/components/schemas/WelcomeMessageDTO'
+        notifications:
+          allOf:
+          - $ref: '#/components/schemas/NotificationsDTO'
     TenantIdAvailabilityDTO:
       type: object
       required:
@@ -2575,3 +2712,140 @@ components:
               type: string
               maxLength: 40
               description: 'Exact activationDate/currentDpaVersion of the contract displayed to the signer. Missing/malformed input is rejected; an outdated displayed version returns 409 without signing the unseen renewal.'
+
+    TenantDataProtectionOfficerDTO:
+      type: object
+      description: 'Optional data protection officer (Datenschutzbeauftragte:r) of the Träger, same shape
+        as an agency''s `dataProtectionOfficerContact`. Its Beratungsstellen inherit it for the `{{Datenschutzbeauftragte}}`
+        legal-text placeholder unless they enter their own. Never required. On update an absent object keeps
+        the stored one; an object whose fields are all blank clears it. Public on the restricted tenant
+        read on purpose: a DPO''s contact details have to be published (Art. 37(7) GDPR).'
+      properties:
+        nameAndLegalForm:
+          type: string
+          maxLength: 255
+          example: Dr. Maria Muster
+        street:
+          type: string
+          maxLength: 100
+          example: Musterstraße 1
+        postcode:
+          type: string
+          maxLength: 10
+          example: '79106'
+        city:
+          type: string
+          maxLength: 100
+          example: Freiburg
+        phoneNumber:
+          type: string
+          maxLength: 64
+          example: +49 761 200-0
+        email:
+          type: string
+          format: email
+          maxLength: 255
+          example: datenschutz@caritas-musterstadt.de
+
+    NotificationsDTO:
+      type: object
+      properties:
+        teamSessions:
+          allOf:
+          - $ref: '#/components/schemas/TeamSessionsDTO'
+
+    TeamSessionsDTO:
+      type: object
+      properties:
+        newMessage:
+          allOf:
+          - $ref: '#/components/schemas/NewMessageDTO'
+
+    NewMessageDTO:
+      type: object
+      properties:
+        allTeamConsultants:
+          type: boolean
+          example: true
+
+    AccountInactivitySettings:
+      type: object
+      description: Platform creation defaults only. Existing people retain their assigned months.
+      required:
+      - askerMonths
+      - consultantMonths
+      - otherMonths
+      - revision
+      properties:
+        askerMonths:
+          type: integer
+          format: int32
+          minimum: 1
+        consultantMonths:
+          type: integer
+          format: int32
+          minimum: 1
+        otherMonths:
+          type: integer
+          format: int32
+          minimum: 1
+        revision:
+          type: integer
+          format: int64
+          minimum: 0
+
+    ChatRecoverySettings:
+      type: object
+      required:
+      - asker
+      - consultant
+      - revision
+      properties:
+        asker:
+          $ref: '#/components/schemas/ChatRecoveryMode'
+        consultant:
+          $ref: '#/components/schemas/ChatRecoveryMode'
+        revision:
+          type: integer
+          format: int64
+          minimum: 0
+
+    ChatRecoveryMode:
+      type: string
+      enum:
+      - RECOVERY_KEY
+      - LOGIN_PASSWORD
+
+    InternalGroupChatPolicies:
+      type: object
+      description: Functionality Access policies for internal group chats that are not on/off switches (ORISO-TenantService#319).
+        ENFORCED = requirement the Traeger admin cannot change, SUGGESTED = recommendation the Traeger admin
+        may override.
+      properties:
+        recipientScope:
+          $ref: '#/components/schemas/RecipientScopePermissionPolicy'
+
+    RecipientScopePermissionPolicy:
+      type: object
+      required:
+      - value
+      - mode
+      properties:
+        value:
+          $ref: '#/components/schemas/InternalGroupChatRecipientScope'
+        mode:
+          $ref: '#/components/schemas/PermissionPolicyMode'
+        inherited:
+          type: boolean
+          readOnly: true
+          description: True when the resolved tenant value comes from the platform policy.
+
+    InternalGroupChatRecipientScope:
+      type: string
+      description: Whom a counsellor may pick as recipient of an internal group chat. PLATFORM = any counsellor
+        of the platform, TENANT = counsellors of the same Traeger, AGENCY = counsellors of the same counselling
+        centre only. Unset means AGENCY (the most restrictive).
+      enum:
+      - PLATFORM
+      - TENANT
+      - AGENCY

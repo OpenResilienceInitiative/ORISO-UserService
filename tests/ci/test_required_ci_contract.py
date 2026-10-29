@@ -1,4 +1,8 @@
 import os
+import copy
+import ast
+import json
+import yaml
 from pathlib import Path
 import re
 import subprocess
@@ -17,7 +21,144 @@ def job_block(workflow: str, job_name: str) -> str:
     return remainder if next_job is None else remainder[: next_job.start()]
 
 
+def assert_native_ownership(excluded, mariadb_workflow, caller_workflow, creation_workflow=None):
+    """Every H2 exclusion retains an actual required native owner."""
+    owners = set()
+    for match in re.finditer(r"-Dtest=([^\s]+)", mariadb_workflow):
+        owners.update(match.group(1).split(","))
+    document = yaml.safe_load(caller_workflow)
+    events = document.get("on", document.get(True, {}))
+    if events.get("pull_request") != {"branches": ["dev"]}:
+        raise AssertionError("Dedicated native owner must run for PRs to dev")
+    jobs = document.get("jobs", {})
+    native = jobs.get("native-fairness", {})
+    if not native or native.get("needs") != "caller-proof" or "caller-proof" not in jobs:
+        raise AssertionError("Missing required native fairness gate")
+    if (
+        "if" in native or "if" in jobs["caller-proof"]
+        or native.get("continue-on-error") or jobs["caller-proof"].get("continue-on-error")
+    ):
+        raise AssertionError("Native owner cannot be optional or suppressed")
+    expected_engines = [
+        {"version": "11.0.6", "image": "mariadb@sha256:082554e82eb0e333cddd152d474bb55b8155c8f6585d4c5b0fb47ce2f740cb08"},
+        {"version": "11.4.13", "image": "mariadb@sha256:33a6653ab666774f48818120045f9367a81cd4c54c027412fe294a7d1274e2dc"},
+    ]
+    if (
+        native.get("strategy", {}).get("matrix", {}).get("include", []) != expected_engines
+        or native.get("strategy", {}).get("fail-fast") is not False
+        or native.get("services", {}).get("mariadb", {}).get("image") != "${{ matrix.image }}"
+    ):
+        raise AssertionError("Both exact pinned Maria engines are required")
+    selector = "-Dtest=de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleRetryFairnessMariaDbIT"
+    steps = native.get("steps", [])
+    critical = [step for step in steps if selector in step.get("run", "")]
+    if (
+        len(critical) != 1 or "if" in critical[0]
+        or any(step.get("continue-on-error") for step in steps)
+    ):
+        raise AssertionError("Native owner execution cannot be optional or suppressed")
+    source = "\n".join(step.get("run", "") for step in steps)
+    required = [
+        selector, "names == expected",
+        "and totals == {'tests': 11, 'failures': 0, 'errors': 0, 'skipped': 0}",
+        "status == 0 and before == after", "source-before.json", "source-after.json",
+        "if not accepted:", "raise SystemExit(status or 1)",
+    ]
+    if not all(fragment in source for fragment in required):
+        raise AssertionError("Native owner must enforce exact cases, no skips and source binding")
+    exact_names = {
+        "oneHundredUncertainOwnedCleanupsCannotStarveTheNextCommittedAccountAfterRestart",
+        "twoReplicaReservationsAreDisjointAndCrashReservationsExpireWithoutDroppingIntents",
+        "aTemporarilyLockedIntentRemainsDueAndIsClaimedByTheNextTickAfterRelease",
+        "reservationCommitsPhysicallyBeforeDispatchAndSurvivesAnUnrelatedOuterRollback",
+        "migrationBackfillsAnExistingPendingIntentWithoutChangingItsImmutableBody",
+        "confirmedNativeConflictAndRefusalCommitReconciliationWithoutClaimingCompletion",
+        "retryFailuresEmitBoundedDiagnosticsAndKeepUnknownIntentsWhileHealthyWorkProgresses",
+        "thePinnedServerUsesInnoDbAndTheExactDueQueueIndex",
+        "theActualLiquibaseChangeSetCanRollBackAndUpgradeAnExistingPendingIntent",
+        "localSecretErasureKeepsTheOriginalDeadlineFullSqlAndUnknownClaim",
+        "persistedErasureCursorSurvivesPoisonLockedRowsAndTwoColdProcesses",
+    }
+    if not all("'" + name + "'" in source for name in exact_names):
+        raise AssertionError("Every original and additive native case is required")
+    owners.add("AccountLifecycleRetryFairnessMariaDbIT")
+    if creation_workflow is not None:
+        creation = yaml.safe_load(creation_workflow).get("jobs", {}).get("proof", {})
+        steps = creation.get("steps", [])
+        selector = "-Dtest=CreationOperationMariaDbIT"
+        critical = [step for step in steps if selector in step.get("run", "")]
+        source = "\n".join(step.get("run", "") for step in steps)
+        if (not creation or "if" in creation or creation.get("continue-on-error")
+                or len(critical) != 1 or "if" in critical[0]
+                or any(step.get("continue-on-error") for step in steps)
+                or not all(fragment in source for fragment in (
+                    "source-before.json", "source-after.json", "maven.exit",
+                    "creation-outcome-proof.py verify", selector))):
+            raise AssertionError("Creation outcomes require an actual source-bound native owner")
+        owners.add("CreationOperationMariaDbIT")
+    if excluded - owners:
+        raise AssertionError("H2 exclusions without an actual native owner: " + str(sorted(excluded - owners)))
+
+
 class RequiredCiContractTest(unittest.TestCase):
+    def test_composed_caller_recycles_classloaders_without_raising_resource_limits(self):
+        document = yaml.safe_load((ROOT / ".github/workflows/scenario-c-caller-proof.yml").read_text())
+        job = document["jobs"]["caller-proof"]
+        source = next(step["run"] for step in job["steps"]
+                      if "def test_phase(" in step.get("run", ""))
+        module = ast.parse(source.split("python3 - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0])
+        phase = next(node for node in module.body
+                     if isinstance(node, ast.FunctionDef) and node.name == "test_phase")
+        calls = []
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            scope = dict(root=root, proof=root, common=["./mvnw"], inputs={},
+                         snapshot=lambda: {}, json=json, shutil=__import__("shutil"),
+                         inventory=lambda phase, status: (__import__("shutil").rmtree(root / "target/surefire-reports", ignore_errors=True) or status == 0),
+                         execute=lambda argv, log, seconds: calls.append((argv, seconds)) or 0)
+            exec(compile(ast.Module(body=[phase], type_ignores=[]), "caller-test-phase", "exec"), scope)
+            scope["test_phase"]("focused", "FirstTest,SecondTest,ThirdTest,FourthTest,FifthTest,SixthTest,SeventhTest", 600)
+            scope["test_phase"]("regression", "EncodingTest#originalCase", 600)
+        selected = []
+        self.assertEqual(4, len(calls))
+        for argv, _ in calls[:3]:
+            self.assertEqual(["-DforkCount=1", "-DreuseForks=false"], argv[-2:])
+            selected.extend(argv[2].removeprefix("-Dtest=").split(","))
+        self.assertCountEqual(["FirstTest", "SecondTest", "ThirdTest", "FourthTest", "FifthTest", "SixthTest", "SeventhTest"], selected)
+        self.assertEqual(len(selected), len(set(selected)))
+        self.assertEqual(["./mvnw", "test", "-Dtest=EncodingTest#originalCase"], calls[3][0])
+        self.assertEqual([600] * 4, [seconds for _, seconds in calls])
+        # The outer orchestration allows the existing 56-minute child envelope plus cleanup;
+        # individual child deadlines and native/CPU/heap limits remain unchanged.
+        self.assertEqual(60, job["timeout-minutes"])
+        self.assertEqual("-Xmx512m -XX:MaxMetaspaceSize=192m -XX:ActiveProcessorCount=2",
+                         job["env"]["JAVA_TOOL_OPTIONS"])
+
+    def test_caller_focused_batches_keep_all_failures_without_retry_or_short_circuit(self):
+        document = yaml.safe_load((ROOT / ".github/workflows/scenario-c-caller-proof.yml").read_text())
+        source = next(step["run"] for step in document["jobs"]["caller-proof"]["steps"]
+                      if "def test_phase(" in step.get("run", ""))
+        module = ast.parse(source.split("python3 - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0])
+        phase = next(node for node in module.body if isinstance(node, ast.FunctionDef) and node.name == "test_phase")
+        calls, outcomes = [], []
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            def execute(argv, log, seconds):
+                calls.append((argv, seconds))
+                return 1 if len(calls) == 1 else 0
+            scope = dict(root=root, proof=root, common=["./mvnw"], inputs={}, snapshot=lambda: {},
+                         json=json, shutil=__import__("shutil"), execute=execute,
+                         inventory=lambda name, status: outcomes.append((name, status)) or False)
+            exec(compile(ast.Module(body=[phase], type_ignores=[]), "caller-test-phase", "exec"), scope)
+            with self.assertRaises(SystemExit) as raised:
+                scope["test_phase"]("focused", "A,B,C,D,E,F", 600)
+            self.assertEqual(1, raised.exception.code)
+        self.assertEqual(3, len(calls), "A product failure must not prevent other disjoint selected classes from running")
+        self.assertEqual([("focused", 1)], outcomes, "A later successful batch must never hide an earlier failure")
+        selected = [name for argv, _ in calls for name in argv[2].removeprefix("-Dtest=").split(",")]
+        self.assertCountEqual(["A", "B", "C", "D", "E", "F"], selected)
+        self.assertEqual(len(selected), len(set(selected)), "No product-test retry")
+
     def test_required_runner_rejects_skipped_tests_and_counts_only_executed_tests(self):
         runner = ROOT / "scripts/ci/run-required-integration-tests.sh"
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -247,11 +388,58 @@ class RequiredCiContractTest(unittest.TestCase):
             mariadb_selectors.update(match.group(1).split(","))
 
         self.assertIn("GroupChatMatrixCleanupAdoptionMariaDbIT", mariadb_selectors)
-        self.assertEqual(
-            set(),
-            excluded - mariadb_selectors,
-            "excluded from the required runner but not run by the mariadb-contract job",
+        caller_workflow = (ROOT / ".github/workflows/scenario-c-caller-proof.yml").read_text()
+        creation_workflow = (ROOT / ".github/workflows/creation-outcome-mariadb.yml").read_text()
+        assert_native_ownership(excluded, mariadb_workflow, caller_workflow, creation_workflow)
+
+    def test_fairness_owner_requires_the_actual_pr_trigger(self):
+        self.assert_invalid_fairness_owner(
+            lambda document: document.get("on", document.get(True)).pop("pull_request", None)
         )
+
+    def test_fairness_owner_requires_both_pinned_engines(self):
+        self.assert_invalid_fairness_owner(
+            lambda document: document["jobs"]["native-fairness"]["strategy"]["matrix"]["include"].pop()
+        )
+
+    def test_fairness_owner_requires_the_exact_eleven_case_gate(self):
+        self.assert_invalid_fairness_owner(
+            lambda document: self.replace_native_source(document, "'tests': 11", "'tests': 10")
+        )
+
+    def test_fairness_owner_preserves_every_original_and_retention_case(self):
+        names = (
+            "oneHundredUncertainOwnedCleanupsCannotStarveTheNextCommittedAccountAfterRestart",
+            "localSecretErasureKeepsTheOriginalDeadlineFullSqlAndUnknownClaim",
+            "persistedErasureCursorSurvivesPoisonLockedRowsAndTwoColdProcesses",
+        )
+        for name in names:
+            with self.subTest(name=name):
+                self.assert_invalid_fairness_owner(
+                    lambda document: self.replace_native_source(document, name, "unrelatedCase")
+                )
+
+    def test_fairness_owner_cannot_be_a_missing_native_job(self):
+        self.assert_invalid_fairness_owner(
+            lambda document: document["jobs"].pop("native-fairness")
+        )
+
+    def test_any_other_unassigned_suite_still_rejects_the_registry(self):
+        caller = (ROOT / ".github/workflows/scenario-c-caller-proof.yml").read_text()
+        mariadb = (ROOT / ".github/workflows/mariadb-contract.yml").read_text()
+        with self.assertRaises(AssertionError):
+            assert_native_ownership({"UnassignedMariaDbIT"}, mariadb, caller)
+
+    def assert_invalid_fairness_owner(self, mutate):
+        document = copy.deepcopy(yaml.safe_load((ROOT / ".github/workflows/scenario-c-caller-proof.yml").read_text()))
+        mutate(document)
+        with self.assertRaises(AssertionError):
+            assert_native_ownership({"AccountLifecycleRetryFairnessMariaDbIT"}, "", yaml.safe_dump(document))
+
+    def replace_native_source(self, document, before, after):
+        for step in document["jobs"]["native-fairness"]["steps"]:
+            if "run" in step:
+                step["run"] = step["run"].replace(before, after)
 
     def test_pull_request_has_one_truthful_required_conclusion(self):
         workflow = (ROOT / ".github/workflows/ci-pull-request.yml").read_text()
@@ -262,7 +450,7 @@ class RequiredCiContractTest(unittest.TestCase):
         self.assertNotIn("continue-on-error:", integration)
         self.assertIn(
             "needs: [validate, redis-contract, mariadb-contract, required-integration-tests,"
-            " tenant-filter-on-integration-tests, notification-smtp-contract]",
+            " tenant-filter-on-integration-tests, notification-smtp-contract, creation-outcome-mariadb]",
             aggregate,
         )
         self.assertIn("if: always()", aggregate)
@@ -271,6 +459,7 @@ class RequiredCiContractTest(unittest.TestCase):
         self.assertIn("needs.mariadb-contract.result", aggregate)
         self.assertIn("needs.tenant-filter-on-integration-tests.result", aggregate)
         self.assertIn("needs.notification-smtp-contract.result", aggregate)
+        self.assertIn("needs.creation-outcome-mariadb.result", aggregate)
 
     def test_required_aggregate_refuses_failed_skipped_and_cancelled_smtp(self):
         workflow = (ROOT / ".github/workflows/ci-pull-request.yml").read_text()
@@ -280,7 +469,7 @@ class RequiredCiContractTest(unittest.TestCase):
         for smtp_result in ("success", "failure", "skipped", "cancelled"):
             with self.subTest(smtp_result=smtp_result):
                 env = os.environ.copy()
-                for name in ("VALIDATE", "REDIS", "MARIADB", "INTEGRATION", "TENANT_FILTER"):
+                for name in ("VALIDATE", "REDIS", "MARIADB", "INTEGRATION", "TENANT_FILTER", "CREATION_OUTCOME"):
                     env[name + "_RESULT"] = "success"
                 env["SMTP_RESULT"] = smtp_result
                 result = subprocess.run(["bash", "-c", script], env=env,
@@ -295,7 +484,7 @@ class RequiredCiContractTest(unittest.TestCase):
         integration = job_block(workflow, "required-integration-tests")
 
         self.assertIn(
-            "needs: [build, required-integration-tests, mariadb-contract, notification-smtp-contract]",
+            "needs: [build, required-integration-tests, mariadb-contract, notification-smtp-contract, creation-outcome-mariadb]",
             publish,
         )
         self.assertIn("name: required integration tests", integration)

@@ -1,0 +1,50 @@
+name: Required consultant creation outcome MariaDB proof
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    name: required creation outcome MariaDB proof
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      JAVA_TOOL_OPTIONS: -Xmx512m -XX:MaxMetaspaceSize=192m -XX:ActiveProcessorCount=2
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+    - name: Checkout exact calling source
+      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      with:
+        persist-credentials: false
+    - name: Set up JDK and Maven
+      uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+      with:
+        java-version: '21'
+        distribution: temurin
+        cache: maven
+    - name: Record actual source and require Docker
+      run: |
+        python3 scripts/ci/creation-outcome-proof.py record --output target/creation-outcome-proof/source-before.json
+        docker info > /dev/null
+    - name: Execute and require all real MariaDB transaction cases
+      run: |
+        set +e
+        ./mvnw -B -Dskip.unit-tests=true -Dskip.integration-tests=false -Dtest=CreationOperationMariaDbIT integration-test
+        maven_status=$?
+        set -e
+        printf '%s\n' "$maven_status" > target/creation-outcome-proof/maven.exit
+        python3 scripts/ci/creation-outcome-proof.py record --output target/creation-outcome-proof/source-after.json
+        python3 scripts/ci/creation-outcome-proof.py verify --proof target/creation-outcome-proof
+    - name: Retain actual source, compiled inputs and native transaction results
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: creation-outcome-mariadb-reports
+        path: |
+          target/creation-outcome-proof/*
+          target/surefire-reports/*CreationOperationMariaDbIT*
+        if-no-files-found: error
+        retention-days: 14

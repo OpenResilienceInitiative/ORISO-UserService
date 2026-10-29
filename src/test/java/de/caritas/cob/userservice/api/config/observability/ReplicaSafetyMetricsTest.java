@@ -78,10 +78,29 @@ class ReplicaSafetyMetricsTest {
                 .gauge()
                 .value())
         .isEqualTo(1);
+    String erasureMethod = "DeleteUserAccountScheduler.performReactivationSecretErasure()";
+    assertThat(
+            registry
+                .get("userservice.scheduler.registered")
+                .tag("task", erasureMethod)
+                .gauge()
+                .value())
+        .isEqualTo(1);
     assertThat(registry.getMeters())
         .allSatisfy(
             meter ->
-                assertThat(meter.getId().getTags().toString().toLowerCase())
+                assertThat(
+                        meter.getId().getTags().stream()
+                            // This exact reviewed source identifier names an erasure task, not a
+                            // secret value.
+                            .map(
+                                tag ->
+                                    "task".equals(tag.getKey())
+                                            && erasureMethod.equals(tag.getValue())
+                                        ? "task=reviewed-static-erasure-method"
+                                        : tag.toString())
+                            .collect(java.util.stream.Collectors.joining(","))
+                            .toLowerCase())
                     .doesNotContain(
                         "@alice",
                         "!room:",

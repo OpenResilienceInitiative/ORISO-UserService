@@ -5,6 +5,7 @@ import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourc
 
 import de.caritas.cob.userservice.api.actions.ActionCommand;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException;
 import de.caritas.cob.userservice.api.workflow.delete.action.DeleteKeycloakUserAction;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
@@ -31,9 +32,10 @@ public class DeleteKeycloakConsultantAction extends DeleteKeycloakUserAction
   @Override
   public void execute(ConsultantDeletionWorkflowDTO actionTarget) {
     try {
-      this.deleteUserWithId(actionTarget.getConsultant().getId());
+      this.deleteUserWithId(
+          actionTarget.getConsultant().getId(), actionTarget.isFixedDiagnostics());
     } catch (Exception e) {
-      log.error("UserService delete workflow error: ", e);
+      actionTarget.logFailure(log, "UserService delete workflow error: ", e);
       actionTarget
           .getDeletionWorkflowErrors()
           .add(
@@ -44,6 +46,9 @@ public class DeleteKeycloakConsultantAction extends DeleteKeycloakUserAction
                   .reason(ERROR_REASON)
                   .timestamp(nowInUtc())
                   .build());
+      if (e instanceof ScopedIdentityCommandRequiredException denied) {
+        throw denied;
+      }
     }
   }
 }

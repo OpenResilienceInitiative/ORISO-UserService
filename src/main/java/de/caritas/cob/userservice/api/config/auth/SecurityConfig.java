@@ -75,6 +75,12 @@ public class SecurityConfig {
   private final @Nullable HttpTenantFilter tenantFilter;
   private final @Nullable IpPrivacyHeaderFilter ipPrivacyHeaderFilter;
 
+  @org.springframework.beans.factory.annotation.Autowired
+  private org.springframework.core.env.Environment importEnvironment;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  private org.springframework.beans.factory.ObjectProvider<TaskActorTokenBroker> importBrokers;
+
   /**
    * Processes HTTP requests and checks for a valid spring security authentication for the
    * (Keycloak) principal (authorization header).
@@ -111,7 +117,7 @@ public class SecurityConfig {
     // during rollout so a human identity without its immutable lifecycle snapshot cannot enter.
     http.addFilterAfter(
         new de.caritas.cob.userservice.api.adapters.web.controller.interceptor
-            .AccountInactivityAccessFilter(inactivity),
+            .AccountInactivityAccessFilter(inactivity, importEnvironment, importBrokers),
         SecurityContextHolderAwareRequestFilter.class);
 
     http.addFilterAfter(
@@ -481,7 +487,10 @@ public class SecurityConfig {
                 .requestMatchers("/users/consultants")
                 .hasAuthority(VIEW_AGENCY_CONSULTANTS)
                 .requestMatchers("/users/consultants/import")
-                .hasAuthority(TECHNICAL_DEFAULT)
+                .access(
+                    (authentication, context) ->
+                        new AuthorizationDecision(
+                            consultantImportAllowed(authentication.get(), context)))
                 .requestMatchers("/users/messages/key")
                 .hasAuthority(TECHNICAL_DEFAULT)
                 .requestMatchers(
@@ -518,6 +527,11 @@ public class SecurityConfig {
                 .hasAuthority(TENANT_ADMIN)
                 .requestMatchers("/useradmin/data", "/service/useradmin/data")
                 .hasAnyAuthority(SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/useradmin/consultant-creation-operations/**",
+                    "/service/useradmin/consultant-creation-operations/**")
+                .authenticated()
                 .requestMatchers(
                     HttpMethod.POST, "/useradmin/consultants", "/service/useradmin/consultants")
                 .hasAnyAuthority(CONSULTANT_CREATE, TECHNICAL_DEFAULT)
@@ -646,6 +660,30 @@ public class SecurityConfig {
     http.oauth2ResourceServer(
         oauth2 -> oauth2.jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter)));
     return http.build();
+  }
+
+  private boolean consultantImportAllowed(
+      Authentication authentication, RequestAuthorizationContext context) {
+    String model = importEnvironment.getProperty("TASK_IDENTITY_MODEL", "LEGACY");
+    if ("LEGACY".equals(model))
+      return authentication != null
+          && authentication.getAuthorities().stream()
+              .anyMatch(authority -> TECHNICAL_DEFAULT.equals(authority.getAuthority()));
+    if (!"FIVE_ACTORS".equals(model)
+        || !(authentication instanceof JwtAuthenticationToken checked)
+        || !checked.isAuthenticated()
+        || !"POST".equals(context.getRequest().getMethod())) return false;
+    String raw = context.getRequest().getHeader("Authorization");
+    if (raw == null || !raw.equals("Bearer " + checked.getToken().getTokenValue())) return false;
+    try (var verified =
+        importBrokers
+            .getObject()
+            .verifyConsultantImportTrigger(checked.getToken().getTokenValue())) {
+      verified.requireLive();
+      return true;
+    } catch (RuntimeException unavailable) {
+      return false;
+    }
   }
 
   @Bean

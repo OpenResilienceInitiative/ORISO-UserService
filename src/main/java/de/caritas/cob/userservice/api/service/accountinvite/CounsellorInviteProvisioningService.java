@@ -41,6 +41,34 @@ public class CounsellorInviteProvisioningService {
   private final @NonNull ConsultantTopicRepository consultantTopicRepository;
   private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
 
+  @org.springframework.beans.factory.annotation.Autowired
+  private org.springframework.core.env.Environment lifecycleEnvironment;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  private org.springframework.transaction.PlatformTransactionManager lifecycleTransactions;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  private de.caritas.cob.userservice.api.service.accountpolicy.CheckedAccountPolicyReads
+      checkedPolicyReads;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  private org.springframework.beans.factory.ObjectProvider<
+          de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryAccountCreation>
+      ordinaryAccountCreation;
+
+  private boolean fiveActors() {
+    return lifecycleEnvironment != null
+        && "FIVE_ACTORS".equals(lifecycleEnvironment.getProperty("TASK_IDENTITY_MODEL", "LEGACY"));
+  }
+
+  private de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryAccountCreation
+      ordinaryWorkflow() {
+    var flow = ordinaryAccountCreation == null ? null : ordinaryAccountCreation.getIfAvailable();
+    if (flow == null)
+      throw new IllegalStateException("Ordinary invitation lifecycle activation remains gated");
+    return flow;
+  }
+
   @Transactional(noRollbackFor = RuntimeException.class)
   public AccountInvite acceptInvite(String rawToken, ProvisionCounsellorCommand command) {
     return acceptInvite(rawToken, command, WizardAccept.NONE);
@@ -71,6 +99,11 @@ public class CounsellorInviteProvisioningService {
       // (idempotent 200 while the 2FA gate is pending, 410 with a reason code otherwise). No
       // caller-supplied user id is recorded on this path — provisioning identity is always the
       // server-created consultant id.
+      if (fiveActors()
+          && invite.getStatus() == AccountInviteStatus.ACCEPTED
+          && (invite.getExpiresAt() == null || invite.getExpiresAt().isAfter(LocalDateTime.now()))
+          && invite.getProvisionedUserId() != null
+          && ordinaryWorkflow().finishInvitationIfPending(invite)) return invite;
       return accountInviteService.acceptInvite(rawToken, null);
     }
     if (invite.getProvisioningStatus() == AccountInviteProvisioningStatus.IN_PROGRESS) {
@@ -78,6 +111,7 @@ public class CounsellorInviteProvisioningService {
     }
     validate(command, invite);
     acceptTimeAgencyCheck.requireOperationalTenant(invite);
+    FailedInviteOwner failureOwner = fiveActors() ? FailedInviteOwner.capture(invite) : null;
     InviteRowHold.hold(accountInviteRepository, invite, LocalDateTime.now());
     wizard.createUnit().run();
 
@@ -95,6 +129,31 @@ public class CounsellorInviteProvisioningService {
       // leaving it IN_PROGRESS, which would answer every retry with 409.
       technicalAccessToken = acceptTimeAgencyCheck.serviceToken();
       acceptTimeAgencyCheck.requireLiveAgency(invite, technicalAccessToken);
+      if (fiveActors()) {
+        if (checkedPolicyReads == null)
+          throw new IllegalStateException("Checked invitation policy is unavailable");
+        String selectedToken = technicalAccessToken;
+        return checkedPolicyReads.withInvitation(
+            rawToken,
+            Boolean.TRUE.equals(command.grantAgencyAdmin())
+                ? "CONSULTANT_AGENCY_ADMIN"
+                : "CONSULTANT",
+            () ->
+                TechnicalAccessTokenContext.callWith(
+                    selectedToken,
+                    () ->
+                        createConsultantSaga.createInvitedConsultant(
+                            toConsultant(command, invite),
+                            invite,
+                            Boolean.TRUE.equals(command.grantAgencyAdmin()),
+                            consultant ->
+                                completeOrdinaryInvitation(
+                                    rawToken,
+                                    command,
+                                    invite,
+                                    agencyAdminAlsoCounselling,
+                                    consultant.getId()))));
+      }
       // The service identity is ambient ONLY around the remote calls that need it: consultant
       // creation and agency assignment reach TenantService/AgencyService/ConsultingTypeService
       // through the shared admin services, which read the bearer from the header supplier.
@@ -145,6 +204,12 @@ public class CounsellorInviteProvisioningService {
       accepted.setUpdateDate(LocalDateTime.now());
       return accountInviteRepository.save(accepted);
     } catch (RuntimeException failure) {
+      if (failureOwner != null
+          && org.springframework.transaction.support.TransactionSynchronizationManager
+              .isActualTransactionActive()) {
+        preserveFailureAfterRollback(failureOwner);
+        throw failure;
+      }
       rollbackPartiallyCreatedConsultant(consultantId, technicalAccessToken, failure);
       invite.setProvisionedUserId(null);
       invite.setProvisioningStatus(AccountInviteProvisioningStatus.FAILED);
@@ -155,6 +220,110 @@ public class CounsellorInviteProvisioningService {
     } finally {
       restoreTenantContext(requestTenant);
     }
+  }
+
+  private void preserveFailureAfterRollback(FailedInviteOwner original) {
+    // An inner REQUIRED failure already marked the transaction rollback-only. Mark our local
+    // owner too, preserving the typed failure rather than attempting an impossible commit.
+    org.springframework.transaction.interceptor.TransactionAspectSupport.currentTransactionStatus()
+        .setRollbackOnly();
+    org.springframework.transaction.support.TransactionSynchronizationManager
+        .registerSynchronization(
+            new org.springframework.transaction.support.TransactionSynchronization() {
+              @Override
+              public void afterCompletion(int status) {
+                if (status != STATUS_ROLLED_BACK) return;
+                var independent =
+                    new org.springframework.transaction.support.TransactionTemplate(
+                        lifecycleTransactions);
+                independent.setPropagationBehavior(
+                    org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+                independent.executeWithoutResult(
+                    ignored ->
+                        InviteRowHold.lock(accountInviteRepository, original.id())
+                            .ifPresent(
+                                current -> {
+                                  // The outer row lock is gone. A revoke, resend or newer attempt
+                                  // may
+                                  // already own this invite; only the unchanged original may be
+                                  // marked.
+                                  if (!original.equals(FailedInviteOwner.capture(current))) return;
+                                  current.setProvisioningStatus(
+                                      AccountInviteProvisioningStatus.FAILED);
+                                  current.setProvisioningFailureReason(
+                                      "Scoped account provisioning failed");
+                                  current.setUpdateDate(LocalDateTime.now());
+                                  accountInviteRepository.save(current);
+                                }));
+              }
+            });
+  }
+
+  private record FailedInviteOwner(
+      Long id,
+      String tokenHash,
+      AccountInvitePurpose purpose,
+      AccountInviteTargetRole role,
+      Long tenantId,
+      Long agencyId,
+      Long departmentId,
+      String recipient,
+      AccountInviteStatus status,
+      AccountInviteProvisioningStatus provisioning,
+      String provisionedUserId,
+      LocalDateTime createdAt,
+      LocalDateTime updatedAt,
+      LocalDateTime expiresAt) {
+    private static FailedInviteOwner capture(AccountInvite invite) {
+      return new FailedInviteOwner(
+          invite.getId(),
+          invite.getTokenHash(),
+          invite.getPurpose(),
+          invite.getTargetRole(),
+          invite.getTenantId(),
+          invite.getAgencyId(),
+          invite.getDepartmentId(),
+          invite.getRecipientEmail(),
+          invite.getStatus(),
+          invite.getProvisioningStatus(),
+          invite.getProvisionedUserId(),
+          invite.getCreateDate(),
+          invite.getUpdateDate(),
+          invite.getExpiresAt());
+    }
+
+    @Override
+    public String toString() {
+      return "FailedInviteOwner[redacted]";
+    }
+  }
+
+  private AccountInvite completeOrdinaryInvitation(
+      String rawToken,
+      ProvisionCounsellorCommand command,
+      AccountInvite invite,
+      boolean alsoCounselling,
+      String consultantId) {
+    alignRequirementsWithInvite(consultantId, invite);
+    invite.setProvisionedUserId(consultantId);
+    invite.setUpdateDate(LocalDateTime.now());
+    accountInviteRepository.save(invite);
+    consultantAgencyRelationCreatorService.createNewConsultantAgency(
+        consultantId,
+        new CreateConsultantAgencyDTO()
+            .agencyId(invite.getAgencyId())
+            .roleSetKey(DEFAULT_ROLE_SET));
+    consultantTopicRepository.assignUnscopedTopicsToAgency(consultantId, invite.getAgencyId());
+    if (Boolean.TRUE.equals(command.grantAgencyAdmin()))
+      counsellorAgencyAdminGrantService.bindInitialAgencyAdmin(
+          consultantId, invite.getAgencyId(), invite);
+    AccountInvite accepted = accountInviteService.acceptInvite(rawToken, consultantId);
+    if (alsoCounselling) accepted.setAlsoCounsellor(true);
+    accepted.setProvisionedUserId(consultantId);
+    accepted.setProvisioningStatus(AccountInviteProvisioningStatus.COMPLETED);
+    accepted.setProvisioningFailureReason(null);
+    accepted.setUpdateDate(LocalDateTime.now());
+    return accountInviteRepository.save(accepted);
   }
 
   private static TenantData snapshotTenantContext() {
@@ -420,5 +589,14 @@ public class CounsellorInviteProvisioningService {
           null,
           grantAgencyAdmin);
     }
+  }
+
+  /** Read-only startup check of the actual installed production consumers. */
+  public boolean hasScopedAccountBindings(
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryAccountCreation owner) {
+    return ordinaryAccountCreation != null
+        && ordinaryAccountCreation.getIfAvailable() == owner
+        && lifecycleEnvironment != null
+        && "FIVE_ACTORS".equals(lifecycleEnvironment.getProperty("TASK_IDENTITY_MODEL", "LEGACY"));
   }
 }

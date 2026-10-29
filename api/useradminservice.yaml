@@ -171,7 +171,28 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateConsultantDTO'
         required: true
+      parameters:
+        - name: X-ORISO-Creation-Operation-Key
+          in: header
+          required: false
+          description: Optional canonical UUID for an authorized platform administrator's creation operation. Replays never create another account.
+          schema:
+            type: string
       responses:
+        200:
+          description: OK - actual runtime success; 201 below is historical documentation only.
+          headers:
+            X-ORISO-Creation-Operation:
+              description: Authorized tracked operation receipt URI.
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+          content:
+            'application/hal+json':
+              schema:
+                $ref: '#/components/schemas/ConsultantAdminResponseDTO'
         201:
           description: CREATED - consultant was created successfully
           content:
@@ -183,11 +204,84 @@ paths:
         401:
           description: UNAUTHORIZED - no/invalid role/authorization
         409:
-          description: CONFLICT - invalid/unavailable username or email address
+          description: CONFLICT - tracked replay (CREATION_OPERATION_REPLAY), changed effective request (CREATION_OPERATION_CONFLICT), or known native conflict. Authorized tracked outcomes include the persisted receipt URI and perform no replay side effects.
+          headers:
+            X-ORISO-Creation-Operation:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+        404:
+          description: Tracked operation access denied without disclosing existence.
+        424:
+          description: Native or mandatory workflow dependency failed; authorized bound outcomes include the receipt URI.
+        503:
+          description: Creation journal unavailable; an already bound authorized receipt remains recoverable.
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
+  /useradmin/consultant-creation-operations/{operationId}:
+    get:
+      tags:
+        - admin-user-controller
+      summary: Read an owned creation receipt after current authority and scope checks.
+      operationId: getConsultantCreationOperation
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        200:
+          description: Historical observations only; never login readiness or verified absence.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsultantCreationOperationDTO'
+        400:
+          description: Invalid identifier.
+        401:
+          description: Authentication required.
+        404:
+          description: Operation unavailable.
+        503:
+          description: Journal unavailable.
+      security:
+        - Bearer: []
+  /useradmin/consultant-creation-operations/by-key/{operationKey}:
+    get:
+      tags:
+        - admin-user-controller
+      summary: Read an owned creation receipt after current authority and scope checks.
+      operationId: getConsultantCreationOperationByKey
+      parameters:
+        - name: operationKey
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        200:
+          description: Historical observations only; never login readiness or verified absence.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsultantCreationOperationDTO'
+        400:
+          description: Invalid identifier.
+        401:
+          description: Authentication required.
+        404:
+          description: Operation unavailable.
+        503:
+          description: Journal unavailable.
+      security:
+        - Bearer: []
   /useradmin/consultants/{consultantId}:
     get:
       tags:
@@ -1994,6 +2088,67 @@ components:
         previous:
           $ref: '#/components/schemas/HalLink'
 
+    ConsultantCreationOperationDTO:
+      type: object
+      description: Historical independent observations, without account readiness or verified compensation claims.
+      required: [operationId, scope, dispatch, workflow, row, onboarding, compensation, reason, version, createdAt, updatedAt]
+      properties:
+        operationId:
+          type: string
+          format: uuid
+        scope:
+          $ref: '#/components/schemas/ConsultantCreationScopeDTO'
+        nativeId:
+          type: string
+        version:
+          type: integer
+          format: int64
+        dispatch:
+          type: string
+          enum: [PREPARED, DISPATCH_UNKNOWN, NATIVE_ID_CAPTURED]
+        workflow:
+          type: string
+          enum: [NOT_STARTED, IN_PROGRESS, RETURNED, FAILED, UNKNOWN]
+        row:
+          type: string
+          enum: [NOT_ATTEMPTED, COMMIT_UNKNOWN, COMMITTED, ROLLED_BACK]
+        onboarding:
+          type: string
+          enum: [NOT_ATTEMPTED, OUTCOME_UNKNOWN, ISSUER_RETURNED, FAILED]
+        compensation:
+          type: string
+          enum: [NOT_STARTED, STARTED_OUTCOME_UNKNOWN, RETURNED_UNVERIFIED]
+        reason:
+          type: string
+          enum: [NONE, NATIVE_OUTCOME_UNKNOWN, NATIVE_CAPTURE_FAILED, MANDATORY_ATTRIBUTES_FAILED, WORKFLOW_FAILED, ROW_COMMIT_FAILED, ONBOARDING_FAILED, JOURNAL_UNAVAILABLE]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        dispatchedAt:
+          type: string
+          format: date-time
+        capturedAt:
+          type: string
+          format: date-time
+    ConsultantCreationScopeDTO:
+      type: object
+      required: [tenantId, agencyIds, role]
+      properties:
+        tenantId:
+          type: integer
+          format: int64
+        agencyIds:
+          type: array
+          maxItems: 100
+          items:
+            type: integer
+            format: int64
+        role:
+          type: string
+          enum: [COUNSELLOR]
     CreateConsultantDTO:
       type: object
       required:

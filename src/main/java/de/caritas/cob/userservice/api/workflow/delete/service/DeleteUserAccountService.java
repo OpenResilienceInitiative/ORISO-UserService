@@ -2,11 +2,14 @@ package de.caritas.cob.userservice.api.workflow.delete.service;
 
 import static org.apache.commons.collections4.CollectionUtils.isNotEmpty;
 
+import de.caritas.cob.userservice.api.actions.ActionCommand;
 import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAnonymousRegistryIdAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAppointmentServiceAskerAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAskerDraftMessagesAction;
@@ -50,6 +53,198 @@ public class DeleteUserAccountService {
   private final @NonNull DeletionLifecycleService deletionLifecycleService;
   private final @NonNull UserHardDeleteClaimService userHardDeleteClaimService;
 
+  private DeleteDatabaseAskerAction acknowledgedFinalAction;
+  private DeleteAppointmentServiceAskerAction absentAppointments;
+  private DeleteAskerDraftMessagesAction absentDrafts;
+  private DeleteAskerEventNotificationsAction absentNotifications;
+
+  /** Existing action beans only; the old six-argument compatibility constructor remains. */
+  @org.springframework.beans.factory.annotation.Autowired
+  public DeleteUserAccountService(
+      UserRepository users,
+      ConsultantRepository consultants,
+      ActionsRegistry registry,
+      WorkflowErrorMailService errors,
+      DeletionLifecycleService lifecycle,
+      UserHardDeleteClaimService hardDelete,
+      DeleteDatabaseAskerAction finalAction,
+      DeleteAppointmentServiceAskerAction appointments,
+      DeleteAskerDraftMessagesAction drafts,
+      DeleteAskerEventNotificationsAction notifications) {
+    this(users, consultants, registry, errors, lifecycle, hardDelete);
+    this.acknowledgedFinalAction = finalAction;
+    this.absentAppointments = appointments;
+    this.absentDrafts = drafts;
+    this.absentNotifications = notifications;
+  }
+
+  /** Continues only an acknowledgement issued by the held scheduled-deletion owner. */
+  public void continueAcknowledgedDeletion(
+      ScheduledAskerMaintenance.AcknowledgedDeletion acknowledged) {
+    java.util.Objects.requireNonNull(acknowledged);
+    acknowledged.requireCurrent();
+    if (acknowledged.completed()) return;
+    if (acknowledged.inactivityCause()) {
+      if (acknowledgedFinalAction == null
+          || absentAppointments == null
+          || absentDrafts == null
+          || absentNotifications == null) throw new ScopedIdentityCommandRequiredException();
+      TenantContext.runIn(
+          acknowledged.tenantId(),
+          () -> {
+            if (acknowledged.hasLocalUser()) continueInactiveUser(acknowledged);
+            else continueInactiveAbsence(acknowledged);
+          });
+      return;
+    }
+    if (!acknowledged.hasLocalUser()) throw new ScopedIdentityCommandRequiredException();
+    TenantContext.runIn(
+        acknowledged.tenantId(),
+        () -> {
+          var original = new java.util.concurrent.atomic.AtomicReference<User>();
+          acknowledged.runOwnedLocal(
+              () -> {
+                var loaded = userRepository.findById(acknowledged.accountId()).orElseThrow();
+                acknowledged.requireCurrentUser(loaded);
+                original.set(loaded);
+              });
+          var target =
+              new AskerDeletionWorkflowDTO(original.get(), new ArrayList<>(), acknowledged);
+          executeAcknowledged(target, DeleteMatrixAskerAction.class);
+          executeAcknowledged(target, DeleteAskerRoomsAndSessionsAction.class);
+          target.runOwnedLocal(
+              () -> executeAcknowledged(target, DeleteDatabaseAskerAgencyAction.class));
+          target.runOwnedLocal(
+              () -> executeAcknowledged(target, DeleteAnonymousRegistryIdAction.class));
+          target.runOwnedExternal(
+              () -> executeAcknowledged(target, DeleteAppointmentServiceAskerAction.class));
+          target.runOwnedLocal(
+              () -> executeAcknowledged(target, DeleteAskerDraftMessagesAction.class));
+          target.runOwnedLocal(
+              () -> executeAcknowledged(target, DeleteAskerEventNotificationsAction.class));
+          target.runOwnedLocal(
+              () -> executeAcknowledged(target, DeleteAskerReplyEmailDeliveriesAction.class));
+          target.completeOwnedLocalDeletion(
+              () -> executeAcknowledged(target, DeleteDatabaseAskerAction.class));
+          if (isNotEmpty(target.getDeletionWorkflowErrors())) {
+            acknowledged.requireCurrent();
+            workflowErrorMailService.buildAndSendErrorMail(target.getDeletionWorkflowErrors());
+            acknowledged.requireCurrent();
+          }
+        });
+  }
+
+  /** Continues the existing nine Consultant steps only from the held owner's strict native ACK. */
+  public void continueAcknowledgedConsultantDeletion(
+      ScheduledConsultantMaintenance.AcknowledgedConsultantDeletion acknowledged) {
+    java.util.Objects.requireNonNull(acknowledged);
+    acknowledged.requireCurrent();
+    if (acknowledged.completed()) return;
+    TenantContext.runIn(
+        acknowledged.tenantId(),
+        () -> {
+          var original = new java.util.concurrent.atomic.AtomicReference<Consultant>();
+          acknowledged.runOwnedLocal(
+              () -> {
+                var loaded = consultantRepository.findById(acknowledged.accountId()).orElseThrow();
+                acknowledged.requireCurrentConsultant(loaded);
+                original.set(loaded);
+              });
+          var target =
+              new ConsultantDeletionWorkflowDTO(original.get(), new ArrayList<>(), acknowledged);
+          executeAcknowledgedConsultant(target, DeleteMatrixConsultantAction.class);
+          target.runOwnedLocal(
+              () ->
+                  executeAcknowledgedConsultant(
+                      target, DeleteDatabaseConsultantAgencyAction.class));
+          executeAcknowledgedConsultant(target, DeleteChatAction.class);
+          target.runOwnedExternal(
+              () ->
+                  executeAcknowledgedConsultant(
+                      target, DeleteAppointmentServiceConsultantAction.class));
+          target.runOwnedLocal(
+              () ->
+                  executeAcknowledgedConsultant(
+                      target, DeleteCaseHandoverRequestsForConsultantAction.class));
+          target.runOwnedLocal(
+              () ->
+                  executeAcknowledgedConsultant(target, DeleteConsultantDraftMessagesAction.class));
+          target.runOwnedLocal(
+              () ->
+                  executeAcknowledgedConsultant(
+                      target, DeleteConsultantEventNotificationsAction.class));
+          target.runOwnedLocal(
+              () ->
+                  executeAcknowledgedConsultant(
+                      target, DeleteConsultantMessageEmailDeliveriesAction.class));
+          target.completeOwnedLocalDeletion(
+              () -> executeAcknowledgedConsultant(target, DeleteDatabaseConsultantAction.class));
+          if (isNotEmpty(target.getDeletionWorkflowErrors())) {
+            acknowledged.requireCurrent();
+            workflowErrorMailService.buildAndSendErrorMail(target.getDeletionWorkflowErrors());
+            acknowledged.requireCurrent();
+          }
+        });
+  }
+
+  private void executeAcknowledgedConsultant(
+      ConsultantDeletionWorkflowDTO target,
+      Class<? extends ActionCommand<ConsultantDeletionWorkflowDTO>> action) {
+    actionsRegistry
+        .buildContainerForType(ConsultantDeletionWorkflowDTO.class)
+        .addActionToExecute(action)
+        .executeActions(target);
+  }
+
+  private void continueInactiveUser(ScheduledAskerMaintenance.AcknowledgedDeletion acknowledged) {
+    var original = new java.util.concurrent.atomic.AtomicReference<User>();
+    acknowledged.runOwnedLocal(
+        () -> {
+          var loaded = userRepository.findById(acknowledged.accountId()).orElseThrow();
+          acknowledged.requireCurrentUser(loaded);
+          original.set(loaded);
+        });
+    var target = new AskerDeletionWorkflowDTO(original.get(), new ArrayList<>(), acknowledged);
+    executeAcknowledged(target, DeleteMatrixAskerAction.class);
+    if (isNotEmpty(target.getDeletionWorkflowErrors())) return;
+    executeAcknowledged(target, DeleteAskerRoomsAndSessionsAction.class);
+    if (isNotEmpty(target.getDeletionWorkflowErrors())) return;
+    target.runOwnedLocal(() -> executeAcknowledged(target, DeleteDatabaseAskerAgencyAction.class));
+    if (isNotEmpty(target.getDeletionWorkflowErrors())) return;
+    target.runOwnedLocal(() -> executeAcknowledged(target, DeleteAnonymousRegistryIdAction.class));
+    if (isNotEmpty(target.getDeletionWorkflowErrors())) return;
+    target.runOwnedExternal(
+        () -> executeAcknowledged(target, DeleteAppointmentServiceAskerAction.class));
+    if (isNotEmpty(target.getDeletionWorkflowErrors())) return;
+    target.runOwnedLocal(() -> executeAcknowledged(target, DeleteAskerDraftMessagesAction.class));
+    if (isNotEmpty(target.getDeletionWorkflowErrors())) return;
+    target.runOwnedLocal(
+        () -> executeAcknowledged(target, DeleteAskerEventNotificationsAction.class));
+    if (isNotEmpty(target.getDeletionWorkflowErrors())) return;
+    var prepared = acknowledgedFinalAction.prepareAcknowledged(target);
+    if (prepared.isEmpty()) return;
+    acknowledged.beforeFinalLocalDeletion(prepared.orElseThrow());
+    acknowledgedFinalAction.completeAcknowledged(prepared.orElseThrow());
+  }
+
+  private void continueInactiveAbsence(
+      ScheduledAskerMaintenance.AcknowledgedDeletion acknowledged) {
+    if (isNotEmpty(absentAppointments.executeOriginallyAbsent(acknowledged))) return;
+    if (isNotEmpty(absentDrafts.executeOriginallyAbsent(acknowledged))) return;
+    if (isNotEmpty(absentNotifications.executeOriginallyAbsent(acknowledged))) return;
+    acknowledged.beforeFinalLocalAbsence();
+    acknowledged.completeOwnedLocalDeletion(() -> {});
+  }
+
+  private void executeAcknowledged(
+      AskerDeletionWorkflowDTO target,
+      Class<? extends ActionCommand<AskerDeletionWorkflowDTO>> action) {
+    actionsRegistry
+        .buildContainerForType(AskerDeletionWorkflowDTO.class)
+        .addActionToExecute(action)
+        .executeActions(target);
+  }
+
   /** Deletes all user accounts marked as deleted in database. */
   public void deleteUserAccounts() {
     var workflowErrors = deleteAskersAndCollectPossibleErrors();
@@ -85,19 +280,23 @@ public class DeleteUserAccountService {
 
     var deletionWorkflowDTO = new AskerDeletionWorkflowDTO(user, new ArrayList<>());
 
-    this.actionsRegistry
-        .buildContainerForType(AskerDeletionWorkflowDTO.class)
-        .addActionToExecute(DeleteKeycloakAskerAction.class)
-        .addActionToExecute(DeleteMatrixAskerAction.class)
-        .addActionToExecute(DeleteAskerRoomsAndSessionsAction.class)
-        .addActionToExecute(DeleteDatabaseAskerAgencyAction.class)
-        .addActionToExecute(DeleteAnonymousRegistryIdAction.class)
-        .addActionToExecute(DeleteAppointmentServiceAskerAction.class)
-        .addActionToExecute(DeleteAskerDraftMessagesAction.class)
-        .addActionToExecute(DeleteAskerEventNotificationsAction.class)
-        .addActionToExecute(DeleteAskerReplyEmailDeliveriesAction.class)
-        .addActionToExecute(DeleteDatabaseAskerAction.class)
-        .executeActions(deletionWorkflowDTO);
+    try {
+      this.actionsRegistry
+          .buildContainerForType(AskerDeletionWorkflowDTO.class)
+          .addActionToExecute(DeleteKeycloakAskerAction.class)
+          .addActionToExecute(DeleteMatrixAskerAction.class)
+          .addActionToExecute(DeleteAskerRoomsAndSessionsAction.class)
+          .addActionToExecute(DeleteDatabaseAskerAgencyAction.class)
+          .addActionToExecute(DeleteAnonymousRegistryIdAction.class)
+          .addActionToExecute(DeleteAppointmentServiceAskerAction.class)
+          .addActionToExecute(DeleteAskerDraftMessagesAction.class)
+          .addActionToExecute(DeleteAskerEventNotificationsAction.class)
+          .addActionToExecute(DeleteAskerReplyEmailDeliveriesAction.class)
+          .addActionToExecute(DeleteDatabaseAskerAction.class)
+          .executeActions(deletionWorkflowDTO);
+    } catch (ScopedIdentityCommandRequiredException denied) {
+      // The native action has recorded the refusal. Stop before any downstream effect.
+    }
 
     return deletionWorkflowDTO.getDeletionWorkflowErrors();
   }
@@ -113,12 +312,55 @@ public class DeleteUserAccountService {
   }
 
   public List<DeletionWorkflowError> performConsultantDeletion(Consultant consultant) {
+    return performConsultantDeletion(consultant, false);
+  }
 
-    var deletionWorkflowDTO = new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>());
+  public List<DeletionWorkflowError> performConsultantDeletion(
+      Consultant consultant, boolean fixedDiagnostics) {
 
-    this.actionsRegistry
+    var deletionWorkflowDTO =
+        new ConsultantDeletionWorkflowDTO(fixedDiagnostics, consultant, new ArrayList<>());
+
+    try {
+      this.actionsRegistry
+          .buildContainerForType(ConsultantDeletionWorkflowDTO.class)
+          .addActionToExecute(DeleteKeycloakConsultantAction.class)
+          .addActionToExecute(DeleteMatrixConsultantAction.class)
+          .addActionToExecute(DeleteDatabaseConsultantAgencyAction.class)
+          .addActionToExecute(DeleteChatAction.class)
+          .addActionToExecute(DeleteAppointmentServiceConsultantAction.class)
+          .addActionToExecute(DeleteCaseHandoverRequestsForConsultantAction.class)
+          .addActionToExecute(DeleteConsultantDraftMessagesAction.class)
+          .addActionToExecute(DeleteConsultantEventNotificationsAction.class)
+          .addActionToExecute(DeleteConsultantMessageEmailDeliveriesAction.class)
+          .addActionToExecute(DeleteDatabaseConsultantAction.class)
+          .executeActions(deletionWorkflowDTO);
+    } catch (ScopedIdentityCommandRequiredException denied) {
+      // The native action recorded the refusal. Keep the consultant and stop downstream effects.
+    }
+
+    return deletionWorkflowDTO.getDeletionWorkflowErrors();
+  }
+
+  /** Verify the same finite action containers used by acknowledged cleanup, without executing. */
+  public boolean hasScopedAccountBindings() {
+    if (acknowledgedFinalAction == null
+        || absentAppointments == null
+        || absentDrafts == null
+        || absentNotifications == null) return false;
+    actionsRegistry
+        .buildContainerForType(AskerDeletionWorkflowDTO.class)
+        .addActionToExecute(DeleteMatrixAskerAction.class)
+        .addActionToExecute(DeleteAskerRoomsAndSessionsAction.class)
+        .addActionToExecute(DeleteDatabaseAskerAgencyAction.class)
+        .addActionToExecute(DeleteAnonymousRegistryIdAction.class)
+        .addActionToExecute(DeleteAppointmentServiceAskerAction.class)
+        .addActionToExecute(DeleteAskerDraftMessagesAction.class)
+        .addActionToExecute(DeleteAskerEventNotificationsAction.class)
+        .addActionToExecute(DeleteAskerReplyEmailDeliveriesAction.class)
+        .addActionToExecute(DeleteDatabaseAskerAction.class);
+    actionsRegistry
         .buildContainerForType(ConsultantDeletionWorkflowDTO.class)
-        .addActionToExecute(DeleteKeycloakConsultantAction.class)
         .addActionToExecute(DeleteMatrixConsultantAction.class)
         .addActionToExecute(DeleteDatabaseConsultantAgencyAction.class)
         .addActionToExecute(DeleteChatAction.class)
@@ -127,9 +369,7 @@ public class DeleteUserAccountService {
         .addActionToExecute(DeleteConsultantDraftMessagesAction.class)
         .addActionToExecute(DeleteConsultantEventNotificationsAction.class)
         .addActionToExecute(DeleteConsultantMessageEmailDeliveriesAction.class)
-        .addActionToExecute(DeleteDatabaseConsultantAction.class)
-        .executeActions(deletionWorkflowDTO);
-
-    return deletionWorkflowDTO.getDeletionWorkflowErrors();
+        .addActionToExecute(DeleteDatabaseConsultantAction.class);
+    return true;
   }
 }

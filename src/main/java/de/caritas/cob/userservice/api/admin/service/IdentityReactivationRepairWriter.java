@@ -16,6 +16,13 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class IdentityReactivationRepairWriter {
 
+  private de.caritas.cob.userservice.api.port.out.IdentityClientConfig identityMode;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  public void setIdentityMode(de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode) {
+    this.identityMode = java.util.Objects.requireNonNull(mode);
+  }
+
   private final @NonNull UserRepository userRepository;
   private final @NonNull IdentityDeactivator identityDeactivator;
 
@@ -28,6 +35,7 @@ public class IdentityReactivationRepairWriter {
       noRollbackFor = IdentityReactivationCompensationException.class)
   public boolean compensate(
       IdentityReactivationOperation operation, RuntimeException reactivationFailure) {
+    requireLegacy();
     return repairCurrentOperation(operation.userId(), operation.operationId(), reactivationFailure);
   }
 
@@ -35,6 +43,7 @@ public class IdentityReactivationRepairWriter {
       propagation = Propagation.REQUIRES_NEW,
       noRollbackFor = IdentityReactivationCompensationException.class)
   public boolean retry(String userId, String operationId) {
+    requireLegacy();
     return repairCurrentOperation(
         userId,
         operationId,
@@ -74,5 +83,10 @@ public class IdentityReactivationRepairWriter {
   private boolean isRepairableState(User user) {
     return user.getDeletionLifecycleState() == DeletionLifecycleState.REACTIVATION_IN_PROGRESS
         || user.getDeletionLifecycleState() == DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED;
+  }
+
+  private void requireLegacy() {
+    if (identityMode != null && identityMode.isFiveActorMode())
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
   }
 }

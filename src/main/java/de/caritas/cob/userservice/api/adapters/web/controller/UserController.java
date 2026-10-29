@@ -64,6 +64,7 @@ import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
+import de.caritas.cob.userservice.api.port.out.ScopedAvailabilityUnavailableException;
 import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
@@ -187,6 +188,8 @@ public class UserController implements UsersApi {
     boolean usernameAvailable;
     try {
       usernameAvailable = identityManager.isUsernameAvailable(username);
+    } catch (ScopedAvailabilityUnavailableException unavailable) {
+      throw unavailable;
     } catch (RuntimeException exception) {
       log.warn(
           "Could not check username availability for {}. Treating it as available so registration is not blocked.",
@@ -935,5 +938,15 @@ public class UserController implements UsersApi {
         consultantDtoMapper.consultantResponseDtoOf(consultant, onlineAgencies, false);
 
     return new ResponseEntity<>(consultantDto, HttpStatus.OK);
+  }
+
+  /** Read-only startup check of the actual installed production consumers. */
+  public boolean hasScopedAccountBindings(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode,
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance otp,
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfPasswordMaintenance password,
+      de.caritas.cob.userservice.api.adapters.keycloak.maintenance.SelfLocaleMaintenance locale) {
+    return userAccountControllerDelegate.hasScopedAccountBindings(mode, otp, password, locale)
+        && userTwoFactorAuthControllerDelegate.hasScopedAccountBindings(otp);
   }
 }

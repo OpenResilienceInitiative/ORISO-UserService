@@ -148,6 +148,115 @@ public class CreateUserFacadeTest {
         .thenReturn(inactivityPolicy);
   }
 
+  @Test
+  void fiveActorRegistrationWithoutReviewedLifecycleNeverCallsNativeIdentity() {
+    var environment =
+        new org.springframework.mock.env.MockEnvironment()
+            .withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS");
+    var beans = new org.springframework.beans.factory.support.DefaultListableBeanFactory();
+    beans.registerResolvableDependency(org.springframework.core.env.Environment.class, environment);
+    var injector =
+        new org.springframework.beans.factory.annotation.AutowiredAnnotationBeanPostProcessor();
+    injector.setAutowiredAnnotationType(
+        org.springframework.beans.factory.annotation.Autowired.class);
+    injector.setBeanFactory(beans);
+    injector.postProcessProperties(null, createUserFacade, "registrationFacade");
+    org.junit.jupiter.api.Assertions.assertThrows(
+        RuntimeException.class,
+        () -> createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT));
+    org.mockito.Mockito.verify(identityClient, org.mockito.Mockito.never())
+        .createUser(org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verifyNoInteractions(
+        identityPasswordUpdater,
+        identityDummyEmailUpdater,
+        identityAccountRemover,
+        matrixSynapseService);
+  }
+
+  @Test
+  void fiveActorRegistrationUsesValidatedLifecycleAndOwnedLocalWritesWithoutNativeMutations() {
+    var lifecycle =
+        mock(
+            de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryRegistrationLifecycle
+                .class);
+    var environment =
+        new org.springframework.mock.env.MockEnvironment()
+            .withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS");
+    var beans = new org.springframework.beans.factory.support.DefaultListableBeanFactory();
+    beans.registerResolvableDependency(org.springframework.core.env.Environment.class, environment);
+    beans.registerSingleton("ordinaryRegistrationLifecycle", lifecycle);
+    var injector =
+        new org.springframework.beans.factory.annotation.AutowiredAnnotationBeanPostProcessor();
+    injector.setAutowiredAnnotationType(
+        org.springframework.beans.factory.annotation.Autowired.class);
+    injector.setBeanFactory(beans);
+    injector.postProcessProperties(null, createUserFacade, "registrationFacade");
+    var user =
+        User.builder()
+            .userId("33333333-3333-4333-8333-333333333333")
+            .username(USER_DTO_SUCHT.getUsername())
+            .email("synthetic@example.test")
+            .build();
+    var projection =
+        new de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleDtos
+            .AccountProjection(
+            user.getUserId(),
+            "synthetic",
+            user.getEmail(),
+            null,
+            null,
+            null,
+            "de",
+            false,
+            false,
+            List.of(),
+            false);
+    var session =
+        new de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryRegistrationLifecycle
+            .Session(null, projection);
+    var rooms =
+        mock(
+            de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.JdbcOwnedLifecycleEffects
+                .Scope.class);
+    when(lifecycle.register(
+            eq(USER_DTO_SUCHT), org.mockito.ArgumentMatchers.nullable(Long.class), any()))
+        .thenAnswer(
+            invocation -> {
+              java.util.function.Function<
+                      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle
+                          .OrdinaryRegistrationLifecycle.Session,
+                      Long>
+                  local = invocation.getArgument(2);
+              return local.apply(session);
+            });
+    when(userService.createNewLifecycleUser(
+            eq(user.getUserId()), any(), eq(user.getEmail()), anyBoolean(), eq("de"), any(), any()))
+        .thenReturn(user);
+    when(userService.saveUser(user)).thenReturn(user);
+    when(lifecycle.createMatrixUser(eq(session), any())).thenReturn("@synthetic:example.test");
+    when(lifecycle.ownedRooms(session)).thenReturn(rooms);
+    when(createNewSessionFacade.initializeOwnedRegistration(
+            eq(USER_DTO_SUCHT), eq(user), any(), eq(rooms)))
+        .thenReturn(new NewRegistrationResponseDto().sessionId(42L));
+    org.junit.jupiter.api.Assertions.assertEquals(
+        42L, createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT));
+    var order =
+        org.mockito.Mockito.inOrder(userVerifier, agencyVerifier, lifecycle, welcomeEmailService);
+    order.verify(userVerifier).checkIfAllRequiredAttributesAreCorrectlyFilled(USER_DTO_SUCHT);
+    order.verify(userVerifier).checkIfUsernameIsAvailable(USER_DTO_SUCHT);
+    order.verify(agencyVerifier).checkIfConsultingTypeMatchesToAgency(USER_DTO_SUCHT);
+    order
+        .verify(lifecycle)
+        .register(eq(USER_DTO_SUCHT), org.mockito.ArgumentMatchers.nullable(Long.class), any());
+    order.verify(welcomeEmailService).sendWelcomeEmail(eq(user), any());
+    org.mockito.Mockito.verifyNoInteractions(
+        identityClient,
+        identityPasswordUpdater,
+        identityDummyEmailUpdater,
+        identityAccountRemover,
+        matrixSynapseService);
+  }
+
   private CreateUserFacade createUserFacade;
   @Mock private IdentityClient identityClient;
   @Mock private IdentityAccountRemover identityAccountRemover;

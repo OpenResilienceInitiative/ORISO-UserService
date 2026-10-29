@@ -41,23 +41,42 @@ public class DeleteChatAction implements ActionCommand<ConsultantDeletionWorkflo
    */
   @Override
   public void execute(ConsultantDeletionWorkflowDTO actionTarget) {
+    if (actionTarget.isAcknowledged()) {
+      var chats = new java.util.concurrent.atomic.AtomicReference<List<Chat>>();
+      actionTarget.runOwnedLocal(
+          () -> chats.set(chatRepository.findByChatOwner(actionTarget.getConsultant())));
+      var errors = new ArrayList<DeletionWorkflowError>();
+      for (var chat : chats.get()) {
+        actionTarget.runOwnedExternal(
+            () -> errors.addAll(purgeMatrixRoom(chat.getMatrixRoomId(), false)));
+      }
+      actionTarget.runOwnedLocal(() -> deleteDatabaseChat(chats.get(), errors, actionTarget));
+      actionTarget.getDeletionWorkflowErrors().addAll(errors);
+      return;
+    }
     var chatsByChatOwner = this.chatRepository.findByChatOwner(actionTarget.getConsultant());
 
     var workflowErrors =
         chatsByChatOwner.stream()
-            .map(chat -> purgeMatrixRoom(chat.getMatrixRoomId()))
+            .map(chat -> purgeMatrixRoom(chat.getMatrixRoomId(), actionTarget.isFixedDiagnostics()))
             .flatMap(Collection::stream)
             .collect(Collectors.toList());
 
-    deleteDatabaseChat(chatsByChatOwner, workflowErrors);
+    deleteDatabaseChat(chatsByChatOwner, workflowErrors, actionTarget);
     actionTarget.getDeletionWorkflowErrors().addAll(workflowErrors);
   }
 
-  private List<DeletionWorkflowError> purgeMatrixRoom(String matrixRoomId) {
-    if (!isNotBlank(matrixRoomId) || matrixSynapseService.purgeRoom(matrixRoomId)) {
+  private List<DeletionWorkflowError> purgeMatrixRoom(
+      String matrixRoomId, boolean fixedDiagnostics) {
+    if (!isNotBlank(matrixRoomId)
+        || (fixedDiagnostics
+            ? matrixSynapseService.purgeRoom(matrixRoomId, true)
+            : matrixSynapseService.purgeRoom(matrixRoomId))) {
       return new ArrayList<>();
     }
-    log.error("UserService delete workflow error: Unable to purge Matrix room {}", matrixRoomId);
+    if (fixedDiagnostics) log.error("Tracked consultant compensation room purge failed");
+    else
+      log.error("UserService delete workflow error: Unable to purge Matrix room {}", matrixRoomId);
     return singletonList(
         DeletionWorkflowError.builder()
             .deletionSourceType(CONSULTANT)
@@ -69,12 +88,14 @@ public class DeleteChatAction implements ActionCommand<ConsultantDeletionWorkflo
   }
 
   private void deleteDatabaseChat(
-      List<Chat> chatsByChatOwner, List<DeletionWorkflowError> workflowErrors) {
+      List<Chat> chatsByChatOwner,
+      List<DeletionWorkflowError> workflowErrors,
+      ConsultantDeletionWorkflowDTO actionTarget) {
     if (isNotEmpty(chatsByChatOwner)) {
       try {
         this.chatRepository.deleteAll(chatsByChatOwner);
       } catch (Exception e) {
-        log.error("UserService delete workflow error: ", e);
+        actionTarget.logFailure(log, "UserService delete workflow error: ", e);
         workflowErrors.add(
             DeletionWorkflowError.builder()
                 .deletionSourceType(CONSULTANT)

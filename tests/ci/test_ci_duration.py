@@ -114,7 +114,7 @@ class CiDurationTest(unittest.TestCase):
         self.assertNotIn("needs", build)
         self.assertEqual({"contents": "read"}, build["permissions"])
         self.assertEqual(
-            {"build", "required-integration-tests", "mariadb-contract", "notification-smtp-contract"},
+            {"build", "required-integration-tests", "mariadb-contract", "notification-smtp-contract", "creation-outcome-mariadb"},
             set(publish["needs"]),
         )
         self.assertNotIn("if", publish)

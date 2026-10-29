@@ -57,6 +57,381 @@ public class MembersOnlyRevocation {
   private final ChatRepository chatRepository;
   private final MatrixChatShutdownService shutdownService;
 
+  private org.springframework.jdbc.core.JdbcTemplate preDeletionJdbc;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public void configurePreDeletionJdbc(org.springframework.jdbc.core.JdbcTemplate jdbc) {
+    preDeletionJdbc = java.util.Objects.requireNonNull(jdbc);
+  }
+
+  /** The actual ACK and complete related rows bind every remote room and final local change. */
+  public PreparedRemoval prepareAcknowledgedDeletion(
+      de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+              .AcknowledgedPreDeletion
+          acknowledged,
+      boolean forceDeleteSessions) {
+    acknowledged.requireConsultantCurrent();
+    if (preDeletionJdbc == null)
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    var prepared = new java.util.concurrent.atomic.AtomicReference<PreparedRemoval>();
+    acknowledged.runOwnedLocal(
+        () ->
+            TenantContext.supplyAcrossTenants(
+                () -> {
+                  var actual =
+                      consultantRepository.findById(acknowledged.accountId()).orElseThrow();
+                  acknowledged.requireCurrentConsultant(actual);
+                  var rows = PreDeletionChatRows.capture(preDeletionJdbc, actual.getId());
+                  var remotes = remoteRemovals(actual, forceDeleteSessions);
+                  var originalSessions =
+                      sessionRepository
+                          .findByConsultantId(
+                              actual.getId(), org.springframework.data.domain.Pageable.unpaged())
+                          .getContent()
+                          .stream()
+                          .map(Session::getId)
+                          .collect(java.util.stream.Collectors.toUnmodifiableSet());
+                  var proof =
+                      new PreparedRemoval(
+                          this, acknowledged, rows, remotes, originalSessions, forceDeleteSessions);
+                  acknowledged.freezeRelatedRemoval(proof);
+                  prepared.set(proof);
+                  return null;
+                }));
+    var proof = prepared.get();
+    for (var remote : proof.remotes) {
+      proof.requireFresh();
+      if (org.springframework.transaction.support.TransactionSynchronizationManager
+          .isActualTransactionActive())
+        throw new de.caritas.cob.userservice.api.exception.httpresponses
+            .ServiceUnavailableException("Room removal must run outside SQL");
+      if (remote.kind.equals("SIDE"))
+        membershipService.removeMemberFromRoomOrFail(remote.room, remote.member);
+      else {
+        var chat = new Chat();
+        chat.setId(remote.chat);
+        chat.setMatrixRoomId(remote.room);
+        chat.setMembersOnly(true);
+        if (remote.kind.equals("PURGE")) shutdownService.shutdownRoom(chat);
+        else membershipService.removeParticipantFromRoom(chat, remote.member);
+      }
+      proof.requireFresh();
+    }
+    proof.remoteComplete = true;
+    return proof;
+  }
+
+  private record RemoteRemoval(String kind, Long chat, String room, String member) {}
+
+  private List<RemoteRemoval> remoteRemovals(Consultant leaving, boolean force) {
+    var remotes = new LinkedHashSet<RemoteRemoval>();
+    if (force)
+      for (var session :
+          sessionRepository.findByConsultantAndStatusIn(
+              leaving, List.of(SessionStatus.IN_PROGRESS, SessionStatus.IN_ARCHIVE))) {
+        var participants = participantRepository.findByChatId(session.getId());
+        if (membersOnlyCase(session)
+            && !participants.isEmpty()
+            && successorOf(participants, leaving.getId()).isEmpty())
+          supervisorRepository
+              .findBySessionIdAndIsActiveTrue(session.getId())
+              .forEach(value -> addSide(remotes, value));
+      }
+    for (var participation : participantRepository.findByConsultantId(leaving.getId())) {
+      var chat =
+          chatRepository
+              .findById(participation.getSeriesId())
+              .filter(Chat::isMembersOnly)
+              .orElse(null);
+      if (chat == null) continue;
+      supervisorRepository
+          .findBySessionIdAndSupervisorConsultantIdAndIsActiveTrue(
+              participation.getChatId(), leaving.getId())
+          .ifPresent(value -> addSide(remotes, value));
+      if (ownedBy(chat, participation) && nextOwnerOf(chat, leaving.getId()).isEmpty()) {
+        for (var session : casesOf(chat))
+          supervisorRepository
+              .findBySessionIdAndIsActiveTrue(session.getId())
+              .forEach(value -> addSide(remotes, value));
+        remotes.add(new RemoteRemoval("PURGE", chat.getId(), chat.getMatrixRoomId(), null));
+      } else
+        remotes.add(
+            new RemoteRemoval(
+                "MAIN", chat.getId(), chat.getMatrixRoomId(), leaving.getMatrixUserId()));
+    }
+    return remotes.stream()
+        .sorted(
+            Comparator.comparingInt(
+                    (RemoteRemoval value) ->
+                        value.kind.equals("SIDE") ? 0 : value.kind.equals("MAIN") ? 1 : 2)
+                .thenComparing(
+                    RemoteRemoval::chat, Comparator.nullsFirst(Comparator.naturalOrder()))
+                .thenComparing(
+                    RemoteRemoval::room, Comparator.nullsFirst(Comparator.naturalOrder()))
+                .thenComparing(
+                    RemoteRemoval::member, Comparator.nullsFirst(Comparator.naturalOrder())))
+        .toList();
+  }
+
+  private static void addSide(LinkedHashSet<RemoteRemoval> remotes, SessionSupervisor supervision) {
+    if (supervision.getMatrixRoomId() != null
+        && !supervision.getMatrixRoomId().isBlank()
+        && supervision.getSupervisorConsultant() != null)
+      remotes.add(
+          new RemoteRemoval(
+              "SIDE",
+              null,
+              supervision.getMatrixRoomId(),
+              supervision.getSupervisorConsultant().getMatrixUserId()));
+  }
+
+  private List<Session> casesOf(Chat chat) {
+    var ids = new LinkedHashSet<Long>();
+    participantRepository.findBySeriesId(chat.getId()).stream()
+        .map(GroupChatParticipant::getChatId)
+        .filter(Objects::nonNull)
+        .forEach(ids::add);
+    if (chat.getMatrixRoomId() != null)
+      sessionRepository
+          .findByMatrixRoomId(chat.getMatrixRoomId())
+          .map(Session::getId)
+          .ifPresent(ids::add);
+    return ids.stream().map(sessionRepository::findById).flatMap(Optional::stream).toList();
+  }
+
+  private boolean membersOnlyCase(Session session) {
+    if (session.getMatrixRoomId() == null
+        || session.getMatrixRoomId().isBlank()
+        || session.getConversationType() != null
+            && session.getConversationType()
+                != de.caritas.cob.userservice.api.model.ConversationType.INTERNAL_GROUP)
+      return false;
+    return chatRepository.existsByMatrixRoomIdAndMembersOnlyTrue(session.getMatrixRoomId())
+        || session.getConversationType()
+                == de.caritas.cob.userservice.api.model.ConversationType.INTERNAL_GROUP
+            && !session.isTeamSession()
+            && !chatRepository.existsByMatrixRoomId(session.getMatrixRoomId());
+  }
+
+  public static final class PreparedRemoval {
+    private final MembersOnlyRevocation issuer;
+    private final de.caritas.cob.userservice.api.workflow.delete.service
+            .PublicPreDeletionMaintenance.AcknowledgedPreDeletion
+        acknowledged;
+    private final java.util.Map<String, List<List<String>>> rows;
+    private final List<RemoteRemoval> remotes;
+    private final java.util.Set<Long> originalSessions;
+    private final boolean force;
+    private boolean remoteComplete, readyForLocal, applied;
+
+    private PreparedRemoval(
+        MembersOnlyRevocation issuer,
+        de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+                .AcknowledgedPreDeletion
+            acknowledged,
+        java.util.Map<String, List<List<String>>> rows,
+        List<RemoteRemoval> remotes,
+        java.util.Set<Long> originalSessions,
+        boolean force) {
+      this.issuer = issuer;
+      this.acknowledged = acknowledged;
+      this.rows = rows;
+      this.remotes = remotes;
+      this.originalSessions = originalSessions;
+      this.force = force;
+    }
+
+    private void requireRows() {
+      acknowledged.requireConsultantCurrent();
+      if (!org.springframework.transaction.support.TransactionSynchronizationManager
+              .isActualTransactionActive()
+          || !rows.equals(
+              PreDeletionChatRows.capture(issuer.preDeletionJdbc, acknowledged.accountId())))
+        throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(
+            "The owned chat source changed");
+    }
+
+    private void requireFresh() {
+      acknowledged.runOwnedLocal(
+          () -> {
+            requireRows();
+            acknowledged.requireFrozenRelatedRemoval(this);
+          });
+    }
+
+    /** Data is recomputed only from this issuer's complete rows and original remote inventory. */
+    public com.fasterxml.jackson.databind.JsonNode frozenPlanFor(
+        de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+                .AcknowledgedPreDeletion
+            frame,
+        de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.AccountLifecycleCodec codec) {
+      if (frame != acknowledged)
+        throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(
+            "Foreign related preparation");
+      requireRows();
+      var summaries = new java.util.TreeMap<String, Object>();
+      rows.forEach(
+          (table, values) ->
+              summaries.put(
+                  table,
+                  java.util.Map.of(
+                      "count",
+                      (long) values.size() - 1,
+                      "digest",
+                      codec.digest(
+                          "public-pre-deletion-related/v1",
+                          java.util.Map.of("table", table, "rows", values)))));
+      var inventory =
+          remotes.stream()
+              .map(
+                  remote -> {
+                    var value = new java.util.TreeMap<String, Object>();
+                    value.put("kind", remote.kind);
+                    value.put("chatId", remote.chat);
+                    value.put("roomId", remote.room);
+                    value.put("memberId", remote.member);
+                    return value;
+                  })
+              .toList();
+      return codec.read(
+          codec.canonical(
+              java.util.Map.of(
+                  "state",
+                  "FROZEN",
+                  "rows",
+                  summaries,
+                  "remotes",
+                  java.util.Map.of(
+                      "count",
+                      (long) inventory.size(),
+                      "digest",
+                      codec.digest(
+                          "public-pre-deletion-related/v1",
+                          java.util.Map.of("remotes", inventory))))),
+          com.fasterxml.jackson.databind.JsonNode.class);
+    }
+
+    public void requireRequestFor(
+        de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+                .AcknowledgedPreDeletion
+            frame,
+        boolean originalForce) {
+      if (frame != acknowledged || force != originalForce)
+        throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(
+            "Foreign original deletion request");
+    }
+
+    public void requireReadyFor(
+        de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+                .AcknowledgedPreDeletion
+            frame) {
+      acknowledged.requireRelatedFinal(this);
+      if (frame != acknowledged || !remoteComplete || applied)
+        throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(
+            "Related preparation is not ready");
+      requireRows();
+      readyForLocal = true;
+    }
+
+    public void requireAppliedFor(
+        de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+                .AcknowledgedPreDeletion
+            frame) {
+      acknowledged.requireRelatedFinal(this);
+      if (frame != acknowledged || !readyForLocal || !applied)
+        throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(
+            "Related preparation was not applied");
+    }
+
+    public void apply(Consultant independentlyLoadedOriginal) {
+      acknowledged.requireRelatedFinal(this);
+      acknowledged.requireCurrentConsultant(independentlyLoadedOriginal);
+      if (!remoteComplete || !readyForLocal || applied)
+        throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(
+            "The room preparation was already consumed");
+      TenantContext.supplyAcrossTenants(
+          () -> {
+            if (force)
+              for (var session :
+                  issuer.sessionRepository.findByConsultantAndStatusIn(
+                      independentlyLoadedOriginal,
+                      List.of(SessionStatus.IN_PROGRESS, SessionStatus.IN_ARCHIVE)))
+                if (issuer.membersOnlyCase(session))
+                  issuer.keepCaseLocally(session, independentlyLoadedOriginal);
+            issuer.revokeAllLocally(independentlyLoadedOriginal);
+            return null;
+          });
+      applied = true;
+    }
+
+    public boolean keepCaseOnDeletionOf(Session session, Consultant independentlyLoadedOriginal) {
+      acknowledged.requireRelatedFinal(this);
+      acknowledged.requireCurrentConsultant(independentlyLoadedOriginal);
+      if (!remoteComplete
+          || !applied
+          || !force
+          || session == null
+          || !originalSessions.contains(session.getId())
+          || issuer.sessionRepository.findById(session.getId()).orElse(null) != session
+          || session.getConsultant() == null
+          || !independentlyLoadedOriginal.getId().equals(session.getConsultant().getId()))
+        throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(
+            "The original case changed");
+      return issuer.keepCaseLocally(session, independentlyLoadedOriginal);
+    }
+
+    @Override
+    public String toString() {
+      return "PreparedRemoval[ownership=redacted]";
+    }
+  }
+
+  private void revokeAllLocally(Consultant leaving) {
+    for (var participation : participantRepository.findByConsultantId(leaving.getId())) {
+      var chat =
+          chatRepository
+              .findById(participation.getSeriesId())
+              .filter(Chat::isMembersOnly)
+              .orElse(null);
+      if (chat == null) continue;
+      supervisorRepository
+          .findBySessionIdAndSupervisorConsultantIdAndIsActiveTrue(
+              participation.getChatId(), leaving.getId())
+          .ifPresent(this::endLocally);
+      handOverSessionFrom(chat, participation);
+      participantRepository.delete(participation);
+      if (ownedBy(chat, participation) && !passOwnershipOn(chat, leaving.getId())) {
+        for (var session : casesOf(chat)) closeLocally(session);
+        participantRepository.deleteBySeriesId(chat.getId());
+        chatRepository.delete(chat);
+      }
+    }
+  }
+
+  private boolean keepCaseLocally(Session session, Consultant leaving) {
+    var participants = participantRepository.findByChatId(session.getId());
+    if (participants.isEmpty()) return false;
+    var successor = successorOf(participants, leaving.getId());
+    if (successor.isPresent()) {
+      session.setConsultant(successor.get());
+      sessionRepository.save(session);
+    } else closeLocally(session);
+    return true;
+  }
+
+  private void closeLocally(Session session) {
+    supervisorRepository.findBySessionIdAndIsActiveTrue(session.getId()).forEach(this::endLocally);
+    session.setStatus(SessionStatus.DONE);
+    session.setUpdateDate(LocalDateTime.now());
+    sessionRepository.save(session);
+  }
+
+  private void endLocally(SessionSupervisor supervision) {
+    supervision.setIsActive(false);
+    supervision.setRemovedDate(LocalDateTime.now());
+    supervisorRepository.save(supervision);
+  }
+
   /**
    * Call before the participation of {@code leaving} is deleted, in the same transaction. Does
    * nothing for an ordinary chat.

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -41,6 +42,20 @@ class IdentityReactivationRepairServiceTest {
         new IdentityReactivationRepairService(repairWriter, userRepository, meterRegistry);
     ReflectionTestUtils.setField(repairService, "staleAfter", Duration.ofMinutes(5));
     ReflectionTestUtils.setField(repairService, "repairBatchSize", 200);
+  }
+
+  @Test
+  void fiveActorsGenericRepairCannotScanOrCompensateHumanOwnedPendingWork() {
+    var mode =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
+    lenient().when(mode.isFiveActorMode()).thenReturn(true);
+    repairService.setIdentityMode(mode);
+    assertThrows(
+        de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException.class,
+        () -> repairService.compensate(operation(), databaseFailure()));
+    repairService.retryOutstandingRepairs();
+    org.mockito.Mockito.verifyNoInteractions(userRepository, repairWriter);
   }
 
   @Test

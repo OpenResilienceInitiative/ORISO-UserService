@@ -23,11 +23,45 @@ public class UpdateAdminService {
   private final @NonNull AdminRepository adminRepository;
   private final @NonNull RetrieveAdminService retrieveAdminService;
 
+  private de.caritas.cob.userservice.api.port.out.IdentityClientConfig identityMode;
+  private de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance
+      scopedMaintenance;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public void setScopedAdminMaintenance(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode,
+      @org.springframework.lang.Nullable
+          de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance
+              maintenance) {
+    this.identityMode = java.util.Objects.requireNonNull(mode);
+    this.scopedMaintenance = maintenance;
+  }
+
+  @jakarta.persistence.PersistenceContext private jakarta.persistence.EntityManager scopedEntities;
+
+  private boolean fiveActors() {
+    return identityMode != null && identityMode.isFiveActorMode();
+  }
+
+  private Admin updateScoped(Admin admin, IdentityProfileUpdate profile) {
+    if (scopedMaintenance == null || !scopedMaintenance.isFiveActorMode())
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    // The private writer returns a fresh detached SQL result after its acknowledged conditional
+    // commit.
+    // Do not dirty or re-save the earlier JPA entity.
+    return scopedMaintenance.updateAdminProfile(admin.getId(), profile);
+  }
+
   public Admin updateAgencyAdmin(
       final String adminId, final UpdateAgencyAdminDTO updateAgencyAdminDTO) {
     final Admin admin = retrieveAdminService.findAdmin(adminId, Admin.AdminType.AGENCY);
     assertAdminHasTenantIdNotNullAndNotZero(admin);
     final UserDTO userDTO = buildValidatedUserDTO(updateAgencyAdminDTO, admin);
+    if (fiveActors())
+      return updateScoped(
+          admin,
+          profileUpdate(
+              userDTO, updateAgencyAdminDTO.getFirstname(), updateAgencyAdminDTO.getLastname()));
     this.identityProfileUpdater.updateProfile(
         admin.getId(),
         profileUpdate(
@@ -102,6 +136,20 @@ public class UpdateAdminService {
   public Admin updateTenantAdmin(String adminId, UpdateTenantAdminDTO updateTenantAdminDTO) {
     final Admin admin = retrieveAdminService.findAdmin(adminId, Admin.AdminType.TENANT);
     final UserDTO userDTO = buildValidatedUserDTO(updateTenantAdminDTO, admin);
+    if (fiveActors()) {
+      if (scopedMaintenance == null || !scopedMaintenance.isFiveActorMode())
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+      try (var source =
+          new ScopedTenantEdit(
+              adminId,
+              updateTenantAdminDTO,
+              profileUpdate(
+                  userDTO,
+                  updateTenantAdminDTO.getFirstname(),
+                  updateTenantAdminDTO.getLastname()))) {
+        return scopedMaintenance.updateTenantAdmin(source);
+      }
+    }
     this.identityProfileUpdater.updateProfile(
         admin.getId(),
         profileUpdate(
@@ -110,10 +158,99 @@ public class UpdateAdminService {
     return this.adminRepository.save(buildAdmin(updateTenantAdminDTO, admin));
   }
 
+  /** Only the actual full TenantAdmin DTO entry can mint this live edit source. */
+  public final class ScopedTenantEdit implements AutoCloseable {
+    private final String account;
+    private final UpdateTenantAdminDTO input;
+    private final IdentityProfileUpdate desired;
+    private final Thread owner = Thread.currentThread();
+    private boolean active = true;
+
+    private ScopedTenantEdit(
+        String account, UpdateTenantAdminDTO input, IdentityProfileUpdate desired) {
+      this.account = account;
+      this.input = input;
+      this.desired = desired;
+      requireLive();
+    }
+
+    public void requireLive() {
+      if (!active
+          || owner != Thread.currentThread()
+          || input == null
+          || desired == null
+          || input.getTenantId() == null
+          || input.getTenantId() < 1
+          || !java.util.Objects.equals(desired.tenantId(), input.getTenantId().longValue())
+          || !java.util.Objects.equals(desired.firstName(), input.getFirstname())
+          || !java.util.Objects.equals(desired.lastName(), input.getLastname())
+          || !java.util.Objects.equals(desired.email(), input.getEmail()))
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    }
+
+    public String accountId() {
+      requireLive();
+      return account;
+    }
+
+    public IdentityProfileUpdate profile() {
+      requireLive();
+      return desired;
+    }
+
+    public void requireJpaOwner(jakarta.persistence.EntityManagerFactory factory) {
+      requireLive();
+      if (factory == null
+          || scopedEntities == null
+          || scopedEntities.getEntityManagerFactory() != factory)
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    }
+
+    public void apply(
+        de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance.CheckedAccount
+            checked) {
+      requireLive();
+      checked.requireTenantEditCallback(this);
+      if (!scopedEntities.isJoinedToTransaction())
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+      var row =
+          de.caritas.cob.userservice.api.tenant.TenantContext.supplyAcrossTenants(
+                  () -> adminRepository.findByIdAndType(account, Admin.AdminType.TENANT))
+              .orElseThrow();
+      scopedEntities.refresh(row);
+      row.setTenantId(desired.tenantId());
+      row.setFirstName(desired.firstName());
+      row.setLastName(desired.lastName());
+      row.setEmail(desired.email());
+      adminRepository.save(row);
+      scopedEntities.flush();
+    }
+
+    public Admin result() {
+      requireLive();
+      return de.caritas.cob.userservice.api.tenant.TenantContext.supplyAcrossTenants(
+              () -> adminRepository.findByIdAndType(account, Admin.AdminType.TENANT))
+          .orElseThrow();
+    }
+
+    @Override
+    public void close() {
+      active = false;
+    }
+
+    @Override
+    public String toString() {
+      return "ScopedTenantEdit[ownership=redacted]";
+    }
+  }
+
   public Admin patchAgencyAdmin(final String adminId, final PatchAdminDTO patchAdminDTO) {
     final Admin admin = retrieveAdminService.findAdmin(adminId, Admin.AdminType.AGENCY);
     assertAdminHasTenantIdNotNullAndNotZero(admin);
     final UserDTO userDTO = buildValidatedUserDTO(patchAdminDTO, admin);
+    if (fiveActors())
+      return updateScoped(
+          admin, profileUpdate(userDTO, patchAdminDTO.getFirstname(), patchAdminDTO.getLastname()));
     this.identityProfileUpdater.updateProfile(
         admin.getId(),
         profileUpdate(userDTO, patchAdminDTO.getFirstname(), patchAdminDTO.getLastname()));
@@ -124,10 +261,24 @@ public class UpdateAdminService {
   public Admin patchTenantAdmin(String adminId, PatchAdminDTO patchAdminDTO) {
     final Admin admin = retrieveAdminService.findAdmin(adminId, Admin.AdminType.TENANT);
     final UserDTO userDTO = buildValidatedUserDTO(patchAdminDTO, admin);
+    if (fiveActors())
+      return updateScoped(
+          admin, profileUpdate(userDTO, patchAdminDTO.getFirstname(), patchAdminDTO.getLastname()));
     this.identityProfileUpdater.updateProfile(
         admin.getId(),
         profileUpdate(userDTO, patchAdminDTO.getFirstname(), patchAdminDTO.getLastname()));
 
     return this.adminRepository.save(patchAdminEntity(patchAdminDTO, admin));
+  }
+
+  /** Read-only startup check of the actual installed production consumers. */
+  public boolean hasScopedAccountBindings(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode,
+      de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance owner,
+      org.springframework.orm.jpa.JpaTransactionManager manager) {
+    return identityMode == mode
+        && scopedMaintenance == owner
+        && scopedEntities != null
+        && scopedEntities.getEntityManagerFactory() == manager.getEntityManagerFactory();
   }
 }

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+ xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+ <changeSet id="20261023-existing-import-intent-367" author="codex">
+  <comment>#367: finite existing-import namespace in the existing operation intent.</comment>
+  <sqlFile path="db/changelog/changeset/20261023_existing_import_intent_367/migrate.sql"
+   relativeToChangelogFile="false" splitStatements="true" stripComments="true" endDelimiter=";"/>
+  <rollback><sql>ALTER TABLE identity_account_operation_intent DROP INDEX uq_identity_operation_source, DROP COLUMN applied_json, DROP COLUMN source_json, DROP COLUMN source_key, DROP COLUMN operation_kind;</sql></rollback>
+ </changeSet>
+</databaseChangeLog>

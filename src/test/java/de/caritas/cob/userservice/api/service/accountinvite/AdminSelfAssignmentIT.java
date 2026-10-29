@@ -116,6 +116,8 @@ class AdminSelfAssignmentIT {
   @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
   @MockitoBean private GrantConsultantIdentityService grantConsultantIdentityService;
 
+  @MockitoBean private de.caritas.cob.userservice.api.port.out.IdentityClientConfig identityMode;
+
   @MockitoBean
   private ConsultantAgencyRelationCreatorService consultantAgencyRelationCreatorService;
 
@@ -186,6 +188,37 @@ class AdminSelfAssignmentIT {
   }
 
   // --- as counsellor ---
+
+  @Test
+  void coordinatedFirstGrantRunsOutsideSqlAndKeepsTheAdminWhenItsOwnerRefuses() {
+    actAsTenantAdmin(TENANT_ADMIN_ID);
+    when(identityMode.isFiveActorMode()).thenReturn(true);
+    var refusal = new ForbiddenException("The current native grant was withdrawn");
+    var before = adminRepository.findById(TENANT_ADMIN_ID).orElseThrow().getUpdateDate();
+    doAnswer(
+            invocation -> {
+              assertThat(
+                      org.springframework.transaction.support.TransactionSynchronizationManager
+                          .isActualTransactionActive())
+                  .isFalse();
+              throw refusal;
+            })
+        .when(grantConsultantIdentityService)
+        .grantConsultantIdentityToAdmin(eq(TENANT_ADMIN_ID), any());
+
+    assertThatThrownBy(
+            () ->
+                service.assign(
+                    new SelfAssignmentCommand(
+                        SelfAssignmentRole.COUNSELLOR, OTHER_OWN_TENANT_AGENCY)))
+        .isSameAs(refusal);
+
+    assertThat(adminRepository.findById(TENANT_ADMIN_ID).orElseThrow().getUpdateDate())
+        .isEqualTo(before);
+    assertThat(consultantRepository.findById(TENANT_ADMIN_ID)).isEmpty();
+    verify(consultantAgencyRelationCreatorService, never())
+        .createNewConsultantAgency(anyString(), any());
+  }
 
   @Test
   void tenantAdmin_May_AssignThemselvesAsCounsellor_ThroughTheUsersAreaGrant() {

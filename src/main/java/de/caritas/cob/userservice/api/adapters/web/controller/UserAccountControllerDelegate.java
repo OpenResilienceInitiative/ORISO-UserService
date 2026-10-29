@@ -70,6 +70,52 @@ class UserAccountControllerDelegate {
   private final @NonNull AgencyAdminDataProvider agencyAdminDataProvider;
   private final @NonNull UsernameTranscoder usernameTranscoder;
 
+  private de.caritas.cob.userservice.api.config.auth.ServiceIdentitySeparationCheck
+      accountCommandReadiness;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  void setAccountCommandReadiness(
+      de.caritas.cob.userservice.api.config.auth.ServiceIdentitySeparationCheck readiness) {
+    this.accountCommandReadiness = java.util.Objects.requireNonNull(readiness);
+  }
+
+  private de.caritas.cob.userservice.api.adapters.keycloak.maintenance.SelfLocaleMaintenance
+      selfLocaleMaintenance;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setSelfLocaleMaintenance(
+      de.caritas.cob.userservice.api.adapters.keycloak.maintenance.SelfLocaleMaintenance
+          maintenance) {
+    this.selfLocaleMaintenance = maintenance;
+  }
+
+  private de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance
+      selfAppOtpMaintenance;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setSelfAppOtpMaintenance(
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance
+          maintenance) {
+    this.selfAppOtpMaintenance = maintenance;
+  }
+
+  private de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfPasswordMaintenance
+      selfPasswordMaintenance;
+  private de.caritas.cob.userservice.api.port.out.IdentityClientConfig passwordIdentityConfig;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setSelfPasswordMaintenance(
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfPasswordMaintenance
+          maintenance) {
+    this.selfPasswordMaintenance = maintenance;
+  }
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setPasswordIdentityConfig(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode) {
+    this.passwordIdentityConfig = mode;
+  }
+
   ResponseEntity<Void> updateAbsence(AbsenceDTO absence) {
     var consultant = userAccountProvider.retrieveValidatedConsultant();
     this.consultantDataFacade.updateConsultantAbsent(consultant, absence);
@@ -102,6 +148,13 @@ class UserAccountControllerDelegate {
   }
 
   ResponseEntity<UserDataResponseDTO> getUserData() {
+    if ((passwordIdentityConfig != null && passwordIdentityConfig.isFiveActorMode())
+        || (selfAppOtpMaintenance != null && selfAppOtpMaintenance.isFiveActorMode())) {
+      if (selfAppOtpMaintenance == null || !selfAppOtpMaintenance.isFiveActorMode())
+        throw new ServiceUnavailableException("Current SELF profile owner unavailable");
+      // Required even when OTP is disabled or local consultant data supplies the visible profile.
+      selfAppOtpMaintenance.readCurrentProfile();
+    }
     UserDataResponseDTO partialUserData;
     if (authenticatedUser.isConsultant()) {
       var consultant = userAccountProvider.retrieveValidatedConsultant();
@@ -137,6 +190,8 @@ class UserAccountControllerDelegate {
             videoChatConfig.getE2eEncryptionEnabled(),
             identityPolicy.isConsultantDisplayNameAllowed());
 
+    fullUserData.setScopedAccountCommands(
+        accountCommandReadiness == null ? null : accountCommandReadiness.scopedAccountCommands());
     return new ResponseEntity<>(fullUserData, HttpStatus.OK);
   }
 
@@ -173,6 +228,9 @@ class UserAccountControllerDelegate {
     if (!isOtpAllowed()) {
       return null;
     }
+    if (selfAppOtpMaintenance != null && selfAppOtpMaintenance.isFiveActorMode()) {
+      return selfAppOtpMaintenance.readCredential();
+    }
     try {
       return identityManager.getOtpCredential(
           usernameTranscoder.encodeUsername(authenticatedUser.getUsername()));
@@ -205,15 +263,24 @@ class UserAccountControllerDelegate {
             .orElseThrow(
                 () -> new BadRequestException("Invalid payload: at least one property expected"));
 
-    Optional<Map<String, Object>> patchResponse = accountManager.patchUser(patchMap);
+    var locale = userDtoMapper.preferredLanguageOf(patchUserDTO);
+    boolean scopedLocale =
+        locale.isPresent()
+            && selfLocaleMaintenance != null
+            && selfLocaleMaintenance.isFiveActorMode();
+    Optional<Map<String, Object>> patchResponse =
+        scopedLocale
+            ? selfLocaleMaintenance.patch(
+                locale.orElseThrow(), patchMap, () -> accountManager.patchUser(patchMap))
+            : accountManager.patchUser(patchMap);
     if (patchResponse.isEmpty()) {
       throw new NotFoundException(
           "User with id %s not found in user or consultant repository", userId);
     }
 
-    userDtoMapper
-        .preferredLanguageOf(patchUserDTO)
-        .ifPresent(lang -> identityManager.changeLanguage(userId, lang));
+    if (!scopedLocale) {
+      locale.ifPresent(lang -> identityManager.changeLanguage(userId, lang));
+    }
 
     userDtoMapper
         .availableOf(patchUserDTO)
@@ -264,6 +331,17 @@ class UserAccountControllerDelegate {
     if (passwordDTO.getNewPassword() != null
         && passwordDTO.getNewPassword().equals(passwordDTO.getOldPassword())) {
       throw new ConflictException("The new password must differ from the current one");
+    }
+
+    if (passwordIdentityConfig != null && passwordIdentityConfig.isFiveActorMode()) {
+      if (selfPasswordMaintenance == null)
+        throw new ServiceUnavailableException("Scoped password change is unavailable");
+      if (!selfPasswordMaintenance.change(
+          passwordDTO.getOldPassword(),
+          passwordDTO.getNewPassword(),
+          () -> clearPasswordChangeRequirement(authenticatedUser.getUserId())))
+        throw new BadRequestException("Current password was not accepted");
+      return ResponseEntity.ok().build();
     }
 
     var username = authenticatedUser.getUsername();
@@ -325,6 +403,11 @@ class UserAccountControllerDelegate {
 
   ResponseEntity<Void> deactivateAndFlagUserAccountForDeletion(
       DeleteUserAccountDTO deleteUserAccountDTO) {
+    if (passwordIdentityConfig != null && passwordIdentityConfig.isFiveActorMode()) {
+      userAccountProvider.deactivateAndFlagUserAccountForDeletion(
+          deleteUserAccountDTO.getPassword());
+      return new ResponseEntity<>(HttpStatus.OK);
+    }
     var username = authenticatedUser.getUsername();
     var password = deleteUserAccountDTO.getPassword();
     var passwordValid = identityManager.validatePasswordIgnoring2fa(username, password);
@@ -352,5 +435,17 @@ class UserAccountControllerDelegate {
   ResponseEntity<Void> addMobileAppToken(MobileTokenDTO mobileTokenDTO) {
     this.userAccountProvider.addMobileAppToken(mobileTokenDTO.getToken());
     return new ResponseEntity<>(HttpStatus.OK);
+  }
+
+  /** Read-only startup check of the actual installed production consumers. */
+  boolean hasScopedAccountBindings(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode,
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance otp,
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfPasswordMaintenance password,
+      de.caritas.cob.userservice.api.adapters.keycloak.maintenance.SelfLocaleMaintenance locale) {
+    return passwordIdentityConfig == mode
+        && selfAppOtpMaintenance == otp
+        && selfPasswordMaintenance == password
+        && selfLocaleMaintenance == locale;
   }
 }

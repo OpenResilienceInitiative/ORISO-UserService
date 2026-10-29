@@ -94,6 +94,7 @@ import de.caritas.cob.userservice.api.service.session.SessionConsentService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.testHelper.CreationJsonMapperFixture;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.util.*;
 import org.apache.commons.lang3.RandomStringUtils;
@@ -121,6 +122,7 @@ import org.springframework.test.web.servlet.MockMvc;
     excludeAutoConfiguration = HypermediaAutoConfiguration.class)
 @AutoConfigureMockMvc(addFilters = false)
 @Import({
+  CreationJsonMapperFixture.class,
   UserChatControllerDelegate.class,
   GroupChatFeatureGate.class,
   UserSessionControllerDelegate.class,
@@ -289,6 +291,11 @@ class UserControllerIT {
 
   @MockitoBean private EnquiryRejectionService enquiryRejectionService;
   @MockitoBean private UserAccountService userAccountService;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.config.auth.ServiceIdentitySeparationCheck
+      accountCommandReadiness;
+
   @MockitoBean private PasswordResetService passwordResetService;
   @MockitoBean private AccountInviteService accountInviteService;
   @MockitoBean private TenantService tenantService;
@@ -449,6 +456,7 @@ class UserControllerIT {
 
   @BeforeEach
   void setUp() {
+    when(accountCommandReadiness.scopedAccountCommands()).thenReturn(null);
     when(usernameTranscoder.encodeUsername(anyString())).thenAnswer(inv -> inv.getArgument(0));
     TenantContext.clear();
   }
@@ -1303,54 +1311,72 @@ class UserControllerIT {
 
   @Test
   void getUserData_ForSingleTenantAdmin_Should_ReturnUserDataFromKeycloak() throws Exception {
+    var data = new UserDataResponseDTO();
+    data.setUserId(USER_ID);
+    when(userDtoMapper.userDataOf(same(data), isNull(), eq(false), eq(false))).thenReturn(data);
     when(authenticatedUser.isSingleTenantAdmin()).thenReturn(true);
-    when(keycloakUserDataProvider.retrieveAuthenticatedUserData())
-        .thenReturn(new UserDataResponseDTO());
+    when(keycloakUserDataProvider.retrieveAuthenticatedUserData()).thenReturn(data);
 
     mvc.perform(
             get(PATH_USER_DATA)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().is(HttpStatus.OK.value()));
+        .andExpect(status().is(HttpStatus.OK.value()))
+        .andExpect(jsonPath("$.userId").value(USER_ID))
+        .andExpect(jsonPath("$.scopedAccountCommands").value(org.hamcrest.Matchers.nullValue()));
   }
 
   @Test
   void getUserData_ForTenantSuperAdmin_Should_ReturnUserDataFromKeycloak() throws Exception {
+    var data = new UserDataResponseDTO();
+    data.setUserId(USER_ID);
+    when(userDtoMapper.userDataOf(same(data), isNull(), eq(false), eq(false))).thenReturn(data);
     when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
-    when(keycloakUserDataProvider.retrieveAuthenticatedUserData())
-        .thenReturn(new UserDataResponseDTO());
+    when(keycloakUserDataProvider.retrieveAuthenticatedUserData()).thenReturn(data);
 
     mvc.perform(
             get(PATH_USER_DATA)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().is(HttpStatus.OK.value()));
+        .andExpect(status().is(HttpStatus.OK.value()))
+        .andExpect(jsonPath("$.userId").value(USER_ID))
+        .andExpect(jsonPath("$.scopedAccountCommands").value(org.hamcrest.Matchers.nullValue()));
   }
 
   @Test
   void getUserData_ForAgencySuperAdmin_Should_ReturnUserDataWithAssignedAgencies()
       throws Exception {
+    var data = new UserDataResponseDTO();
+    data.setUserId(USER_ID);
+    when(userDtoMapper.userDataOf(same(data), isNull(), eq(false), eq(false))).thenReturn(data);
     when(authenticatedUser.isAgencySuperAdmin()).thenReturn(true);
-    when(agencyAdminDataProvider.retrieveData()).thenReturn(new UserDataResponseDTO());
+    when(agencyAdminDataProvider.retrieveData()).thenReturn(data);
 
     mvc.perform(
             get(PATH_USER_DATA)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().is(HttpStatus.OK.value()));
+        .andExpect(status().is(HttpStatus.OK.value()))
+        .andExpect(jsonPath("$.userId").value(USER_ID))
+        .andExpect(jsonPath("$.scopedAccountCommands").value(org.hamcrest.Matchers.nullValue()));
   }
 
   @Test
   void getUserData_ForRestrictedAgencyAdmin_Should_ReturnUserDataWithAssignedAgencies()
       throws Exception {
+    var data = new UserDataResponseDTO();
+    data.setUserId(USER_ID);
+    when(userDtoMapper.userDataOf(same(data), isNull(), eq(false), eq(false))).thenReturn(data);
     when(authenticatedUser.isRestrictedAgencyAdmin()).thenReturn(true);
-    when(agencyAdminDataProvider.retrieveData()).thenReturn(new UserDataResponseDTO());
+    when(agencyAdminDataProvider.retrieveData()).thenReturn(data);
 
     mvc.perform(
             get(PATH_USER_DATA)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().is(HttpStatus.OK.value()));
+        .andExpect(status().is(HttpStatus.OK.value()))
+        .andExpect(jsonPath("$.userId").value(USER_ID))
+        .andExpect(jsonPath("$.scopedAccountCommands").value(org.hamcrest.Matchers.nullValue()));
   }
 
   /** Method: getTeamSessionsForAuthenticatedConsultant (role: consultant) */

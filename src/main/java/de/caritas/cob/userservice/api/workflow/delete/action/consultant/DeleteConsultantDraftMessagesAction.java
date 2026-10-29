@@ -39,7 +39,7 @@ public class DeleteConsultantDraftMessagesAction
     try {
       this.draftMessageRepository.deleteByUserId(actionTarget.getConsultant().getId());
     } catch (Exception e) {
-      log.error("UserService delete workflow error: ", e);
+      actionTarget.logFailure(log, "UserService delete workflow error: ", e);
       actionTarget
           .getDeletionWorkflowErrors()
           .add(

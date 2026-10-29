@@ -91,8 +91,55 @@ public class UserService {
       de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService
               .RecoveryPolicySnapshot
           snapshot) {
+    return createUser(
+        userId, oldId, username, email, languageFormal, preferredLanguage, snapshot, false, null);
+  }
+
+  /** A newly received lifecycle id must not adopt a pre-existing local account. */
+  @org.springframework.transaction.annotation.Transactional
+  public User createNewLifecycleUser(
+      String userId,
+      String username,
+      String email,
+      boolean languageFormal,
+      String preferredLanguage,
+      de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService
+              .RecoveryPolicySnapshot
+          snapshot,
+      de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Policy
+          capturedPolicy) {
+    if (capturedPolicy == null)
+      throw new IllegalArgumentException("Captured creation inactivity policy is required");
+    return createUser(
+        userId,
+        null,
+        username,
+        email,
+        languageFormal,
+        preferredLanguage,
+        snapshot,
+        true,
+        capturedPolicy);
+  }
+
+  private User createUser(
+      String userId,
+      Long oldId,
+      String username,
+      String email,
+      boolean languageFormal,
+      String preferredLanguage,
+      de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService
+              .RecoveryPolicySnapshot
+          snapshot,
+      boolean requireNew,
+      de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Policy
+          capturedPolicy) {
     var existing = userRepository.findById(userId);
-    if (existing.isPresent()) return existing.get();
+    if (existing.isPresent()) {
+      if (requireNew) throw new ConflictException("Lifecycle account already exists locally");
+      return existing.get();
+    }
     var user = new User(userId, oldId, username, email, languageFormal);
     if (snapshot != null) {
       user.setChatRecoveryMode(snapshot.mode());
@@ -104,10 +151,12 @@ public class UserService {
       user.setLanguageCode(LanguageCode.valueOf(preferredLanguage));
     }
 
-    inactivityEnrollment.enroll(
-        userId,
-        user.getTenantId(),
-        de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group.ASKER);
+    if (requireNew) inactivityEnrollment.enroll(userId, user.getTenantId(), capturedPolicy);
+    else
+      inactivityEnrollment.enroll(
+          userId,
+          user.getTenantId(),
+          de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group.ASKER);
     return userRepository.save(user);
   }
 

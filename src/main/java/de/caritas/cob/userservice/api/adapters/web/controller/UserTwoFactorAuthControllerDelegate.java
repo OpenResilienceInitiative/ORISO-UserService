@@ -30,11 +30,28 @@ class UserTwoFactorAuthControllerDelegate {
   private final @NonNull UserDtoMapper userDtoMapper;
   private final @NonNull UsernameTranscoder usernameTranscoder;
 
+  private de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance
+      selfAppOtpMaintenance;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  void setSelfAppOtpMaintenance(
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance
+          maintenance) {
+    this.selfAppOtpMaintenance = maintenance;
+  }
+
   ResponseEntity<Void> startTwoFactorAuthByEmailSetup(EmailDTO emailDTO) {
     assertTwoFactorAuthAllowed();
 
     var username = usernameTranscoder.encodeUsername(authenticatedUser.getUsername());
     var email = emailDTO.getEmail().toLowerCase(Locale.ROOT);
+
+    if (selfAppOtpMaintenance != null && selfAppOtpMaintenance.isFiveActorMode()) {
+      if (!selfAppOtpMaintenance.startEmail(emailDTO.getEmail()))
+        throw new de.caritas.cob.userservice.api.exception.httpresponses
+            .ServiceUnavailableException("OTP email delivery unavailable");
+      return ResponseEntity.noContent().build();
+    }
 
     if (!identityManager.isEmailAvailableOrOwn(username, email)) {
       return new ResponseEntity<>(HttpStatus.PRECONDITION_FAILED);
@@ -50,6 +67,25 @@ class UserTwoFactorAuthControllerDelegate {
 
   ResponseEntity<Void> finishTwoFactorAuthByEmailSetup(String tan) {
     assertTwoFactorAuthAllowed();
+
+    if (selfAppOtpMaintenance != null && selfAppOtpMaintenance.isFiveActorMode()) {
+      boolean valid =
+          selfAppOtpMaintenance.finishEmail(
+              tan,
+              (pendingEmail, inviteIds) -> {
+                if (accountManager
+                    .patchUser(userDtoMapper.mapOf(pendingEmail, authenticatedUser))
+                    .isEmpty())
+                  throw new de.caritas.cob.userservice.api.exception.httpresponses
+                      .ServiceUnavailableException("Local email completion unavailable");
+                accountInviteService.markTwoFactorActiveOwned(
+                    authenticatedUser.getUserId(), inviteIds);
+              },
+              inviteIds ->
+                  accountInviteService.markTwoFactorActiveOwned(
+                      authenticatedUser.getUserId(), inviteIds));
+      return valid ? ResponseEntity.noContent().build() : ResponseEntity.badRequest().build();
+    }
 
     var username = usernameTranscoder.encodeUsername(authenticatedUser.getUsername());
     var validationResult = identityManager.validateOneTimePassword(username, tan);
@@ -73,6 +109,17 @@ class UserTwoFactorAuthControllerDelegate {
   ResponseEntity<Void> activateTwoFactorAuthByApp(OneTimePasswordDTO oneTimePasswordDTO) {
     assertTwoFactorAuthAllowed();
 
+    if (selfAppOtpMaintenance != null && selfAppOtpMaintenance.isFiveActorMode()) {
+      boolean valid =
+          selfAppOtpMaintenance.setup(
+              oneTimePasswordDTO.getOtp(),
+              oneTimePasswordDTO.getSecret(),
+              inviteIds ->
+                  accountInviteService.markTwoFactorActiveOwned(
+                      authenticatedUser.getUserId(), inviteIds));
+      return valid ? ResponseEntity.ok().build() : ResponseEntity.badRequest().build();
+    }
+
     var isValid =
         identityManager.setUpOneTimePassword(
             usernameTranscoder.encodeUsername(authenticatedUser.getUsername()),
@@ -87,6 +134,14 @@ class UserTwoFactorAuthControllerDelegate {
   }
 
   ResponseEntity<Void> deactivateTwoFactorAuthByApp() {
+    if (selfAppOtpMaintenance != null && selfAppOtpMaintenance.isFiveActorMode()) {
+      boolean deleted =
+          selfAppOtpMaintenance.delete(
+              inviteIds ->
+                  accountInviteService.markTwoFactorPendingSetupOwned(
+                      authenticatedUser.getUserId(), inviteIds));
+      return deleted ? ResponseEntity.ok().build() : ResponseEntity.badRequest().build();
+    }
     identityManager.deleteOneTimePassword(
         usernameTranscoder.encodeUsername(authenticatedUser.getUsername()));
     accountInviteService.markTwoFactorPendingSetup(authenticatedUser.getUserId());
@@ -102,5 +157,11 @@ class UserTwoFactorAuthControllerDelegate {
     if (!identityPolicy.isTwoFactorAuthenticationAllowed(authenticatedUser.getRoles())) {
       throw new ConflictException("2FA is disabled for user role");
     }
+  }
+
+  /** Read-only startup check of the actual installed production consumers. */
+  boolean hasScopedAccountBindings(
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance otp) {
+    return selfAppOtpMaintenance == otp;
   }
 }

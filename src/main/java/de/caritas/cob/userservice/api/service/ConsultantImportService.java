@@ -14,7 +14,6 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
-import java.io.FileReader;
 import java.io.IOException;
 import java.io.Reader;
 import java.nio.charset.StandardCharsets;
@@ -67,27 +66,97 @@ public class ConsultantImportService {
   private static final String NEWLINE_CHAR = "\r\n";
   private String protocolFile;
 
-  public void startImport() {
+  @org.springframework.beans.factory.annotation.Autowired
+  private org.springframework.core.env.Environment lifecycleEnvironment;
 
+  @org.springframework.beans.factory.annotation.Autowired
+  private de.caritas.cob.userservice.api.port.out.IdentityClientConfig lifecycleIdentities;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  private de.caritas.cob.userservice.api.service.accountpolicy.CheckedAccountPolicyReads
+      checkedPolicyReads;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  private de.caritas.cob.userservice.api.service.identity.ExistingConsultantImportMaintenance
+      existingImports;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  private de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository
+      existingImportRelations;
+
+  @jakarta.persistence.PersistenceContext private jakarta.persistence.EntityManager importEntities;
+
+  private boolean fiveActors() {
+    return lifecycleEnvironment != null
+        && "FIVE_ACTORS".equals(lifecycleEnvironment.getProperty("TASK_IDENTITY_MODEL", "LEGACY"));
+  }
+
+  /** Fixed verified HTTP trigger only; configured records supply all import authority. */
+  public void startImport(
+      de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker
+              .VerifiedConsultantImportTrigger
+          trigger) {
+    if (!fiveActors() || trigger == null)
+      throw new org.springframework.security.access.AccessDeniedException(
+          "Verified import trigger is unavailable");
+    if (org.springframework.transaction.support.TransactionSynchronizationManager
+        .isActualTransactionActive())
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    trigger.requireLive();
+    importConfiguredFile(trigger);
+  }
+
+  public void startImport() {
+    if (fiveActors())
+      throw new org.springframework.security.access.AccessDeniedException(
+          "Verified import trigger is required");
+    importConfiguredFile(null);
+  }
+
+  private void importConfiguredFile(
+      de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker
+              .VerifiedConsultantImportTrigger
+          trigger) {
     this.protocolFile = protocolFilename + "." + System.currentTimeMillis();
 
     Reader in;
     List<CSVRecord> records;
     String logMessage;
     Consultant consultant;
+    final String sourceDigest;
 
     try {
-      in = new FileReader(importFilename);
+      byte[] captured = Files.readAllBytes(Paths.get(importFilename));
+      sourceDigest =
+          java.util.HexFormat.of()
+              .formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(captured));
+      String text =
+          StandardCharsets.UTF_8
+              .newDecoder()
+              .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+              .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+              .decode(java.nio.ByteBuffer.wrap(captured))
+              .toString();
+      in = new java.io.StringReader(text);
       records = CSVFormat.DEFAULT.parse(in).getRecords();
     } catch (Exception exception) {
       throw new InternalServerErrorException(exception.getMessage());
     }
 
-    for (CSVRecord record : records) {
+    if (fiveActors() && existingImports != null)
+      existingImports.requirePendingConfiguredSource(sourceDigest);
 
+    for (CSVRecord record : records) {
+      if (fiveActors()) {
+        if (trigger == null)
+          throw new org.springframework.security.access.AccessDeniedException(
+              "Verified import trigger is required");
+        trigger.requireLive();
+      }
       try {
 
         ImportRecord importRecord = getImportRecord(record);
+        boolean relationsCompletedInCreation = false;
 
         // Check if username is valid
         if (importRecord.getConsultantId() == null
@@ -96,12 +165,15 @@ public class ConsultantImportService {
               String.format(
                   "Username length is invalid. Skipping import for %s",
                   importRecord.getUsername()));
+          if (fiveActors() && existingImports != null)
+            existingImports.requireNoPendingSkippedRecord(sourceDigest, record.getRecordNumber());
           continue;
         }
 
         String[] agencyRoleSetArray = importRecord.getAgenciesAndRoleSets().split(DELIMITER);
 
         HashSet<String> roles = new HashSet<>();
+        var selected = new java.util.TreeMap<Long, java.util.Set<String>>();
         HashSet<Long> agencyIds = new HashSet<>();
         List<Boolean> formalLanguageList = new ArrayList<>();
         for (String agencyRoleSet : agencyRoleSetArray) {
@@ -114,8 +186,24 @@ public class ConsultantImportService {
           }
           String[] agencyRoleArray = agencyRoleSet.split(AGENCY_ROLE_DELIMITER);
 
-          AgencyDTO agency =
-              agencyService.getAgencyWithoutCaching(Long.valueOf(agencyRoleArray[0]));
+          Long agencyId = Long.valueOf(agencyRoleArray[0]);
+          selected
+              .computeIfAbsent(agencyId, ignored -> new java.util.TreeSet<>())
+              .add(agencyRoleArray[1]);
+          AgencyDTO agency;
+          if (fiveActors()) {
+            if (lifecycleIdentities == null || !lifecycleIdentities.isFiveActorMode())
+              throw new ImportException("Bounded import owner read is unavailable");
+            String token =
+                lifecycleIdentities.taskAccessToken(
+                    de.caritas.cob.userservice.api.config.auth.TaskPurpose.RUNTIME_POLICY);
+            var current = agencyService.getAgenciesForOrdinaryCreation(List.of(agencyId), token);
+            if (current == null
+                || current.size() != 1
+                || !java.util.Objects.equals(current.get(0).getId(), agencyId))
+              throw new ImportException("Configured import agency projection is unavailable");
+            agency = current.get(0);
+          } else agency = agencyService.getAgencyWithoutCaching(agencyId);
 
           if (agency == null) {
             throw new ImportException(
@@ -123,6 +211,17 @@ public class ConsultantImportService {
                     "Consultant %s could not be imported: Invalid agency id %s",
                     importRecord.getUsername(), agencyRoleArray[0]));
           }
+
+          if (fiveActors()
+              && !isTrue(multiTenancyEnabled)
+              && importRecord.getTenantId() == null
+              && agency.getTenantId() != null
+              && agency.getTenantId() > 0) importRecord.setTenantId(agency.getTenantId());
+          if (fiveActors()
+              && (importRecord.getTenantId() == null
+                  || !java.util.Objects.equals(importRecord.getTenantId(), agency.getTenantId())))
+            throw new ImportException(
+                "Configured import agency does not belong to its exact row tenant");
 
           agencyIds.add(Long.valueOf(agencyRoleArray[0]));
 
@@ -149,7 +248,7 @@ public class ConsultantImportService {
                   .getConsultant()
                   .getRoleSets()
                   .entrySet()) {
-            if (roleSet.getKey().equals(agencyRoleArray[1])) {
+            if (java.util.Objects.equals(roleSet.getKey(), agencyRoleArray[1])) {
               roles.addAll(roleSet.getValue());
               break;
             }
@@ -183,15 +282,20 @@ public class ConsultantImportService {
                 String.format(
                     "Consultant with username %s (%s) exists and won't be " + "imported.",
                     importRecord.getUsername(), importRecord.getUsernameEncoded()));
+            if (fiveActors() && existingImports != null)
+              existingImports.requireNoPendingSkippedRecord(sourceDigest, record.getRecordNumber());
             continue;
           }
 
           // Check if decoded username is already taken
-          if (!identityUsernameAvailability.isUsernameAvailable(importRecord.getUsername())) {
+          if (!fiveActors()
+              && !identityUsernameAvailability.isUsernameAvailable(importRecord.getUsername())) {
             writeToImportLog(
                 String.format(
                     "Could not create Keycloak user for old id %s - username or e-mail address is already taken.",
                     importRecord.getIdOld()));
+            if (fiveActors() && existingImports != null)
+              existingImports.requireNoPendingSkippedRecord(sourceDigest, record.getRecordNumber());
             continue;
           }
 
@@ -201,6 +305,14 @@ public class ConsultantImportService {
               consultantService.getConsultant(importRecord.getConsultantId());
 
           if (currentConsultant.isPresent()) {
+            if (fiveActors()
+                && (currentConsultant.get().getTenantId() == null
+                    || !java.util.Objects.equals(
+                        importRecord.getTenantId(), currentConsultant.get().getTenantId())
+                    || !java.util.Objects.equals(
+                        importRecord.getConsultantId(), currentConsultant.get().getId())))
+              throw new ImportException(
+                  "Configured import current consultant does not belong to its exact row tenant");
             UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
             if (!importRecord
                 .getUsername()
@@ -211,6 +323,9 @@ public class ConsultantImportService {
                       importRecord.getConsultantId(),
                       usernameTranscoder.decodeUsername(currentConsultant.get().getUsername()),
                       importRecord.getUsername()));
+              if (fiveActors() && existingImports != null)
+                existingImports.requireNoPendingSkippedRecord(
+                    sourceDigest, record.getRecordNumber());
               continue;
             }
           } else {
@@ -218,6 +333,8 @@ public class ConsultantImportService {
                 String.format(
                     "Consultant with id %s not found. Skipped entry.",
                     importRecord.getConsultantId()));
+            if (fiveActors() && existingImports != null)
+              existingImports.requireNoPendingSkippedRecord(sourceDigest, record.getRecordNumber());
             continue;
           }
         }
@@ -226,7 +343,40 @@ public class ConsultantImportService {
         writeToImportLog(logMessage);
 
         if (importRecord.getConsultantId() == null) {
-          consultant = this.createConsultantSaga.createNewConsultant(importRecord, roles);
+          if (fiveActors()) {
+            if (checkedPolicyReads == null)
+              throw new ImportException("Checked import policy is unavailable");
+            var checkedOrigin =
+                new CheckedPolicyOrigin(
+                    importRecord,
+                    roles,
+                    agencyIds,
+                    sourceDigest,
+                    record.getRecordNumber(),
+                    trigger);
+            try {
+              consultant =
+                  checkedPolicyReads.withConfiguredImport(
+                      checkedOrigin,
+                      () ->
+                          this.createConsultantSaga.createImportedConsultant(
+                              importRecord,
+                              roles,
+                              agencyIds,
+                              sourceDigest,
+                              record.getRecordNumber(),
+                              created ->
+                                  this.consultantAgencyRelationCreatorService
+                                      .createConsultantAgencyRelations(
+                                          created.getId(),
+                                          agencyIds,
+                                          roles,
+                                          this::writeToImportLog)));
+            } finally {
+              checkedOrigin.open = false;
+            }
+            relationsCompletedInCreation = true;
+          } else consultant = this.createConsultantSaga.createNewConsultant(importRecord, roles);
 
           importRecord.setConsultantId(consultant.getId());
           logMessage = "Keycloak-ID: " + consultant.getId();
@@ -239,29 +389,275 @@ public class ConsultantImportService {
           writeToImportLog(logMessage);
         }
 
+        if (fiveActors() && !relationsCompletedInCreation) {
+          if (existingImports == null)
+            throw new de.caritas.cob.userservice.api.port.out
+                .ScopedIdentityCommandRequiredException();
+          try (var source =
+              new ScopedExistingImport(
+                  importRecord, selected, sourceDigest, record.getRecordNumber(), trigger)) {
+            existingImports.apply(source);
+          } catch (ImportException changedSource) {
+            // The native command may already be acknowledged. Keep that original intent pending
+            // and expose an unavailable result instead of the legacy parser's successful skip.
+            throw new de.caritas.cob.userservice.api.exception.httpresponses
+                .ServiceUnavailableException("Configured import remains pending");
+          }
+          relationsCompletedInCreation = true;
+        }
+
         // create relations to agencies
         logMessage =
             "Agencies: " + agencyIds.stream().map(String::valueOf).collect(Collectors.joining(","));
         writeToImportLog(logMessage);
-        this.consultantAgencyRelationCreatorService.createConsultantAgencyRelations(
-            importRecord.getConsultantId(), agencyIds, roles, this::writeToImportLog);
+        if (!relationsCompletedInCreation)
+          this.consultantAgencyRelationCreatorService.createConsultantAgencyRelations(
+              importRecord.getConsultantId(), agencyIds, roles, this::writeToImportLog);
 
         logMessage = "=== END === " + importRecord.getUsername() + " ===" + NEWLINE_CHAR;
         writeToImportLog(logMessage);
 
       } catch (ImportException wontImportException) {
+        if (fiveActors() && existingImports != null)
+          existingImports.requireNoPendingSkippedRecord(sourceDigest, record.getRecordNumber());
         writeToImportLog(wontImportException.getMessage());
         break;
       } catch (Exception fileNotFoundException) {
+        if (fiveActors())
+          throw new de.caritas.cob.userservice.api.exception.httpresponses
+              .ServiceUnavailableException("Configured import remains pending");
         fileNotFoundException.printStackTrace();
         break;
       }
     }
 
+    if (fiveActors() && existingImports != null) existingImports.requireNoPendingConfiguredImport();
     try {
       in.close();
     } catch (IOException e) {
       e.printStackTrace();
+    }
+  }
+
+  /** Nonsecret resolved source data; only the private live importer frame can authorize it. */
+  public record ExistingAgency(
+      Long id,
+      Long tenant,
+      int consultingType,
+      boolean team,
+      boolean bounded,
+      java.util.Set<String> requiredRoles) {
+    public ExistingAgency {
+      requiredRoles =
+          java.util.Collections.unmodifiableSet(
+              new java.util.LinkedHashSet<>(new java.util.TreeSet<>(requiredRoles)));
+    }
+  }
+
+  public final class ScopedExistingImport implements AutoCloseable {
+    private final ImportRecord record;
+    private final String digest, configuredFile;
+    private final long number;
+    private final java.util.Map<Long, java.util.Set<String>> selected;
+    private final java.util.List<ExistingAgency> agencies;
+    private final java.util.Map<String, Object> row;
+    private final de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker
+            .VerifiedConsultantImportTrigger
+        trigger;
+    private final Thread owner = Thread.currentThread();
+    private boolean active = true;
+
+    private ScopedExistingImport(
+        ImportRecord record,
+        java.util.Map<Long, java.util.Set<String>> selected,
+        String digest,
+        long number,
+        de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker
+                .VerifiedConsultantImportTrigger
+            trigger) {
+      this.record = record;
+      this.digest = digest;
+      this.number = number;
+      this.trigger = java.util.Objects.requireNonNull(trigger);
+      configuredFile = importFilename;
+      var copy = new java.util.TreeMap<Long, java.util.Set<String>>();
+      selected.forEach((id, keys) -> copy.put(id, java.util.Set.copyOf(keys)));
+      this.selected = java.util.Collections.unmodifiableMap(copy);
+      trigger.requireLive();
+      agencies = resolveSelected();
+      var roles = new java.util.TreeSet<String>();
+      agencies.forEach(agency -> roles.addAll(agency.requiredRoles()));
+      row =
+          java.util.Collections.unmodifiableMap(
+              CheckedPolicyOrigin.snapshotRow(record, java.util.List.copyOf(roles)));
+      if (agencies.isEmpty()
+          || agencies.size() > 100
+          || record.getConsultantId() == null
+          || record.getTenantId() == null
+          || record.getTenantId() < 1)
+        throw new ImportException("Existing import source is invalid");
+    }
+
+    public void requireLive() {
+      if (!active || owner != Thread.currentThread())
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+      trigger.requireLive();
+      if (!row.equals(CheckedPolicyOrigin.snapshotRow(record, (List<?>) row.get("roles"))))
+        throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(
+            "Configured import record changed");
+    }
+
+    public void requireJpaOwner(jakarta.persistence.EntityManagerFactory factory) {
+      requireLive();
+      if (factory == null
+          || importEntities == null
+          || importEntities.getEntityManagerFactory() != factory)
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    }
+
+    public String accountId() {
+      requireLive();
+      return record.getConsultantId();
+    }
+
+    public Long tenantId() {
+      requireLive();
+      return record.getTenantId();
+    }
+
+    public String sourceDigest() {
+      requireLive();
+      return digest;
+    }
+
+    public long recordNumber() {
+      requireLive();
+      return number;
+    }
+
+    public Map<String, Object> record() {
+      requireLive();
+      return row;
+    }
+
+    public List<ExistingAgency> agencies() {
+      requireLive();
+      return agencies;
+    }
+
+    public List<String> requiredRoles() {
+      requireLive();
+      return (List<String>) row.get("roles");
+    }
+
+    private List<ExistingAgency> resolveSelected() {
+      if (org.springframework.transaction.support.TransactionSynchronizationManager
+          .isActualTransactionActive())
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+      String token =
+          lifecycleIdentities.taskAccessToken(
+              de.caritas.cob.userservice.api.config.auth.TaskPurpose.RUNTIME_POLICY);
+      var result = new java.util.ArrayList<ExistingAgency>();
+      for (var entry : selected.entrySet()) {
+        var values = agencyService.getAgenciesForOrdinaryCreation(List.of(entry.getKey()), token);
+        if (values == null
+            || values.size() != 1
+            || !entry.getKey().equals(values.getFirst().getId())
+            || !java.util.Objects.equals(record.getTenantId(), values.getFirst().getTenantId()))
+          throw new ImportException("Configured import agency tenant changed");
+        var agency = values.getFirst();
+        var settings = consultingTypeManager.getConsultingTypeSettings(agency.getConsultingType());
+        if (settings == null
+            || settings.getRoles() == null
+            || settings.getRoles().getConsultant() == null
+            || settings.getRoles().getConsultant().getRoleSets() == null)
+          throw new ImportException("Configured import role sets are unavailable");
+        var roles = new java.util.TreeSet<String>();
+        roles.add("consultant");
+        for (String key : entry.getValue()) {
+          var required = settings.getRoles().getConsultant().getRoleSets().get(key);
+          if (required == null)
+            throw new ImportException("Configured import selected role set changed");
+          roles.addAll(required);
+        }
+        if (!java.util.Set.of(
+                "consultant", "group-chat-consultant", "restricted-agency-admin", "user-admin")
+            .containsAll(roles))
+          throw new ImportException("Configured import role family is unsupported");
+        result.add(
+            new ExistingAgency(
+                agency.getId(),
+                agency.getTenantId(),
+                agency.getConsultingType(),
+                isTrue(agency.getTeamAgency()),
+                consultingTypeManager.isConsultantBoundedToAgency(agency.getConsultingType()),
+                roles));
+      }
+      return List.copyOf(result);
+    }
+
+    public void validateOutsideSql() {
+      requireLive();
+      if (org.springframework.transaction.support.TransactionSynchronizationManager
+          .isActualTransactionActive())
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+      try {
+        if (!configuredFile.equals(importFilename)
+            || !digest.equals(
+                java.util.HexFormat.of()
+                    .formatHex(
+                        java.security.MessageDigest.getInstance("SHA-256")
+                            .digest(Files.readAllBytes(Paths.get(configuredFile))))))
+          throw new ImportException("Configured import file changed");
+      } catch (java.io.IOException | java.security.NoSuchAlgorithmException invalid) {
+        throw new ImportException("Configured import source is unavailable");
+      }
+      if (!agencies.equals(resolveSelected()))
+        throw new ImportException("Configured import selected agencies changed");
+      var current =
+          de.caritas.cob.userservice.api.tenant.TenantContext.supplyAcrossTenants(
+                  () -> consultantService.getConsultant(accountId()))
+              .orElseThrow(() -> new ImportException("Configured import consultant disappeared"));
+      if (!java.util.Objects.equals(tenantId(), current.getTenantId())
+          || !record.getUsernameEncoded().equals(current.getUsername()))
+        throw new ImportException("Configured import current identity changed");
+      consultantAgencyRelationCreatorService.validateExistingImportSources(this);
+    }
+
+    public void apply(
+        de.caritas.cob.userservice.api.service.identity.ExistingConsultantImportMaintenance
+                .CheckedImport
+            checked) {
+      requireLive();
+      checked.requireLocalCallback(this);
+      if (!importEntities.isJoinedToTransaction())
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+      var current = consultantService.getConsultant(accountId()).orElseThrow();
+      importEntities.refresh(current);
+      if (!java.util.Objects.equals(current.getTenantId(), tenantId()))
+        throw new ImportException("Configured import tenant changed");
+      if (!checked.agenciesToCreate().isEmpty())
+        current.setStatus(de.caritas.cob.userservice.api.model.ConsultantStatus.IN_PROGRESS);
+      if (agencies.stream().anyMatch(ExistingAgency::team)) current.setTeamConsultant(true);
+      consultantService.saveConsultant(current);
+      consultantAgencyRelationCreatorService.createCheckedExistingImportAgencies(this, checked);
+      importEntities.flush();
+    }
+
+    public List<de.caritas.cob.userservice.api.model.ConsultantAgency> currentRelations() {
+      requireLive();
+      return de.caritas.cob.userservice.api.tenant.TenantContext.supplyAcrossTenants(
+          () -> existingImportRelations.findByConsultantIdAndDeleteDateIsNull(accountId()));
+    }
+
+    @Override
+    public void close() {
+      active = false;
+    }
+
+    @Override
+    public String toString() {
+      return "ScopedExistingImport[source=redacted]";
     }
   }
 
@@ -337,5 +733,154 @@ public class ConsultantImportService {
     String agenciesAndRoleSets;
     boolean formalLanguage = FORMAL_LANGUAGE_DEFAULT;
     boolean isTeamConsultant = TEAM_CONSULTANT_DEFAULT;
+  }
+
+  /**
+   * Constructed only here, after this configured source's exact row and current agencies passed.
+   */
+  public static final class CheckedPolicyOrigin {
+    private final de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker
+            .VerifiedConsultantImportTrigger
+        trigger;
+    private final ImportRecord row;
+    private final Long tenantId;
+    private final List<Long> agencies;
+    private final String profile;
+    private final String source;
+    private final long number;
+    private final Map<String, Object> frozen;
+    private final Thread owner = Thread.currentThread();
+    private boolean open = true;
+
+    private CheckedPolicyOrigin(
+        ImportRecord row,
+        java.util.Set<String> roles,
+        java.util.Set<Long> agencies,
+        String source,
+        long number,
+        de.caritas.cob.userservice.api.config.auth.TaskActorTokenBroker
+                .VerifiedConsultantImportTrigger
+            trigger) {
+      this.trigger = java.util.Objects.requireNonNull(trigger);
+      trigger.requireLive();
+      this.row = row;
+      this.tenantId = row.getTenantId();
+      this.agencies = agencies.stream().sorted().toList();
+      this.profile = policyProfile(roles);
+      this.source = source;
+      this.number = number;
+      if (tenantId == null
+          || tenantId < 1
+          || this.agencies.isEmpty()
+          || this.agencies.size() > 100
+          || this.agencies.stream().anyMatch(id -> id == null || id < 1)
+          || profile == null
+          || source == null
+          || !source.matches("[a-f0-9]{64}")
+          || number < 1) throw new ImportException("Configured import policy origin is invalid");
+      this.frozen =
+          java.util.Collections.unmodifiableMap(snapshotRow(row, roles.stream().sorted().toList()));
+    }
+
+    public void requireLive() {
+      if (!open || owner != Thread.currentThread())
+        throw new org.springframework.security.access.AccessDeniedException(
+            "Configured import owner is no longer live");
+      trigger.requireLive();
+      try {
+        if (!java.security.MessageDigest.isEqual(
+            de.caritas.cob.userservice.api.service.accountpolicy.TaskContextProof.canonical(frozen),
+            de.caritas.cob.userservice.api.service.accountpolicy.TaskContextProof.canonical(
+                snapshotRow(row, (List<?>) frozen.get("roles")))))
+          throw new org.springframework.security.access.AccessDeniedException(
+              "Configured import row changed");
+      } catch (org.springframework.security.access.AccessDeniedException denied) {
+        throw denied;
+      } catch (Exception invalid) {
+        throw new org.springframework.security.access.AccessDeniedException(
+            "Configured import row is invalid");
+      }
+    }
+
+    public Long tenantId() {
+      requireLive();
+      return tenantId;
+    }
+
+    public List<Long> agencyIds() {
+      requireLive();
+      return agencies;
+    }
+
+    public String profile() {
+      requireLive();
+      return profile;
+    }
+
+    public String sourceDigest() {
+      requireLive();
+      return source;
+    }
+
+    public String reference() {
+      requireLive();
+      return "import:" + source + ":" + number;
+    }
+
+    public Map<String, Object> snapshot() {
+      requireLive();
+      return frozen;
+    }
+
+    @Override
+    public String toString() {
+      return "CheckedPolicyOrigin[configured import]";
+    }
+
+    private static Map<String, Object> snapshotRow(ImportRecord row, List<?> roles) {
+      Map<String, Object> snapshot = new java.util.TreeMap<>();
+      snapshot.put("tenantId", row.getTenantId());
+      snapshot.put("username", row.getUsername());
+      snapshot.put("email", row.getEmail());
+      snapshot.put("firstName", row.getFirstName());
+      snapshot.put("lastName", row.getLastName());
+      snapshot.put("consultantId", row.getConsultantId());
+      snapshot.put("oldId", row.getIdOld());
+      snapshot.put("usernameEncoded", row.getUsernameEncoded());
+      snapshot.put("agenciesAndRoleSets", row.getAgenciesAndRoleSets());
+      snapshot.put("roles", roles);
+      snapshot.put("absent", row.isAbsent());
+      snapshot.put("absenceMessage", row.getAbsenceMessage());
+      snapshot.put("formalLanguage", row.isFormalLanguage());
+      snapshot.put("teamConsultant", row.isTeamConsultant());
+      return snapshot;
+    }
+
+    private static String policyProfile(java.util.Set<String> roles) {
+      if (roles.equals(java.util.Set.of("consultant"))
+          || roles.equals(java.util.Set.of("consultant", "group-chat-consultant")))
+        return "CONSULTANT";
+      if (roles.equals(java.util.Set.of("consultant", "restricted-agency-admin", "user-admin"))
+          || roles.equals(
+              java.util.Set.of(
+                  "consultant", "group-chat-consultant", "restricted-agency-admin", "user-admin")))
+        return "CONSULTANT_AGENCY_ADMIN";
+      return null;
+    }
+  }
+
+  /** Read-only startup check of the actual installed production consumers. */
+  public boolean hasScopedAccountBindings(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode,
+      de.caritas.cob.userservice.api.service.identity.ExistingConsultantImportMaintenance owner,
+      de.caritas.cob.userservice.api.service.accountpolicy.CheckedAccountPolicyReads policy,
+      org.springframework.orm.jpa.JpaTransactionManager manager) {
+    return lifecycleIdentities == mode
+        && existingImports == owner
+        && checkedPolicyReads == policy
+        && existingImportRelations != null
+        && importEntities != null
+        && importEntities.getEntityManagerFactory() == manager.getEntityManagerFactory()
+        && fiveActors();
   }
 }

@@ -32,7 +32,63 @@ class ServiceIdentitySeparationCheckTest {
   @Test
   void distinctClientsAndSecretsAreAccepted() {
     configure();
+    org.junit.jupiter.api.Assertions.assertNull(check.scopedAccountCommands());
     check.verifyBackendClients();
+    org.junit.jupiter.api.Assertions.assertEquals(Boolean.FALSE, check.scopedAccountCommands());
+  }
+
+  @Test
+  void failedRevalidationRevokesTheLegacyCapabilityWithoutAuthenticationSideEffects() {
+    configure();
+    check.verifyBackendClients();
+    org.junit.jupiter.api.Assertions.assertEquals(Boolean.FALSE, check.scopedAccountCommands());
+    technical.setClientSecret("");
+    org.junit.jupiter.api.Assertions.assertThrows(
+        IllegalStateException.class, check::verifyBackendClients);
+    org.junit.jupiter.api.Assertions.assertNull(check.scopedAccountCommands());
+    org.mockito.Mockito.verify(identity, org.mockito.Mockito.never())
+        .taskAccessToken(org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  void configuredRoutineFiveActorsRemainAcceptedWhileLifecycleIsDisabled() {
+    configure();
+    when(identity.isFiveActorMode()).thenReturn(true);
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        check, "taskIdentityModel", "FIVE_ACTORS");
+    when(environment.getProperty("TASK_IDENTITY_MODEL", "LEGACY")).thenReturn("FIVE_ACTORS");
+    for (var actor : TaskActor.values()) {
+      String prefix = "IDENTITY_" + actor.name();
+      when(environment.getProperty(prefix + "_CLIENT_ID")).thenReturn("fixture-" + actor.name());
+      when(environment.getProperty(prefix + "_CLIENT_SECRET"))
+          .thenReturn("synthetic-secret-" + actor.name());
+      when(environment.getProperty(prefix + "_SERVICE_SUBJECT"))
+          .thenReturn("fixture-subject-" + actor.name());
+    }
+    org.junit.jupiter.api.Assertions.assertDoesNotThrow(check::verifyBackendClients);
+    org.junit.jupiter.api.Assertions.assertNull(check.scopedAccountCommands());
+  }
+
+  @Test
+  void completeActorConfigurationDefersActivationUntilActualSingletonBindingsAreVerified() {
+    configure();
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        check, "taskIdentityModel", "FIVE_ACTORS");
+    when(identity.isFiveActorMode()).thenReturn(true);
+    when(environment.getProperty("TASK_IDENTITY_MODEL", "LEGACY")).thenReturn("FIVE_ACTORS");
+    when(environment.getProperty("ORISO_ACCOUNT_LIFECYCLE_ENABLED")).thenReturn("true");
+    for (var actor : TaskActor.values()) {
+      String prefix = "IDENTITY_" + actor.name();
+      when(environment.getProperty(prefix + "_CLIENT_ID")).thenReturn("fixture-" + actor.name());
+      when(environment.getProperty(prefix + "_CLIENT_SECRET"))
+          .thenReturn("synthetic-secret-" + actor.name());
+      when(environment.getProperty(prefix + "_SERVICE_SUBJECT"))
+          .thenReturn("fixture-subject-" + actor.name());
+    }
+    org.junit.jupiter.api.Assertions.assertDoesNotThrow(check::verifyBackendClients);
+    org.junit.jupiter.api.Assertions.assertNull(check.scopedAccountCommands());
+    org.mockito.Mockito.verify(identity, org.mockito.Mockito.never())
+        .taskAccessToken(org.mockito.ArgumentMatchers.any());
   }
 
   @ParameterizedTest
@@ -60,5 +116,45 @@ class ServiceIdentitySeparationCheckTest {
         .hasMessageNotContaining("synthetic-admin-secret")
         .hasMessageNotContaining("synthetic-technical-secret")
         .hasNoCause();
+  }
+
+  @Test
+  void configuredActorsCannotActivateWithoutActualInstallation() {
+    completeActorConfigurationDefersActivationUntilActualSingletonBindingsAreVerified();
+    assertThatThrownBy(check::afterSingletonsInstantiated)
+        .isInstanceOf(IllegalStateException.class);
+    org.junit.jupiter.api.Assertions.assertNull(check.scopedAccountCommands());
+    org.mockito.Mockito.verify(identity, org.mockito.Mockito.never())
+        .taskAccessToken(org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  void disabledLifecycleNeverInspectsOrActivatesInstallation() {
+    configuredRoutineFiveActorsRemainAcceptedWhileLifecycleIsDisabled();
+    var context = mock(org.springframework.context.ApplicationContext.class);
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        check, "applicationContext", context);
+    check.afterSingletonsInstantiated();
+    org.mockito.Mockito.verifyNoInteractions(context);
+    org.junit.jupiter.api.Assertions.assertNull(check.scopedAccountCommands());
+  }
+
+  @Test
+  void beanAvailabilityCannotSubstituteForInstalledCleanupConsumers() {
+    completeActorConfigurationDefersActivationUntilActualSingletonBindingsAreVerified();
+    var context = mock(org.springframework.context.ApplicationContext.class);
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        check, "applicationContext", context);
+    var deletion =
+        mock(de.caritas.cob.userservice.api.workflow.delete.service.DeleteUserAccountService.class);
+    when(context.getBean(
+            de.caritas.cob.userservice.api.workflow.delete.service.DeleteUserAccountService.class))
+        .thenReturn(deletion);
+    assertThatThrownBy(check::afterSingletonsInstantiated)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Incomplete scoped account binding: DeleteUserAccountService");
+    org.junit.jupiter.api.Assertions.assertNull(check.scopedAccountCommands());
+    org.mockito.Mockito.verify(identity, org.mockito.Mockito.never())
+        .taskAccessToken(org.mockito.ArgumentMatchers.any());
   }
 }

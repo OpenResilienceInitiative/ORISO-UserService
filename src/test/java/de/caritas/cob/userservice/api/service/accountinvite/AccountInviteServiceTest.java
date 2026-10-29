@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -995,6 +996,318 @@ class AccountInviteServiceTest {
                 null));
 
     assertThat(invite.getRecipientEmail()).isEqualTo("free@example.org");
+  }
+
+  @Test
+  void platformLegacyCounsellorDraftKeepsAnUnassignedTenantWithoutReservingANewOne() {
+    var scope = mock(de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class);
+    when(scope.current())
+        .thenReturn(new de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Platform());
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        service, "accessPolicy", new AccountInviteAccessPolicy(authenticatedUser, scope));
+    when(authenticatedUser.getUserId()).thenReturn("platform-admin");
+    when(authenticatedUser.getUsername()).thenReturn("platform@example.org");
+    when(identityEmailOwnerLookup.findByEmail("unassigned@example.org"))
+        .thenReturn(Optional.empty());
+    when(accountInviteRepository.save(any(AccountInvite.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    var invite =
+        service.createInvite(
+            new CreateAccountInviteCommand(
+                AccountInviteTargetRole.COUNSELLOR,
+                null,
+                "unassigned@example.org",
+                "A",
+                "B",
+                null,
+                11L,
+                null));
+
+    assertThat(invite.getTenantId()).isNull();
+    assertThat(invite.getAgencyId()).isNull();
+    assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
+    assertThat(invite.getProvisioningStatus()).isEqualTo(AccountInviteProvisioningStatus.PENDING);
+    verifyNoInteractions(tenantIdAllocationClient, agencyIdAllocationClient);
+  }
+
+  @Test
+  void fiveActorInviteCreationKeepsTheLegacyEmailLookupFencedWithoutBlockingAnUnusedRecipient() {
+    var config = mock(de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
+    when(config.isFiveActorMode()).thenReturn(true);
+    var nativeClient = mock(de.caritas.cob.userservice.api.adapters.keycloak.KeycloakClient.class);
+    var actualIdentity =
+        new de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService(
+            new AuthenticatedUser(),
+            mock(
+                de.caritas.cob.userservice.api.admin.service.consultant.validation
+                    .UserAccountInputValidator.class),
+            config,
+            nativeClient,
+            mock(de.caritas.cob.userservice.api.adapters.keycloak.KeycloakMapper.class),
+            mock(de.caritas.cob.userservice.api.helper.UserHelper.class),
+            mock(de.caritas.cob.userservice.api.adapters.keycloak.KeycloakAuthClient.class));
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        service, "identityEmailOwnerLookup", actualIdentity);
+    var wire =
+        new de.caritas.cob.userservice.api.testHelper.InvitationRecipientHttpFixture(
+            () ->
+                new de.caritas.cob.userservice.api.port.out.InvitationRecipientAvailability.Human(
+                    "b4444444-4444-4444-8444-444444444444",
+                    "https://issuer.example/realms/oriso",
+                    "human-admin",
+                    "PROTECTED_ACCOUNT_OPERATIONS_V1",
+                    "Bearer synthetic-human-token"));
+    installRecipientAvailability(config, wire.adapter);
+    var confirmed = new java.util.concurrent.atomic.AtomicBoolean();
+    wire.server
+        .expect(
+            org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(
+                "http://identity.example/realms/oriso/oriso-account-maintenance/v1/availability/invitation-email"))
+        .andRespond(
+            request -> {
+              confirmed.set(true);
+              return org.springframework.test.web.client.response.MockRestResponseCreators
+                  .withSuccess(
+                      "{\"available\":true}", org.springframework.http.MediaType.APPLICATION_JSON)
+                  .header("Cache-Control", "no-store")
+                  .createResponse(request);
+            });
+    lenient().when(authenticatedUser.getUserId()).thenReturn("admin-1");
+    lenient().when(authenticatedUser.getUsername()).thenReturn("admin@example.org");
+    lenient()
+        .when(accountInviteRepository.save(any(AccountInvite.class)))
+        .thenAnswer(
+            invocation -> {
+              assertThat(confirmed.get()).isTrue();
+              return invocation.getArgument(0);
+            });
+
+    var invite =
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(
+            () ->
+                service.createInvite(
+                    new CreateAccountInviteCommand(
+                        AccountInviteTargetRole.COUNSELLOR,
+                        7L,
+                        "free@example.org",
+                        "A",
+                        "B",
+                        null,
+                        11L,
+                        null)));
+
+    assertThat(invite.getRecipientEmail()).isEqualTo("free@example.org");
+    verify(accountInviteRepository).save(any(AccountInvite.class));
+    verifyNoInteractions(nativeClient);
+    wire.server.verify();
+  }
+
+  private void installRecipientAvailability(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode,
+      de.caritas.cob.userservice.api.port.out.InvitationRecipientAvailability availability) {
+    var beans = new org.springframework.beans.factory.support.StaticListableBeanFactory();
+    if (availability != null) beans.addBean("recipientAvailability", availability);
+    service.configureRecipientAvailability(
+        mode,
+        beans.getBeanProvider(
+            de.caritas.cob.userservice.api.port.out.InvitationRecipientAvailability.class));
+  }
+
+  private de.caritas.cob.userservice.api.testHelper.InvitationRecipientHttpFixture recipientWire(
+      org.springframework.test.web.client.ResponseCreator response) {
+    var mode = mock(de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
+    when(mode.isFiveActorMode()).thenReturn(true);
+    var wire =
+        new de.caritas.cob.userservice.api.testHelper.InvitationRecipientHttpFixture(
+            () ->
+                new de.caritas.cob.userservice.api.port.out.InvitationRecipientAvailability.Human(
+                    "b4444444-4444-4444-8444-444444444444",
+                    "https://issuer.example/realms/oriso",
+                    "human-admin",
+                    "PROTECTED_ACCOUNT_OPERATIONS_V1",
+                    "Bearer synthetic-human-token"));
+    installRecipientAvailability(mode, wire.adapter);
+    wire.server
+        .expect(
+            org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(
+                "http://identity.example/realms/oriso/oriso-account-maintenance/v1/availability/invitation-email"))
+        .andRespond(response);
+    return wire;
+  }
+
+  private static org.springframework.test.web.client.ResponseCreator confirmedRecipient(
+      boolean free) {
+    return org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
+            "{\"available\":" + free + "}", org.springframework.http.MediaType.APPLICATION_JSON)
+        .header("Cache-Control", "no-store");
+  }
+
+  private static CreateAccountInviteCommand scopedCounsellorDraft(String email) {
+    return new CreateAccountInviteCommand(
+        AccountInviteTargetRole.COUNSELLOR, 7L, email, "A", "B", null, 11L, null);
+  }
+
+  @Test
+  void fiveActorMissingAvailabilityCannotFallBackToTheLegacyEmailReader() {
+    var mode = mock(de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
+    when(mode.isFiveActorMode()).thenReturn(true);
+    installRecipientAvailability(mode, null);
+    assertThatThrownBy(() -> service.createInvite(scopedCounsellorDraft("free@example.org")))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.port.out
+                .InvitationRecipientAvailabilityUnavailableException.class);
+    verifyNoInteractions(
+        identityEmailOwnerLookup,
+        accountInviteRepository,
+        tenantIdAllocationClient,
+        agencyIdAllocationClient);
+  }
+
+  @Test
+  void fiveActorOccupiedRecipientKeepsTheExistingEmailReasonWithoutSavingOrReserving() {
+    var wire = recipientWire(confirmedRecipient(false));
+    assertThatThrownBy(() -> service.createInvite(scopedCounsellorDraft(" Taken@Example.ORG ")))
+        .isInstanceOfSatisfying(
+            CustomValidationHttpStatusException.class,
+            failure -> {
+              assertThat(failure.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+              assertThat(failure.getCustomHttpHeaders().getFirst("X-Reason"))
+                  .isEqualTo("EMAIL_NOT_AVAILABLE");
+            });
+    assertThat(wire.lastBody.get().path("email").textValue()).isEqualTo("taken@example.org");
+    verifyNoInteractions(
+        identityEmailOwnerLookup,
+        accountInviteRepository,
+        tenantIdAllocationClient,
+        agencyIdAllocationClient);
+    wire.server.verify();
+  }
+
+  @Test
+  void fiveActorUnknownAvailabilityCannotCreateADraftOrReleaseALocalRecipientClaim() {
+    var wire =
+        recipientWire(
+            org.springframework.test.web.client.response.MockRestResponseCreators.withStatus(
+                    HttpStatus.SERVICE_UNAVAILABLE)
+                .body("private-upstream-recipient-token"));
+    assertThatThrownBy(() -> service.createInvite(scopedCounsellorDraft("free@example.org")))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.port.out
+                .InvitationRecipientAvailabilityUnavailableException.class)
+        .hasNoCause()
+        .hasMessageNotContaining("private-upstream");
+    verifyNoInteractions(
+        identityEmailOwnerLookup,
+        accountInviteRepository,
+        tenantIdAllocationClient,
+        agencyIdAllocationClient);
+    wire.server.verify();
+  }
+
+  @Test
+  void fiveActorNativeFreeAnswerDoesNotOverrideTheExistingLocalRecipientClaim() {
+    var wire = recipientWire(confirmedRecipient(true));
+    when(accountInviteRepository.countNonTerminalInvitesForRecipientEmail(
+            eq("held@example.org"), any(), any()))
+        .thenReturn(1L);
+    assertThatThrownBy(() -> service.createInvite(scopedCounsellorDraft("held@example.org")))
+        .isInstanceOf(CustomValidationHttpStatusException.class);
+    verify(accountInviteRepository, never()).save(any());
+    verifyNoInteractions(
+        identityEmailOwnerLookup, tenantIdAllocationClient, agencyIdAllocationClient);
+    wire.server.verify();
+  }
+
+  @Test
+  void fiveActorAvailabilityUsesTheTenantResolvedFromAnExistingAgency() {
+    var wire = recipientWire(confirmedRecipient(true));
+    when(agencyFacts.find(70L))
+        .thenReturn(Optional.of(new AgencyFacts.Agency(70L, 7L, false, java.util.List.of(11L))));
+    when(accountInviteRepository.save(any(AccountInvite.class)))
+        .thenAnswer(call -> call.getArgument(0));
+    when(authenticatedUser.getUserId()).thenReturn("platform-admin");
+    when(authenticatedUser.getUsername()).thenReturn("platform@example.org");
+    var draft =
+        service.createInvite(
+            new CreateAccountInviteCommand(
+                AccountInviteTargetRole.COUNSELLOR,
+                null,
+                "free@example.org",
+                "A",
+                "B",
+                70L,
+                null,
+                null,
+                null,
+                IdAllocationMode.EXISTING));
+    assertThat(draft.getTenantId()).isEqualTo(7L);
+    assertThat(wire.lastBody.get().path("tenantId").textValue()).isEqualTo("7");
+    assertThat(wire.lastBody.get().path("tenantMode").textValue()).isEqualTo("EXISTING");
+    verify(agencyFacts).find(70L);
+    verifyNoInteractions(identityEmailOwnerLookup);
+    wire.server.verify();
+  }
+
+  @Test
+  void fiveActorPlatformUnassignedDraftUsesOnlyTheExplicitPreflightMode() {
+    var scope = mock(de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class);
+    when(scope.current())
+        .thenReturn(new de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Platform());
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        service, "accessPolicy", new AccountInviteAccessPolicy(authenticatedUser, scope));
+    var wire = recipientWire(confirmedRecipient(true));
+    when(accountInviteRepository.save(any(AccountInvite.class)))
+        .thenAnswer(call -> call.getArgument(0));
+    when(authenticatedUser.getUserId()).thenReturn("platform-admin");
+    when(authenticatedUser.getUsername()).thenReturn("platform@example.org");
+    var draft =
+        service.createInvite(
+            new CreateAccountInviteCommand(
+                AccountInviteTargetRole.COUNSELLOR,
+                null,
+                "unassigned@example.org",
+                "A",
+                "B",
+                null,
+                11L,
+                null));
+    assertThat(draft.getTenantId()).isNull();
+    assertThat(draft.getProvisioningStatus()).isEqualTo(AccountInviteProvisioningStatus.PENDING);
+    assertThat(wire.lastBody.get().path("tenantMode").textValue()).isEqualTo("UNASSIGNED");
+    assertThat(wire.lastBody.get().path("tenantId").isNull()).isTrue();
+    verifyNoInteractions(
+        identityEmailOwnerLookup, tenantIdAllocationClient, agencyIdAllocationClient);
+    wire.server.verify();
+  }
+
+  @Test
+  void fiveActorResendChecksTheStoredTargetWithoutExposingANativeExclusion() {
+    var wire = recipientWire(confirmedRecipient(false));
+    var old =
+        AccountInvite.builder()
+            .id(1L)
+            .tenantId(7L)
+            .agencyId(70L)
+            .targetRole(AccountInviteTargetRole.COUNSELLOR)
+            .purpose(AccountInvitePurpose.INVITE)
+            .recipientEmail("occupied@example.org")
+            .status(AccountInviteStatus.EMAIL_SENT)
+            .expiresAt(LocalDateTime.now().plusDays(1))
+            .build();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(old));
+    assertThatThrownBy(() -> service.resendInvite(new SendInviteCommand(1L, 20L)))
+        .isInstanceOf(CustomValidationHttpStatusException.class);
+    assertThat(wire.lastBody.get().path("tenantId").textValue()).isEqualTo("7");
+    assertThat(wire.lastBody.get().has("exclude")).isFalse();
+    assertThat(old.getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+    verify(accountInviteRepository, never()).save(any());
+    verifyNoInteractions(
+        identityEmailOwnerLookup,
+        inviteMailDispatchService,
+        tenantIdAllocationClient,
+        agencyIdAllocationClient);
+    wire.server.verify();
   }
 
   // --- P3 gap closure: the identity probe alone is not enough. A Keycloak user only exists once

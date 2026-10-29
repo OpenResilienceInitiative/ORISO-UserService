@@ -88,6 +88,91 @@ class UserAccountControllerDelegateTest {
 
   @InjectMocks private UserAccountControllerDelegate delegate;
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.NullSource
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void currentUserPublishesOnlyTheReadOnlyStartupCapability(Boolean readiness) throws Exception {
+    var partial = new UserDataResponseDTO();
+    var full = new UserDataResponseDTO();
+    full.setUserId("74000000-0000-4000-8000-000000000001");
+    when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
+    when(keycloakUserDataProvider.retrieveAuthenticatedUserData()).thenReturn(partial);
+    when(userDtoMapper.userDataOf(eq(partial), isNull(), anyBoolean(), anyBoolean()))
+        .thenReturn(full);
+    var state =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.config.auth.ServiceIdentitySeparationCheck.class);
+    when(state.scopedAccountCommands()).thenReturn(readiness);
+    delegate.setAccountCommandReadiness(state);
+    var result = delegate.getUserData();
+    assertThat(result.getBody().getScopedAccountCommands()).isEqualTo(readiness);
+    assertThat(result.getBody().getUserId()).isEqualTo(full.getUserId());
+    var json = new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(result.getBody());
+    assertThat(json.has("scopedAccountCommands")).isTrue();
+    if (readiness == null) assertThat(json.path("scopedAccountCommands").isNull()).isTrue();
+    else assertThat(json.path("scopedAccountCommands").booleanValue()).isEqualTo(readiness);
+    verify(state).scopedAccountCommands();
+    org.mockito.Mockito.verifyNoMoreInteractions(state);
+  }
+
+  @Test
+  void scopedCurrentUserWithOtpDisabledRequiresInstalledCurrentSelfOwner() {
+    var mode =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
+    when(mode.isFiveActorMode()).thenReturn(true);
+    delegate.setPasswordIdentityConfig(mode);
+    assertThatThrownBy(delegate::getUserData).isInstanceOf(ServiceUnavailableException.class);
+    org.mockito.Mockito.verifyNoInteractions(
+        userAccountProvider, keycloakUserDataProvider, agencyAdminDataProvider, identityManager);
+  }
+
+  @Test
+  void scopedCurrentUserReadsNativeSelfEvenWithOtpDisabled() {
+    var mode =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
+    var owner =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance.class);
+    when(mode.isFiveActorMode()).thenReturn(true);
+    when(owner.isFiveActorMode()).thenReturn(true);
+    delegate.setPasswordIdentityConfig(mode);
+    delegate.setSelfAppOtpMaintenance(owner);
+    var partial = new UserDataResponseDTO();
+    var full = new UserDataResponseDTO();
+    when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
+    when(keycloakUserDataProvider.retrieveAuthenticatedUserData()).thenReturn(partial);
+    when(userDtoMapper.userDataOf(eq(partial), isNull(), anyBoolean(), anyBoolean()))
+        .thenReturn(full);
+    assertThat(delegate.getUserData().getBody()).isSameAs(full);
+    org.mockito.InOrder order = org.mockito.Mockito.inOrder(owner, keycloakUserDataProvider);
+    order.verify(owner).isFiveActorMode();
+    order.verify(owner).readCurrentProfile();
+    order.verify(keycloakUserDataProvider).retrieveAuthenticatedUserData();
+    verify(owner, never()).readCredential();
+    org.mockito.Mockito.verifyNoInteractions(identityManager);
+  }
+
+  @Test
+  void scopedCurrentUserCannotUseLocalConsultantDataAfterNativeSelfRefusal() {
+    var mode =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
+    var owner =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfAppOtpMaintenance.class);
+    when(mode.isFiveActorMode()).thenReturn(true);
+    when(owner.isFiveActorMode()).thenReturn(true);
+    when(owner.readCurrentProfile())
+        .thenThrow(new ServiceUnavailableException("native current identity unavailable"));
+    delegate.setPasswordIdentityConfig(mode);
+    delegate.setSelfAppOtpMaintenance(owner);
+    assertThatThrownBy(delegate::getUserData).isInstanceOf(ServiceUnavailableException.class);
+    org.mockito.Mockito.verifyNoInteractions(
+        userAccountProvider, consultantDataProvider, identityManager);
+  }
+
   @Test
   void getUserDataShouldResolveAssignedAgenciesForRestrictedAgencyAdmin() {
     var roles = Set.of(UserRole.RESTRICTED_AGENCY_ADMIN.getValue(), UserRole.USER_ADMIN.getValue());
@@ -817,6 +902,41 @@ class UserAccountControllerDelegateTest {
   }
 
   @Test
+  void scopedDeletionDelegatesCurrentPasswordToTheOwnedOriginalAttemptBeforeAnyPasswordGrant() {
+    scopedDeletionRouteFixture();
+    var body = new DeleteUserAccountDTO();
+    body.setPassword("original-current-password");
+
+    var response = delegate.deactivateAndFlagUserAccountForDeletion(body);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    verify(userAccountProvider)
+        .deactivateAndFlagUserAccountForDeletion("original-current-password");
+    verify(userAccountProvider, never()).deactivateAndFlagUserAccountForDeletion();
+    org.mockito.Mockito.verifyNoInteractions(identityManager);
+  }
+
+  @Test
+  void
+      scopedPendingDeletionRetainsItsExactPasswordRequestInsteadOfLoggingInTheDisabledAccountAgain() {
+    scopedDeletionRouteFixture();
+    var body = new DeleteUserAccountDTO();
+    body.setPassword("original-current-password");
+    doThrow(new ServiceUnavailableException("Original operation remains pending"))
+        .doNothing()
+        .when(userAccountProvider)
+        .deactivateAndFlagUserAccountForDeletion("original-current-password");
+
+    assertThatThrownBy(() -> delegate.deactivateAndFlagUserAccountForDeletion(body))
+        .isInstanceOf(ServiceUnavailableException.class);
+    assertThat(delegate.deactivateAndFlagUserAccountForDeletion(body).getStatusCode())
+        .isEqualTo(HttpStatus.OK);
+    verify(userAccountProvider, org.mockito.Mockito.times(2))
+        .deactivateAndFlagUserAccountForDeletion("original-current-password");
+    org.mockito.Mockito.verifyNoInteractions(identityManager);
+  }
+
+  @Test
   void deactivateAndFlagUserAccountForDeletion_badPassword_throwsBadRequestException() {
     // Account deletion requires a valid current password.
     var deleteUserAccountDTO = new DeleteUserAccountDTO();
@@ -875,5 +995,33 @@ class UserAccountControllerDelegateTest {
     verify(identityManager).validatePasswordIgnoring2fa(USERNAME, "correct");
     verify(identityManager).validatePasswordIgnoring2fa("enc.username", "correct");
     verify(userAccountProvider).deactivateAndFlagUserAccountForDeletion();
+  }
+
+  private void scopedDeletionRouteFixture() {
+    var mode =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
+    when(mode.isFiveActorMode()).thenReturn(true);
+    delegate =
+        new UserAccountControllerDelegate(
+            userAccountProvider,
+            new AuthenticatedUser(USER_ID, USERNAME, Set.of("user"), "fixture-human", Set.of()),
+            decryptionService,
+            consultantDataFacade,
+            identityPolicy,
+            identityManager,
+            accountManager,
+            messenger,
+            consultantDtoMapper,
+            userDtoMapper,
+            consultantService,
+            consultantUpdateService,
+            consultantDataProvider,
+            askerDataProvider,
+            videoChatConfig,
+            keycloakUserDataProvider,
+            agencyAdminDataProvider,
+            new UsernameTranscoder());
+    delegate.setPasswordIdentityConfig(mode);
   }
 }

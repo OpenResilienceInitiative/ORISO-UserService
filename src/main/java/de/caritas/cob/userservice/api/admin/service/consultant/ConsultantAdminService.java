@@ -5,6 +5,7 @@ import static de.caritas.cob.userservice.api.model.Session.SessionStatus.INITIAL
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_ARCHIVE;
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_PROGRESS;
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW;
+import static de.caritas.cob.userservice.api.service.creationoutcome.TrackedConsultantCreation.transition;
 
 import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.AccountManager;
@@ -31,6 +32,8 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.api.service.creationoutcome.*;
+import de.caritas.cob.userservice.api.service.creationoutcome.CreationOperation.*;
 import de.caritas.cob.userservice.api.service.session.SessionOwnershipService;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
@@ -42,7 +45,6 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 /** Service class for admin operations on {@link Consultant} objects. */
 @Service
@@ -74,6 +76,20 @@ public class ConsultantAdminService {
 
   private final @NonNull ConsultantTopicRepository consultantTopicRepository;
   private final @NonNull TopicService topicService;
+
+  private de.caritas.cob.userservice.api.port.out.IdentityClientConfig identityMode;
+  private de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+      preDeletion;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public void setScopedPreDeletion(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode,
+      @org.springframework.lang.Nullable
+          de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+              owner) {
+    identityMode = mode;
+    preDeletion = owner;
+  }
 
   /**
    * Finds a {@link Consultant} by the given consultant id and throws a {@link NoContentException}
@@ -157,6 +173,48 @@ public class ConsultantAdminService {
    * @return the generated and persisted {@link Consultant} representation as {@link
    *     ConsultantAdminResponseDTO}
    */
+  @org.springframework.beans.factory.annotation.Autowired
+  private CreationOperationWriter creationOperationWriter;
+
+  public TrackedConsultantCreation createNewConsultant(
+      CreateConsultantDTO input, CreationOperationContext context) {
+    if (!canAccessAdminRemarks()) input.setAdminRemarks(null);
+    TrackedConsultantCreation result;
+    try {
+      result = createConsultantSaga.createNewConsultant(input, context);
+    } catch (RuntimeException failure) {
+      if (context.persistedOperationId().isEmpty()
+          || failure instanceof CreationOperationAccess.ExistingOperation) throw failure;
+      if (failure instanceof CreationOperationFailure) throw failure;
+      transition(
+          context,
+          creationOperationWriter,
+          new CreationTransition.Workflow(WorkflowState.FAILED, Reason.ROW_COMMIT_FAILED));
+      throw TrackedConsultantCreation.failure(context, failure, Reason.ROW_COMMIT_FAILED);
+    }
+    try {
+      if (context.receipt().row() != RowState.COMMITTED)
+        throw new CreationOperationFailure(
+            context.receipt().operationId(), 503, Reason.JOURNAL_UNAVAILABLE);
+      var response = result.consultant();
+      if (canAccessAdminRemarks()) response.getEmbedded().setAdminRemarks(input.getAdminRemarks());
+      enrichWithDisplayName(response.getEmbedded().getId(), response);
+      enrichWithTopics(response.getEmbedded().getId(), response);
+      transition(
+          context,
+          creationOperationWriter,
+          new CreationTransition.Workflow(WorkflowState.RETURNED, Reason.NONE));
+      return new TrackedConsultantCreation(response, context.receipt().operationId());
+    } catch (RuntimeException failure) {
+      if (context.receipt().workflow() == WorkflowState.IN_PROGRESS)
+        transition(
+            context,
+            creationOperationWriter,
+            new CreationTransition.Workflow(WorkflowState.FAILED, Reason.WORKFLOW_FAILED));
+      throw TrackedConsultantCreation.failure(context, failure, Reason.WORKFLOW_FAILED);
+    }
+  }
+
   public ConsultantAdminResponseDTO createNewConsultant(CreateConsultantDTO createConsultantDTO)
       throws DistributedTransactionException {
     if (!canAccessAdminRemarks()) {
@@ -209,8 +267,76 @@ public class ConsultantAdminService {
    * @param consultantId the consultant id
    * @param forceDeleteSessions
    */
-  @Transactional
   public void markConsultantForDeletion(String consultantId, Boolean forceDeleteSessions) {
+    if (identityMode != null && identityMode.isFiveActorMode()) {
+      if (preDeletion == null || !preDeletion.isFiveActorMode())
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+      preDeletion.startAdminConsultant(
+          consultantId,
+          forceDeleteSessions,
+          acknowledged -> {
+            var relations =
+                consultantPreDeletionService.prepareAcknowledgedDeletion(
+                    acknowledged, forceDeleteSessions);
+            var memberships =
+                membersOnlyRevocation.prepareAcknowledgedDeletion(
+                    acknowledged, Boolean.TRUE.equals(forceDeleteSessions));
+            acknowledged.completeConsultant(
+                consultant -> {
+                  var deletedAt = nowInUtc();
+                  relations.apply(consultant, deletedAt);
+                  memberships.apply(consultant);
+                  if (Boolean.TRUE.equals(forceDeleteSessions)) {
+                    sessionRepository
+                        .findByConsultantAndStatusIn(
+                            consultant, Lists.newArrayList(IN_PROGRESS, IN_ARCHIVE))
+                        .forEach(
+                            session -> {
+                              if (membersOnlyChatAccess.concerns(session)
+                                  && memberships.keepCaseOnDeletionOf(session, consultant)) return;
+                              caseHandoverRequestRepository.deleteAllBySessionId(session.getId());
+                              sessionSupervisorRepository.deleteAllBySessionId(session.getId());
+                              sessionRepository.delete(session);
+                            });
+                    unassignNewOrInitialSessions(consultant);
+                  }
+                  consultant.setDeleteDate(deletedAt);
+                  deletionLifecycleService.beginConsultantDeletion(
+                      consultant, authenticatedUser.getUserId());
+                  pictureStore.removeForConsultantDeletion(consultantId);
+                  consultant.setStatus(ConsultantStatus.IN_DELETION);
+                  consultantRepository.save(consultant);
+                });
+          });
+      return;
+    }
+    if (preDeletionTransactions == null)
+      markConsultantForDeletionLegacy(consultantId, forceDeleteSessions);
+    else
+      new org.springframework.transaction.support.TransactionTemplate(preDeletionTransactions)
+          .executeWithoutResult(
+              ignored -> markConsultantForDeletionLegacy(consultantId, forceDeleteSessions));
+  }
+
+  private org.springframework.transaction.PlatformTransactionManager preDeletionTransactions;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public void setPreDeletionTransactions(
+      org.springframework.transaction.PlatformTransactionManager manager) {
+    preDeletionTransactions = java.util.Objects.requireNonNull(manager);
+  }
+
+  @org.springframework.beans.factory.annotation.Autowired
+  private org.springframework.jdbc.core.JdbcTemplate legacyIdentityRows;
+
+  private void markConsultantForDeletionLegacy(String consultantId, Boolean forceDeleteSessions) {
+    if (legacyIdentityRows == null)
+      throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+    if (!legacyIdentityRows
+        .queryForList("select admin_id from admin where admin_id=?", consultantId)
+        .isEmpty())
+      throw new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException(
+          "Separate identity removal requires scoped account commands");
     var consultant = pictureStore.lockActiveConsultant(consultantId);
 
     // One date for the counsellor and the relations removed with it: that pair marks the agencies
@@ -280,5 +406,12 @@ public class ConsultantAdminService {
               sessionSupervisorRepository.deleteAllBySessionId(session.getId());
               sessionRepository.delete(session);
             });
+  }
+
+  /** Read-only startup check of the actual installed production consumers. */
+  public boolean hasScopedAccountBindings(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode,
+      de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance owner) {
+    return identityMode == mode && preDeletion == owner;
   }
 }

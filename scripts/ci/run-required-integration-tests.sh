@@ -37,8 +37,8 @@ run_maven() {
   done
 }
 
-# Real-MariaDB contracts are owned by the separately required mariadb-contract job. Excluding them
-# from discovery here prevents JUnit's environment conditions from manufacturing skipped reports.
+# Real-MariaDB contracts are owned by the separate mariadb-contract and Scenario C caller-proof
+# jobs. Excluding them here prevents JUnit environment conditions from manufacturing skipped reports.
 # SupportRoomMigrationConvergenceIT is excluded here for the same reason: it is @EnabledIf...
 # LIQUIBASE_IT_DB_URL and is run by the mariadb-contract job. An earlier revision justified the
 # exclusion with 3bfa3d06 ("Keep support migration outside refactor CI"), but that commit is on
@@ -65,6 +65,10 @@ mariadb_owned_tests=(
   GroupChatMatrixCleanupAdoptionMariaDbIT
   IdentityReactivationSagaMariaDbIT
   UserHardDeleteClaimMariaDbIT
+  # Scenario C caller-proof owns this exact suite on both pinned native MariaDB versions.
+  AccountLifecycleRetryFairnessMariaDbIT
+  # Required creation-outcome-mariadb owns all eight real JPA/MariaDB transaction cases.
+  CreationOperationMariaDbIT
 )
 required_test_pattern="**/*IT"
 for mariadb_owned_test in "${mariadb_owned_tests[@]}"; do
@@ -93,6 +97,8 @@ required_e2e = {
     "UserAdminControllerE2EIT",
     "UserControllerE2EIT",
     "MatrixBrowserDeviceSynapseIT",
+    "ConsultantCreationOperationWebSecurityIT",
+    "ConsultantCreationOperationPrivacyIT",
 }
 
 tests = failures = errors = skipped = 0

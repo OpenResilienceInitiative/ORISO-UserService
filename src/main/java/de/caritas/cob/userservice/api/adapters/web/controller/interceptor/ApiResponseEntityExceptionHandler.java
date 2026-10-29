@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.adapters.web.controller.interceptor;
 
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfPasswordMaintenance.VerifiedTerminal;
 import de.caritas.cob.userservice.api.exception.CustomCryptoException;
 import de.caritas.cob.userservice.api.exception.NoMasterKeyException;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
@@ -20,8 +21,12 @@ import de.caritas.cob.userservice.api.exception.identity.IdentityReactivationCom
 import de.caritas.cob.userservice.api.exception.identity.IdentityReactivationUpstreamException;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.picture.PictureDiagnostics;
+import de.caritas.cob.userservice.api.port.out.IdentitySessionExchange.MagicLinkChallenge;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
+import de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance.DefiniteProfileConflict;
+import de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance.DefiniteProfileForbidden;
+import de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance.DefiniteProfileNoEffect;
 import jakarta.persistence.OptimisticLockException;
 import jakarta.validation.ConstraintViolationException;
 import java.net.UnknownHostException;
@@ -58,6 +63,24 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
 @ControllerAdvice
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHandler {
+
+  @ExceptionHandler(MagicLinkChallenge.class)
+  public ResponseEntity<Object> handleMagicLinkChallenge(
+      MagicLinkChallenge ex, WebRequest request) {
+    Map<String, Object> body = new java.util.LinkedHashMap<>();
+    body.put("error", "invalid_grant");
+    body.put("error_description", "Missing totp");
+    body.put("otpType", ex.otpType());
+    var headers = new HttpHeaders();
+    headers.setCacheControl("no-store");
+    if (ex.resendAvailableInSeconds() != null) {
+      body.put("resendAvailableInSeconds", ex.resendAvailableInSeconds());
+      if (ex.status() == 429) {
+        headers.set(HttpHeaders.RETRY_AFTER, ex.resendAvailableInSeconds().toString());
+      }
+    }
+    return handleExceptionInternal(ex, body, headers, HttpStatus.valueOf(ex.status()), request);
+  }
 
   @ExceptionHandler(de.caritas.cob.userservice.api.picture.PictureException.class)
   public ResponseEntity<Object> handlePicture(
@@ -146,7 +169,11 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
     log.warn(BAD_REQUEST, ex);
 
     return handleExceptionInternal(
-        ex, messageBody(ex.getMessage()), new HttpHeaders(), HttpStatus.BAD_REQUEST, request);
+        ex,
+        messageBody(ex.getMessage()),
+        verifiedMutationHeaders(ex, new HttpHeaders(), HttpStatus.BAD_REQUEST, request),
+        HttpStatus.BAD_REQUEST,
+        request);
   }
 
   /**
@@ -160,11 +187,13 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
       final CustomValidationHttpStatusException ex, final WebRequest request) {
     ex.executeLogging();
     var reason = Optional.ofNullable(ex.getCustomHttpHeaders().getFirst("X-Reason"));
+    var headers = new HttpHeaders();
+    headers.addAll(ex.getCustomHttpHeaders());
 
     return handleExceptionInternal(
         ex,
         reason.map(this::reasonBody).orElse(null),
-        ex.getCustomHttpHeaders(),
+        verifiedMutationHeaders(ex, headers, ex.getHttpStatus(), request),
         ex.getHttpStatus(),
         request);
   }
@@ -250,7 +279,12 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
             .map(reason -> new CustomHttpHeader(reason).buildHeader())
             .orElseGet(HttpHeaders::new);
 
-    return handleExceptionInternal(null, null, headers, HttpStatus.CONFLICT, request);
+    return handleExceptionInternal(
+        null,
+        null,
+        verifiedMutationHeaders(ex, headers, HttpStatus.CONFLICT, request),
+        HttpStatus.CONFLICT,
+        request);
   }
 
   /**
@@ -347,7 +381,12 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
       final ForbiddenException ex, final WebRequest request) {
     ex.executeLogging();
 
-    return handleExceptionInternal(null, null, new HttpHeaders(), HttpStatus.FORBIDDEN, request);
+    return handleExceptionInternal(
+        null,
+        null,
+        verifiedMutationHeaders(ex, new HttpHeaders(), HttpStatus.FORBIDDEN, request),
+        HttpStatus.FORBIDDEN,
+        request);
   }
 
   /** Maps service-layer tenant-scope denials to the same explicit 403 contract as role denials. */
@@ -440,5 +479,38 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
     }
 
     return new ResponseEntity<>(body, headers, status);
+  }
+
+  /** Only a private-issued, committed terminal may retire its exact original browser attempt. */
+  private HttpHeaders verifiedMutationHeaders(
+      Exception ex, HttpHeaders headers, HttpStatus status, WebRequest request) {
+    java.util.UUID operation = null;
+    if (ex instanceof VerifiedTerminal terminal && terminal.status() == status.value()) {
+      operation = terminal.operationId();
+    } else if (ex
+            instanceof
+            de.caritas.cob.userservice.api.adapters.keycloak.maintenance.SelfLocaleMaintenance
+                        .VerifiedTerminal
+                    terminal
+        && terminal.status() == status.value()) {
+      operation = terminal.operationId();
+    } else if (ex
+            instanceof
+            de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+                        .VerifiedTerminal
+                    terminal
+        && terminal.status() == status.value()) {
+      operation = terminal.operationId();
+    } else if (ex instanceof DefiniteProfileNoEffect terminal
+        && (status == HttpStatus.FORBIDDEN && ex instanceof DefiniteProfileForbidden
+            || status == HttpStatus.CONFLICT && ex instanceof DefiniteProfileConflict)) {
+      operation = terminal.operationId();
+    }
+    if (operation != null && operation.toString().equals(request.getHeader("Idempotency-Key"))) {
+      headers.set("X-ORISO-Mutation-Outcome", "NO_EFFECT");
+      headers.set("X-ORISO-Mutation-Operation", operation.toString());
+      headers.setCacheControl("no-store");
+    }
+    return headers;
   }
 }

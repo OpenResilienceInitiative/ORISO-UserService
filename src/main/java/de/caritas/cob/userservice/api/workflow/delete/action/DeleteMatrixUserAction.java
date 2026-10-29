@@ -25,6 +25,24 @@ public abstract class DeleteMatrixUserAction {
     this.matrixSynapseService = matrixSynapseService;
   }
 
+  protected void deactivateMatrixUser(String matrixUserId, boolean fixedDiagnostics) {
+    if (!fixedDiagnostics) {
+      deactivateMatrixUser(matrixUserId);
+      return;
+    }
+    if (isNotBlank(matrixUserId) && !matrixSynapseService.deactivateUser(matrixUserId, true))
+      throw new IllegalStateException(ERROR_REASON);
+  }
+
+  protected void purgeMatrixRoom(String matrixRoomId, boolean fixedDiagnostics) {
+    if (!fixedDiagnostics) {
+      purgeMatrixRoom(matrixRoomId);
+      return;
+    }
+    if (isNotBlank(matrixRoomId) && !matrixSynapseService.purgeRoom(matrixRoomId, true))
+      throw new IllegalStateException(ERROR_REASON);
+  }
+
   protected void deactivateMatrixUser(String matrixUserId) {
     if (isNotBlank(matrixUserId) && !matrixSynapseService.deactivateUser(matrixUserId)) {
       throw new IllegalStateException(ERROR_REASON);
@@ -42,7 +60,17 @@ public abstract class DeleteMatrixUserAction {
       DeletionSourceType deletionSourceType,
       String matrixUserId,
       Exception e) {
-    log.error("UserService delete workflow error: ", e);
+    appendErrorsForSourceType(workflowErrors, deletionSourceType, matrixUserId, e, false);
+  }
+
+  protected void appendErrorsForSourceType(
+      List<DeletionWorkflowError> workflowErrors,
+      DeletionSourceType deletionSourceType,
+      String matrixUserId,
+      Exception e,
+      boolean fixedDiagnostics) {
+    if (fixedDiagnostics) log.error("Tracked consultant compensation Matrix step failed");
+    else log.error("UserService delete workflow error: ", e);
     workflowErrors.add(
         DeletionWorkflowError.builder()
             .deletionSourceType(deletionSourceType)

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+  <changeSet id="20261025-reactivation-erasure-cursor-367" author="oriso">
+    <sqlFile path="migrate.sql" relativeToChangelogFile="true" splitStatements="true"/>
+    <rollback><dropColumn tableName="scheduled_task_claim" columnName="reactivation_erasure_after_account_id"/></rollback>
+  </changeSet>
+</databaseChangeLog>

@@ -43,6 +43,23 @@ public class DeleteAskerRoomsAndSessionsAction extends DeleteRoomsAndSessionActi
    */
   @Override
   public void execute(AskerDeletionWorkflowDTO actionTarget) {
+    if (actionTarget.isAcknowledged()) {
+      var sessions =
+          new java.util.concurrent.atomic.AtomicReference<
+              java.util.List<de.caritas.cob.userservice.api.model.Session>>();
+      actionTarget.runOwnedLocal(
+          () -> sessions.set(sessionRepository.findByUser(actionTarget.getUser())));
+      for (var session : sessions.get()) {
+        var errors = actionTarget.getDeletionWorkflowErrors();
+        actionTarget.runOwnedLocal(() -> deleteSessionData(session, errors));
+        actionTarget.runOwnedLocal(() -> deleteSessionSupervisors(session, errors));
+        actionTarget.runOwnedLocal(() -> deleteSessionTopics(session, errors));
+        actionTarget.runOwnedLocal(() -> deleteCaseHandoverRequests(session, errors));
+        deleteTeamDiscussion(session, errors, actionTarget);
+        actionTarget.runOwnedLocal(() -> deleteSession(session, errors));
+      }
+      return;
+    }
     this.sessionRepository
         .findByUser(actionTarget.getUser())
         .forEach(

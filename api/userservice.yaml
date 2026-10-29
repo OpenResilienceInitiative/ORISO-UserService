@@ -3872,6 +3872,14 @@ components:
     UserDataResponseDTO:
       type: object
       properties:
+        scopedAccountCommands:
+          type: boolean
+          nullable: true
+          readOnly: true
+          description: >-
+            Account mutation receipt capability, not authorization. True requires verified full
+            scoped activation; false identifies verified legacy mode. Missing or null means
+            unknown activation and clients must disable destructive confirmation.
         chatRecoveryMode:
           type: string
           enum: [RECOVERY_KEY, LOGIN_PASSWORD]

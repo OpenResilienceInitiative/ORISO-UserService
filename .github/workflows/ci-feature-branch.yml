@@ -94,3 +94,8 @@ jobs:
     needs: route-validation
     if: needs.route-validation.outputs.run_validation == 'true'
     uses: ./.github/workflows/notification-smtp-contract.yml
+
+  creation-outcome-mariadb:
+    needs: route-validation
+    if: needs.route-validation.outputs.run_validation == 'true'
+    uses: ./.github/workflows/creation-outcome-mariadb.yml

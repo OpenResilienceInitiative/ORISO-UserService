@@ -1,0 +1,120 @@
+{
+  "sourceCommit": "7ed5ee7cd4b4f1c0cad4c00aba87c93906e59654",
+  "sourcePath": "charts/keycloak/keycloak-resources/realm.json",
+  "sourceSHA256": "7ff396623aa2f98845b046e0f6a7d7c0b1745ad47c36b9e374e05d3b702f4c4b",
+  "directGrantFlow": "direct-grant-2fa",
+  "authenticationFlows": [
+    {
+      "alias": "direct-grant-2fa",
+      "description": "Direct grant with app (TOTP) and email OTP via onlineBeratung otp-config SPI",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "autheticatorFlow": false,
+          "userSetupAllowed": false,
+          "authenticator": "direct-grant-validate-username"
+        },
+        {
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "autheticatorFlow": false,
+          "userSetupAllowed": false,
+          "authenticator": "direct-grant-validate-password"
+        },
+        {
+          "authenticatorFlow": true,
+          "requirement": "CONDITIONAL",
+          "priority": 30,
+          "autheticatorFlow": true,
+          "userSetupAllowed": false,
+          "flowAlias": "app-otp-conditional"
+        },
+        {
+          "authenticatorFlow": true,
+          "requirement": "CONDITIONAL",
+          "priority": 40,
+          "autheticatorFlow": true,
+          "userSetupAllowed": false,
+          "flowAlias": "email-otp-conditional"
+        }
+      ]
+    },
+    {
+      "alias": "app-otp-conditional",
+      "description": "App (TOTP) second factor: challenge via app-authenticator, validate via direct-grant-validate-otp",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "autheticatorFlow": false,
+          "userSetupAllowed": false,
+          "authenticator": "conditional-user-configured"
+        },
+        {
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "autheticatorFlow": false,
+          "userSetupAllowed": false,
+          "authenticator": "app-authenticator"
+        },
+        {
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 30,
+          "autheticatorFlow": false,
+          "userSetupAllowed": false,
+          "authenticator": "direct-grant-validate-otp"
+        }
+      ]
+    },
+    {
+      "alias": "email-otp-conditional",
+      "description": "Email OTP second factor via email-authenticator",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "autheticatorFlow": false,
+          "userSetupAllowed": false,
+          "authenticator": "conditional-user-configured"
+        },
+        {
+          "authenticatorFlow": false,
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "autheticatorFlow": false,
+          "userSetupAllowed": false,
+          "authenticator": "email-authenticator",
+          "authenticatorConfig": "email-otp-config"
+        }
+      ]
+    }
+  ],
+  "authenticatorConfig": [
+    {
+      "alias": "email-otp-config",
+      "config": {
+        "length": "6",
+        "ttl": "900",
+        "senderId": "Onlineberatung",
+        "simulation": "false"
+      }
+    }
+  ],
+  "scope": "Read-only exact compatible production APP/email direct-grant fixture input. Not deployed or yet executed; final joined current S1/browser/client proof remains separate."
+}

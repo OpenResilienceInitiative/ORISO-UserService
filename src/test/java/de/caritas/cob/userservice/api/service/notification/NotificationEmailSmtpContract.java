@@ -116,6 +116,8 @@ class NotificationEmailSmtpContract {
   @Autowired OrisoEmailBrand brand;
   @Autowired TenantTemplateSupplier templates;
   @Autowired NotificationRequestFacts requestFacts;
+  @MockitoBean private de.caritas.cob.userservice.api.port.out.IdentityClientConfig identityMode;
+
   @MockitoBean SessionRepository sessions;
   @MockitoBean GroupChatParticipantRepository participants;
   @MockitoBean ConsultantRepository consultants;

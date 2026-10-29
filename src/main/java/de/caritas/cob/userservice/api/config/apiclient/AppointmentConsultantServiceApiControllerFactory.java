@@ -15,6 +15,14 @@ public class AppointmentConsultantServiceApiControllerFactory {
 
   @Autowired private RestTemplate restTemplate;
 
+  public ConsultantApi createControllerApi(boolean fixedDiagnostics) {
+    if (!fixedDiagnostics) return createControllerApi();
+    var view =
+        new de.caritas.cob.userservice.api.adapters.http.TrackedHttpTransport(restTemplate)
+            .generatedClientView();
+    return new ConsultantApi(new ApiClient(view).setBasePath(this.appointmentServiceApiUrl));
+  }
+
   public ConsultantApi createControllerApi() {
     var apiClient = new ApiClient(restTemplate).setBasePath(this.appointmentServiceApiUrl);
     return new ConsultantApi(apiClient);

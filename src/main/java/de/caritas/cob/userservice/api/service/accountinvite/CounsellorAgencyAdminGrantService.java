@@ -75,6 +75,29 @@ public class CounsellorAgencyAdminGrantService {
         invite.getId());
   }
 
+  /** Initial combined membership is activated later by the bounded receiver, never here. */
+  public void bindInitialAgencyAdmin(String userId, Long agencyId, AccountInvite invite) {
+    if (!de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.PendingCreationRoles.authorize(
+        userId, invite.getTenantId(), List.of("restricted-agency-admin", "user-admin")))
+      throw new org.springframework.security.access.AccessDeniedException(
+          "Initial agency admin needs the live owned creation");
+    bindAdmin(
+        userId,
+        agencyId,
+        () ->
+            Admin.builder()
+                .id(userId)
+                .type(Admin.AdminType.AGENCY)
+                .tenantId(invite.getTenantId())
+                .username(invite.getRecipientEmail())
+                .firstName(invite.getFirstName())
+                .lastName(invite.getLastName())
+                .email(invite.getRecipientEmail())
+                .createDate(nowInUtc())
+                .updateDate(nowInUtc())
+                .build());
+  }
+
   /**
    * The same grant for a counsellor whose account exists. Rows first, realm roles last: inside the
    * caller's transaction a refused role rolls the rows back.
@@ -99,6 +122,38 @@ public class CounsellorAgencyAdminGrantService {
     // Flushes both rows, so a constraint failure stops us before Keycloak changes.
     adminRepository.flush();
     AGENCY_ADMIN_ROLES.forEach(role -> identityClient.updateRole(consultant.getId(), role));
+  }
+
+  /** Only the actual role producer's live owning SQL callback can bind the acknowledged grant. */
+  void bindCheckedAgencyAdmin(AccountRoleAddition.ScopedAddition addition) {
+    addition.requireLocalCurrent();
+    Consultant consultant = addition.currentConsultant();
+    // An existing managed Admin is already part of the owner's complete locked snapshot.
+    // Re-saving it can merge a second instance and must not change its audit fields.
+    Admin savedAdmin =
+        adminRepository
+            .findById(consultant.getId())
+            .orElseGet(
+                () ->
+                    adminRepository.save(
+                        Admin.builder()
+                            .id(consultant.getId())
+                            .type(Admin.AdminType.AGENCY)
+                            .tenantId(consultant.getTenantId())
+                            .username(usernameTranscoder.decodeUsername(consultant.getUsername()))
+                            .firstName(consultant.getFirstName())
+                            .lastName(consultant.getLastName())
+                            .email(consultant.getEmail())
+                            .createDate(nowInUtc())
+                            .updateDate(nowInUtc())
+                            .build()));
+    adminAgencyRepository.save(
+        AdminAgency.builder()
+            .admin(savedAdmin)
+            .agencyId(addition.agencyId())
+            .createDate(nowInUtc())
+            .updateDate(nowInUtc())
+            .build());
   }
 
   private void bindAdmin(String userId, Long agencyId, Supplier<Admin> newAdmin) {

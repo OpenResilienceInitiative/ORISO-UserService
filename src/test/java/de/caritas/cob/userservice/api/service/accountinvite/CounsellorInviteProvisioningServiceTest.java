@@ -692,6 +692,225 @@ class CounsellorInviteProvisioningServiceTest {
     return provisioned;
   }
 
+  @Test
+  void fiveActorAcceptedInviteRetriesItsPendingActivationWithoutRecreatingOrReturningConsumed() {
+    var invite = activeCounsellorInvite();
+    invite.setId(41L);
+    invite.setStatus(AccountInviteStatus.ACCEPTED);
+    invite.setProvisionedUserId("created-consultant");
+    invite.setTwoFactorStatus(TwoFactorGateStatus.NOT_REQUIRED);
+    when(accountInviteService.findInviteByToken("raw-token")).thenReturn(invite);
+    var flow =
+        mock(
+            de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.OrdinaryAccountCreation
+                .class);
+    var provider = mock(org.springframework.beans.factory.ObjectProvider.class);
+    when(provider.getIfAvailable()).thenReturn(flow);
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        service,
+        "lifecycleEnvironment",
+        new org.springframework.mock.env.MockEnvironment()
+            .withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS"));
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        service, "ordinaryAccountCreation", provider);
+    when(flow.finishInvitationIfPending(invite)).thenReturn(true);
+    assertThat(
+            service.acceptInvite(
+                "raw-token", new ProvisionCounsellorCommand("name", "chosen-secret", true, null)))
+        .isSameAs(invite);
+    verify(accountInviteService, never()).acceptInvite(any(), any());
+    verifyNoInteractions(createConsultantSaga, consultantAdminFacade, identityPasswordUpdater);
+  }
+
+  @Test
+  void fiveActorInvitationIncludesAcceptanceAndRelationsInTheCheckedCreationCallback() {
+    var policyReads =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.service.accountpolicy.CheckedAccountPolicyReads.class);
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        service, "checkedPolicyReads", policyReads);
+    when(policyReads.withInvitation(eq("raw-token"), eq("CONSULTANT"), any()))
+        .thenAnswer(call -> ((java.util.function.Supplier<?>) call.getArgument(2)).get());
+    var invite = activeCounsellorInvite();
+    invite.setId(41L);
+    when(accountInviteService.findInviteByToken("raw-token")).thenReturn(invite);
+    when(accountInviteService.acceptInvite("raw-token", "created-consultant")).thenReturn(invite);
+    when(identityClientConfig.isFiveActorMode()).thenReturn(true);
+    when(identityClientConfig.taskAccessToken(
+            de.caritas.cob.userservice.api.config.auth.TaskPurpose.INVITE_RESERVATIONS))
+        .thenReturn("synthetic-setup-token");
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        service,
+        "lifecycleEnvironment",
+        new org.springframework.mock.env.MockEnvironment()
+            .withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS"));
+    when(createConsultantSaga.createInvitedConsultant(any(), eq(invite), eq(false), any()))
+        .thenAnswer(
+            call -> {
+              java.util.function.Function<Consultant, AccountInvite> finish = call.getArgument(3);
+              return finish.apply(
+                  Consultant.builder()
+                      .id("created-consultant")
+                      .username("invited-counsellor")
+                      .firstName("Lisa")
+                      .lastName("Simpson")
+                      .email("lisa.simpson@example.org")
+                      .tenantId(79L)
+                      .build());
+            });
+    var accepted =
+        service.acceptInvite(
+            "raw-token",
+            new ProvisionCounsellorCommand("invited-counsellor", "chosen-secret", true, null));
+    assertThat(accepted.getProvisioningStatus())
+        .isEqualTo(AccountInviteProvisioningStatus.COMPLETED);
+    verify(consultantAgencyRelationCreatorService)
+        .createNewConsultantAgency(eq("created-consultant"), any());
+    verify(consultantTopicRepository).assignUnscopedTopicsToAgency("created-consultant", 275L);
+    verify(identityAuthentication, never()).loginService(any(), any());
+    verifyNoInteractions(identityPasswordUpdater, consultantAdminFacade);
+  }
+
+  @Test
+  void fiveActorInnerRequiredFailureKeepsItsTypedCauseAndCommittedRetryableInvite() {
+    assertInnerRequiredFailure(false);
+  }
+
+  @Test
+  void failedAttemptCannotOverwriteAnInviteChangedAfterTheOwningRollback() {
+    assertInnerRequiredFailure(true);
+  }
+
+  private void assertInnerRequiredFailure(boolean concurrentCompletion) {
+    var source =
+        new org.springframework.jdbc.datasource.DriverManagerDataSource(
+            "jdbc:h2:mem:invite-failure-" + java.util.UUID.randomUUID() + ";DB_CLOSE_DELAY=-1",
+            "sa",
+            "");
+    var jdbc = new org.springframework.jdbc.core.JdbcTemplate(source);
+    var manager = new org.springframework.jdbc.datasource.DataSourceTransactionManager(source);
+    jdbc.execute(
+        "create table invite_tx_probe(id bigint primary key, provisioning varchar(32), updated_at timestamp)");
+    jdbc.execute("create table consultant_tx_probe(id bigint primary key)");
+    var invite = activeCounsellorInvite();
+    invite.setId(41L);
+    invite.setTokenHash("synthetic-invite-tx-probe");
+    invite.setUpdateDate(LocalDateTime.of(2026, 10, 22, 12, 0));
+    jdbc.update(
+        "insert into invite_tx_probe values(41,?,?)",
+        invite.getProvisioningStatus().name(),
+        invite.getUpdateDate());
+    when(accountInviteService.findInviteByToken("raw-token")).thenReturn(invite);
+    when(accountInviteRepository.save(any(AccountInvite.class)))
+        .thenAnswer(
+            call -> {
+              AccountInvite saved = call.getArgument(0);
+              jdbc.update(
+                  "update invite_tx_probe set provisioning=?,updated_at=? where id=?",
+                  saved.getProvisioningStatus().name(),
+                  saved.getUpdateDate(),
+                  saved.getId());
+              return saved;
+            });
+    when(accountInviteRepository.findByIdForUpdate(41L))
+        .thenAnswer(
+            ignored -> {
+              var row = jdbc.queryForMap("select * from invite_tx_probe where id=41 for update");
+              var current = new AccountInvite();
+              org.springframework.beans.BeanUtils.copyProperties(invite, current);
+              current.setProvisioningStatus(
+                  AccountInviteProvisioningStatus.valueOf((String) row.get("PROVISIONING")));
+              current.setUpdateDate(((java.sql.Timestamp) row.get("UPDATED_AT")).toLocalDateTime());
+              return Optional.of(current);
+            });
+    when(identityClientConfig.isFiveActorMode()).thenReturn(true);
+    when(identityClientConfig.taskAccessToken(
+            de.caritas.cob.userservice.api.config.auth.TaskPurpose.INVITE_RESERVATIONS))
+        .thenReturn("synthetic-setup-token");
+    var reads =
+        mock(de.caritas.cob.userservice.api.service.accountpolicy.CheckedAccountPolicyReads.class);
+    when(reads.withInvitation(eq("raw-token"), eq("CONSULTANT"), any()))
+        .thenAnswer(call -> ((java.util.function.Supplier<?>) call.getArgument(2)).get());
+    var refused =
+        new de.caritas.cob.userservice.api.exception.httpresponses
+            .CustomValidationHttpStatusException(
+            de.caritas.cob.userservice.api.exception.httpresponses.customheader
+                .HttpStatusExceptionReason.USERNAME_NOT_AVAILABLE,
+            org.springframework.http.HttpStatus.CONFLICT);
+    var required = new org.springframework.transaction.support.TransactionTemplate(manager);
+    when(createConsultantSaga.createInvitedConsultant(any(), eq(invite), eq(false), any()))
+        .thenAnswer(
+            ignored ->
+                required.execute(
+                    transaction -> {
+                      org.junit.jupiter.api.Assertions.assertTrue(
+                          org.springframework.transaction.support.TransactionSynchronizationManager
+                              .isActualTransactionActive());
+                      jdbc.update("insert into consultant_tx_probe values(1)");
+                      if (concurrentCompletion) {
+                        org.springframework.transaction.support.TransactionSynchronizationManager
+                            .registerSynchronization(
+                                new org.springframework.transaction.support
+                                    .TransactionSynchronization() {
+                                  @Override
+                                  public void afterCompletion(int status) {
+                                    if (status != STATUS_ROLLED_BACK) return;
+                                    var changed =
+                                        new org.springframework.transaction.support
+                                            .TransactionTemplate(manager);
+                                    changed.setPropagationBehavior(
+                                        org.springframework.transaction.TransactionDefinition
+                                            .PROPAGATION_REQUIRES_NEW);
+                                    changed.executeWithoutResult(
+                                        ignoredStatus ->
+                                            jdbc.update(
+                                                "update invite_tx_probe set provisioning='COMPLETED',updated_at=? where id=41",
+                                                LocalDateTime.of(2026, 10, 22, 13, 0)));
+                                  }
+                                });
+                      }
+                      throw refused;
+                    }));
+    try (var context =
+        new org.springframework.context.annotation.AnnotationConfigApplicationContext()) {
+      context.setEnvironment(
+          new org.springframework.mock.env.MockEnvironment()
+              .withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS"));
+      context.register(InviteFailureTransactions.class);
+      context.registerBean(
+          org.springframework.transaction.PlatformTransactionManager.class, () -> manager);
+      context.getBeanFactory().registerSingleton("checkedAccountPolicyReads", reads);
+      context.registerBean(CounsellorInviteProvisioningService.class, () -> service);
+      context.refresh();
+      var publicService = context.getBean(CounsellorInviteProvisioningService.class);
+      org.junit.jupiter.api.Assertions.assertTrue(
+          org.springframework.aop.support.AopUtils.isAopProxy(publicService));
+      Throwable actual =
+          org.assertj.core.api.Assertions.catchThrowable(
+              () ->
+                  publicService.acceptInvite(
+                      "raw-token",
+                      new ProvisionCounsellorCommand(
+                          "invited-counsellor", "chosen-secret", true, null)));
+      org.junit.jupiter.api.Assertions.assertAll(
+          () -> assertThat(actual).isSameAs(refused),
+          () ->
+              assertThat(
+                      jdbc.queryForObject(
+                          "select provisioning from invite_tx_probe where id=41", String.class))
+                  .isEqualTo(concurrentCompletion ? "COMPLETED" : "FAILED"),
+          () ->
+              assertThat(
+                      jdbc.queryForObject("select count(*) from consultant_tx_probe", Long.class))
+                  .isZero());
+    }
+    verifyNoInteractions(consultantAdminFacade, identityPasswordUpdater);
+  }
+
+  @org.springframework.context.annotation.Configuration(proxyBeanMethods = false)
+  @org.springframework.transaction.annotation.EnableTransactionManagement
+  static class InviteFailureTransactions {}
+
   private static AccountInvite activeCounsellorInvite() {
     return AccountInvite.builder()
         .targetRole(AccountInviteTargetRole.COUNSELLOR)

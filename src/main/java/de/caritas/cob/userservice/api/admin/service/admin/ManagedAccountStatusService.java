@@ -14,8 +14,13 @@ import java.time.LocalDateTime;
 import java.util.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.orm.jpa.JpaTransactionManager;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
 /** The selected identity's independent management pause and authoritative display metadata. */
@@ -31,6 +36,64 @@ public class ManagedAccountStatusService {
   private final IdentitySecondFactor factors;
   private final AccountInactivityService lifecycle;
   private final TenantService tenants;
+
+  private IdentityClientConfig identityMode;
+  private JdbcTemplate jdbc;
+  private TransactionTemplate localWrites;
+
+  private de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance
+      scopedMaintenance;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public void setHumanAdminMaintenance(
+      @org.springframework.lang.Nullable
+          de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance
+              maintenance) {
+    scopedMaintenance = maintenance;
+  }
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public void setScopedLocalWrites(
+      IdentityClientConfig mode, JdbcTemplate jdbc, PlatformTransactionManager manager) {
+    javax.sql.DataSource owner = null;
+    if (manager instanceof JpaTransactionManager jpa) owner = jpa.getDataSource();
+    else if (manager instanceof DataSourceTransactionManager sql) owner = sql.getDataSource();
+    if (owner == null || owner != jdbc.getDataSource())
+      throw new IllegalArgumentException("Account status SQL owner mismatch");
+    this.identityMode = Objects.requireNonNull(mode);
+    this.jdbc = jdbc;
+    this.localWrites = new TransactionTemplate(manager);
+  }
+
+  private org.springframework.beans.factory.ObjectProvider<
+          de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance>
+      removedConsultants;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public void configureRemovedConsultantProofs(
+      org.springframework.beans.factory.ObjectProvider<
+              de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance>
+          owners) {
+    removedConsultants = Objects.requireNonNull(owners);
+  }
+
+  private Target activeReadTarget(String id, Target target) {
+    if (identityMode == null
+        || !identityMode.isFiveActorMode()
+        || target.admin() == null
+        || target.consultant() == null
+        || target.consultant().getDeleteDate() == null) return target;
+    var proof = removedConsultants == null ? null : removedConsultants.getIfAvailable();
+    if (proof == null || localWrites == null)
+      throw new de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException(
+          "Retained Consultant proof unavailable");
+    localWrites.execute(
+        ignored -> {
+          proof.requireRetainedConsultantRemoved(id, target.admin().getTenantId());
+          return true;
+        });
+    return new Target(target.admin(), null);
+  }
 
   public record TwoFactor(Boolean required, Boolean configured, Boolean active) {}
 
@@ -77,11 +140,18 @@ public class ManagedAccountStatusService {
 
   public AccountStatus read(String id) {
     Target target = authorizedTarget(id, false);
-    return status(id, target);
+    return status(id, activeReadTarget(id, target));
   }
 
-  @Transactional
   public AccountStatus update(String id, boolean active) {
+    if (identityMode != null && identityMode.isFiveActorMode()) return updateScoped(id, active);
+    // REQUIRED preserves the original LEGACY transaction, including participation in its caller.
+    return localWrites == null
+        ? updateLegacy(id, active)
+        : localWrites.execute(ignored -> updateLegacy(id, active));
+  }
+
+  private AccountStatus updateLegacy(String id, boolean active) {
     Target target = authorizedTarget(id, true);
     AccountStatus before = status(id, target);
     if (active) {
@@ -106,6 +176,153 @@ public class ManagedAccountStatusService {
     return status(id, target);
   }
 
+  private record LocalRows(
+      List<Map<String, Object>> admin,
+      List<Map<String, Object>> consultant,
+      List<Map<String, Object>> inactivity) {}
+
+  private record LocalSelection(Target target, LocalRows rows) {}
+
+  private AccountStatus updateScoped(String id, boolean active) {
+    if (TransactionSynchronizationManager.isActualTransactionActive())
+      throw new ResponseStatusException(
+          HttpStatus.CONFLICT, "Account status requires no ambient SQL");
+    LocalSelection selected = localWrites.execute(ignored -> selectedRows(id));
+    AccountStatus before = status(id, selected.target());
+    if (active) {
+      var independent =
+          before.restrictions().stream().filter(r -> !r.equals("MANAGED_PAUSE")).toList();
+      if (!independent.isEmpty()) throw new ActivationRefused(before);
+      if (before.loginEnabled() == null
+          || before.lifecycleRestricted() == null
+          || before.tenantActive() == null)
+        throw new ResponseStatusException(
+            HttpStatus.BAD_GATEWAY, "Account activation prerequisites unavailable");
+    }
+    Target committed =
+        localWrites.execute(
+            ignored -> {
+              LocalSelection current = selectedRows(id);
+              if (!selected.rows().equals(current.rows()))
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Account status changed");
+              updatePause("admin", "admin_id", id, current.rows().admin(), !active);
+              updatePause("consultant", "consultant_id", id, current.rows().consultant(), !active);
+              return selectedRows(id).target();
+            });
+    // Fresh external display reads also happen after the selected local commit.
+    return status(id, committed);
+  }
+
+  private LocalSelection selectedRows(String id) {
+    var adminRows = jdbc.queryForList("select * from admin where admin_id=? for update", id);
+    var consultantRows =
+        jdbc.queryForList("select * from consultant where consultant_id=? for update", id);
+    if (!jdbc.queryForList("select user_id from user where user_id=? for update", id).isEmpty())
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+    var inactivity =
+        jdbc.queryForList("select * from account_inactivity where identity_id=? for update", id);
+    if (adminRows.size() > 1 || consultantRows.size() > 1 || inactivity.size() > 1)
+      throw new ResponseStatusException(HttpStatus.CONFLICT);
+    var admin = adminRows.isEmpty() ? null : statusAdmin(adminRows.getFirst());
+    var consultant = consultantRows.isEmpty() ? null : statusConsultant(consultantRows.getFirst());
+    Target target = new Target(admin, consultant);
+    assertAuthorizedTarget(id, true, target);
+    var reach = scope.current();
+    if (reach.tenantId() != null && !Objects.equals(reach.tenantId(), target.tenantId()))
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+    if (!inactivity.isEmpty()
+        && !Objects.equals(sqlTenant(inactivity.getFirst()), target.tenantId()))
+      throw new ResponseStatusException(HttpStatus.CONFLICT, "Account lifecycle owner changed");
+    if (consultant != null && consultant.getDeleteDate() != null)
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+    if (admin != null
+        && consultant != null
+        && !Objects.equals(decoded(admin.getUsername()), decoded(consultant.getUsername())))
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+    return new LocalSelection(target, new LocalRows(adminRows, consultantRows, inactivity));
+  }
+
+  private void updatePause(
+      String table, String column, String id, List<Map<String, Object>> rows, boolean paused) {
+    if (rows.isEmpty() || sqlBoolean(rows.getFirst().get("managed_paused")) == paused) return;
+    // The names are private literals; both complete rows remain locked and unchanged since
+    // selection.
+    if (jdbc.update(
+            "update "
+                + table
+                + " set managed_paused=?,update_date=CURRENT_TIMESTAMP where "
+                + column
+                + "=? and managed_paused=?",
+            paused,
+            id,
+            !paused)
+        != 1) throw new ResponseStatusException(HttpStatus.CONFLICT, "Account status changed");
+  }
+
+  private Admin statusAdmin(Map<String, Object> row) {
+    return Admin.builder()
+        .id((String) row.get("admin_id"))
+        .tenantId(sqlTenant(row))
+        .username((String) row.get("username"))
+        .firstName((String) row.get("first_name"))
+        .lastName((String) row.get("last_name"))
+        .email((String) row.get("email"))
+        .type(Admin.AdminType.valueOf((String) row.get("type")))
+        .managedPaused(sqlBoolean(row.get("managed_paused")))
+        .createDate(sqlDate(row.get("create_date")))
+        .updateDate(sqlDate(row.get("update_date")))
+        .build();
+  }
+
+  private Consultant statusConsultant(Map<String, Object> row) {
+    return Consultant.builder()
+        .id((String) row.get("consultant_id"))
+        .tenantId(sqlTenant(row))
+        .username((String) row.get("username"))
+        .firstName((String) row.get("first_name"))
+        .lastName((String) row.get("last_name"))
+        .email((String) row.get("email"))
+        .managedPaused(sqlBoolean(row.get("managed_paused")))
+        .absent(sqlBoolean(row.get("is_absent")))
+        .twoFactorRequired(
+            row.get("two_factor_required") == null
+                ? null
+                : sqlBoolean(row.get("two_factor_required")))
+        .status(
+            row.get("status") == null ? null : ConsultantStatus.valueOf((String) row.get("status")))
+        .deletionLifecycleState(
+            row.get("deletion_lifecycle_state") == null
+                ? null
+                : de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState
+                    .valueOf((String) row.get("deletion_lifecycle_state")))
+        .createDate(sqlDate(row.get("create_date")))
+        .updateDate(sqlDate(row.get("update_date")))
+        .deleteDate(sqlDate(row.get("delete_date")))
+        .build();
+  }
+
+  private static Long sqlTenant(Map<String, Object> row) {
+    return row.get("tenant_id") == null ? null : ((Number) row.get("tenant_id")).longValue();
+  }
+
+  private static LocalDateTime sqlDate(Object value) {
+    if (value == null) return null;
+    return value instanceof java.sql.Timestamp timestamp
+        ? timestamp.toLocalDateTime()
+        : (LocalDateTime) value;
+  }
+
+  private static boolean sqlBoolean(Object value) {
+    if (value instanceof Boolean flag) return flag;
+    if (value instanceof Number number && (number.intValue() == 0 || number.intValue() == 1))
+      return number.intValue() == 1;
+    throw new ResponseStatusException(HttpStatus.CONFLICT, "Unknown account status");
+  }
+
+  private static String decoded(String username) {
+    return new de.caritas.cob.userservice.api.helper.UsernameTranscoder().decodeUsername(username);
+  }
+
   public static class ActivationRefused extends RuntimeException {
     private final AccountStatus status;
 
@@ -122,6 +339,14 @@ public class ManagedAccountStatusService {
   private Target authorizedTarget(String id, boolean write) {
     var admin = TenantContext.supplyAcrossTenants(() -> admins.findById(id)).orElse(null);
     var consultant = TenantContext.supplyAcrossTenants(() -> consultants.findById(id)).orElse(null);
+    var target = new Target(admin, consultant);
+    assertAuthorizedTarget(id, write, target);
+    return target;
+  }
+
+  private void assertAuthorizedTarget(String id, boolean write, Target target) {
+    var admin = target.admin();
+    var consultant = target.consultant();
     if (admin == null && consultant == null)
       throw new ResponseStatusException(HttpStatus.NOT_FOUND);
     Set<String> authorities =
@@ -146,7 +371,6 @@ public class ManagedAccountStatusService {
       scope.assertMay(AdminScope.Target.counsellor(id));
     }
     if (!permitted) throw new ResponseStatusException(HttpStatus.FORBIDDEN);
-    return new Target(admin, consultant);
   }
 
   private AccountStatus status(String id, Target target) {
@@ -166,7 +390,13 @@ public class ManagedAccountStatusService {
     var admin = TenantContext.supplyAcrossTenants(() -> admins.findById(id)).orElse(null);
     var consultant = TenantContext.supplyAcrossTenants(() -> consultants.findById(id)).orElse(null);
     if (admin == null && consultant == null) return null;
-    return status(id, new Target(admin, consultant), loginEnabled, false, tenantStates).active();
+    return status(
+            id,
+            activeReadTarget(id, new Target(admin, consultant)),
+            loginEnabled,
+            false,
+            tenantStates)
+        .active();
   }
 
   private AccountStatus status(
@@ -217,15 +447,23 @@ public class ManagedAccountStatusService {
             : consultant != null ? consultant.getTwoFactorRequired() : null;
     Boolean configured = null, factorActive = null;
     try {
-      var profile = includeFactor ? profiles.findById(id).orElse(null) : null;
-      // Never resolve a target's second factor through an unverified or observer username.
-      var otp =
-          profile != null && id.equals(profile.id()) && profile.username() != null
-              ? factors.getOtpCredential(profile.username())
-              : null;
-      if (otp != null && otp.setup() != null) {
-        factorActive = otp.setup();
-        configured = Boolean.TRUE.equals(otp.setup()) || otp.type() != null;
+      if (identityMode != null && identityMode.isFiveActorMode()) {
+        if (includeFactor && scopedMaintenance != null && scopedMaintenance.isFiveActorMode()) {
+          var metadata = scopedMaintenance.factorStatus(id);
+          configured = metadata.configured();
+          factorActive = metadata.active();
+        }
+      } else {
+        var profile = includeFactor ? profiles.findById(id).orElse(null) : null;
+        // Never resolve a target's second factor through an unverified or observer username.
+        var otp =
+            profile != null && id.equals(profile.id()) && profile.username() != null
+                ? factors.getOtpCredential(profile.username())
+                : null;
+        if (otp != null && otp.setup() != null) {
+          factorActive = otp.setup();
+          configured = Boolean.TRUE.equals(otp.setup()) || otp.type() != null;
+        }
       }
     } catch (RuntimeException unavailable) {
       /* Unknown metadata; never expose provider exception or enrollment secrets. */
@@ -262,5 +500,21 @@ public class ManagedAccountStatusService {
 
   private static String string(LocalDateTime value) {
     return value == null ? null : value.toString();
+  }
+
+  /** Read-only startup check of the actual installed production consumers. */
+  public boolean hasScopedAccountBindings(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode,
+      de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance owner,
+      de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance proof,
+      org.springframework.orm.jpa.JpaTransactionManager manager) {
+    return identityMode == mode
+        && scopedMaintenance == owner
+        && removedConsultants != null
+        && removedConsultants.getIfAvailable() == proof
+        && localWrites != null
+        && localWrites.getTransactionManager() == manager
+        && jdbc != null
+        && jdbc.getDataSource() == manager.getDataSource();
   }
 }

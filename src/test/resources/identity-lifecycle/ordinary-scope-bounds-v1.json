@@ -1,0 +1,257 @@
+{
+  "schema": "oriso-ordinary-scope-bounds-v1",
+  "cases": [
+    {
+      "field": "workflowId",
+      "length": 255,
+      "accepted": true,
+      "scope": {
+        "tenantId": "7",
+        "registrationKind": "CONSULTANT",
+        "initialGroup": "/human-roles/consultant",
+        "origin": {
+          "kind": "HUMAN_ADMIN",
+          "workflowId": "v:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "provenance": "human:verified",
+          "humanIssuer": "https://issuer.example/realms/oriso",
+          "humanSubject": "human-subject",
+          "humanAuthority": "user-admin",
+          "agencyIds": [
+            "12"
+          ]
+        }
+      }
+    },
+    {
+      "field": "workflowId",
+      "length": 256,
+      "accepted": false,
+      "scope": {
+        "tenantId": "7",
+        "registrationKind": "CONSULTANT",
+        "initialGroup": "/human-roles/consultant",
+        "origin": {
+          "kind": "HUMAN_ADMIN",
+          "workflowId": "v:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "provenance": "human:verified",
+          "humanIssuer": "https://issuer.example/realms/oriso",
+          "humanSubject": "human-subject",
+          "humanAuthority": "user-admin",
+          "agencyIds": [
+            "12"
+          ]
+        }
+      }
+    },
+    {
+      "field": "humanSubject",
+      "length": 255,
+      "accepted": true,
+      "scope": {
+        "tenantId": "7",
+        "registrationKind": "CONSULTANT",
+        "initialGroup": "/human-roles/consultant",
+        "origin": {
+          "kind": "HUMAN_ADMIN",
+          "workflowId": "human:bounded",
+          "provenance": "human:verified",
+          "humanIssuer": "https://issuer.example/realms/oriso",
+          "humanSubject": "v:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "humanAuthority": "user-admin",
+          "agencyIds": [
+            "12"
+          ]
+        }
+      }
+    },
+    {
+      "field": "humanSubject",
+      "length": 256,
+      "accepted": false,
+      "scope": {
+        "tenantId": "7",
+        "registrationKind": "CONSULTANT",
+        "initialGroup": "/human-roles/consultant",
+        "origin": {
+          "kind": "HUMAN_ADMIN",
+          "workflowId": "human:bounded",
+          "provenance": "human:verified",
+          "humanIssuer": "https://issuer.example/realms/oriso",
+          "humanSubject": "v:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "humanAuthority": "user-admin",
+          "agencyIds": [
+            "12"
+          ]
+        }
+      }
+    },
+    {
+      "field": "provenance",
+      "length": 512,
+      "accepted": true,
+      "scope": {
+        "tenantId": "7",
+        "registrationKind": "CONSULTANT",
+        "initialGroup": "/human-roles/consultant",
+        "origin": {
+          "kind": "HUMAN_ADMIN",
+          "workflowId": "human:bounded",
+          "provenance": "v:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "humanIssuer": "https://issuer.example/realms/oriso",
+          "humanSubject": "human-subject",
+          "humanAuthority": "user-admin",
+          "agencyIds": [
+            "12"
+          ]
+        }
+      }
+    },
+    {
+      "field": "provenance",
+      "length": 513,
+      "accepted": false,
+      "scope": {
+        "tenantId": "7",
+        "registrationKind": "CONSULTANT",
+        "initialGroup": "/human-roles/consultant",
+        "origin": {
+          "kind": "HUMAN_ADMIN",
+          "workflowId": "human:bounded",
+          "provenance": "v:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "humanIssuer": "https://issuer.example/realms/oriso",
+          "humanSubject": "human-subject",
+          "humanAuthority": "user-admin",
+          "agencyIds": [
+            "12"
+          ]
+        }
+      }
+    },
+    {
+      "field": "humanIssuer",
+      "length": 512,
+      "accepted": true,
+      "scope": {
+        "tenantId": "7",
+        "registrationKind": "CONSULTANT",
+        "initialGroup": "/human-roles/consultant",
+        "origin": {
+          "kind": "HUMAN_ADMIN",
+          "workflowId": "human:bounded",
+          "provenance": "human:verified",
+          "humanIssuer": "https://issuer.example/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "humanSubject": "human-subject",
+          "humanAuthority": "user-admin",
+          "agencyIds": [
+            "12"
+          ]
+        }
+      }
+    },
+    {
+      "field": "humanIssuer",
+      "length": 513,
+      "accepted": false,
+      "scope": {
+        "tenantId": "7",
+        "registrationKind": "CONSULTANT",
+        "initialGroup": "/human-roles/consultant",
+        "origin": {
+          "kind": "HUMAN_ADMIN",
+          "workflowId": "human:bounded",
+          "provenance": "human:verified",
+          "humanIssuer": "https://issuer.example/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "humanSubject": "human-subject",
+          "humanAuthority": "user-admin",
+          "agencyIds": [
+            "12"
+          ]
+        }
+      }
+    },
+    {
+      "field": "humanAuthority",
+      "length": 255,
+      "accepted": true,
+      "scope": {
+        "tenantId": "7",
+        "registrationKind": "CONSULTANT",
+        "initialGroup": "/human-roles/consultant",
+        "origin": {
+          "kind": "HUMAN_ADMIN",
+          "workflowId": "human:bounded",
+          "provenance": "human:verified",
+          "humanIssuer": "https://issuer.example/realms/oriso",
+          "humanSubject": "human-subject",
+          "humanAuthority": "v:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "agencyIds": [
+            "12"
+          ]
+        }
+      }
+    },
+    {
+      "field": "humanAuthority",
+      "length": 256,
+      "accepted": false,
+      "scope": {
+        "tenantId": "7",
+        "registrationKind": "CONSULTANT",
+        "initialGroup": "/human-roles/consultant",
+        "origin": {
+          "kind": "HUMAN_ADMIN",
+          "workflowId": "human:bounded",
+          "provenance": "human:verified",
+          "humanIssuer": "https://issuer.example/realms/oriso",
+          "humanSubject": "human-subject",
+          "humanAuthority": "v:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "agencyIds": [
+            "12"
+          ]
+        }
+      }
+    },
+    {
+      "field": "initialGroup",
+      "length": 512,
+      "accepted": true,
+      "scope": {
+        "tenantId": "7",
+        "registrationKind": "CONSULTANT",
+        "initialGroup": "/human-roles/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "origin": {
+          "kind": "HUMAN_ADMIN",
+          "workflowId": "human:bounded",
+          "provenance": "human:verified",
+          "humanIssuer": "https://issuer.example/realms/oriso",
+          "humanSubject": "human-subject",
+          "humanAuthority": "user-admin",
+          "agencyIds": [
+            "12"
+          ]
+        }
+      }
+    },
+    {
+      "field": "initialGroup",
+      "length": 513,
+      "accepted": false,
+      "scope": {
+        "tenantId": "7",
+        "registrationKind": "CONSULTANT",
+        "initialGroup": "/human-roles/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "origin": {
+          "kind": "HUMAN_ADMIN",
+          "workflowId": "human:bounded",
+          "provenance": "human:verified",
+          "humanIssuer": "https://issuer.example/realms/oriso",
+          "humanSubject": "human-subject",
+          "humanAuthority": "user-admin",
+          "agencyIds": [
+            "12"
+          ]
+        }
+      }
+    }
+  ]
+}

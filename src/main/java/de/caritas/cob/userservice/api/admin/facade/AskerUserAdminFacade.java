@@ -35,12 +35,52 @@ public class AskerUserAdminFacade {
   private final @NonNull DeletionLifecycleService deletionLifecycleService;
   private final @NonNull AdminScope adminScope;
 
+  private de.caritas.cob.userservice.api.port.out.IdentityClientConfig identityMode;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  public void setIdentityMode(de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode) {
+    this.identityMode = java.util.Objects.requireNonNull(mode);
+  }
+
+  private de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ScopedAskerReactivation
+      scopedReactivation;
+
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  public void setScopedReactivation(
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ScopedAskerReactivation owner) {
+    this.scopedReactivation = java.util.Objects.requireNonNull(owner);
+  }
+
+  private de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+      preDeletion;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  public void setScopedPreDeletion(
+      @org.springframework.lang.Nullable
+          de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+              owner) {
+    preDeletion = owner;
+  }
+
   /**
    * Marks the asker with the given id for deletion.
    *
    * @param userId the id of the asker
    */
   public void markAskerForDeletion(String userId) {
+    if (identityMode != null && identityMode.isFiveActorMode()) {
+      if (preDeletion == null || !preDeletion.isFiveActorMode())
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+      preDeletion.startAdminAsker(
+          userId,
+          acknowledged ->
+              acknowledged.completeUser(
+                  user -> {
+                    deletionLifecycleService.beginUserDeletion(user, null);
+                    userService.saveUser(user);
+                  }));
+      return;
+    }
     adminScope.assertMay(Target.adviceSeeker(userId));
     User user =
         userService
@@ -78,6 +118,12 @@ public class AskerUserAdminFacade {
    * <p>Username alone is deliberately insufficient because historic data permits duplicates.
    */
   public void reactivateAsker(AskerReactivationRequestDTO request) {
+    if (identityMode != null && identityMode.isFiveActorMode()) {
+      if (scopedReactivation == null)
+        throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+      scopedReactivation.reactivate(request);
+      return;
+    }
     assertCallerMayAccessTenant(request.getTenantId());
     var operation =
         identityReactivationSagaStore.begin(
@@ -112,5 +158,14 @@ public class AskerUserAdminFacade {
     asker.setUsername(this.usernameTranscoder.decodeUsername(user.getUsername()));
     asker.setEmail(user.getEmail());
     return asker;
+  }
+
+  /** Read-only startup check of the actual installed production consumers. */
+  public boolean hasScopedAccountBindings(
+      de.caritas.cob.userservice.api.port.out.IdentityClientConfig mode,
+      de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance owner,
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ScopedAskerReactivation
+          reactivation) {
+    return identityMode == mode && preDeletion == owner && scopedReactivation == reactivation;
   }
 }

@@ -49,6 +49,11 @@ class ConsultantImportServiceTest {
   @Mock private UserHelper userHelper;
   @Mock private CreateConsultantSaga createConsultantSaga;
   @Mock private ConsultantAgencyRelationCreatorService consultantAgencyRelationCreatorService;
+  @Mock private de.caritas.cob.userservice.api.port.out.IdentityClientConfig lifecycleIdentities;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.accountpolicy.CheckedAccountPolicyReads
+      checkedPolicyReads;
 
   @TempDir Path tempDir;
 
@@ -63,6 +68,35 @@ class ConsultantImportServiceTest {
     ReflectionTestUtils.setField(
         consultantImportService, "protocolFilename", protocolFile.toString());
     ReflectionTestUtils.setField(consultantImportService, "multiTenancyEnabled", false);
+    ReflectionTestUtils.setField(
+        consultantImportService, "lifecycleIdentities", lifecycleIdentities);
+    ReflectionTestUtils.setField(consultantImportService, "checkedPolicyReads", checkedPolicyReads);
+  }
+
+  @Test
+  void fiveActorNoArgumentEntryRejectsBeforeReadingAnyConfiguredFile() {
+    ReflectionTestUtils.setField(
+        consultantImportService,
+        "lifecycleEnvironment",
+        new org.springframework.mock.env.MockEnvironment()
+            .withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS"));
+    ReflectionTestUtils.setField(
+        consultantImportService,
+        "importFilename",
+        tempDir.resolve("must-not-be-opened.csv").toString());
+    assertThrows(
+        org.springframework.security.access.AccessDeniedException.class,
+        consultantImportService::startImport);
+    org.mockito.Mockito.verifyNoInteractions(
+        identityUsernameAvailability,
+        consultantService,
+        consultingTypeManager,
+        agencyService,
+        userHelper,
+        createConsultantSaga,
+        consultantAgencyRelationCreatorService,
+        lifecycleIdentities,
+        checkedPolicyReads);
   }
 
   // ---------------------------------------------------------------------------
@@ -132,7 +166,8 @@ class ConsultantImportServiceTest {
 
     consultantImportService.startImport();
 
-    verify(createConsultantSaga, never()).createNewConsultant(any(), any());
+    verify(createConsultantSaga, never())
+        .createNewConsultant(any(ConsultantImportService.ImportRecord.class), any());
   }
 
   // ---------------------------------------------------------------------------
@@ -169,7 +204,8 @@ class ConsultantImportServiceTest {
 
     consultantImportService.startImport();
 
-    verify(createConsultantSaga, never()).createNewConsultant(any(), any());
+    verify(createConsultantSaga, never())
+        .createNewConsultant(any(ConsultantImportService.ImportRecord.class), any());
   }
 
   // ---------------------------------------------------------------------------
@@ -187,7 +223,8 @@ class ConsultantImportServiceTest {
 
     consultantImportService.startImport();
 
-    verify(createConsultantSaga, never()).createNewConsultant(any(), any());
+    verify(createConsultantSaga, never())
+        .createNewConsultant(any(ConsultantImportService.ImportRecord.class), any());
   }
 
   // ---------------------------------------------------------------------------
@@ -207,11 +244,14 @@ class ConsultantImportServiceTest {
     when(identityUsernameAvailability.isUsernameAvailable("brandnewuser")).thenReturn(true);
     Consultant newConsultant = new Consultant();
     newConsultant.setId("new-id-456");
-    when(createConsultantSaga.createNewConsultant(any(), any())).thenReturn(newConsultant);
+    when(createConsultantSaga.createNewConsultant(
+            any(ConsultantImportService.ImportRecord.class), any()))
+        .thenReturn(newConsultant);
 
     consultantImportService.startImport();
 
-    verify(createConsultantSaga).createNewConsultant(any(), any());
+    verify(createConsultantSaga)
+        .createNewConsultant(any(ConsultantImportService.ImportRecord.class), any());
     verify(consultantAgencyRelationCreatorService)
         .createConsultantAgencyRelations(eq("new-id-456"), any(), any(), any());
   }
@@ -249,16 +289,207 @@ class ConsultantImportServiceTest {
     when(identityUsernameAvailability.isUsernameAvailable("tenantuser")).thenReturn(true);
     Consultant newConsultant = new Consultant();
     newConsultant.setId("tenant-cons-id");
-    when(createConsultantSaga.createNewConsultant(any(), any())).thenReturn(newConsultant);
+    when(createConsultantSaga.createNewConsultant(
+            any(ConsultantImportService.ImportRecord.class), any()))
+        .thenReturn(newConsultant);
 
     consultantImportService.startImport();
 
-    verify(createConsultantSaga).createNewConsultant(any(), any());
+    verify(createConsultantSaga)
+        .createNewConsultant(any(ConsultantImportService.ImportRecord.class), any());
   }
 
   // ---------------------------------------------------------------------------
   // helpers
   // ---------------------------------------------------------------------------
+
+  @Test
+  void fiveActorSingleTenantImportBindsTheCurrentAgencyTenantAndAllRelationsBeforeActivation()
+      throws Exception {
+    org.junit.jupiter.api.Assertions.assertSame(
+        lifecycleIdentities,
+        ReflectionTestUtils.getField(consultantImportService, "lifecycleIdentities"));
+    ReflectionTestUtils.setField(
+        consultantImportService,
+        "lifecycleEnvironment",
+        new org.springframework.mock.env.MockEnvironment()
+            .withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS"));
+    // A quoted newline spans physical lines but remains logical CSV record one.
+    String csv = ",1,validuser,\"First\nLine\",Last,valid@example.com,nein,,10;ordinary\r\n";
+    var capturedOrigin =
+        new java.util.concurrent.atomic.AtomicReference<
+            ConsultantImportService.CheckedPolicyOrigin>();
+    when(checkedPolicyReads.withConfiguredImport(any(), any()))
+        .thenAnswer(
+            call -> {
+              ConsultantImportService.CheckedPolicyOrigin origin = call.getArgument(0);
+              origin.requireLive();
+              org.junit.jupiter.api.Assertions.assertEquals(5L, origin.tenantId());
+              org.junit.jupiter.api.Assertions.assertEquals(List.of(10L), origin.agencyIds());
+              org.junit.jupiter.api.Assertions.assertEquals("CONSULTANT", origin.profile());
+              org.junit.jupiter.api.Assertions.assertTrue(origin.reference().endsWith(":1"));
+              capturedOrigin.set(origin);
+              return ((java.util.function.Supplier<?>) call.getArgument(1)).get();
+            });
+    writeCsv(csv);
+    when(userHelper.isUsernameValid("validuser")).thenReturn(true);
+    when(userHelper.isValidEmail("valid@example.com")).thenReturn(true);
+    var agency = agencyWithConsultingType(1);
+    agency.setTenantId(5L);
+    when(lifecycleIdentities.isFiveActorMode()).thenReturn(true);
+    when(lifecycleIdentities.taskAccessToken(
+            de.caritas.cob.userservice.api.config.auth.TaskPurpose.RUNTIME_POLICY))
+        .thenReturn("synthetic-runtime-token");
+    when(agencyService.getAgenciesForOrdinaryCreation(List.of(10L), "synthetic-runtime-token"))
+        .thenReturn(List.of(agency));
+    when(consultingTypeManager.getConsultingTypeSettings(1))
+        .thenReturn(typeWithRoles(Map.of("ordinary", List.of("consultant"))));
+    when(consultantService.findConsultantByUsernameOrEmail(anyString(), anyString()))
+        .thenReturn(Optional.empty());
+    when(createConsultantSaga.createImportedConsultant(
+            any(), any(), any(), anyString(), org.mockito.ArgumentMatchers.anyLong(), any()))
+        .thenAnswer(
+            call -> {
+              var created = new Consultant();
+              created.setId("new-imported-consultant");
+              java.util.function.Consumer<Consultant> allRelations = call.getArgument(5);
+              allRelations.accept(created);
+              return created;
+            });
+
+    try (var trigger =
+        de.caritas.cob.userservice.api.config.auth.ConfiguredImportTriggerFixture.verified()) {
+      consultantImportService.startImport(trigger);
+    }
+
+    org.junit.jupiter.api.Assertions.assertNotNull(capturedOrigin.get());
+    org.junit.jupiter.api.Assertions.assertThrows(
+        org.springframework.security.access.AccessDeniedException.class,
+        () -> capturedOrigin.get().requireLive());
+
+    var row = org.mockito.ArgumentCaptor.forClass(ConsultantImportService.ImportRecord.class);
+    String digest =
+        java.util.HexFormat.of()
+            .formatHex(
+                java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(csv.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    verify(createConsultantSaga)
+        .createImportedConsultant(
+            row.capture(),
+            eq(java.util.Set.of("consultant")),
+            eq(java.util.Set.of(10L)),
+            eq(digest),
+            eq(1L),
+            any());
+    org.junit.jupiter.api.Assertions.assertEquals(5L, row.getValue().getTenantId());
+    org.junit.jupiter.api.Assertions.assertEquals("First\nLine", row.getValue().getFirstName());
+    verify(consultantAgencyRelationCreatorService)
+        .createConsultantAgencyRelations(
+            eq("new-imported-consultant"),
+            eq(java.util.Set.of(10L)),
+            eq(java.util.Set.of("consultant")),
+            any());
+    verify(identityUsernameAvailability, never()).isUsernameAvailable(anyString());
+    verify(createConsultantSaga, never())
+        .createNewConsultant(any(ConsultantImportService.ImportRecord.class), any());
+  }
+
+  @Test
+  void fiveActorExistingImportRefusesForeignConsultantBeforeAnyRelationMutation() throws Exception {
+    configuredExistingImport(7L);
+    try (var trigger =
+        de.caritas.cob.userservice.api.config.auth.ConfiguredImportTriggerFixture.verified()) {
+      consultantImportService.startImport(trigger);
+    }
+    verify(consultantAgencyRelationCreatorService, never())
+        .createConsultantAgencyRelations(anyString(), any(), any(), any());
+    verify(createConsultantSaga, never())
+        .createNewConsultant(any(ConsultantImportService.ImportRecord.class), any());
+    verify(identityUsernameAvailability, never()).isUsernameAvailable(anyString());
+  }
+
+  @Test
+  void fiveActorExistingImportRefusesUnassignedConsultantBeforeAnyRelationMutation()
+      throws Exception {
+    configuredExistingImport(null);
+    try (var trigger =
+        de.caritas.cob.userservice.api.config.auth.ConfiguredImportTriggerFixture.verified()) {
+      consultantImportService.startImport(trigger);
+    }
+    verify(consultantAgencyRelationCreatorService, never())
+        .createConsultantAgencyRelations(anyString(), any(), any(), any());
+    verify(createConsultantSaga, never())
+        .createNewConsultant(any(ConsultantImportService.ImportRecord.class), any());
+    verify(identityUsernameAvailability, never()).isUsernameAvailable(anyString());
+  }
+
+  @Test
+  void fiveActorExistingImportKeepsExactConsultantRowAndAgencyTenantBinding() throws Exception {
+    configuredExistingImport(5L);
+    var owner =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.service.identity.ExistingConsultantImportMaintenance
+                .class);
+    ReflectionTestUtils.setField(consultantImportService, "existingImports", owner);
+    var captured =
+        new java.util.concurrent.atomic.AtomicReference<
+            ConsultantImportService.ScopedExistingImport>();
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              ConsultantImportService.ScopedExistingImport source = call.getArgument(0);
+              source.requireLive();
+              org.junit.jupiter.api.Assertions.assertEquals(
+                  "3057c2a7-635f-4bb9-a976-48ac82ec3dda", source.accountId());
+              org.junit.jupiter.api.Assertions.assertEquals(5L, source.tenantId());
+              org.junit.jupiter.api.Assertions.assertEquals(
+                  List.of("consultant"), source.requiredRoles());
+              org.junit.jupiter.api.Assertions.assertEquals(10L, source.agencies().getFirst().id());
+              org.junit.jupiter.api.Assertions.assertEquals(
+                  5L, source.agencies().getFirst().tenant());
+              captured.set(source);
+              return null;
+            })
+        .when(owner)
+        .apply(any());
+    try (var trigger =
+        de.caritas.cob.userservice.api.config.auth.ConfiguredImportTriggerFixture.verified()) {
+      consultantImportService.startImport(trigger);
+    }
+    verify(owner).apply(any());
+    assertThrows(RuntimeException.class, () -> captured.get().requireLive());
+    verify(consultantAgencyRelationCreatorService, never())
+        .createConsultantAgencyRelations(anyString(), any(), any(), any());
+    verify(createConsultantSaga, never())
+        .createNewConsultant(any(ConsultantImportService.ImportRecord.class), any());
+    verify(identityUsernameAvailability, never()).isUsernameAvailable(anyString());
+  }
+
+  private void configuredExistingImport(Long currentTenant) throws IOException {
+    ReflectionTestUtils.setField(
+        consultantImportService,
+        "lifecycleEnvironment",
+        new org.springframework.mock.env.MockEnvironment()
+            .withProperty("TASK_IDENTITY_MODEL", "FIVE_ACTORS"));
+    writeCsv(
+        "3057c2a7-635f-4bb9-a976-48ac82ec3dda,1,someuser,First,Last,valid@example.com,nein,,10;ordinary\r\n");
+    when(userHelper.isValidEmail("valid@example.com")).thenReturn(true);
+    var agency = agencyWithConsultingType(1);
+    agency.setTenantId(5L);
+    when(lifecycleIdentities.isFiveActorMode()).thenReturn(true);
+    when(lifecycleIdentities.taskAccessToken(
+            de.caritas.cob.userservice.api.config.auth.TaskPurpose.RUNTIME_POLICY))
+        .thenReturn("synthetic-runtime-token");
+    when(agencyService.getAgenciesForOrdinaryCreation(List.of(10L), "synthetic-runtime-token"))
+        .thenReturn(List.of(agency));
+    when(consultingTypeManager.getConsultingTypeSettings(1))
+        .thenReturn(typeWithRoles(Map.of("ordinary", List.of("consultant"))));
+    var existing = new Consultant();
+    existing.setId("3057c2a7-635f-4bb9-a976-48ac82ec3dda");
+    existing.setUsername(
+        new de.caritas.cob.userservice.api.helper.UsernameTranscoder().encodeUsername("someuser"));
+    existing.setTenantId(currentTenant);
+    when(consultantService.getConsultant(existing.getId())).thenReturn(Optional.of(existing));
+  }
 
   private void writeCsv(String content) throws IOException {
     Files.writeString(importFile, content);

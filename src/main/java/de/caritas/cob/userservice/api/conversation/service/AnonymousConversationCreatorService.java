@@ -49,7 +49,17 @@ public class AnonymousConversationCreatorService {
    */
   public Session createAnonymousConversation(
       UserDTO userDTO, AnonymousUserCredentials credentials) {
+    return createAnonymousConversation(userDTO, credentials, false);
+  }
 
+  /** The surrounding account journal owns rollback and exact downstream cleanup. */
+  public Session createOwnedAnonymousConversation(
+      UserDTO userDTO, AnonymousUserCredentials credentials) {
+    return createAnonymousConversation(userDTO, credentials, true);
+  }
+
+  private Session createAnonymousConversation(
+      UserDTO userDTO, AnonymousUserCredentials credentials, boolean owned) {
     var user = obtainAnonymousUser(credentials);
     List<ConsultantAgency> consultantAgencies;
     Session session;
@@ -63,7 +73,7 @@ public class AnonymousConversationCreatorService {
       sessionService.saveSession(session);
 
     } catch (Exception ex) {
-      rollBackAnonymousConversation(userDTO, user);
+      if (!owned) rollBackAnonymousConversation(userDTO, user);
       throw new InternalServerErrorException(
           String.format(
               "Could not create session for user %s. %s", user.getUsername(), ex.getMessage()));

@@ -65,6 +65,8 @@ class MatrixCallNotificationIT {
   @Autowired private MatrixCallLifecycleService lifecycle;
   @Autowired private MatrixCallConversationResolver conversations;
   @Autowired private MatrixCallInviteNotificationService inviteService;
+  @MockitoBean private de.caritas.cob.userservice.api.port.out.IdentityClientConfig identityMode;
+
   @MockitoBean private MatrixSynapseService matrix;
   @MockitoBean private MatrixFeedUpdateSignalService feedUpdateSignals;
 

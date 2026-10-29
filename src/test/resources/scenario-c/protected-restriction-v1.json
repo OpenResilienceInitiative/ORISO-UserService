@@ -1,0 +1,120 @@
+{
+  "cancelledIssued": {
+    "approvalId": "b8ecea23-382e-4ca5-8b70-8ab0d8ab1b31",
+    "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "state": "CANCELLED",
+    "version": 0,
+    "boundAttemptId": null,
+    "fencedExecution": null,
+    "approvalReceipt": {
+      "approvalId": "b8ecea23-382e-4ca5-8b70-8ab0d8ab1b31",
+      "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "issuerSubject": "15a51abf-a6e7-4513-942a-d1ea209e00dd",
+      "bindingVersion": 3,
+      "profileVersion": 2,
+      "validUntil": "2030-01-02T03:04:05Z",
+      "approvalRequestDigest": "edc93d4485e41eeaccd0b2bbc1ea81f4e91926c3b86692defed2cbe0a4e3d4cf",
+      "receipt": "eyJhcHByb3ZhbElkIjoiYjhlY2VhMjMtMzgyZS00Y2E1LThiNzAtOGFiMGQ4YWIxYjMxIiwiYXBwcm92YWxSZXF1ZXN0RGlnZXN0IjoiZWRjOTNkNDQ4NWU0MWVlYWNjZDBiMmJiYzFlYTgxZjRlOTE5MjZjM2I4NjY5MmRlZmVkMmNiZTBhNGUzZDRjZiIsImJpbmRpbmdWZXJzaW9uIjozLCJpc3N1ZXJTdWJqZWN0IjoiMTVhNTFhYmYtYTZlNy00NTEzLTk0MmEtZDFlYTIwOWUwMGRkIiwicHJvZmlsZVZlcnNpb24iOjIsInNjb3BlRGlnZXN0IjoiYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSIsInZhbGlkVW50aWwiOiIyMDMwLTAxLTAyVDAzOjA0OjA1WiJ9.89df4c7fd63f1baa3952ac76d840935201795c14f9dc8245c6a4a796d123d8be"
+    },
+    "transitionReceipt": {
+      "realmId": "native-synthetic-realm",
+      "approvalId": "b8ecea23-382e-4ca5-8b70-8ab0d8ab1b31",
+      "workflowId": "f09e4bce-89bd-40cb-86eb-2ed8cf481290",
+      "inviteId": "73",
+      "authorizationRevision": 1,
+      "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "approvalRequestDigest": "edc93d4485e41eeaccd0b2bbc1ea81f4e91926c3b86692defed2cbe0a4e3d4cf",
+      "operation": "protected-invitation.cancel",
+      "cancellationId": "ff088602-ad24-41f4-8cbf-5e6bed44f6fa",
+      "reason": "REVOKED",
+      "state": "CANCELLED",
+      "actor": "SETUP",
+      "actorSubject": "4ebf5f9c-a3f4-41fe-8a22-ec1f511d77ed",
+      "actorIssuer": "https://auth.example.test/realms/synthetic",
+      "actorClient": "backend-setup",
+      "actorBindingVersion": null,
+      "receipt": "eyJhY3RvciI6IlNFVFVQIiwiYWN0b3JCaW5kaW5nVmVyc2lvbiI6bnVsbCwiYWN0b3JDbGllbnQiOiJiYWNrZW5kLXNldHVwIiwiYWN0b3JJc3N1ZXIiOiJodHRwczovL2F1dGguZXhhbXBsZS50ZXN0L3JlYWxtcy9zeW50aGV0aWMiLCJhY3RvclN1YmplY3QiOiI0ZWJmNWY5Yy1hM2Y0LTQxZmUtOGEyMi1lYzFmNTExZDc3ZWQiLCJhcHByb3ZhbElkIjoiYjhlY2VhMjMtMzgyZS00Y2E1LThiNzAtOGFiMGQ4YWIxYjMxIiwiYXBwcm92YWxSZXF1ZXN0RGlnZXN0IjoiZWRjOTNkNDQ4NWU0MWVlYWNjZDBiMmJiYzFlYTgxZjRlOTE5MjZjM2I4NjY5MmRlZmVkMmNiZTBhNGUzZDRjZiIsImF1dGhvcml6YXRpb25SZXZpc2lvbiI6MSwiY2FuY2VsbGF0aW9uSWQiOiJmZjA4ODYwMi1hZDI0LTQxZjQtOGNiZi01ZTZiZWQ0NGY2ZmEiLCJpbnZpdGVJZCI6IjczIiwib3BlcmF0aW9uIjoicHJvdGVjdGVkLWludml0YXRpb24uY2FuY2VsIiwicmVhbG1JZCI6Im5hdGl2ZS1zeW50aGV0aWMtcmVhbG0iLCJyZWFzb24iOiJSRVZPS0VEIiwic2NvcGVEaWdlc3QiOiJhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIiwic3RhdGUiOiJDQU5DRUxMRUQiLCJ3b3JrZmxvd0lkIjoiZjA5ZTRiY2UtODliZC00MGNiLTg2ZWItMmVkOGNmNDgxMjkwIn0.a9ec6fb708a7e0d8ef2a39126a03592245146a0b2bffeed649636fce8f09297a"
+    },
+    "approvalRequestDigest": "edc93d4485e41eeaccd0b2bbc1ea81f4e91926c3b86692defed2cbe0a4e3d4cf"
+  },
+  "expired": {
+    "approvalId": "b8ecea23-382e-4ca5-8b70-8ab0d8ab1b31",
+    "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "state": "EXPIRED",
+    "version": 0,
+    "boundAttemptId": null,
+    "fencedExecution": null,
+    "approvalReceipt": {
+      "approvalId": "b8ecea23-382e-4ca5-8b70-8ab0d8ab1b31",
+      "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "issuerSubject": "15a51abf-a6e7-4513-942a-d1ea209e00dd",
+      "bindingVersion": 3,
+      "profileVersion": 2,
+      "validUntil": "2030-01-02T03:04:05Z",
+      "approvalRequestDigest": "edc93d4485e41eeaccd0b2bbc1ea81f4e91926c3b86692defed2cbe0a4e3d4cf",
+      "receipt": "eyJhcHByb3ZhbElkIjoiYjhlY2VhMjMtMzgyZS00Y2E1LThiNzAtOGFiMGQ4YWIxYjMxIiwiYXBwcm92YWxSZXF1ZXN0RGlnZXN0IjoiZWRjOTNkNDQ4NWU0MWVlYWNjZDBiMmJiYzFlYTgxZjRlOTE5MjZjM2I4NjY5MmRlZmVkMmNiZTBhNGUzZDRjZiIsImJpbmRpbmdWZXJzaW9uIjozLCJpc3N1ZXJTdWJqZWN0IjoiMTVhNTFhYmYtYTZlNy00NTEzLTk0MmEtZDFlYTIwOWUwMGRkIiwicHJvZmlsZVZlcnNpb24iOjIsInNjb3BlRGlnZXN0IjoiYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSIsInZhbGlkVW50aWwiOiIyMDMwLTAxLTAyVDAzOjA0OjA1WiJ9.89df4c7fd63f1baa3952ac76d840935201795c14f9dc8245c6a4a796d123d8be"
+    },
+    "transitionReceipt": {
+      "realmId": "native-synthetic-realm",
+      "approvalId": "b8ecea23-382e-4ca5-8b70-8ab0d8ab1b31",
+      "workflowId": "f09e4bce-89bd-40cb-86eb-2ed8cf481290",
+      "inviteId": "73",
+      "authorizationRevision": 1,
+      "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "approvalRequestDigest": "edc93d4485e41eeaccd0b2bbc1ea81f4e91926c3b86692defed2cbe0a4e3d4cf",
+      "operation": "protected-invitation.expire",
+      "reason": "EXPIRED",
+      "state": "EXPIRED",
+      "actor": "RECEIVER",
+      "expiryId": "99fbc468-a90c-4435-bb22-dc2c78dd2311",
+      "validUntil": "2030-01-02T03:04:05Z",
+      "expiredAt": "2030-01-03T00:00:00Z",
+      "receipt": "eyJhY3RvciI6IlJFQ0VJVkVSIiwiYXBwcm92YWxJZCI6ImI4ZWNlYTIzLTM4MmUtNGNhNS04YjcwLThhYjBkOGFiMWIzMSIsImFwcHJvdmFsUmVxdWVzdERpZ2VzdCI6ImVkYzkzZDQ0ODVlNDFlZWFjY2QwYjJiYmMxZWE4MWY0ZTkxOTI2YzNiODY2OTJkZWZlZDJjYmUwYTRlM2Q0Y2YiLCJhdXRob3JpemF0aW9uUmV2aXNpb24iOjEsImV4cGlyZWRBdCI6IjIwMzAtMDEtMDNUMDA6MDA6MDBaIiwiZXhwaXJ5SWQiOiI5OWZiYzQ2OC1hOTBjLTQ0MzUtYmIyMi1kYzJjNzhkZDIzMTEiLCJpbnZpdGVJZCI6IjczIiwib3BlcmF0aW9uIjoicHJvdGVjdGVkLWludml0YXRpb24uZXhwaXJlIiwicmVhbG1JZCI6Im5hdGl2ZS1zeW50aGV0aWMtcmVhbG0iLCJyZWFzb24iOiJFWFBJUkVEIiwic2NvcGVEaWdlc3QiOiJhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIiwic3RhdGUiOiJFWFBJUkVEIiwidmFsaWRVbnRpbCI6IjIwMzAtMDEtMDJUMDM6MDQ6MDVaIiwid29ya2Zsb3dJZCI6ImYwOWU0YmNlLTg5YmQtNDBjYi04NmViLTJlZDhjZjQ4MTI5MCJ9.cacc3f9ea57685da57b2ddbb0d1083a826ac91eac6c21c4b6d124c3a910bbf54"
+    },
+    "approvalRequestDigest": "edc93d4485e41eeaccd0b2bbc1ea81f4e91926c3b86692defed2cbe0a4e3d4cf"
+  },
+  "expiredBound": {
+    "approvalId": "b8ecea23-382e-4ca5-8b70-8ab0d8ab1b31",
+    "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "state": "EXPIRED",
+    "version": 0,
+    "boundAttemptId": "d81f08e6-3226-45f8-a50f-c46f352476e1",
+    "fencedExecution": {
+      "executionId": "987c6183-aee5-47f6-b7fa-13978c23f97e",
+      "generation": 1
+    },
+    "approvalReceipt": {
+      "approvalId": "b8ecea23-382e-4ca5-8b70-8ab0d8ab1b31",
+      "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "issuerSubject": "15a51abf-a6e7-4513-942a-d1ea209e00dd",
+      "bindingVersion": 3,
+      "profileVersion": 2,
+      "validUntil": "2030-01-02T03:04:05Z",
+      "approvalRequestDigest": "edc93d4485e41eeaccd0b2bbc1ea81f4e91926c3b86692defed2cbe0a4e3d4cf",
+      "receipt": "eyJhcHByb3ZhbElkIjoiYjhlY2VhMjMtMzgyZS00Y2E1LThiNzAtOGFiMGQ4YWIxYjMxIiwiYXBwcm92YWxSZXF1ZXN0RGlnZXN0IjoiZWRjOTNkNDQ4NWU0MWVlYWNjZDBiMmJiYzFlYTgxZjRlOTE5MjZjM2I4NjY5MmRlZmVkMmNiZTBhNGUzZDRjZiIsImJpbmRpbmdWZXJzaW9uIjozLCJpc3N1ZXJTdWJqZWN0IjoiMTVhNTFhYmYtYTZlNy00NTEzLTk0MmEtZDFlYTIwOWUwMGRkIiwicHJvZmlsZVZlcnNpb24iOjIsInNjb3BlRGlnZXN0IjoiYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSIsInZhbGlkVW50aWwiOiIyMDMwLTAxLTAyVDAzOjA0OjA1WiJ9.89df4c7fd63f1baa3952ac76d840935201795c14f9dc8245c6a4a796d123d8be"
+    },
+    "transitionReceipt": {
+      "realmId": "native-synthetic-realm",
+      "approvalId": "b8ecea23-382e-4ca5-8b70-8ab0d8ab1b31",
+      "workflowId": "f09e4bce-89bd-40cb-86eb-2ed8cf481290",
+      "inviteId": "73",
+      "authorizationRevision": 1,
+      "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "approvalRequestDigest": "edc93d4485e41eeaccd0b2bbc1ea81f4e91926c3b86692defed2cbe0a4e3d4cf",
+      "operation": "protected-invitation.expire",
+      "reason": "EXPIRED",
+      "state": "EXPIRED",
+      "actor": "RECEIVER",
+      "expiryId": "99fbc468-a90c-4435-bb22-dc2c78dd2311",
+      "validUntil": "2030-01-02T03:04:05Z",
+      "expiredAt": "2030-01-03T00:00:00Z",
+      "boundAttemptId": "d81f08e6-3226-45f8-a50f-c46f352476e1",
+      "fencedExecution": {
+        "executionId": "987c6183-aee5-47f6-b7fa-13978c23f97e",
+        "generation": 1
+      },
+      "receipt": "eyJhY3RvciI6IlJFQ0VJVkVSIiwiYXBwcm92YWxJZCI6ImI4ZWNlYTIzLTM4MmUtNGNhNS04YjcwLThhYjBkOGFiMWIzMSIsImFwcHJvdmFsUmVxdWVzdERpZ2VzdCI6ImVkYzkzZDQ0ODVlNDFlZWFjY2QwYjJiYmMxZWE4MWY0ZTkxOTI2YzNiODY2OTJkZWZlZDJjYmUwYTRlM2Q0Y2YiLCJhdXRob3JpemF0aW9uUmV2aXNpb24iOjEsImJvdW5kQXR0ZW1wdElkIjoiZDgxZjA4ZTYtMzIyNi00NWY4LWE1MGYtYzQ2ZjM1MjQ3NmUxIiwiZXhwaXJlZEF0IjoiMjAzMC0wMS0wM1QwMDowMDowMFoiLCJleHBpcnlJZCI6Ijk5ZmJjNDY4LWE5MGMtNDQzNS1iYjIyLWRjMmM3OGRkMjMxMSIsImZlbmNlZEV4ZWN1dGlvbiI6eyJleGVjdXRpb25JZCI6Ijk4N2M2MTgzLWFlZTUtNDdmNi1iN2ZhLTEzOTc4YzIzZjk3ZSIsImdlbmVyYXRpb24iOjF9LCJpbnZpdGVJZCI6IjczIiwib3BlcmF0aW9uIjoicHJvdGVjdGVkLWludml0YXRpb24uZXhwaXJlIiwicmVhbG1JZCI6Im5hdGl2ZS1zeW50aGV0aWMtcmVhbG0iLCJyZWFzb24iOiJFWFBJUkVEIiwic2NvcGVEaWdlc3QiOiJhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIiwic3RhdGUiOiJFWFBJUkVEIiwidmFsaWRVbnRpbCI6IjIwMzAtMDEtMDJUMDM6MDQ6MDVaIiwid29ya2Zsb3dJZCI6ImYwOWU0YmNlLTg5YmQtNDBjYi04NmViLTJlZDhjZjQ4MTI5MCJ9.fdfff5a25c56098475e8b4f1269e07fb2c1d73a49752d426f72b69a17e4d04dc"
+    },
+    "approvalRequestDigest": "edc93d4485e41eeaccd0b2bbc1ea81f4e91926c3b86692defed2cbe0a4e3d4cf"
+  }
+}

@@ -18,7 +18,9 @@ public class SensitiveRequestBodyLoggingAdvice extends RequestBodyAdviceAdapter 
       MethodParameter methodParameter,
       Type targetType,
       Class<? extends HttpMessageConverter<?>> converterType) {
-    return PasswordDTO.class.equals(targetType);
+    return PasswordDTO.class.equals(targetType)
+        || de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO.class.equals(
+            targetType);
   }
 
   @Override

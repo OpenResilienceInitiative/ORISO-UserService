@@ -15,6 +15,38 @@ public interface AccountInactivityEffects {
     UNKNOWN
   }
 
+  default Set<Role> currentRoles(AccountInactivityService.ClaimedWork work) {
+    throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+  }
+
+  default boolean suspend(AccountInactivityService.ClaimedWork work) {
+    throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+  }
+
+  default boolean reactivate(AccountInactivityService.ClaimedWork work) {
+    throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+  }
+
+  default boolean delete(AccountInactivityService.ClaimedWork work) {
+    throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+  }
+
+  default void captureDeletionMedia(
+      AccountInactivityService.ClaimedWork work,
+      de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance
+              .AcknowledgedDeletion
+          frame) {
+    throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+  }
+
+  default void forgetDeletionMedia(
+      AccountInactivityService.ClaimedWork work,
+      de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance
+              .AcknowledgedDeletion
+          frame) {
+    throw new de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException();
+  }
+
   Set<Role> currentRoles(String identityId);
 
   boolean delete(String identityId);

@@ -58,7 +58,7 @@ public class DeleteCaseHandoverRequestsForConsultantAction
                       map -> List.copyOf(map.values())));
       this.caseHandoverRequestRepository.deleteAll(caseHandoverRequests);
     } catch (Exception e) {
-      log.error("UserService delete workflow error: ", e);
+      actionTarget.logFailure(log, "UserService delete workflow error: ", e);
       actionTarget
           .getDeletionWorkflowErrors()
           .add(

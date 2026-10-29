@@ -8,6 +8,12 @@ public interface MatrixUserClient {
   String createUserId(String username, String password, String displayName)
       throws MatrixCreateUserException;
 
+  /** Fixed-diagnostic creation for an explicitly tracked invocation. */
+  default String createUserIdTracked(String username, String password, String displayName)
+      throws MatrixCreateUserException {
+    throw new MatrixCreateUserException("Tracked Matrix creation is unavailable");
+  }
+
   /**
    * Mints a chat account, refusing rather than reactivating one the homeserver already holds. For
    * callers that repair an existing consultant: {@link #createUserId} answers a taken localpart by
@@ -22,6 +28,12 @@ public interface MatrixUserClient {
    */
   String createUserIdWithoutReactivation(String username, String password, String displayName)
       throws MatrixCreateUserException;
+
+  /** Explicit tracked transport retains the refusal to reactivate an existing chat identity. */
+  default String createUserIdWithoutReactivationTracked(
+      String username, String password, String displayName) throws MatrixCreateUserException {
+    throw new MatrixCreateUserException("Tracked Matrix creation is unavailable");
+  }
 
   /**
    * Returns true for an existing account and false only for confirmed absence. Implementations must

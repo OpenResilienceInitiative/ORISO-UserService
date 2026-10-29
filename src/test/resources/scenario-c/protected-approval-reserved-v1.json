@@ -1,0 +1,57 @@
+{
+  "syntheticPublicKeyHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "approvalId": "b8ecea23-382e-4ca5-8b70-8ab0d8ab1b31",
+  "issuerRealm": "native-synthetic-realm",
+  "issuerSubject": "15a51abf-a6e7-4513-942a-d1ea209e00dd",
+  "request": {
+    "scope": {
+      "workflowId": "f09e4bce-89bd-40cb-86eb-2ed8cf481290",
+      "inviteId": "73",
+      "authorizationRevision": 1,
+      "purpose": "INVITE",
+      "recipient": "ada@example.test",
+      "protectedKind": "TENANT_ADMIN",
+      "targetTenantIds": [
+        7
+      ],
+      "tenantMode": "RESERVED_NEW",
+      "reservationBinding": {
+        "tenantId": 7,
+        "invitationWorkflowId": "f09e4bce-89bd-40cb-86eb-2ed8cf481290",
+        "capabilityDigest": "50f8a942dde59267a0b276f097bc0399f22d73927bc295d3bb1aeeec7fed7fba"
+      },
+      "agencyBinding": {
+        "agencyId": 11,
+        "tenantId": 7
+      },
+      "protectedProfileId": "tenant-owner",
+      "validUntil": "2030-01-02T03:04:05Z",
+      "creatorClient": "backend-account-create",
+      "creatorSubject": "259d23a0-5b65-4559-8cc1-aa5683961d02",
+      "setupClient": "backend-setup",
+      "setupSubject": "4ebf5f9c-a3f4-41fe-8a22-ec1f511d77ed"
+    }
+  },
+  "requestDigest": "e0191d1cc67f562cedeb7706ffb13be4b1b98ed390207501c6225bed8716bc8a",
+  "response": {
+    "approvalId": "b8ecea23-382e-4ca5-8b70-8ab0d8ab1b31",
+    "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "state": "AUTHORIZED",
+    "version": 0,
+    "boundAttemptId": null,
+    "fencedExecution": null,
+    "approvalReceipt": {
+      "approvalId": "b8ecea23-382e-4ca5-8b70-8ab0d8ab1b31",
+      "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "issuerSubject": "15a51abf-a6e7-4513-942a-d1ea209e00dd",
+      "bindingVersion": 3,
+      "profileVersion": 2,
+      "validUntil": "2030-01-02T03:04:05Z",
+      "approvalRequestDigest": "e0191d1cc67f562cedeb7706ffb13be4b1b98ed390207501c6225bed8716bc8a",
+      "receipt": "eyJhcHByb3ZhbElkIjoiYjhlY2VhMjMtMzgyZS00Y2E1LThiNzAtOGFiMGQ4YWIxYjMxIiwiYXBwcm92YWxSZXF1ZXN0RGlnZXN0IjoiZTAxOTFkMWNjNjdmNTYyY2VkZWI3NzA2ZmZiMTNiZTRiMWI5OGVkMzkwMjA3NTAxYzYyMjViZWQ4NzE2YmM4YSIsImJpbmRpbmdWZXJzaW9uIjozLCJpc3N1ZXJTdWJqZWN0IjoiMTVhNTFhYmYtYTZlNy00NTEzLTk0MmEtZDFlYTIwOWUwMGRkIiwicHJvZmlsZVZlcnNpb24iOjIsInNjb3BlRGlnZXN0IjoiYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSIsInZhbGlkVW50aWwiOiIyMDMwLTAxLTAyVDAzOjA0OjA1WiJ9.fc2cb148dd10fc178835f75a000c289a4ab2328f3737405e4140b4711ebad401"
+    },
+    "transitionReceipt": null,
+    "approvalRequestDigest": "e0191d1cc67f562cedeb7706ffb13be4b1b98ed390207501c6225bed8716bc8a"
+  },
+  "syntheticReservationToken": "9eb4c868-16d4-4be5-8c0b-5fb9d2b866b3"
+}

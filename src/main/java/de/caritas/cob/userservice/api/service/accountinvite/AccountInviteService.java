@@ -1,5 +1,8 @@
 package de.caritas.cob.userservice.api.service.accountinvite;
 
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedInvitationCancellation;
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedInvitationCancellation.Reason;
+import de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.ProtectedInvitationMailOutbox;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
@@ -11,7 +14,13 @@ import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.InvitationRecipientAvailability;
+import de.caritas.cob.userservice.api.port.out.InvitationRecipientAvailability.Kind;
+import de.caritas.cob.userservice.api.port.out.InvitationRecipientAvailability.Target;
+import de.caritas.cob.userservice.api.port.out.InvitationRecipientAvailability.TenantMode;
+import de.caritas.cob.userservice.api.port.out.InvitationRecipientAvailabilityUnavailableException;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteAccessPolicy.InviteListScope;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteDelivery.Prepared;
@@ -22,25 +31,30 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
@@ -95,6 +109,74 @@ public class AccountInviteService {
   private final @NonNull UnitQueue unitQueue;
   private final @NonNull InviteDelivery delivery;
   private final @NonNull ExistingAccountSetupIssuer existingAccountSetupIssuer;
+  private ProtectedInvitationIssuance protectedInvitationIssuance;
+  private ProtectedInvitationCancellation protectedInvitationCancellation;
+  private IdentityClientConfig recipientIdentityMode;
+  private org.springframework.beans.factory.ObjectProvider<InvitationRecipientAvailability>
+      recipientAvailability;
+
+  @Autowired
+  void configureRecipientAvailability(
+      IdentityClientConfig mode,
+      org.springframework.beans.factory.ObjectProvider<InvitationRecipientAvailability>
+          availability) {
+    recipientIdentityMode = Objects.requireNonNull(mode);
+    recipientAvailability = Objects.requireNonNull(availability);
+  }
+
+  @jakarta.persistence.PersistenceContext
+  private jakarta.persistence.EntityManager protectedInviteEntityManager;
+
+  @Autowired(required = false)
+  void configureProtectedIssuance(ProtectedInvitationIssuance issuance) {
+    protectedInvitationIssuance = issuance;
+  }
+
+  @Autowired(required = false)
+  void configureProtectedCancellation(ProtectedInvitationCancellation cancellation) {
+    protectedInvitationCancellation = cancellation;
+  }
+
+  private ProtectedInvitationCancellation requireProtectedCancellation() {
+    if (protectedInvitationCancellation == null) {
+      throw new AccessDeniedException("Protected invitation cancellation is unavailable");
+    }
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException("Protected cancellation requires completed local SQL");
+    }
+    return protectedInvitationCancellation;
+  }
+
+  private ProtectedInvitationIssuance requireProtectedIssuance() {
+    if (protectedInvitationIssuance == null) {
+      throw new AccessDeniedException("Protected invitation approval is unavailable");
+    }
+    return protectedInvitationIssuance;
+  }
+
+  private InviteSendResult sendProtected(AccountInvite invite, InviteEmailTemplate template) {
+    return sendProtected(invite, () -> template);
+  }
+
+  private InviteSendResult sendProtected(
+      AccountInvite invite, Supplier<InviteEmailTemplate> template) {
+    return requireProtectedIssuance()
+        .send(
+            invite,
+            template,
+            (current, selected) -> {
+              InviteEmailTemplate authorized = findTemplate(selected.getId());
+              Prepared prepared =
+                  delivery.prepareProtected(current, authorized, LocalDateTime.now());
+              return new ProtectedInvitationMailOutbox.Mail(
+                  prepared.rawToken(),
+                  prepared.acceptUrl(),
+                  prepared.subject(),
+                  prepared.body(),
+                  authorized.getId(),
+                  authorized.getLanguage());
+            });
+  }
 
   @Transactional
   public AccountInvite createInvite(CreateAccountInviteCommand requestedCommand) {
@@ -106,12 +188,13 @@ public class AccountInviteService {
     }
     Supplier<Optional<AgencyFacts.Agency>> agency = oneLookupOf(requestedCommand);
     // Cross-Träger guard: the target tenant, agency and role come from the request body.
-    CreateAccountInviteCommand command = accessPolicy.authorizeCreate(requestedCommand);
+    CreateAccountInviteCommand command =
+        canonicalProtected(accessPolicy.authorizeCreate(requestedCommand));
     if (isBlank(command.recipientEmail())) {
       throw new BadRequestException("recipientEmail is required");
     }
     InviteTarget target = targets.resolve(command, agency);
-    verifyRecipientEmailAvailable(command.recipientEmail());
+    verifyRecipientEmailAvailable(command, target);
     TopicPermission topicPermission =
         TopicPermissionPolicy.decide(
             command.targetRole(),
@@ -145,6 +228,11 @@ public class AccountInviteService {
   public InviteSendResult createAndSendInvite(CreateAccountInviteCommand command, Long templateId) {
     // Before the invite exists: a refused template must not reserve ids or write a row.
     InviteEmailTemplate template = findTemplate(templateId);
+    if (command != null && delivery.protects(command.targetRole())) {
+      requireProtectedIssuance();
+      AccountInvite draft = requiresNewTransaction().execute(transaction -> createInvite(command));
+      return sendProtected(draft, template);
+    }
     Prepared prepared;
     try {
       prepared =
@@ -245,6 +333,30 @@ public class AccountInviteService {
         .build();
   }
 
+  private CreateAccountInviteCommand canonicalProtected(CreateAccountInviteCommand command) {
+    if (!delivery.protects(command.targetRole())) return command;
+    Long tenant = command.tenantId();
+    if (command.targetRole() == AccountInviteTargetRole.PLATFORM_ADMIN) {
+      if (tenant != null && tenant != 0L) {
+        throw new BadRequestException("A platform invitation requires tenant zero");
+      }
+      tenant = 0L;
+    }
+    return new CreateAccountInviteCommand(
+        command.targetRole(),
+        tenant,
+        command.recipientEmail() == null ? null : normalizeEmail(command.recipientEmail()),
+        command.firstName(),
+        command.lastName(),
+        command.agencyId(),
+        command.departmentId(),
+        command.expiresInDays(),
+        command.tenantIdAllocationMode(),
+        command.agencyIdAllocationMode(),
+        command.alsoCounsellor(),
+        command.topicPermission());
+  }
+
   private AccountInvite save(AccountInvite invite) {
     try {
       AccountInvite saved = accountInviteRepository.save(invite);
@@ -306,9 +418,18 @@ public class AccountInviteService {
    * invite table (promised addresses). Checked on the admin-only create call, so it is no
    * enumeration oracle; the unique active-recipient key closes the race between replicas.
    */
-  private void verifyRecipientEmailAvailable(String recipientEmail) {
-    String normalized = normalizeEmail(recipientEmail);
-    if (identityEmailOwnerLookup.findByEmail(normalized).isPresent()) {
+  private void verifyRecipientEmailAvailable(
+      CreateAccountInviteCommand command, InviteTarget target) {
+    String normalized = normalizeEmail(command.recipientEmail());
+    if (recipientEmailInUse(
+        normalized,
+        () ->
+            recipientTarget(
+                command.targetRole(),
+                command.alsoCounsellor(),
+                target.tenantId(),
+                target.reservation().newTenant()
+                    || IdAllocationMode.reservesAnId(command.tenantIdAllocationMode())))) {
       throw emailNotAvailable(null);
     }
     LocalDateTime now = LocalDateTime.now();
@@ -332,18 +453,56 @@ public class AccountInviteService {
         normalizedEmail, ADDRESS_HOLDING_INVITE_STATUSES, now);
   }
 
-  private void verifyRecipientEmailAvailableExcluding(
-      String recipientEmail, Long excludedInviteId, LocalDateTime now) {
-    String normalized = normalizeEmail(recipientEmail);
-    if (identityEmailOwnerLookup.findByEmail(normalized).isPresent()) {
+  private void verifyRecipientEmailAvailableExcluding(AccountInvite invite, LocalDateTime now) {
+    String normalized = normalizeEmail(invite.getRecipientEmail());
+    if (recipientEmailInUse(
+        normalized,
+        () ->
+            recipientTarget(
+                invite.getTargetRole(),
+                invite.getAlsoCounsellor(),
+                invite.getTenantId(),
+                IdAllocationMode.reservesAnId(invite.getTenantIdAllocationMode())
+                    || invite.getTargetRole() == AccountInviteTargetRole.TENANT_ADMIN
+                        && invite.getTenantIdAllocationMode() != IdAllocationMode.EXISTING))) {
       throw emailNotAvailable(null);
     }
     expireElapsedRecipientClaims(normalized, now);
     if (accountInviteRepository.countNonTerminalInvitesForRecipientEmailExcludingId(
-            normalized, excludedInviteId, ADDRESS_HOLDING_INVITE_STATUSES, now)
+            normalized, invite.getId(), ADDRESS_HOLDING_INVITE_STATUSES, now)
         > 0) {
       throw emailNotAvailable(null);
     }
+  }
+
+  private boolean recipientEmailInUse(String normalized, Supplier<Target> target) {
+    if (recipientIdentityMode != null && recipientIdentityMode.isFiveActorMode()) {
+      var scoped = recipientAvailability == null ? null : recipientAvailability.getIfAvailable();
+      if (scoped == null) throw new InvitationRecipientAvailabilityUnavailableException();
+      return !scoped.available(normalized, target.get());
+    }
+    return identityEmailOwnerLookup.findByEmail(normalized).isPresent();
+  }
+
+  private static Target recipientTarget(
+      AccountInviteTargetRole role, Boolean alsoCounsellor, Long tenantId, boolean reservedNew) {
+    Kind kind =
+        switch (role) {
+          case COUNSELLOR -> Kind.CONSULTANT;
+          case AGENCY_ADMIN ->
+              Boolean.FALSE.equals(alsoCounsellor)
+                  ? Kind.AGENCY_ADMIN
+                  : Kind.CONSULTANT_AGENCY_ADMIN;
+          case TENANT_ADMIN -> Kind.TENANT_ADMIN;
+          case PLATFORM_ADMIN -> Kind.PLATFORM_ADMIN;
+            // The enum alone never supplied an ADVICE_SEEKER invitation provisioner.
+          case ADVICE_SEEKER -> throw new InvitationRecipientAvailabilityUnavailableException();
+        };
+    TenantMode mode =
+        reservedNew
+            ? TenantMode.RESERVED_NEW
+            : tenantId == null ? TenantMode.UNASSIGNED : TenantMode.EXISTING;
+    return new Target(kind, tenantId, mode);
   }
 
   @Transactional(readOnly = true)
@@ -421,6 +580,24 @@ public class AccountInviteService {
    * audit row never waits for our own row lock; any SMTP failure restores the old link.
    */
   public InviteSendResult sendInvite(SendInviteCommand command) {
+    if (delivery.protectedModelEnabled()) {
+      AccountInvite selected =
+          requiresNewTransaction()
+              .execute(
+                  transaction -> {
+                    AccountInvite current = findAuthorizedInviteForUpdate(command.inviteId());
+                    return delivery.protects(current.getTargetRole()) ? current : null;
+                  });
+      if (selected != null) {
+        if (selected.getPurpose() != AccountInvitePurpose.INVITE) {
+          throw new BadRequestException("Existing-account setup links use their own delivery flow");
+        }
+        if (selected.getStatus() == AccountInviteStatus.WAITING_FOR_UNIT) {
+          return unitQueue.sendByHand(selected, findTemplate(command.templateId()));
+        }
+        return sendProtected(selected, () -> findTemplate(command.templateId()));
+      }
+    }
     SendClaim claim = requiresNewTransaction().execute(transaction -> claimForSend(command));
     if (claim.prepared() == null) {
       return unitQueue.sendByHand(claim.waiting(), claim.template());
@@ -506,6 +683,9 @@ public class AccountInviteService {
       // A waiting invite was never sent: "resend" is its first send (release), same rules.
       return sendInvite(command);
     }
+    if (current != null && delivery.protects(current.getTargetRole())) {
+      return resendProtected(command, current);
+    }
     ResendDispatch resend = prepareResend(command);
     if (resend == null) {
       throw new BadRequestException(INACTIVE_RESEND_MESSAGE);
@@ -515,6 +695,88 @@ public class AccountInviteService {
         resend.oldInviteId(),
         true,
         sendFailure -> restoreResendAfterConfirmedFailure(resend, sendFailure));
+  }
+
+  private InviteSendResult resendProtected(SendInviteCommand command, AccountInvite initial) {
+    if (initial.getPurpose() != AccountInvitePurpose.INVITE
+        || initial.getStatus() == AccountInviteStatus.ACCEPTED
+        || initial.getStatus() == AccountInviteStatus.REVOKED
+        || initial.getStatus() == AccountInviteStatus.EXPIRED
+        || initial.getExpiresAt() != null && !initial.getExpiresAt().isAfter(LocalDateTime.now())) {
+      throw new BadRequestException(INACTIVE_RESEND_MESSAGE);
+    }
+    if (initial.getSupersededByInviteId() == null) findTemplate(command.templateId());
+    var cancellation = requireProtectedCancellation();
+    cancellation.cancel(
+        initial.getId(),
+        Reason.SUPERSEDED,
+        () -> {
+          AccountInvite old = findAuthorizedInviteForUpdate(initial.getId());
+          if (old.getStatus() == AccountInviteStatus.ACCEPTED) throw inviteAlreadyAccepted();
+          if (old.getStatus() == AccountInviteStatus.REVOKED
+              || old.getStatus() == AccountInviteStatus.EXPIRED
+              || old.getExpiresAt() != null && !old.getExpiresAt().isAfter(LocalDateTime.now())) {
+            throw new BadRequestException(INACTIVE_RESEND_MESSAGE);
+          }
+          if (old.getStatus() != AccountInviteStatus.SUPERSEDED) {
+            LocalDateTime now = LocalDateTime.now();
+            old.setStatus(AccountInviteStatus.SUPERSEDED);
+            old.setSupersededAt(now);
+            old.setSupersededByUserId(authenticatedUser.getUserId());
+            old.setUpdateDate(now);
+          }
+          old.setTokenHash(null);
+          accountInviteRepository.saveAndFlush(old);
+        });
+    AccountInvite replacement =
+        cancellation.withAcknowledged(
+            initial.getId(),
+            () -> {
+              AccountInvite old = findAuthorizedInviteForUpdate(initial.getId());
+              if (old.getStatus() != AccountInviteStatus.SUPERSEDED) {
+                throw new BadRequestException(INACTIVE_RESEND_MESSAGE);
+              }
+              if (old.getSupersededByInviteId() != null) {
+                return findAuthorizedInviteForUpdate(old.getSupersededByInviteId());
+              }
+              LocalDateTime now = LocalDateTime.now();
+              verifyRecipientEmailAvailableExcluding(old, now);
+              AccountInvite next =
+                  AccountInvite.builder()
+                      .targetRole(old.getTargetRole())
+                      .tenantId(old.getTenantId())
+                      .tenantIdReservationToken(old.getTenantIdReservationToken())
+                      .recipientEmail(old.getRecipientEmail())
+                      .activeRecipientKey(normalizeEmail(old.getRecipientEmail()))
+                      .firstName(old.getFirstName())
+                      .lastName(old.getLastName())
+                      .agencyId(old.getAgencyId())
+                      .departmentId(old.getDepartmentId())
+                      .tenantIdAllocationMode(old.getTenantIdAllocationMode())
+                      .agencyIdAllocationMode(old.getAgencyIdAllocationMode())
+                      .alsoCounsellor(old.getAlsoCounsellor())
+                      .topicPermission(old.getTopicPermission())
+                      .unitCreatedAt(old.getUnitCreatedAt())
+                      .expiresAt(resolveExpiry(now, DEFAULT_EXPIRY_DAYS))
+                      .status(AccountInviteStatus.DRAFT)
+                      .provisioningStatus(AccountInviteProvisioningStatus.PENDING)
+                      .emailVerificationStatus(EmailVerificationStatus.PENDING)
+                      .twoFactorStatus(defaultTwoFactorStatus(old.getTargetRole()))
+                      .createdByUserId(authenticatedUser.getUserId())
+                      .createdByUsername(authenticatedUser.getUsername())
+                      .createDate(now)
+                      .updateDate(now)
+                      .build();
+              old.setActiveRecipientKey(null);
+              accountInviteRepository.saveAndFlush(old);
+              next = save(next);
+              old.setSupersededByInviteId(next.getId());
+              old.setTenantIdReservationToken(null);
+              old.setUpdateDate(now);
+              accountInviteRepository.saveAndFlush(old);
+              return next;
+            });
+    return sendProtected(replacement, () -> findTemplate(command.templateId()));
   }
 
   /** Null when the invite is (or the recipient cleanup just made it) expired. */
@@ -542,8 +804,7 @@ public class AccountInviteService {
               }
 
               LocalDateTime now = LocalDateTime.now();
-              verifyRecipientEmailAvailableExcluding(
-                  initialOldInvite.getRecipientEmail(), initialOldInvite.getId(), now);
+              verifyRecipientEmailAvailableExcluding(initialOldInvite, now);
               // The expiry cleanup is a clearing bulk update, so reload the old row before the
               // durable handover.
               AccountInvite oldInvite = findInvite(command.inviteId());
@@ -661,9 +922,27 @@ public class AccountInviteService {
                         .stream()
                         .map(AccountInvite::getId)
                         .toList());
+    var candidates = new LinkedHashSet<Long>(elapsed == null ? List.of() : elapsed);
+    if (delivery.protectedModelEnabled() && protectedInvitationCancellation != null) {
+      candidates.addAll(requireProtectedCancellation().pendingInviteIds(EXPIRY_SWEEP_BATCH));
+    }
     int expired = 0;
+    RuntimeException firstUnknown = null;
     // One transaction per invite: the sweep never holds one invite's locks while taking another's.
-    for (Long inviteId : elapsed == null ? List.<Long>of() : elapsed) {
+    for (Long inviteId : candidates) {
+      AccountInvite selected =
+          delivery.protectedModelEnabled()
+              ? requiresNewTransaction()
+                  .execute(tx -> accountInviteRepository.findById(inviteId).orElse(null))
+              : null;
+      if (selected != null && delivery.protects(selected.getTargetRole())) {
+        try {
+          if (expireProtected(selected, now)) expired++;
+        } catch (RuntimeException unknown) {
+          if (firstUnknown == null) firstUnknown = unknown;
+        }
+        continue;
+      }
       Boolean done =
           requiresNewTransaction()
               .execute(
@@ -676,15 +955,121 @@ public class AccountInviteService {
         expired++;
       }
     }
+    if (firstUnknown != null) throw firstUnknown;
     return expired;
+  }
+
+  private boolean expireProtected(AccountInvite initial, LocalDateTime now) {
+    if (initial.getStatus() == AccountInviteStatus.ACCEPTED) return false;
+    Reason reason =
+        switch (initial.getStatus()) {
+          case REVOKED -> Reason.REVOKED;
+          case SUPERSEDED -> Reason.SUPERSEDED;
+          default -> Reason.ISSUANCE_ABORTED;
+        };
+    if (reason == Reason.ISSUANCE_ABORTED
+        && (initial.getExpiresAt() == null || initial.getExpiresAt().isAfter(now))) return false;
+    boolean[] expired = {false};
+    var cancellation = requireProtectedCancellation();
+    cancellation.cancel(
+        initial.getId(),
+        reason,
+        () -> {
+          AccountInvite current =
+              refreshProtectedInvite(
+                  InviteRowHold.lock(accountInviteRepository, initial.getId())
+                      .orElseThrow(() -> new NotFoundException("Account invite not found")));
+          if (current.getStatus() == AccountInviteStatus.ACCEPTED) throw inviteAlreadyAccepted();
+          if (reason == Reason.ISSUANCE_ABORTED) {
+            expired[0] = expireAndReleaseNumbers(current, now);
+          } else if (current.getStatus() != initial.getStatus()) {
+            throw new BadRequestException("The cancellation state changed");
+          }
+        });
+    cancellation.withAcknowledged(
+        initial.getId(),
+        () -> {
+          AccountInvite current =
+              refreshProtectedInvite(
+                  InviteRowHold.lock(accountInviteRepository, initial.getId())
+                      .orElseThrow(() -> new NotFoundException("Account invite not found")));
+          if (reason == Reason.SUPERSEDED) {
+            if (current.getStatus() != AccountInviteStatus.SUPERSEDED) {
+              throw new BadRequestException("The cancellation state changed");
+            }
+            // An interrupted resend retains its address and capability until its original deadline.
+            // A live source or a replacement recorded during the native RPC still owns them.
+            if (current.getExpiresAt() == null
+                || current.getExpiresAt().isAfter(now)
+                || current.getSupersededByInviteId() != null
+                || current.getTenantIdReservationToken() == null
+                    && current.getActiveRecipientKey() == null) return null;
+          } else if (current.getStatus() != AccountInviteStatus.EXPIRED
+              && current.getStatus() != AccountInviteStatus.REVOKED) {
+            throw new BadRequestException("The cancellation state changed");
+          }
+          releaseProtectedReservation(current, now);
+          return null;
+        });
+    return expired[0];
   }
 
   /**
    * Locked and conditional so a racing accept and revoke cannot both win (ORISO-Admin#1026); only
    * the call that revoked gives the numbers back.
    */
-  @Transactional
   public AccountInvite revokeInvite(Long inviteId) {
+    if (delivery.protectedModelEnabled()) {
+      AccountInvite selected =
+          requiresNewTransaction().execute(tx -> findAuthorizedInviteForUpdate(inviteId));
+      if (selected != null && delivery.protects(selected.getTargetRole())) {
+        if (selected.getStatus() == AccountInviteStatus.ACCEPTED) throw inviteAlreadyAccepted();
+        var cancellation = requireProtectedCancellation();
+        cancellation.cancel(
+            inviteId,
+            Reason.REVOKED,
+            () -> {
+              AccountInvite current = findAuthorizedInviteForUpdate(inviteId);
+              String heldRecipientKey = current.getActiveRecipientKey();
+              if (current.getStatus() == AccountInviteStatus.ACCEPTED)
+                throw inviteAlreadyAccepted();
+              if (current.getStatus() != AccountInviteStatus.REVOKED) {
+                accountInviteRepository.revokeWhileStatusIn(
+                    inviteId,
+                    REVOCABLE_STATUSES,
+                    authenticatedUser.getUserId(),
+                    LocalDateTime.now());
+                current = findInvite(inviteId);
+                if (current.getStatus() != AccountInviteStatus.REVOKED)
+                  throw inviteAlreadyAccepted();
+              }
+              // The shared legacy bulk update clears this key; retain it in the same locked SQL.
+              current.setActiveRecipientKey(heldRecipientKey);
+              current.setTokenHash(null);
+              accountInviteRepository.saveAndFlush(current);
+            });
+        return cancellation.withAcknowledged(
+            inviteId,
+            () -> {
+              AccountInvite current = findAuthorizedInviteForUpdate(inviteId);
+              if (current.getStatus() != AccountInviteStatus.REVOKED) throw inviteAlreadyAccepted();
+              releaseProtectedReservation(current, LocalDateTime.now());
+              return current;
+            });
+      }
+    }
+    // Preserve the original REQUIRED boundary for ordinary/LEGACY revocation.
+    return new TransactionTemplate(transactionManager).execute(tx -> revokeLocal(inviteId));
+  }
+
+  private void releaseProtectedReservation(AccountInvite current, LocalDateTime now) {
+    ledger.releaseUnneeded(current, now);
+    current.setTenantIdReservationToken(null);
+    current.setActiveRecipientKey(null);
+    accountInviteRepository.saveAndFlush(current);
+  }
+
+  private AccountInvite revokeLocal(Long inviteId) {
     AccountInvite invite = findAuthorizedInviteForUpdate(inviteId);
     if (invite.getStatus() == AccountInviteStatus.ACCEPTED) {
       throw inviteAlreadyAccepted();
@@ -714,6 +1099,7 @@ public class AccountInviteService {
 
   /** Conditional, so an accept or revoke that landed after the read is never written over. */
   private boolean expireAndReleaseNumbers(AccountInvite invite, LocalDateTime now) {
+    String heldRecipientKey = invite.getActiveRecipientKey();
     if (InviteRowHold.orBusy(
             () ->
                 accountInviteRepository.expireWhileStatusIn(
@@ -724,6 +1110,16 @@ public class AccountInviteService {
     invite.setStatus(AccountInviteStatus.EXPIRED);
     invite.setActiveRecipientKey(null);
     invite.setUpdateDate(now);
+    if (delivery.protects(invite.getTargetRole())) {
+      // The root pending coordinator records/retries its exact reducing intent outside SQL.
+      AccountInvite current = findInvite(invite.getId());
+      current.setActiveRecipientKey(heldRecipientKey);
+      current.setTokenHash(null);
+      accountInviteRepository.saveAndFlush(current);
+      invite.setActiveRecipientKey(heldRecipientKey);
+      invite.setTokenHash(null);
+      return true;
+    }
     ledger.releaseUnneeded(invite, now);
     return true;
   }
@@ -736,6 +1132,11 @@ public class AccountInviteService {
     AccountInvite invite =
         InviteRowHold.lockByToken(accountInviteRepository, hash(rawToken))
             .orElseThrow(() -> new NotFoundException("Account invite not found"));
+
+    if (delivery.protects(invite.getTargetRole())) {
+      throw new AccessDeniedException(
+          "Protected invitation acceptance requires its recipient registration workflow");
+    }
 
     // The ordinary acceptance path provisions a new identity. An existing-account setup token
     // must never reach it, including its accepted-link resume branch.
@@ -940,12 +1341,50 @@ public class AccountInviteService {
         userId, TwoFactorGateStatus.ACTIVE, TwoFactorGateStatus.PENDING_SETUP);
   }
 
+  /** Applies a verified C enrollment only to the privately frozen invite membership. */
+  public void markTwoFactorActiveOwned(String userId, Set<Long> inviteIds) {
+    transitionTwoFactorStatus(
+        userId,
+        TwoFactorGateStatus.PENDING_SETUP,
+        TwoFactorGateStatus.ACTIVE,
+        checkedInviteIds(inviteIds));
+    // The C owner verifies its SQL postcondition before recording the native ACK.
+    // Flush the same owning persistence context, including the preceding email change.
+    accountInviteRepository.flush();
+  }
+
+  /** Reopens only the invite membership frozen by the verified C deletion. */
+  public void markTwoFactorPendingSetupOwned(String userId, Set<Long> inviteIds) {
+    transitionTwoFactorStatus(
+        userId,
+        TwoFactorGateStatus.ACTIVE,
+        TwoFactorGateStatus.PENDING_SETUP,
+        checkedInviteIds(inviteIds));
+  }
+
+  private Set<Long> checkedInviteIds(Set<Long> inviteIds) {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || inviteIds == null
+        || inviteIds.size() > 1024
+        || inviteIds.stream().anyMatch(id -> id == null || id <= 0))
+      throw new IllegalStateException(
+          "An owning transaction and frozen invite membership are required");
+    return Set.copyOf(inviteIds);
+  }
+
   private void transitionTwoFactorStatus(
       String userId, TwoFactorGateStatus from, TwoFactorGateStatus to) {
+    transitionTwoFactorStatus(userId, from, to, null);
+  }
+
+  private void transitionTwoFactorStatus(
+      String userId, TwoFactorGateStatus from, TwoFactorGateStatus to, Set<Long> inviteIds) {
     if (isBlank(userId)) {
       return;
     }
     var invites = accountInviteRepository.findAllByAcceptedByUserIdAndTwoFactorStatus(userId, from);
+    if (inviteIds != null)
+      invites = invites.stream().filter(invite -> inviteIds.contains(invite.getId())).toList();
     if (invites.isEmpty()) {
       return;
     }
@@ -984,8 +1423,21 @@ public class AccountInviteService {
       accessPolicy.authorizeMissing(inviteId);
       throw new NotFoundException("Account invite not found");
     }
-    accessPolicy.authorizeAccess(invite.get());
-    return invite.get();
+    AccountInvite current = refreshProtectedInvite(invite.get());
+    accessPolicy.authorizeAccess(current);
+    return current;
+  }
+
+  private AccountInvite refreshProtectedInvite(AccountInvite invite) {
+    // A new SQL lock does not refresh a request-bound JPA first-level cache after native RPC.
+    // Refresh only this locked row, preserving unrelated local managed work.
+    if (delivery.protects(invite.getTargetRole())
+        && protectedInviteEntityManager != null
+        && protectedInviteEntityManager.contains(invite)) {
+      protectedInviteEntityManager.refresh(
+          invite, jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
+    }
+    return invite;
   }
 
   private AccountInvite findInvite(Long inviteId) {
@@ -1372,4 +1824,16 @@ public class AccountInviteService {
   }
 
   public record WaiveTwoFactorCommand(String reason) {}
+
+  /** Read-only startup check of the actual installed production consumers. */
+  public boolean hasScopedAccountBindings(
+      ProtectedInvitationIssuance issuance,
+      ProtectedInvitationCancellation cancellation,
+      org.springframework.orm.jpa.JpaTransactionManager manager) {
+    return protectedInvitationIssuance == issuance
+        && protectedInvitationCancellation == cancellation
+        && protectedInviteEntityManager != null
+        && protectedInviteEntityManager.getEntityManagerFactory()
+            == manager.getEntityManagerFactory();
+  }
 }
