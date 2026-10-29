@@ -60,6 +60,113 @@ class KeycloakAccountLifecycleCommandsTest {
   private final AccountCreation account =
       new AccountCreation("syntheticä", null, null, null, "de", "synthetic-pāssword", false);
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"DEBUG", "TRACE"})
+  void trackedCreationKeepsExactWireAndCheckedProofWithoutRenderingOpaqueBytes(String level)
+      throws Exception {
+    credentials();
+    var checked = mock(TaskActorTokenBroker.VerifiedProvisioningToken.class);
+    when(checked.accessToken()).thenReturn("private-tracked-bearer-canary");
+    when(broker.issueCheckedProvisioningPrivate(TaskPurpose.ACCOUNT_PROVISIONING))
+        .thenReturn(checked);
+    var identity = codec.identity(scope, account);
+    var request = new CreateRequest(identity, execution, account);
+    byte[] exact = codec.canonical(request).getBytes(StandardCharsets.UTF_8);
+    var receipt =
+        new AttemptResult(id, "account", "OPEN", execution, proof(identity, "account"), null, null);
+    server
+        .expect(requestTo(url()))
+        .andExpect(method(HttpMethod.PUT))
+        .andExpect(content().bytes(exact))
+        .andExpect(header("Authorization", "Bearer private-tracked-bearer-canary"))
+        .andExpect(
+            actual ->
+                assertDoesNotThrow(
+                    () -> {
+                      String[] parts =
+                          actual.getHeaders().getFirst("X-ORISO-Task-Context").split("\\.");
+                      assertEquals(2, parts.length);
+                      Mac mac = Mac.getInstance("HmacSHA256");
+                      mac.init(new SecretKeySpec(key, "HmacSHA256"));
+                      assertArrayEquals(
+                          mac.doFinal(("proof\n" + parts[0]).getBytes(StandardCharsets.UTF_8)),
+                          Base64.getUrlDecoder().decode(parts[1]));
+                      var claims =
+                          new com.fasterxml.jackson.databind.ObjectMapper()
+                              .readTree(Base64.getUrlDecoder().decode(parts[0]));
+                      assertEquals("account.create", claims.path("operation").asText());
+                      assertEquals("PUT", claims.path("method").asText());
+                      assertEquals("ACCOUNT_PROVISIONING", claims.path("purpose").asText());
+                      assertEquals("ACCOUNT_CREATE", claims.path("actor").asText());
+                      assertEquals(
+                          "realm/realm-synthetic/account-attempt/" + id,
+                          claims.path("target").asText());
+                      assertEquals(
+                          codec.digest("payload", request), claims.path("payloadDigest").asText());
+                      assertEquals(owner.clientId(), claims.path("taskClient").asText());
+                      assertEquals(owner.serviceSubject(), claims.path("taskSubject").asText());
+                      assertEquals(60, claims.path("exp").asLong() - claims.path("iat").asLong());
+                    }))
+        .andRespond(withSuccess(codec.canonical(receipt), MediaType.APPLICATION_JSON));
+    var root =
+        (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
+    var old =
+        new java.util.LinkedHashMap<ch.qos.logback.classic.Logger, ch.qos.logback.classic.Level>();
+    var context =
+        (ch.qos.logback.classic.LoggerContext) org.slf4j.LoggerFactory.getILoggerFactory();
+    context.getLoggerList().stream()
+        .filter(
+            l ->
+                l.getName().startsWith("org.springframework.web")
+                    || l.getName().startsWith("org.springframework.http"))
+        .forEach(
+            l -> {
+              old.put(l, l.getLevel());
+              l.setLevel(ch.qos.logback.classic.Level.valueOf(level));
+            });
+    var events =
+        new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+    events.start();
+    root.addAppender(events);
+    try {
+      assertEquals(receipt, transport.createTracked(id, request));
+      String messages =
+          events.list.stream()
+              .map(
+                  e ->
+                      e.getFormattedMessage()
+                          + (e.getThrowableProxy() == null
+                              ? ""
+                              : ch.qos.logback.classic.spi.ThrowableProxyUtil.asString(
+                                  e.getThrowableProxy())))
+              .collect(java.util.stream.Collectors.joining("\n"));
+      for (String secret :
+          java.util.List.of(
+              account.password(),
+              account.username(),
+              "private-tracked-bearer-canary",
+              owner.clientSecret())) {
+        byte[] raw = secret.getBytes(StandardCharsets.UTF_8);
+        assertFalse(messages.contains(secret));
+        assertFalse(messages.contains(Base64.getEncoder().encodeToString(raw)));
+        assertFalse(messages.contains(java.util.Arrays.toString(raw)));
+        assertFalse(
+            messages.contains(
+                new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(secret)));
+      }
+      assertFalse(messages.contains(java.util.Arrays.toString(exact)));
+      assertFalse(messages.contains(Base64.getEncoder().encodeToString(exact)));
+    } finally {
+      root.detachAppender(events);
+      old.forEach(ch.qos.logback.classic.Logger::setLevel);
+      events.stop();
+    }
+    verify(broker).issueCheckedProvisioningPrivate(TaskPurpose.ACCOUNT_PROVISIONING);
+    verify(broker, never()).issueCheckedProvisioning(TaskPurpose.ACCOUNT_PROVISIONING);
+    server.verify();
+  }
+
   @Test
   void ordinaryCreationUsesTheCheckedCreatorWhileGenericIssuanceStaysClosed() throws Exception {
     credentials();

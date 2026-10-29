@@ -90,14 +90,17 @@ public class DeleteMatrixConsultantAction extends DeleteMatrixUserAction
       Consultant consultant = actionTarget.getConsultant();
       sessionRepository
           .findByConsultantId(consultant.getId(), Pageable.unpaged())
-          .forEach(session -> purgeMatrixRoom(session.getMatrixRoomId()));
-      deactivateMatrixUser(consultant.getMatrixUserId());
+          .forEach(
+              session ->
+                  purgeMatrixRoom(session.getMatrixRoomId(), actionTarget.isFixedDiagnostics()));
+      deactivateMatrixUser(consultant.getMatrixUserId(), actionTarget.isFixedDiagnostics());
     } catch (Exception e) {
       appendErrorsForSourceType(
           actionTarget.getDeletionWorkflowErrors(),
           CONSULTANT,
           actionTarget.getConsultant().getMatrixUserId(),
-          e);
+          e,
+          actionTarget.isFixedDiagnostics());
     }
   }
 }

@@ -1,5 +1,8 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import static de.caritas.cob.userservice.api.service.creationoutcome.TrackedConsultantCreation.transition;
+
+import de.caritas.cob.userservice.api.adapters.web.controller.dto.SafeConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminListPreferencesDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminListSortDTO;
@@ -11,6 +14,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AskerReactivationRequestD
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAgencyResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantCreationOperationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminAgencyRelationDTO;
@@ -44,16 +48,20 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
+import de.caritas.cob.userservice.api.service.creationoutcome.*;
+import de.caritas.cob.userservice.api.service.creationoutcome.CreationOperation.*;
 import de.caritas.cob.userservice.api.service.helper.EmailUrlDecoder;
 import de.caritas.cob.userservice.api.service.identity.UserIdentitiesService;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UseradminApi;
 import io.swagger.annotations.Api;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -104,6 +112,18 @@ public class UserAdminController implements UseradminApi {
           .ExistingAccountSetupIssuer
       accountSetupIssuer;
   private final @NonNull UserHelper userHelper;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  private CreationOperationAccess creationOperationAccess;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  private CreationOperationWriter creationOperationWriter;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  private ConsultantCreationOperationController creationOperationController;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  private HttpServletResponse servletResponse;
 
   /** Never typed by anyone and valid until the setup link expires, so length costs nothing. */
   static final int SETUP_ONLY_PASSWORD_LENGTH = 32;
@@ -162,6 +182,83 @@ public class UserAdminController implements UseradminApi {
    * @return {@link ConsultantAdminResponseDTO}
    */
   @Override
+  public ResponseEntity<ConsultantAdminResponseDTO> createConsultant(
+      CreateConsultantDTO createConsultantDTO, String xORISOCreationOperationKey) {
+    if (xORISOCreationOperationKey == null) return createConsultant(createConsultantDTO);
+    var key = CreationOperationAccess.parseKey(xORISOCreationOperationKey);
+    String owner = creationOperationAccess.requireTrackedCaller();
+    CreationOperationAccess.validateBounds(createConsultantDTO);
+    var context = new CreationOperationContext(new Candidate(UUID.randomUUID(), key, owner));
+    try {
+      createConsultantDTO.setEmail(createConsultantDTO.getEmail().toLowerCase(Locale.ROOT));
+      var result = consultantAdminFacade.createNewConsultant(createConsultantDTO, context);
+      transition(
+          context,
+          creationOperationWriter,
+          new CreationTransition.Onboarding(OnboardingState.OUTCOME_UNKNOWN, Reason.NONE));
+      try {
+        accountSetupIssuer.issueAfterCreation(
+            de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole.COUNSELLOR,
+            result.consultant().getEmbedded().getId(),
+            createConsultantDTO.getPassword());
+      } catch (RuntimeException failure) {
+        transition(
+            context,
+            creationOperationWriter,
+            new CreationTransition.Onboarding(OnboardingState.FAILED, Reason.ONBOARDING_FAILED));
+        throw new CreationOperationFailure(
+            context.receipt().operationId(), 500, Reason.ONBOARDING_FAILED);
+      }
+      transition(
+          context,
+          creationOperationWriter,
+          new CreationTransition.Onboarding(OnboardingState.ISSUER_RETURNED, Reason.NONE));
+      authorizeReceiptHeaders(context);
+      return ResponseEntity.ok()
+          .header("Cache-Control", "no-store")
+          .header(
+              CreationOperationAccess.RECEIPT_HEADER,
+              CreationOperationAccess.receiptUri(context.receipt().operationId()))
+          .body(SafeConsultantAdminResponseDTO.from(result.consultant()));
+    } catch (RuntimeException failure) {
+      if (context.persistedOperationId().isPresent()) {
+        if (failure instanceof CreationOperationFailure safe
+            && !safe.operationId().equals(context.receipt().operationId()))
+          throw CreationOperationAccess.denied();
+        if (failure instanceof CreationOperationAccess.ExistingOperation existing
+            && !existing.operationId().equals(context.receipt().operationId()))
+          throw CreationOperationAccess.denied();
+        authorizeReceiptHeaders(context);
+        if (failure instanceof CreationOperationAccess.ExistingOperation) throw failure;
+        throw TrackedConsultantCreation.failure(context, failure, Reason.WORKFLOW_FAILED);
+      }
+      throw failure;
+    } finally {
+      de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.clear();
+    }
+  }
+
+  private void authorizeReceiptHeaders(CreationOperationContext context) {
+    creationOperationAccess.requireReceiptAccess(context.receipt());
+    servletResponse.setHeader(
+        CreationOperationAccess.RECEIPT_HEADER,
+        CreationOperationAccess.receiptUri(context.receipt().operationId()));
+    servletResponse.setHeader("Cache-Control", "no-store");
+  }
+
+  @Override
+  public ResponseEntity<ConsultantCreationOperationDTO> getConsultantCreationOperation(
+      UUID operationId) {
+    return creationOperationController.getConsultantCreationOperation(operationId);
+  }
+
+  @Override
+  public ResponseEntity<ConsultantCreationOperationDTO> getConsultantCreationOperationByKey(
+      UUID operationKey) {
+    return creationOperationController.getConsultantCreationOperationByKey(operationKey);
+  }
+
+  /** Untracked entry point retained for existing callers. */
   public ResponseEntity<ConsultantAdminResponseDTO> createConsultant(
       CreateConsultantDTO createConsultantDTO) {
 

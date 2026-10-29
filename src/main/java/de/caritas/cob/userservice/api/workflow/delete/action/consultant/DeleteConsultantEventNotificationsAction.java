@@ -41,7 +41,7 @@ public class DeleteConsultantEventNotificationsAction
       this.eventNotificationRepository.deleteByRecipientUserId(
           actionTarget.getConsultant().getId());
     } catch (Exception e) {
-      log.error("UserService delete workflow error: ", e);
+      actionTarget.logFailure(log, "UserService delete workflow error: ", e);
       actionTarget
           .getDeletionWorkflowErrors()
           .add(

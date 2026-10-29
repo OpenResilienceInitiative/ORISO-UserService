@@ -113,11 +113,24 @@ public class TaskActorTokenBroker {
 
   /** Only checked account-creation transports may obtain this private result. */
   public VerifiedProvisioningToken issueCheckedProvisioning(TaskPurpose purpose) {
+    return issueCheckedProvisioning(purpose, false);
+  }
+
+  /** Same checked grant and JWT validation, with private diagnostics for a tracked creation. */
+  public VerifiedProvisioningToken issueCheckedProvisioningPrivate(TaskPurpose purpose) {
+    return issueCheckedProvisioning(purpose, true);
+  }
+
+  private VerifiedProvisioningToken issueCheckedProvisioning(
+      TaskPurpose purpose, boolean privateDiagnostics) {
     if (purpose != TaskPurpose.ACCOUNT_PROVISIONING) throw provisioningUnavailable();
     try {
       var binding = configuration.require(purpose);
       if (binding.actor() != TaskActor.ACCOUNT_CREATE) throw provisioningUnavailable();
-      return new VerifiedProvisioningToken(requestBoundNativeToken(binding));
+      var issued =
+          privateDiagnostics ? requestNativeToken(binding, true) : requestBoundNativeToken(binding);
+      if (privateDiagnostics) requireOriginalBounds(issued.token);
+      return new VerifiedProvisioningToken(issued);
     } catch (RuntimeException failure) {
       throw provisioningUnavailable();
     }
@@ -213,8 +226,15 @@ public class TaskActorTokenBroker {
   }
 
   private NativeToken requestNativeToken(TaskActorCredentials binding) {
+    return requestNativeToken(binding, false);
+  }
+
+  private NativeToken requestNativeToken(TaskActorCredentials binding, boolean privateDiagnostics) {
     try {
-      var response = authentication.loginService(binding.clientId(), binding.clientSecret());
+      var response =
+          privateDiagnostics
+              ? authentication.loginServicePrivate(binding.clientId(), binding.clientSecret())
+              : authentication.loginService(binding.clientId(), binding.clientSecret());
       Jwt token = decodeBoundNativeToken(binding, response.getAccessToken());
       return new NativeToken(token, response.getAccessToken(), response.getExpiresIn());
     } catch (RuntimeException failure) {

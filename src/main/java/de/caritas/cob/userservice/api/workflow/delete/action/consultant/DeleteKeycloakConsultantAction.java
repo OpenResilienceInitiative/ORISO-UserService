@@ -32,9 +32,10 @@ public class DeleteKeycloakConsultantAction extends DeleteKeycloakUserAction
   @Override
   public void execute(ConsultantDeletionWorkflowDTO actionTarget) {
     try {
-      this.deleteUserWithId(actionTarget.getConsultant().getId());
+      this.deleteUserWithId(
+          actionTarget.getConsultant().getId(), actionTarget.isFixedDiagnostics());
     } catch (Exception e) {
-      log.error("UserService delete workflow error: ", e);
+      actionTarget.logFailure(log, "UserService delete workflow error: ", e);
       actionTarget
           .getDeletionWorkflowErrors()
           .add(

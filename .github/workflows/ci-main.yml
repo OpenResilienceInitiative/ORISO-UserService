@@ -68,7 +68,7 @@ jobs:
 
   publish:
     name: scan and publish image
-    needs: [build, required-integration-tests, mariadb-contract, notification-smtp-contract]
+    needs: [build, required-integration-tests, mariadb-contract, notification-smtp-contract, creation-outcome-mariadb]
     runs-on: ubuntu-latest
 
     permissions:
@@ -108,3 +108,6 @@ jobs:
 
   notification-smtp-contract:
     uses: ./.github/workflows/notification-smtp-contract.yml
+
+  creation-outcome-mariadb:
+    uses: ./.github/workflows/creation-outcome-mariadb.yml

@@ -55,12 +55,18 @@ import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.port.out.ScopedAvailabilityUnavailableException;
 import de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
+import de.caritas.cob.userservice.api.port.out.identity.NativeCreationCapture;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.NotAuthorizedException;
 import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.core.Response;
 import java.net.URI;
+import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -474,12 +480,36 @@ public class KeycloakService
    */
   public CreatedIdentity createUser(
       final UserDTO user, final String firstName, final String lastName) {
+    return createUserInternal(user, firstName, lastName, null);
+  }
+
+  @Override
+  public CreatedIdentity createUser(
+      final UserDTO user,
+      final String firstName,
+      final String lastName,
+      final NativeCreationCapture capture) {
+    java.util.Objects.requireNonNull(capture, "Native creation capture is required");
+    try {
+      return createUserInternal(user, firstName, lastName, capture);
+    } catch (de.caritas.cob.userservice.api.port.out.identity.NativeCreationConflict conflict) {
+      throw conflict;
+    } catch (RuntimeException exception) {
+      // Provider and capture failures may contain submitted selectors or credentials. Do not
+      // retain their causes: callers can recover only through their durable operation receipt.
+      throw new InternalServerErrorException("Native identity creation failed");
+    }
+  }
+
+  private CreatedIdentity createUserInternal(
+      UserDTO user, String firstName, String lastName, NativeCreationCapture capture) {
+    boolean tracked = capture != null;
     var locale =
         isNull(user.getPreferredLanguage()) ? "de" : user.getPreferredLanguage().toString();
     var kcUser = getUserRepresentation(user, firstName, lastName, locale);
-    for (int attempt = 0; attempt < 2; attempt++) {
+    for (int attempt = 0; attempt < (tracked ? 1 : 2); attempt++) {
       try (var response = keycloakClient.getUsersResource().create(kcUser)) {
-        if (response.getStatus() == HttpStatus.UNAUTHORIZED.value() && attempt == 0) {
+        if (!tracked && response.getStatus() == HttpStatus.UNAUTHORIZED.value() && attempt == 0) {
           log.warn(
               "Keycloak admin session was unauthorized while creating a user, forcing token refresh and retrying once");
           recordRetry("admin-session-refresh");
@@ -487,27 +517,103 @@ public class KeycloakService
           continue;
         }
         if (response.getStatus() == HttpStatus.CREATED.value()) {
-          final String createdUserId = getCreatedUserId(response.getLocation());
-          try {
-            updateIdentityAttributesAfterCreate(user, createdUserId);
-          } catch (Exception exception) {
-            log.error(
-                "Failed to set mandatory attributes for created keycloak user {}. Rolling back user creation.",
-                createdUserId,
-                exception);
-            rollbackUser(createdUserId);
-            throw new InternalServerErrorException(
-                String.format(
-                    "Could not persist mandatory keycloak user attributes for user %s",
-                    createdUserId),
-                exception);
+          final String createdUserId =
+              tracked
+                  ? requireCapturedUserId(response.getLocation())
+                  : getCreatedUserId(response.getLocation());
+          if (tracked) {
+            // Deliberately outside the compensation catch: a failed durable capture must not
+            // cause an unrecorded destructive call or any subsequent identity mutation.
+            capture.captured(new CreatedIdentity(createdUserId));
           }
+          persistMandatoryCreationAttributes(user, createdUserId, capture);
           return new CreatedIdentity(createdUserId);
+        }
+        if (tracked) {
+          if (response.getStatus() == 409)
+            throw new de.caritas.cob.userservice.api.port.out.identity.NativeCreationConflict();
+          throw new InternalServerErrorException("Native identity creation failed");
         }
         throw createUserFailure(user, response);
       }
     }
     throw new IllegalStateException("Unreachable Keycloak create-user retry state");
+  }
+
+  private void persistMandatoryCreationAttributes(
+      UserDTO user, String createdUserId, NativeCreationCapture capture) {
+    try {
+      updateIdentityAttributesAfterCreate(user, createdUserId);
+    } catch (Exception exception) {
+      if (capture != null) {
+        capture.compensationStarting();
+        rollbackUser(createdUserId, true);
+        // rollbackUser is best effort. Its return is not evidence of remote absence.
+        capture.compensationReturned();
+        throw new InternalServerErrorException("Native identity attribute update failed");
+      }
+      log.error(
+          "Failed to set mandatory attributes for created keycloak user {}. Rolling back user creation.",
+          createdUserId,
+          exception);
+      rollbackUser(createdUserId);
+      throw new InternalServerErrorException(
+          String.format(
+              "Could not persist mandatory keycloak user attributes for user %s", createdUserId),
+          exception);
+    }
+  }
+
+  private String requireCapturedUserId(URI location) {
+    String path = location == null ? null : location.getRawPath();
+    String rawSegment = path == null ? "" : path.substring(path.lastIndexOf('/') + 1);
+    String userId = decodeNativeIdentitySegment(rawSegment);
+    if (userId.isEmpty()
+        || userId.indexOf('/') >= 0
+        || userId.indexOf('\\') >= 0
+        || userId.length() > 255
+        || userId
+            .codePoints()
+            .anyMatch(
+                character ->
+                    Character.isISOControl(character)
+                        || Character.isWhitespace(character)
+                        || Character.isSpaceChar(character))) {
+      throw new InternalServerErrorException("Native identity location is invalid");
+    }
+    return userId;
+  }
+
+  private String decodeNativeIdentitySegment(String rawSegment) {
+    try {
+      var rawBytes =
+          StandardCharsets.UTF_8
+              .newEncoder()
+              .onMalformedInput(CodingErrorAction.REPORT)
+              .onUnmappableCharacter(CodingErrorAction.REPORT)
+              .encode(CharBuffer.wrap(rawSegment));
+      var decodedBytes = ByteBuffer.allocate(rawBytes.remaining());
+      while (rawBytes.hasRemaining()) {
+        byte value = rawBytes.get();
+        if (value == '%') {
+          // URI already validates percent-escape syntax. Decode once without form semantics,
+          // preserving literal '+' and ':' and rejecting malformed UTF-8 instead of replacing it.
+          int high = Character.digit(rawBytes.get(), 16);
+          int low = Character.digit(rawBytes.get(), 16);
+          decodedBytes.put((byte) ((high << 4) | low));
+        } else {
+          decodedBytes.put(value);
+        }
+      }
+      return StandardCharsets.UTF_8
+          .newDecoder()
+          .onMalformedInput(CodingErrorAction.REPORT)
+          .onUnmappableCharacter(CodingErrorAction.REPORT)
+          .decode(decodedBytes.flip())
+          .toString();
+    } catch (CharacterCodingException exception) {
+      throw new InternalServerErrorException("Native identity location is invalid");
+    }
   }
 
   /**
@@ -1141,13 +1247,25 @@ public class KeycloakService
    */
   @Override
   public void rollbackUser(String userId) {
+    rollbackUser(userId, false);
+  }
+
+  private void rollbackUser(String userId, boolean fixedDiagnostics) {
     try {
-      deleteUser(userId);
-      log.debug("User {} has been removed due to rollback", userId);
+      deleteUser(userId, fixedDiagnostics);
+      if (fixedDiagnostics) {
+        log.debug("Native identity compensation returned");
+      } else {
+        log.debug("User {} has been removed due to rollback", userId);
+      }
     } catch (ScopedIdentityCommandRequiredException required) {
       throw required;
     } catch (Exception e) {
-      log.error("Keycloak error: User could not be removed/rolled back: {}", userId);
+      if (fixedDiagnostics) {
+        log.error("Native identity compensation failed");
+      } else {
+        log.error("Keycloak error: User could not be removed/rolled back: {}", userId);
+      }
     }
   }
 
@@ -1158,24 +1276,41 @@ public class KeycloakService
    */
   @Override
   public void deleteUser(String userId) {
+    deleteUser(userId, false);
+  }
+
+  @Override
+  public void deleteUserTracked(String userId) {
+    deleteUser(userId, true);
+  }
+
+  private void deleteUser(String userId, boolean fixedDiagnostics) {
     requireLegacyAccountAccess();
     try {
-      removeUserIfPresent(userId);
+      removeUserIfPresent(userId, fixedDiagnostics);
     } catch (NotAuthorizedException e) {
-      log.warn(
-          "Keycloak admin session was unauthorized for deleting user {}, forcing token refresh"
-              + " and retrying once",
-          userId);
+      if (fixedDiagnostics) {
+        log.warn("Native identity compensation unauthorized, refreshing session and retrying once");
+      } else {
+        log.warn(
+            "Keycloak admin session was unauthorized for deleting user {}, forcing token refresh"
+                + " and retrying once",
+            userId);
+      }
       keycloakClient.refreshAdminSession();
-      removeUserIfPresent(userId);
+      removeUserIfPresent(userId, fixedDiagnostics);
     }
   }
 
-  private void removeUserIfPresent(String userId) {
+  private void removeUserIfPresent(String userId, boolean fixedDiagnostics) {
     try {
       keycloakClient.getUsersResource().get(userId).remove();
     } catch (NotFoundException e) {
-      log.warn("User {} not found in Keycloak, skipping deletion.", userId);
+      if (fixedDiagnostics) {
+        log.warn("Native identity compensation target was not found");
+      } else {
+        log.warn("User {} not found in Keycloak, skipping deletion.", userId);
+      }
     }
   }
 

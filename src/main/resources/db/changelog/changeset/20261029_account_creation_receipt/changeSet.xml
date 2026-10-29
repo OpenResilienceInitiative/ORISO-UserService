@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.25.xsd">
+  <changeSet id="20261029-account-creation-receipt" author="oriso">
+    <!-- Existing rows stay untracked. No default receipt, version or dispatch permit. -->
+    <modifyDataType tableName="account_creation_attempt" columnName="owner_id" newDataType="VARCHAR(255)"/>
+    <modifyDataType tableName="account_creation_attempt" columnName="native_identity_id" newDataType="VARCHAR(255)"/>
+    <addColumn tableName="account_creation_attempt">
+      <column name="receipt_id" type="CHAR(36)"/>
+      <column name="agency_ids" type="LONGTEXT"/>
+      <column name="creation_role" type="VARCHAR(32)"/>
+      <column name="fingerprint_version" type="SMALLINT"/>
+      <column name="request_fingerprint" type="VARCHAR(64)"/>
+      <column name="receipt_version" type="BIGINT"/>
+      <column name="dispatched_at" type="DATETIME(6)"/>
+      <column name="captured_at" type="DATETIME(6)"/>
+      <column name="dispatch" type="VARCHAR(32)"/>
+      <column name="workflow" type="VARCHAR(32)"/>
+      <column name="consultant_row" type="VARCHAR(32)"/>
+      <column name="onboarding" type="VARCHAR(32)"/>
+      <column name="compensation" type="VARCHAR(32)"/>
+      <column name="reason" type="VARCHAR(64)"/>
+    </addColumn>
+    <createIndex tableName="account_creation_attempt" indexName="idx_account_creation_receipt" unique="true">
+      <column name="receipt_id"/>
+    </createIndex>
+  </changeSet>
+</databaseChangeLog>

@@ -312,8 +312,14 @@ public class DeleteUserAccountService {
   }
 
   public List<DeletionWorkflowError> performConsultantDeletion(Consultant consultant) {
+    return performConsultantDeletion(consultant, false);
+  }
 
-    var deletionWorkflowDTO = new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>());
+  public List<DeletionWorkflowError> performConsultantDeletion(
+      Consultant consultant, boolean fixedDiagnostics) {
+
+    var deletionWorkflowDTO =
+        new ConsultantDeletionWorkflowDTO(fixedDiagnostics, consultant, new ArrayList<>());
 
     try {
       this.actionsRegistry

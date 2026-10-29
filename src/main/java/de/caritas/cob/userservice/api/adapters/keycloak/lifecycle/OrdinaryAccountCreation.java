@@ -258,26 +258,42 @@ public class OrdinaryAccountCreation {
 
   public <T> T create(
       CreationScope scope, AccountCreation account, Function<Pending, T> localWrites) {
+    return create(null, null, scope, account, localWrites);
+  }
+
+  /** Opt-in server-owned receipt linkage; public operation keys never become native selectors. */
+  public <T> T create(
+      UUID receiptId,
+      java.util.function.Consumer<String> capture,
+      CreationScope scope,
+      AccountCreation account,
+      Function<Pending, T> localWrites) {
     var intended = groups.get(scope.initialGroup());
     if (intended == null
         || !Objects.equals(
             "ANONYMOUS".equals(scope.registrationKind()) ? "ASKER" : scope.registrationKind(),
             kind(intended))) throw denied();
     boolean outer = TransactionSynchronizationManager.isActualTransactionActive();
-    UUID id = UUID.randomUUID();
-    var receipt = coordinator.create(id, scope, account);
+    if ((receiptId == null) != (capture == null))
+      throw new IllegalArgumentException("Tracked capture requires its server receipt");
+    UUID id = receiptId == null ? UUID.randomUUID() : receiptId;
+    var receipt = coordinator.create(id, scope, account, capture != null);
+    // coordinator.create has verified and independently committed the native receipt.
+    if (capture != null) capture.accept(receipt.accountId());
     T result =
         coordinator.localSaga(
             receipt,
             attempt -> {
+              var request =
+                  new OwnedReadRequest(
+                      attempt.identity(),
+                      attempt.execution(),
+                      attempt.accountId(),
+                      attempt.creationProof());
               var projection =
-                  commands.ownedRead(
-                      id,
-                      new OwnedReadRequest(
-                          attempt.identity(),
-                          attempt.execution(),
-                          attempt.accountId(),
-                          attempt.creationProof()));
+                  capture == null
+                      ? commands.ownedRead(id, request)
+                      : commands.ownedReadTracked(id, request);
               if (projection == null
                   || !attempt.accountId().equals(projection.id())
                   || projection.enabled()
@@ -302,14 +318,22 @@ public class OrdinaryAccountCreation {
   }
 
   public String createChatAccount(Pending pending, String plainUsername, String displayName) {
+    return createChatAccount(pending, plainUsername, displayName, false);
+  }
+
+  public String createChatAccount(
+      Pending pending, String plainUsername, String displayName, boolean privateDiagnostics) {
     String localpart = plainUsername.toLowerCase(Locale.ROOT);
     String expected = "@" + localpart + ":" + matrixConfig.getServerName();
     UUID effect =
         effects.started(pending.attempt, JdbcOwnedLifecycleEffects.Kind.MATRIX_USER, expected);
     try {
       String actual =
-          matrix.createUserIdWithoutReactivation(
-              localpart, UUID.randomUUID() + "-" + UUID.randomUUID(), displayName);
+          privateDiagnostics
+              ? matrix.createUserIdWithoutReactivationTracked(
+                  localpart, UUID.randomUUID() + "-" + UUID.randomUUID(), displayName)
+              : matrix.createUserIdWithoutReactivation(
+                  localpart, UUID.randomUUID() + "-" + UUID.randomUUID(), displayName);
       if (!expected.equals(actual)) throw denied();
       effects.acknowledged(effect, actual);
       return actual;
@@ -323,6 +347,11 @@ public class OrdinaryAccountCreation {
   }
 
   public void createAppointment(Pending pending, ConsultantAdminResponseDTO response) {
+    createAppointment(pending, response, false);
+  }
+
+  public void createAppointment(
+      Pending pending, ConsultantAdminResponseDTO response, boolean privateDiagnostics) {
     if (response == null
         || response.getEmbedded() == null
         || !pending.accountId().equals(response.getEmbedded().getId())) throw denied();
@@ -331,8 +360,12 @@ public class OrdinaryAccountCreation {
             pending.attempt,
             JdbcOwnedLifecycleEffects.Kind.APPOINTMENT_CONSULTANT,
             pending.accountId());
-    appointments.createOwnedConsultant(
-        response, Long.valueOf(pending.attempt.identity().scope().tenantId()));
+    if (privateDiagnostics)
+      appointments.createOwnedConsultantTracked(
+          response, Long.valueOf(pending.attempt.identity().scope().tenantId()));
+    else
+      appointments.createOwnedConsultant(
+          response, Long.valueOf(pending.attempt.identity().scope().tenantId()));
     effects.acknowledged(effect, pending.accountId());
   }
 

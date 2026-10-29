@@ -5,6 +5,7 @@ import static de.caritas.cob.userservice.api.model.Session.SessionStatus.INITIAL
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_ARCHIVE;
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_PROGRESS;
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW;
+import static de.caritas.cob.userservice.api.service.creationoutcome.TrackedConsultantCreation.transition;
 
 import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.AccountManager;
@@ -31,6 +32,8 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.api.service.creationoutcome.*;
+import de.caritas.cob.userservice.api.service.creationoutcome.CreationOperation.*;
 import de.caritas.cob.userservice.api.service.session.SessionOwnershipService;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
@@ -170,6 +173,48 @@ public class ConsultantAdminService {
    * @return the generated and persisted {@link Consultant} representation as {@link
    *     ConsultantAdminResponseDTO}
    */
+  @org.springframework.beans.factory.annotation.Autowired
+  private CreationOperationWriter creationOperationWriter;
+
+  public TrackedConsultantCreation createNewConsultant(
+      CreateConsultantDTO input, CreationOperationContext context) {
+    if (!canAccessAdminRemarks()) input.setAdminRemarks(null);
+    TrackedConsultantCreation result;
+    try {
+      result = createConsultantSaga.createNewConsultant(input, context);
+    } catch (RuntimeException failure) {
+      if (context.persistedOperationId().isEmpty()
+          || failure instanceof CreationOperationAccess.ExistingOperation) throw failure;
+      if (failure instanceof CreationOperationFailure) throw failure;
+      transition(
+          context,
+          creationOperationWriter,
+          new CreationTransition.Workflow(WorkflowState.FAILED, Reason.ROW_COMMIT_FAILED));
+      throw TrackedConsultantCreation.failure(context, failure, Reason.ROW_COMMIT_FAILED);
+    }
+    try {
+      if (context.receipt().row() != RowState.COMMITTED)
+        throw new CreationOperationFailure(
+            context.receipt().operationId(), 503, Reason.JOURNAL_UNAVAILABLE);
+      var response = result.consultant();
+      if (canAccessAdminRemarks()) response.getEmbedded().setAdminRemarks(input.getAdminRemarks());
+      enrichWithDisplayName(response.getEmbedded().getId(), response);
+      enrichWithTopics(response.getEmbedded().getId(), response);
+      transition(
+          context,
+          creationOperationWriter,
+          new CreationTransition.Workflow(WorkflowState.RETURNED, Reason.NONE));
+      return new TrackedConsultantCreation(response, context.receipt().operationId());
+    } catch (RuntimeException failure) {
+      if (context.receipt().workflow() == WorkflowState.IN_PROGRESS)
+        transition(
+            context,
+            creationOperationWriter,
+            new CreationTransition.Workflow(WorkflowState.FAILED, Reason.WORKFLOW_FAILED));
+      throw TrackedConsultantCreation.failure(context, failure, Reason.WORKFLOW_FAILED);
+    }
+  }
+
   public ConsultantAdminResponseDTO createNewConsultant(CreateConsultantDTO createConsultantDTO)
       throws DistributedTransactionException {
     if (!canAccessAdminRemarks()) {

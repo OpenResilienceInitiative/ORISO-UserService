@@ -34,6 +34,15 @@ public class ConsultantPublicSlugService {
     return consultantRepository.findByPublicSlugAndDeleteDateIsNull(normalize(idOrSlug));
   }
 
+  public void validateNewAdminSlug(String rawSlug) {
+    if (rawSlug == null || rawSlug.isBlank()) return;
+    var slug = validateSyntaxAndReservation(rawSlug);
+    if (consultantRepository.existsByPublicSlugAndDeleteDateIsNull(slug)
+        || consultantRepository.existsByPendingPublicSlugAndDeleteDateIsNull(slug)) {
+      throw new ConflictException("Public slug is already in use");
+    }
+  }
+
   public void applyAdminSlug(Consultant consultant, String rawSlug) {
     if (rawSlug == null) {
       return;
@@ -84,7 +93,7 @@ public class ConsultantPublicSlugService {
     return rawSlug == null ? null : rawSlug.trim().toLowerCase(java.util.Locale.ROOT);
   }
 
-  private String validateAvailableSlug(String rawSlug, String consultantId) {
+  private String validateSyntaxAndReservation(String rawSlug) {
     var slug = normalize(rawSlug);
     if (!SLUG_PATTERN.matcher(slug).matches()) {
       throw new BadRequestException(
@@ -93,6 +102,11 @@ public class ConsultantPublicSlugService {
     if (reservedPublicSlugRepository.existsBySlugAndActiveTrue(slug)) {
       throw new BadRequestException("Public slug is reserved");
     }
+    return slug;
+  }
+
+  private String validateAvailableSlug(String rawSlug, String consultantId) {
+    var slug = validateSyntaxAndReservation(rawSlug);
     if (consultantRepository.existsByPublicSlugAndIdNotAndDeleteDateIsNull(slug, consultantId)
         || consultantRepository.existsByPendingPublicSlugAndIdNotAndDeleteDateIsNull(
             slug, consultantId)) {

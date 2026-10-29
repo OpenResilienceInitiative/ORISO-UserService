@@ -21,7 +21,7 @@ def job_block(workflow: str, job_name: str) -> str:
     return remainder if next_job is None else remainder[: next_job.start()]
 
 
-def assert_native_ownership(excluded, mariadb_workflow, caller_workflow):
+def assert_native_ownership(excluded, mariadb_workflow, caller_workflow, creation_workflow=None):
     """Every H2 exclusion retains an actual required native owner."""
     owners = set()
     for match in re.finditer(r"-Dtest=([^\s]+)", mariadb_workflow):
@@ -82,6 +82,20 @@ def assert_native_ownership(excluded, mariadb_workflow, caller_workflow):
     if not all("'" + name + "'" in source for name in exact_names):
         raise AssertionError("Every original and additive native case is required")
     owners.add("AccountLifecycleRetryFairnessMariaDbIT")
+    if creation_workflow is not None:
+        creation = yaml.safe_load(creation_workflow).get("jobs", {}).get("proof", {})
+        steps = creation.get("steps", [])
+        selector = "-Dtest=CreationOperationMariaDbIT"
+        critical = [step for step in steps if selector in step.get("run", "")]
+        source = "\n".join(step.get("run", "") for step in steps)
+        if (not creation or "if" in creation or creation.get("continue-on-error")
+                or len(critical) != 1 or "if" in critical[0]
+                or any(step.get("continue-on-error") for step in steps)
+                or not all(fragment in source for fragment in (
+                    "source-before.json", "source-after.json", "maven.exit",
+                    "creation-outcome-proof.py verify", selector))):
+            raise AssertionError("Creation outcomes require an actual source-bound native owner")
+        owners.add("CreationOperationMariaDbIT")
     if excluded - owners:
         raise AssertionError("H2 exclusions without an actual native owner: " + str(sorted(excluded - owners)))
 
@@ -375,7 +389,8 @@ class RequiredCiContractTest(unittest.TestCase):
 
         self.assertIn("GroupChatMatrixCleanupAdoptionMariaDbIT", mariadb_selectors)
         caller_workflow = (ROOT / ".github/workflows/scenario-c-caller-proof.yml").read_text()
-        assert_native_ownership(excluded, mariadb_workflow, caller_workflow)
+        creation_workflow = (ROOT / ".github/workflows/creation-outcome-mariadb.yml").read_text()
+        assert_native_ownership(excluded, mariadb_workflow, caller_workflow, creation_workflow)
 
     def test_fairness_owner_requires_the_actual_pr_trigger(self):
         self.assert_invalid_fairness_owner(
@@ -435,7 +450,7 @@ class RequiredCiContractTest(unittest.TestCase):
         self.assertNotIn("continue-on-error:", integration)
         self.assertIn(
             "needs: [validate, redis-contract, mariadb-contract, required-integration-tests,"
-            " tenant-filter-on-integration-tests, notification-smtp-contract]",
+            " tenant-filter-on-integration-tests, notification-smtp-contract, creation-outcome-mariadb]",
             aggregate,
         )
         self.assertIn("if: always()", aggregate)
@@ -444,6 +459,7 @@ class RequiredCiContractTest(unittest.TestCase):
         self.assertIn("needs.mariadb-contract.result", aggregate)
         self.assertIn("needs.tenant-filter-on-integration-tests.result", aggregate)
         self.assertIn("needs.notification-smtp-contract.result", aggregate)
+        self.assertIn("needs.creation-outcome-mariadb.result", aggregate)
 
     def test_required_aggregate_refuses_failed_skipped_and_cancelled_smtp(self):
         workflow = (ROOT / ".github/workflows/ci-pull-request.yml").read_text()
@@ -453,7 +469,7 @@ class RequiredCiContractTest(unittest.TestCase):
         for smtp_result in ("success", "failure", "skipped", "cancelled"):
             with self.subTest(smtp_result=smtp_result):
                 env = os.environ.copy()
-                for name in ("VALIDATE", "REDIS", "MARIADB", "INTEGRATION", "TENANT_FILTER"):
+                for name in ("VALIDATE", "REDIS", "MARIADB", "INTEGRATION", "TENANT_FILTER", "CREATION_OUTCOME"):
                     env[name + "_RESULT"] = "success"
                 env["SMTP_RESULT"] = smtp_result
                 result = subprocess.run(["bash", "-c", script], env=env,
@@ -468,7 +484,7 @@ class RequiredCiContractTest(unittest.TestCase):
         integration = job_block(workflow, "required-integration-tests")
 
         self.assertIn(
-            "needs: [build, required-integration-tests, mariadb-contract, notification-smtp-contract]",
+            "needs: [build, required-integration-tests, mariadb-contract, notification-smtp-contract, creation-outcome-mariadb]",
             publish,
         )
         self.assertIn("name: required integration tests", integration)

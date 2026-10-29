@@ -36,7 +36,7 @@ public class DeleteDatabaseConsultantAgencyAction
           this.consultantAgencyRepository.findByConsultantId(actionTarget.getConsultant().getId());
       this.consultantAgencyRepository.deleteAll(consultantAgencies);
     } catch (Exception e) {
-      log.error("UserService delete workflow error: ", e);
+      actionTarget.logFailure(log, "UserService delete workflow error: ", e);
       actionTarget
           .getDeletionWorkflowErrors()
           .add(

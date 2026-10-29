@@ -67,6 +67,8 @@ mariadb_owned_tests=(
   UserHardDeleteClaimMariaDbIT
   # Scenario C caller-proof owns this exact suite on both pinned native MariaDB versions.
   AccountLifecycleRetryFairnessMariaDbIT
+  # Required creation-outcome-mariadb owns all eight real JPA/MariaDB transaction cases.
+  CreationOperationMariaDbIT
 )
 required_test_pattern="**/*IT"
 for mariadb_owned_test in "${mariadb_owned_tests[@]}"; do
@@ -95,6 +97,8 @@ required_e2e = {
     "UserAdminControllerE2EIT",
     "UserControllerE2EIT",
     "MatrixBrowserDeviceSynapseIT",
+    "ConsultantCreationOperationWebSecurityIT",
+    "ConsultantCreationOperationPrivacyIT",
 }
 
 tests = failures = errors = skipped = 0

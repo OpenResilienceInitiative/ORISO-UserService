@@ -915,6 +915,629 @@ class CreateConsultantSagaTest {
     return displayNameCaptor.getValue();
   }
 
+  private java.util.Map<
+          java.util.UUID,
+          de.caritas.cob.userservice.api.service.creationoutcome.CreationOperation.Receipt>
+      trackedRows;
+
+  private java.util.function.Predicate<
+          de.caritas.cob.userservice.api.service.creationoutcome.CreationOperation.Receipt>
+      failTrackedWrite = receipt -> false;
+
+  private void trackedJournalFixture() {
+    trackedRows = new java.util.concurrent.ConcurrentHashMap<>();
+    var repository =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.CreationOperationStore.class,
+            invocation -> {
+              switch (invocation.getMethod().getName()) {
+                case "insert":
+                  {
+                    var receipt =
+                        (de.caritas.cob.userservice.api.service.creationoutcome.CreationOperation
+                                .Receipt)
+                            invocation.getArgument(0);
+                    if (trackedRows.values().stream()
+                        .anyMatch(r -> r.operationKey().equals(receipt.operationKey())))
+                      throw new org.springframework.dao.DuplicateKeyException("collision");
+                    trackedRows.put(receipt.operationId(), receipt);
+                    return 1;
+                  }
+                case "findByKey":
+                  return trackedRows.values().stream()
+                      .filter(r -> r.operationKey().equals(invocation.getArgument(0)))
+                      .findFirst();
+                case "findById":
+                  return java.util.Optional.ofNullable(trackedRows.get(invocation.getArgument(0)));
+                case "compareAndSet":
+                  {
+                    var receipt =
+                        (de.caritas.cob.userservice.api.service.creationoutcome.CreationOperation
+                                .Receipt)
+                            invocation.getArgument(0);
+                    if (failTrackedWrite.test(receipt))
+                      throw new IllegalStateException("PrivateStorageCanary");
+                    var old = trackedRows.get(receipt.operationId());
+                    if (old == null || old.version() != (long) invocation.getArgument(1)) return 0;
+                    trackedRows.put(receipt.operationId(), receipt);
+                    return 1;
+                  }
+                default:
+                  return org.mockito.Answers.RETURNS_DEFAULTS.answer(invocation);
+              }
+            });
+    var writer =
+        new de.caritas.cob.userservice.api.service.creationoutcome.CreationOperationWriter(
+            repository);
+    ReflectionTestUtils.setField(createConsultantSaga, "creationWriter", writer);
+    ReflectionTestUtils.setField(
+        createConsultantSaga,
+        "creationJournal",
+        new AccountCreationAttemptJournal(
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.port.out.AccountCreationAttemptRepository.class),
+            java.time.Clock.systemUTC(),
+            writer));
+    ReflectionTestUtils.setField(
+        createConsultantSaga,
+        "creationAccess",
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.service.creationoutcome.CreationOperationAccess.class));
+  }
+
+  @Test
+  void validatedClaimOccursBeforeNativeCreate() throws Exception {
+    trackedJournalFixture();
+    when(consultantService.saveConsultant(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    var context =
+        new de.caritas.cob.userservice.api.service.creationoutcome.CreationOperationContext(
+            new de.caritas.cob.userservice.api.service.creationoutcome.CreationOperation.Candidate(
+                java.util.UUID.randomUUID(), java.util.UUID.randomUUID(), "actual-owner"));
+    var nativeClient =
+        org.mockito.Mockito.mock(
+            IdentityClient.class,
+            invocation -> {
+              if (invocation.getMethod().getName().equals("createUser")) {
+                org.junit.jupiter.api.Assertions.assertTrue(
+                    context.persistedOperationId().isPresent(),
+                    "The durable claim must exist before any native creation");
+                verify(userAccountInputValidator).validateUserDTO(any());
+                var identity = new CreatedIdentity();
+                identity.setUserId(KEYCLOAK_USER_ID);
+                ((de.caritas.cob.userservice.api.port.out.identity.NativeCreationCapture)
+                        invocation.getArgument(3))
+                    .captured(identity);
+                return identity;
+              }
+              return org.mockito.Answers.RETURNS_DEFAULTS.answer(invocation);
+            });
+    ReflectionTestUtils.setField(createConsultantSaga, "identityClient", nativeClient);
+    var dto = validCreateConsultantDto();
+    dto.setTenantId(7L);
+    createConsultantSaga.createNewConsultant(dto, context);
+  }
+
+  private de.caritas.cob.userservice.api.service.creationoutcome.CreationOperationContext
+      trackedContext(java.util.UUID key) {
+    return new de.caritas.cob.userservice.api.service.creationoutcome.CreationOperationContext(
+        new de.caritas.cob.userservice.api.service.creationoutcome.CreationOperation.Candidate(
+            java.util.UUID.randomUUID(), key, "actual-owner"));
+  }
+
+  private CreateConsultantDTO trackedInput() {
+    var dto = validCreateConsultantDto();
+    dto.setTenantId(7L);
+    return dto;
+  }
+
+  private void trackedHappy() throws Exception {
+    trackedHappy(true);
+  }
+
+  private void trackedHappy(boolean save) throws Exception {
+    trackedJournalFixture();
+    when(identityClient.createUser(any(), any(), any(), any()))
+        .thenAnswer(
+            call -> {
+              var created = new CreatedIdentity(KEYCLOAK_USER_ID);
+              ((de.caritas.cob.userservice.api.port.out.identity.NativeCreationCapture)
+                      call.getArgument(3))
+                  .captured(created);
+              return created;
+            });
+    if (save) when(consultantService.saveConsultant(any())).thenAnswer(call -> call.getArgument(0));
+  }
+
+  @Test
+  void replayAfterLicenseExhaustionIsReceiptOnlyAndBindsPersistedWinner() throws Exception {
+    trackedHappy();
+    var key = java.util.UUID.randomUUID();
+    var first = trackedContext(key);
+    createConsultantSaga.createNewConsultant(trackedInput(), first);
+    org.mockito.Mockito.clearInvocations(
+        identityClient,
+        identityPasswordUpdater,
+        matrixSynapseService,
+        appointmentService,
+        consultantPublicSlugService,
+        tenantAdminService,
+        userHelper,
+        consultantService);
+    ReflectionTestUtils.setField(createConsultantSaga, "multiTenancyEnabled", true);
+    var replay = trackedContext(key);
+    var failure =
+        assertThrows(
+            de.caritas.cob.userservice.api.service.creationoutcome.CreationOperationAccess
+                .ExistingOperation.class,
+            () -> createConsultantSaga.createNewConsultant(trackedInput(), replay));
+    org.junit.jupiter.api.Assertions.assertEquals(
+        first.receipt().operationId(), failure.operationId());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        first.receipt().operationId(), replay.receipt().operationId());
+    org.junit.jupiter.api.Assertions.assertFalse(failure.conflict());
+    verifyNoInteractions(
+        identityClient,
+        identityPasswordUpdater,
+        matrixSynapseService,
+        appointmentService,
+        tenantAdminService,
+        userHelper,
+        consultantService,
+        consultantPublicSlugService);
+    var changed = trackedInput();
+    changed.setFirstname("Changed");
+    org.junit.jupiter.api.Assertions.assertTrue(
+        assertThrows(
+                de.caritas.cob.userservice.api.service.creationoutcome.CreationOperationAccess
+                    .ExistingOperation.class,
+                () -> createConsultantSaga.createNewConsultant(changed, trackedContext(key)))
+            .conflict());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"user", "absence", "slug", "topic", "scope", "license", "tenant"})
+  void invalidInputCreatesNoReceipt(String validation) {
+    trackedJournalFixture();
+    var dto = trackedInput();
+    var failure =
+        new de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException(
+            "PrivateInputCanary");
+    switch (validation) {
+      case "user" ->
+          org.mockito.Mockito.doThrow(failure)
+              .when(userAccountInputValidator)
+              .validateUserDTO(any());
+      case "absence" ->
+          org.mockito.Mockito.doThrow(failure)
+              .when(userAccountInputValidator)
+              .validateAbsence(any());
+      case "slug" ->
+          org.mockito.Mockito.doThrow(failure)
+              .when(consultantPublicSlugService)
+              .validateNewAdminSlug(any());
+      case "topic" -> {
+        dto.setAgencyIds(java.util.List.of(2L));
+        org.mockito.Mockito.doThrow(failure)
+            .when(consultantTopicAgencyCompatibilityValidator)
+            .validateGrantTopicsAgainstSelectedAgencies(any(), any(), any());
+      }
+      case "scope" ->
+          org.mockito.Mockito.doThrow(failure)
+              .when(
+                  (de.caritas.cob.userservice.api.service.creationoutcome.CreationOperationAccess)
+                      ReflectionTestUtils.getField(createConsultantSaga, "creationAccess"))
+              .requireScope(any());
+      case "license" ->
+          ReflectionTestUtils.setField(createConsultantSaga, "multiTenancyEnabled", true);
+      case "tenant" -> {
+        dto.setTenantId(null);
+        ReflectionTestUtils.setField(createConsultantSaga, "multiTenancyEnabled", true);
+      }
+    }
+    assertThrows(
+        RuntimeException.class,
+        () ->
+            createConsultantSaga.createNewConsultant(
+                dto, trackedContext(java.util.UUID.randomUUID())));
+    org.junit.jupiter.api.Assertions.assertTrue(trackedRows.isEmpty());
+    verifyNoInteractions(
+        identityClient,
+        identityPasswordUpdater,
+        rollbackFacade,
+        matrixSynapseService,
+        appointmentService);
+  }
+
+  @Test
+  void captureFailureSkipsEverySagaCompensationAndLaterMutation() {
+    trackedJournalFixture();
+    failTrackedWrite = r -> r.nativeId() != null;
+    when(identityClient.createUser(any(), any(), any(), any()))
+        .thenAnswer(
+            call -> {
+              ((de.caritas.cob.userservice.api.port.out.identity.NativeCreationCapture)
+                      call.getArgument(3))
+                  .captured(new CreatedIdentity(KEYCLOAK_USER_ID));
+              return new CreatedIdentity(KEYCLOAK_USER_ID);
+            });
+    var context = trackedContext(java.util.UUID.randomUUID());
+    var failure =
+        assertThrows(
+            de.caritas.cob.userservice.api.service.creationoutcome.CreationOperationFailure.class,
+            () -> createConsultantSaga.createNewConsultant(trackedInput(), context));
+    org.junit.jupiter.api.Assertions.assertEquals(503, failure.status());
+    org.junit.jupiter.api.Assertions.assertNull(context.receipt().nativeId());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        de.caritas.cob.userservice.api.service.creationoutcome.CreationOperation.DispatchState
+            .DISPATCH_UNKNOWN,
+        context.receipt().dispatch());
+    verifyNoInteractions(
+        identityPasswordUpdater,
+        rollbackFacade,
+        matrixSynapseService,
+        appointmentService,
+        consultantService);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void nativeFailureKeepsConflictStatusOnlyWhenKnownAndNeverCompensates(boolean knownConflict) {
+    trackedJournalFixture();
+    org.mockito.Mockito.doThrow(
+            knownConflict
+                ? new de.caritas.cob.userservice.api.port.out.identity.NativeCreationConflict()
+                : new IllegalStateException("PrivateProviderCanary"))
+        .when(identityClient)
+        .createUser(any(), any(), any(), any());
+    var context = trackedContext(java.util.UUID.randomUUID());
+    var failure =
+        assertThrows(
+            de.caritas.cob.userservice.api.service.creationoutcome.CreationOperationFailure.class,
+            () -> createConsultantSaga.createNewConsultant(trackedInput(), context));
+    org.junit.jupiter.api.Assertions.assertEquals(knownConflict ? 409 : 424, failure.status());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        context.receipt().operationId(), failure.operationId());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        de.caritas.cob.userservice.api.service.creationoutcome.CreationOperation.DispatchState
+            .DISPATCH_UNKNOWN,
+        context.receipt().dispatch());
+    verifyNoInteractions(
+        identityPasswordUpdater,
+        rollbackFacade,
+        matrixSynapseService,
+        appointmentService,
+        consultantService);
+  }
+
+  @Test
+  void mandatoryAttributeFailureRetainsCapturedIdentityWithoutSecondSagaCompensation() {
+    trackedJournalFixture();
+    when(identityClient.createUser(any(), any(), any(), any()))
+        .thenAnswer(
+            call -> {
+              var capture =
+                  (de.caritas.cob.userservice.api.port.out.identity.NativeCreationCapture)
+                      call.getArgument(3);
+              capture.captured(new CreatedIdentity(KEYCLOAK_USER_ID));
+              capture.compensationStarting();
+              capture.compensationReturned();
+              throw new IllegalStateException("PrivateAttributeCanary");
+            });
+    var context = trackedContext(java.util.UUID.randomUUID());
+    var failure =
+        assertThrows(
+            de.caritas.cob.userservice.api.service.creationoutcome.CreationOperationFailure.class,
+            () -> createConsultantSaga.createNewConsultant(trackedInput(), context));
+    org.junit.jupiter.api.Assertions.assertEquals(424, failure.status());
+    org.junit.jupiter.api.Assertions.assertEquals(KEYCLOAK_USER_ID, context.receipt().nativeId());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        de.caritas.cob.userservice.api.service.creationoutcome.CreationOperation.CompensationState
+            .RETURNED_UNVERIFIED,
+        context.receipt().compensation());
+    verifyNoInteractions(
+        rollbackFacade, identityPasswordUpdater, matrixSynapseService, appointmentService);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"password", "role", "agency", "appointment", "row"})
+  void laterFailuresPersistCompensationStartBeforeDeletingAndNeverClaimAbsence(String step)
+      throws Exception {
+    trackedHappy(step.equals("agency") || step.equals("appointment"));
+    var dto = trackedInput();
+    var context = trackedContext(java.util.UUID.randomUUID());
+    var failure = new IllegalStateException("PrivateStepCanary");
+    switch (step) {
+      case "password" ->
+          org.mockito.Mockito.doThrow(failure)
+              .when(identityPasswordUpdater)
+              .updateTemporaryPassword(any(), any());
+      case "role" ->
+          org.mockito.Mockito.doThrow(failure)
+              .when(identityClient)
+              .updateRole(anyString(), anyString());
+      case "agency" -> {
+        dto.setAgencyIds(java.util.List.of(2L));
+        org.mockito.Mockito.doThrow(failure)
+            .when(consultantAgencyRelationCreatorService)
+            .createNewConsultantAgency(any(), any());
+      }
+      case "appointment" -> {
+        ReflectionTestUtils.setField(createConsultantSaga, "appointmentFeatureEnabled", true);
+        org.mockito.Mockito.doThrow(failure)
+            .when(appointmentService)
+            .createConsultant(any(), org.mockito.ArgumentMatchers.eq(true));
+      }
+      case "row" ->
+          org.mockito.Mockito.doThrow(failure).when(consultantService).saveConsultant(any());
+    }
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              org.junit.jupiter.api.Assertions.assertEquals(
+                  de.caritas.cob.userservice.api.service.creationoutcome.CreationOperation
+                      .CompensationState.STARTED_OUTCOME_UNKNOWN,
+                  trackedRows.get(context.receipt().operationId()).compensation());
+              return null;
+            })
+        .when(rollbackFacade)
+        .rollbackConsultantAccount(any(), org.mockito.ArgumentMatchers.eq(true));
+    assertThrows(
+        de.caritas.cob.userservice.api.service.creationoutcome.CreationOperationFailure.class,
+        () -> createConsultantSaga.createNewConsultant(dto, context));
+    org.junit.jupiter.api.Assertions.assertEquals(KEYCLOAK_USER_ID, context.receipt().nativeId());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        de.caritas.cob.userservice.api.service.creationoutcome.CreationOperation.CompensationState
+            .RETURNED_UNVERIFIED,
+        context.receipt().compensation());
+    verify(rollbackFacade).rollbackConsultantAccount(any(), org.mockito.ArgumentMatchers.eq(true));
+  }
+
+  @Test
+  void compensationStartStorageFailurePermitsZeroDelete() throws Exception {
+    trackedHappy(false);
+    failTrackedWrite =
+        r ->
+            r.compensation()
+                == de.caritas.cob.userservice.api.service.creationoutcome.CreationOperation
+                    .CompensationState.STARTED_OUTCOME_UNKNOWN;
+    org.mockito.Mockito.doThrow(new IllegalStateException("PrivatePasswordCanary"))
+        .when(identityPasswordUpdater)
+        .updateTemporaryPassword(any(), any());
+    var context = trackedContext(java.util.UUID.randomUUID());
+    var failure =
+        assertThrows(
+            de.caritas.cob.userservice.api.service.creationoutcome.CreationOperationFailure.class,
+            () -> createConsultantSaga.createNewConsultant(trackedInput(), context));
+    org.junit.jupiter.api.Assertions.assertEquals(503, failure.status());
+    verifyNoInteractions(rollbackFacade);
+  }
+
+  @Test
+  void unavailableJournalBeforeClaimReturns503WithoutReceiptOrNativeEffect() {
+    var journal = org.mockito.Mockito.mock(AccountCreationAttemptJournal.class);
+    org.mockito.Mockito.doThrow(new IllegalStateException("PrivateJournalCanary"))
+        .when(journal)
+        .findByKey(any());
+    ReflectionTestUtils.setField(createConsultantSaga, "creationJournal", journal);
+    ReflectionTestUtils.setField(
+        createConsultantSaga,
+        "creationAccess",
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.service.creationoutcome.CreationOperationAccess.class));
+    var context = trackedContext(java.util.UUID.randomUUID());
+    var failure =
+        assertThrows(
+            org.springframework.web.server.ResponseStatusException.class,
+            () -> createConsultantSaga.createNewConsultant(trackedInput(), context));
+    org.junit.jupiter.api.Assertions.assertEquals(503, failure.getStatusCode().value());
+    org.junit.jupiter.api.Assertions.assertTrue(context.persistedOperationId().isEmpty());
+    org.junit.jupiter.api.Assertions.assertNull(failure.getCause());
+    verifyNoInteractions(
+        identityClient,
+        identityPasswordUpdater,
+        matrixSynapseService,
+        rollbackFacade,
+        appointmentService);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void lateSlugRaceCompensatesActualCapturedIdentityOnlyAfterDurableStart(boolean failStart)
+      throws Exception {
+    trackedHappy(false);
+    when(matrixSynapseService.createUserIdTracked(any(), any(), any()))
+        .thenReturn("@actual-created:matrix.invalid");
+    org.mockito.Mockito.doThrow(
+            new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.CONFLICT, "PrivateSlugRaceCanary"))
+        .when(consultantPublicSlugService)
+        .applyAdminSlug(any(), any());
+    if (failStart)
+      failTrackedWrite =
+          r ->
+              r.compensation()
+                  == de.caritas.cob.userservice.api.service.creationoutcome.CreationOperation
+                      .CompensationState.STARTED_OUTCOME_UNKNOWN;
+    var context = trackedContext(java.util.UUID.randomUUID());
+    if (!failStart)
+      org.mockito.Mockito.doAnswer(
+              call -> {
+                var rollback = (Consultant) call.getArgument(0);
+                org.junit.jupiter.api.Assertions.assertEquals(KEYCLOAK_USER_ID, rollback.getId());
+                org.junit.jupiter.api.Assertions.assertEquals(
+                    "@actual-created:matrix.invalid", rollback.getMatrixUserId());
+                org.junit.jupiter.api.Assertions.assertEquals(7L, rollback.getTenantId());
+                org.junit.jupiter.api.Assertions.assertEquals(
+                    de.caritas.cob.userservice.api.service.creationoutcome.CreationOperation
+                        .CompensationState.STARTED_OUTCOME_UNKNOWN,
+                    trackedRows.get(context.receipt().operationId()).compensation());
+                return null;
+              })
+          .when(rollbackFacade)
+          .rollbackConsultantAccount(any(), org.mockito.ArgumentMatchers.eq(true));
+    var failure =
+        assertThrows(
+            de.caritas.cob.userservice.api.service.creationoutcome.CreationOperationFailure.class,
+            () -> createConsultantSaga.createNewConsultant(trackedInput(), context));
+    org.junit.jupiter.api.Assertions.assertEquals(failStart ? 503 : 409, failure.status());
+    org.junit.jupiter.api.Assertions.assertEquals(KEYCLOAK_USER_ID, context.receipt().nativeId());
+    if (failStart) verifyNoInteractions(rollbackFacade);
+    else {
+      verify(rollbackFacade)
+          .rollbackConsultantAccount(any(), org.mockito.ArgumentMatchers.eq(true));
+      org.junit.jupiter.api.Assertions.assertEquals(
+          de.caritas.cob.userservice.api.service.creationoutcome.CreationOperation.CompensationState
+              .RETURNED_UNVERIFIED,
+          context.receipt().compensation());
+    }
+  }
+
+  @Test
+  void trackedLicenseFailureNeverLogsProviderCanary() {
+    trackedJournalFixture();
+    ReflectionTestUtils.setField(createConsultantSaga, "multiTenancyEnabled", true);
+    when(tenantAdminService.getTenantById(7L))
+        .thenThrow(new org.springframework.web.client.RestClientException("PrivateLicenseCanary"));
+    var logger =
+        (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
+    var capture =
+        new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+    capture.start();
+    logger.addAppender(capture);
+    try {
+      assertThrows(
+          RuntimeException.class,
+          () ->
+              createConsultantSaga.createNewConsultant(
+                  trackedInput(), trackedContext(java.util.UUID.randomUUID())));
+      for (var event : capture.list) {
+        org.junit.jupiter.api.Assertions.assertFalse(
+            event.getFormattedMessage().contains("PrivateLicenseCanary"));
+        if (event.getThrowableProxy() != null)
+          org.junit.jupiter.api.Assertions.assertFalse(
+              ch.qos.logback.classic.spi.ThrowableProxyUtil.asString(event.getThrowableProxy())
+                  .contains("PrivateLicenseCanary"));
+      }
+      verifyNoInteractions(identityClient, rollbackFacade);
+    } finally {
+      logger.detachAppender(capture);
+      capture.stop();
+    }
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"returned", "missing", "failed"})
+  void trackedMatrixUsesValidatedInputWithoutAmbientCredentialsAndKeepsPartialOutcome(String result)
+      throws Exception {
+    PlainCredentialsHolder.clear();
+    trackedHappy();
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              org.junit.jupiter.api.Assertions.assertEquals(VALID_USERNAME, call.getArgument(0));
+              org.junit.jupiter.api.Assertions.assertNull(PlainCredentialsHolder.get());
+              if (result.equals("failed")) throw new IllegalStateException("PrivateMatrixCanary");
+              return result.equals("returned") ? "@actual:matrix.invalid" : null;
+            })
+        .when(matrixSynapseService)
+        .createUserIdTracked(any(), any(), any());
+    var context = trackedContext(java.util.UUID.randomUUID());
+    var outcome = createConsultantSaga.createNewConsultant(trackedInput(), context);
+    org.junit.jupiter.api.Assertions.assertEquals(
+        context.receipt().operationId(), outcome.operationId());
+    var saved = org.mockito.ArgumentCaptor.forClass(Consultant.class);
+    verify(consultantService).saveConsultant(saved.capture());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        result.equals("returned") ? "@actual:matrix.invalid" : null,
+        saved.getValue().getMatrixUserId());
+    org.junit.jupiter.api.Assertions.assertEquals(KEYCLOAK_USER_ID, context.receipt().nativeId());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        de.caritas.cob.userservice.api.service.creationoutcome.CreationOperation.RowState
+            .COMMIT_UNKNOWN,
+        context.receipt().row());
+    verifyNoInteractions(rollbackFacade);
+    org.junit.jupiter.api.Assertions.assertNull(PlainCredentialsHolder.get());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(ints = {0, 409, 404})
+  void insertionRaceBindsOnlyCurrentlyAuthorizedPersistedWinner(int collisionStatus) {
+    trackedJournalFixture();
+    var key = java.util.UUID.randomUUID();
+    var context = trackedContext(key);
+    var scope =
+        new de.caritas.cob.userservice.api.service.creationoutcome.CreationOperation.Scope(
+            7, java.util.List.of(), "COUNSELLOR");
+    var writer =
+        (de.caritas.cob.userservice.api.service.creationoutcome.CreationOperationWriter)
+            ReflectionTestUtils.getField(createConsultantSaga, "creationWriter");
+    var persisted =
+        writer
+            .prepare(
+                new de.caritas.cob.userservice.api.service.creationoutcome.CreationOperation
+                    .Prepared(
+                    new de.caritas.cob.userservice.api.service.creationoutcome.CreationOperation
+                        .Candidate(java.util.UUID.randomUUID(), key, "actual-owner"),
+                    scope,
+                    collisionStatus == 409
+                        ? "a".repeat(64)
+                        : de.caritas.cob.userservice.api.service.creationoutcome
+                            .CreationRequestFingerprint.of(trackedInput(), scope)))
+            .receipt();
+    var journal = org.mockito.Mockito.mock(AccountCreationAttemptJournal.class);
+    when(journal.findByKey(key))
+        .thenReturn(java.util.Optional.empty(), java.util.Optional.of(persisted));
+    if (collisionStatus == 0)
+      when(journal.claim(any()))
+          .thenReturn(
+              new de.caritas.cob.userservice.api.service.creationoutcome.CreationOperation.Claim(
+                  persisted, false));
+    else
+      when(journal.claim(any()))
+          .thenThrow(
+              new de.caritas.cob.userservice.api.service.creationoutcome.CreationOperationFailure(
+                  persisted.operationId(),
+                  collisionStatus,
+                  de.caritas.cob.userservice.api.service.creationoutcome.CreationOperation.Reason
+                      .NONE));
+    ReflectionTestUtils.setField(createConsultantSaga, "creationJournal", journal);
+    var access =
+        (de.caritas.cob.userservice.api.service.creationoutcome.CreationOperationAccess)
+            ReflectionTestUtils.getField(createConsultantSaga, "creationAccess");
+    if (collisionStatus == 404) {
+      org.mockito.Mockito.doThrow(
+              de.caritas.cob.userservice.api.service.creationoutcome.CreationOperationAccess
+                  .denied())
+          .when(access)
+          .requireReceiptAccess(persisted);
+      assertThrows(
+          org.springframework.web.server.ResponseStatusException.class,
+          () -> createConsultantSaga.createNewConsultant(trackedInput(), context));
+      org.junit.jupiter.api.Assertions.assertTrue(context.persistedOperationId().isEmpty());
+    } else {
+      var failure =
+          assertThrows(
+              de.caritas.cob.userservice.api.service.creationoutcome.CreationOperationAccess
+                  .ExistingOperation.class,
+              () -> createConsultantSaga.createNewConsultant(trackedInput(), context));
+      org.junit.jupiter.api.Assertions.assertEquals(persisted.operationId(), failure.operationId());
+      org.junit.jupiter.api.Assertions.assertEquals(
+          persisted.operationId(), context.receipt().operationId());
+      org.junit.jupiter.api.Assertions.assertNotEquals(
+          context.candidate().operationId(), failure.operationId());
+      org.junit.jupiter.api.Assertions.assertEquals(collisionStatus == 409, failure.conflict());
+    }
+    verify(access).requireReceiptAccess(persisted);
+    verifyNoInteractions(
+        identityClient,
+        identityPasswordUpdater,
+        matrixSynapseService,
+        appointmentService,
+        rollbackFacade);
+  }
+
   private void stubHappyPath() throws Exception {
     stubKeycloakUserCreation();
     when(consultantService.saveConsultant(any(Consultant.class)))

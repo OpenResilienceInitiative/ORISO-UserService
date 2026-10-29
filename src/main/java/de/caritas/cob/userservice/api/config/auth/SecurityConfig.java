@@ -528,6 +528,11 @@ public class SecurityConfig {
                 .requestMatchers("/useradmin/data", "/service/useradmin/data")
                 .hasAnyAuthority(SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
                 .requestMatchers(
+                    HttpMethod.GET,
+                    "/useradmin/consultant-creation-operations/**",
+                    "/service/useradmin/consultant-creation-operations/**")
+                .authenticated()
+                .requestMatchers(
                     HttpMethod.POST, "/useradmin/consultants", "/service/useradmin/consultants")
                 .hasAnyAuthority(CONSULTANT_CREATE, TECHNICAL_DEFAULT)
                 .requestMatchers(

@@ -24,9 +24,11 @@ public class DeleteAppointmentServiceConsultantAction
   @Override
   public void execute(ConsultantDeletionWorkflowDTO actionTarget) {
     try {
-      this.appointmentService.deleteConsultant(actionTarget.getConsultant().getId());
+      if (actionTarget.isFixedDiagnostics())
+        this.appointmentService.deleteConsultant(actionTarget.getConsultant().getId(), true);
+      else this.appointmentService.deleteConsultant(actionTarget.getConsultant().getId());
     } catch (Exception e) {
-      log.error("Appointment service delete workflow error: ", e);
+      actionTarget.logFailure(log, "Appointment service delete workflow error: ", e);
       actionTarget
           .getDeletionWorkflowErrors()
           .add(

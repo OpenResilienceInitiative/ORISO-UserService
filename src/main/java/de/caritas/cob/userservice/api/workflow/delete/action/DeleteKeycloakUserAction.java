@@ -19,14 +19,21 @@ public abstract class DeleteKeycloakUserAction {
   private final @NonNull IdentityAccountRemover identityAccountRemover;
 
   protected void deleteUserWithId(String userId) {
+    deleteUserWithId(userId, false);
+  }
 
+  protected void deleteUserWithId(String userId, boolean fixedDiagnostics) {
     try {
-      identityAccountRemover.deleteUser(userId);
+      if (fixedDiagnostics) identityAccountRemover.deleteUserTracked(userId);
+      else identityAccountRemover.deleteUser(userId);
     } catch (jakarta.ws.rs.NotFoundException alreadyDeleted) {
       // The Keycloak admin client uses JAX-RS exceptions; a retry may find the identity gone.
       log.info("Identity already absent; deletion can continue");
     } catch (HttpClientErrorException ex) {
-      acceptDeletionIfUserNotFoundInKeycloak(userId, ex);
+      if (fixedDiagnostics) {
+        if (!HttpStatus.NOT_FOUND.equals(ex.getStatusCode())) throw ex;
+        log.warn("Tracked identity compensation target was not found");
+      } else acceptDeletionIfUserNotFoundInKeycloak(userId, ex);
     }
   }
 

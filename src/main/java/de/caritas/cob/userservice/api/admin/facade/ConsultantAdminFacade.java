@@ -140,6 +140,15 @@ public class ConsultantAdminFacade {
    * @return the generated and persisted {@link Consultant} representation as {@link
    *     ConsultantAdminResponseDTO}
    */
+  public de.caritas.cob.userservice.api.service.creationoutcome.TrackedConsultantCreation
+      createNewConsultant(
+          CreateConsultantDTO input,
+          de.caritas.cob.userservice.api.service.creationoutcome.CreationOperationContext context) {
+    if (input.getAgencyIds() != null && !input.getAgencyIds().isEmpty())
+      adminScope.assertMay(Target.agencies(input.getAgencyIds()));
+    return consultantAdminService.createNewConsultant(input, context);
+  }
+
   public ConsultantAdminResponseDTO createNewConsultant(CreateConsultantDTO createConsultantDTO) {
     if (createConsultantDTO != null
         && createConsultantDTO.getAgencyIds() != null

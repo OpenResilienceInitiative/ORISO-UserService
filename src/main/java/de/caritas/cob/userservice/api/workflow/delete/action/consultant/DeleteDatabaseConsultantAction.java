@@ -99,7 +99,7 @@ public class DeleteDatabaseConsultantAction
 
   private static void handleExceptionWithMessage(
       ConsultantDeletionWorkflowDTO actionTarget, Exception e, String message) {
-    log.error("UserService delete workflow error: ", e);
+    actionTarget.logFailure(log, "UserService delete workflow error: ", e);
     actionTarget
         .getDeletionWorkflowErrors()
         .add(

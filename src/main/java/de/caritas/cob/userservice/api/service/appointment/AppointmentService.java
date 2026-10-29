@@ -60,14 +60,18 @@ public class AppointmentService {
 
   public void createConsultant(ConsultantAdminResponseDTO consultantAdminResponseDTO)
       throws RestClientException {
-    if (!appointmentFeatureEnabled) {
-      return;
-    }
+    createConsultant(consultantAdminResponseDTO, false);
+  }
 
+  public void createConsultant(
+      ConsultantAdminResponseDTO consultantAdminResponseDTO, boolean fixedDiagnostics) {
+    if (!appointmentFeatureEnabled) return;
     if (consultantAdminResponseDTO != null) {
       ObjectMapper mapper = getObjectMapper(false);
       ConsultantApi appointmentConsultantApi =
-          this.appointmentConsultantServiceApiControllerFactory.createControllerApi();
+          fixedDiagnostics
+              ? this.appointmentConsultantServiceApiControllerFactory.createControllerApi(true)
+              : this.appointmentConsultantServiceApiControllerFactory.createControllerApi();
       addTaskHeaders(appointmentConsultantApi.getApiClient(), TaskPurpose.APPOINTMENT_SYNC);
       de.caritas.cob.userservice.appointmentservice.generated.web.model.ConsultantDTO consultant =
           getConsultantDTO(consultantAdminResponseDTO, mapper);
@@ -78,6 +82,17 @@ public class AppointmentService {
   /** Creation ledger owns the exact returned native account and the captured original tenant. */
   @Transactional(propagation = Propagation.NOT_SUPPORTED)
   public void createOwnedConsultant(ConsultantAdminResponseDTO response, Long capturedTenant) {
+    createOwnedConsultant(response, capturedTenant, false);
+  }
+
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
+  public void createOwnedConsultantTracked(
+      ConsultantAdminResponseDTO response, Long capturedTenant) {
+    createOwnedConsultant(response, capturedTenant, true);
+  }
+
+  private void createOwnedConsultant(
+      ConsultantAdminResponseDTO response, Long capturedTenant, boolean privateDiagnostics) {
     requireOwnedOutsideSql();
     if (!appointmentFeatureEnabled
         || response == null
@@ -88,7 +103,10 @@ public class AppointmentService {
     var dto = getConsultantDTO(response, getObjectMapper(false));
     if (dto == null || dto.getId() == null || !dto.getId().equals(response.getEmbedded().getId()))
       throw new IllegalArgumentException("Owned appointment payload differs from account");
-    var api = appointmentConsultantServiceApiControllerFactory.createControllerApi();
+    var api =
+        privateDiagnostics
+            ? appointmentConsultantServiceApiControllerFactory.createControllerApi(true)
+            : appointmentConsultantServiceApiControllerFactory.createControllerApi();
     addCapturedTaskHeaders(api.getApiClient(), TaskPurpose.APPOINTMENT_SYNC, capturedTenant);
     try {
       var result = api.createConsultantWithHttpInfo(dto);
@@ -200,18 +218,26 @@ public class AppointmentService {
   }
 
   public void deleteConsultant(String consultantId) {
+    deleteConsultant(consultantId, false);
+  }
+
+  public void deleteConsultant(String consultantId, boolean fixedDiagnostics) {
     if (!appointmentFeatureEnabled) {
       return;
     }
     ConsultantApi appointmentConsultantApi =
-        this.appointmentConsultantServiceApiControllerFactory.createControllerApi();
+        fixedDiagnostics
+            ? this.appointmentConsultantServiceApiControllerFactory.createControllerApi(true)
+            : this.appointmentConsultantServiceApiControllerFactory.createControllerApi();
 
     if (consultantId != null && !consultantId.isEmpty()) {
       addTaskHeaders(appointmentConsultantApi.getApiClient(), TaskPurpose.APPOINTMENT_CLEANUP);
       try {
         appointmentConsultantApi.deleteConsultant(consultantId);
       } catch (HttpClientErrorException ex) {
-        acceptDeletionIfConsultantNotFoundInAppointmentService(ex, consultantId);
+        if (fixedDiagnostics) {
+          if (!HttpStatus.NOT_FOUND.equals(ex.getStatusCode())) throw ex;
+        } else acceptDeletionIfConsultantNotFoundInAppointmentService(ex, consultantId);
       }
     }
   }

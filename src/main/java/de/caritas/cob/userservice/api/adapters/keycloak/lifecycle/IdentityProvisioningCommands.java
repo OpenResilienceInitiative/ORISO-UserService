@@ -10,6 +10,14 @@ public interface IdentityProvisioningCommands {
 
   AccountProjection ownedRead(UUID attemptId, OwnedReadRequest request);
 
+  default AttemptResult createTracked(UUID id, CreateRequest request) {
+    throw new IllegalStateException("Tracked lifecycle transport is unavailable");
+  }
+
+  default AccountProjection ownedReadTracked(UUID id, OwnedReadRequest request) {
+    throw new IllegalStateException("Tracked lifecycle transport is unavailable");
+  }
+
   AttemptResult recover(UUID attemptId, RecoverRequest request);
 
   AttemptResult commit(UUID attemptId, CommitRequest request);

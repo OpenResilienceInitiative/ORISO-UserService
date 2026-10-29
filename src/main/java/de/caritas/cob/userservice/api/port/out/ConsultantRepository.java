@@ -45,6 +45,10 @@ public interface ConsultantRepository
   @EntityGraph(attributePaths = {"consultantAgencies", "languages"})
   Optional<Consultant> findByPublicSlugAndDeleteDateIsNull(String publicSlug);
 
+  boolean existsByPublicSlugAndDeleteDateIsNull(String publicSlug);
+
+  boolean existsByPendingPublicSlugAndDeleteDateIsNull(String pendingPublicSlug);
+
   boolean existsByPublicSlugAndIdNotAndDeleteDateIsNull(String publicSlug, String id);
 
   boolean existsByPendingPublicSlugAndIdNotAndDeleteDateIsNull(String pendingPublicSlug, String id);

@@ -45,6 +45,18 @@ public class RollbackFacade {
     }
   }
 
+  /** Same compensation sequence; a return remains unverified even when every step returned. */
+  public void rollbackConsultantAccount(Consultant consultant, boolean fixedDiagnostics) {
+    if (!fixedDiagnostics) {
+      rollbackConsultantAccount(consultant);
+      return;
+    }
+    consultant.setDeleteDate(LocalDateTime.now());
+    var failures = deleteUserAccountService.performConsultantDeletion(consultant, true);
+    if (failures != null && !failures.isEmpty())
+      log.error("Tracked consultant compensation returned with failures");
+  }
+
   /**
    * Deletes the provided user in Keycloak, MariaDB and its related session or user-chat/agency
    * relations depending on the provided {@link RollbackUserAccountInformation}.

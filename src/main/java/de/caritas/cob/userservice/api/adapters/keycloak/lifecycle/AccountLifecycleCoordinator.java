@@ -29,10 +29,20 @@ public final class AccountLifecycleCoordinator {
 
   public AttemptResult create(
       UUID id, CreationScope verifiedScope, AccountCreation validatedAccount) {
+    return create(id, verifiedScope, validatedAccount, false);
+  }
+
+  public AttemptResult create(
+      UUID id,
+      CreationScope verifiedScope,
+      AccountCreation validatedAccount,
+      boolean privateDiagnostics) {
     var identity = codec.identity(verifiedScope, validatedAccount);
     var execution = journal.begin(id, identity); // independently committed before any HTTP call
     try {
-      var result = remote.create(id, new CreateRequest(identity, execution, validatedAccount));
+      var request = new CreateRequest(identity, execution, validatedAccount);
+      var result =
+          privateDiagnostics ? remote.createTracked(id, request) : remote.create(id, request);
       if (result == null
           || !id.equals(result.attemptId())
           || !execution.equals(result.execution())

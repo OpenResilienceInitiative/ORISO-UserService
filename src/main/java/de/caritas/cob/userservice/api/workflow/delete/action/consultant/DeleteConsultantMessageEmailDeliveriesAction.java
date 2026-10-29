@@ -40,7 +40,7 @@ public class DeleteConsultantMessageEmailDeliveriesAction
         repository.deleteBySourceMatrixUserId(target.getConsultant().getMatrixUserId());
       }
     } catch (Exception failure) {
-      log.error("UserService delete workflow error: ", failure);
+      target.logFailure(log, "UserService delete workflow error: ", failure);
       target
           .getDeletionWorkflowErrors()
           .add(

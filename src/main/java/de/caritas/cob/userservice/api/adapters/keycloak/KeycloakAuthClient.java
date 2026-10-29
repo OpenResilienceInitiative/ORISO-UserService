@@ -78,6 +78,15 @@ public class KeycloakAuthClient {
 
   /** Confidential backend authentication, with no human password or refresh-session fallback. */
   public KeycloakLoginResponseDTO loginService(String clientId, String clientSecret) {
+    return loginService(clientId, clientSecret, false);
+  }
+
+  public KeycloakLoginResponseDTO loginServicePrivate(String clientId, String clientSecret) {
+    return loginService(clientId, clientSecret, true);
+  }
+
+  private KeycloakLoginResponseDTO loginService(
+      String clientId, String clientSecret, boolean privateDiagnostics) {
     if (clientId == null
         || clientId.isBlank()
         || clientSecret == null
@@ -93,11 +102,18 @@ public class KeycloakAuthClient {
     headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
     try {
       Map<?, ?> response =
-          restTemplate
-              .postForEntity(
-                  identityClientConfig.getOpenIdConnectUrl("/token"),
-                  new HttpEntity<>(form, headers),
-                  Map.class)
+          (privateDiagnostics
+                  ? new de.caritas.cob.userservice.api.adapters.http.TrackedHttpTransport(
+                          restTemplate)
+                      .exchange(
+                          java.net.URI.create(identityClientConfig.getOpenIdConnectUrl("/token")),
+                          org.springframework.http.HttpMethod.POST,
+                          new HttpEntity<>(form, headers),
+                          Map.class)
+                  : restTemplate.postForEntity(
+                      identityClientConfig.getOpenIdConnectUrl("/token"),
+                      new HttpEntity<>(form, headers),
+                      Map.class))
               .getBody();
       if (response == null
           || !(response.get("access_token") instanceof String token)

@@ -70,6 +70,34 @@ public final class KeycloakAccountLifecycleCommands implements IdentityProvision
   }
 
   @Override
+  public AttemptResult createTracked(UUID id, CreateRequest request) {
+    if (!codec.identity(request.identity().scope(), request.account()).equals(request.identity()))
+      throw new IllegalArgumentException("Creation payload does not match durable fingerprint");
+    return call(
+        id,
+        "",
+        "account.create",
+        HttpMethod.PUT,
+        TaskPurpose.ACCOUNT_PROVISIONING,
+        request,
+        AttemptResult.class,
+        true);
+  }
+
+  @Override
+  public AccountProjection ownedReadTracked(UUID id, OwnedReadRequest request) {
+    return call(
+        id,
+        "owned-read",
+        "account.owned-read",
+        HttpMethod.POST,
+        TaskPurpose.ACCOUNT_PROVISIONING,
+        request,
+        AccountProjection.class,
+        true);
+  }
+
+  @Override
   public AttemptResult recover(UUID id, RecoverRequest request) {
     return call(
         id,
@@ -113,10 +141,26 @@ public final class KeycloakAccountLifecycleCommands implements IdentityProvision
       TaskPurpose purpose,
       Object request,
       Class<T> responseType) {
+    return call(id, suffix, operation, method, purpose, request, responseType, false);
+  }
+
+  private <T> T call(
+      UUID id,
+      String suffix,
+      String operation,
+      HttpMethod method,
+      TaskPurpose purpose,
+      Object request,
+      Class<T> responseType,
+      boolean privateDiagnostics) {
     var actor = actors.require(purpose);
     String bearer =
         switch (purpose) {
-          case ACCOUNT_PROVISIONING -> broker.issueCheckedProvisioning(purpose).accessToken();
+          case ACCOUNT_PROVISIONING ->
+              (privateDiagnostics
+                      ? broker.issueCheckedProvisioningPrivate(purpose)
+                      : broker.issueCheckedProvisioning(purpose))
+                  .accessToken();
           case ACCOUNT_MAINTENANCE -> broker.issueCheckedMaintenance(purpose).accessToken();
           default -> throw new IllegalArgumentException("Unsupported account lifecycle purpose");
         };
@@ -139,11 +183,18 @@ public final class KeycloakAccountLifecycleCommands implements IdentityProvision
     URI uri = builder.build().encode().toUri();
     try {
       var response =
-          http.exchange(
-              uri,
-              method,
-              new HttpEntity<>(body.getBytes(StandardCharsets.UTF_8), headers),
-              byte[].class);
+          privateDiagnostics
+              ? new de.caritas.cob.userservice.api.adapters.http.TrackedHttpTransport(http)
+                  .exchange(
+                      uri,
+                      method,
+                      new HttpEntity<>(body.getBytes(StandardCharsets.UTF_8), headers),
+                      byte[].class)
+              : http.exchange(
+                  uri,
+                  method,
+                  new HttpEntity<>(body.getBytes(StandardCharsets.UTF_8), headers),
+                  byte[].class);
       if (!(response.getStatusCode().value() == 200
           || (method == HttpMethod.PUT && response.getStatusCode().value() == 201)))
         throw new RemoteFailure(0);

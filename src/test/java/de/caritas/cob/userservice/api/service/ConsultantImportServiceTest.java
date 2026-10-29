@@ -166,7 +166,8 @@ class ConsultantImportServiceTest {
 
     consultantImportService.startImport();
 
-    verify(createConsultantSaga, never()).createNewConsultant(any(), any());
+    verify(createConsultantSaga, never())
+        .createNewConsultant(any(ConsultantImportService.ImportRecord.class), any());
   }
 
   // ---------------------------------------------------------------------------
@@ -203,7 +204,8 @@ class ConsultantImportServiceTest {
 
     consultantImportService.startImport();
 
-    verify(createConsultantSaga, never()).createNewConsultant(any(), any());
+    verify(createConsultantSaga, never())
+        .createNewConsultant(any(ConsultantImportService.ImportRecord.class), any());
   }
 
   // ---------------------------------------------------------------------------
@@ -221,7 +223,8 @@ class ConsultantImportServiceTest {
 
     consultantImportService.startImport();
 
-    verify(createConsultantSaga, never()).createNewConsultant(any(), any());
+    verify(createConsultantSaga, never())
+        .createNewConsultant(any(ConsultantImportService.ImportRecord.class), any());
   }
 
   // ---------------------------------------------------------------------------
@@ -241,11 +244,14 @@ class ConsultantImportServiceTest {
     when(identityUsernameAvailability.isUsernameAvailable("brandnewuser")).thenReturn(true);
     Consultant newConsultant = new Consultant();
     newConsultant.setId("new-id-456");
-    when(createConsultantSaga.createNewConsultant(any(), any())).thenReturn(newConsultant);
+    when(createConsultantSaga.createNewConsultant(
+            any(ConsultantImportService.ImportRecord.class), any()))
+        .thenReturn(newConsultant);
 
     consultantImportService.startImport();
 
-    verify(createConsultantSaga).createNewConsultant(any(), any());
+    verify(createConsultantSaga)
+        .createNewConsultant(any(ConsultantImportService.ImportRecord.class), any());
     verify(consultantAgencyRelationCreatorService)
         .createConsultantAgencyRelations(eq("new-id-456"), any(), any(), any());
   }
@@ -283,11 +289,14 @@ class ConsultantImportServiceTest {
     when(identityUsernameAvailability.isUsernameAvailable("tenantuser")).thenReturn(true);
     Consultant newConsultant = new Consultant();
     newConsultant.setId("tenant-cons-id");
-    when(createConsultantSaga.createNewConsultant(any(), any())).thenReturn(newConsultant);
+    when(createConsultantSaga.createNewConsultant(
+            any(ConsultantImportService.ImportRecord.class), any()))
+        .thenReturn(newConsultant);
 
     consultantImportService.startImport();
 
-    verify(createConsultantSaga).createNewConsultant(any(), any());
+    verify(createConsultantSaga)
+        .createNewConsultant(any(ConsultantImportService.ImportRecord.class), any());
   }
 
   // ---------------------------------------------------------------------------
@@ -394,7 +403,8 @@ class ConsultantImportServiceTest {
     }
     verify(consultantAgencyRelationCreatorService, never())
         .createConsultantAgencyRelations(anyString(), any(), any(), any());
-    verify(createConsultantSaga, never()).createNewConsultant(any(), any());
+    verify(createConsultantSaga, never())
+        .createNewConsultant(any(ConsultantImportService.ImportRecord.class), any());
     verify(identityUsernameAvailability, never()).isUsernameAvailable(anyString());
   }
 
@@ -408,7 +418,8 @@ class ConsultantImportServiceTest {
     }
     verify(consultantAgencyRelationCreatorService, never())
         .createConsultantAgencyRelations(anyString(), any(), any(), any());
-    verify(createConsultantSaga, never()).createNewConsultant(any(), any());
+    verify(createConsultantSaga, never())
+        .createNewConsultant(any(ConsultantImportService.ImportRecord.class), any());
     verify(identityUsernameAvailability, never()).isUsernameAvailable(anyString());
   }
 
@@ -448,7 +459,8 @@ class ConsultantImportServiceTest {
     assertThrows(RuntimeException.class, () -> captured.get().requireLive());
     verify(consultantAgencyRelationCreatorService, never())
         .createConsultantAgencyRelations(anyString(), any(), any(), any());
-    verify(createConsultantSaga, never()).createNewConsultant(any(), any());
+    verify(createConsultantSaga, never())
+        .createNewConsultant(any(ConsultantImportService.ImportRecord.class), any());
     verify(identityUsernameAvailability, never()).isUsernameAvailable(anyString());
   }
 

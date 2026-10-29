@@ -551,6 +551,60 @@ def journal_fixture(report):
     return output
 
 
+def startup_fixture_class(kc, jars, browser, role_source):
+    """Same disposable native construction for the independent startup and capture proofs."""
+    from protected_peer_readiness import PeerFixture
+    from protected_account_operations import OperationFixture
+    from test_protected_invitations import ISSUER
+
+    class StartupFixture(PeerFixture):
+        native_issuer = ISSUER
+        installer_claims = staticmethod(OperationFixture.installer_claims)
+        check_installer_identity = OperationFixture.check_installer_identity
+
+        @classmethod
+        def ready(cls):
+            super().ready()
+            cls('runTest').check_installer_identity([cls.installer], 'NATIVE_READY')
+
+        def admin(self, method, path='', body=None):
+            previous = self.installer
+            if self.installer_claims(previous)['exp'] <= time.time() + 30:
+                type(self).ready(); self.installer = type(self).installer
+                self.check_installer_identity([previous, self.installer], 'RENEWAL')
+            return super().admin(method, path, body)
+
+        @classmethod
+        def prepare_installation(cls, helper, configuration):
+            value = startup_protected_catalogue(OperationFixture.prepare_installation.__func__(cls, helper, configuration))
+            command = cls.command.copy()
+            group_index = [i for i, argument in enumerate(command) if argument.startswith('ORISO_ACCOUNT_LIFECYCLE_GROUPS=')]
+            policy_index = [i for i, argument in enumerate(command) if argument.startswith('ORISO_ACCOUNT_MAINTENANCE_CONFIG=')]
+            if len(group_index) != 1 or len(policy_index) != 1: raise ValueError('Exact startup policy environment is required')
+            installed, groups = startup_fixture_catalogue(cls.ordinary_installed_configuration,
+                json.loads(command[group_index[0]].split('=', 1)[1]))
+            command[group_index[0]] = 'ORISO_ACCOUNT_LIFECYCLE_GROUPS=' + json.dumps(groups, separators=(',', ':'))
+            command[policy_index[0]] = 'ORISO_ACCOUNT_MAINTENANCE_CONFIG=' + json.dumps(installed, separators=(',', ':'))
+            cls.ordinary_installed_configuration = installed
+            original_protected = copy.deepcopy(value)
+            source_projection = startup_source_projection(value, cls.human_subject)
+            canonical = role_source.install_canonical_platform_source(cls, helper, source_projection, installed)
+            value = restore_startup_source_targets(original_protected, canonical, cls.human_subject)
+            if browser: value = install_startup_primary_adoption(cls, helper, value)
+            cls.startup_reviewed_groups = groups
+            index = command.index(IMAGE)
+            command[index:index] = ['-v', str(jars['OTP_C_TEST_JAR'].resolve()) + ':/opt/keycloak/providers/otp-config-spi.jar:ro',
+                '-e', 'IDENTITY_ACCOUNT_ADMIN_CLIENT_ID=backend-account-admin',
+                '-e', 'ORISO_APP_BASE_URL=https://otp-fixture.internal', '-e', 'EMAIL_BRANDING_NAME=OTP Fixture',
+                '-e', 'EMAIL_LEGAL_ORGANISATION_NAME=Fixture Operator',
+                '-v', str(kc / 'keycloak-image/themes/oriso') + ':/opt/keycloak/themes/oriso:ro']
+            cls.command = command
+            cls.startup_protected_configuration = copy.deepcopy(value)
+            return value
+
+    return StartupFixture
+
+
 def native(kc, report):
     if platform.system() != 'Linux' or os.environ.get('GITHUB_ACTIONS') != 'true':
         raise ValueError('Fresh hosted Linux fixture required')
@@ -601,50 +655,7 @@ def native(kc, report):
     role_spec = importlib.util.spec_from_file_location('startup_role_source', ROOT / 'scripts/ci/role-maintenance-native.py')
     role_source = importlib.util.module_from_spec(role_spec); role_spec.loader.exec_module(role_source)
 
-    class StartupFixture(PeerFixture):
-        native_issuer = ISSUER
-        installer_claims = staticmethod(OperationFixture.installer_claims)
-        check_installer_identity = OperationFixture.check_installer_identity
-
-        @classmethod
-        def ready(cls):
-            super().ready()
-            cls('runTest').check_installer_identity([cls.installer], 'NATIVE_READY')
-
-        def admin(self, method, path='', body=None):
-            previous = self.installer
-            if self.installer_claims(previous)['exp'] <= time.time() + 30:
-                type(self).ready(); self.installer = type(self).installer
-                self.check_installer_identity([previous, self.installer], 'RENEWAL')
-            return super().admin(method, path, body)
-
-        @classmethod
-        def prepare_installation(cls, helper, configuration):
-            value = startup_protected_catalogue(OperationFixture.prepare_installation.__func__(cls, helper, configuration))
-            command = cls.command.copy()
-            group_index = [i for i, argument in enumerate(command) if argument.startswith('ORISO_ACCOUNT_LIFECYCLE_GROUPS=')]
-            policy_index = [i for i, argument in enumerate(command) if argument.startswith('ORISO_ACCOUNT_MAINTENANCE_CONFIG=')]
-            if len(group_index) != 1 or len(policy_index) != 1: raise ValueError('Exact startup policy environment is required')
-            installed, groups = startup_fixture_catalogue(cls.ordinary_installed_configuration,
-                json.loads(command[group_index[0]].split('=', 1)[1]))
-            command[group_index[0]] = 'ORISO_ACCOUNT_LIFECYCLE_GROUPS=' + json.dumps(groups, separators=(',', ':'))
-            command[policy_index[0]] = 'ORISO_ACCOUNT_MAINTENANCE_CONFIG=' + json.dumps(installed, separators=(',', ':'))
-            cls.ordinary_installed_configuration = installed
-            original_protected = copy.deepcopy(value)
-            source_projection = startup_source_projection(value, cls.human_subject)
-            canonical = role_source.install_canonical_platform_source(cls, helper, source_projection, installed)
-            value = restore_startup_source_targets(original_protected, canonical, cls.human_subject)
-            if browser: value = install_startup_primary_adoption(cls, helper, value)
-            cls.startup_reviewed_groups = groups
-            index = command.index(IMAGE)
-            command[index:index] = ['-v', str(jars['OTP_C_TEST_JAR'].resolve()) + ':/opt/keycloak/providers/otp-config-spi.jar:ro',
-                '-e', 'IDENTITY_ACCOUNT_ADMIN_CLIENT_ID=backend-account-admin',
-                '-e', 'ORISO_APP_BASE_URL=https://otp-fixture.internal', '-e', 'EMAIL_BRANDING_NAME=OTP Fixture',
-                '-e', 'EMAIL_LEGAL_ORGANISATION_NAME=Fixture Operator',
-                '-v', str(kc / 'keycloak-image/themes/oriso') + ':/opt/keycloak/themes/oriso:ro']
-            cls.command = command
-            cls.startup_protected_configuration = copy.deepcopy(value)
-            return value
+    StartupFixture = startup_fixture_class(kc, jars, browser, role_source)
 
     receipt = {'expected_state': state, 'phase': 'fixture-setup', 'accepted': False, 'executed': 0,
         'genuine_behavior_red': False, 'before': before, 'jars': hashes, 'compiled_user_classes': compiled, 'image': IMAGE}
