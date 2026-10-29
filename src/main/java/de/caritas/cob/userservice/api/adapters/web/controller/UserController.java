@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AbsenceDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyAdminContactDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatInfoResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatMembersResponseDTO;
@@ -65,6 +66,7 @@ import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.SearchFilter;
+import de.caritas.cob.userservice.api.service.AgencyAdminContactService;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
@@ -181,6 +183,7 @@ public class UserController implements UsersApi {
   private final @NotNull GroupChatRoleService groupChatRoleService;
   private final @NotNull GroupChatJoinRequestControllerDelegate groupChatJoinRequestDelegate;
   private final @NotNull AuthenticatedUser authenticatedUser;
+  private final @NonNull AgencyAdminContactService agencyAdminContactService;
   private final @NonNull RequestedContactSheetService requestedContactSheetService;
   private final @NotNull IdentitySuggestionControllerDelegate identitySuggestionControllerDelegate;
   private final @NonNull DirectLinkControllerDelegate directLinkControllerDelegate;
@@ -667,6 +670,12 @@ public class UserController implements UsersApi {
   public ResponseEntity<InternalSubsetChatResponseDTO> openInternalSubsetChat(
       @RequestBody InternalSubsetChatDTO request) {
     return userChatControllerDelegate.openInternalSubsetChat(request);
+  }
+
+  @Override
+  public ResponseEntity<List<AgencyAdminContactDTO>> getAgencyAdminContacts(Long agencyId) {
+    return ResponseEntity.ok(
+        agencyAdminContactService.contactsFor(authenticatedUser.getUserId(), agencyId));
   }
 
   @Override

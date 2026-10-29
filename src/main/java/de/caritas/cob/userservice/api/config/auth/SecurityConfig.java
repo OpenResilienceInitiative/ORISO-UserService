@@ -523,6 +523,8 @@ public class SecurityConfig {
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/recipient-decision",
                     "/users/chat-series/**",
                     "/service/users/chat-series/**",
+                    "/users/agencies/{agencyId:[0-9]+}/admin-contacts",
+                    "/service/users/agencies/{agencyId:[0-9]+}/admin-contacts",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover",
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover/extend",

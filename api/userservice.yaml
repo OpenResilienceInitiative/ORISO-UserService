@@ -1766,6 +1766,41 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
+  /users/agencies/{agencyId}/admin-contacts:
+    get:
+      tags:
+        - user-controller
+      summary: 'The agency admins of one of the caller''s own counselling centres that can be invited into an internal chat [Authorization: Role: consultant]'
+      description: >-
+        Returns, for a counselling centre the caller belongs to, the agency admins who are also active counsellors of that centre with a
+        chat identity, i.e. exactly the people POST /users/chat/internal-subset can invite. Only the id and the internal display name are
+        returned (no e-mail, user name or other personal data). The caller is never listed. An empty list means nobody can be contacted.
+        A centre the caller does not belong to answers 403, whether or not it exists.
+      operationId: getAgencyAdminContacts
+      parameters:
+        - name: agencyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        200:
+          description: OK - possibly empty
+          content:
+            'application/json':
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AgencyAdminContactDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - the caller is not a counsellor of this counselling centre
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
   /users/chat/internal-subset:
     post:
       tags:
@@ -4923,6 +4958,19 @@ components:
           maxLength: 50
           description: Name of the room. Defaults to the members' names.
           example: Case talk
+    AgencyAdminContactDTO:
+      type: object
+      required:
+        - consultantId
+        - displayName
+      properties:
+        consultantId:
+          type: string
+          description: Id to pass in consultantIds of POST /users/chat/internal-subset.
+          example: "consultant-id-1"
+        displayName:
+          type: string
+          example: "Maria Muster"
     InternalSubsetChatResponseDTO:
       type: object
       required:
