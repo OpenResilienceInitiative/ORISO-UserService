@@ -43,6 +43,41 @@ def checked_witness(value):
     return all(value.values())
 
 
+def checked_nonce_diagnostic(value):
+    states = {
+        'dispatch': {'PREPARED', 'DISPATCH_UNKNOWN', 'NATIVE_ID_CAPTURED'},
+        'workflow': {'NOT_STARTED', 'IN_PROGRESS', 'RETURNED', 'FAILED', 'UNKNOWN'},
+        'row': {'NOT_ATTEMPTED', 'COMMIT_UNKNOWN', 'COMMITTED', 'ROLLED_BACK'},
+        'reason': {'NONE', 'NATIVE_OUTCOME_UNKNOWN', 'NATIVE_CAPTURE_FAILED', 'MANDATORY_ATTRIBUTES_FAILED',
+                   'WORKFLOW_FAILED', 'ROW_COMMIT_FAILED', 'ONBOARDING_FAILED', 'JOURNAL_UNAVAILABLE'}}
+    booleans = {'responseDone', 'receiptHeaderPresent', 'rowReadSucceeded'}
+    counts = {'singleTenantReads', 'policyReads', 'nonceReads'}
+    fields = set(states) | booleans | counts | {'responseStatus', 'rowCount'}
+    if not isinstance(value, dict) or set(value) != fields:
+        raise ValueError('Closed nonce diagnostic required')
+    if any(type(value[k]) is not bool for k in booleans):
+        raise ValueError('Fixed nonce diagnostic booleans required')
+    status = value['responseStatus']
+    if type(status) is not int or not (status == 0 or 100 <= status <= 599):
+        raise ValueError('Bounded response status required')
+    if not value['responseDone'] and (status != 0 or value['receiptHeaderPresent']):
+        raise ValueError('Pending response cannot report receipt')
+    if status == 0 and value['receiptHeaderPresent']:
+        raise ValueError('Unavailable response cannot report receipt')
+    if any(type(value[k]) is not int or not 0 <= value[k] <= 100 for k in counts):
+        raise ValueError('Bounded nonce diagnostic counts required')
+    if type(value['rowCount']) is not str or value['rowCount'] not in {'0', '1', 'MANY'}:
+        raise ValueError('Fixed row cardinality required')
+    for key, allowed in states.items():
+        if type(value[key]) is not str or value[key] not in allowed | {'ABSENT', 'INVALID'}:
+            raise ValueError('Fixed journal phase required')
+    if not value['rowReadSucceeded'] and value['rowCount'] != '0':
+        raise ValueError('Failed journal read has no cardinality observation')
+    if value['rowCount'] != '1' and any(value[k] != 'ABSENT' for k in states):
+        raise ValueError('Only one observed row has phases')
+    return dict(value)
+
+
 def exact_create_audit(before, after, account, realm, client, subject):
     if any(not isinstance(e.get('id'), str) or not e['id'] for e in [*before, *after]): return False
     old = {e['id']: e for e in before}; new = {e['id']: e for e in after}
@@ -321,6 +356,10 @@ def native(kc, report):
             finally:
                 finished.set(); observer.join(timeout=5)
             if observer.is_alive(): raise ValueError('Native observer did not stop')
+            diagnostic = exchange / 'nonce-diagnostic.json'
+            if diagnostic.exists():
+                if diagnostic.stat().st_size > 4096: raise ValueError('Bounded nonce diagnostic required')
+                receipt['nonceDiagnostic'] = checked_nonce_diagnostic(json.loads(diagnostic.read_text()))
         receipt['nativeCheckpoint'] = phases
         inventory = sanitize(reports, report.with_suffix('.xml')); receipt['inventory'] = inventory; receipt['executed'] = inventory['tests']
         witness = json.loads(report.with_name(PREFIX + 'witness.json').read_text())

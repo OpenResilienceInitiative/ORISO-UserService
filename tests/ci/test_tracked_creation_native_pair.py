@@ -108,6 +108,34 @@ class TrackedCreationNativeControls(unittest.TestCase):
         self.assertFalse(proof.exact_capture(before, after, {**captured, 'private-field': 'secret'}, 'private-pending'))
         self.assertFalse(proof.exact_capture(after, after, captured, 'private-pending'))
 
+    def test_nonce_diagnostic_is_closed_bounded_and_never_exports_private_fields(self):
+        good = {'responseDone': True, 'responseStatus': 503, 'receiptHeaderPresent': True,
+                'rowReadSucceeded': True, 'rowCount': '1', 'dispatch': 'NATIVE_ID_CAPTURED',
+                'workflow': 'FAILED', 'row': 'ROLLED_BACK', 'reason': 'WORKFLOW_FAILED',
+                'singleTenantReads': 1, 'policyReads': 2, 'nonceReads': 0}
+        self.assertEqual(good, proof.checked_nonce_diagnostic(good))
+        absent = {**good, 'responseStatus': 0, 'receiptHeaderPresent': False,
+                  'rowReadSucceeded': False, 'rowCount': '0',
+                  **dict.fromkeys(['dispatch', 'workflow', 'row', 'reason'], 'ABSENT')}
+        self.assertEqual(absent, proof.checked_nonce_diagnostic(absent))
+        for field in good:
+            missing = good.copy(); missing.pop(field)
+            with self.assertRaises(ValueError): proof.checked_nonce_diagnostic(missing)
+        for field in ['body', 'header', 'uuid', 'email', 'token', 'error', 'operationKey']:
+            with self.assertRaises(ValueError) as raised:
+                proof.checked_nonce_diagnostic({**good, field: 'PRIVATE-SENTINEL'})
+            self.assertNotIn('PRIVATE-SENTINEL', str(raised.exception))
+        for field, values in {'responseStatus': [True, -1, 99, 600, '503'],
+                              'singleTenantReads': [True, -1, 101, '1'],
+                              'rowCount': [0, 'PRIVATE-SENTINEL'],
+                              'dispatch': ['PRIVATE-SENTINEL', None, []],
+                              'responseDone': [1, None]}.items():
+            for value in values:
+                with self.assertRaises(ValueError): proof.checked_nonce_diagnostic({**good, field: value})
+        for bad in [{**good, 'responseDone': False}, {**good, 'responseStatus': 0},
+                    {**good, 'rowReadSucceeded': False}, {**good, 'rowCount': 'MANY'}]:
+            with self.assertRaises(ValueError): proof.checked_nonce_diagnostic(bad)
+
     def test_witness_rejects_absent_false_extra_or_nonboolean_claims(self):
         good = dict.fromkeys(proof.FLAGS, True)
         self.assertTrue(proof.checked_witness(good))

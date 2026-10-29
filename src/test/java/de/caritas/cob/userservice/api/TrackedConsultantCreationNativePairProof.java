@@ -239,9 +239,17 @@ class TrackedConsultantCreationNativePairProof {
           client.sendAsync(
               request(port, bearer, "POST", "/useradmin/consultants", operationKey, originalBody),
               HttpResponse.BodyHandlers.ofString());
-      assertTrue(
-          nonceReached.await(20, TimeUnit.SECONDS),
-          "Actual Matrix nonce must be reached after native capture");
+      boolean reachedNonce = nonceReached.await(20, TimeUnit.SECONDS);
+      if (!reachedNonce)
+        nonceDiagnostic(
+            exchange,
+            first,
+            source,
+            operationKey,
+            singleTenantReads.get(),
+            policyReads.get(),
+            nonceReads.get());
+      assertTrue(reachedNonce, "Actual Matrix nonce must be reached after native capture");
       witness.put("matrixNonceReached", true);
       assertFalse(
           first.isDone(), "Original request must remain inside actual Matrix nonce boundary");
@@ -360,6 +368,79 @@ class TrackedConsultantCreationNativePairProof {
           Path.of(required("TRACKED_CREATION_WITNESS")), JSON.writeValueAsString(witness));
     }
     for (String flag : FLAGS) assertTrue(witness.get(flag), flag);
+  }
+
+  private static void nonceDiagnostic(
+      Path exchange,
+      CompletableFuture<HttpResponse<String>> first,
+      DataSource source,
+      String operationKey,
+      int singleTenantReads,
+      int policyReads,
+      int nonceReads)
+      throws Exception {
+    var diagnostic = new TreeMap<String, Object>();
+    boolean done = first.isDone();
+    diagnostic.put("responseDone", done);
+    diagnostic.put("responseStatus", 0);
+    diagnostic.put("receiptHeaderPresent", false);
+    if (done) {
+      try {
+        var response = first.getNow(null);
+        if (response != null) {
+          diagnostic.put("responseStatus", response.statusCode());
+          diagnostic.put(
+              "receiptHeaderPresent", response.headers().firstValue(RECEIPT).isPresent());
+        }
+      } catch (CompletionException | CancellationException ignored) {
+        // Status zero reports unavailable transport outcome without exporting its exception.
+      }
+    }
+    diagnostic.put("rowReadSucceeded", false);
+    diagnostic.put("rowCount", "0");
+    var allowed =
+        Map.of(
+            "dispatch", Set.of("PREPARED", "DISPATCH_UNKNOWN", "NATIVE_ID_CAPTURED"),
+            "workflow", Set.of("NOT_STARTED", "IN_PROGRESS", "RETURNED", "FAILED", "UNKNOWN"),
+            "row", Set.of("NOT_ATTEMPTED", "COMMIT_UNKNOWN", "COMMITTED", "ROLLED_BACK"),
+            "reason",
+                Set.of(
+                    "NONE",
+                    "NATIVE_OUTCOME_UNKNOWN",
+                    "NATIVE_CAPTURE_FAILED",
+                    "MANDATORY_ATTRIBUTES_FAILED",
+                    "WORKFLOW_FAILED",
+                    "ROW_COMMIT_FAILED",
+                    "ONBOARDING_FAILED",
+                    "JOURNAL_UNAVAILABLE"));
+    allowed.keySet().forEach(key -> diagnostic.put(key, "ABSENT"));
+    var jdbc = new JdbcTemplate(source);
+    jdbc.setQueryTimeout(2);
+    jdbc.setMaxRows(2);
+    try {
+      var rows =
+          jdbc.queryForList(
+              "select dispatch,workflow,consultant_row,reason from account_creation_attempt where"
+                  + " operation_key=?",
+              operationKey);
+      diagnostic.put("rowReadSucceeded", true);
+      diagnostic.put("rowCount", rows.isEmpty() ? "0" : rows.size() == 1 ? "1" : "MANY");
+      if (rows.size() == 1) {
+        var row = rows.getFirst();
+        for (var entry : allowed.entrySet()) {
+          Object value = row.get(entry.getKey().equals("row") ? "consultant_row" : entry.getKey());
+          diagnostic.put(
+              entry.getKey(),
+              value instanceof String text && entry.getValue().contains(text) ? text : "INVALID");
+        }
+      }
+    } catch (RuntimeException ignored) {
+      // A failed bounded read is explicit; its zero placeholder is not an absence observation.
+    }
+    diagnostic.put("singleTenantReads", Math.min(100, Math.max(0, singleTenantReads)));
+    diagnostic.put("policyReads", Math.min(100, Math.max(0, policyReads)));
+    diagnostic.put("nonceReads", Math.min(100, Math.max(0, nonceReads)));
+    privateJson(exchange.resolve("nonce-diagnostic.json"), diagnostic);
   }
 
   private static void applyCreationMigrations(DataSource source, String configuredUrl)

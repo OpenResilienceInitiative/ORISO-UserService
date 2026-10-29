@@ -21,11 +21,13 @@ import de.caritas.cob.userservice.api.conversation.service.ConversationListResol
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
+import de.caritas.cob.userservice.api.testHelper.CreationJsonMapperFixture;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.hateoas.client.LinkDiscoverers;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
@@ -34,6 +36,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(ConversationController.class)
 @AutoConfigureMockMvc(addFilters = false)
+@Import(CreationJsonMapperFixture.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
 class ConversationControllerIT {
 

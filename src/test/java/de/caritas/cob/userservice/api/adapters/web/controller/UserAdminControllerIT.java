@@ -40,6 +40,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NoContentException
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.identity.UserIdentitiesService;
+import de.caritas.cob.userservice.api.testHelper.CreationJsonMapperFixture;
 import java.util.ArrayList;
 import java.util.UUID;
 import org.jeasy.random.EasyRandom;
@@ -50,6 +51,7 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.hateoas.client.LinkDiscoverers;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -59,6 +61,7 @@ import org.springframework.test.web.servlet.MockMvc;
     value = UserAdminController.class,
     excludeAutoConfiguration = HypermediaAutoConfiguration.class)
 @AutoConfigureMockMvc(addFilters = false)
+@Import(CreationJsonMapperFixture.class)
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 class UserAdminControllerIT {
 
@@ -94,6 +97,16 @@ class UserAdminControllerIT {
   private static final EasyRandom easyRandom = new EasyRandom();
 
   @Autowired private MockMvc mvc;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.creationoutcome.CreationOperationAccess
+      creationOperationAccess;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.creationoutcome.CreationOperationWriter
+      creationOperationWriter;
+
+  @MockitoBean private ConsultantCreationOperationController consultantCreationOperationController;
 
   @MockitoBean private SessionAdminService sessionAdminService;
 

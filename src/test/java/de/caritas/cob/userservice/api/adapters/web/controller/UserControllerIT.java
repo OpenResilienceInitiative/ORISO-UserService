@@ -94,6 +94,7 @@ import de.caritas.cob.userservice.api.service.session.SessionConsentService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.testHelper.CreationJsonMapperFixture;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.util.*;
 import org.apache.commons.lang3.RandomStringUtils;
@@ -121,6 +122,7 @@ import org.springframework.test.web.servlet.MockMvc;
     excludeAutoConfiguration = HypermediaAutoConfiguration.class)
 @AutoConfigureMockMvc(addFilters = false)
 @Import({
+  CreationJsonMapperFixture.class,
   UserChatControllerDelegate.class,
   GroupChatFeatureGate.class,
   UserSessionControllerDelegate.class,
