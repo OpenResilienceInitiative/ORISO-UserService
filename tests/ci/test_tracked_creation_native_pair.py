@@ -36,6 +36,71 @@ def canonical_ast_digest(node):
 
 
 class TrackedCreationNativeControls(unittest.TestCase):
+    def test_runtime_fixture_projection_preserves_bindings_and_requires_fresh_exact_native_token(self):
+        import base64
+        import time
+        class Fixture:
+            base = 'http://private-fixture'
+            client_ids = {'RUNTIME': 'private-client-id'}
+            def __init__(self):
+                self.mappers = [{'id': 'roles', 'name': 'actor-roles', 'protocol': 'openid-connect',
+                    'protocolMapper': 'oidc-usermodel-realm-role-mapper', 'config': {'unchanged': 'true'}}]
+                self.mappers += [{'id': str(i), 'name': 'audience-' + aud, 'protocol': 'openid-connect',
+                    'protocolMapper': 'oidc-audience-mapper', 'consentRequired': False,
+                    'config': {'included.custom.audience': aud, 'access.token.claim': 'true'}}
+                    for i, aud in enumerate(['userservice', 'oriso-account-lifecycle'])]
+                self.calls = []; self.tokens = 0; self.fail = None
+            def admin(self, method, path, body=None):
+                self.calls.append((method, path, copy.deepcopy(body)))
+                if path == '/clients/private-client-id/protocol-mappers/models':
+                    if method == 'GET': return copy.deepcopy(self.mappers)
+                    if method == 'POST': self.mappers.append(dict(copy.deepcopy(body), id='new-' + str(len(self.mappers)))); return None
+                if method == 'DELETE' and path.startswith('/clients/private-client-id/protocol-mappers/models/'):
+                    self.mappers = [m for m in self.mappers if m['id'] != path.rsplit('/', 1)[1]]; return None
+                if method == 'GET' and path == '/clients/private-client-id':
+                    return {'id': 'private-client-id', 'clientId': 'backend-runtime', 'enabled': True,
+                        'serviceAccountsEnabled': True, 'secret': 'private-same-secret', 'protocolMappers': copy.deepcopy(self.mappers),
+                        'fullScopeAllowed': self.fail == 'client-drift' and self.tokens > 0}
+                if method == 'GET' and path.endswith('/service-account-user'): return {'id': 'private-subject', 'enabled': True}
+                if method == 'GET' and path == '/users/private-subject/role-mappings': return {'realmMappings': ['private-same-roles']}
+                if method == 'GET' and path == '/users/private-subject/credentials': return []
+                raise AssertionError('Unexpected fixture route')
+            def token(self, *args, **kwargs):
+                self.tokens += 1
+                if self.fail == 'grant': return 401, {}
+                aud = [m['config']['included.custom.audience'] for m in self.mappers if m['protocolMapper'] == 'oidc-audience-mapper']
+                if self.fail == 'extra-token' and self.tokens > 1: aud.append('userservice')
+                claims = {'iss': 'http://private-issuer/realms/fixture', 'sub': 'private-subject', 'azp': 'backend-runtime',
+                    'iat': int(time.time()) - 1, 'exp': int(time.time()) + 60, 'aud': aud,
+                    'realm_access': {'roles': ['runtime-policy']}}
+                value = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip('=')
+                return 200, {'access_token': 'private.' + value + '.private'}
+        def run(f):
+            lifecycle = types.SimpleNamespace(ACTORS={'RUNTIME': ('backend-runtime', ['runtime-policy'])},
+                SUBJECTS={'RUNTIME': 'private-subject'}, REALM='fixture', call=f.token)
+            return proof.install_tracked_runtime_audiences(f, lifecycle, 'http://private-issuer/realms/fixture')
+        fixture = Fixture(); original = copy.deepcopy(fixture.mappers[0]); result = run(fixture)
+        self.assertEqual(4, len(result)); self.assertTrue(all(v is True for v in result.values()))
+        self.assertEqual(2, fixture.tokens); self.assertEqual(original, fixture.mappers[0])
+        self.assertEqual(['DELETE', 'DELETE', 'POST', 'POST', 'POST'], [m for m, _, _ in fixture.calls if m != 'GET'])
+        self.assertEqual({'tenantservice', 'agencyservice', 'appointmentservice'},
+            {m['config']['included.custom.audience'] for m in fixture.mappers[1:]})
+        for failure in ['grant', 'extra-token', 'client-drift']:
+            bad = Fixture(); bad.fail = failure
+            with self.assertRaises(ValueError): run(bad)
+            if failure == 'grant': self.assertTrue(all(m == 'GET' for m, _, _ in bad.calls))
+        bad = Fixture(); bad.mappers[1]['config']['included.custom.audience'] = 'unexpected'
+        with self.assertRaises(ValueError): run(bad)
+        self.assertTrue(all(m == 'GET' for m, _, _ in bad.calls))
+
+    def test_runtime_projection_precedes_boot_and_native_baseline_without_changing_shared_fixture(self):
+        source = (ROOT / 'scripts/ci/tracked-creation-native-pair.py').read_text()
+        point = source.index("receipt['runtimeAudienceFixture'] = install_tracked_runtime_audiences")
+        self.assertLess(point, source.index('original = accounts(); events ='))
+        self.assertLess(point, source.index("receipt['phase'] = 'actual-public-creation'"))
+        shared = (ROOT / 'scripts/ci/application-startup-native-pair.py').read_text()
+        self.assertNotIn('install_tracked_runtime_audiences', shared)
+
     def event(self, **changes):
         return {'id': 'private-event', 'realmId': 'private-realm', 'operationType': 'CREATE',
             'resourceType': 'USER', 'resourcePath': 'accounts/private-account',

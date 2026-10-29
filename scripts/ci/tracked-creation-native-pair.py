@@ -43,6 +43,78 @@ def checked_witness(value):
     return all(value.values())
 
 
+def install_tracked_runtime_audiences(fixture, lifecycle, issuer):
+    """New proof only: replace the inherited native-denial audiences with User's runtime contract."""
+    expected = {'tenantservice', 'agencyservice', 'appointmentservice'}
+    old = {'userservice', 'oriso-account-lifecycle'}
+    client, roles = lifecycle.ACTORS['RUNTIME']
+    subject = lifecycle.SUBJECTS['RUNTIME']
+    client_path = '/clients/' + fixture.client_ids['RUNTIME']
+    before = fixture.admin('GET', client_path)
+    account = fixture.admin('GET', client_path + '/service-account-user')
+    mappings = fixture.admin('GET', '/users/' + subject + '/role-mappings')
+    credentials = fixture.admin('GET', '/users/' + subject + '/credentials')
+    if (before.get('clientId') != client or before.get('enabled') is not True
+            or before.get('serviceAccountsEnabled') is not True or account.get('id') != subject
+            or account.get('enabled') is not True):
+        raise ValueError('Existing runtime fixture binding required')
+    def claims_match(audiences):
+        status, response = lifecycle.call(fixture.base, 'POST',
+            '/realms/' + lifecycle.REALM + '/protocol/openid-connect/token',
+            {'client_id': client, 'client_secret': 'synthetic-lifecycle-RUNTIME',
+             'grant_type': 'client_credentials'}, form=True)
+        if status != 200 or not isinstance(response, dict) or not isinstance(response.get('access_token'), str):
+            raise ValueError('Actual runtime fixture grant required')
+        token = response['access_token']; part = token.split('.')[1]
+        claims = json.loads(__import__('base64').urlsafe_b64decode(part + '=' * (-len(part) % 4)))
+        aud = claims.get('aud'); aud = [aud] if isinstance(aud, str) else aud
+        now = time.time()
+        if (claims.get('iss') != issuer or claims.get('sub') != subject or claims.get('azp') != client
+                or not isinstance(aud, list) or len(aud) != len(audiences) or set(aud) != audiences
+                or set(claims.get('realm_access', {}).get('roles', [])) != set(roles)
+                or claims.get('resource_access') not in (None, {})
+                or type(claims.get('iat')) is not int or type(claims.get('exp')) is not int
+                or not 0 < claims['iat'] <= now < claims['exp']):
+            raise ValueError('Exact runtime fixture token contract required')
+    claims_match(old)
+    mapper_path = client_path + '/protocol-mappers/models'
+    original = fixture.admin('GET', mapper_path)
+    audience = [m for m in original if m.get('protocolMapper') == 'oidc-audience-mapper']
+    retained = [m for m in original if m.get('protocolMapper') != 'oidc-audience-mapper']
+    if (len(audience) != 2 or {m.get('config', {}).get('included.custom.audience') for m in audience} != old
+            or any(m.get('config') != {'included.custom.audience': m['config']['included.custom.audience'],
+                'access.token.claim': 'true'} for m in audience)):
+        raise ValueError('Exact inherited runtime audience fixture required')
+    without_id = lambda value: {k: v for k, v in value.items() if k != 'id'}
+    template = without_id(audience[0])
+    for mapper in audience:
+        comparable = without_id(mapper); comparable['name'] = template['name']
+        comparable['config'] = dict(template['config'])
+        if comparable != template or mapper.get('protocol') != 'openid-connect':
+            raise ValueError('Identical original runtime mapper metadata required')
+    desired = []
+    for aud in sorted(expected):
+        mapper = copy.deepcopy(template); mapper['name'] = 'audience-' + aud
+        mapper['config']['included.custom.audience'] = aud; desired.append(mapper)
+    for mapper in audience: fixture.admin('DELETE', mapper_path + '/' + mapper['id'])
+    for mapper in desired: fixture.admin('POST', mapper_path, mapper)
+    installed = fixture.admin('GET', mapper_path)
+    new_audience = [m for m in installed if m.get('protocolMapper') == 'oidc-audience-mapper']
+    stable = lambda values: sorted(values, key=lambda value: value['id'])
+    after = fixture.admin('GET', client_path)
+    if (stable([m for m in installed if m.get('protocolMapper') != 'oidc-audience-mapper']) != stable(retained)
+            or sorted([without_id(m) for m in new_audience], key=lambda m: m['name']) != desired
+            or {k: v for k, v in before.items() if k != 'protocolMappers'}
+                != {k: v for k, v in after.items() if k != 'protocolMappers'}
+            or fixture.admin('GET', client_path + '/service-account-user') != account
+            or fixture.admin('GET', '/users/' + subject + '/role-mappings') != mappings
+            or fixture.admin('GET', '/users/' + subject + '/credentials') != credentials):
+        raise ValueError('Runtime audience projection changed another binding')
+    claims_match(expected)
+    return {'inheritedNativeDenialAudiencesObserved': True, 'canonicalRuntimeAudiencesReadBack': True,
+            'sameClientSubjectCredentialsRolesAndOtherMappers': True, 'freshNativeRuntimeTokenMatched': True}
+
+
 def checked_java_failure_frames(private_value, root, source_hashes):
     """Only source-bound JVM method/line metadata may leave the private child output."""
     categories = {'java.lang.IllegalStateException', 'java.lang.IllegalArgumentException',
@@ -318,6 +390,7 @@ def native(kc, report):
     try:
         schema = startup.journal_fixture(report)
         Fixture.setUpClass(); fixture = Fixture('runTest')
+        receipt['runtimeAudienceFixture'] = install_tracked_runtime_audiences(fixture, lifecycle, ISSUER)
         def settings():
             values = json.loads(subprocess.run(['docker', 'inspect', '--format', '{{json .Config.Env}}', fixture.name],
                                 check=True, capture_output=True, text=True, timeout=15).stdout)
