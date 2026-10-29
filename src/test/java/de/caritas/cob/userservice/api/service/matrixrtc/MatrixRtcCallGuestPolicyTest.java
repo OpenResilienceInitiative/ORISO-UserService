@@ -53,6 +53,11 @@ class MatrixRtcCallGuestPolicyTest {
         "CREATE TABLE matrix_call_guest(id BIGINT AUTO_INCREMENT PRIMARY KEY,binding_id BIGINT,"
             + "matrix_user_id VARCHAR(255),admitted_by_matrix_id VARCHAR(255),admitted_at BIGINT,"
             + "revoked_at BIGINT)");
+    // Read by the direct-link knock check (#1475); no knock rows means no knock gate.
+    jdbc.execute("CREATE TABLE session(id BIGINT PRIMARY KEY,matrix_room_id VARCHAR(255))");
+    jdbc.execute(
+        "CREATE TABLE group_chat_join_request(id BIGINT PRIMARY KEY,session_id BIGINT,"
+            + "user_id VARCHAR(36),via VARCHAR(32),status VARCHAR(16))");
     jdbc.update("INSERT INTO user VALUES ('guest',?)", GUEST);
     jdbc.update("INSERT INTO account_inactivity VALUES ('guest','ACTIVE')");
     jdbc.update("INSERT INTO matrix_call_binding VALUES (1,?,'!media:example',NULL)", SOURCE);
