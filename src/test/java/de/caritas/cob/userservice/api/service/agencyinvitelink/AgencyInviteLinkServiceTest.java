@@ -401,6 +401,23 @@ class AgencyInviteLinkServiceTest {
     assertThat(ctx.getConsultingTypeId()).isEqualTo(2);
   }
 
+  /** The 410 DIRECT_LINK_INACTIVE contract belongs to direct links; admin links keep 400. */
+  @Test
+  void disabledAdminLink_Should_KeepTheBadRequestContract() {
+    AgencyInviteLink link =
+        AgencyInviteLink.builder()
+            .token("admin")
+            .status(InviteLinkStatus.DISABLED.name())
+            .chatType(InviteLinkChatType.LIVE_CHAT.name())
+            .build();
+    when(repository.findByToken("admin")).thenReturn(Optional.of(link));
+    when(repository.findByTokenAndStatus("admin", InviteLinkStatus.ACTIVE.name()))
+        .thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> service.getContext("admin")).isInstanceOf(BadRequestException.class);
+    assertThatThrownBy(() -> service.redeem("admin")).isInstanceOf(BadRequestException.class);
+  }
+
   @Test
   void redeem_Should_CreateAnonymousTopicSession_When_LinkIsLiveChat() {
     // A Live Chat link binds only to a topic. Redeem must create a real anonymous session for

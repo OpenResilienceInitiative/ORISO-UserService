@@ -217,7 +217,8 @@ public class AgencyInviteLinkService {
   }
 
   private InvitationContext contextOf(AgencyInviteLink link) {
-    if (InviteLinkStatus.DISABLED.name().equals(link.getStatus())) {
+    if (InviteLinkStatus.DISABLED.name().equals(link.getStatus())
+        && InviteLinkChatType.isDirectMedium(link.getChatType())) {
       throw new DirectLinkInactiveException();
     }
     if (!InviteLinkStatus.ACTIVE.name().equals(link.getStatus())) {
@@ -322,7 +323,8 @@ public class AgencyInviteLinkService {
       if (InviteLinkStatus.USED.name().equals(existing.getStatus())) {
         throw new BadRequestException("Invite link already used");
       }
-      if (InviteLinkStatus.DISABLED.name().equals(existing.getStatus())) {
+      if (InviteLinkStatus.DISABLED.name().equals(existing.getStatus())
+          && InviteLinkChatType.isDirectMedium(existing.getChatType())) {
         throw new DirectLinkInactiveException();
       }
       throw new BadRequestException("Invite link is not active");
