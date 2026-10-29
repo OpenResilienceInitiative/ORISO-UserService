@@ -18,6 +18,23 @@ spec = importlib.util.spec_from_file_location('tracked_capture_proof', ROOT / 's
 proof = importlib.util.module_from_spec(spec); spec.loader.exec_module(proof)
 
 
+def canonical_ast_digest(node):
+    """Hash all semantic fields, including empty lists and None, without dump formatting."""
+    def value(item):
+        if isinstance(item, ast.AST):
+            return {'node': type(item).__name__,
+                    'fields': [[name, value(child)] for name, child in ast.iter_fields(item)]}
+        if isinstance(item, list):
+            return [value(child) for child in item]
+        if isinstance(item, bytes):
+            return {'bytes': item.hex()}
+        if item is None or type(item) in (str, int, float, bool):
+            return item
+        raise TypeError('Unexpected semantic AST field')
+    return hashlib.sha256(json.dumps(value(node), sort_keys=True, separators=(',', ':'),
+                                    ensure_ascii=True, allow_nan=False).encode()).hexdigest()
+
+
 class TrackedCreationNativeControls(unittest.TestCase):
     def event(self, **changes):
         return {'id': 'private-event', 'realmId': 'private-realm', 'operationType': 'CREATE',
@@ -173,12 +190,34 @@ class TrackedCreationNativeControls(unittest.TestCase):
             with self.assertRaises(FileExistsError): proof.private_json(path, {})
             self.assertEqual('owned-existing', path.with_suffix('.pending').read_text())
 
+    def test_canonical_ast_keeps_empty_none_nonempty_fields_and_source_semantics(self):
+        original = ast.parse('def example():\n    pass\n').body[0]
+        expected = canonical_ast_digest(original)
+        self.assertEqual(expected, canonical_ast_digest(copy.deepcopy(original)))
+        nonempty = copy.deepcopy(original)
+        nonempty.type_params = [ast.Name(id='T', ctx=ast.Load())]
+        self.assertNotEqual(expected, canonical_ast_digest(nonempty))
+        absent = copy.deepcopy(original)
+        del absent.type_params
+        self.assertNotEqual(expected, canonical_ast_digest(absent))
+        annotated = copy.deepcopy(original)
+        annotated.returns = ast.Constant(value=None)
+        self.assertNotEqual(expected, canonical_ast_digest(annotated))
+        changed = copy.deepcopy(original)
+        changed.body = [ast.Expr(value=ast.Constant(value='changed'))]
+        self.assertNotEqual(expected, canonical_ast_digest(changed))
+        self.assertNotEqual(canonical_ast_digest(ast.Constant(value=b'fixed')),
+                            canonical_ast_digest(ast.Constant(value='fixed')))
+        self.assertNotEqual(canonical_ast_digest(ast.Constant(value=b'fixed')),
+                            canonical_ast_digest(ast.Constant(value=b'changed')))
+        with self.assertRaises(TypeError): canonical_ast_digest(object())
+
     def test_shared_fixture_class_ast_is_identical_to_reviewed_preextraction_source(self):
         tree = ast.parse((ROOT / 'scripts/ci/application-startup-native-pair.py').read_text())
         factory = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'startup_fixture_class')
         cls = next(n for n in factory.body if isinstance(n, ast.ClassDef))
-        digest = hashlib.sha256(ast.dump(cls, include_attributes=False).encode()).hexdigest()
-        self.assertEqual('76449ac22813127f22f809f5aa4d3676fa0bab8650da97d07f14696593777a74', digest)
+        digest = canonical_ast_digest(cls)
+        self.assertEqual('a31c697cd49c0577222f218f5cf30001ddace48142d415cfe472c57f13ccfb66', digest)
         self.assertEqual(['kc', 'jars', 'browser', 'role_source'], [a.arg for a in factory.args.args])
         native = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'native')
         calls = [n for n in ast.walk(native) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == 'startup_fixture_class']
@@ -227,7 +266,7 @@ class TrackedCreationNativeControls(unittest.TestCase):
         native.body = [copy.deepcopy(cls) if isinstance(n, ast.Assign)
             and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name) and n.targets[0].id == 'StartupFixture'
             else n for n in native.body]
-        self.assertEqual('3209cb6eca65b87fb5bb53156f1dad780f26fdaafaaed44c0724751d44895c56', hashlib.sha256(ast.dump(native, include_attributes=False).encode()).hexdigest())
+        self.assertEqual('2b56e5d330c38823c103e59079412dac4bdc467f2e26b6d9b1db95725b080b08', canonical_ast_digest(native))
 
     def test_java_keeps_real_servlet_jpa_native_checkpoint_and_guarded_fixture_schema(self):
         source = (ROOT / proof.JAVA_SOURCE).read_text()

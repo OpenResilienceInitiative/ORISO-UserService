@@ -83,6 +83,11 @@ class ConsultantPictureDatabaseIT {
   @MockitoBean AdminUserFacade admins;
   @MockitoBean ConsultantAgencyAdminService agencies;
   @MockitoBean CreateConsultantSaga create;
+
+  @MockitoBean
+  de.caritas.cob.userservice.api.service.creationoutcome.CreationOperationWriter
+      creationOperationWriter;
+
   @MockitoBean ConsultantUpdateService update;
   @MockitoBean ConsultantPreDeletionService preDelete;
   @MockitoBean de.caritas.cob.userservice.api.port.out.IdentityClientConfig identityMode;
