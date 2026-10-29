@@ -71,13 +71,84 @@ class MatrixCallGuestServiceTest {
     when(matrix.loginAsUserAccessToken(COUNSELLOR)).thenReturn("counsellor-token");
     when(accounts.snapshot(anyString())).thenReturn(Optional.empty());
     lenient()
-        .when(guests.save(any(MatrixCallGuest.class)))
+        .when(guests.saveAndFlush(any(MatrixCallGuest.class)))
         .thenAnswer(
             call -> {
               MatrixCallGuest guest = call.getArgument(0);
               saved.add(guest);
               return guest;
             });
+    lenient()
+        .doAnswer(call -> saved.remove((MatrixCallGuest) call.getArgument(0)))
+        .when(guests)
+        .delete(any(MatrixCallGuest.class));
+  }
+
+  /** The seat is written before the invite, so a failed write can never leave an unknown guest. */
+  @Test
+  void seatIsRecordedBeforeTheInvite() throws Exception {
+    service.admit(counsellor, SOURCE, "call", "guest");
+
+    var order = org.mockito.Mockito.inOrder(guests, matrix);
+    order.verify(guests).saveAndFlush(any(MatrixCallGuest.class));
+    order.verify(matrix).inviteUserToRoom(MEDIA, GUEST, "counsellor-token");
+  }
+
+  @Test
+  void failedSeatWriteInvitesNobody() throws Exception {
+    when(guests.saveAndFlush(any(MatrixCallGuest.class)))
+        .thenThrow(new org.springframework.dao.DataIntegrityViolationException("x"));
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> service.admit(counsellor, SOURCE, "call", "guest"))
+        .isInstanceOf(org.springframework.dao.DataAccessException.class);
+    verify(matrix, never()).inviteUserToRoom(anyString(), anyString(), anyString());
+  }
+
+  @Test
+  void seatOfAnEndedCallIsNoLongerActive() {
+    when(guests.existsByBindingIdAndMatrixUserIdAndRevokedAtIsNull(11L, GUEST)).thenReturn(true);
+
+    assertThat(service.isActiveGuest(binding(null), GUEST)).isTrue();
+    assertThat(service.isActiveGuest(binding(5000L), GUEST)).isFalse();
+  }
+
+  @Test
+  void failedPowerLevelClearKeepsTheSeatOutstanding() {
+    var guest = guest();
+    when(guests.findByBindingIdAndRevokedAtIsNull(binding.getId())).thenReturn(List.of(guest));
+    when(matrix.getRoomMembership(MEDIA, GUEST, "counsellor-token"))
+        .thenReturn(Optional.of("leave"));
+    when(matrix.clearUserPowerLevel(MEDIA, GUEST, "counsellor-token")).thenReturn(false);
+
+    service.revokeOutstanding(binding(5000L));
+
+    assertThat(guest.getRevokedAt()).isNull();
+    assertThat(guest.getRevokeAttempts()).isEqualTo(1);
+  }
+
+  @Test
+  void admittingCounsellorRemovesTheGuestWhenTheCallerCannot() {
+    var guest =
+        MatrixCallGuest.builder()
+            .id(3L)
+            .bindingId(binding.getId())
+            .matrixUserId(GUEST)
+            .admittedByMatrixId("@cocounsellor:example")
+            .admittedAt(1500L)
+            .build();
+    when(guests.findByBindingIdAndRevokedAtIsNull(binding.getId())).thenReturn(List.of(guest));
+    when(matrix.getRoomMembership(MEDIA, GUEST, "counsellor-token"))
+        .thenReturn(Optional.of("join"));
+    when(matrix.loginAsUserAccessToken("@cocounsellor:example")).thenReturn("co-token");
+    when(matrix.getRoomMembership(MEDIA, GUEST, "co-token"))
+        .thenReturn(Optional.of("join"), Optional.of("leave"));
+    when(matrix.clearUserPowerLevel(MEDIA, GUEST, "co-token")).thenReturn(true);
+
+    service.revokeOutstanding(binding(5000L));
+
+    verify(matrix).removeUserFromRoom(MEDIA, GUEST, "co-token");
+    assertThat(guest.getRevokedAt()).isNotNull();
   }
 
   @Test
@@ -179,7 +250,7 @@ class MatrixCallGuestServiceTest {
 
     assertThat(service.admit(counsellor, SOURCE, "call", "guest").outcome())
         .isEqualTo(Outcome.MATRIX_UNAVAILABLE);
-    assertThat(saved).isEmpty();
+    assertThat(saved).as("reserved seat is withdrawn").isEmpty();
   }
 
   @Test

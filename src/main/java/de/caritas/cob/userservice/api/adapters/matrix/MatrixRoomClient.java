@@ -879,7 +879,7 @@ public class MatrixRoomClient {
       restTemplate.put(url, new HttpEntity<>(powerLevels, headers));
       return true;
     } catch (Exception e) {
-      log.warn("Could not clear power level in room {}: {}", roomId, e.getMessage());
+      log.warn("Could not clear power level in room {}: {}", roomId, failureType(e));
       return false;
     }
   }
@@ -894,7 +894,7 @@ public class MatrixRoomClient {
           url, new HttpEntity<>(Map.of("user_id", userId), headers), Map.class);
       return true;
     } catch (Exception e) {
-      log.warn("Could not kick a user from room {}: {}", roomId, e.getMessage());
+      log.warn("Could not kick a user from room {}: {}", roomId, failureType(e));
       return false;
     }
   }
@@ -914,7 +914,7 @@ public class MatrixRoomClient {
           ? java.util.Optional.of(m)
           : java.util.Optional.empty();
     } catch (Exception e) {
-      log.warn("Could not read a membership in room {}: {}", roomId, e.getMessage());
+      log.warn("Could not read a membership in room {}: {}", roomId, failureType(e));
       return java.util.Optional.empty();
     }
   }
@@ -970,5 +970,12 @@ public class MatrixRoomClient {
 
   private URI buildUrl(String endpoint, Map<String, ?> uriVariables) {
     return MatrixUrlBuilder.buildUrl(matrixConfig, endpoint, uriVariables);
+  }
+
+  /** The failure type only: a RestTemplate message can carry the URL with a Matrix user ID. */
+  private static String failureType(Exception e) {
+    return e instanceof org.springframework.web.client.RestClientResponseException response
+        ? e.getClass().getSimpleName() + " " + response.getStatusCode().value()
+        : e.getClass().getSimpleName();
   }
 }
