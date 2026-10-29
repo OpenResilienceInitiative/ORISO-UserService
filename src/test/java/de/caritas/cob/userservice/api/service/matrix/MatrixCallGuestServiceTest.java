@@ -171,6 +171,17 @@ class MatrixCallGuestServiceTest {
             });
   }
 
+  /** A transient membership lookup failure is "Matrix unavailable" (502), never a 500. */
+  @Test
+  void failedMembershipLookupIsMatrixUnavailable() {
+    when(matrix.getCallRoomMembers(SOURCE))
+        .thenThrow(new MatrixSynapseService.CallLookupUnavailableException("x"));
+
+    assertThat(service.counsellorCall(7L, "counsellor", SOURCE, "call").outcome())
+        .isEqualTo(Outcome.MATRIX_UNAVAILABLE);
+    assertThat(service.counsellorsInConversation(7L, SOURCE)).isEmpty();
+  }
+
   @Test
   void askerCannotAdmitGuests() throws Exception {
     var asker = new AuthenticatedUser();

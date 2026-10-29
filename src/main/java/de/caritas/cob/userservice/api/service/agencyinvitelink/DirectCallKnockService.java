@@ -119,10 +119,21 @@ public class DirectCallKnockService {
                         .build()));
   }
 
-  /** Let in once (#1487): the guest's admission on this link holds until the call ends. */
+  /**
+   * Let in once (#1487): the guest's admission on this link holds until the call ends. Locked, so a
+   * counsellor's decline (which locks the same row first) waits for a seating in progress and then
+   * sees and revokes its seat, or the seating sees the decline.
+   */
   public Optional<GroupChatJoinRequest> callLinkAdmission(Long linkId, User user) {
-    return repository.findFirstByInviteLinkIdAndUserIdAndViaAndStatusOrderByIdDesc(
-        linkId, user.getUserId(), Via.CALL_LINK, Status.ADMITTED);
+    return repository
+        .findCallLinkKnocksForUpdate(
+            linkId,
+            user.getUserId(),
+            Via.CALL_LINK,
+            Status.ADMITTED,
+            org.springframework.data.domain.PageRequest.of(0, 1))
+        .stream()
+        .findFirst();
   }
 
   /** "Anklopfen" switched off (#1487): everybody waiting on the link is let in at once. */

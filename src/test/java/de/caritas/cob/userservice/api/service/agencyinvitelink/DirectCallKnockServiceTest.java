@@ -32,6 +32,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.data.domain.PageRequest;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -315,6 +316,19 @@ class DirectCallKnockServiceTest {
 
     assertThat(service.knockOnCallLink(5L, asker, "AUDIO")).isSameAs(open);
     verify(repository, never()).save(any());
+  }
+
+  /** Seating and a counsellor's decline serialise on the admission row (#1487 review). */
+  @Test
+  void callLinkAdmission_Should_LockTheAdmission() {
+    var admitted = callLinkKnock(1L, Status.ADMITTED);
+    when(repository.findCallLinkKnocksForUpdate(
+            5L, "asker-1", Via.CALL_LINK, Status.ADMITTED, PageRequest.of(0, 1)))
+        .thenReturn(java.util.List.of(admitted));
+
+    assertThat(service.callLinkAdmission(5L, asker)).containsSame(admitted);
+    verify(repository, never())
+        .findFirstByInviteLinkIdAndUserIdAndViaAndStatusOrderByIdDesc(any(), any(), any(), any());
   }
 
   @Test

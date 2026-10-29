@@ -94,7 +94,7 @@ public class MatrixCallGuestService {
             .filter(value -> !blank(value))
             .orElse(null);
     if (conversation == null || counsellor == null) return CounsellorCall.of(Outcome.NOT_FOUND);
-    var members = matrix.getCallRoomMembers(sourceRoomId).orElse(null);
+    var members = callRoomMembers(sourceRoomId).orElse(null);
     if (members == null) return CounsellorCall.of(Outcome.MATRIX_UNAVAILABLE);
     // Only a counsellor who is in the conversation may open its call to somebody else.
     if (!members.contains(counsellor)) return CounsellorCall.of(Outcome.NOT_FOUND);
@@ -127,7 +127,7 @@ public class MatrixCallGuestService {
             .filter(value -> tenant.equals(value.getTenantId()))
             .orElse(null);
     if (conversation == null) return List.of();
-    return matrix.getCallRoomMembers(sourceRoomId).orElse(List.of()).stream()
+    return callRoomMembers(sourceRoomId).orElse(List.of()).stream()
         .map(consultants::findByMatrixUserIdAndDeleteDateIsNull)
         .flatMap(Optional::stream)
         .filter(value -> tenant.equals(value.getTenantId()))
@@ -314,6 +314,15 @@ public class MatrixCallGuestService {
     return guests.findEndedMediaRoomsWithOutstandingGuests(
         System.currentTimeMillis() - guestRevokeRetryMillis,
         org.springframework.data.domain.PageRequest.of(0, 100));
+  }
+
+  /** Empty also when the lookup fails transiently, so callers answer "Matrix unavailable". */
+  private Optional<List<String>> callRoomMembers(String sourceRoomId) {
+    try {
+      return matrix.getCallRoomMembers(sourceRoomId);
+    } catch (MatrixSynapseService.CallLookupUnavailableException unavailable) {
+      return Optional.empty();
+    }
   }
 
   private boolean isGone(String room, String matrixId, String token) {

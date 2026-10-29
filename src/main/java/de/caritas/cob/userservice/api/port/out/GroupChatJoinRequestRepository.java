@@ -67,6 +67,19 @@ public interface GroupChatJoinRequestRepository extends CrudRepository<GroupChat
   Optional<GroupChatJoinRequest> findFirstByInviteLinkIdAndUserIdAndViaAndStatusOrderByIdDesc(
       Long inviteLinkId, String userId, Via via, Status status);
 
+  /** The same, locked: seating a guest and declining the admission serialise on this row. */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "SELECT request FROM GroupChatJoinRequest request WHERE request.inviteLinkId = :linkId"
+          + " AND request.userId = :userId AND request.via = :via AND request.status = :status"
+          + " ORDER BY request.id DESC")
+  List<GroupChatJoinRequest> findCallLinkKnocksForUpdate(
+      @Param("linkId") Long inviteLinkId,
+      @Param("userId") String userId,
+      @Param("via") Via via,
+      @Param("status") Status status,
+      Pageable page);
+
   List<GroupChatJoinRequest> findByInviteLinkIdAndViaAndStatus(
       Long inviteLinkId, Via via, Status status);
 
