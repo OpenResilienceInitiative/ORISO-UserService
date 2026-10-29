@@ -151,6 +151,11 @@ public class CounsellorDirectLinkService {
         || (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now()))) {
       throw new BadRequestException("Invite link expired");
     }
+    // A temporary account exists for the one link it was created through (#1476).
+    var temporary = user.getTemporaryAccountSnapshot();
+    if (temporary != null && !Objects.equals(temporary.getInviteLinkId(), link.getId())) {
+      throw new ForbiddenException("A temporary account only opens its own direct link");
+    }
     // Fail closed: a person without a Träger never reaches a link of one.
     if (!Objects.equals(user.getTenantId(), link.getTenantId())) {
       throw new ForbiddenException("Invite link belongs to another tenant");

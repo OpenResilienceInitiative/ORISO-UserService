@@ -368,6 +368,11 @@ public class SecurityConfig {
                 .access(this::isPlatformAdmin)
                 .requestMatchers("/users/system-notification-emails/test")
                 .access(this::isPlatformAdmin)
+                // Temporary-account lifetimes and message retention (ADR-029, #1476).
+                .requestMatchers(
+                    "/users/admin/temporary-account-settings",
+                    "/service/users/admin/temporary-account-settings")
+                .access(this::isPlatformAdmin)
                 .requestMatchers(
                     "/users/admin/service-notices/drafts",
                     "/users/admin/service-notices/drafts/**",
@@ -390,6 +395,13 @@ public class SecurityConfig {
                     USER_DEFAULT,
                     CONSULTANT_DEFAULT,
                     RESTRICTED_AGENCY_ADMIN)
+                // The caller's own direct-link temporary account (#1476).
+                .requestMatchers(
+                    "/users/temporary-account",
+                    "/users/temporary-account/message-retention",
+                    "/service/users/temporary-account",
+                    "/service/users/temporary-account/message-retention")
+                .hasAuthority(USER_DEFAULT)
                 // Counsellor direct links (#1475): ownership is checked in the service.
                 .requestMatchers(
                     "/users/call-knocks/mine",

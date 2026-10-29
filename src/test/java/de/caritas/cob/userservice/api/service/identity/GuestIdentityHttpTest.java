@@ -121,6 +121,11 @@ class GuestIdentityHttpTest {
   @MockitoBean TopicService topics;
   @MockitoBean ConsultantRepository consultants;
   @MockitoBean ConsultingTypeService consultingTypes;
+
+  @MockitoBean
+  de.caritas.cob.userservice.api.service.temporaryaccount.TemporaryAccountSettingsService
+      temporaryAccountSettings;
+
   @MockitoBean AgencyService agencies;
   @MockitoBean CreateAnonymousEnquiryFacade provisioning;
 

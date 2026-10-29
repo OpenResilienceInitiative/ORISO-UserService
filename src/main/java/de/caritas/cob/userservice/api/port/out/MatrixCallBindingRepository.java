@@ -40,4 +40,7 @@ public interface MatrixCallBindingRepository extends JpaRepository<MatrixCallBin
       "select b from MatrixCallBinding b where b.mediaRoomId = :room")
   Optional<MatrixCallBinding> lockByMediaRoomId(
       @org.springframework.data.repository.query.Param("room") String room);
+
+  /** Calls of the given sessions, for the temporary-account cleanup (#1476). */
+  java.util.List<MatrixCallBinding> findBySessionIdIn(java.util.Collection<Long> sessionIds);
 }

@@ -30,6 +30,12 @@ class AgencyInviteLinkContextHttpTest {
   private final AgencyInviteLinkRepository repository = mock(AgencyInviteLinkRepository.class);
   private final CreateAnonymousEnquiryFacade facade = mock(CreateAnonymousEnquiryFacade.class);
   private final ConsultantRepository consultants = mock(ConsultantRepository.class);
+  private final de.caritas.cob.userservice.api.service.temporaryaccount
+          .TemporaryAccountSettingsService
+      temporaryAccountSettings =
+          mock(
+              de.caritas.cob.userservice.api.service.temporaryaccount
+                  .TemporaryAccountSettingsService.class);
   private final de.caritas.cob.userservice.api.service.agencyinvitelink.CallShareLinkService
       callShareLinks =
           mock(de.caritas.cob.userservice.api.service.agencyinvitelink.CallShareLinkService.class);
@@ -49,7 +55,19 @@ class AgencyInviteLinkContextHttpTest {
             facade,
             mock(de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class),
             mock(de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class),
+            temporaryAccountSettings,
             callShareLinks);
+    when(temporaryAccountSettings.current())
+        .thenReturn(
+            new de.caritas.cob.userservice.api.service.temporaryaccount
+                .TemporaryAccountSettingsValues(
+                15,
+                24,
+                30,
+                true,
+                de.caritas.cob.userservice.api.service.temporaryaccount.MessageRetentionMode
+                    .ALWAYS_PERSISTENT,
+                3L));
     mvc =
         MockMvcBuilders.standaloneSetup(new AgencyInviteLinkController(service, topicService))
             .setControllerAdvice(new ApiResponseEntityExceptionHandler())
@@ -174,7 +192,26 @@ class AgencyInviteLinkContextHttpTest {
                 .json(
                     """
             {"tenantId":83,"agencyId":99,"consultingTypeId":1,"topicId":11,"chatType":"VIDEO",
-             "temporaryAccount":true,"admission":"KNOCK"}
+             "temporaryAccount":true,"admission":"KNOCK","hidePasswordField":true,
+             "messageRetention":"ALWAYS_PERSISTENT"}
+            """,
+                    org.springframework.test.json.JsonCompareMode.STRICT));
+  }
+
+  @Test
+  void directLinkWithoutTemporaryAccountsOmitsThePlatformAccountSettings() throws Exception {
+    var link = directLink();
+    link.setTemporaryAccount(false);
+    when(repository.findByToken("token")).thenReturn(Optional.of(link));
+    ownerServes(99L);
+    mvc.perform(get("/users/invitelinks/token/context"))
+        .andExpect(status().isOk())
+        .andExpect(
+            content()
+                .json(
+                    """
+            {"tenantId":83,"agencyId":99,"consultingTypeId":1,"topicId":11,"chatType":"VIDEO",
+             "temporaryAccount":false,"admission":"KNOCK"}
             """,
                     org.springframework.test.json.JsonCompareMode.STRICT));
   }

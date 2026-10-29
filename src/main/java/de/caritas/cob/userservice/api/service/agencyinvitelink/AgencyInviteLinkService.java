@@ -60,6 +60,9 @@ public class AgencyInviteLinkService {
   private final @NonNull AdminScope adminScope;
   private final @NonNull de.caritas.cob.userservice.api.admin.service.tenant.TenantService
       tenantService;
+  private final @NonNull de.caritas.cob.userservice.api.service.temporaryaccount
+          .TemporaryAccountSettingsService
+      temporaryAccountSettings;
 
   /** Call share links (#1487) in the public context; not {@code @NonNull} for older test wiring. */
   private final CallShareLinkService callShareLinkService;
@@ -238,6 +241,10 @@ public class AgencyInviteLinkService {
               ? null
               : resolveAgencyIdForRegistration(link, consultingTypeId);
       boolean direct = InviteLinkChatType.isDirectMedium(link.getChatType());
+      // A link that creates temporary accounts tells the registration page what applies to
+      // people who join now (ADR-029 §3–§5, #1476).
+      var settings =
+          direct && link.isTemporaryAccount() ? temporaryAccountSettings.current() : null;
       return new InvitationContext(
           link.getTenantId(),
           agencyId,
@@ -245,7 +252,9 @@ public class AgencyInviteLinkService {
           link.getTopicId(),
           link.getChatType(),
           direct ? link.isTemporaryAccount() : null,
-          direct ? InviteLinkChatType.valueOf(link.getChatType()).admission().name() : null);
+          direct ? InviteLinkChatType.valueOf(link.getChatType()).admission().name() : null,
+          settings == null ? null : settings.hidePasswordField(),
+          settings == null ? null : settings.messageRetention().name());
     } finally {
       if (previousTenant == null) {
         TenantContext.clear();
@@ -297,7 +306,9 @@ public class AgencyInviteLinkService {
       Long topicId,
       String chatType,
       @JsonInclude(JsonInclude.Include.NON_NULL) Boolean temporaryAccount,
-      @JsonInclude(JsonInclude.Include.NON_NULL) String admission) {}
+      @JsonInclude(JsonInclude.Include.NON_NULL) String admission,
+      @JsonInclude(JsonInclude.Include.NON_NULL) Boolean hidePasswordField,
+      @JsonInclude(JsonInclude.Include.NON_NULL) String messageRetention) {}
 
   /**
    * Redeem the token: validate, mark USED, return tenant/agency/consulting-type/topic metadata for

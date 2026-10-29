@@ -525,6 +525,9 @@ class ManagedAccountStatusControllerTest {
             mock(AdminScope.class),
             tenants,
             mock(
+                de.caritas.cob.userservice.api.service.temporaryaccount
+                    .TemporaryAccountSettingsService.class),
+            mock(
                 de.caritas.cob.userservice.api.service.agencyinvitelink.CallShareLinkService
                     .class));
     var mvc =
