@@ -26,14 +26,16 @@ import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 
-/**
- * Event acknowledgement through real durable fan-out/rendering to the external mail boundary.
- * Ported from US#1376; FE#1725 story 40 adds the tenant switch tests.
- */
+/** Event acknowledgement through real durable fan-out/rendering to the external mail boundary. */
 class InternalChatEmailServiceTest {
   static final String ROOM = "!internal:matrix.example";
   static final String EVENT = "$internal-event";
   private final SessionRepository sessions = mock(SessionRepository.class);
+  private final de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+      accountLifecycle =
+          mock(
+              de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+                  .class);
   private final GroupChatParticipantRepository participants =
       mock(GroupChatParticipantRepository.class);
   private final ConsultantRepository consultants = mock(ConsultantRepository.class);
@@ -98,8 +100,9 @@ class InternalChatEmailServiceTest {
         .thenAnswer(i -> Optional.ofNullable(stored.get(i.getArgument(0))));
     when(repository.findByIdForUpdate(anyLong()))
         .thenAnswer(i -> Optional.ofNullable(stored.get(i.getArgument(0))));
-    when(repository.findTop100ByStatusAndNextAttemptAtLessThanEqualOrderByCreatedAtAsc(
-            any(), any()))
+    when(repository
+            .findTop100ByStatusAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAscCreatedAtAscIdAsc(
+                any(), any()))
         .thenAnswer(
             i ->
                 stored.values().stream()
@@ -149,7 +152,7 @@ class InternalChatEmailServiceTest {
                 "m.room.encrypted",
                 "content",
                 Map.of("ciphertext", "PRIVATE_ENCRYPTED_MESSAGE_MARKER")));
-    when(matrix.getRoomEvent(ROOM, EVENT, "matrix-token")).thenAnswer(i -> Optional.of(event));
+    when(matrix.findRoomEvent(ROOM, EVENT, "matrix-token")).thenAnswer(i -> Optional.of(event));
     tenantSettings =
         new HashMap<>(
             Map.of(
@@ -173,7 +176,7 @@ class InternalChatEmailServiceTest {
                     "mail@example.org",
                     "passwordSet",
                     true)));
-    when(mailClient.readTenant(7L)).thenAnswer(i -> Map.of("settings", tenantSettings));
+    when(mailClient.readMailContext(7L)).thenAnswer(i -> mailContext());
     doAnswer(
             i -> {
               received.add(new Delivered(i.getArgument(2), i.getArgument(3), i.getArgument(4)));
@@ -204,7 +207,7 @@ class InternalChatEmailServiceTest {
             sessions,
             participants,
             consultants,
-            identities,
+            new NotificationAccountEligibility(accountLifecycle, identities),
             matrix,
             writer,
             new DoNotDisturbService(dnd),
@@ -218,6 +221,68 @@ class InternalChatEmailServiceTest {
     ReflectionTestUtils.setField(service, "applicationBaseUrl", "https://app.example.net");
   }
 
+  private TenantSystemEmailClient.MailContext mailContext() {
+    @SuppressWarnings("unchecked")
+    Map<String, Object> smtp = (Map<String, Object>) tenantSettings.get("smtp");
+    boolean smtpPresent = smtp != null && !smtp.isEmpty();
+    boolean ownSmtpConfigured =
+        smtpPresent
+            && Boolean.TRUE.equals(smtp.get("enabled"))
+            && smtp.get("host") instanceof String host
+            && !host.isBlank()
+            && smtp.get("port") instanceof Number port
+            && port.intValue() >= 1
+            && port.intValue() <= 65535
+            && smtp.get("secure") instanceof Boolean
+            && smtp.get("username") instanceof String username
+            && !username.isBlank()
+            && smtp.get("from") instanceof String from
+            && !from.isBlank()
+            && Boolean.TRUE.equals(smtp.get("passwordSet"));
+    return new TenantSystemEmailClient.MailContext(
+        (Boolean) tenantSettings.get("featureSystemNotificationEmailsEnabled"),
+        (String) tenantSettings.get("smtpMode"),
+        smtp == null ? null : (String) smtp.get("emailThemeColor"),
+        ownSmtpConfigured,
+        smtpPresent);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.MethodSource("internalLifecycleStates")
+  void suspendedLifecycleAfterFanOutCannotSendOrReceiveInternalMail(
+      String identityId,
+      de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService.Status
+          status) {
+    service.onMessageIntent(ROOM, EVENT, caller);
+    writer.pendingIds().forEach(service::resolveIntent);
+    var now = java.time.Instant.now();
+    when(accountLifecycle.snapshot(identityId))
+        .thenReturn(
+            Optional.of(
+                new de.caritas.cob.userservice.api.workflow.accountinactivity
+                    .AccountInactivityService.Snapshot(
+                    identityId, 7L, 12, 0, now, now, status, 0, null)));
+    drain();
+    assertThat(received)
+        .hasSize(
+            status
+                    == de.caritas.cob.userservice.api.workflow.accountinactivity
+                        .AccountInactivityService.Status.ACTIVE
+                ? 1
+                : 0);
+  }
+
+  static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments>
+      internalLifecycleStates() {
+    return java.util.stream.Stream.of("actor", "recipient")
+        .flatMap(
+            id ->
+                java.util.Arrays.stream(
+                        de.caritas.cob.userservice.api.workflow.accountinactivity
+                            .AccountInactivityService.Status.values())
+                    .map(status -> org.junit.jupiter.params.provider.Arguments.of(id, status)));
+  }
+
   @Test
   void newInternalMessageDeliversOneNeutralMailToOtherCurrentCounsellor() {
     service.onMessageIntent(ROOM, EVENT, caller);
@@ -228,6 +293,27 @@ class InternalChatEmailServiceTest {
     assertThat(received.getFirst().email().html())
         .contains("mail=interne-nachricht")
         .doesNotContain("PRIVATE_");
+    assertThat(received.getFirst().email().text()).contains("/42").doesNotContain("PRIVATE_");
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "CREATED,CREATED",
+    "CREATED,IN_PROGRESS",
+    "IN_PROGRESS,CREATED",
+    "IN_PROGRESS,IN_PROGRESS"
+  })
+  void operationalCounsellorsReceiveInternalMailExactlyOnce(
+      ConsultantStatus senderStatus, ConsultantStatus recipientStatus) {
+    actor.setStatus(senderStatus);
+    recipient.setStatus(recipientStatus);
+
+    service.onMessageIntent(ROOM, EVENT, caller);
+    service.onMatrixMessage(ROOM, EVENT, actor.getMatrixUserId());
+    drain();
+
+    assertThat(received).hasSize(1);
+    assertThat(received.getFirst().recipient()).isEqualTo("recipient@example.org");
     assertThat(received.getFirst().email().text()).contains("/42").doesNotContain("PRIVATE_");
   }
 
@@ -329,6 +415,22 @@ class InternalChatEmailServiceTest {
     assertThat(received).hasSize(1);
   }
 
+  @Test
+  void prolongedMailSetupOutageRecoversWithoutLosingOrDuplicatingTheMessage() {
+    tenantSettings.remove("smtpMode");
+    service.onMessageIntent(ROOM, EVENT, caller);
+    for (int round = 0; round < 16; round++) {
+      drain();
+      makeRetryDue();
+    }
+    assertThat(received).isEmpty();
+    tenantSettings.put("smtpMode", "OWN");
+    drain();
+    service.onMatrixMessage(ROOM, EVENT, actor.getMatrixUserId());
+    drain();
+    assertThat(received).hasSize(1);
+  }
+
   @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.ValueSource(strings = {"m.text", "m.emote", "m.file"})
   void unencryptedInternalRoomMessageDeliversMail(String msgtype) {
@@ -364,27 +466,48 @@ class InternalChatEmailServiceTest {
   }
 
   @Test
-  void missingMatrixEventStopsRetryingAfterTheAttemptCap() {
-    when(matrix.getRoomEvent(ROOM, EVENT, "matrix-token")).thenReturn(Optional.empty());
+  void prolongedMatrixOutageRemainsRetryableAndRecoversExactlyOnce() {
+    when(matrix.findRoomEvent(ROOM, EVENT, "matrix-token"))
+        .thenThrow(
+            new de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService
+                .RoomEventUnavailableException(null));
     service.onMessageIntent(ROOM, EVENT, caller);
     for (int round = 0; round < 40; round++) {
       drain();
       makeRetryDue();
     }
-    assertThat(writer.pendingIds()).isEmpty();
-    assertThat(stored.values())
-        .extracting(ReplyEmailDelivery::getStatus)
-        .containsOnly(ReplyEmailDelivery.Status.REJECTED);
-    verify(matrix, atMost(InternalChatEmailService.MAX_PREFLIGHT_ATTEMPTS))
-        .getRoomEvent(ROOM, EVENT, "matrix-token");
     assertThat(received).isEmpty();
+    org.mockito.Mockito.doAnswer(i -> Optional.of(event))
+        .when(matrix)
+        .findRoomEvent(ROOM, EVENT, "matrix-token");
+    drain();
+    assertThat(received).hasSize(1);
+    service.onMatrixMessage(ROOM, EVENT, actor.getMatrixUserId());
+    drain();
+    assertThat(received).hasSize(1);
+  }
+
+  @Test
+  void unknownMatrixEventIsRejectedOnceInsteadOfRetriedForever() {
+    when(matrix.findRoomEvent(ROOM, EVENT, "matrix-token")).thenReturn(Optional.empty());
+    service.onMessageIntent(ROOM, EVENT, caller);
+    for (int round = 0; round < 5; round++) {
+      drain();
+      makeRetryDue();
+    }
+    assertThat(received).isEmpty();
+    verify(matrix, org.mockito.Mockito.times(1)).findRoomEvent(ROOM, EVENT, "matrix-token");
   }
 
   @Test
   void briefMatrixOutageStillDeliversOnceTheEventIsReadable() {
-    when(matrix.getRoomEvent(ROOM, EVENT, "matrix-token"))
-        .thenReturn(Optional.empty())
-        .thenReturn(Optional.empty())
+    when(matrix.findRoomEvent(ROOM, EVENT, "matrix-token"))
+        .thenThrow(
+            new de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService
+                .RoomEventUnavailableException(null))
+        .thenThrow(
+            new de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService
+                .RoomEventUnavailableException(null))
         .thenAnswer(i -> Optional.of(event));
     service.onMessageIntent(ROOM, EVENT, caller);
     for (int round = 0; round < 4; round++) {
@@ -442,6 +565,14 @@ class InternalChatEmailServiceTest {
     session.setConversationType(type);
     service.onMessageIntent(ROOM, EVENT, caller);
     service.onMatrixMessage(ROOM, EVENT, actor.getMatrixUserId());
+    drain();
+    assertThat(received).isEmpty();
+  }
+
+  @Test
+  void confidentialAsideRoomCannotBorrowItsCaseGroupLabel() {
+    session.setMatrixRoomId("!primary:matrix.example");
+    service.onMessageIntent(ROOM, EVENT, caller);
     drain();
     assertThat(received).isEmpty();
   }
@@ -545,6 +676,7 @@ class InternalChatEmailServiceTest {
             mock(FeedbackMessageEmailService.class),
             service,
             caller,
+            mock(MessageEventCurrentAccessService.class),
             Optional.empty());
     var request =
         new de.caritas.cob.userservice.api.adapters.web.controller.EventNotificationController
@@ -574,10 +706,56 @@ class InternalChatEmailServiceTest {
   }
 
   @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(OrisoEmailRenderer.Tone.class)
+  void smtpReceiptIsNeutralMultipartWithOneDedicatedOptOutSelector(OrisoEmailRenderer.Tone tone)
+      throws Exception {
+    recipient.setLanguageCode(
+        LanguageCode.valueOf(
+            tone == OrisoEmailRenderer.Tone.DE_FORMAL || tone == OrisoEmailRenderer.Tone.DE_INFORMAL
+                ? "de"
+                : tone.name().toLowerCase()));
+    recipient.setLanguageFormal(tone != OrisoEmailRenderer.Tone.DE_INFORMAL);
+    tenantSettings.put("smtpMode", "PLATFORM");
+    when(settings.getGlobalSmtpSettingsSnapshot())
+        .thenReturn(
+            Optional.of(
+                PlatformSmtpSettingsFixture.credentials("fixture-account", "fixture-secret")));
+    List<jakarta.mail.internet.MimeMessage> mime = new ArrayList<>();
+    try (var transport =
+        org.mockito.Mockito.mockStatic(
+            OrisoSmtpTransport.class, org.mockito.Mockito.CALLS_REAL_METHODS)) {
+      transport
+          .when(() -> OrisoSmtpTransport.send(any(jakarta.mail.Message.class)))
+          .thenAnswer(
+              call -> {
+                mime.add(call.getArgument(0));
+                return null;
+              });
+      service.onMessageIntent(ROOM, EVENT, caller);
+      drain();
+    }
+    assertThat(mime).hasSize(1);
+    var message = mime.getFirst();
+    assertThat(message.getAllRecipients())
+        .extracting(Object::toString)
+        .containsExactly("recipient@example.org");
+    assertThat(message.getSubject()).doesNotContain("PRIVATE_", "actor", "recipient");
+    assertThat(UUID.fromString(message.getHeader("X-ORISO-Delivery-ID", null))).isNotNull();
+    var multipart = (jakarta.mail.internet.MimeMultipart) message.getContent();
+    assertThat(multipart.getContentType()).startsWith("multipart/alternative");
+    assertThat(multipart.getCount()).isEqualTo(2);
+    for (int part = 0; part < 2; part++) {
+      String content = (String) multipart.getBodyPart(part).getContent();
+      assertThat(content).contains("mail=interne-nachricht").doesNotContain("PRIVATE_", "{{");
+      assertThat(org.apache.commons.lang3.StringUtils.countMatches(content, "mail=")).isEqualTo(1);
+    }
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.EnumSource(
       value = ConsultantStatus.class,
       names = {"ERROR", "IN_DELETION"})
-  void brokenOrDeletingRecipientCannotReceiveInternalMail(ConsultantStatus status) {
+  void failedOrDeletingRecipientCannotReceiveInternalMail(ConsultantStatus status) {
     recipient.setStatus(status);
     service.onMessageIntent(ROOM, EVENT, caller);
     drain();
@@ -588,7 +766,7 @@ class InternalChatEmailServiceTest {
   @org.junit.jupiter.params.provider.EnumSource(
       value = ConsultantStatus.class,
       names = {"ERROR", "IN_DELETION"})
-  void brokenOrDeletingSenderCannotGenerateInternalMail(ConsultantStatus status) {
+  void failedOrDeletingSenderCannotGenerateInternalMail(ConsultantStatus status) {
     actor.setStatus(status);
     service.onMessageIntent(ROOM, EVENT, caller);
     service.onMatrixMessage(ROOM, EVENT, actor.getMatrixUserId());
@@ -611,12 +789,84 @@ class InternalChatEmailServiceTest {
 
   @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.ValueSource(strings = {"actor", "recipient"})
+  void identityOutageRetriesWithoutLosingTheMessage(String userId) {
+    when(identities.findEnabledById(userId))
+        .thenThrow(new IllegalStateException("fixture-secret-not-for-logs"));
+    service.onMessageIntent(ROOM, EVENT, caller);
+    drain();
+    assertThat(received).isEmpty();
+    doReturn(Optional.of(true)).when(identities).findEnabledById(userId);
+    makeRetryDue();
+    drain();
+    assertThat(received).hasSize(1);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"actor", "recipient"})
   void suspensionAfterFanOutPreventsPendingDelivery(String userId) {
     service.onMessageIntent(ROOM, EVENT, caller);
     writer.pendingIds().forEach(service::resolveIntent);
     when(identities.findEnabledById(userId)).thenReturn(Optional.of(false));
     drain();
     assertThat(received).isEmpty();
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "policy,TENANT_POLICY,NOTIFICATION_POLICY_INVALID",
+    "mode,TENANT_SMTP,SMTP_MODE_INVALID",
+    "own,TENANT_SMTP,OWN_SMTP_INCOMPLETE",
+    "membership,MATRIX_MEMBERSHIP,DEPENDENCY_UNAVAILABLE",
+    "event,MATRIX_EVENT,DEPENDENCY_UNAVAILABLE",
+    "identity,IDENTITY,DEPENDENCY_UNAVAILABLE",
+    "context,TENANT_CONTEXT,DEPENDENCY_UNAVAILABLE"
+  })
+  void retryDiagnosticsIdentifySafeActionableStageAndReason(
+      String failure, String stage, String reason) {
+    var logger =
+        (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(InternalChatEmailService.class);
+    var appender =
+        new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      switch (failure) {
+        case "policy" -> tenantSettings.remove("featureSystemNotificationEmailsEnabled");
+        case "mode" -> tenantSettings.remove("smtpMode");
+        case "own" -> tenantSettings.put("smtp", Map.of("enabled", true));
+        case "membership" -> when(matrix.getRoomMembers(ROOM)).thenReturn(Optional.empty());
+        case "event" ->
+            when(matrix.findRoomEvent(ROOM, EVENT, "matrix-token"))
+                .thenThrow(
+                    new de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService
+                        .RoomEventUnavailableException(null));
+        case "identity" ->
+            when(identities.findEnabledById("actor"))
+                .thenThrow(new IllegalStateException("fixture-secret-not-for-logs"));
+        case "context" ->
+            when(tenants.getRestrictedTenantDataFresh(7L))
+                .thenThrow(new IllegalStateException("fixture-secret-not-for-logs"));
+      }
+      service.onMessageIntent(ROOM, EVENT, caller);
+      drain();
+      assertThat(received).isEmpty();
+      assertThat(appender.list)
+          .extracting(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+          .anySatisfy(message -> assertThat(message).contains("stage=" + stage, "reason=" + reason))
+          .allSatisfy(
+              message ->
+                  assertThat(message)
+                      .doesNotContain(
+                          "fixture-secret",
+                          "matrix-token",
+                          "PRIVATE_",
+                          "actor@example",
+                          "recipient@example"));
+    } finally {
+      logger.detachAppender(appender);
+      appender.stop();
+    }
   }
 
   private void drain() {

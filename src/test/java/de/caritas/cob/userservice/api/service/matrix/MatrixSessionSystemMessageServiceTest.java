@@ -462,6 +462,69 @@ class MatrixSessionSystemMessageServiceTest {
     verify(matrixSynapseService, never()).sendMessage(anyString(), anyString(), anyString());
   }
 
+  @Test
+  void postSystemMessage_asConsultant_postsWithTheAssignedConsultantsAccount() {
+    var consultant = new Consultant();
+    consultant.setId(CONSULTANT_ID);
+    consultant.setMatrixUserId(CONSULTANT_MATRIX_ID);
+    var session = sessionWithUserMatrixId(USER_MATRIX_ID, "asker");
+    session.setConsultant(consultant);
+    when(consultantService.getConsultant(CONSULTANT_ID)).thenReturn(Optional.of(consultant));
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MATRIX_ID))
+        .thenReturn(ACCESS_TOKEN);
+    when(matrixSynapseService.sendMessage(MATRIX_ROOM_ID, "[SYSTEM_NOTIFICATION]{}", ACCESS_TOKEN))
+        .thenReturn(Map.of("event_id", "$evt"));
+
+    assertThat(
+            matrixSessionSystemMessageService.postSystemMessage(
+                session, "[SYSTEM_NOTIFICATION]{}", true))
+        .isTrue();
+  }
+
+  @Test
+  void postSystemMessage_asConsultant_neverFallsBackToTheAskersAccount() {
+    var consultant = new Consultant();
+    consultant.setId(CONSULTANT_ID);
+    var session = sessionWithUserMatrixId(USER_MATRIX_ID, "asker");
+    session.setConsultant(consultant);
+    when(consultantService.getConsultant(CONSULTANT_ID)).thenReturn(Optional.of(consultant));
+
+    assertThat(
+            matrixSessionSystemMessageService.postSystemMessage(
+                session, "[SYSTEM_NOTIFICATION]{}", true))
+        .isFalse();
+    assertThat(matrixSessionSystemMessageService.hasConsultantMatrixIdentity(session)).isFalse();
+    verify(matrixSynapseService, never()).loginAsUserAccessToken(USER_MATRIX_ID);
+    verify(matrixSynapseService, never()).sendMessage(anyString(), anyString(), anyString());
+  }
+
+  @Test
+  void hasConsultantMatrixIdentity_readsTheStoredConsultant() {
+    var stored = new Consultant();
+    stored.setId(CONSULTANT_ID);
+    stored.setMatrixUserId(CONSULTANT_MATRIX_ID);
+    var reference = new Consultant();
+    reference.setId(CONSULTANT_ID);
+    var session = sessionWithUserMatrixId(USER_MATRIX_ID, "asker");
+    session.setConsultant(reference);
+    when(consultantService.getConsultant(CONSULTANT_ID)).thenReturn(Optional.of(stored));
+
+    assertThat(matrixSessionSystemMessageService.hasConsultantMatrixIdentity(session)).isTrue();
+  }
+
+  @Test
+  void postSystemMessage_reportsAMatrixError() {
+    var session = sessionWithUserMatrixId(USER_MATRIX_ID, "asker");
+    when(matrixSynapseService.loginAsUserAccessToken(USER_MATRIX_ID)).thenReturn(ACCESS_TOKEN);
+    when(matrixSynapseService.sendMessage(MATRIX_ROOM_ID, "[SYSTEM_NOTIFICATION]{}", ACCESS_TOKEN))
+        .thenReturn(Map.of("error", "forbidden"));
+
+    assertThat(
+            matrixSessionSystemMessageService.postSystemMessage(
+                session, "[SYSTEM_NOTIFICATION]{}", false))
+        .isFalse();
+  }
+
   private Session baseSession() {
     var session = new Session();
     session.setId(SESSION_ID);

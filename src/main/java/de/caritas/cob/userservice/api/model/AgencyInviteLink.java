@@ -51,7 +51,10 @@ public class AgencyInviteLink {
   @Column(name = "link_kind", nullable = false, length = 32)
   private String linkKind;
 
-  /** {@code LIVE_CHAT} for now; reserved for future chat types. */
+  /**
+   * {@code LIVE_CHAT} for admin links; {@code CHAT} / {@code AUDIO} / {@code VIDEO} for direct
+   * links.
+   */
   @Column(name = "chat_type", nullable = false, length = 32)
   private String chatType;
 
@@ -102,4 +105,28 @@ public class AgencyInviteLink {
 
   @Column(name = "status", nullable = false, length = 20)
   private String status;
+
+  /** Counsellor-chosen label of a direct link, e.g. "Flyer Schule" (#1475). */
+  @Column(name = "name", length = 100)
+  private String name;
+
+  /** Direct links: people without an account get a temporary one (ADR-029 §3). */
+  @Builder.Default
+  @Column(name = "temporary_account", nullable = false)
+  private boolean temporaryAccount = false;
+
+  @Column(name = "update_date")
+  private LocalDateTime updateDate;
+
+  /**
+   * Call share links (#1487): guests wait for the counsellor ("Anklopfen") instead of joining
+   * straight away. Read only for {@code link_kind = CALL}.
+   */
+  @Builder.Default
+  @Column(name = "knock", nullable = false)
+  private boolean knock = true;
+
+  /** Call share links (#1487): the one running call ({@code matrix_call_binding.id}). */
+  @Column(name = "call_binding_id", unique = true)
+  private Long callBindingId;
 }

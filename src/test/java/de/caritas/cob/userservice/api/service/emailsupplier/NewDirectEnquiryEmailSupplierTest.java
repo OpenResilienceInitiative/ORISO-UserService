@@ -37,14 +37,92 @@ class NewDirectEnquiryEmailSupplierTest {
 
   @Mock private ConsultantAgencyRepository consultantAgencyRepository;
   @Mock private ReleaseToggleService releaseToggleService;
+  @Mock private de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup identities;
+
+  @Mock
+  private de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+      accountLifecycle;
 
   @BeforeEach
   void setup() {
+    org.mockito.Mockito.lenient()
+        .when(identities.findEnabledById(org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(java.util.Optional.of(true));
     newDirectEnquiryEmailSupplier =
-        new NewDirectEnquiryEmailSupplier(consultantAgencyRepository, null, releaseToggleService);
+        new NewDirectEnquiryEmailSupplier(
+            consultantAgencyRepository,
+            new de.caritas.cob.userservice.api.service.notification.NotificationAccountEligibility(
+                accountLifecycle, identities),
+            null,
+            releaseToggleService);
     newDirectEnquiryEmailSupplier.setAgencyId(AGENCY_ID);
     newDirectEnquiryEmailSupplier.setConsultantId(CONSULTANT_ID);
     newDirectEnquiryEmailSupplier.setPostCode(POSTCODE);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      de.caritas.cob.userservice.api.model.ConsultantStatus.class)
+  void onlyCreatedOrInProgressConsultantsReceiveNewEnquiries(
+      de.caritas.cob.userservice.api.model.ConsultantStatus status) {
+    var recipient = currentRecipient();
+    org.assertj.core.api.Assertions.assertThat(newDirectEnquiryEmailSupplier.generateEmails())
+        .hasSize(1);
+    recipient.setStatus(status);
+    org.assertj.core.api.Assertions.assertThat(newDirectEnquiryEmailSupplier.generateEmails())
+        .hasSize(
+            status == de.caritas.cob.userservice.api.model.ConsultantStatus.CREATED
+                    || status == de.caritas.cob.userservice.api.model.ConsultantStatus.IN_PROGRESS
+                ? 1
+                : 0);
+  }
+
+  @Test
+  void deletedConsultantBehindALiveRelationReceivesNoNewEnquiry() {
+    var recipient = currentRecipient();
+    org.assertj.core.api.Assertions.assertThat(newDirectEnquiryEmailSupplier.generateEmails())
+        .hasSize(1);
+    recipient.setDeleteDate(java.time.LocalDateTime.now());
+    org.assertj.core.api.Assertions.assertThat(newDirectEnquiryEmailSupplier.generateEmails())
+        .isEmpty();
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService.Status
+          .class)
+  void inactiveLifecycleCannotReceiveNewEnquiriesDespiteRetainedAgencyMembership(
+      de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService.Status
+          status) {
+    var recipient = currentRecipient();
+    org.assertj.core.api.Assertions.assertThat(newDirectEnquiryEmailSupplier.generateEmails())
+        .hasSize(1);
+    var now = java.time.Instant.now();
+    when(accountLifecycle.snapshot(recipient.getId()))
+        .thenReturn(
+            java.util.Optional.of(
+                new de.caritas.cob.userservice.api.workflow.accountinactivity
+                    .AccountInactivityService.Snapshot(
+                    recipient.getId(), 7L, 12, 0, now, now, status, 0, null)));
+    org.assertj.core.api.Assertions.assertThat(newDirectEnquiryEmailSupplier.generateEmails())
+        .hasSize(
+            status
+                    == de.caritas.cob.userservice.api.workflow.accountinactivity
+                        .AccountInactivityService.Status.ACTIVE
+                ? 1
+                : 0);
+  }
+
+  @Test
+  void disabledIdentityBehindALiveAgencyRelationCannotReceiveANewEnquiry() {
+    currentRecipient();
+    org.assertj.core.api.Assertions.assertThat(newDirectEnquiryEmailSupplier.generateEmails())
+        .hasSize(1);
+    org.mockito.Mockito.lenient()
+        .when(identities.findEnabledById("guard-recipient"))
+        .thenReturn(java.util.Optional.of(false));
+    org.assertj.core.api.Assertions.assertThat(newDirectEnquiryEmailSupplier.generateEmails())
+        .isEmpty();
   }
 
   @Test
@@ -144,5 +222,21 @@ class NewDirectEnquiryEmailSupplierTest {
     assertThat(templateData.get(1).getKey(), is("plz"));
     assertThat(templateData.get(1).getValue(), is(POSTCODE));
     assertThat(templateData.get(2).getKey(), is("url"));
+  }
+
+  private Consultant currentRecipient() {
+    var recipient = new Consultant();
+    recipient.setId("guard-recipient");
+    recipient.setTenantId(7L);
+    recipient.setEmail("guard@synthetic.oriso.test");
+    recipient.setLanguageCode(com.neovisionaries.i18n.LanguageCode.de);
+    recipient.setStatus(de.caritas.cob.userservice.api.model.ConsultantStatus.CREATED);
+    var relation = ConsultantAgency.builder().consultant(recipient).agencyId(70L).build();
+    newDirectEnquiryEmailSupplier.setAgencyId(70L);
+    newDirectEnquiryEmailSupplier.setConsultantId("guard-recipient");
+    when(consultantAgencyRepository.findByConsultantIdAndAgencyIdAndDeleteDateIsNull(
+            anyString(), anyLong()))
+        .thenReturn(List.of(relation));
+    return recipient;
   }
 }

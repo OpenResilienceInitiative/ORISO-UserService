@@ -7,6 +7,55 @@ externalDocs:
   description: Internal consultant picture API (bounded raw-byte intake, maintained separately from generated JSON controllers).
   url: ./useradmin-consultant-picture.yaml
 paths:
+  /useradmin/identity-observations:
+    post:
+      tags: [identity-observation-controller]
+      summary: Observe exact identity occupancy across all collision layers
+      description: Read only. Requires a nontechnical platform administrator with USER_ADMIN. Does not certify ownership or physical absence.
+      operationId: observeIdentityOccupancy
+      security:
+        - Bearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IdentityObservationRequestDTO'
+      responses:
+        '200':
+          description: All four layers completely observed
+          headers:
+            Cache-Control:
+              schema: {type: string, enum: [no-store]}
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentityObservationResponseDTO'
+        '400':
+          description: Invalid exact selectors; safe fixed validation message without selector values
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message]
+                properties:
+                  message:
+                    type: string
+                    description: Safe explanation of the selector requirements
+        '403':
+          description: Forbidden without existence details
+        '409':
+          description: Conflicting identities or observation limit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentityObservationResponseDTO'
+        '502':
+          description: Incomplete dependency observation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentityObservationResponseDTO'
   /useradmin:
     get:
       tags:
@@ -1759,6 +1808,63 @@ paths:
 
 components:
   schemas:
+    IdentityObservationRequestDTO:
+      type: object
+      additionalProperties: false
+      description: At least one exact selector. Selectors form a union. Underscores are literal characters. Blank values, control characters and the wildcard characters %, * and ? are rejected.
+      properties:
+        identityId: {type: string, minLength: 1, maxLength: 255}
+        username: {type: string, minLength: 1, maxLength: 255}
+        email: {type: string, minLength: 1, maxLength: 254}
+    IdentityObservationResponseDTO:
+      type: object
+      required: [scope, observedAt, normalizedSelectors, identityScanComplete, occupancy, layers, facts]
+      properties:
+        scope: {type: string, enum: [identity-occupancy-v1]}
+        observedAt: {type: string, format: date-time}
+        normalizedSelectors:
+          $ref: '#/components/schemas/IdentityObservationSelectorsDTO'
+        identityScanComplete: {type: boolean}
+        occupancy: {type: string, enum: [FREE, OCCUPIED, CONFLICT, UNKNOWN]}
+        layers:
+          type: array
+          maxItems: 4
+          items:
+            $ref: '#/components/schemas/IdentityObservationLayerDTO'
+        facts:
+          type: array
+          maxItems: 80
+          items:
+            $ref: '#/components/schemas/IdentityObservationFactDTO'
+    IdentityObservationSelectorsDTO:
+      type: object
+      properties:
+        identityId: {type: string}
+        usernames:
+          type: array
+          maxItems: 2
+          items: {type: string}
+        email: {type: string}
+    IdentityObservationLayerDTO:
+      type: object
+      required: [source, status]
+      properties:
+        source: {type: string, enum: [KEYCLOAK, ADMIN, CONSULTANT, ASKER]}
+        status: {type: string, enum: [COMPLETE, LIMIT, DEPENDENCY_FAILURE]}
+    IdentityObservationFactDTO:
+      type: object
+      required: [source, identityId]
+      properties:
+        source: {type: string, enum: [KEYCLOAK, ADMIN, CONSULTANT, ASKER]}
+        identityId: {type: string}
+        rowId: {type: string}
+        username: {type: string}
+        email: {type: string}
+        tenantId: {type: integer, format: int64}
+        adminType: {type: string}
+        deleted: {type: boolean}
+        deletedAt: {type: string}
+        enabled: {type: boolean}
     AdminListSortDTO:
       type: object
       description: >-

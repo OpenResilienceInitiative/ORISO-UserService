@@ -32,9 +32,20 @@ public class MatrixRtcCallPolicyController {
     if (!tokenVerifier.isValid(policyToken)) {
       return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
     }
+    if (request.callRoomId() == null) {
+      return ResponseEntity.ok(
+          callPolicyService.resolve(request.sourceRoomId(), request.matrixUserId()));
+    }
     return ResponseEntity.ok(
-        callPolicyService.resolve(request.sourceRoomId(), request.matrixUserId()));
+        callPolicyService.resolve(
+            request.sourceRoomId(), request.matrixUserId(), request.callRoomId()));
   }
 
-  public record CallPolicyRequest(@NotBlank String sourceRoomId, @NotBlank String matrixUserId) {}
+  /** callRoomId is optional; only a call guest (US#1477) needs it, and is denied without it. */
+  public record CallPolicyRequest(
+      @NotBlank String sourceRoomId, @NotBlank String matrixUserId, String callRoomId) {
+    public CallPolicyRequest(String sourceRoomId, String matrixUserId) {
+      this(sourceRoomId, matrixUserId, null);
+    }
+  }
 }

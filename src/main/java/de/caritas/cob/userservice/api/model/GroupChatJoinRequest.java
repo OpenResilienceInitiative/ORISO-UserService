@@ -18,15 +18,25 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 /**
- * A consultant's "knock" on a self-help group Series they reached through an invite link. Until a
- * Series Owner or Co-Moderator admits it, the request grants no access to the group.
+ * A "knock" that grants nothing until it is admitted. Two shapes share the lifecycle:
+ *
+ * <ul>
+ *   <li>{@link Via#INVITE_LINK}: a consultant knocks on a self-help group Series; a Series Owner or
+ *       Co-Moderator admits it ({@code seriesId}, {@code consultantId}).
+ *   <li>{@link Via#DIRECT_LINK}: a person knocks on an audio or video call in their own 1:1
+ *       conversation opened through a counsellor direct link; that counsellor admits it ({@code
+ *       sessionId}, {@code userId}, #1475, ADR-029 §2). Never enters the Matrix admission path.
+ *   <li>{@link Via#CALL_LINK}: a guest knocks on one running call through its share link ({@code
+ *       inviteLinkId}, {@code userId}, #1487); the link's counsellor admits it.
+ * </ul>
  */
 @Entity
 @Table(
     name = "group_chat_join_request",
     indexes = {
       @Index(name = "idx_gcjr_series_status", columnList = "series_id, status"),
-      @Index(name = "idx_gcjr_consultant_series", columnList = "consultant_id, series_id")
+      @Index(name = "idx_gcjr_consultant_series", columnList = "consultant_id, series_id"),
+      @Index(name = "idx_gcjr_session_status", columnList = "session_id, status")
     })
 @AllArgsConstructor
 @NoArgsConstructor
@@ -44,7 +54,10 @@ public class GroupChatJoinRequest {
   }
 
   public enum Via {
-    INVITE_LINK
+    INVITE_LINK,
+    DIRECT_LINK,
+    /** A guest knocks on one running call through its share link (#1487). */
+    CALL_LINK
   }
 
   @Id
@@ -53,11 +66,27 @@ public class GroupChatJoinRequest {
   private Long id;
 
   /** References {@code chat.id} (the Series), like {@link GroupChatParticipant#getSeriesId()}. */
-  @Column(name = "series_id", nullable = false, updatable = false)
+  @Column(name = "series_id", updatable = false)
   private Long seriesId;
 
-  @Column(name = "consultant_id", nullable = false, updatable = false, length = 36)
+  @Column(name = "consultant_id", updatable = false, length = 36)
   private String consultantId;
+
+  /** {@link Via#DIRECT_LINK}: the 1:1 conversation whose call is knocked on. */
+  @Column(name = "session_id", updatable = false)
+  private Long sessionId;
+
+  /** {@link Via#DIRECT_LINK}: the person knocking. */
+  @Column(name = "user_id", updatable = false, length = 36)
+  private String userId;
+
+  /** {@link Via#DIRECT_LINK}: the link used; no foreign key, so deleting the link keeps it. */
+  @Column(name = "invite_link_id", updatable = false)
+  private Long inviteLinkId;
+
+  /** {@link Via#DIRECT_LINK}: {@code AUDIO} or {@code VIDEO}. */
+  @Column(name = "medium", updatable = false, length = 16)
+  private String medium;
 
   @Enumerated(EnumType.STRING)
   @Column(name = "status", nullable = false, length = 16)

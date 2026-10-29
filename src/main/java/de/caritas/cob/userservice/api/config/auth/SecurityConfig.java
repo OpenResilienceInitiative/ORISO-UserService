@@ -320,6 +320,21 @@ public class SecurityConfig {
                     RESTRICTED_AGENCY_ADMIN)
                 .requestMatchers(HttpMethod.GET, APPOINTMENTS_APPOINTMENT_ID + UUID_PATTERN + "}")
                 .permitAll()
+                // Call share links (#1487), ahead of /matrix/**: guests join, counsellors manage;
+                // membership of the call is checked in the service.
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/matrix/calls/share-links/*/join",
+                    "/service/matrix/calls/share-links/*/join")
+                .hasAuthority(USER_DEFAULT)
+                .requestMatchers(
+                    "/matrix/calls/share-links",
+                    "/service/matrix/calls/share-links",
+                    "/matrix/calls/share-links/{linkId:[0-9]+}",
+                    "/service/matrix/calls/share-links/{linkId:[0-9]+}",
+                    "/matrix/calls/share-links/{linkId:[0-9]+}/guests/remove",
+                    "/service/matrix/calls/share-links/{linkId:[0-9]+}/guests/remove")
+                .hasAuthority(CONSULTANT_DEFAULT)
                 .requestMatchers(
                     "/users/email",
                     "/users/drafts",
@@ -353,6 +368,11 @@ public class SecurityConfig {
                 .access(this::isPlatformAdmin)
                 .requestMatchers("/users/system-notification-emails/test")
                 .access(this::isPlatformAdmin)
+                // Temporary-account lifetimes and message retention (ADR-029, #1476).
+                .requestMatchers(
+                    "/users/admin/temporary-account-settings",
+                    "/service/users/admin/temporary-account-settings")
+                .access(this::isPlatformAdmin)
                 .requestMatchers(
                     "/users/admin/service-notices/drafts",
                     "/users/admin/service-notices/drafts/**",
@@ -375,6 +395,41 @@ public class SecurityConfig {
                     USER_DEFAULT,
                     CONSULTANT_DEFAULT,
                     RESTRICTED_AGENCY_ADMIN)
+                // The caller's own direct-link temporary account (#1476).
+                .requestMatchers(
+                    "/users/temporary-account",
+                    "/users/temporary-account/message-retention",
+                    "/service/users/temporary-account",
+                    "/service/users/temporary-account/message-retention")
+                .hasAuthority(USER_DEFAULT)
+                // Counsellor direct links (#1475): ownership is checked in the service.
+                .requestMatchers(
+                    "/users/call-knocks/mine",
+                    "/service/users/call-knocks/mine",
+                    "/users/call-knocks/mine/{knockId:[0-9]+}",
+                    "/service/users/call-knocks/mine/{knockId:[0-9]+}")
+                .hasAuthority(USER_DEFAULT)
+                .requestMatchers(
+                    "/users/call-knocks",
+                    "/service/users/call-knocks",
+                    "/users/call-knocks/admit-all",
+                    "/service/users/call-knocks/admit-all",
+                    "/users/call-knocks/{knockId:[0-9]+}/admit",
+                    "/service/users/call-knocks/{knockId:[0-9]+}/admit",
+                    "/users/call-knocks/{knockId:[0-9]+}/decline",
+                    "/service/users/call-knocks/{knockId:[0-9]+}/decline")
+                .hasAuthority(CONSULTANT_DEFAULT)
+                .requestMatchers(
+                    "/users/directlinks",
+                    "/service/users/directlinks",
+                    "/users/directlinks/{linkId:[0-9]+}",
+                    "/service/users/directlinks/{linkId:[0-9]+}")
+                .hasAuthority(CONSULTANT_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/users/invitelinks/*/conversations",
+                    "/service/users/invitelinks/*/conversations")
+                .hasAuthority(USER_DEFAULT)
                 .requestMatchers("/users/statistics/registration")
                 .hasAnyAuthority(SINGLE_TENANT_ADMIN, TENANT_ADMIN)
                 .requestMatchers(
@@ -405,6 +460,18 @@ public class SecurityConfig {
                     "/users/sessions/{sessionId:[0-9]+}/supervision/opt-out",
                     "/service/users/sessions/{sessionId:[0-9]+}/supervision/opt-out")
                 .hasAuthority(USER_DEFAULT)
+                // FE#1876 S6: ownership and duplicate state are checked in SessionArchiveService.
+                .requestMatchers(
+                    HttpMethod.PUT,
+                    "/users/askers/sessions/{sessionId:[0-9]+}/end-duplicate",
+                    "/service/users/askers/sessions/{sessionId:[0-9]+}/end-duplicate")
+                .hasAuthority(USER_DEFAULT)
+                // FE#1876 S2: assignment and state are checked in the recommendation service.
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/users/sessions/{sessionId:[0-9]+}/further-counselling-recommendation",
+                    "/service/users/sessions/{sessionId:[0-9]+}/further-counselling-recommendation")
+                .hasAuthority(CONSULTANT_DEFAULT)
                 /* Gate 2 consent pointer (ADR-022 decision 2). Anonymous help-seekers are the
                 main case — they hold ANONYMOUS_DEFAULT, not USER_DEFAULT — but a registered
                 help-seeker passes the same gate in the room. Ownership of the session is
@@ -466,6 +533,8 @@ public class SecurityConfig {
                     "/users/sessions/{sessionId:[0-9]+}/supervisors/{supervisorId:[0-9]+}",
                     "/service/users/sessions/{sessionId:[0-9]+}/supervisors",
                     "/service/users/sessions/{sessionId:[0-9]+}/supervisors/{supervisorId:[0-9]+}",
+                    "/users/sessions/{sessionId:[0-9]+}/rejection",
+                    "/service/users/sessions/{sessionId:[0-9]+}/rejection",
                     "/users/sessions/{sessionId:[0-9]+}/team-discussion",
                     "/service/users/sessions/{sessionId:[0-9]+}/team-discussion")
                 .hasAuthority(CONSULTANT_DEFAULT)
@@ -493,6 +562,9 @@ public class SecurityConfig {
                     "/users/chat/{chatId:[0-9]+}/update",
                     "/users/{matrixUserId}/chat/{chatId:[0-9]+}/ban")
                 .hasAuthority(UPDATE_CHAT)
+                .requestMatchers(
+                    "/useradmin/identity-observations", "/service/useradmin/identity-observations")
+                .access(this::canObserveIdentityOccupancy)
                 .requestMatchers(
                     "/useradmin/accounts/*/status", "/service/useradmin/accounts/*/status")
                 .hasAnyAuthority(
@@ -687,6 +759,35 @@ public class SecurityConfig {
             .collect(Collectors.toSet());
     authorities.addAll(authorityMapper.mapAuthorities(roleAuthorities));
     return authorities;
+  }
+
+  private AuthorizationDecision canObserveIdentityOccupancy(
+      Supplier<? extends Authentication> authenticationSupplier,
+      RequestAuthorizationContext requestContext) {
+    Authentication authentication = authenticationSupplier.get();
+    if (!(authentication instanceof JwtAuthenticationToken jwtAuthentication)
+        || !authentication.isAuthenticated()) {
+      return new AuthorizationDecision(false);
+    }
+    Set<String> roles = KeycloakRoles.of(jwtAuthentication.getToken().getClaims());
+    boolean technical =
+        roles.contains(UserRole.TECHNICAL.getValue())
+            || roles.contains(UserRole.NOTIFICATIONS_TECHNICAL.getValue())
+            || authentication.getAuthorities().stream()
+                .anyMatch(
+                    authority ->
+                        TECHNICAL_DEFAULT.equals(authority.getAuthority())
+                            || de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue
+                                .NOTIFICATIONS_TECHNICAL
+                                .equals(authority.getAuthority()));
+    boolean userAdmin =
+        authentication.getAuthorities().stream()
+            .anyMatch(authority -> USER_ADMIN.equals(authority.getAuthority()));
+    return new AuthorizationDecision(
+        !technical
+            && userAdmin
+            && roles.contains(UserRole.USER_ADMIN.getValue())
+            && isPlatformAdmin(authenticationSupplier, requestContext).isGranted());
   }
 
   private AuthorizationDecision canAccessInactiveAccountAuditLogs(

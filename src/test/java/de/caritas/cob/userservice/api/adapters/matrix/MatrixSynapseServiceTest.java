@@ -177,6 +177,115 @@ class MatrixSynapseServiceTest {
     verifyNoInteractions(restTemplate);
   }
 
+  private static final URI REDACT_URI =
+      URI.create(
+          "https://matrix.example.com/_synapse/admin/v1/user/%40seeker%3Amatrix.example.com/redact");
+  private static final URI REDACT_STATUS_URI =
+      URI.create("https://matrix.example.com/_synapse/admin/v1/user/redact_status/r1");
+
+  @Test
+  void submitRedactionShouldSendAnExplicitLimitAndReturnTheTaskId() {
+    stubAdminLogin();
+    var body = ArgumentCaptor.forClass(HttpEntity.class);
+    when(restTemplate.exchange(eq(REDACT_URI), eq(HttpMethod.POST), body.capture(), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("redact_id", "r1")));
+
+    assertThat(matrixSynapseService().submitRedaction(MATRIX_USER_ID, List.of("!room:x")))
+        .contains("r1");
+    @SuppressWarnings("unchecked")
+    var sent = (Map<String, Object>) body.getValue().getBody();
+    assertThat(sent).containsKey("limit");
+  }
+
+  /** Synapse redacts asynchronously: only a completed task without failures counts. */
+  @Test
+  void redactionStatusShouldTellRunningCompleteAndFailed() {
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            eq(REDACT_STATUS_URI), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("status", "active")))
+        .thenReturn(ResponseEntity.ok(Map.of("status", "complete", "failed_redactions", Map.of())))
+        .thenReturn(
+            ResponseEntity.ok(
+                Map.of("status", "complete", "failed_redactions", Map.of("$e", "error"))));
+    var service = matrixSynapseService();
+
+    assertThat(service.redactionStatus("r1"))
+        .isEqualTo(MatrixSynapseService.RedactionStatus.RUNNING);
+    assertThat(service.redactionStatus("r1"))
+        .isEqualTo(MatrixSynapseService.RedactionStatus.COMPLETE);
+    assertThat(service.redactionStatus("r1"))
+        .isEqualTo(MatrixSynapseService.RedactionStatus.FAILED);
+  }
+
+  @Test
+  void redactionStatusShouldReportAnUnknownTaskAsFailed() {
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            eq(REDACT_STATUS_URI), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenThrow(
+            new org.springframework.web.client.HttpClientErrorException(HttpStatus.NOT_FOUND));
+
+    assertThat(matrixSynapseService().redactionStatus("r1"))
+        .isEqualTo(MatrixSynapseService.RedactionStatus.FAILED);
+  }
+
+  /** E2EE rooms carry m.room.encrypted; that is activity as much as a plain message. */
+  @Test
+  void latestMessageTimestampShouldCountEncryptedMessagesAndFilterOnTheServer() {
+    stubAdminLogin();
+    var url = ArgumentCaptor.forClass(URI.class);
+    when(restTemplate.exchange(
+            url.capture(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(
+            ResponseEntity.ok(
+                Map.of(
+                    "chunk",
+                    List.of(
+                        Map.of("type", "m.room.encrypted", "origin_server_ts", 900L),
+                        Map.of("type", "m.room.message", "origin_server_ts", 800L)))));
+
+    assertThat(matrixSynapseService().latestMessageTimestamp("!room:x")).isEqualTo(900L);
+    assertThat(url.getValue().toString()).contains("filter=").contains("m.room.encrypted");
+  }
+
+  @Test
+  void latestMessageTimestampShouldBeZeroForARoomWithoutMessages() {
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("chunk", List.of())));
+
+    assertThat(matrixSynapseService().latestMessageTimestamp("!room:x")).isZero();
+  }
+
+  /** Events came back but none tells a message time: unknown, never "inactive". */
+  @Test
+  void latestMessageTimestampShouldThrowWhenEventsCarryNoMessageTime() {
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(
+            ResponseEntity.ok(
+                Map.of("chunk", List.of(Map.of("type", "m.room.member", "origin_server_ts", 1L)))));
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> matrixSynapseService().latestMessageTimestamp("!room:x"))
+        .isInstanceOf(MatrixSynapseService.RoomEventUnavailableException.class);
+  }
+
+  @Test
+  void latestMessageTimestampShouldThrowWhenMatrixCannotTell() {
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenThrow(new HttpServerErrorException(HttpStatus.SERVICE_UNAVAILABLE));
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> matrixSynapseService().latestMessageTimestamp("!room:x"))
+        .isInstanceOf(MatrixSynapseService.RoomEventUnavailableException.class);
+  }
+
   @Test
   void deactivateUserShouldReturnTrueWhenSynapseAdminApiSucceeds() {
     stubAdminLogin();
@@ -1114,6 +1223,52 @@ class MatrixSynapseServiceTest {
     assertThat(matrixSynapseService().getRoomMembers(MATRIX_ROOM_ID)).isEmpty();
   }
 
+  private void stubRoomState(List<Map<String, Object>> state) {
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.argThat(uri -> uri.toString().contains("/state")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("state", state)));
+  }
+
+  private static Map<String, Object> memberEvent(String userId, String membership) {
+    return Map.of(
+        "type", "m.room.member", "state_key", userId, "content", Map.of("membership", membership));
+  }
+
+  @Test
+  void isBannedFromRoom_banMembership_returnsTrue() {
+    stubAdminLogin();
+    stubRoomState(
+        List.of(
+            memberEvent("@alice:matrix.example.com", "join"),
+            memberEvent("@bob:matrix.example.com", "ban")));
+
+    assertThat(matrixSynapseService().isBannedFromRoom(MATRIX_ROOM_ID, "@bob:matrix.example.com"))
+        .contains(true);
+  }
+
+  @Test
+  void isBannedFromRoom_otherMembership_returnsFalse() {
+    stubAdminLogin();
+    stubRoomState(List.of(memberEvent("@bob:matrix.example.com", "leave")));
+
+    assertThat(matrixSynapseService().isBannedFromRoom(MATRIX_ROOM_ID, "@bob:matrix.example.com"))
+        .contains(false);
+  }
+
+  @Test
+  void isBannedFromRoom_unreadableState_returnsEmptyOptional() {
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenThrow(new RuntimeException("synapse down"));
+
+    assertThat(matrixSynapseService().isBannedFromRoom(MATRIX_ROOM_ID, "@bob:matrix.example.com"))
+        .isEmpty();
+  }
+
   @Test
   void getCallRoomMembers_successfulEmptyListIsDefinitive() {
     stubAdminLogin();
@@ -1224,6 +1379,28 @@ class MatrixSynapseServiceTest {
     assertThat(matrixSynapseService().getCallRoomBinding(MATRIX_ROOM_ID, MATRIX_USER_ID)).isEmpty();
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"M_USER_LOCKED", "M_USER_DEACTIVATED"})
+  void getCallRoomBinding_lockedMemberTokenIsADefinitiveDenial(String errcode) {
+    stubCallBindingPrerequisites(MATRIX_USER_ID);
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.argThat(
+                uri -> uri.toString().contains("/state/org.oriso.call.binding")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            org.mockito.ArgumentMatchers
+                .<org.springframework.core.ParameterizedTypeReference<Map<String, Object>>>any()))
+        .thenThrow(
+            new HttpClientErrorException(
+                HttpStatus.UNAUTHORIZED,
+                "synthetic member denial",
+                org.springframework.http.HttpHeaders.EMPTY,
+                ("{\"errcode\":\"" + errcode + "\"}").getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8));
+
+    assertThat(matrixSynapseService().getCallRoomBinding(MATRIX_ROOM_ID, MATRIX_USER_ID)).isEmpty();
+  }
+
   @Test
   void getCallRoomBinding_unauthorizedFreshTokenIsRetryable() {
     stubCallBindingPrerequisites(MATRIX_USER_ID);
@@ -1241,8 +1418,11 @@ class MatrixSynapseServiceTest {
         .isInstanceOf(MatrixSynapseService.CallLookupUnavailableException.class);
   }
 
-  @Test
-  void getCallRoomBinding_unauthorizedImpersonationRefreshesAdminAuthenticationOnRetry() {
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"M_UNKNOWN_TOKEN", "M_USER_LOCKED", "M_USER_DEACTIVATED"})
+  void getCallRoomBinding_unauthorizedImpersonationRefreshesAdminAuthenticationOnRetry(
+      String errcode) {
     matrixConfig.setApiUrl(MATRIX_BASE_URL);
     matrixConfig.setAdminUsername("admin");
     matrixConfig.setAdminPassword("admin-password");
@@ -1266,7 +1446,13 @@ class MatrixSynapseServiceTest {
                 + UriUtils.encode(MATRIX_USER_ID, StandardCharsets.UTF_8)
                 + "/login");
     when(restTemplate.postForEntity(eq(impersonationUri), any(HttpEntity.class), eq(Map.class)))
-        .thenThrow(new HttpClientErrorException(HttpStatus.UNAUTHORIZED))
+        .thenThrow(
+            new HttpClientErrorException(
+                HttpStatus.UNAUTHORIZED,
+                "synthetic admin denial",
+                org.springframework.http.HttpHeaders.EMPTY,
+                ("{\"errcode\":\"" + errcode + "\"}").getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8))
         .thenReturn(ResponseEntity.ok(Map.of("access_token", MATRIX_USER_TOKEN)));
 
     Map<String, Object> binding = Map.of("call_id", "call-401", "source_room_id", MATRIX_ROOM_ID);
@@ -1448,6 +1634,29 @@ class MatrixSynapseServiceTest {
 
     assertThat(matrixSynapseService().getRoomEvent(MATRIX_ROOM_ID, "$missing", ACCESS_TOKEN))
         .isEmpty();
+  }
+
+  @Test
+  void findRoomEvent_isEmptyOnlyForANotFoundEventAndThrowsOnTransientFailures() {
+    matrixConfig.setApiUrl(MATRIX_BASE_URL);
+    when(restTemplate.exchange(
+            any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenThrow(
+            org.springframework.web.client.HttpClientErrorException.create(
+                org.springframework.http.HttpStatus.NOT_FOUND, "Not Found", null, null, null))
+        .thenThrow(
+            org.springframework.web.client.HttpServerErrorException.create(
+                org.springframework.http.HttpStatus.BAD_GATEWAY, "Bad Gateway", null, null, null))
+        .thenThrow(new org.springframework.web.client.ResourceAccessException("timeout"));
+
+    assertThat(matrixSynapseService().findRoomEvent(MATRIX_ROOM_ID, "$missing", ACCESS_TOKEN))
+        .isEmpty();
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> matrixSynapseService().findRoomEvent(MATRIX_ROOM_ID, "$event", ACCESS_TOKEN))
+        .isInstanceOf(MatrixSynapseService.RoomEventUnavailableException.class);
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> matrixSynapseService().findRoomEvent(MATRIX_ROOM_ID, "$event", ACCESS_TOKEN))
+        .isInstanceOf(MatrixSynapseService.RoomEventUnavailableException.class);
   }
 
   // -------------------------------------------------------------------------

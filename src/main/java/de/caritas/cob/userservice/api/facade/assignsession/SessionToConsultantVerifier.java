@@ -45,6 +45,9 @@ public class SessionToConsultantVerifier {
   /** verifies necessary input data of {@link Session} and {@link Consultant}. */
   public void verifyPreconditionsForAssignment(
       ConsultantSessionDTO consultantSessionDTO, boolean skipSameConsultantAssignmentVerification) {
+    if (consultantSessionDTO.getSession().getStatus() == Session.SessionStatus.REJECTED) {
+      throw new ConflictException("Rejected enquiry cannot be assigned");
+    }
     // A members-only chat is handed to nobody who is not in it: assigning its case would invite
     // the colleague into the room and take the others out.
     membersOnlyChatAccess.requireAccess(

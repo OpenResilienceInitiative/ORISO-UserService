@@ -107,6 +107,38 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 @Api(tags = "user-controller")
 public class UserController implements UsersApi {
+  private final @NonNull de.caritas.cob.userservice.api.service.enquiry.EnquiryRejectionService
+      enquiryRejectionService;
+
+  @Override
+  public ResponseEntity<Void> rejectEnquiry(@PathVariable Long sessionId) {
+    return enquiryRejectionService.rejectEnquiry(sessionId)
+        ? ResponseEntity.noContent().build()
+        : ResponseEntity.status(503).build();
+  }
+
+  private final @NonNull de.caritas.cob.userservice.api.service.furthercounselling
+          .FurtherCounsellingRecommendationService
+      furtherCounsellingRecommendationService;
+
+  /** FE#1876 S2: the assigned counsellor recommends further counselling on a topic. */
+  @Override
+  public ResponseEntity<Void> recommendFurtherCounselling(
+      @PathVariable Long sessionId,
+      @RequestBody
+          de.caritas.cob.userservice.api.adapters.web.dto.FurtherCounsellingRecommendationDTO
+              recommendation) {
+    furtherCounsellingRecommendationService.recommend(
+        sessionId, recommendation.getTopicId(), recommendation.getNote());
+    return ResponseEntity.noContent().build();
+  }
+
+  /** FE#1876 S6: the asker ends the newer of two accepted same-topic conversations. */
+  @Override
+  public ResponseEntity<Void> endTopicDuplicate(@PathVariable Long sessionId) {
+    sessionArchiveService.endTopicDuplicate(sessionId);
+    return ResponseEntity.noContent().build();
+  }
 
   private final @NotNull UserAccountService userAccountProvider;
   private final @NotNull UserRegistrationControllerDelegate userRegistrationControllerDelegate;
@@ -151,6 +183,98 @@ public class UserController implements UsersApi {
   private final @NotNull AuthenticatedUser authenticatedUser;
   private final @NonNull RequestedContactSheetService requestedContactSheetService;
   private final @NotNull IdentitySuggestionControllerDelegate identitySuggestionControllerDelegate;
+  private final @NonNull DirectLinkControllerDelegate directLinkControllerDelegate;
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.TemporaryAccountDTO>
+      getOwnTemporaryAccount() {
+    return directLinkControllerDelegate.getOwnTemporaryAccount();
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.TemporaryAccountDTO>
+      decideTemporaryAccountMessageRetention(
+          de.caritas.cob.userservice.api.adapters.web.dto.TemporaryAccountRetentionDecisionDTO
+              decision) {
+    return directLinkControllerDelegate.decideTemporaryAccountMessageRetention(decision);
+  }
+
+  @Override
+  public ResponseEntity<
+          java.util.List<de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkDTO>>
+      getOwnDirectLinks() {
+    return directLinkControllerDelegate.getOwnDirectLinks();
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkDTO>
+      createDirectLink(
+          de.caritas.cob.userservice.api.adapters.web.dto.CreateDirectLinkDTO createDirectLinkDTO) {
+    return directLinkControllerDelegate.createDirectLink(createDirectLinkDTO);
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkDTO>
+      updateDirectLink(
+          Long linkId,
+          de.caritas.cob.userservice.api.adapters.web.dto.UpdateDirectLinkDTO updateDirectLinkDTO) {
+    return directLinkControllerDelegate.updateDirectLink(linkId, updateDirectLinkDTO);
+  }
+
+  @Override
+  public ResponseEntity<Void> deleteDirectLink(Long linkId) {
+    return directLinkControllerDelegate.deleteDirectLink(linkId);
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkConversationDTO>
+      startDirectLinkConversation(String token) {
+    return directLinkControllerDelegate.startDirectLinkConversation(token);
+  }
+
+  @Override
+  public ResponseEntity<
+          java.util.List<de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO>>
+      getPendingCallKnocks(Long sessionId, String matrixRoomId) {
+    return directLinkControllerDelegate.getPendingCallKnocks(sessionId, matrixRoomId);
+  }
+
+  @Override
+  public ResponseEntity<
+          java.util.List<de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO>>
+      admitAllCallKnocks(Long sessionId, String matrixRoomId) {
+    return directLinkControllerDelegate.admitAllCallKnocks(sessionId, matrixRoomId);
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO>
+      admitCallKnock(Long knockId) {
+    return directLinkControllerDelegate.admitCallKnock(knockId);
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO>
+      declineCallKnock(Long knockId) {
+    return directLinkControllerDelegate.declineCallKnock(knockId);
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO>
+      getOwnCallKnock(Long knockId) {
+    return directLinkControllerDelegate.getOwnCallKnock(knockId);
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO>
+      getOwnCallKnockForSession(Long sessionId) {
+    return directLinkControllerDelegate.getOwnCallKnockForSession(sessionId);
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO>
+      cancelOwnCallKnock(Long knockId) {
+    return directLinkControllerDelegate.cancelOwnCallKnock(knockId);
+  }
 
   @Override
   public ResponseEntity<Void> sendContactSheetEmail(Long sessionId) {

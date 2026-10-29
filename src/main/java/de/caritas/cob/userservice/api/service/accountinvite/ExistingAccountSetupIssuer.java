@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.accountinvite;
 
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
+import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
@@ -27,16 +28,21 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.Base64;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 /** Issues an opaque, single-use setup link after a direct-created identity has been persisted. */
 @Slf4j
@@ -353,7 +359,7 @@ public class ExistingAccountSetupIssuer {
           consultant.getTenantId(),
           consultant.getEmail(),
           consultant.getUsername(),
-          tone);
+          requestTone().orElse(tone));
     }
     Admin.AdminType type =
         switch (role) {
@@ -376,7 +382,33 @@ public class ExistingAccountSetupIssuer {
         admin.getTenantId(),
         admin.getEmail(),
         admin.getUsername(),
-        OrisoEmailRenderer.Tone.DE_FORMAL);
+        requestTone().orElse(OrisoEmailRenderer.Tone.DE_FORMAL));
+  }
+
+  /**
+   * An account that still needs its setup link has no language of its own yet: counsellors are
+   * created as German, admins carry none. The mail follows the language the acting admin works in,
+   * which the admin app sends with every request (#1844).
+   */
+  private static Optional<OrisoEmailRenderer.Tone> requestTone() {
+    if (!(RequestContextHolder.getRequestAttributes()
+        instanceof ServletRequestAttributes attributes)) {
+      return Optional.empty();
+    }
+    String header = attributes.getRequest().getHeader(HttpHeaders.ACCEPT_LANGUAGE);
+    if (isBlank(header)) {
+      return Optional.empty();
+    }
+    // "de@informal" and "en-GB,en;q=0.9" both name their language first.
+    String primary = header.split("[,;@_-]", 2)[0].trim().toLowerCase(Locale.ROOT);
+    LanguageCode language = LanguageCode.getByCode(primary);
+    try {
+      return language == null
+          ? Optional.empty()
+          : Optional.of(OrisoEmailRenderer.Tone.of(language));
+    } catch (IllegalArgumentException noTemplate) {
+      return Optional.empty();
+    }
   }
 
   private void assertMayAct(AccountInviteTargetRole role, String identityId) {
@@ -384,7 +416,7 @@ public class ExistingAccountSetupIssuer {
       adminScope.assertMay(AdminScope.Target.counsellor(identityId));
     } else if (role == AccountInviteTargetRole.AGENCY_ADMIN
         || role == AccountInviteTargetRole.TENANT_ADMIN) {
-      adminScope.assertMay(AdminScope.Target.admin(identityId));
+      adminScope.assertMay(AdminScope.Target.managedAdmin(identityId));
     } else {
       throw new BadRequestException("Existing account role is not supported");
     }

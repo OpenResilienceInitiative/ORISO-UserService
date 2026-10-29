@@ -66,6 +66,33 @@ class MatrixRoomClientTest {
         .thenAnswer(invocation -> API_URL + invocation.getArgument(0, String.class));
   }
 
+  /** A RestTemplate message can carry the request URL, and with it the Matrix user ID. */
+  @Test
+  void guestCleanupFailuresAreLoggedWithoutTheRestTemplateMessage() {
+    var failure = new org.springframework.web.client.ResourceAccessException("GET " + USER_ID);
+    when(restTemplate.postForEntity(
+            org.mockito.ArgumentMatchers.any(URI.class),
+            org.mockito.ArgumentMatchers.any(),
+            eq(Map.class)))
+        .thenThrow(failure);
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.any(URI.class),
+            eq(HttpMethod.GET),
+            org.mockito.ArgumentMatchers.any(),
+            eq(Map.class)))
+        .thenThrow(failure);
+
+    try (var logs =
+        de.caritas.cob.userservice.testutils.LogbackCaptor.forClass(MatrixRoomClient.class)) {
+      assertThat(matrixRoomClient.kickUserFromRoom(ROOM_ID, USER_ID, ACCESS_TOKEN)).isFalse();
+      assertThat(matrixRoomClient.getRoomMembership(ROOM_ID, USER_ID, ACCESS_TOKEN)).isEmpty();
+      assertThat(matrixRoomClient.clearUserPowerLevel(ROOM_ID, USER_ID, ACCESS_TOKEN)).isFalse();
+      assertThat(logs.messages(ch.qos.logback.classic.Level.WARN))
+          .hasSize(3)
+          .allSatisfy(message -> assertThat(message).doesNotContain(USER_ID));
+    }
+  }
+
   @Test
   void createRoom_ShouldSendPrivateRoomCreationRequest() throws Exception {
     var responseBody = new MatrixCreateRoomResponseDTO();
@@ -230,6 +257,31 @@ class MatrixRoomClientTest {
         .isInstanceOf(
             de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException.class)
         .hasMessageContaining("Could not invite user");
+  }
+
+  @Test
+  void inviteUserToRoom_ShouldCapAServerChosenRetryDelay() throws Exception {
+    when(restTemplate.postForEntity(
+            eq(uri(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/invite")),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(MatrixInviteUserResponseDTO.class)))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.TOO_MANY_REQUESTS,
+                "Too Many Requests",
+                null,
+                "{\"errcode\":\"M_LIMIT_EXCEEDED\",\"retry_after_ms\":600000}"
+                    .getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8))
+        .thenReturn(ResponseEntity.ok(new MatrixInviteUserResponseDTO()));
+
+    long started = System.nanoTime();
+    matrixRoomClient.inviteUserToRoom(ROOM_ID, USER_ID, ACCESS_TOKEN);
+    long waitedMs = java.time.Duration.ofNanos(System.nanoTime() - started).toMillis();
+
+    assertThat(waitedMs)
+        .isGreaterThanOrEqualTo(MatrixRoomClient.MAX_INVITE_RETRY_DELAY_MS)
+        .isLessThan(MatrixRoomClient.MAX_INVITE_RETRY_DELAY_MS + 3000);
   }
 
   @Test

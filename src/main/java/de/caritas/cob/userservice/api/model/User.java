@@ -178,6 +178,12 @@ public class User implements TenantAware, NotificationsAware {
   private boolean temporaryAccount;
 
   /**
+   * Lifetimes and retention copied at creation for a temporary account from a direct link (ADR-029,
+   * #1476). Null for every other account, including self-help-group guests.
+   */
+  @jakarta.persistence.Embedded private TemporaryAccountSnapshot temporaryAccountSnapshot;
+
+  /**
    * The animal the advice seeker chose in their profile (#1240), as its lower-case file stem. Null
    * shows the default the app derives from the user id.
    */

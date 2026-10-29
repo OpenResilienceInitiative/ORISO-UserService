@@ -171,6 +171,10 @@ class InternalSubsetChatHttpIT {
                   + " consultant_id_owner IN ("
                   + owners
                   + "))");
+          database.update(
+              "DELETE FROM case_handover_request WHERE session_id IN (SELECT id FROM session WHERE consultant_id IN ("
+                  + owners
+                  + "))");
           database.update("DELETE FROM chat WHERE consultant_id_owner IN (" + owners + ")");
           database.update("DELETE FROM session WHERE consultant_id IN (" + owners + ")");
           if (!systemUserExisted41) {
@@ -1226,6 +1230,59 @@ class InternalSubsetChatHttpIT {
         });
 
     assertEveryEndpointRefuses(sameCentre, chatId, roomId, sessionId);
+  }
+
+  @Test
+  void privateChatRefusesHandoverMutationsWithoutChangingItsAudienceOrOwner() throws Exception {
+    var created = openRoom(creator, sameCentre);
+    var chatId = field(created, "chatId");
+    var roomId = field(created, "matrixRoomId");
+    var sessionId = sessionOf(chatId);
+    var before = Tenants.acrossAll(() -> sessions.findById(sessionId).orElseThrow());
+    var response =
+        request(
+            "POST",
+            "/users/sessions/" + sessionId + "/case-handover",
+            anotherSameCentre,
+            "{\"reasonCode\":\"UNPLANNED_ABSENCE\",\"explanation\":\"Synthetic regression\"}");
+    // Observe protocol and storage effects before interpreting an error response.
+    assertThat(synapse.joined(roomId))
+        .containsExactlyInAnyOrder(matrix(creator), matrix(sameCentre));
+    assertThat(participantsOf(storedChat(Long.parseLong(chatId))))
+        .containsExactlyInAnyOrder(creator.getId(), sameCentre.getId());
+    var after = Tenants.acrossAll(() -> sessions.findById(sessionId).orElseThrow());
+    assertThat(after.getConsultant().getId()).isEqualTo(before.getConsultant().getId());
+    assertThat(after.getOwnershipRevision()).isEqualTo(before.getOwnershipRevision());
+    assertThat(
+            database.queryForObject(
+                "SELECT COUNT(*) FROM case_handover_request WHERE session_id=?",
+                Integer.class,
+                sessionId))
+        .isZero();
+    assertThat(response.statusCode()).as(response.body()).isEqualTo(404);
+    var preference =
+        request(
+            "PUT",
+            "/users/sessions/" + sessionId + "/case-handover/consent-preference",
+            creator,
+            "{\"alwaysAskBeforeAdditionalAccess\":true}");
+    // These asker-only endpoints reject a consultant before reaching the service. The session's
+    // own user is a technical system account without an asker login, so the service guard is
+    // covered in CaseHandoverServiceTest instead.
+    assertThat(preference.statusCode()).as(preference.body()).isEqualTo(403);
+    var consent =
+        request(
+            "POST",
+            "/users/sessions/" + sessionId + "/case-handover/123/client-consent",
+            creator,
+            "{\"approved\":true}");
+    assertThat(consent.statusCode()).as(consent.body()).isEqualTo(403);
+    assertThat(
+            Tenants.acrossAll(() -> sessions.findById(sessionId).orElseThrow())
+                .isAlwaysAskBeforeAdditionalAccess())
+        .isEqualTo(before.isAlwaysAskBeforeAdditionalAccess());
+    assertThat(synapse.joined(roomId))
+        .containsExactlyInAnyOrder(matrix(creator), matrix(sameCentre));
   }
 
   @Test

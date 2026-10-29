@@ -55,6 +55,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.SessionSupervisionDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -194,6 +195,7 @@ class SessionServiceTest {
           null,
           null,
           null,
+          null,
           null);
 
   @InjectMocks private SessionService sessionService;
@@ -206,6 +208,11 @@ class SessionServiceTest {
   @Mock private GroupChatParticipantRepository groupChatParticipantRepository;
   @Mock private SessionSupervisorRepository sessionSupervisorRepository;
   @Mock private SessionSupervisionMarkerService supervisionMarkerService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.enquiry.EnquiryRejectionPendingReadAccess
+      rejectionReadAccess;
+
   @Mock private SessionOwnershipService sessionOwnershipService;
   @Mock private AgencyService agencyService;
   @Mock private ConsultantService consultantService;
@@ -1598,5 +1605,88 @@ class SessionServiceTest {
 
     assertThat(session.getConversationType())
         .isEqualTo(de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP);
+  }
+
+  private static Session enquiry(Long tenantId, Consultant consultant) {
+    var user = new User();
+    user.setUserId("asker");
+    var session = new Session();
+    session.setId(7L);
+    session.setTenantId(tenantId);
+    session.setAgencyId(3L);
+    session.setUser(user);
+    session.setMatrixRoomId("!room:example");
+    session.setConsultant(consultant);
+    session.setStatus(SessionStatus.INITIAL);
+    return session;
+  }
+
+  @Test
+  void finalizeEnquiryRefusesASessionThatNoLongerExists() {
+    when(sessionRepository.findByIdForUpdate(7L)).thenReturn(Optional.empty());
+
+    assertThrows(
+        NotFoundException.class,
+        () -> sessionService.finalizeEnquiry(enquiry(1L, null), "de", "!room:example"));
+    verify(sessionRepository, never()).save(any());
+  }
+
+  @Test
+  void finalizeEnquiryRefusesARejectedSession() {
+    var current = enquiry(1L, null);
+    current.setStatus(SessionStatus.REJECTED);
+    when(sessionRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(current));
+
+    assertThrows(
+        ConflictException.class,
+        () -> sessionService.finalizeEnquiry(enquiry(1L, null), "de", "!room:example"));
+    verify(sessionRepository, never()).save(any());
+  }
+
+  @Test
+  void finalizeEnquiryRefusesAnEnquiryThatWasAlreadySent() {
+    var current = enquiry(1L, null);
+    current.setEnquiryMessageDate(java.time.LocalDateTime.now());
+    when(sessionRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(current));
+
+    assertThrows(
+        ConflictException.class,
+        () -> sessionService.finalizeEnquiry(enquiry(1L, null), "de", "!room:example"));
+    verify(sessionRepository, never()).save(any());
+  }
+
+  @Test
+  void finalizeEnquiryRefusesASessionOfAnotherTenant() {
+    when(sessionRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(enquiry(2L, null)));
+
+    assertThrows(
+        ConflictException.class,
+        () -> sessionService.finalizeEnquiry(enquiry(1L, null), "de", "!room:example"));
+    verify(sessionRepository, never()).save(any());
+  }
+
+  @Test
+  void finalizeEnquiryMakesAnUnassignedEnquiryNew() {
+    var current = enquiry(1L, null);
+    when(sessionRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(current));
+    when(sessionRepository.save(current)).thenReturn(current);
+
+    var saved = sessionService.finalizeEnquiry(enquiry(1L, null), "de", "!room:example");
+
+    assertThat(saved.getStatus()).isEqualTo(SessionStatus.NEW);
+    assertThat(saved.getEnquiryMessageDate()).isNotNull();
+  }
+
+  @Test
+  void finalizeEnquiryPutsAnAssignedEnquiryInProgress() {
+    var consultant = new Consultant();
+    var current = enquiry(1L, consultant);
+    when(sessionRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(current));
+    when(sessionRepository.save(current)).thenReturn(current);
+
+    var saved = sessionService.finalizeEnquiry(enquiry(1L, consultant), "de", "!room:example");
+
+    assertThat(saved.getStatus()).isEqualTo(SessionStatus.IN_PROGRESS);
+    assertThat(saved.getEnquiryMessageDate()).isNotNull();
   }
 }

@@ -1,5 +1,7 @@
 package de.caritas.cob.userservice.api.service.accountinvite;
 
+import de.caritas.cob.userservice.api.config.auth.RoutineTaskAuthentication;
+import de.caritas.cob.userservice.api.config.auth.TaskPurpose;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext;
@@ -54,16 +56,17 @@ public class QueuedInviteReleaseListener {
 
   /** None when a caller already made the token ambient; then the allocation calls use that one. */
   private Optional<String> technicalToken() {
-    if (TechnicalAccessTokenContext.get().isPresent()) {
+    if (!identityClientConfig.isFiveActorMode() && TechnicalAccessTokenContext.get().isPresent()) {
       return Optional.empty();
     }
     try {
-      var technicalUser = identityClientConfig.getTechnicalUser();
       return Optional.of(
-          identityAuthentication
-              .loginService(technicalUser.getClientId(), technicalUser.getClientSecret())
-              .accessToken());
+          RoutineTaskAuthentication.accessToken(
+              TaskPurpose.INVITE_RESERVATIONS, identityClientConfig, identityAuthentication));
     } catch (RuntimeException exception) {
+      if (identityClientConfig.isFiveActorMode()) {
+        throw new IllegalStateException("Task actor authentication unavailable");
+      }
       log.warn(
           "Technical login for the invite release failed ({}); releasing without it",
           exception.getClass().getSimpleName());
