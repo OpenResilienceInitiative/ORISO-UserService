@@ -385,14 +385,11 @@ class TrackedConsultantCreationNativePairProof {
         statement.execute("drop table account_creation_attempt");
       }
     }
-    for (String path :
-        List.of("20261023_account_creation_attempt", "20261029_account_creation_receipt")) {
-      var migration = new SpringLiquibase();
-      migration.setDataSource(source);
-      migration.setChangeLog("classpath:db/changelog/changeset/" + path + "/changeSet.xml");
-      migration.setShouldRun(true);
-      migration.afterPropertiesSet();
-    }
+    var migration = new SpringLiquibase();
+    migration.setDataSource(source);
+    migration.setChangeLog("classpath:creation-outcome-store-test.xml");
+    migration.setShouldRun(true);
+    migration.afterPropertiesSet();
     var jdbc = new JdbcTemplate(source);
     assertTrue(
         jdbc.queryForList("select id from databasechangelog order by orderexecuted", String.class)
