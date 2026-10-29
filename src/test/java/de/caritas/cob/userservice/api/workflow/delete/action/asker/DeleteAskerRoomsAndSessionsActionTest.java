@@ -65,6 +65,10 @@ class DeleteAskerRoomsAndSessionsActionTest {
 
   @Mock private TeamDiscussionPurgeService teamDiscussionPurgeService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.session.DeletedAskerSessionService
+      deletedAskerSessionService;
+
   private LogbackCaptor logCaptor;
 
   @BeforeEach
@@ -110,6 +114,56 @@ class DeleteAskerRoomsAndSessionsActionTest {
     InOrder dependencyOrder = inOrder(this.sessionTopicRepository, this.sessionRepository);
     dependencyOrder.verify(this.sessionTopicRepository).deleteAllBySessionId(session.getId());
     dependencyOrder.verify(this.sessionRepository).delete(session);
+  }
+
+  @Test
+  void execute_Should_recordThePlaceholderAfterTheSessionWasDeleted() {
+    Session session = new EasyRandom().nextObject(Session.class);
+    when(this.sessionRepository.findByUser(any())).thenReturn(singletonList(session));
+
+    this.deleteAskerRoomsAndSessionsAction.execute(
+        new AskerDeletionWorkflowDTO(new User(), new ArrayList<>()));
+
+    // ORISO-Frontend#1159: captured while the row exists, recorded once it is gone.
+    InOrder order = inOrder(this.sessionRepository, deletedAskerSessionService);
+    order.verify(this.sessionRepository).delete(session);
+    order
+        .verify(deletedAskerSessionService)
+        .recordDeletionAfterCommit(
+            new de.caritas.cob.userservice.api.service.session.DeletedAskerSessionService
+                .Placeholder(
+                session.getConsultant().getId(),
+                session.getId(),
+                session.getAgencyId(),
+                session.getTenantId()));
+  }
+
+  @Test
+  void execute_Should_recordNoPlaceholder_When_theSessionCouldNotBeDeleted() {
+    Session session = new EasyRandom().nextObject(Session.class);
+    when(this.sessionRepository.findByUser(any())).thenReturn(singletonList(session));
+    doThrow(new RuntimeException()).when(this.sessionRepository).delete(any());
+
+    this.deleteAskerRoomsAndSessionsAction.execute(
+        new AskerDeletionWorkflowDTO(new User(), new ArrayList<>()));
+
+    org.mockito.Mockito.verifyNoInteractions(deletedAskerSessionService);
+  }
+
+  @Test
+  void execute_Should_stillDeleteTheSession_When_recordingThePlaceholderFails() {
+    Session session = new EasyRandom().nextObject(Session.class);
+    when(this.sessionRepository.findByUser(any())).thenReturn(singletonList(session));
+    doThrow(new RuntimeException("placeholder failed"))
+        .when(deletedAskerSessionService)
+        .recordDeletionAfterCommit(any());
+    AskerDeletionWorkflowDTO workflowDTO =
+        new AskerDeletionWorkflowDTO(new User(), new ArrayList<>());
+
+    this.deleteAskerRoomsAndSessionsAction.execute(workflowDTO);
+
+    assertThat(workflowDTO.getDeletionWorkflowErrors(), hasSize(0));
+    verify(this.sessionRepository).delete(session);
   }
 
   @Test

@@ -25,6 +25,10 @@ class EventNotificationRetentionSchedulerTest {
 
   @Mock private TenantContextProvider tenantContextProvider;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.session.DeletedAskerSessionService
+      deletedAskerSessionService;
+
   @Mock private ScheduledTaskClaimService taskClaimService;
 
   @BeforeEach
@@ -41,6 +45,23 @@ class EventNotificationRetentionSchedulerTest {
 
     verify(tenantContextProvider).setTechnicalContextIfMultiTenancyIsEnabled();
     verify(eventNotificationRetentionService).purgeExpiredNotifications();
+    verify(deletedAskerSessionService).purgeExpired();
+  }
+
+  /** ORISO-Frontend#1159: a failing notification purge must not keep placeholders past 30 days. */
+  @Test
+  void purgeExpiredNotifications_stillPurgesPlaceholders_When_theNotificationPurgeFails() {
+    when(taskClaimService.tryClaim("event-notification-retention", Duration.ofHours(12)))
+        .thenReturn(true);
+    org.mockito.Mockito.doThrow(new RuntimeException("db down"))
+        .when(eventNotificationRetentionService)
+        .purgeExpiredNotifications();
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        RuntimeException.class,
+        () -> eventNotificationRetentionScheduler.purgeExpiredNotifications());
+
+    verify(deletedAskerSessionService).purgeExpired();
   }
 
   /** Every replica runs the same cron, so exactly one of them may do the deleting. */
@@ -51,6 +72,7 @@ class EventNotificationRetentionSchedulerTest {
 
     eventNotificationRetentionScheduler.purgeExpiredNotifications();
 
-    verifyNoInteractions(tenantContextProvider, eventNotificationRetentionService);
+    verifyNoInteractions(
+        tenantContextProvider, eventNotificationRetentionService, deletedAskerSessionService);
   }
 }
