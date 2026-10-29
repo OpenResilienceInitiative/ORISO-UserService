@@ -41,6 +41,7 @@ import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -117,6 +118,31 @@ public class AccountInviteController {
         HttpStatus.CREATED);
   }
 
+  /** Compatibility overload for existing in-process callers. */
+  @PreAuthorize(ADMIN_AUTH)
+  public ResponseEntity<PagedAccountInviteResponseDTO> listInvites(
+      String tab,
+      String targetRole,
+      String status,
+      String progressPhase,
+      Long tenantId,
+      String query,
+      Integer page,
+      Integer size) {
+    return listInvites(
+        tab, targetRole, status, progressPhase, tenantId, query, page, size, null, null);
+  }
+
+  private static Set<InviteProgress.Phase> parsePhases(String raw) {
+    if (raw == null || raw.isBlank()) return Set.of();
+    Set<InviteProgress.Phase> phases = java.util.EnumSet.noneOf(InviteProgress.Phase.class);
+    for (String value : raw.split(",", -1)) {
+      if (value.isBlank()) throw new BadRequestException("Invalid progress_phase");
+      phases.add(parseOptionalEnum(InviteProgress.Phase.class, value, "progress_phase"));
+    }
+    return phases;
+  }
+
   @PreAuthorize(ADMIN_AUTH)
   @GetMapping("/useradmin/account-invites")
   public ResponseEntity<PagedAccountInviteResponseDTO> listInvites(
@@ -127,17 +153,21 @@ public class AccountInviteController {
       @RequestParam(value = "tenant_id", required = false) Long tenantId,
       @RequestParam(value = "query", required = false) String query,
       @RequestParam(value = "page", required = false) Integer page,
-      @RequestParam(value = "size", required = false) Integer size) {
+      @RequestParam(value = "size", required = false) Integer size,
+      @RequestParam(value = "sort", required = false) String sort,
+      @RequestParam(value = "sort_direction", required = false) String sortDirection) {
     InviteBoard.Listing listing =
         inviteBoard.list(
             parseOptionalEnum(InviteBoard.Tab.class, tab, "tab"),
             parseOptionalEnum(AccountInviteTargetRole.class, targetRole, "target_role"),
             parseOptionalEnum(AccountInviteStatus.class, status, "status"),
-            parseOptionalEnum(InviteProgress.Phase.class, progressPhase, "progress_phase"),
+            parsePhases(progressPhase),
             tenantId,
             query,
             page == null ? 0 : page,
-            size == null ? 20 : size);
+            size == null ? 20 : size,
+            sort,
+            sortDirection);
     Page<InviteBoard.Row> result = listing.rows();
     List<AccountInvite> invites =
         result.getContent().stream().map(InviteBoard.Row::invite).toList();

@@ -5,6 +5,7 @@ import static java.util.Objects.isNull;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
+import de.caritas.cob.userservice.api.admin.service.search.AccountSearch;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
@@ -47,6 +48,8 @@ import org.springframework.web.client.RestClientException;
 public class AccountManager implements AccountManaging {
 
   private final ConsultantRepository consultantRepository;
+
+  private final AccountSearch accountSearch;
 
   private final AdminRepository adminRepository;
 
@@ -289,11 +292,11 @@ public class AccountManager implements AccountManaging {
     } else if (filter.hasAgencyIds()) {
       agencyIds = filter.agencyIds();
     } else {
-      return consultantRepository.findAllByInfix(infix, tenantId, pageRequest);
+      return accountSearch.consultants(infix, tenantId, null, pageRequest);
     }
     return agencyIds.isEmpty()
         ? Page.empty(pageRequest)
-        : consultantRepository.findAllByInfixAndAgencyIds(infix, agencyIds, tenantId, pageRequest);
+        : accountSearch.consultants(infix, tenantId, agencyIds, pageRequest);
   }
 
   private Long resolveEffectiveTenantId() {

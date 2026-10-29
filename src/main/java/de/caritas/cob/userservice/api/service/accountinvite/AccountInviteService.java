@@ -401,7 +401,7 @@ public class AccountInviteService {
       return null;
     }
     String trimmed = query.trim();
-    return trimmed.isEmpty() ? null : trimmed.toLowerCase();
+    return trimmed.isEmpty() ? null : trimmed.toLowerCase(java.util.Locale.ROOT);
   }
 
   private static Long parseNumericSearch(String normalizedSearch) {

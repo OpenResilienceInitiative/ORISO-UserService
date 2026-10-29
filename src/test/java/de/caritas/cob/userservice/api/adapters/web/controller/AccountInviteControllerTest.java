@@ -774,6 +774,18 @@ class AccountInviteControllerTest {
         Integer.class,
         Integer.class);
     assertHasPreAuthorize(
+        "listInvites",
+        String.class,
+        String.class,
+        String.class,
+        String.class,
+        Long.class,
+        String.class,
+        Integer.class,
+        Integer.class,
+        String.class,
+        String.class);
+    assertHasPreAuthorize(
         "sendInvite", Long.class, AccountInviteController.SendInviteRequestDTO.class);
     assertHasPreAuthorize(
         "resendInvite", Long.class, AccountInviteController.SendInviteRequestDTO.class);
