@@ -551,39 +551,6 @@ abstract class RevokeAcceptRaceContract {
   }
 
   @Test
-  void waiveWhileARevokeLands_Should_KeepTheRevoke() throws Exception {
-    AccountInvite invite = persistedAgencyAdminInvite();
-
-    Object waived =
-        writeWhileAnotherWriteLands(
-            () ->
-                service.waiveTwoFactor(
-                    invite.getId(), new AccountInviteService.WaiveTwoFactorCommand("on paper")),
-            () -> revokeAsAdmin(invite.getId()));
-
-    assertThat(waived).isInstanceOf(AccountInvite.class);
-    AccountInvite persisted = reload(invite);
-    assertThat(persisted.getStatus()).isEqualTo(AccountInviteStatus.REVOKED);
-    assertThat(persisted.getTwoFactorStatus()).isEqualTo(TwoFactorGateStatus.WAIVED);
-  }
-
-  @Test
-  void waiveWhileAnAcceptLands_Should_KeepTheAcceptance() throws Exception {
-    AccountInvite invite = persistedAgencyAdminInvite();
-
-    writeWhileAnotherWriteLands(
-        () ->
-            service.waiveTwoFactor(
-                invite.getId(), new AccountInviteService.WaiveTwoFactorCommand("on paper")),
-        () -> service.acceptInvite(RAW_TOKEN, "race-acceptor"));
-
-    AccountInvite persisted = reload(invite);
-    assertThat(persisted.getStatus()).isEqualTo(AccountInviteStatus.ACCEPTED);
-    assertThat(persisted.getAcceptedByUserId()).isEqualTo("race-acceptor");
-    assertThat(persisted.getTwoFactorStatus()).isEqualTo(TwoFactorGateStatus.WAIVED);
-  }
-
-  @Test
   void topicPermissionWhileARevokeLands_Should_KeepTheRevoke() throws Exception {
     AccountInvite invite = persistedCounsellorInvite();
     readTheAgencyTopicsAsTheWriterHook();

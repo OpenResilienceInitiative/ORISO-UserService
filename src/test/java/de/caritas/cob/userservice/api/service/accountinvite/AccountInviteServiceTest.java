@@ -769,7 +769,7 @@ class AccountInviteServiceTest {
   }
 
   @Test
-  void calculateAccessGate_Should_BlockRequiredTwoFactorUntilWaived() {
+  void calculateAccessGate_Should_BlockRequiredTwoFactorUntilActive() {
     AccountInvite invite =
         AccountInvite.builder()
             .id(1L)
@@ -781,13 +781,8 @@ class AccountInviteServiceTest {
     assertThat(service.calculateAccessGate(invite))
         .isEqualTo(AccountAccessGateStatus.BLOCKED_TWO_FACTOR);
 
-    doReturn(Optional.of(invite)).when(accountInviteRepository).findByIdForUpdate(1L);
-    when(authenticatedUser.getUserId()).thenReturn("admin-1");
-    service.waiveTwoFactor(invite, new WaiveTwoFactorCommand("Temporary migration waiver"));
+    invite.setTwoFactorStatus(TwoFactorGateStatus.ACTIVE);
 
-    assertThat(invite.getTwoFactorStatus()).isEqualTo(TwoFactorGateStatus.WAIVED);
-    assertThat(invite.getTwoFactorWaivedBy()).isEqualTo("admin-1");
-    assertThat(invite.getTwoFactorWaiverReason()).isEqualTo("Temporary migration waiver");
     assertThat(service.calculateAccessGate(invite)).isEqualTo(AccountAccessGateStatus.READY);
   }
 
@@ -1977,40 +1972,32 @@ class AccountInviteServiceTest {
     verify(accountInviteRepository, never()).saveAll(any());
   }
 
+  // --- waiveTwoFactor is refused: every new staff account must set up 2FA ---
+
   @Test
-  void waiveTwoFactor_Should_persistWaivedInvite() {
+  void waiveTwoFactor_Should_refuseAndLeaveInviteUntouched_When_adminAsksForWaiver() {
     AccountInvite invite =
-        AccountInvite.builder().id(1L).twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP).build();
+        AccountInvite.builder()
+            .id(1L)
+            .purpose(AccountInvitePurpose.INVITE)
+            .twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP)
+            .build();
     doReturn(Optional.of(invite)).when(accountInviteRepository).findByIdForUpdate(1L);
-    when(authenticatedUser.getUserId()).thenReturn("admin-1");
 
-    service.waiveTwoFactor(invite, new WaiveTwoFactorCommand("four-eyes onboarding"));
+    assertThatThrownBy(
+            () -> service.waiveTwoFactor(invite, new WaiveTwoFactorCommand("four-eyes onboarding")))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessageContaining("cannot be waived");
 
-    verify(accountInviteRepository).save(invite);
+    assertThat(invite.getTwoFactorStatus()).isEqualTo(TwoFactorGateStatus.PENDING_SETUP);
+    assertThat(invite.getTwoFactorWaivedBy()).isNull();
+    verify(accountInviteRepository, never()).save(any());
   }
-
-  // --- waiveTwoFactor guards ---
 
   @Test
   void waiveTwoFactor_Should_throwBadRequest_When_inviteNull() {
     assertThatThrownBy(
             () -> service.waiveTwoFactor((AccountInvite) null, new WaiveTwoFactorCommand("reason")))
-        .isInstanceOf(BadRequestException.class);
-  }
-
-  @Test
-  void waiveTwoFactor_Should_throwBadRequest_When_commandNull() {
-    AccountInvite invite = AccountInvite.builder().build();
-
-    assertThatThrownBy(() -> service.waiveTwoFactor(invite, null))
-        .isInstanceOf(BadRequestException.class);
-  }
-
-  @Test
-  void waiveTwoFactor_Should_throwBadRequest_When_reasonBlank() {
-    AccountInvite invite = AccountInvite.builder().build();
-
-    assertThatThrownBy(() -> service.waiveTwoFactor(invite, new WaiveTwoFactorCommand("  ")))
         .isInstanceOf(BadRequestException.class);
   }
 
