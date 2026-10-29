@@ -128,4 +128,21 @@ class UserHelperTest {
         + "."
         + (easyRandom.nextBoolean() ? "de" : "com");
   }
+
+  @Test
+  void getRandomPassword_Should_ReturnRequestedLengthWithEveryCharacterClass() {
+    var password = userHelper.getRandomPassword(32);
+
+    org.assertj.core.api.Assertions.assertThat(password)
+        .hasSize(32)
+        .containsPattern("[A-Z]")
+        .containsPattern("[a-z]")
+        .containsPattern("[0-9]")
+        .containsPattern("[!()$%&]");
+  }
+
+  @Test
+  void getRandomPassword_Should_KeepTenCharacters_ForTheExistingCallers() {
+    org.assertj.core.api.Assertions.assertThat(userHelper.getRandomPassword()).hasSize(10);
+  }
 }

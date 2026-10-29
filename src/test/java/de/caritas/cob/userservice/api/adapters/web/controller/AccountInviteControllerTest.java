@@ -8,14 +8,17 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
@@ -59,9 +62,15 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 @ExtendWith(MockitoExtension.class)
@@ -681,6 +690,74 @@ class AccountInviteControllerTest {
   }
 
   @Test
+  void deleteTemplate_Should_returnNoContent() throws Exception {
+    MockMvcBuilders.standaloneSetup(controller)
+        .build()
+        .perform(delete("/useradmin/invite-email-templates/9"))
+        .andExpect(status().isNoContent());
+
+    verify(templateService).deleteTemplate(9L);
+  }
+
+  @Test
+  void deleteTemplate_Should_surfaceRefusalMissingAndQueuedStatuses() throws Exception {
+    var mvc =
+        MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(new ApiResponseEntityExceptionHandler())
+            .build();
+    org.mockito.Mockito.doThrow(new ForbiddenException("readonly or system"))
+        .when(templateService)
+        .deleteTemplate(1L);
+    org.mockito.Mockito.doThrow(new NotFoundException("missing"))
+        .when(templateService)
+        .deleteTemplate(2L);
+    org.mockito.Mockito.doThrow(new ConflictException("queued"))
+        .when(templateService)
+        .deleteTemplate(3L);
+
+    mvc.perform(delete("/useradmin/invite-email-templates/1")).andExpect(status().isForbidden());
+    mvc.perform(delete("/useradmin/invite-email-templates/2")).andExpect(status().isNotFound());
+    mvc.perform(delete("/useradmin/invite-email-templates/3")).andExpect(status().isConflict());
+  }
+
+  @EnableMethodSecurity
+  static class DeleteMethodSecurity {}
+
+  @Test
+  void deleteTemplate_Should_refusePlainCounsellorAndAllowInviteAdmins() {
+    try (var context = new AnnotationConfigApplicationContext()) {
+      context.register(DeleteMethodSecurity.class);
+      context.registerBean(AccountInviteController.class, () -> controller);
+      context.refresh();
+      var securedController = context.getBean(AccountInviteController.class);
+      SecurityContextHolder.getContext()
+          .setAuthentication(
+              new UsernamePasswordAuthenticationToken(
+                  "counsellor",
+                  "unused",
+                  List.of(new SimpleGrantedAuthority("AUTHORIZATION_CONSULTANT"))));
+
+      assertThrows(AccessDeniedException.class, () -> securedController.deleteTemplate(9L));
+      org.mockito.Mockito.verifyNoInteractions(templateService);
+
+      for (String authority :
+          List.of(
+              "AUTHORIZATION_TENANT_ADMIN",
+              "AUTHORIZATION_USER_ADMIN",
+              "AUTHORIZATION_RESTRICTED_AGENCY_ADMIN")) {
+        SecurityContextHolder.getContext()
+            .setAuthentication(
+                new UsernamePasswordAuthenticationToken(
+                    "admin", "unused", List.of(new SimpleGrantedAuthority(authority))));
+        assertEquals(HttpStatus.NO_CONTENT, securedController.deleteTemplate(9L).getStatusCode());
+      }
+      verify(templateService, org.mockito.Mockito.times(3)).deleteTemplate(9L);
+    } finally {
+      SecurityContextHolder.clearContext();
+    }
+  }
+
+  @Test
   void listInvites_adminEndpoints_havePreAuthorizeAnnotation() throws Exception {
     // Business reason: admin-only invite operations must enforce role-based policy at controller
     // boundary.
@@ -706,6 +783,7 @@ class AccountInviteControllerTest {
     assertHasPreAuthorize("createTemplate", AccountInviteController.TemplateRequestDTO.class);
     assertHasPreAuthorize(
         "updateTemplate", Long.class, AccountInviteController.TemplateRequestDTO.class);
+    assertHasPreAuthorize("deleteTemplate", Long.class);
     assertHasPreAuthorize("listTemplates", String.class);
   }
 

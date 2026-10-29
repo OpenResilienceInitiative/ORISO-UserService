@@ -79,6 +79,10 @@ class ConsultantAdminFacadeTest {
 
   @Mock private AdminScope adminScope;
 
+  @Mock
+  private de.caritas.cob.userservice.api.admin.service.admin.AccountLoginStatusService
+      accountStatus;
+
   @Test
   void findConsultant_Should_useConsultantAdminService() {
     this.consultantAdminFacade.findConsultant("");

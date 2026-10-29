@@ -180,6 +180,34 @@ public class CreateUserFacadeTest {
       new ProvisioningCompensator(new SimpleMeterRegistry());
 
   @Test
+  void pausedTenantStopsRegisteredCreationBeforeIdentityRowsOrChatWork() {
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        createUserFacade,
+        "tenantService",
+        de.caritas.cob.userservice.api.testHelper.PausedTenantAuthorityFixture.paused(79L));
+    TenantContext.setCurrentTenant(79L);
+    try {
+      var refused =
+          assertThrows(
+              org.springframework.web.server.ResponseStatusException.class,
+              () ->
+                  createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT));
+      org.junit.jupiter.api.Assertions.assertEquals(
+          org.springframework.http.HttpStatus.FORBIDDEN, refused.getStatusCode());
+      org.mockito.Mockito.verifyNoInteractions(
+          identityClient,
+          userService,
+          matrixSynapseService,
+          createNewSessionFacade,
+          sessionService,
+          welcomeEmailService,
+          inactivityEnrollment);
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Test
   void unavailableRecoveryPolicyStopsBeforeProvisioning() {
     org.mockito.Mockito.doThrow(
             new org.springframework.web.server.ResponseStatusException(

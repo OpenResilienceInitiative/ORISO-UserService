@@ -194,8 +194,11 @@ class RequiredCiContractTest(unittest.TestCase):
             "DeleteUserAccountSchedulerMariaDbReplicaIT",
             "DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT",
             "SupportRoomMigrationConvergenceIT",
+            "GroupChatMatrixCleanupAdoptionMariaDbIT",
         ):
             self.assertIn(f"!{mariadb_owned_test}", arguments)
+        self.assertIn("-Dtest=**/*IT,", arguments)
+        self.assertNotIn("!GroupChatMatrixCleanupAdoptionIT", arguments)
 
     def test_every_test_excluded_from_the_required_runner_is_run_by_the_mariadb_job(self):
         """No test may fall between the two required jobs.
@@ -243,6 +246,7 @@ class RequiredCiContractTest(unittest.TestCase):
         for match in re.finditer(r"-Dtest=([^\s]+)", mariadb_workflow):
             mariadb_selectors.update(match.group(1).split(","))
 
+        self.assertIn("GroupChatMatrixCleanupAdoptionMariaDbIT", mariadb_selectors)
         self.assertEqual(
             set(),
             excluded - mariadb_selectors,
@@ -272,7 +276,7 @@ class RequiredCiContractTest(unittest.TestCase):
         publish = job_block(workflow, "publish")
         integration = job_block(workflow, "required-integration-tests")
 
-        self.assertIn("needs: [required-integration-tests, mariadb-contract]", publish)
+        self.assertIn("needs: [build, required-integration-tests, mariadb-contract]", publish)
         self.assertIn("name: required integration tests", integration)
         self.assertNotIn("continue-on-error:", integration)
 

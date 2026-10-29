@@ -33,6 +33,12 @@ public class MatrixSessionSystemMessageService {
   private static final com.fasterxml.jackson.databind.ObjectMapper OBJECT_MAPPER =
       new com.fasterxml.jackson.databind.ObjectMapper();
 
+  /** Who ended the chat; sent as {@code endedBy} so clients can show the right text. */
+  public enum EndedBy {
+    CONSULTANT,
+    ADVICE_SEEKER
+  }
+
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull AgencyMatrixCredentialClient agencyMatrixCredentialClient;
   private final @NonNull SessionService sessionService;
@@ -44,6 +50,16 @@ public class MatrixSessionSystemMessageService {
    * @param session the session being finished or deleted
    */
   public void postUserLeftChatMessage(Session session) {
+    postUserLeftChatMessage(session, null);
+  }
+
+  /**
+   * Same as {@link #postUserLeftChatMessage(Session)}, naming who ended the chat.
+   *
+   * @param session the session being finished or deleted
+   * @param endedBy the person who ended it; {@code null} for system ends (omits {@code endedBy})
+   */
+  public void postUserLeftChatMessage(Session session, EndedBy endedBy) {
     if (session == null || session.getId() == null) {
       return;
     }
@@ -62,7 +78,8 @@ public class MatrixSessionSystemMessageService {
     resolveMatrixCredentials(session)
         .ifPresent(
             credentials ->
-                sendUserLeftMessage(session.getId(), roomId, displayUsername, credentials));
+                sendUserLeftMessage(
+                    session.getId(), roomId, displayUsername, endedBy, credentials));
   }
 
   /**
@@ -195,7 +212,11 @@ public class MatrixSessionSystemMessageService {
   }
 
   private void sendUserLeftMessage(
-      Long sessionId, String matrixRoomId, String displayUsername, MatrixCredentials credentials) {
+      Long sessionId,
+      String matrixRoomId,
+      String displayUsername,
+      EndedBy endedBy,
+      MatrixCredentials credentials) {
     var accessToken = credentials.accessToken(matrixSynapseService);
     if (accessToken == null) {
       log.warn(
@@ -205,7 +226,7 @@ public class MatrixSessionSystemMessageService {
       return;
     }
 
-    var body = buildUserLeftChatBody(displayUsername);
+    var body = buildUserLeftChatBody(displayUsername, endedBy);
     var response = matrixSynapseService.sendMessage(matrixRoomId, body, accessToken);
     if (response != null && response.containsKey("error")) {
       log.warn(
@@ -256,14 +277,16 @@ public class MatrixSessionSystemMessageService {
     return user.getUsername();
   }
 
-  private String buildUserLeftChatBody(String username) {
+  private String buildUserLeftChatBody(String username, EndedBy endedBy) {
     var safeUsername = username == null ? "" : username.replace("\\", "\\\\").replace("\"", "\\\"");
     return SYSTEM_NOTIFICATION_PREFIX
         + "{\"type\":\""
         + USER_LEFT_CHAT_TYPE
         + "\",\"username\":\""
         + safeUsername
-        + "\"}";
+        + "\""
+        + (endedBy == null ? "" : ",\"endedBy\":\"" + endedBy.name() + "\"")
+        + "}";
   }
 
   private static final class MatrixCredentials {

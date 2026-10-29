@@ -36,6 +36,10 @@ import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 @SpringJUnitWebConfig(ConsultantPictureHttpTest.Config.class)
 @TestPropertySource(properties = "multitenancy.enabled=false")
 class ConsultantPictureHttpTest {
+  @org.springframework.test.context.bean.override.mockito.MockitoBean
+  de.caritas.cob.userservice.api.admin.service.admin.ManagedAccountStatusService
+      accountOperationalStatus;
+
   // Explicitly loaded above; no component stereotype, so AppConfig cannot scan this fixture.
   @EnableWebMvc
   @Import({

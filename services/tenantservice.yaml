@@ -1398,6 +1398,10 @@ components:
         - id
         - name
       properties:
+        active:
+          type: boolean
+          nullable: true
+          description: Operational status. Missing values retain compatibility with operating tenants.
         id:
           type: integer
           format: int64
@@ -1527,6 +1531,12 @@ components:
           type: boolean
           default: true
         featureAskerBrowserSelfHelpEnabled:
+          type: boolean
+          default: true
+        featureConsultantEmailInternalGroupEnabled:
+          type: boolean
+          default: true
+        featureConsultantBrowserInternalGroupEnabled:
           type: boolean
           default: true
         featureStatisticsEnabled:

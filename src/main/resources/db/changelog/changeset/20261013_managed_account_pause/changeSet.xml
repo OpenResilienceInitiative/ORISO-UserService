@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <changeSet id="20261013-managed-account-pause" author="oriso">
+    <addColumn tableName="admin"><column name="managed_paused" type="BOOLEAN" defaultValueBoolean="false"><constraints nullable="false"/></column></addColumn>
+    <addColumn tableName="consultant"><column name="managed_paused" type="BOOLEAN" defaultValueBoolean="false"><constraints nullable="false"/></column></addColumn>
+    <rollback><dropColumn tableName="admin" columnName="managed_paused"/><dropColumn tableName="consultant" columnName="managed_paused"/></rollback>
+  </changeSet>
+</databaseChangeLog>
