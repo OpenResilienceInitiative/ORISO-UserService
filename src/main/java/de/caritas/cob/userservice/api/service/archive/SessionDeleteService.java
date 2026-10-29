@@ -80,14 +80,12 @@ public class SessionDeleteService {
           .executeActions(user);
     }
 
-    // ORISO-Frontend#1159: when the advice seeker deletes this chat, the counsellor keeps a
-    // placeholder. A counsellor who deletes the chat themselves needs none.
-    if (!authenticatedUser.isConsultant()) {
-      try {
-        deletedAskerSessionService.recordDeletion(session);
-      } catch (RuntimeException e) {
-        log.warn("Could not record deleted-asker placeholder for session {}", sessionId, e);
-      }
+    // ORISO-Frontend#1159: the assigned counsellor keeps a placeholder whoever deletes the chat —
+    // the advice seeker, a colleague or the counsellor themselves (product decision 29 Oct).
+    try {
+      deletedAskerSessionService.recordDeletion(session);
+    } catch (RuntimeException e) {
+      log.warn("Could not record deleted-asker placeholder for session {}", sessionId, e);
     }
 
     var deleteSession = new SessionDeletionWorkflowDTO(session, null);

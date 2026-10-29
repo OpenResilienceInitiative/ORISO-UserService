@@ -155,14 +155,27 @@ class SessionDeleteServiceTest {
   }
 
   @Test
-  void deleteSession_Should_leaveNoPlaceholder_When_aConsultantDeletes() {
+  void deleteSession_Should_leaveThePlaceholder_When_aConsultantDeletes() {
     var sessionId = givenAPresentSession(false);
     givenActionRegistryDeletesSession();
     when(authenticatedUser.isConsultant()).thenReturn(true);
 
     sessionDeleteService.deleteSession(sessionId);
 
-    org.mockito.Mockito.verifyNoInteractions(deletedAskerSessionService);
+    verify(deletedAskerSessionService).recordDeletion(any(Session.class));
+  }
+
+  @Test
+  void deleteSession_Should_stillDelete_When_recordingThePlaceholderFails() {
+    var sessionId = givenAPresentSession(false);
+    givenActionRegistryDeletesSession();
+    org.mockito.Mockito.doThrow(new RuntimeException("placeholder failed"))
+        .when(deletedAskerSessionService)
+        .recordDeletion(any());
+
+    sessionDeleteService.deleteSession(sessionId);
+
+    verify(actionsRegistry).buildContainerForType(SessionDeletionWorkflowDTO.class);
   }
 
   private long givenAPresentSession(boolean isOnlySession) {
