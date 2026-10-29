@@ -79,7 +79,14 @@ public class CaseHandoverPolicyCacheService {
         throw new ServiceUnavailableException(
             "No complete tenant Case Handover snapshot is available");
       }
-      markStale(cache);
+      try {
+        markStale(cache);
+      } catch (DataAccessException | TransactionException staleWriteFailed) {
+        log.warn(
+            "Tenant {} stale marker for Case Handover snapshot not persisted: {}",
+            tenantId,
+            staleWriteFailed.getClass().getSimpleName());
+      }
       return fallback;
     }
     // A malformed live authority must not fall back to an older permissive snapshot.

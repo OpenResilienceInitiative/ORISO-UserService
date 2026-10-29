@@ -157,6 +157,98 @@ class CaseHandoverPolicyCacheServiceTest {
     assertThat(stored.get(42L).getStaleSince()).isEqualTo(LocalDateTime.now(clock));
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "true,save",
+    "false,save",
+    "true,commit",
+    "false,commit"
+  })
+  void runtimeOutageRetainsValidatedMasterWhenStaleMarkerPersistenceFails(
+      boolean enabled, String failureBoundary) throws Exception {
+    var cache = fullSnapshot(enabled);
+    when(repository.findById(42L)).thenReturn(Optional.of(cache));
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenThrow(new RestClientException("synthetic-sensitive-provider-body"));
+    if (failureBoundary.equals("save")) {
+      when(repository.save(any()))
+          .thenThrow(
+              new org.springframework.dao.DataAccessResourceFailureException(
+                  "synthetic-sensitive-database-body"));
+    } else {
+      org.mockito.Mockito.doNothing()
+          .doThrow(
+              new org.springframework.transaction.TransactionSystemException(
+                  "synthetic-sensitive-database-body"))
+          .when(transactionManager)
+          .commit(transactionStatus);
+    }
+
+    try (var logs =
+        de.caritas.cob.userservice.testutils.LogbackCaptor.forClass(
+            CaseHandoverPolicyCacheService.class)) {
+      var current = service.getCurrent(42L);
+      assertThat(current.enabled()).isEqualTo(enabled);
+      if (enabled) current.requireEnabled();
+      else
+        assertThatThrownBy(current::requireEnabled)
+            .isInstanceOf(
+                de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+      verify(repository).save(cache);
+      verify(
+              transactionManager,
+              org.mockito.Mockito.times(failureBoundary.equals("commit") ? 2 : 1))
+          .commit(transactionStatus);
+      assertThat(logs.events())
+          .allSatisfy(
+              event -> {
+                assertThat(event.getFormattedMessage())
+                    .doesNotContain(
+                        "synthetic-sensitive-provider-body", "synthetic-sensitive-database-body");
+                assertThat(event.getThrowableProxy()).isNull();
+              });
+      assertThat(logs.hasWarnLog()).isTrue();
+    }
+  }
+
+  @Test
+  void runtimeOutageStillFailsClosedWhenTheCacheCannotBeRead() {
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenThrow(new RestClientException("synthetic-sensitive-provider-body"));
+    when(repository.findById(42L))
+        .thenThrow(
+            new org.springframework.dao.DataAccessResourceFailureException(
+                "synthetic-sensitive-database-body"));
+
+    assertThatThrownBy(() -> service.getCurrent(42L))
+        .isInstanceOf(ServiceUnavailableException.class)
+        .hasMessage("Tenant Case Handover policy is unavailable")
+        .hasNoCause();
+    verify(repository, never()).save(any());
+  }
+
+  @Test
+  void staleMarkerDoesNotHideAnUnexpectedProgrammingFailure() throws Exception {
+    when(repository.findById(42L)).thenReturn(Optional.of(fullSnapshot(true)));
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenThrow(new RestClientException("provider offline"));
+    when(repository.save(any())).thenThrow(new IllegalArgumentException("programming failure"));
+
+    assertThatThrownBy(() -> service.getCurrent(42L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("programming failure");
+  }
+
+  private TenantCaseHandoverPolicyCache fullSnapshot(boolean enabled) throws Exception {
+    return TenantCaseHandoverPolicyCache.builder()
+        .tenantId(42L)
+        .policies(
+            new com.fasterxml.jackson.databind.ObjectMapper()
+                .writeValueAsString(authoritative(42L, enabled)))
+        .refreshedAt(LocalDateTime.now(clock))
+        .build();
+  }
+
   @Test
   void runtimeTenantIsolationSurvivesRestartAndTransportFailure() {
     var stored = useInMemorySnapshots();

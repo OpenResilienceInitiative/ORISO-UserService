@@ -351,7 +351,7 @@ class SessionOwnershipMariaDbIT {
         assertThat(caseHandoverRequestRepository.findBySessionId(sessionId)).isEmpty();
         assertThat(readSession().getConsultant().getId()).isEqualTo(OWNER_C_ID);
       }
-      verify(messages, never()).postCaseHandoverGrantedMessage(any(), any(), any());
+      verify(messages, never()).postCaseHandoverGrantedMessage(any(), any(), any(), any());
       verify(reader).getTenantPermissionPolicies(7L);
     } finally {
       releasePolicy.countDown();
@@ -575,7 +575,7 @@ class SessionOwnershipMariaDbIT {
                     .getStatus());
     assertThat(storedStatus).isEqualTo(CaseHandoverRequest.Status.CLIENT_CONSENT_DECLINED);
     assertThat(readSession().getConsultant().getId()).isEqualTo(ownerA.getId());
-    verify(matrixMessages, never()).postCaseHandoverGrantedMessage(any(), any(), any());
+    verify(matrixMessages, never()).postCaseHandoverGrantedMessage(any(), any(), any(), any());
   }
 
   @Test
@@ -686,7 +686,7 @@ class SessionOwnershipMariaDbIT {
 
     assertThat(readSession().getConsultant().getId()).isEqualTo(ownerA.getId());
     assertThat(readSession().getOwnershipRevision()).isZero();
-    verify(matrixMessages, never()).postCaseHandoverGrantedMessage(any(), any(), any());
+    verify(matrixMessages, never()).postCaseHandoverGrantedMessage(any(), any(), any(), any());
   }
 
   @Test

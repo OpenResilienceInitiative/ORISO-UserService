@@ -29,7 +29,10 @@ second policy request.
 
 A transport/provider outage may use only a previously validated full snapshot for
 the same tenant, preserving both master-on and master-off values. `staleSince`
-records the first failed refresh; a successful response clears it. The existing
+records the first failed refresh; a successful response clears it. During a runtime
+outage, a persistence failure while marking an already validated snapshot stale is
+logged by exception class only and does not discard that snapshot. This metadata
+write is best effort; failure to read or validate the snapshot still yields 503. The existing
 last-known-good availability contract has **no maximum stale age**. The scheduled
 five-minute refresh interval is not an expiry bound. Consequently a setting
 changed at TenantService during an outage cannot be observed until contact is
