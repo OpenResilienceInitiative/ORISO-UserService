@@ -169,6 +169,8 @@ class CreationOperationMariaDbIT {
     final java.util.Map<Class<?>, Object> dependencies = new java.util.HashMap<>();
     boolean failAfterRow;
     boolean failAtCommit;
+    boolean commitFaultInjected;
+    Runnable beforeCommitCheck = () -> {};
     boolean sawEnlistedConnection;
 
     SagaFixture(EntityManagerFactory emf, DataSource ds) {
@@ -235,8 +237,18 @@ class CreationOperationMariaDbIT {
                 de.caritas.cob.userservice.api.model.Consultant consultant = call.getArgument(0);
                 entityManager.persist(consultant);
                 if (failAtCommit)
-                  consultant.setFirstName(
-                      null); // Hibernate validates this during the actual proxy commit.
+                  org.springframework.transaction.support.TransactionSynchronizationManager
+                      .registerSynchronization(
+                          new org.springframework.transaction.support.TransactionSynchronization() {
+                            @Override
+                            public void beforeCommit(boolean readOnly) {
+                              beforeCommitCheck.run();
+                              // Bypass the Lombok setter guard only in this commit-failure fixture.
+                              org.springframework.test.util.ReflectionTestUtils.setField(
+                                  consultant, "firstName", null);
+                              commitFaultInjected = true;
+                            }
+                          });
                 return consultant;
               });
       doAnswer(
@@ -305,11 +317,18 @@ class CreationOperationMariaDbIT {
       var invocation =
           new CreationOperationContext(
               new Candidate(UUID.randomUUID(), UUID.randomUUID(), "synthetic-owner"));
+      if (commitFailure)
+        fixture.beforeCommitCheck =
+            () -> {
+              assertThat(invocation.receipt().workflow()).isEqualTo(WorkflowState.IN_PROGRESS);
+              assertThat(invocation.receipt().reason()).isEqualTo(Reason.NONE);
+            };
       assertThatThrownBy(
               () ->
                   ctx.getBean(CreateConsultantSaga.class)
                       .createNewConsultant(sagaInput(), invocation))
           .isInstanceOf(RuntimeException.class);
+      if (commitFailure) assertThat(fixture.commitFaultInjected).isTrue();
       var receipt =
           ctx.getBean(AccountCreationAttemptJournal.class)
               .findByKey(invocation.candidate().operationKey())
@@ -318,6 +337,9 @@ class CreationOperationMariaDbIT {
       assertThat(receipt.nativeId()).isEqualTo(fixture.nativeId);
       assertThat(receipt.dispatch()).isEqualTo(DispatchState.NATIVE_ID_CAPTURED);
       assertThat(receipt.row()).isEqualTo(RowState.ROLLED_BACK);
+      assertThat(receipt.reason())
+          .isEqualTo(commitFailure ? Reason.ROW_COMMIT_FAILED : Reason.WORKFLOW_FAILED);
+      if (!commitFailure) assertThat(receipt.workflow()).isEqualTo(WorkflowState.FAILED);
       assertThat(
               new JdbcTemplate(ctx.getBean(DataSource.class))
                   .queryForObject(

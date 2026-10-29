@@ -792,7 +792,12 @@ public class CreateConsultantSaga {
                             : status == STATUS_ROLLED_BACK
                                 ? RowState.ROLLED_BACK
                                 : RowState.COMMIT_UNKNOWN,
-                        status == STATUS_COMMITTED ? Reason.NONE : Reason.ROW_COMMIT_FAILED));
+                        // Preserve an already-recorded cause when its transaction rolls back.
+                        status == STATUS_COMMITTED
+                                || (status == STATUS_ROLLED_BACK
+                                    && context.receipt().reason() != Reason.NONE)
+                            ? Reason.NONE
+                            : Reason.ROW_COMMIT_FAILED));
               } catch (RuntimeException unavailable) {
                 log.error("Creation operation transaction observation could not be persisted");
               }
