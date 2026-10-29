@@ -82,14 +82,14 @@ def install_tracked_runtime_audiences(fixture, lifecycle, issuer):
     audience = [m for m in original if m.get('protocolMapper') == 'oidc-audience-mapper']
     retained = [m for m in original if m.get('protocolMapper') != 'oidc-audience-mapper']
     if (len(audience) != 2 or {m.get('config', {}).get('included.custom.audience') for m in audience} != old
-            or any(m.get('config') != {'included.custom.audience': m['config']['included.custom.audience'],
-                'access.token.claim': 'true'} for m in audience)):
+            or any(m.get('config', {}).get('access.token.claim') != 'true' for m in audience)):
         raise ValueError('Exact inherited runtime audience fixture required')
     without_id = lambda value: {k: v for k, v in value.items() if k != 'id'}
     template = without_id(audience[0])
     for mapper in audience:
         comparable = without_id(mapper); comparable['name'] = template['name']
-        comparable['config'] = dict(template['config'])
+        comparable['config'] = dict(mapper['config'])
+        comparable['config']['included.custom.audience'] = template['config']['included.custom.audience']
         if comparable != template or mapper.get('protocol') != 'openid-connect':
             raise ValueError('Identical original runtime mapper metadata required')
     desired = []

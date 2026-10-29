@@ -47,7 +47,8 @@ class TrackedCreationNativeControls(unittest.TestCase):
                     'protocolMapper': 'oidc-usermodel-realm-role-mapper', 'config': {'unchanged': 'true'}}]
                 self.mappers += [{'id': str(i), 'name': 'audience-' + aud, 'protocol': 'openid-connect',
                     'protocolMapper': 'oidc-audience-mapper', 'consentRequired': False,
-                    'config': {'included.custom.audience': aud, 'access.token.claim': 'true'}}
+                    'config': {'included.custom.audience': aud, 'access.token.claim': 'true',
+                        'introspection.token.claim': 'true'}}
                     for i, aud in enumerate(['userservice', 'oriso-account-lifecycle'])]
                 self.calls = []; self.tokens = 0; self.fail = None
             def admin(self, method, path, body=None):
@@ -82,6 +83,7 @@ class TrackedCreationNativeControls(unittest.TestCase):
         fixture = Fixture(); original = copy.deepcopy(fixture.mappers[0]); result = run(fixture)
         self.assertEqual(4, len(result)); self.assertTrue(all(v is True for v in result.values()))
         self.assertEqual(2, fixture.tokens); self.assertEqual(original, fixture.mappers[0])
+        self.assertTrue(all(m['config']['introspection.token.claim'] == 'true' for m in fixture.mappers[1:]))
         self.assertEqual(['DELETE', 'DELETE', 'POST', 'POST', 'POST'], [m for m, _, _ in fixture.calls if m != 'GET'])
         self.assertEqual({'tenantservice', 'agencyservice', 'appointmentservice'},
             {m['config']['included.custom.audience'] for m in fixture.mappers[1:]})
@@ -90,6 +92,9 @@ class TrackedCreationNativeControls(unittest.TestCase):
             with self.assertRaises(ValueError): run(bad)
             if failure == 'grant': self.assertTrue(all(m == 'GET' for m, _, _ in bad.calls))
         bad = Fixture(); bad.mappers[1]['config']['included.custom.audience'] = 'unexpected'
+        with self.assertRaises(ValueError): run(bad)
+        self.assertTrue(all(m == 'GET' for m, _, _ in bad.calls))
+        bad = Fixture(); bad.mappers[1]['config']['introspection.token.claim'] = 'false'
         with self.assertRaises(ValueError): run(bad)
         self.assertTrue(all(m == 'GET' for m, _, _ in bad.calls))
 
