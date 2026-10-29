@@ -690,6 +690,12 @@ class TenantAdminUserServiceTest {
     givenAgencyAdminSharingAgencyWith("shared-admin");
     UpdateTenantAdminDTO dto = new EasyRandom().nextObject(UpdateTenantAdminDTO.class);
     dto.setTenantId(9);
+    // Let the body's tenant pass, so the managed-admin check is the one that refuses.
+    var scope =
+        Mockito.spy(
+            (AdminScope) ReflectionTestUtils.getField(tenantAdminUserService, "adminScope"));
+    Mockito.doNothing().when(scope).assertMay(AdminScope.Target.tenant(9L));
+    ReflectionTestUtils.setField(tenantAdminUserService, "adminScope", scope);
 
     assertThatThrownBy(() -> tenantAdminUserService.updateTenantAdmin("shared-admin", dto))
         .isInstanceOf(ForbiddenException.class);
@@ -697,13 +703,17 @@ class TenantAdminUserServiceTest {
   }
 
   @Test
-  void patchTenantAdmin_Should_ThrowForbidden_When_AgencyAdminSharesAnAgencyWithTheAdmin() {
-    givenAgencyAdminSharingAgencyWith("shared-admin");
+  void patchTenantAdmin_Should_PatchOwnProfile_When_CallerAlsoHoldsAgencyAdmin() {
+    givenAgencyAdminSharingAgencyWith("agency-admin");
+    PatchAdminDTO dto = new PatchAdminDTO();
+    when(updateAdminService.patchTenantAdmin("agency-admin", dto))
+        .thenReturn(tenantAdmin("agency-admin", 9L));
+    when(tenantService.getRestrictedTenantData(9L))
+        .thenReturn(new RestrictedTenantDTO().subdomain("tenant-nine"));
 
-    assertThatThrownBy(
-            () -> tenantAdminUserService.patchTenantAdmin("shared-admin", new PatchAdminDTO()))
-        .isInstanceOf(ForbiddenException.class);
-    Mockito.verifyNoInteractions(updateAdminService);
+    tenantAdminUserService.patchTenantAdmin("agency-admin", dto);
+
+    Mockito.verify(updateAdminService).patchTenantAdmin("agency-admin", dto);
   }
 
   /** An agency admin that also holds tenant-admin reaches the endpoint, but manages no admins. */
