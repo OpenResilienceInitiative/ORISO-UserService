@@ -57,6 +57,293 @@ paths:
           description: Inactive or expired invitation
         '404':
           description: Invitation not found
+        '410':
+          description: The direct link was switched off; body {"reason":"DIRECT_LINK_INACTIVE"}
+  /users/invitelinks/{token}/conversations:
+    post:
+      tags: [direct-link-controller]
+      operationId: startDirectLinkConversation
+      summary: 'Open (or reopen) the caller''s own 1:1 conversation through a counsellor direct link [Authorization: Role: user]'
+      description: >-
+        Every person gets their own conversation with the link owner. It is assigned to the
+        counsellor directly (like the contact link) and never enters the enquiry inbox. A second
+        call by the same person returns the existing conversation. Audio and video links answer
+        admission KNOCK: the person waits until the counsellor admits them (ADR-029 §2). Let in
+        once: after an admission every later visit returns it (callAdmitted true) and opens no new
+        knock; after a decline the next visit knocks again.
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: The caller already had a conversation through this counsellor and topic
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DirectLinkConversationDTO'}
+        '201':
+          description: A new conversation was created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DirectLinkConversationDTO'}
+        '400': {description: 'Expired link, or not a counsellor direct link'}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '403': {description: 'Direct invitations are not allowed here, or the caller belongs to another Träger'}
+        '404': {description: Unknown link}
+        '410': {description: 'The link was switched off; body {"reason":"DIRECT_LINK_INACTIVE"}'}
+  /users/call-knocks:
+    get:
+      tags: [direct-link-controller]
+      operationId: getPendingCallKnocks
+      summary: 'People waiting to be let into a call in one of the caller''s conversations, oldest first [Authorization: Role: consultant]'
+      description: >-
+        With sessionId or matrixRoomId only the knocks of that call; without either all of the
+        caller's waiting knocks (unchanged behaviour).
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: sessionId
+          in: query
+          required: false
+          description: The conversation of the current call.
+          schema: {type: integer, format: int64}
+        - name: matrixRoomId
+          in: query
+          required: false
+          description: The Matrix room of the current call (the conversation's room).
+          schema: {type: string}
+      responses:
+        '200':
+          description: Pending knocks of the last two hours
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/CallKnockDTO'}
+        '400': {description: sessionId and matrixRoomId name different conversations}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '403': {description: Caller is not a consultant}
+  /users/call-knocks/admit-all:
+    post:
+      tags: [direct-link-controller]
+      operationId: admitAllCallKnocks
+      summary: 'Let everybody in who is waiting for the caller''s current call [Authorization: Role: consultant]'
+      description: >-
+        Scoped to one call: sessionId or matrixRoomId is required, otherwise 400. Knocks in the
+        caller's other conversations stay waiting.
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: sessionId
+          in: query
+          required: false
+          description: The conversation of the current call.
+          schema: {type: integer, format: int64}
+        - name: matrixRoomId
+          in: query
+          required: false
+          description: The Matrix room of the current call (the conversation's room).
+          schema: {type: string}
+      responses:
+        '200':
+          description: The knocks that were admitted
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/CallKnockDTO'}
+        '400': {description: 'Neither sessionId nor matrixRoomId, or both naming different conversations'}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '403': {description: Caller is not a consultant}
+  /users/call-knocks/{knockId}/admit:
+    post:
+      tags: [direct-link-controller]
+      operationId: admitCallKnock
+      summary: 'Let one person into the call (idempotent) [Authorization: Role: consultant]'
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: knockId
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        '200':
+          description: The admitted knock
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CallKnockDTO'}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '404': {description: No knock on one of the caller's conversations with this id}
+        '409': {description: The knock was already declined or cancelled}
+  /users/call-knocks/{knockId}/decline:
+    post:
+      tags: [direct-link-controller]
+      operationId: declineCallKnock
+      summary: 'Do not let the person in (idempotent) [Authorization: Role: consultant]'
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: knockId
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        '200':
+          description: The declined knock
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CallKnockDTO'}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '404': {description: No knock on one of the caller's conversations with this id}
+        '409': {description: The knock was already admitted or cancelled}
+  /users/call-knocks/mine:
+    get:
+      tags: [direct-link-controller]
+      operationId: getOwnCallKnockForSession
+      summary: 'The caller''s call admission in one of their conversations, on any device [Authorization: Role: user]'
+      description: >-
+        Let in once: returns the caller's ADMITTED knock in this conversation if there is one,
+        otherwise their latest knock there. ADMITTED means the person joins every later call in
+        this conversation directly, without knocking.
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: sessionId
+          in: query
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        '200':
+          description: The admission, or the latest knock
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CallKnockDTO'}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '403': {description: Caller is not a user}
+        '404': {description: The caller never knocked in this conversation}
+  /users/call-knocks/mine/{knockId}:
+    get:
+      tags: [direct-link-controller]
+      operationId: getOwnCallKnock
+      summary: 'The state of the caller''s own knock, for the waiting room [Authorization: Role: user]'
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: knockId
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        '200':
+          description: The knock
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CallKnockDTO'}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '404': {description: No own knock with this id}
+    delete:
+      tags: [direct-link-controller]
+      operationId: cancelOwnCallKnock
+      summary: 'Stop waiting (idempotent) [Authorization: Role: user]'
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: knockId
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        '200':
+          description: The knock after cancelling
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CallKnockDTO'}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '404': {description: No own knock with this id}
+  /users/directlinks:
+    get:
+      tags: [direct-link-controller]
+      operationId: getOwnDirectLinks
+      summary: 'List the caller''s own direct links, newest first [Authorization: Role: consultant]'
+      security:
+        - Bearer: [ ]
+      responses:
+        '200':
+          description: The caller's direct links (switched-off ones included)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/DirectLinkDTO'}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '403': {description: Caller is not a consultant}
+    post:
+      tags: [direct-link-controller]
+      operationId: createDirectLink
+      summary: 'Create a direct link for chat, audio or video [Authorization: Role: consultant]'
+      security:
+        - Bearer: [ ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateDirectLinkDTO'}
+      responses:
+        '201':
+          description: The new link
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DirectLinkDTO'}
+        '400': {description: 'Missing or invalid field, or agencyId needed because the caller works for several Beratungsstellen'}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '403': {description: 'Caller is not a consultant, not in the agency, or direct invitations are not allowed here'}
+        '404': {description: Unknown topic}
+  /users/directlinks/{linkId}:
+    patch:
+      tags: [direct-link-controller]
+      operationId: updateDirectLink
+      summary: 'Change name, topic, temporary flag or on/off of an own direct link; the medium is fixed [Authorization: Role: consultant]'
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: linkId
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateDirectLinkDTO'}
+      responses:
+        '200':
+          description: The changed link
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DirectLinkDTO'}
+        '400': {description: Invalid field}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '403': {description: Switching on is not allowed here}
+        '404': {description: No own direct link with this id}
+    delete:
+      tags: [direct-link-controller]
+      operationId: deleteDirectLink
+      summary: 'Delete an own direct link; conversations started through it stay [Authorization: Role: consultant]'
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: linkId
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        '204': {description: Deleted}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '404': {description: No own direct link with this id}
   /users/{username}:
     get:
       tags:
@@ -2906,6 +3193,91 @@ components:
         consultingTypeId: {type: integer, format: int32}
         topicId: {type: integer, format: int64, nullable: true}
         chatType: {type: string}
+        temporaryAccount:
+          type: boolean
+          nullable: true
+          description: Direct links only. New people get a temporary account (ADR-029 §3).
+        admission:
+          type: string
+          nullable: true
+          enum: [DIRECT, KNOCK]
+          description: Direct links only. KNOCK for audio and video, DIRECT for chat (ADR-029 §2).
+    DirectLinkMedium:
+      type: string
+      enum: [CHAT, AUDIO, VIDEO]
+    DirectLinkDTO:
+      type: object
+      required: [id, token, url, medium, topicId, temporary, active, admission]
+      properties:
+        id: {type: integer, format: int64}
+        token: {type: string}
+        url:
+          type: string
+          description: Shareable entry URL (APP_BASE_URL + /invite/{token}; relative when the base is unset)
+        name: {type: string, maxLength: 100}
+        topicId: {type: integer, format: int64}
+        topicName: {type: string}
+        agencyId: {type: integer, format: int64}
+        medium: {$ref: '#/components/schemas/DirectLinkMedium'}
+        temporary: {type: boolean}
+        active: {type: boolean}
+        admission: {type: string, enum: [DIRECT, KNOCK]}
+        createDate: {type: string, format: date-time}
+    CreateDirectLinkDTO:
+      type: object
+      required: [medium, topicId]
+      properties:
+        medium: {$ref: '#/components/schemas/DirectLinkMedium'}
+        topicId: {type: integer, format: int64}
+        name: {type: string, maxLength: 100}
+        temporary:
+          type: boolean
+          description: Defaults to false for chat and true for calls
+        agencyId:
+          type: integer
+          format: int64
+          description: Required only when the caller works for more than one Beratungsstelle
+    UpdateDirectLinkDTO:
+      type: object
+      description: Every field is optional; absent fields stay unchanged
+      properties:
+        name: {type: string, maxLength: 100}
+        topicId: {type: integer, format: int64}
+        temporary: {type: boolean}
+        active: {type: boolean}
+    DirectLinkConversationDTO:
+      type: object
+      required: [sessionId, medium, admission, created]
+      properties:
+        sessionId: {type: integer, format: int64}
+        matrixRoomId: {type: string}
+        medium: {$ref: '#/components/schemas/DirectLinkMedium'}
+        admission: {type: string, enum: [DIRECT, KNOCK]}
+        created: {type: boolean}
+        knockId:
+          type: integer
+          format: int64
+          description: 'Audio and video only. The person''s admission, else their open knock; poll GET /users/call-knocks/mine/{knockId}.'
+        knockStatus: {$ref: '#/components/schemas/CallKnockStatus'}
+        callAdmitted:
+          type: boolean
+          description: 'Audio and video only. True once the counsellor let the person in: the admission holds for the whole conversation, so later calls are joined directly and no new knock is opened.'
+    CallKnockStatus:
+      type: string
+      enum: [PENDING, ADMITTED, DECLINED, CANCELLED]
+    CallKnockDTO:
+      type: object
+      required: [id, sessionId, status, medium, requestedAt]
+      properties:
+        id: {type: integer, format: int64}
+        sessionId: {type: integer, format: int64}
+        displayName:
+          type: string
+          description: 'The knocking person''s username (pseudonym), decoded; never the e-mail address or a real name.'
+        status: {$ref: '#/components/schemas/CallKnockStatus'}
+        medium: {$ref: '#/components/schemas/DirectLinkMedium'}
+        requestedAt: {type: string, format: date-time}
+        decidedAt: {type: string, format: date-time}
     OccurrenceOverrideRequest:
       type: object
       required: [originalStartUtc]

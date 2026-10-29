@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.agencyinvitelink;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryResponseDTO;
@@ -183,23 +184,35 @@ public class AgencyInviteLinkService {
         repository
             .findByToken(token)
             .orElseThrow(() -> new NotFoundException("Invite link not found"));
+    if (InviteLinkStatus.DISABLED.name().equals(link.getStatus())
+        && InviteLinkChatType.isDirectMedium(link.getChatType())) {
+      throw new DirectLinkInactiveException();
+    }
     if (!InviteLinkStatus.ACTIVE.name().equals(link.getStatus())) {
       throw new BadRequestException("Invite link is not active");
     }
     if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now())) {
       throw new BadRequestException("Invite link expired");
     }
-
     TenantData previousTenant = TenantContext.getCurrentTenantData();
     try {
       TenantContext.setCurrentTenantData(new TenantData(link.getTenantId(), null));
+      // The owner lookup is tenant-filtered and this route runs without a tenant.
+      DirectLinkOwner.requireStillServing(consultantRepository, link);
       Integer consultingTypeId = pickConsultingTypeId(link);
       Long agencyId =
           InviteLinkChatType.LIVE_CHAT.name().equals(link.getChatType())
               ? null
               : resolveAgencyIdForRegistration(link, consultingTypeId);
+      boolean direct = InviteLinkChatType.isDirectMedium(link.getChatType());
       return new InvitationContext(
-          link.getTenantId(), agencyId, consultingTypeId, link.getTopicId(), link.getChatType());
+          link.getTenantId(),
+          agencyId,
+          consultingTypeId,
+          link.getTopicId(),
+          link.getChatType(),
+          direct ? link.isTemporaryAccount() : null,
+          direct ? InviteLinkChatType.valueOf(link.getChatType()).admission().name() : null);
     } finally {
       if (previousTenant == null) {
         TenantContext.clear();
@@ -209,9 +222,18 @@ public class AgencyInviteLinkService {
     }
   }
 
-  /** Public context deliberately excludes credentials and invitation administration data. */
+  /**
+   * Public context deliberately excludes credentials and invitation administration data, including
+   * the owner of a direct link. The direct-link fields are omitted for every other link.
+   */
   public record InvitationContext(
-      Long tenantId, Long agencyId, Integer consultingTypeId, Long topicId, String chatType) {}
+      Long tenantId,
+      Long agencyId,
+      Integer consultingTypeId,
+      Long topicId,
+      String chatType,
+      @JsonInclude(JsonInclude.Include.NON_NULL) Boolean temporaryAccount,
+      @JsonInclude(JsonInclude.Include.NON_NULL) String admission) {}
 
   /**
    * Redeem the token: validate, mark USED, return tenant/agency/consulting-type/topic metadata for
@@ -237,6 +259,10 @@ public class AgencyInviteLinkService {
       if (InviteLinkStatus.USED.name().equals(existing.getStatus())) {
         throw new BadRequestException("Invite link already used");
       }
+      if (InviteLinkStatus.DISABLED.name().equals(existing.getStatus())
+          && InviteLinkChatType.isDirectMedium(existing.getChatType())) {
+        throw new DirectLinkInactiveException();
+      }
       throw new BadRequestException("Invite link is not active");
     }
 
@@ -245,12 +271,13 @@ public class AgencyInviteLinkService {
       repository.save(link);
       throw new BadRequestException("Invite link expired");
     }
-
     tenantService.requireOperationalTenant(link.getTenantId());
 
     Long previousTenant = TenantContext.getCurrentTenant();
     try {
       TenantContext.setCurrentTenant(link.getTenantId());
+      // The owner lookup is tenant-filtered and this route runs without a tenant.
+      DirectLinkOwner.requireStillServing(consultantRepository, link);
 
       Integer consultingTypeId = pickConsultingTypeId(link);
 
@@ -320,9 +347,9 @@ public class AgencyInviteLinkService {
       throw new BadRequestException(
           "linkKind must be one of " + Arrays.toString(InviteLinkKind.values()));
     }
-    if (!isValidEnumValue(cmd.getChatType(), InviteLinkChatType.class)) {
-      throw new BadRequestException(
-          "chatType must be one of " + Arrays.toString(InviteLinkChatType.values()));
+    // Direct links (CHAT/AUDIO/VIDEO) belong to a counsellor: /users/directlinks (#1475).
+    if (!InviteLinkChatType.LIVE_CHAT.name().equals(cmd.getChatType())) {
+      throw new BadRequestException("chatType must be LIVE_CHAT");
     }
     if (!isValidEnumValue(cmd.getAnonymity(), InviteLinkAnonymity.class)) {
       throw new BadRequestException(

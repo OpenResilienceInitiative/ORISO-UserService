@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.GroupChatJoinRequest;
 import de.caritas.cob.userservice.api.model.GroupChatJoinRequest.Status;
+import de.caritas.cob.userservice.api.model.GroupChatJoinRequest.Via;
 import jakarta.persistence.LockModeType;
 import java.util.Collection;
 import java.util.List;
@@ -24,12 +25,65 @@ public interface GroupChatJoinRequestRepository extends CrudRepository<GroupChat
   Optional<GroupChatJoinRequest> findFirstBySeriesIdAndConsultantIdOrderByIdDesc(
       Long seriesId, String consultantId);
 
+  /** Direct-link call knocks (#1475). */
+  /** A scalar read, so the knock entity is not loaded before it is locked. */
+  @Query("SELECT request.sessionId FROM GroupChatJoinRequest request WHERE request.id = :id")
+  Optional<Long> findSessionIdById(@Param("id") Long id);
+
+  /** Newest first, locked: a knock admitted meanwhile must not be superseded from a stale read. */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "SELECT request FROM GroupChatJoinRequest request WHERE request.sessionId = :sessionId"
+          + " AND request.userId = :userId AND request.via = :via"
+          + " AND request.status = de.caritas.cob.userservice.api.model.GroupChatJoinRequest.Status.PENDING"
+          + " ORDER BY request.id DESC")
+  List<GroupChatJoinRequest> findPendingCallKnocksForUpdate(
+      @Param("sessionId") Long sessionId, @Param("userId") String userId, @Param("via") Via via);
+
+  Optional<GroupChatJoinRequest> findFirstBySessionIdAndUserIdAndViaAndStatusOrderByIdDesc(
+      Long sessionId, String userId, Via via, Status status);
+
+  Optional<GroupChatJoinRequest> findFirstBySessionIdAndUserIdAndViaOrderByIdDesc(
+      Long sessionId, String userId, Via via);
+
+  @Query(
+      "SELECT request FROM GroupChatJoinRequest request, Session session"
+          + " WHERE request.sessionId = session.id AND session.consultant.id = :consultantId"
+          + " AND request.via = :via AND request.status = :status"
+          + " AND request.requestedAt >= :since"
+          + " AND (:sessionId IS NULL OR request.sessionId = :sessionId)"
+          + " ORDER BY request.requestedAt ASC, request.id ASC")
+  List<GroupChatJoinRequest> findCallKnocksForConsultant(
+      @Param("consultantId") String consultantId,
+      @Param("via") Via via,
+      @Param("status") Status status,
+      @Param("since") java.time.LocalDateTime since,
+      @Param("sessionId") Long sessionId);
+
+  /** Same knocks, locked: "admit all" decides on the current rows, not on an earlier read. */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "SELECT request FROM GroupChatJoinRequest request"
+          + " WHERE request.sessionId IN"
+          + " (SELECT session.id FROM Session session WHERE session.consultant.id = :consultantId)"
+          + " AND request.via = :via AND request.status = :status"
+          + " AND request.requestedAt >= :since"
+          + " AND (:sessionId IS NULL OR request.sessionId = :sessionId)"
+          + " ORDER BY request.requestedAt ASC, request.id ASC")
+  List<GroupChatJoinRequest> findCallKnocksForConsultantForUpdate(
+      @Param("consultantId") String consultantId,
+      @Param("via") Via via,
+      @Param("status") Status status,
+      @Param("since") java.time.LocalDateTime since,
+      @Param("sessionId") Long sessionId);
+
   List<GroupChatJoinRequest> findBySeriesIdInAndStatusOrderByRequestedAtAscIdAsc(
       Collection<Long> seriesIds, Status status);
 
   @Query(
       "SELECT request FROM GroupChatJoinRequest request"
           + " WHERE request.status = :status AND request.admissionRequestedAt IS NOT NULL"
+          + " AND request.via = de.caritas.cob.userservice.api.model.GroupChatJoinRequest.Via.INVITE_LINK"
           + " AND (request.admissionLastAttemptAt IS NULL"
           + " OR request.admissionLastAttemptAt < :retryBefore)"
           + " ORDER BY CASE WHEN request.admissionLastAttemptAt IS NULL THEN 0 ELSE 1 END ASC,"

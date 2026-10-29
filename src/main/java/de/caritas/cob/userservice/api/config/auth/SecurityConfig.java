@@ -375,6 +375,34 @@ public class SecurityConfig {
                     USER_DEFAULT,
                     CONSULTANT_DEFAULT,
                     RESTRICTED_AGENCY_ADMIN)
+                // Counsellor direct links (#1475): ownership is checked in the service.
+                .requestMatchers(
+                    "/users/call-knocks/mine",
+                    "/service/users/call-knocks/mine",
+                    "/users/call-knocks/mine/{knockId:[0-9]+}",
+                    "/service/users/call-knocks/mine/{knockId:[0-9]+}")
+                .hasAuthority(USER_DEFAULT)
+                .requestMatchers(
+                    "/users/call-knocks",
+                    "/service/users/call-knocks",
+                    "/users/call-knocks/admit-all",
+                    "/service/users/call-knocks/admit-all",
+                    "/users/call-knocks/{knockId:[0-9]+}/admit",
+                    "/service/users/call-knocks/{knockId:[0-9]+}/admit",
+                    "/users/call-knocks/{knockId:[0-9]+}/decline",
+                    "/service/users/call-knocks/{knockId:[0-9]+}/decline")
+                .hasAuthority(CONSULTANT_DEFAULT)
+                .requestMatchers(
+                    "/users/directlinks",
+                    "/service/users/directlinks",
+                    "/users/directlinks/{linkId:[0-9]+}",
+                    "/service/users/directlinks/{linkId:[0-9]+}")
+                .hasAuthority(CONSULTANT_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/users/invitelinks/*/conversations",
+                    "/service/users/invitelinks/*/conversations")
+                .hasAuthority(USER_DEFAULT)
                 .requestMatchers("/users/statistics/registration")
                 .hasAnyAuthority(SINGLE_TENANT_ADMIN, TENANT_ADMIN)
                 .requestMatchers(

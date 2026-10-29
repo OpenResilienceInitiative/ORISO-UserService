@@ -8,6 +8,8 @@ import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiRes
 import de.caritas.cob.userservice.api.conversation.facade.CreateAnonymousEnquiryFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
+import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.ConsultingTypeService;
@@ -27,6 +29,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 class AgencyInviteLinkContextHttpTest {
   private final AgencyInviteLinkRepository repository = mock(AgencyInviteLinkRepository.class);
   private final CreateAnonymousEnquiryFacade facade = mock(CreateAnonymousEnquiryFacade.class);
+  private final ConsultantRepository consultants = mock(ConsultantRepository.class);
   private MockMvc mvc;
 
   @BeforeEach
@@ -37,7 +40,7 @@ class AgencyInviteLinkContextHttpTest {
             repository,
             mock(AuthenticatedUser.class),
             topicService,
-            mock(ConsultantRepository.class),
+            consultants,
             mock(ConsultingTypeService.class),
             mock(AgencyService.class),
             facade,
@@ -90,6 +93,69 @@ class AgencyInviteLinkContextHttpTest {
     link.setExpiresAt(LocalDateTime.now().minusDays(1));
     when(repository.findByToken("token")).thenReturn(Optional.of(link));
     mvc.perform(get("/users/invitelinks/token/context")).andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void switchedOffDirectLinkReturns410WithReason() throws Exception {
+    var link = directLink();
+    link.setStatus("DISABLED");
+    when(repository.findByToken("token")).thenReturn(Optional.of(link));
+    mvc.perform(get("/users/invitelinks/token/context"))
+        .andExpect(status().isGone())
+        .andExpect(content().json("{\"reason\":\"DIRECT_LINK_INACTIVE\"}"));
+  }
+
+  @Test
+  void directLinkContextNamesAdmissionButNotTheOwner() throws Exception {
+    when(repository.findByToken("token")).thenReturn(Optional.of(directLink()));
+    ownerServes(99L);
+    mvc.perform(get("/users/invitelinks/token/context"))
+        .andExpect(status().isOk())
+        .andExpect(
+            content()
+                .json(
+                    """
+            {"tenantId":83,"agencyId":99,"consultingTypeId":1,"topicId":11,"chatType":"VIDEO",
+             "temporaryAccount":true,"admission":"KNOCK"}
+            """,
+                    org.springframework.test.json.JsonCompareMode.STRICT));
+  }
+
+  @Test
+  void directLinkWhoseOwnerLeftTheBeratungsstelleReturns410() throws Exception {
+    when(repository.findByToken("token")).thenReturn(Optional.of(directLink()));
+    ownerServes(12345L);
+    mvc.perform(get("/users/invitelinks/token/context"))
+        .andExpect(status().isGone())
+        .andExpect(content().json("{\"reason\":\"DIRECT_LINK_INACTIVE\"}"));
+  }
+
+  @Test
+  void directLinkWhoseOwnerWasDeletedReturns410() throws Exception {
+    when(repository.findByToken("token")).thenReturn(Optional.of(directLink()));
+    when(consultants.findByIdAndDeleteDateIsNull("private-consultant"))
+        .thenReturn(Optional.empty());
+    mvc.perform(get("/users/invitelinks/token/context"))
+        .andExpect(status().isGone())
+        .andExpect(content().json("{\"reason\":\"DIRECT_LINK_INACTIVE\"}"));
+  }
+
+  private void ownerServes(Long agencyId) {
+    var owner = new Consultant();
+    owner.setId("private-consultant");
+    owner.setConsultantAgencies(
+        new java.util.HashSet<>(
+            java.util.Set.of(ConsultantAgency.builder().id(1L).agencyId(agencyId).build())));
+    when(consultants.findByIdAndDeleteDateIsNull("private-consultant"))
+        .thenReturn(Optional.of(owner));
+  }
+
+  private AgencyInviteLink directLink() {
+    var link = link();
+    link.setLinkKind("COUNSELLOR");
+    link.setChatType("VIDEO");
+    link.setTemporaryAccount(true);
+    return link;
   }
 
   private AgencyInviteLink link() {
