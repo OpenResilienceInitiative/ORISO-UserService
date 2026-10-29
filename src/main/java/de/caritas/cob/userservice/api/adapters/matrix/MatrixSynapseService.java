@@ -61,6 +61,7 @@ public class MatrixSynapseService implements MatrixUserClient {
   private static final String ENDPOINT_DEACTIVATE_USER = "/_synapse/admin/v1/deactivate/{userId}";
   private static final String ENDPOINT_PURGE_ROOM = "/_synapse/admin/v2/rooms/{roomId}";
   private static final String ENDPOINT_ROOM_MEMBERS = "/_synapse/admin/v1/rooms/{roomId}/members";
+  private static final String ENDPOINT_ROOM_STATE = "/_synapse/admin/v1/rooms/{roomId}/state";
   private static final String ENDPOINT_JOINED_ROOMS = "/_matrix/client/r0/joined_rooms";
   private static final String ENDPOINT_PRESENCE = "/_matrix/client/r0/presence/{userId}/status";
   private static final String ENDPOINT_SEND_MESSAGE =
@@ -1496,6 +1497,48 @@ public class MatrixSynapseService implements MatrixUserClient {
           && ex instanceof org.springframework.web.client.RestClientException) {
         throw new CallLookupUnavailableException("call membership lookup unavailable", ex);
       }
+      return java.util.Optional.empty();
+    }
+  }
+
+  /**
+   * Whether a moderator banned the user from the room, read from the room state via the Synapse
+   * admin API. Empty when the state cannot be read; callers must treat that as "unknown".
+   */
+  public java.util.Optional<Boolean> isBannedFromRoom(String matrixRoomId, String matrixUserId) {
+    String adminToken = getAdminAccessToken();
+    if (adminToken == null) {
+      return java.util.Optional.empty();
+    }
+    try {
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_ROOM_STATE, java.util.Map.of("roomId", matrixRoomId));
+      ResponseEntity<java.util.Map> response =
+          restTemplate.exchange(
+              url,
+              org.springframework.http.HttpMethod.GET,
+              new HttpEntity<>(getClientHttpHeaders(adminToken)),
+              java.util.Map.class);
+      var body = response.getBody();
+      if (body == null || !(body.get("state") instanceof java.util.List<?> events)) {
+        return java.util.Optional.empty();
+      }
+      return java.util.Optional.of(
+          events.stream()
+              .filter(java.util.Map.class::isInstance)
+              .map(java.util.Map.class::cast)
+              .filter(event -> "m.room.member".equals(event.get("type")))
+              .filter(event -> matrixUserId.equals(event.get("state_key")))
+              .map(event -> event.get("content"))
+              .filter(java.util.Map.class::isInstance)
+              .map(java.util.Map.class::cast)
+              .anyMatch(content -> "ban".equals(content.get("membership"))));
+    } catch (Exception ex) {
+      log.warn(
+          "Matrix Error: Could not read state of room {}: {}",
+          matrixRoomId,
+          redactor.scrub(ex.getMessage()));
       return java.util.Optional.empty();
     }
   }

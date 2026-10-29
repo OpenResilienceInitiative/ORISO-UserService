@@ -2017,7 +2017,7 @@ paths:
         401:
           description: UNAUTHORIZED - no/invalid Keycloak token
         403:
-          description: FORBIDDEN - no chat permission, or AVV does not permit new external counselling
+          description: FORBIDDEN - no chat permission, AVV does not permit new external counselling, or a moderator banned the caller (X-Reason USER_BANNED_FROM_CHAT)
           headers:
             X-Reason:
               schema:
