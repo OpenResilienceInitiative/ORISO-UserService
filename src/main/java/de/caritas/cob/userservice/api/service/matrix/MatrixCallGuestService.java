@@ -169,9 +169,13 @@ public class MatrixCallGuestService {
     try {
       matrix.inviteUserToRoom(binding.getMediaRoomId(), guest.matrixId(), token);
     } catch (MatrixInviteUserException failed) {
-      // An earlier admission may already have seated the guest; anything else is a failure.
-      if (!isMember(binding.getMediaRoomId(), guest.matrixId())) {
-        if (reserved != null) guests.delete(reserved);
+      // The invite may have landed anyway: only a confirmed leave or ban withdraws the seat; an
+      // unreadable state keeps it, so the call-end cleanup still retracts whatever is there.
+      var membership =
+          matrix.getRoomMembership(binding.getMediaRoomId(), guest.matrixId(), token).orElse(null);
+      if (!"join".equals(membership) && !"invite".equals(membership)) {
+        if (reserved != null && ("leave".equals(membership) || "ban".equals(membership)))
+          guests.delete(reserved);
         return Admission.of(Outcome.MATRIX_UNAVAILABLE);
       }
     }
@@ -309,10 +313,6 @@ public class MatrixCallGuestService {
         .getRoomMembership(room, matrixId, token)
         .map(membership -> "leave".equals(membership) || "ban".equals(membership))
         .orElse(false);
-  }
-
-  private boolean isMember(String room, String matrixId) {
-    return matrix.getRoomMembers(room).map(members -> members.contains(matrixId)).orElse(false);
   }
 
   private boolean isActive(String identityId) {
