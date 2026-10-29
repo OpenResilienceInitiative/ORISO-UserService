@@ -128,13 +128,13 @@ class TrackedConsultantCreationNativePairProof {
             try {
               String path = request.getRequestURI().toString();
               if (!"GET".equals(request.getRequestMethod())
-                  || !Set.of("/tenant/public/", "/tenant/public/id/11").contains(path)
+                  || !Set.of("/tenant/public/single", "/tenant/public/id/11").contains(path)
                   || request.getRequestBody().readNBytes(1).length != 0) {
                 unexpectedTenant.set(true);
                 request.sendResponseHeaders(403, -1);
                 return;
               }
-              if (path.equals("/tenant/public/")) {
+              if (path.equals("/tenant/public/single")) {
                 if (!runtimeBearer(request.getRequestHeaders().getFirst("Authorization"))) {
                   unexpectedTenant.set(true);
                   request.sendResponseHeaders(403, -1);
