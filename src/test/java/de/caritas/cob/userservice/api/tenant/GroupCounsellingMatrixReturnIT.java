@@ -58,6 +58,7 @@ class GroupCounsellingMatrixReturnIT extends GroupCounsellingDpaHttpFixture {
   private String historyBodyOverride;
   private boolean historyNon200;
   private boolean matrixInviteDenied;
+  private boolean matrixMemberBanned;
   private Chat foreignChat;
   private MediaType historyContentType = MediaType.APPLICATION_JSON;
   private final java.util.Set<String> notCommencedActors = new java.util.HashSet<>();
@@ -751,6 +752,17 @@ class GroupCounsellingMatrixReturnIT extends GroupCounsellingDpaHttpFixture {
   }
 
   @Test
+  void aBannedMemberIsRefusedWithAReasonInsteadOfAServerError() throws Exception {
+    Chat chat = activeChat();
+    matrixInviteDenied = true;
+    matrixMemberBanned = true;
+    var result = join(chat, assignedUser(chat));
+    assertEquals(403, result.statusCode(), result.body());
+    assertEquals("USER_BANNED_FROM_CHAT", result.headers().firstValue("X-Reason").orElse(""));
+    assertEquals(1, matrixWrites.get());
+  }
+
+  @Test
   void laterOccurrenceModeratorBatchRetainsOnePureOwnerDecisionWithoutHistory() throws Exception {
     Chat chat = storedChat(ConversationType.SELF_HELP);
     chat.setCurrentOccurrenceIndex(1);
@@ -877,6 +889,16 @@ class GroupCounsellingMatrixReturnIT extends GroupCounsellingDpaHttpFixture {
     if (path.startsWith("/_synapse/admin/v1/rooms/") && path.endsWith("/members")) {
       memberReads.incrementAndGet();
       return withSuccess(members, MediaType.APPLICATION_JSON).createResponse(request);
+    }
+    if (path.startsWith("/_synapse/admin/v1/rooms/") && path.endsWith("/state")) {
+      var membership = matrixMemberBanned ? "ban" : "leave";
+      return withSuccess(
+              "{\"state\":[{\"type\":\"m.room.member\",\"state_key\":"
+                  + "\"@synthetic-former:synthetic.oriso.test\",\"content\":{\"membership\":\""
+                  + membership
+                  + "\"}}]}",
+              MediaType.APPLICATION_JSON)
+          .createResponse(request);
     }
     if (path.endsWith("/invite")
         || path.endsWith("/join")

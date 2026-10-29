@@ -206,7 +206,7 @@ class ExistingAccountSetupExpiryIT {
     assertThat(fresh.getInitialPasswordVerifier()).isEqualTo(privateHash);
     assertThat(newToken.get()).isNotBlank().isNotEqualTo(OLD_TOKEN);
     assertThat(fresh.getTokenHash()).isEqualTo(AccountInviteService.hash(newToken.get()));
-    verify(scope).assertMay(AdminScope.Target.admin(ACCOUNT_ID));
+    verify(scope).assertMay(AdminScope.Target.managedAdmin(ACCOUNT_ID));
 
     assertThatThrownBy(() -> confirmation.confirm(OLD_TOKEN, "new-secret"))
         .isInstanceOfSatisfying(
