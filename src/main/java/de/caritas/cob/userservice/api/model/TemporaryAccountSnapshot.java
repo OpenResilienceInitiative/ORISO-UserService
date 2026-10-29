@@ -55,6 +55,14 @@ public class TemporaryAccountSnapshot {
   @Column(name = "temporary_deleted_at")
   private LocalDateTime deletedAt;
 
+  /** Set when the cleanup removed the Keycloak user; later runs finish without a new check. */
+  @Column(name = "temporary_deletion_started_at")
+  private LocalDateTime deletionStartedAt;
+
+  /** The Synapse redaction task still to be confirmed; polled, never submitted twice. */
+  @Column(name = "temporary_redact_id", length = 255)
+  private String redactId;
+
   public boolean isCall() {
     return medium
             == de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkChatType.AUDIO

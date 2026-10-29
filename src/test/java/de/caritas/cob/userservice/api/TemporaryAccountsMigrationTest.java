@@ -52,7 +52,9 @@ class TemporaryAccountsMigrationTest {
                 single(
                     c,
                     "SELECT COUNT(*) FROM user WHERE user_id = 'old'"
-                        + " AND temporary_medium IS NULL AND temporary_deleted_at IS NULL"))
+                        + " AND temporary_medium IS NULL AND temporary_deleted_at IS NULL"
+                        + " AND temporary_deletion_started_at IS NULL"
+                        + " AND temporary_redact_id IS NULL"))
             .isEqualTo(1);
         try (var sql = c.createStatement()) {
           sql.execute(
@@ -65,7 +67,7 @@ class TemporaryAccountsMigrationTest {
         assertThat(single(c, "SELECT COUNT(*) FROM user WHERE temporary_medium = 'VIDEO'"))
             .isEqualTo(1);
 
-        liquibase.rollback(2, (String) null);
+        liquibase.rollback(3, (String) null);
         assertThat(
                 single(
                     c,

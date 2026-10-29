@@ -39,10 +39,11 @@ import org.springframework.web.client.HttpClientErrorException;
  *
  * <p>Unlike the self-help-group guests, the conversation stays: the counsellor keeps the session
  * and the room, and the former guest shows as "Gast (gelöscht)". The Keycloak user goes first, so
- * nobody can sign in while the rest runs. Then the guest's messages are redacted unless the
- * retention mode keeps them, and the Matrix user is deactivated (erased only when the messages go).
- * The account row stays as the tombstone the session points to. A failed Matrix step leaves the row
- * undeleted so the next run retries; every step is safe to repeat.
+ * nobody can sign in while the rest runs, and Matrix access is suspended right after. Then the
+ * guest's messages are redacted unless the retention mode keeps them (one Synapse task, polled on
+ * later runs), and the Matrix user is deactivated (erased only when the messages go). The account
+ * row stays as the tombstone the session points to. A failed Matrix step leaves the row undeleted
+ * so the next run retries; every step is safe to repeat.
  */
 @Service
 @RequiredArgsConstructor
@@ -72,6 +73,10 @@ public class DirectLinkTemporaryAccountCleanup {
 
   private boolean isDue(User user, LocalDateTime now) {
     var snapshot = user.getTemporaryAccountSnapshot();
+    // A started deletion is finished; a half-deleted account is never judged again.
+    if (snapshot != null && snapshot.getDeletionStartedAt() != null) {
+      return snapshot.getDeletedAt() == null;
+    }
     var sessions = sessionRepository.findByUser(user);
     var facts = factsOf(sessions);
     if (!expiryPolicy.isDue(snapshot, user.getCreateDate(), facts, now)) {
@@ -127,9 +132,13 @@ public class DirectLinkTemporaryAccountCleanup {
         || user.getTemporaryAccountSnapshot().getDeletedAt() != null) {
       return List.of();
     }
-    // The selection may be stale: a call or message since then keeps the account.
-    if (!isDue(user, now)) {
-      return List.of();
+    var snapshot = user.getTemporaryAccountSnapshot();
+    if (snapshot.getDeletionStartedAt() == null) {
+      // The selection may be stale: a call or message since then keeps the account.
+      if (!isDue(user, now)) {
+        return List.of();
+      }
+      snapshot.setDeletionStartedAt(now);
     }
     try {
       deleteIdentity(userId);
@@ -138,27 +147,61 @@ public class DirectLinkTemporaryAccountCleanup {
           "Temporary account identity deletion failed ({})", exception.getClass().getSimpleName());
       return List.of(error(userId, DeletionTargetType.KEYCLOAK, "Unable to delete keycloak user"));
     }
-    var snapshot = user.getTemporaryAccountSnapshot();
     var keep = snapshot.keepsMessages();
     var matrixUserId = user.getMatrixUserId();
     if (isNotBlank(matrixUserId)) {
-      var rooms =
-          sessionRepository.findByUser(user).stream()
-              .map(Session::getMatrixRoomId)
-              .filter(Objects::nonNull)
-              .filter(room -> !room.isBlank())
-              .toList();
-      if (!keep && !matrixSynapseService.redactUserEvents(matrixUserId, rooms)) {
-        return List.of(error(userId, DeletionTargetType.MATRIX, "Unable to delete guest messages"));
+      // Sign-in is gone with Keycloak; Matrix sessions go now, whatever the redaction does.
+      if (!matrixSynapseService.setAccountSuspended(matrixUserId, true)) {
+        return List.of(error(userId, DeletionTargetType.MATRIX, "Unable to revoke Matrix access"));
+      }
+      if (!keep) {
+        var redaction = redact(snapshot, matrixUserId, roomsOf(user));
+        if (redaction != MatrixSynapseService.RedactionStatus.COMPLETE) {
+          return redaction == MatrixSynapseService.RedactionStatus.RUNNING
+              ? List.of()
+              : List.of(
+                  error(userId, DeletionTargetType.MATRIX, "Unable to delete guest messages"));
+        }
       }
       if (!matrixSynapseService.deactivateUser(matrixUserId, !keep)) {
         return List.of(
             error(userId, DeletionTargetType.MATRIX, "Unable to delete Matrix user account"));
       }
     }
+    snapshot.setRedactId(null);
     snapshot.setDeletedAt(now);
     userRepository.save(user);
     return List.of();
+  }
+
+  /** Submits the redaction once and polls that task on later runs; a failed task is resubmitted. */
+  private MatrixSynapseService.RedactionStatus redact(
+      de.caritas.cob.userservice.api.model.TemporaryAccountSnapshot snapshot,
+      String matrixUserId,
+      List<String> rooms) {
+    if (rooms.isEmpty()) {
+      return MatrixSynapseService.RedactionStatus.COMPLETE;
+    }
+    if (snapshot.getRedactId() == null) {
+      var submitted = matrixSynapseService.submitRedaction(matrixUserId, rooms);
+      if (submitted.isEmpty()) {
+        return MatrixSynapseService.RedactionStatus.FAILED;
+      }
+      snapshot.setRedactId(submitted.get());
+    }
+    var status = matrixSynapseService.redactionStatus(snapshot.getRedactId());
+    if (status == MatrixSynapseService.RedactionStatus.FAILED) {
+      snapshot.setRedactId(null);
+    }
+    return status;
+  }
+
+  private List<String> roomsOf(User user) {
+    return sessionRepository.findByUser(user).stream()
+        .map(Session::getMatrixRoomId)
+        .filter(Objects::nonNull)
+        .filter(room -> !room.isBlank())
+        .toList();
   }
 
   private void deleteIdentity(String userId) {

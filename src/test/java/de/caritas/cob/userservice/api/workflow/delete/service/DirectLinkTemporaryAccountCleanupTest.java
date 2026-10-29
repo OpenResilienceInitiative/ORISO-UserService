@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -82,7 +83,9 @@ class DirectLinkTemporaryAccountCleanupTest {
     when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
     when(sessionRepository.findByUser(user)).thenReturn(List.of(session));
     when(callBindings.findBySessionIdIn(any())).thenReturn(List.of());
-    when(matrix.redactUserEvents(anyString(), anyList())).thenReturn(true);
+    when(matrix.setAccountSuspended(anyString(), eq(true))).thenReturn(true);
+    when(matrix.submitRedaction(anyString(), anyList())).thenReturn(Optional.of("r1"));
+    when(matrix.redactionStatus("r1")).thenReturn(MatrixSynapseService.RedactionStatus.COMPLETE);
     when(matrix.deactivateUser(anyString(), anyBoolean())).thenReturn(true);
   }
 
@@ -137,7 +140,7 @@ class DirectLinkTemporaryAccountCleanupTest {
         .satisfies(
             error ->
                 assertThat(error.getDeletionTargetType()).isEqualTo(DeletionTargetType.KEYCLOAK));
-    verify(matrix, never()).redactUserEvents(anyString(), anyList());
+    verify(matrix, never()).submitRedaction(anyString(), anyList());
     verify(matrix, never()).deactivateUser(anyString(), anyBoolean());
     verify(userRepository, never()).save(any());
   }
@@ -156,7 +159,7 @@ class DirectLinkTemporaryAccountCleanupTest {
     user.setMatrixUserId(" ");
 
     assertThat(cleanup.delete(USER_ID, NOW)).isEmpty();
-    verify(matrix, never()).redactUserEvents(anyString(), anyList());
+    verify(matrix, never()).submitRedaction(anyString(), anyList());
     verify(matrix, never()).deactivateUser(anyString(), anyBoolean());
     assertThat(user.getTemporaryAccountSnapshot().getDeletedAt()).isEqualTo(NOW);
   }
@@ -219,7 +222,7 @@ class DirectLinkTemporaryAccountCleanupTest {
 
     assertThat(errors).isEmpty();
     verify(identityAccountRemover).deleteUser(USER_ID);
-    verify(matrix).redactUserEvents(MATRIX_ID, List.of(ROOM));
+    verify(matrix).submitRedaction(MATRIX_ID, List.of(ROOM));
     verify(matrix).deactivateUser(MATRIX_ID, true);
     verify(sessionRepository, never()).delete(any());
     assertThat(user.getTemporaryAccountSnapshot().getDeletedAt()).isEqualTo(NOW);
@@ -232,7 +235,7 @@ class DirectLinkTemporaryAccountCleanupTest {
 
     cleanup.delete(USER_ID, NOW);
 
-    verify(matrix, never()).redactUserEvents(anyString(), anyList());
+    verify(matrix, never()).submitRedaction(anyString(), anyList());
     verify(matrix).deactivateUser(MATRIX_ID, false);
     assertThat(user.getTemporaryAccountSnapshot().getDeletedAt()).isEqualTo(NOW);
   }
@@ -245,7 +248,7 @@ class DirectLinkTemporaryAccountCleanupTest {
 
     cleanup.delete(USER_ID, NOW);
 
-    verify(matrix, never()).redactUserEvents(anyString(), anyList());
+    verify(matrix, never()).submitRedaction(anyString(), anyList());
     verify(matrix).deactivateUser(MATRIX_ID, false);
   }
 
@@ -255,13 +258,14 @@ class DirectLinkTemporaryAccountCleanupTest {
 
     cleanup.delete(USER_ID, NOW);
 
-    verify(matrix).redactUserEvents(MATRIX_ID, List.of(ROOM));
+    verify(matrix).submitRedaction(MATRIX_ID, List.of(ROOM));
     verify(matrix).deactivateUser(MATRIX_ID, true);
   }
 
+  /** Once Keycloak is gone, Matrix access goes too, whatever happens to the redaction. */
   @Test
-  void delete_Should_ReportAndRetryLater_When_MatrixFails() {
-    when(matrix.redactUserEvents(anyString(), anyList())).thenReturn(false);
+  void delete_Should_RevokeMatrixAccessAndMarkTheStart_When_TheRedactionCannotStart() {
+    when(matrix.submitRedaction(anyString(), anyList())).thenReturn(Optional.empty());
 
     var errors = cleanup.delete(USER_ID, NOW);
 
@@ -270,9 +274,55 @@ class DirectLinkTemporaryAccountCleanupTest {
         .satisfies(
             error ->
                 assertThat(error.getDeletionTargetType()).isEqualTo(DeletionTargetType.MATRIX));
+    var order = org.mockito.Mockito.inOrder(identityAccountRemover, matrix);
+    order.verify(identityAccountRemover).deleteUser(USER_ID);
+    order.verify(matrix).setAccountSuspended(MATRIX_ID, true);
     verify(matrix, never()).deactivateUser(anyString(), anyBoolean());
+    var snapshot = user.getTemporaryAccountSnapshot();
+    assertThat(snapshot.getDeletionStartedAt()).isEqualTo(NOW);
+    assertThat(snapshot.getDeletedAt()).isNull();
+  }
+
+  /** A started deletion is finished, never judged again on a half-deleted account. */
+  @Test
+  void delete_Should_FinishAStartedDeletion_WithoutCheckingInactivityAgain() {
+    session.setStatus(SessionStatus.IN_PROGRESS);
+    user.getTemporaryAccountSnapshot().setDeletionStartedAt(NOW.minusHours(1));
+
+    assertThat(cleanup.dueAccountIds(NOW)).containsExactly(USER_ID);
+    assertThat(cleanup.delete(USER_ID, NOW)).isEmpty();
+    assertThat(user.getTemporaryAccountSnapshot().getDeletedAt()).isEqualTo(NOW);
+  }
+
+  @Test
+  void delete_Should_PollThePendingRedaction_InsteadOfSubmittingAgain() {
+    var snapshot = user.getTemporaryAccountSnapshot();
+    snapshot.setDeletionStartedAt(NOW.minusHours(1));
+    snapshot.setRedactId("r1");
+    when(matrix.redactionStatus("r1")).thenReturn(MatrixSynapseService.RedactionStatus.RUNNING);
+
+    assertThat(cleanup.delete(USER_ID, NOW)).isEmpty();
+    verify(matrix, never()).submitRedaction(anyString(), anyList());
+    verify(matrix, never()).deactivateUser(anyString(), anyBoolean());
+    assertThat(snapshot.getDeletedAt()).isNull();
+
+    when(matrix.redactionStatus("r1")).thenReturn(MatrixSynapseService.RedactionStatus.COMPLETE);
+
+    assertThat(cleanup.delete(USER_ID, NOW)).isEmpty();
+    verify(matrix, never()).submitRedaction(anyString(), anyList());
+    verify(matrix).deactivateUser(MATRIX_ID, true);
+    assertThat(snapshot.getDeletedAt()).isEqualTo(NOW);
+    assertThat(snapshot.getRedactId()).isNull();
+  }
+
+  @Test
+  void delete_Should_SubmitAgainLater_When_TheRedactionFailed() {
+    when(matrix.redactionStatus("r1")).thenReturn(MatrixSynapseService.RedactionStatus.FAILED);
+
+    assertThat(cleanup.delete(USER_ID, NOW)).singleElement();
+    assertThat(user.getTemporaryAccountSnapshot().getRedactId()).isNull();
     assertThat(user.getTemporaryAccountSnapshot().getDeletedAt()).isNull();
-    verify(userRepository, never()).save(any());
+    verify(matrix, never()).deactivateUser(anyString(), anyBoolean());
   }
 
   @Test

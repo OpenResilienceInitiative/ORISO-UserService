@@ -71,4 +71,16 @@
       <dropColumn tableName="user" columnName="temporary_medium"/>
     </rollback>
   </changeSet>
+  <!-- Deletion progress (#1476 review): once started, the cleanup finishes without judging the
+       half-deleted account again, and polls its pending Synapse redaction instead of resubmitting. -->
+  <changeSet id="20261029-temporary-account-deletion-progress-1476" author="oriso">
+    <addColumn tableName="user">
+      <column name="temporary_deletion_started_at" type="DATETIME"/>
+      <column name="temporary_redact_id" type="VARCHAR(255)"/>
+    </addColumn>
+    <rollback>
+      <dropColumn tableName="user" columnName="temporary_redact_id"/>
+      <dropColumn tableName="user" columnName="temporary_deletion_started_at"/>
+    </rollback>
+  </changeSet>
 </databaseChangeLog>

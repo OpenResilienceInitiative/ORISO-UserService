@@ -56,7 +56,13 @@ class DirectLinkTemporaryAccountDeletionIT {
 
   @BeforeEach
   void turnTheSeededAskerIntoAGuest() {
-    when(matrixSynapseService.redactUserEvents(anyString(), anyList())).thenReturn(true);
+    when(matrixSynapseService.setAccountSuspended(
+            anyString(), org.mockito.ArgumentMatchers.eq(true)))
+        .thenReturn(true);
+    when(matrixSynapseService.submitRedaction(anyString(), anyList()))
+        .thenReturn(java.util.Optional.of("r1"));
+    when(matrixSynapseService.redactionStatus("r1"))
+        .thenReturn(MatrixSynapseService.RedactionStatus.COMPLETE);
     when(matrixSynapseService.deactivateUser(anyString(), anyBoolean())).thenReturn(true);
     var user = userRepository.findById(USER_ID).orElseThrow();
     originalMatrixId = user.getMatrixUserId();
@@ -124,7 +130,7 @@ class DirectLinkTemporaryAccountDeletionIT {
     assertThat(guest.getTemporaryAccountSnapshot().getDeletedAt()).isNotNull();
     assertThat(sessionRepository.findById(SESSION_ID)).isPresent();
     verify(keycloakService).deleteUser(USER_ID);
-    verify(matrixSynapseService, never()).redactUserEvents(anyString(), anyList());
+    verify(matrixSynapseService, never()).submitRedaction(anyString(), anyList());
     verify(matrixSynapseService).deactivateUser(MATRIX_ID, false);
 
     // The counsellor's session list now shows the former guest as deleted ("Gast (gelöscht)").
@@ -154,7 +160,7 @@ class DirectLinkTemporaryAccountDeletionIT {
             .filter(room -> room != null && !room.isBlank())
             .toList();
     verify(matrixSynapseService)
-        .redactUserEvents(
+        .submitRedaction(
             org.mockito.ArgumentMatchers.eq(MATRIX_ID),
             org.mockito.ArgumentMatchers.argThat(
                 given -> given.size() == rooms.size() && given.containsAll(rooms)));

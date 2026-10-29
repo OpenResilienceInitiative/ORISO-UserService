@@ -66,8 +66,10 @@ public class MatrixSynapseService implements MatrixUserClient {
   private static final String ENDPOINT_ADMIN_ROOM_MESSAGES =
       "/_synapse/admin/v1/rooms/{roomId}/messages";
   private static final int REDACT_EVENT_LIMIT = 100_000;
-  private static final int REDACT_STATUS_POLLS = 20;
-  private static final long REDACT_STATUS_POLL_MS = 500;
+  private static final java.util.List<String> MESSAGE_EVENT_TYPES =
+      java.util.List.of("m.room.message", "m.room.encrypted", "m.sticker");
+  private static final String MESSAGE_EVENT_FILTER =
+      "{\"types\":[\"m.room.message\",\"m.room.encrypted\",\"m.sticker\"]}";
   private static final String ENDPOINT_PURGE_ROOM = "/_synapse/admin/v2/rooms/{roomId}";
   private static final String ENDPOINT_ROOM_MEMBERS = "/_synapse/admin/v1/rooms/{roomId}/members";
   private static final String ENDPOINT_JOINED_ROOMS = "/_matrix/client/r0/joined_rooms";
@@ -967,17 +969,15 @@ public class MatrixSynapseService implements MatrixUserClient {
   /**
    * Redacts every event the user sent in the given rooms through the Synapse admin API (Synapse
    * 1.116+), used when a temporary account's messages are deleted with it (ADR-029 §5). Synapse
-   * runs the redaction as a background task; an accepted request counts as done.
+   * runs it as a background task: the returned id is polled with {@link #redactionStatus}.
    */
-  public boolean redactUserEvents(String matrixUserId, java.util.List<String> roomIds) {
-    if (roomIds == null || roomIds.isEmpty()) {
-      return true;
-    }
+  public java.util.Optional<String> submitRedaction(
+      String matrixUserId, java.util.List<String> roomIds) {
     try {
       String adminToken = getAdminToken();
       if (adminToken == null) {
         log.warn("Could not get admin token for Matrix event redaction");
-        return false;
+        return java.util.Optional.empty();
       }
       var url =
           MatrixUrlBuilder.buildUrl(
@@ -990,35 +990,46 @@ public class MatrixSynapseService implements MatrixUserClient {
       body.put("reason", "Temporary account deleted");
       // Synapse's default is 1000 events per room; a guest's whole history must go.
       body.put("limit", REDACT_EVENT_LIMIT);
-      ResponseEntity<java.util.Map> response =
-          restTemplate.exchange(
-              url,
-              org.springframework.http.HttpMethod.POST,
-              new HttpEntity<>(body, headers),
-              java.util.Map.class);
-      if (response.getBody() == null || !(response.getBody().get("redact_id") instanceof String id))
-        return false;
-      return redactionCompleted(id, headers);
+      var response =
+          restTemplate
+              .exchange(
+                  url,
+                  org.springframework.http.HttpMethod.POST,
+                  new HttpEntity<>(body, headers),
+                  java.util.Map.class)
+              .getBody();
+      return response != null && response.get("redact_id") instanceof String id && !id.isBlank()
+          ? java.util.Optional.of(id)
+          : java.util.Optional.empty();
     } catch (Exception ex) {
       log.warn(
           "Failed to redact Matrix events of user {}: {}",
           redactor.pseudonym(matrixUserId),
           redactor.scrub(ex.getMessage()));
-      return false;
+      return java.util.Optional.empty();
     }
   }
 
+  /** State of an asynchronous Synapse redaction task. */
+  public enum RedactionStatus {
+    RUNNING,
+    COMPLETE,
+    FAILED
+  }
+
   /**
-   * Synapse redacts asynchronously: true only once the task completed without failed redactions. A
-   * task still running when the wait ends counts as not done; the cleanup then retries.
+   * COMPLETE only once the task finished without failed redactions; FAILED when it failed or is
+   * unknown to Synapse (submit again); RUNNING while it runs or cannot be read (ask again later).
    */
-  private boolean redactionCompleted(String redactId, HttpHeaders headers)
-      throws InterruptedException {
-    var url =
-        MatrixUrlBuilder.buildUrl(
-            matrixConfig, ENDPOINT_REDACT_STATUS, java.util.Map.of("redactId", redactId));
-    for (int poll = 0; poll < REDACT_STATUS_POLLS; poll++) {
-      if (poll > 0) Thread.sleep(REDACT_STATUS_POLL_MS);
+  public RedactionStatus redactionStatus(String redactId) {
+    try {
+      String adminToken = getAdminToken();
+      if (adminToken == null) return RedactionStatus.RUNNING;
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_REDACT_STATUS, java.util.Map.of("redactId", redactId));
+      var headers = new HttpHeaders();
+      headers.setBearerAuth(adminToken);
       var status =
           restTemplate
               .exchange(
@@ -1029,19 +1040,29 @@ public class MatrixSynapseService implements MatrixUserClient {
               .getBody();
       var state = status == null ? null : status.get("status");
       if ("complete".equals(state)) {
-        return !(status.get("failed_redactions") instanceof java.util.Map<?, ?> failed)
-            || failed.isEmpty();
+        return status.get("failed_redactions") instanceof java.util.Map<?, ?> failed
+                && !failed.isEmpty()
+            ? RedactionStatus.FAILED
+            : RedactionStatus.COMPLETE;
       }
-      if ("failed".equals(state)) return false;
+      return "failed".equals(state) ? RedactionStatus.FAILED : RedactionStatus.RUNNING;
+    } catch (org.springframework.web.client.HttpClientErrorException ex) {
+      if (ex.getStatusCode().value() == 404) return RedactionStatus.FAILED;
+      log.warn("Could not read a Matrix redaction status: {}", ex.getStatusCode().value());
+      return RedactionStatus.RUNNING;
+    } catch (Exception ex) {
+      log.warn("Could not read a Matrix redaction status: {}", ex.getClass().getSimpleName());
+      return RedactionStatus.RUNNING;
     }
-    return false;
   }
 
   /**
-   * Epoch millis of the newest message in a room, 0 when it has none. Read with the admin API, so
-   * the admin need not be a member.
+   * Epoch millis of the newest message-bearing event in a room (plain, encrypted or sticker), 0
+   * when the room has none. Filtered on the server and read with the admin API, so the admin need
+   * not be a member.
    *
-   * @throws RoomEventUnavailableException when Matrix cannot tell
+   * @throws RoomEventUnavailableException when Matrix cannot tell, including events that carry no
+   *     message time: unknown is never "inactive"
    */
   public long latestMessageTimestamp(String roomId) {
     try {
@@ -1052,7 +1073,7 @@ public class MatrixSynapseService implements MatrixUserClient {
               matrixConfig,
               ENDPOINT_ADMIN_ROOM_MESSAGES,
               java.util.Map.of("roomId", roomId),
-              java.util.Map.of("dir", "b", "limit", 50));
+              java.util.Map.of("dir", "b", "limit", 10, "filter", MESSAGE_EVENT_FILTER));
       var headers = new HttpHeaders();
       headers.setBearerAuth(adminToken);
       var body =
@@ -1065,15 +1086,16 @@ public class MatrixSynapseService implements MatrixUserClient {
               .getBody();
       if (body == null || !(body.get("chunk") instanceof java.util.List<?> chunk))
         throw new IllegalStateException("no chunk");
+      if (chunk.isEmpty()) return 0L;
       return chunk.stream()
           .filter(java.util.Map.class::isInstance)
           .map(java.util.Map.class::cast)
-          .filter(event -> "m.room.message".equals(event.get("type")))
+          .filter(event -> MESSAGE_EVENT_TYPES.contains(event.get("type")))
           .map(event -> event.get("origin_server_ts"))
           .filter(Number.class::isInstance)
           .mapToLong(ts -> ((Number) ts).longValue())
           .max()
-          .orElse(0L);
+          .orElseThrow(() -> new IllegalStateException("no message time"));
     } catch (RuntimeException ex) {
       throw new RoomEventUnavailableException(ex);
     }
