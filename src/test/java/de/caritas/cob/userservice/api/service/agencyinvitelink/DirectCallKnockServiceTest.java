@@ -56,6 +56,7 @@ class DirectCallKnockServiceTest {
     when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
     when(sessionRepository.findByIdForUpdate(SESSION_ID)).thenReturn(Optional.of(session));
     when(repository.save(any())).thenAnswer(i -> i.getArgument(0));
+    when(repository.findSessionIdById(any())).thenReturn(Optional.of(SESSION_ID));
   }
 
   @Test
@@ -167,6 +168,30 @@ class DirectCallKnockServiceTest {
     // Idempotent.
     assertThat(service.admit(1L, counsellor).getStatus()).isEqualTo(Status.ADMITTED);
     assertThatThrownBy(() -> service.decline(1L, counsellor)).isInstanceOf(ConflictException.class);
+  }
+
+  /**
+   * Same lock order as knock (conversation, then knock): an admission can never slip between
+   * knock's admission check and its pending lookup and leave a newer pending knock behind.
+   */
+  @Test
+  void decideAndAdmitAll_Should_LockTheConversationBeforeTheKnocks() {
+    when(repository.findByIdForUpdate(1L))
+        .thenReturn(Optional.of(pending(1L, LocalDateTime.now())));
+
+    service.admit(1L, counsellor);
+    var order = inOrder(sessionRepository, repository);
+    order.verify(sessionRepository).findByIdForUpdate(SESSION_ID);
+    order.verify(repository).findByIdForUpdate(1L);
+    // The knock entity is not loaded unlocked first, so no stale copy can be decided.
+    verify(repository, never()).findById(any());
+
+    service.admitAll(counsellor, SESSION_ID, null);
+    order.verify(sessionRepository).findByIdForUpdate(SESSION_ID);
+    order
+        .verify(repository)
+        .findCallKnocksForConsultantForUpdate(
+            eq("counsellor-1"), eq(Via.DIRECT_LINK), eq(Status.PENDING), any(), eq(SESSION_ID));
   }
 
   @Test

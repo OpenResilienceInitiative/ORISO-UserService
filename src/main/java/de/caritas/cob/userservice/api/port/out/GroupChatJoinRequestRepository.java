@@ -26,6 +26,10 @@ public interface GroupChatJoinRequestRepository extends CrudRepository<GroupChat
       Long seriesId, String consultantId);
 
   /** Direct-link call knocks (#1475). */
+  /** A scalar read, so the knock entity is not loaded before it is locked. */
+  @Query("SELECT request.sessionId FROM GroupChatJoinRequest request WHERE request.id = :id")
+  Optional<Long> findSessionIdById(@Param("id") Long id);
+
   /** Newest first, locked: a knock admitted meanwhile must not be superseded from a stale read. */
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query(
