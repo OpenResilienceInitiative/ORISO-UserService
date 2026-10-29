@@ -222,15 +222,44 @@ class MatrixCallGuestServiceTest {
   }
 
   @Test
-  void failedInviteIsReportedAndRecordsNothing() throws Exception {
-    when(matrix.inviteUserToRoom(MEDIA, GUEST, "counsellor-token"))
-        .thenThrow(
-            new de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException("x"));
-    when(matrix.getRoomMembers(MEDIA)).thenReturn(Optional.of(List.of(COUNSELLOR)));
+  void failedInviteWithTheGuestConfirmedAbsentRecordsNothing() throws Exception {
+    failInvite();
+    when(matrix.getRoomMembership(MEDIA, GUEST, "counsellor-token"))
+        .thenReturn(Optional.of("leave"));
 
     assertThat(service.admit(counsellor, SOURCE, "call", "guest").outcome())
         .isEqualTo(Outcome.MATRIX_UNAVAILABLE);
     assertThat(saved).as("reserved seat is withdrawn").isEmpty();
+  }
+
+  /** The invite may have landed although the call threw: the seat must stay for the cleanup. */
+  @Test
+  void failedInviteThatStillLeftAnInviteKeepsTheSeat() throws Exception {
+    failInvite();
+    when(matrix.getRoomMembership(MEDIA, GUEST, "counsellor-token"))
+        .thenReturn(Optional.of("invite"));
+
+    assertThat(service.admit(counsellor, SOURCE, "call", "guest").outcome())
+        .isEqualTo(Outcome.ADMITTED);
+    assertThat(saved).singleElement();
+    verify(guests, never()).delete(any(MatrixCallGuest.class));
+  }
+
+  @Test
+  void failedInviteWithUnreadableMembershipKeepsTheSeat() throws Exception {
+    failInvite();
+    when(matrix.getRoomMembership(MEDIA, GUEST, "counsellor-token")).thenReturn(Optional.empty());
+
+    assertThat(service.admit(counsellor, SOURCE, "call", "guest").outcome())
+        .isEqualTo(Outcome.MATRIX_UNAVAILABLE);
+    assertThat(saved).as("kept for the call-end cleanup").singleElement();
+    verify(guests, never()).delete(any(MatrixCallGuest.class));
+  }
+
+  private void failInvite() throws Exception {
+    when(matrix.inviteUserToRoom(MEDIA, GUEST, "counsellor-token"))
+        .thenThrow(
+            new de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException("x"));
   }
 
   @Test
