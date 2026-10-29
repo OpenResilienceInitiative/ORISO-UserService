@@ -206,7 +206,11 @@ class DirectLinkControllerIT {
     long id = createLink("CHAT");
     String token = linkRepository.findById(id).orElseThrow().getToken();
     when(createNewSessionFacade.initializeNewSession(any(), any(User.class), anyList()))
-        .thenReturn(new NewRegistrationResponseDto().sessionId(9_001L).status(HttpStatus.CREATED));
+        .thenReturn(
+            new NewRegistrationResponseDto()
+                .matrixRoomId("!direct:example")
+                .sessionId(9_001L)
+                .status(HttpStatus.CREATED));
 
     actAsAsker();
     asAsker(post("/users/invitelinks/{token}/conversations", token))
@@ -390,9 +394,15 @@ class DirectLinkControllerIT {
     // As in production: the first visit creates the conversation, later visits reuse it.
     when(createNewSessionFacade.initializeNewSession(any(), any(User.class), anyList()))
         .thenReturn(
-            new NewRegistrationResponseDto().sessionId(sessionId).status(HttpStatus.CREATED))
+            new NewRegistrationResponseDto()
+                .matrixRoomId("!direct:example")
+                .sessionId(sessionId)
+                .status(HttpStatus.CREATED))
         .thenReturn(
-            new NewRegistrationResponseDto().sessionId(sessionId).status(HttpStatus.CONFLICT));
+            new NewRegistrationResponseDto()
+                .matrixRoomId("!direct:example")
+                .sessionId(sessionId)
+                .status(HttpStatus.CONFLICT));
     return linkRepository.findById(id).orElseThrow().getToken();
   }
 

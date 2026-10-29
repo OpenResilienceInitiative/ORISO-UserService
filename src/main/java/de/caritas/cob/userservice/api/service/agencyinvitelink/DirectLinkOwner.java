@@ -28,7 +28,8 @@ final class DirectLinkOwner {
     }
   }
 
-  private static boolean worksFor(Consultant consultant, Long agencyId) {
+  /** One rule for creating a link and for its owner still serving it. */
+  static boolean worksFor(Consultant consultant, Long agencyId) {
     return consultant.getConsultantAgencies() != null
         && consultant.getConsultantAgencies().stream()
             .anyMatch(

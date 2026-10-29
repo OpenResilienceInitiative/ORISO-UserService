@@ -275,6 +275,57 @@ class CreateSessionFacadeTest {
   }
 
   @Test
+  public void createDirectUserSession_Should_returnTheProvisionedRoom_When_theSessionIsNew() {
+    var agencyDTO = new EasyRandom().nextObject(AgencyDTO.class);
+    agencyDTO.setTenantId(41L);
+    var session = new EasyRandom().nextObject(Session.class);
+    session.setMatrixRoomId(null);
+    when(agencyVerifier.getVerifiedAgency(anyLong(), anyInt())).thenReturn(agencyDTO);
+    when(sessionService.findSessionByConsultantAndUserAndConsultingType(any(), any(), any()))
+        .thenReturn(Optional.empty());
+    when(sessionService.initializeDirectSession(any(), any(), any(), anyBoolean()))
+        .thenReturn(session);
+    when(sessionService.saveSession(session)).thenReturn(session);
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              session.setMatrixRoomId("!new:example");
+              return null;
+            })
+        .when(directSessionMatrixRoomService)
+        .provisionRoomForDirectSession(org.mockito.ArgumentMatchers.eq(session), any());
+
+    var result =
+        createSessionFacade.createDirectUserSession(
+            null, mock(UserDTO.class), null, mock(ExtendedConsultingTypeResponseDTO.class));
+
+    assertThat(result.getMatrixRoomId(), is("!new:example"));
+  }
+
+  /** A first visit whose room provisioning failed is repaired by the next visit. */
+  @Test
+  public void
+      createDirectUserSession_Should_provisionTheRoomAgain_When_theExistingSessionHasNone() {
+    var session = new EasyRandom().nextObject(Session.class);
+    session.setMatrixRoomId(null);
+    when(sessionService.findSessionByConsultantAndUserAndConsultingType(any(), any(), any()))
+        .thenReturn(Optional.of(session));
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              session.setMatrixRoomId("!repaired:example");
+              return null;
+            })
+        .when(directSessionMatrixRoomService)
+        .provisionRoomForDirectSession(org.mockito.ArgumentMatchers.eq(session), any());
+
+    var result =
+        createSessionFacade.createDirectUserSession(
+            null, null, null, new ExtendedConsultingTypeResponseDTO());
+
+    assertThat(result.getStatus(), is(HttpStatus.CONFLICT));
+    assertThat(result.getMatrixRoomId(), is("!repaired:example"));
+  }
+
+  @Test
   public void
       createDirectUserSession_Should_returnCreatedWithNewSession_When_userConsultantRelationIsWithOtherConsultingType() {
     var agencyDTO = new EasyRandom().nextObject(AgencyDTO.class);

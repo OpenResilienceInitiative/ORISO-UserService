@@ -298,6 +298,44 @@ class AgencyInviteLinkServiceTest {
 
   // --- redeem ---
 
+  /**
+   * The public context and redeem routes run without a tenant; the owner lookup is tenant-filtered,
+   * so it must run under the link's tenant or a valid direct link reads as inactive.
+   */
+  @Test
+  void directLinkOwnerIsLookedUpUnderTheLinkTenant() {
+    TenantContext.clear();
+    var link =
+        AgencyInviteLink.builder()
+            .token("direct")
+            .status(InviteLinkStatus.ACTIVE.name())
+            .tenantId(83L)
+            .linkKind(InviteLinkKind.COUNSELLOR.name())
+            .chatType(InviteLinkChatType.CHAT.name())
+            .consultantId("owner")
+            .agencyId(5L)
+            .consultingTypeId(1)
+            .build();
+    var owner = new Consultant();
+    owner.setId("owner");
+    var membership = new de.caritas.cob.userservice.api.model.ConsultantAgency();
+    membership.setAgencyId(5L);
+    owner.setConsultantAgencies(java.util.Set.of(membership));
+    when(repository.findByToken("direct")).thenReturn(Optional.of(link));
+    when(repository.findByTokenAndStatus("direct", InviteLinkStatus.ACTIVE.name()))
+        .thenReturn(Optional.of(link));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("owner"))
+        .thenAnswer(
+            call ->
+                Long.valueOf(83L).equals(TenantContext.getCurrentTenant())
+                    ? Optional.of(owner)
+                    : Optional.empty());
+
+    assertThat(service.getContext("direct").agencyId()).isEqualTo(5L);
+    assertThat(service.redeem("direct").getAgencyId()).isEqualTo(5L);
+    assertThat(TenantContext.getCurrentTenant()).isNull();
+  }
+
   @Test
   void redeem_Should_ThrowNotFound_When_TokenDoesNotExist() {
     when(repository.findByTokenAndStatus("bad-token", InviteLinkStatus.ACTIVE.name()))
