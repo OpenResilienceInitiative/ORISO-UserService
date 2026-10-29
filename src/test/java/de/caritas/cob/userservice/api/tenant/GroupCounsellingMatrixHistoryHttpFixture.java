@@ -55,6 +55,7 @@ abstract class GroupCounsellingMatrixHistoryHttpFixture extends GroupCounselling
   protected String historyBodyOverride;
   protected boolean historyNon200;
   protected boolean matrixInviteDenied;
+  protected boolean matrixMemberBanned;
   protected boolean snapshotUnavailable;
   protected int snapshotCount;
   protected boolean forgetUnavailable;
@@ -227,6 +228,16 @@ abstract class GroupCounsellingMatrixHistoryHttpFixture extends GroupCounselling
     if (path.startsWith("/_synapse/admin/v1/rooms/") && path.endsWith("/members")) {
       memberReads.incrementAndGet();
       return withSuccess(members, MediaType.APPLICATION_JSON).createResponse(request);
+    }
+    if (path.startsWith("/_synapse/admin/v1/rooms/") && path.endsWith("/state")) {
+      var membership = matrixMemberBanned ? "ban" : "leave";
+      return withSuccess(
+              "{\"state\":[{\"type\":\"m.room.member\",\"state_key\":"
+                  + "\"@synthetic-former:synthetic.oriso.test\",\"content\":{\"membership\":\""
+                  + membership
+                  + "\"}}]}",
+              MediaType.APPLICATION_JSON)
+          .createResponse(request);
     }
     if (path.endsWith("/invite")
         || path.endsWith("/join")

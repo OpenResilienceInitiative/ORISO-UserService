@@ -9,6 +9,9 @@ public interface MatrixCallBindingRepository extends JpaRepository<MatrixCallBin
 
   Optional<MatrixCallBinding> findByMediaRoomId(String mediaRoomId);
 
+  /** A call ran or runs in this conversation room (#1487 knock scope). */
+  boolean existsBySourceRoomId(String sourceRoomId);
+
   @org.springframework.data.jpa.repository.Query(
       "select b.mediaRoomId from MatrixCallBinding b where b.mediaRoomId in :rooms")
   java.util.Set<String> findKnownMediaRooms(
@@ -37,4 +40,7 @@ public interface MatrixCallBindingRepository extends JpaRepository<MatrixCallBin
       "select b from MatrixCallBinding b where b.mediaRoomId = :room")
   Optional<MatrixCallBinding> lockByMediaRoomId(
       @org.springframework.data.repository.query.Param("room") String room);
+
+  /** Calls of the given sessions, for the temporary-account cleanup (#1476). */
+  java.util.List<MatrixCallBinding> findBySessionIdIn(java.util.Collection<Long> sessionIds);
 }

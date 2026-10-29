@@ -381,6 +381,15 @@ public class GroupChatMembershipService {
     return user.getUserId() != null && user.getUserId().startsWith(GROUP_CHAT_SYSTEM_USER_PREFIX);
   }
 
+  /** Whether the member is banned from the chat's room; empty when unknown. */
+  public Optional<Boolean> isBannedFromRoom(Chat chat, String memberMatrixUserId) {
+    var matrixRoomId = resolveMatrixRoomId(chat);
+    if (isBlank(matrixRoomId) || isBlank(memberMatrixUserId)) {
+      return Optional.empty();
+    }
+    return matrixSynapseService.isBannedFromRoom(matrixRoomId, memberMatrixUserId);
+  }
+
   /**
    * Resolves the Matrix room ID of a group chat.
    *

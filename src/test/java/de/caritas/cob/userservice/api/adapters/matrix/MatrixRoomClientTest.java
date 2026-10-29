@@ -66,6 +66,33 @@ class MatrixRoomClientTest {
         .thenAnswer(invocation -> API_URL + invocation.getArgument(0, String.class));
   }
 
+  /** A RestTemplate message can carry the request URL, and with it the Matrix user ID. */
+  @Test
+  void guestCleanupFailuresAreLoggedWithoutTheRestTemplateMessage() {
+    var failure = new org.springframework.web.client.ResourceAccessException("GET " + USER_ID);
+    when(restTemplate.postForEntity(
+            org.mockito.ArgumentMatchers.any(URI.class),
+            org.mockito.ArgumentMatchers.any(),
+            eq(Map.class)))
+        .thenThrow(failure);
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.any(URI.class),
+            eq(HttpMethod.GET),
+            org.mockito.ArgumentMatchers.any(),
+            eq(Map.class)))
+        .thenThrow(failure);
+
+    try (var logs =
+        de.caritas.cob.userservice.testutils.LogbackCaptor.forClass(MatrixRoomClient.class)) {
+      assertThat(matrixRoomClient.kickUserFromRoom(ROOM_ID, USER_ID, ACCESS_TOKEN)).isFalse();
+      assertThat(matrixRoomClient.getRoomMembership(ROOM_ID, USER_ID, ACCESS_TOKEN)).isEmpty();
+      assertThat(matrixRoomClient.clearUserPowerLevel(ROOM_ID, USER_ID, ACCESS_TOKEN)).isFalse();
+      assertThat(logs.messages(ch.qos.logback.classic.Level.WARN))
+          .hasSize(3)
+          .allSatisfy(message -> assertThat(message).doesNotContain(USER_ID));
+    }
+  }
+
   @Test
   void createRoom_ShouldSendPrivateRoomCreationRequest() throws Exception {
     var responseBody = new MatrixCreateRoomResponseDTO();

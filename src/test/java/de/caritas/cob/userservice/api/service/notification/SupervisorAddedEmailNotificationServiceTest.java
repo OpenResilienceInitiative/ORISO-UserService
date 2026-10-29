@@ -1076,4 +1076,77 @@ class SupervisorAddedEmailNotificationServiceTest {
         .contains("Nord Beratung", "nord/impressum", "nord/datenschutz");
     verify(resolver).resolve(1L);
   }
+
+  // ── FE#1876 topic duplicate mail ─────────────────────────────────────────
+
+  private Consultant topicDuplicateCounsellor() {
+    Consultant counsellor = new Consultant();
+    counsellor.setId("old-counsellor");
+    counsellor.setTenantId(3L);
+    counsellor.setEmail("old@example.org");
+    counsellor.setLanguageCode(LanguageCode.de);
+    counsellor.setNotificationsEnabled(true);
+    return counsellor;
+  }
+
+  @Test
+  void topicDuplicateMailGoesToTheExistingCounsellorWithTheChatLink() {
+    var route = routeSettings();
+    when(emailRoutes.resolve(3L)).thenReturn(Optional.of(route));
+
+    service.notifyTopicDuplicateStarted(topicDuplicateCounsellor(), 41L, null);
+
+    var mail = ArgumentCaptor.forClass(OrisoEmailRenderer.RenderedEmail.class);
+    verify(emailDelivery)
+        .send(
+            eq(3L),
+            eq(route),
+            eq(TenantSystemEmailDelivery.Purpose.NEW_MESSAGE),
+            eq("old@example.org"),
+            mail.capture());
+    assertThat(mail.getValue().text())
+        .contains("weitere Beratung begonnen")
+        .contains("/sessions/consultant/sessionView/session/41");
+  }
+
+  @Test
+  void topicDuplicateMailRespectsTheSwitchedOffMailPreference() {
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
+    var counsellor = topicDuplicateCounsellor();
+    counsellor.setNotificationsSettings("{\"newChatMessageNotificationEnabled\":true}");
+    counsellor.setNotificationsEnabled(false);
+
+    service.notifyTopicDuplicateStarted(counsellor, 41L, null);
+
+    verify(emailDelivery, never()).send(anyLong(), any(), any(), any(), any());
+  }
+
+  @Test
+  void topicDuplicateMailRespectsTheAdviceSeekerMessageSwitch() {
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
+    var counsellor = topicDuplicateCounsellor();
+    counsellor.setNotifyNewChatMessageFromAdviceSeeker(false);
+
+    service.notifyTopicDuplicateStarted(counsellor, 41L, null);
+
+    verify(emailDelivery, never()).send(anyLong(), any(), any(), any(), any());
+  }
+
+  @Test
+  void topicDuplicateMailRespectsTheSwitchedOffChatMessageSwitch() {
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
+    var counsellor = topicDuplicateCounsellor();
+    counsellor.setNotificationsSettings("{\"newChatMessageNotificationEnabled\":false}");
+
+    service.notifyTopicDuplicateStarted(counsellor, 41L, null);
+
+    verify(emailDelivery, never()).send(anyLong(), any(), any(), any(), any());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"de", "en", "fr", "ru", "ti", "tr"})
+  void topicDuplicateStatementExistsInEveryLanguage(String language) {
+    assertThat(service.staffStatementTopicDuplicateStarted(LanguageCode.valueOf(language)))
+        .isNotBlank();
+  }
 }

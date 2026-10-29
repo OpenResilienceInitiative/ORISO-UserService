@@ -692,6 +692,17 @@ class GroupCounsellingMatrixReturnIT extends GroupCounsellingMatrixHistoryHttpFi
   }
 
   @Test
+  void aBannedMemberIsRefusedWithAReasonInsteadOfAServerError() throws Exception {
+    Chat chat = activeChat();
+    matrixInviteDenied = true;
+    matrixMemberBanned = true;
+    var result = join(chat, assignedUser(chat));
+    assertEquals(403, result.statusCode(), result.body());
+    assertEquals("USER_BANNED_FROM_CHAT", result.headers().firstValue("X-Reason").orElse(""));
+    assertEquals(1, matrixWrites.get());
+  }
+
+  @Test
   void laterOccurrenceModeratorBatchFailsSafelyDuringHistoryOutage() throws Exception {
     Chat chat = storedChat(ConversationType.SELF_HELP);
     chat.setCurrentOccurrenceIndex(1);

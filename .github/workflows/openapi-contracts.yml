@@ -47,8 +47,9 @@ jobs:
       uses: actions/checkout@v6
       with:
         repository: OpenResilienceInitiative/ORISO-ConsultingTypeService
-        # CTS#163 and CTS#164 are both merged: pin one-topic settings plus SMTP fields.
-        ref: ${{ github.event_name == 'pull_request' && 'af24ae579ff86b8ec18a9cd3a34a0f63f288b646' || 'dev' }}
+        # CTS dev after PR184 merge: one-topic settings and SMTP fields plus the
+        # furtherCounsellingPostcodeMode and topicDuplicateMode settings consumed here.
+        ref: ${{ github.event_name == 'pull_request' && '77dab765598676420690ce637c5d95b1c5cd4799' || 'dev' }}
         path: .providers/consulting
         persist-credentials: false
 
