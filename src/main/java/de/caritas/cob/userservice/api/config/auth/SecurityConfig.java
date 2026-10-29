@@ -437,6 +437,8 @@ public class SecurityConfig {
                     "/users/sessions/new/{sessionId:[0-9]+}",
                     "/users/consultants/absences",
                     "/users/sessions/consultants",
+                    "/users/sessions/consultants/deleted-askers",
+                    "/service/users/sessions/consultants/deleted-askers",
                     "/users/sessions/teams",
                     "/conversations/askers/anonymous/{sessionId:[0-9]+}/accept",
                     "/service/conversations/askers/anonymous/{sessionId:[0-9]+}/accept",

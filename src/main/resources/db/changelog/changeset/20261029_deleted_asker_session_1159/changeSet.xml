@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- ORISO-Frontend#1159: placeholder without personal data for a deleted advice-seeker chat. -->
+  <changeSet id="20261029-deleted-asker-session-1159" author="oriso">
+    <createTable tableName="deleted_asker_session">
+      <column name="id" type="BIGINT" autoIncrement="true"><constraints primaryKey="true" nullable="false"/></column>
+      <column name="consultant_id" type="VARCHAR(36)"><constraints nullable="false"/></column>
+      <column name="former_session_id" type="BIGINT"><constraints nullable="false"/></column>
+      <column name="agency_id" type="BIGINT"/>
+      <column name="tenant_id" type="BIGINT"/>
+      <column name="deleted_at" type="DATETIME(6)"><constraints nullable="false"/></column>
+    </createTable>
+    <addUniqueConstraint tableName="deleted_asker_session"
+      columnNames="consultant_id, former_session_id"
+      constraintName="uq_deleted_asker_session_consultant_session"/>
+    <createIndex tableName="deleted_asker_session" indexName="idx_deleted_asker_session_deleted_at">
+      <column name="deleted_at"/>
+    </createIndex>
+    <rollback><dropTable tableName="deleted_asker_session"/></rollback>
+  </changeSet>
+</databaseChangeLog>

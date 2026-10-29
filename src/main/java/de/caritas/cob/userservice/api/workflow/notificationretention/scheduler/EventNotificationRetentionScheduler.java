@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.workflow.notificationretention.scheduler;
 
+import de.caritas.cob.userservice.api.service.session.DeletedAskerSessionService;
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.api.workflow.notificationretention.service.EventNotificationRetentionService;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
@@ -18,6 +19,7 @@ public class EventNotificationRetentionScheduler {
   private static final String TASK_NAME = "event-notification-retention";
 
   private final @NonNull EventNotificationRetentionService eventNotificationRetentionService;
+  private final @NonNull DeletedAskerSessionService deletedAskerSessionService;
   private final @NonNull TenantContextProvider tenantContextProvider;
   private final @NonNull ScheduledTaskClaimService taskClaimService;
 
@@ -32,5 +34,7 @@ public class EventNotificationRetentionScheduler {
     }
     tenantContextProvider.setTechnicalContextIfMultiTenancyIsEnabled();
     this.eventNotificationRetentionService.purgeExpiredNotifications();
+    // ORISO-Frontend#1159: deleted-asker placeholders age out on the same nightly run.
+    this.deletedAskerSessionService.purgeExpired();
   }
 }

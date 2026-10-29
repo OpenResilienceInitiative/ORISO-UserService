@@ -25,6 +25,10 @@ class EventNotificationRetentionSchedulerTest {
 
   @Mock private TenantContextProvider tenantContextProvider;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.session.DeletedAskerSessionService
+      deletedAskerSessionService;
+
   @Mock private ScheduledTaskClaimService taskClaimService;
 
   @BeforeEach
@@ -41,6 +45,7 @@ class EventNotificationRetentionSchedulerTest {
 
     verify(tenantContextProvider).setTechnicalContextIfMultiTenancyIsEnabled();
     verify(eventNotificationRetentionService).purgeExpiredNotifications();
+    verify(deletedAskerSessionService).purgeExpired();
   }
 
   /** Every replica runs the same cron, so exactly one of them may do the deleting. */
@@ -51,6 +56,7 @@ class EventNotificationRetentionSchedulerTest {
 
     eventNotificationRetentionScheduler.purgeExpiredNotifications();
 
-    verifyNoInteractions(tenantContextProvider, eventNotificationRetentionService);
+    verifyNoInteractions(
+        tenantContextProvider, eventNotificationRetentionService, deletedAskerSessionService);
   }
 }

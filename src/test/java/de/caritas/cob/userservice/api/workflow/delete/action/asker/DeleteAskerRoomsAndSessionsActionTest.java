@@ -65,6 +65,10 @@ class DeleteAskerRoomsAndSessionsActionTest {
 
   @Mock private TeamDiscussionPurgeService teamDiscussionPurgeService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.session.DeletedAskerSessionService
+      deletedAskerSessionService;
+
   private LogbackCaptor logCaptor;
 
   @BeforeEach
@@ -110,6 +114,37 @@ class DeleteAskerRoomsAndSessionsActionTest {
     InOrder dependencyOrder = inOrder(this.sessionTopicRepository, this.sessionRepository);
     dependencyOrder.verify(this.sessionTopicRepository).deleteAllBySessionId(session.getId());
     dependencyOrder.verify(this.sessionRepository).delete(session);
+  }
+
+  @Test
+  void execute_Should_recordThePlaceholderBeforeTheSessionIsDeleted() {
+    Session session = new EasyRandom().nextObject(Session.class);
+    when(this.sessionRepository.findByUser(any())).thenReturn(singletonList(session));
+
+    this.deleteAskerRoomsAndSessionsAction.execute(
+        new AskerDeletionWorkflowDTO(new User(), new ArrayList<>()));
+
+    // ORISO-Frontend#1159: the placeholder needs the session's counsellor and centre, so it must
+    // be written while the row still exists.
+    InOrder order = inOrder(deletedAskerSessionService, this.sessionRepository);
+    order.verify(deletedAskerSessionService).recordDeletion(session);
+    order.verify(this.sessionRepository).delete(session);
+  }
+
+  @Test
+  void execute_Should_stillDeleteTheSession_When_recordingThePlaceholderFails() {
+    Session session = new EasyRandom().nextObject(Session.class);
+    when(this.sessionRepository.findByUser(any())).thenReturn(singletonList(session));
+    doThrow(new RuntimeException("placeholder failed"))
+        .when(deletedAskerSessionService)
+        .recordDeletion(any());
+    AskerDeletionWorkflowDTO workflowDTO =
+        new AskerDeletionWorkflowDTO(new User(), new ArrayList<>());
+
+    this.deleteAskerRoomsAndSessionsAction.execute(workflowDTO);
+
+    assertThat(workflowDTO.getDeletionWorkflowErrors(), hasSize(0));
+    verify(this.sessionRepository).delete(session);
   }
 
   @Test

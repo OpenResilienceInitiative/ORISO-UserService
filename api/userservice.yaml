@@ -1989,6 +1989,32 @@ paths:
           description: BAD GATEWAY - contact service lookup failed; no upstream details returned
       security:
         - Bearer: [ ]
+  /users/sessions/consultants/deleted-askers:
+    get:
+      tags: [deleted-asker-session-controller]
+      summary: Placeholders for the calling counsellor's deleted advice-seeker chats
+      description: >-
+        Also available with /service prefix. Lists, newest first, the cases of the calling
+        counsellor whose advice seeker deleted the chat or account (or whose account was deleted
+        automatically) within the retention period. Carries no personal data (ORISO-Frontend#1159).
+      operationId: getDeletedAskerSessions
+      # Dedicated handwritten controller owns both prefixes; prevent a duplicate UsersApi mapping.
+      x-internal: true
+      responses:
+        '200':
+          description: Placeholders, possibly empty
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DeletedAskerSessionDTO'
+        '401':
+          description: Authentication required
+        '403':
+          description: Not a counsellor
+      security:
+        - Bearer: []
   /users/sessions/{sessionId}/case-handover/consent-preference:
     get:
       tags: [case-handover-controller]
@@ -3334,6 +3360,22 @@ components:
           type: boolean
           nullable: false
           description: Ask before future allowed additional access; not approval of a current request
+    DeletedAskerSessionDTO:
+      type: object
+      description: Placeholder for a deleted advice-seeker chat; contains no personal data.
+      required: [formerSessionId, deletedAt]
+      properties:
+        formerSessionId:
+          type: integer
+          format: int64
+          description: Id the deleted session had; lets the client drop duplicates
+        agencyId:
+          type: integer
+          format: int64
+        deletedAt:
+          type: string
+          format: date-time
+          description: When the chat was deleted (UTC)
     CaseHandoverConsentPreferenceDTO:
       type: object
       required: [sessionId, alwaysAskBeforeAdditionalAccess]
