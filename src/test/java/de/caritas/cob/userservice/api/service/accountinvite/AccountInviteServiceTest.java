@@ -327,6 +327,38 @@ class AccountInviteServiceTest {
   }
 
   @Test
+  void resendInvite_Should_NotCarryALegacyWaiverIntoTheReplacement() {
+    AccountInvite oldInvite =
+        AccountInvite.builder()
+            .id(10L)
+            .tenantId(7L)
+            .recipientEmail("counsellor@example.org")
+            .firstName("Grace")
+            .targetRole(AccountInviteTargetRole.COUNSELLOR)
+            .status(AccountInviteStatus.EMAIL_SENT)
+            .twoFactorStatus(TwoFactorGateStatus.WAIVED)
+            .build();
+    InviteEmailTemplate template =
+        InviteEmailTemplate.builder()
+            .id(20L)
+            .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+            .subject("Again")
+            .body("Use {{inviteLink}}")
+            .active(true)
+            .build();
+    when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(oldInvite));
+    when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
+    when(accountInviteRepository.saveAndFlush(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    givenSuccessfulDispatch();
+
+    var result = service.resendInvite(new SendInviteCommand(10L, 20L));
+
+    assertThat(result.invite().getTwoFactorStatus()).isEqualTo(TwoFactorGateStatus.PENDING_SETUP);
+    assertThat(oldInvite.getTwoFactorStatus()).isEqualTo(TwoFactorGateStatus.WAIVED);
+  }
+
+  @Test
   void genericHistoryResendDelegatesOnlyTheScopedSelectedSetupRow() {
     AccountInvite selected =
         AccountInvite.builder()

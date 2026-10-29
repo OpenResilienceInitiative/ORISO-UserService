@@ -575,7 +575,11 @@ public class AccountInviteService {
                       .expiresAt(resolveExpiry(now, DEFAULT_EXPIRY_DAYS))
                       .status(AccountInviteStatus.EMAIL_SENT)
                       .emailVerificationStatus(oldInvite.getEmailVerificationStatus())
-                      .twoFactorStatus(oldInvite.getTwoFactorStatus())
+                      .twoFactorStatus(
+                          // A legacy waiver never carries over: new staff accounts owe 2FA.
+                          oldInvite.getTwoFactorStatus() == TwoFactorGateStatus.WAIVED
+                              ? defaultTwoFactorStatus(oldInvite.getTargetRole())
+                              : oldInvite.getTwoFactorStatus())
                       .createdByUserId(authenticatedUser.getUserId())
                       .createdByUsername(authenticatedUser.getUsername())
                       .createDate(now)
