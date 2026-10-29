@@ -131,6 +131,26 @@ class MatrixCallGuestServiceTest {
   }
 
   @Test
+  void counsellorsInConversationAreTheTraegersCounsellorsAmongItsMembers() throws Exception {
+    when(matrix.getCallRoomMembers(SOURCE))
+        .thenReturn(Optional.of(List.of(COUNSELLOR, GUEST, "@foreign:example", "@second:example")));
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull(COUNSELLOR))
+        .thenReturn(Optional.of(consultant("counsellor", COUNSELLOR, 7L)));
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull("@foreign:example"))
+        .thenReturn(Optional.of(consultant("foreign", "@foreign:example", 8L)));
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull("@second:example"))
+        .thenReturn(Optional.of(consultant("second", "@second:example", 7L)));
+
+    assertThat(service.counsellorsInConversation(7L, SOURCE))
+        .containsExactly("counsellor", "second");
+  }
+
+  @Test
+  void counsellorsInConversationIsEmptyForAnotherTraegersConversation() throws Exception {
+    assertThat(service.counsellorsInConversation(8L, SOURCE)).isEmpty();
+  }
+
+  @Test
   void guestFromAnotherTenantIsRefused() throws Exception {
     when(users.findByUserIdAndDeleteDateIsNull("guest"))
         .thenReturn(Optional.of(user("guest", GUEST, 8L)));

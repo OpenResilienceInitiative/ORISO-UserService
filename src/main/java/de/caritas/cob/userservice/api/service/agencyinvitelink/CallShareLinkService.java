@@ -18,6 +18,7 @@ import de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService.Outc
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.Base64;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -162,7 +163,7 @@ public class CallShareLinkService {
    * A guest opens the link. With "Anklopfen" on, the guest knocks and waits for the counsellor; an
    * earlier admission on this link holds (let in once). Otherwise, or once admitted, the guest is
    * seated in the call room only, on the authority of the counsellor who admitted them (any
-   * counsellor in the call may), else of the counsellor who created the link.
+   * counsellor in the call may), else of the link owner, else of any counsellor still in it.
    */
   @Transactional
   public Join join(String token, User guest) {
@@ -344,25 +345,42 @@ public class CallShareLinkService {
     return bindings.findById(link.getCallBindingId()).orElseThrow(CallShareLinkEndedException::new);
   }
 
-  /** The admitting counsellor may have left the call meanwhile; the link owner then vouches. */
+  /**
+   * The admitting counsellor, then the link owner, then any other counsellor still in the
+   * conversation vouches: either may have left it while the call runs on.
+   */
   private Admission seatOnAuthority(
       AgencyInviteLink link, MatrixCallBinding binding, GroupChatJoinRequest admitted, User guest) {
-    var admitter = admitted == null ? null : admitted.getDecidedBy();
-    if (admitter != null && !admitter.equals(link.getConsultantId())) {
-      var seat =
-          callGuests.admitAs(
-              link.getTenantId(),
-              admitter,
-              binding.getSourceRoomId(),
-              binding.getCallId(),
-              guest.getUserId());
+    var tried = new LinkedHashSet<String>();
+    if (admitted != null && admitted.getDecidedBy() != null) {
+      tried.add(admitted.getDecidedBy());
+    }
+    tried.add(link.getConsultantId());
+    var seat = new Admission(Outcome.NOT_FOUND, null, null, null);
+    for (var counsellor : tried) {
+      seat = admitAs(link, binding, counsellor, guest);
       if (seat.outcome() != Outcome.NOT_FOUND) {
         return seat;
       }
     }
+    for (var counsellor :
+        callGuests.counsellorsInConversation(link.getTenantId(), binding.getSourceRoomId())) {
+      if (tried.contains(counsellor)) {
+        continue;
+      }
+      seat = admitAs(link, binding, counsellor, guest);
+      if (seat.outcome() != Outcome.NOT_FOUND) {
+        return seat;
+      }
+    }
+    return seat;
+  }
+
+  private Admission admitAs(
+      AgencyInviteLink link, MatrixCallBinding binding, String counsellor, User guest) {
     return callGuests.admitAs(
         link.getTenantId(),
-        link.getConsultantId(),
+        counsellor,
         binding.getSourceRoomId(),
         binding.getCallId(),
         guest.getUserId());

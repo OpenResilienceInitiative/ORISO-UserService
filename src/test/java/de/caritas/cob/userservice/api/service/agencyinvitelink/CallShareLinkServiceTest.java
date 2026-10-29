@@ -380,6 +380,32 @@ class CallShareLinkServiceTest {
   }
 
   @Test
+  void
+      join_Should_SeatOnAnotherCounsellorsAuthority_When_TheLinkOwnerIsNoLongerInTheConversation() {
+    joinable(false);
+    when(callGuests.admitAs(TENANT, COUNSELLOR, SOURCE, CALL_ID, "guest-1"))
+        .thenReturn(new Admission(Outcome.NOT_FOUND, null, null, null));
+    when(callGuests.counsellorsInConversation(TENANT, SOURCE)).thenReturn(List.of("co-moderator"));
+    when(callGuests.admitAs(TENANT, "co-moderator", SOURCE, CALL_ID, "guest-1"))
+        .thenReturn(new Admission(Outcome.ADMITTED, MEDIA, "@guest:example", 1L));
+
+    var join = service.join("token-5", guest);
+
+    assertThat(join.callAdmitted()).isTrue();
+    assertThat(join.admission()).isEqualTo(InviteLinkAdmission.DIRECT);
+  }
+
+  @Test
+  void join_Should_Return404_When_NoCounsellorIsLeftInTheConversation() {
+    joinable(false);
+    when(callGuests.admitAs(TENANT, COUNSELLOR, SOURCE, CALL_ID, "guest-1"))
+        .thenReturn(new Admission(Outcome.NOT_FOUND, null, null, null));
+    when(callGuests.counsellorsInConversation(TENANT, SOURCE)).thenReturn(List.of());
+
+    assertThatThrownBy(() -> service.join("token-5", guest)).isInstanceOf(NotFoundException.class);
+  }
+
+  @Test
   void join_Should_Return403_ForAGuestOfAnotherTraeger() {
     joinable(false);
     guest.setTenantId(8L);

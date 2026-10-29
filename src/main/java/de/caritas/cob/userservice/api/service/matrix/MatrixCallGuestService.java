@@ -111,6 +111,27 @@ public class MatrixCallGuestService {
   }
 
   /**
+   * The counsellors of {@code tenant} who are members of conversation {@code sourceRoomId}; empty
+   * for another Träger's conversation or when Matrix cannot tell.
+   */
+  @Transactional(readOnly = true)
+  public List<String> counsellorsInConversation(Long tenant, String sourceRoomId) {
+    if (tenant == null || blank(sourceRoomId)) return List.of();
+    var conversation =
+        conversations
+            .resolve(sourceRoomId)
+            .filter(value -> tenant.equals(value.getTenantId()))
+            .orElse(null);
+    if (conversation == null) return List.of();
+    return matrix.getCallRoomMembers(sourceRoomId).orElse(List.of()).stream()
+        .map(consultants::findByMatrixUserIdAndDeleteDateIsNull)
+        .flatMap(Optional::stream)
+        .filter(value -> tenant.equals(value.getTenantId()))
+        .map(value -> value.getId())
+        .toList();
+  }
+
+  /**
    * Seats {@code guestUserId} in the running call on the authority of counsellor {@code
    * consultantId}: the counsellor's own admission (US#1477), or the share link they created
    * (US#1487).
