@@ -15,7 +15,7 @@
 	<parent>
 		<groupId>org.springframework.boot</groupId>
 		<artifactId>spring-boot-starter-parent</artifactId>
-		<version>4.0.8</version>
+		<version>4.1.2</version>
 		<relativePath /> <!-- lookup parent from repository -->
 	</parent>
 
@@ -32,21 +32,21 @@
 		<skip.integration-tests>false</skip.integration-tests>
 		<!-- Server is Keycloak 26.x; the deprecated 17.x spring adapters were removed
 		     (unused since the resource-server migration, flagged by the image CVE gate). -->
-		<keycloak-admin-client.version>26.0.4</keycloak-admin-client.version>
-		<springfox.version>2.9.2</springfox.version>
-		<spring-plugin-core.version>4.0.0</spring-plugin-core.version>
-		<openapi.generator.maven.version>7.17.0</openapi.generator.maven.version>
+		<keycloak-admin-client.version>26.0.12</keycloak-admin-client.version>
+		<springfox.version>2.10.5</springfox.version>
+		<spring-plugin-core.version>4.1.0</spring-plugin-core.version>
+		<openapi.generator.maven.version>7.26.0</openapi.generator.maven.version>
 		<adapters.web.generated.path>
 			${project.groupId}.${project.artifactId}.generated.api.adapters.web
 		</adapters.web.generated.path>
 		<adapters.web.dto.path>
 			${project.groupId}.${project.artifactId}.api.adapters.web.dto
 		</adapters.web.dto.path>
-		<log4j.version>2.25.5</log4j.version> <!-- force safe version due to https://logging.apache.org/log4j/2.x/security.html -->
-		<commons-text.version>1.10.0</commons-text.version>
-		<commons-validator.version>1.10.1</commons-validator.version>
-		<liquibase.version>4.27.0</liquibase.version>
-		<snakeyaml.version>2.0</snakeyaml.version>
+		<log4j.version>2.26.1</log4j.version> <!-- force safe version due to https://logging.apache.org/log4j/2.x/security.html -->
+		<commons-text.version>1.15.0</commons-text.version>
+		<commons-validator.version>1.11.0</commons-validator.version>
+		<liquibase.version>4.33.0</liquibase.version>
+		<snakeyaml.version>2.7</snakeyaml.version>
 		<jakarta.ws.rs-api.version>3.1.0</jakarta.ws.rs-api.version>
 		<javax.ws.rs-api.version>2.1.1</javax.ws.rs-api.version>
 		<json-smart.version>2.6.0</json-smart.version>
@@ -81,7 +81,7 @@
 		<rabbit-amqp-client.version>5.34.0</rabbit-amqp-client.version>
 		<springfox-swagger-ui.version>2.10.0</springfox-swagger-ui.version>
 		<testcontainers.version>1.21.4</testcontainers.version>
-		<lombok.version>1.18.42</lombok.version>
+		<lombok.version>1.18.48</lombok.version>
 	</properties>
 
 	<dependencies>
@@ -185,7 +185,7 @@
 		<dependency>
 			<groupId>com.google.protobuf</groupId>
 			<artifactId>protobuf-java</artifactId>
-			<version>4.32.0</version>
+			<version>4.36.2</version>
 		</dependency>
 
 		<!-- Spring actuator  -->
@@ -222,12 +222,12 @@
 		<dependency>
 			<groupId>org.openapitools</groupId>
 			<artifactId>jackson-databind-nullable</artifactId>
-			<version>0.2.2</version>
+			<version>0.2.13</version>
 		</dependency>
 		<dependency>
 			<groupId>io.swagger.core.v3</groupId>
 			<artifactId>swagger-annotations</artifactId>
-			<version>2.2.15</version>
+			<version>2.2.55</version>
 		</dependency>
 		<dependency>
 			<groupId>com.fasterxml.jackson.datatype</groupId>
@@ -237,7 +237,7 @@
 		<dependency>
 			<groupId>org.codehaus.plexus</groupId>
 			<artifactId>plexus-utils</artifactId>
-			<version>3.6.1</version>
+			<version>3.6.2</version>
 		</dependency>
 		<!-- SpringFox: generate YAML file from POJOs and generate documentation -->
 		<dependency>
@@ -278,7 +278,7 @@
 		<dependency>
 			<groupId>com.github.jknack</groupId>
 			<artifactId>handlebars</artifactId>
-			<version>4.5.2</version>
+			<version>4.5.7</version>
 		</dependency>
 
 		<!-- Apache Commons Lang -->
@@ -342,7 +342,7 @@
 		<dependency>
 			<groupId>net.logstash.logback</groupId>
 			<artifactId>logstash-logback-encoder</artifactId>
-			<version>7.0.1</version>
+			<version>7.4</version>
 		</dependency>
 
 		<dependency>
@@ -354,12 +354,12 @@
 		<dependency>
 			<groupId>org.apache.commons</groupId>
 			<artifactId>commons-csv</artifactId>
-			<version>1.8</version>
+			<version>1.14.1</version>
 		</dependency>
 		<dependency>
 			<groupId>org.passay</groupId>
 			<artifactId>passay</artifactId>
-			<version>1.6.1</version>
+			<version>1.6.6</version>
 		</dependency>
 
 		<dependency>
@@ -381,7 +381,7 @@
 		<dependency>
 			<groupId>com.google.firebase</groupId>
 			<artifactId>firebase-admin</artifactId>
-			<version>9.10.0</version>
+			<version>9.11.0</version>
 		</dependency>
 
 		<!-- Test scope dependencies -->
@@ -389,7 +389,7 @@
 			<groupId>com.h2database</groupId>
 			<artifactId>h2</artifactId>
 			<scope>test</scope>
-			<version>2.2.220</version>
+			<version>2.5.252</version>
 		</dependency>
 		<dependency>
 			<groupId>org.jeasy</groupId>
@@ -425,20 +425,20 @@
 		<dependency>
 			<groupId>org.mockito</groupId>
 			<artifactId>mockito-core</artifactId>
-			<version>5.12.0</version>
+			<version>5.24.0</version>
 			<scope>test</scope>
 		</dependency>
 		<dependency>
 			<groupId>org.mockito</groupId>
 			<artifactId>mockito-junit-jupiter</artifactId>
-			<version>5.12.0</version>
+			<version>5.24.0</version>
 			<scope>test</scope>
 		</dependency>
 		<!-- https://mvnrepository.com/artifact/net.bytebuddy/byte-buddy -->
 		<dependency>
 			<groupId>net.bytebuddy</groupId>
 			<artifactId>byte-buddy</artifactId>
-			<version>1.14.15</version>
+			<version>1.18.16</version>
 		</dependency>
 
 
@@ -451,7 +451,7 @@
     <dependency>
       <groupId>org.apache.commons</groupId>
       <artifactId>commons-collections4</artifactId>
-			<version>4.4</version>
+			<version>4.6.0</version>
     </dependency>
 		<dependency>
 			<groupId>org.awaitility</groupId>
@@ -473,21 +473,21 @@
 		<dependency>
 			<groupId>net.java.dev.jna</groupId>
 			<artifactId>jna</artifactId>
-			<version>5.8.0</version>
+			<version>5.19.1</version>
 			<scope>test</scope>
 		</dependency>
 
 		<dependency>
 			<groupId>com.github.fridujo</groupId>
 			<artifactId>rabbitmq-mock</artifactId>
-			<version>1.1.1</version>
+			<version>1.2.0</version>
 			<scope>test</scope>
 		</dependency>
 
 		<dependency>
 			<groupId>net.javacrumbs.json-unit</groupId>
 			<artifactId>json-unit</artifactId>
-			<version>2.28.0</version>
+			<version>2.40.1</version>
 			<scope>test</scope>
 		</dependency>
 
@@ -495,7 +495,7 @@
 		<dependency>
 			<groupId>net.sourceforge.plantuml</groupId>
 			<artifactId>plantuml</artifactId>
-			<version>1.2026.0</version>
+			<version>1.2026.9</version>
 		</dependency>
 
 		<dependency>
@@ -557,7 +557,7 @@
 			<plugin>
 				<groupId>org.openrewrite.maven</groupId>
 				<artifactId>rewrite-maven-plugin</artifactId>
-				<version>5.30.0</version>
+				<version>5.47.3</version>
 				<configuration>
 					<activeRecipes>
 						<recipe>org.openrewrite.java.spring.boot2.UpgradeSpringBoot_2_7</recipe>
@@ -567,7 +567,7 @@
 					<dependency>
 						<groupId>org.openrewrite.recipe</groupId>
 						<artifactId>rewrite-spring</artifactId>
-						<version>5.9.0</version>
+						<version>5.25.1</version>
 					</dependency>
 				</dependencies>
 			</plugin>
@@ -1106,7 +1106,7 @@
 			<plugin>
 				<groupId>com.diffplug.spotless</groupId>
 				<artifactId>spotless-maven-plugin</artifactId>
-				<version>2.43.0</version>
+				<version>2.46.1</version>
 				<configuration>
 					<java>
 						<toggleOffOn />
@@ -1171,7 +1171,7 @@
 			<plugin>
 				<groupId>org.jacoco</groupId>
 				<artifactId>jacoco-maven-plugin</artifactId>
-				<version>0.8.10</version>
+				<version>0.8.15</version>
 				<configuration>
 					<excludes>
 						<exclude>**/*generated*/**</exclude>
