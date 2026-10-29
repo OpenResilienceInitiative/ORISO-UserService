@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.CounsellorDirectLinkService;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.DirectCallKnockService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.api.service.temporaryaccount.TemporaryAccountService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -51,7 +52,8 @@ class DirectLinkControllerDelegateCallLinkTest {
             accounts,
             mock(TopicService.class),
             knocks,
-            users);
+            users,
+            mock(TemporaryAccountService.class));
     counsellor.setId("counsellor-1");
     when(accounts.retrieveValidatedConsultant()).thenReturn(counsellor);
     var guest = new User();
