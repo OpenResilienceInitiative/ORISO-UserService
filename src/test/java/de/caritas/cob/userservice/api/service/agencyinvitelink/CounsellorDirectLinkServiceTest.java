@@ -397,6 +397,21 @@ class CounsellorDirectLinkServiceTest {
   }
 
   @Test
+  void startConversation_Should_Refuse_ATemporaryAccountOnAnotherLink() {
+    publicLink("tok", "CHAT", "ACTIVE").setId(9L);
+    var guest = asker("g");
+    guest.setTemporaryAccountSnapshot(
+        de.caritas.cob.userservice.api.model.TemporaryAccountSnapshot.builder()
+            .medium(de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkChatType.CHAT)
+            .inviteLinkId(10L)
+            .build());
+
+    assertThatThrownBy(() -> service.startConversation("tok", guest))
+        .isInstanceOf(ForbiddenException.class);
+    verifyNoInteractions(createNewSessionFacade);
+  }
+
+  @Test
   void startConversation_Should_SayNoLongerActive_When_OwnerLeftTheAgencyOrPlatform() {
     publicLink("tok", "CHAT", "ACTIVE");
     owner.getConsultantAgencies().forEach(ca -> ca.setDeleteDate(LocalDateTime.now()));

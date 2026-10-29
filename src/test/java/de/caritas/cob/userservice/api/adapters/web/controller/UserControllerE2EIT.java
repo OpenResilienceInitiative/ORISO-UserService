@@ -2315,6 +2315,7 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     userDTO.setReferer("validRef");
     userDTO.setGroupChatId(null);
     userDTO.setGroupChatInviteToken(null);
+    userDTO.setDirectLinkToken(null);
     // EasyRandom would otherwise ask for a temporary account at random.
     userDTO.setTemporary(false);
   }
