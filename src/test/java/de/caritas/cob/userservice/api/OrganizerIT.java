@@ -1,7 +1,6 @@
 package de.caritas.cob.userservice.api;
 
 import static org.assertj.core.api.AssertionsForInterfaceTypes.assertThat;
-import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.model.Appointment;
 import de.caritas.cob.userservice.api.port.out.AppointmentRepository;
@@ -19,28 +18,48 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
+@Import(OrganizerIT.FixedClockConfiguration.class)
 class OrganizerIT {
 
   private static final EasyRandom easyRandom = new EasyRandom();
+
+  private static final Instant NOW =
+      LocalDateTime.of(2022, 2, 15, 13, 37).toInstant(ZoneOffset.UTC);
+
+  /**
+   * A real fixed clock, not a mock. The application enables scheduling, so a scheduled task can
+   * call the clock while {@code when(clock.instant())} is still recording, and Mockito then binds
+   * the stub to whichever call came last - the failure was {@code WrongTypeOfReturnValue: Instant
+   * cannot be returned by getZone()}. A fixed clock has no stubbing window to lose.
+   */
+  @TestConfiguration
+  static class FixedClockConfiguration {
+
+    @Bean
+    @Primary
+    Clock fixedClock() {
+      return Clock.fixed(NOW, ZoneOffset.UTC);
+    }
+  }
 
   @Autowired private ConsultantRepository consultantRepository;
 
   @Autowired private AppointmentRepository appointmentRepository;
 
-  @MockitoBean private Clock clock;
-
   @Autowired private Organizer organizer;
 
   @Test
   void deleteObsoleteAppointmentsShouldDeleteAppointmentsOlderThanLifespan() {
-    var today = LocalDateTime.of(2022, 2, 15, 13, 37).toInstant(ZoneOffset.UTC);
-    when(clock.instant()).thenReturn(today);
+    var today = NOW;
     createAppointment(today);
     var tomorrow = LocalDateTime.of(2022, 2, 16, 11, 44).toInstant(ZoneOffset.UTC);
     createAppointment(tomorrow);
