@@ -42,10 +42,12 @@ public final class AccountSearchSpecification {
         else fields.add(contains(b, r.get("tenantId").as(String.class), token));
         var ids = names.get(token);
         if (ids != null) {
-          if (!ids.tenants().isEmpty()) fields.add(r.get("tenantId").in(ids.tenants()));
+          if (!consultant && !ids.tenants().isEmpty())
+            fields.add(r.get("tenantId").in(ids.tenants()));
           Set<Long> agencyIds = new HashSet<>(ids.agencies());
           if (visibleAgencies != null) agencyIds.retainAll(visibleAgencies);
-          if (!agencyIds.isEmpty()) fields.add(relation(r, q, b, consultant, agencyIds, tenant));
+          if (consultant && !agencyIds.isEmpty())
+            fields.add(relation(r, q, b, consultant, agencyIds, tenant));
         }
         words.add(b.or(fields.toArray(Predicate[]::new)));
       }

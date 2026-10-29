@@ -31,7 +31,7 @@ public class AccountSearch {
             : names.resolve(
                 search,
                 store.agencyIds(Consultant.class, scope, true, agencies, tenant),
-                store.tenantIds(Consultant.class, scope));
+                java.util.Set.of());
     var specification =
         scope.and(AccountSearchSpecification.matching(search, matches, true, agencies, tenant));
     return store
@@ -47,10 +47,7 @@ public class AccountSearch {
     var matches =
         search.tokens().isEmpty()
             ? Map.<String, AccountSearchNames.Matches>of()
-            : names.resolve(
-                search,
-                store.agencyIds(Admin.class, scope, false, agencies, tenant),
-                store.tenantIds(Admin.class, scope));
+            : names.resolve(search, java.util.Set.of(), store.tenantIds(Admin.class, scope));
     var specification =
         scope.and(AccountSearchSpecification.matching(search, matches, false, agencies, tenant));
     return store

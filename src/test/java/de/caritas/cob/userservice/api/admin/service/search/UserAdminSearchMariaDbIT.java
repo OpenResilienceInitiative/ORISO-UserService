@@ -136,7 +136,8 @@ class UserAdminSearchMariaDbIT {
     verify(agencies, never()).getAgenciesWithoutCaching(argThat(ids -> ids.contains(HIDDEN)));
     assertThat(
             search.consultants("max alpha", TENANT, Set.of(AGENCY), page(0, 20)).getTotalElements())
-        .isEqualTo(23);
+        .isZero();
+    verifyNoInteractions(tenants);
     clearInvocations(agencies, tenants);
     assertThat(search.consultants("max", TENANT, Set.of(), page(0, 20))).isEmpty();
     verifyNoInteractions(agencies, tenants);
@@ -205,8 +206,7 @@ class UserAdminSearchMariaDbIT {
         "INSERT INTO admin_agency(id,admin_id,agency_id) VALUES (NEXT VALUE FOR sequence_admin_agency,?,?)",
         target,
         AGENCY);
-    for (String query :
-        List.of("Max Mustermann", "max caritas", "max alpha", String.valueOf(TENANT)))
+    for (String query : List.of("Max Mustermann", "max alpha", String.valueOf(TENANT)))
       assertThat(
               search
                   .admins(query, Admin.AdminType.AGENCY, TENANT, Set.of(AGENCY), page(0, 10))
@@ -214,6 +214,11 @@ class UserAdminSearchMariaDbIT {
           .containsExactly(target);
     assertThat(search.admins("Max absent", Admin.AdminType.AGENCY, TENANT, null, page(0, 10)))
         .isEmpty();
+    assertThat(
+            search.admins(
+                "max caritas", Admin.AdminType.AGENCY, TENANT, Set.of(AGENCY), page(0, 10)))
+        .isEmpty();
+    verifyNoInteractions(agencies);
     String accented = admin("André", "Müller", TENANT, Admin.AdminType.AGENCY);
     assertThat(
             search
