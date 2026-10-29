@@ -361,6 +361,36 @@ class MatrixCallGuestServiceTest {
     }
   }
 
+  /** A removal that just failed is not retried at every sync, only after the backoff. */
+  @Test
+  void recentlyFailedRemovalWaitsForTheBackoff() {
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        service, "guestRevokeRetryMillis", 60_000L);
+    var guest = guest();
+    when(guests.findByBindingIdAndRevokedAtIsNull(binding.getId())).thenReturn(List.of(guest));
+    when(matrix.getRoomMembership(MEDIA, GUEST, "counsellor-token"))
+        .thenReturn(Optional.of("invite"));
+
+    service.revokeOutstanding(binding(5000L));
+    service.revokeOutstanding(binding(5000L));
+
+    assertThat(guest.getRevokeAttempts()).isEqualTo(1);
+    verify(matrix, org.mockito.Mockito.times(1))
+        .removeUserFromRoom(MEDIA, GUEST, "counsellor-token");
+  }
+
+  @Test
+  void sweepSkipsRoomsWhoseGuestsFailedWithinTheBackoff() {
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        service, "guestRevokeRetryMillis", 60_000L);
+    var cutoff = org.mockito.ArgumentCaptor.forClass(Long.class);
+    when(guests.findEndedMediaRoomsWithOutstandingGuests(cutoff.capture(), any()))
+        .thenReturn(List.of(MEDIA));
+
+    assertThat(service.endedRoomsWithOutstandingGuests()).containsExactly(MEDIA);
+    assertThat(cutoff.getValue()).isLessThanOrEqualTo(System.currentTimeMillis() - 60_000L);
+  }
+
   @Test
   void runningCallRevokesNothing() {
     service.revokeOutstanding(binding);
