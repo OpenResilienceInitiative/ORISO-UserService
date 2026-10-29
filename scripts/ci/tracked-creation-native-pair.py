@@ -43,6 +43,74 @@ def checked_witness(value):
     return all(value.values())
 
 
+def checked_java_failure_frames(private_value, root, source_hashes):
+    """Only source-bound JVM method/line metadata may leave the private child output."""
+    categories = {'java.lang.IllegalStateException', 'java.lang.IllegalArgumentException',
+        'java.lang.NullPointerException', 'org.springframework.transaction.CannotCreateTransactionException',
+        'org.springframework.dao.InvalidDataAccessResourceUsageException',
+        'org.springframework.dao.DataAccessResourceFailureException',
+        'org.springframework.web.client.HttpClientErrorException$Forbidden',
+        'org.springframework.web.client.HttpServerErrorException$InternalServerError',
+        'org.springframework.web.client.ResourceAccessException',
+        'org.springframework.security.access.AccessDeniedException',
+        'de.caritas.cob.userservice.api.port.out.ScopedIdentityCommandRequiredException'}
+    if not isinstance(private_value, dict) or set(private_value) != {'exceptionClasses', 'frames'}:
+        raise ValueError('Closed private exception metadata required')
+    types = private_value['exceptionClasses']; frames = private_value['frames']
+    if (not isinstance(types, list) or len(types) > 4
+            or any(type(v) is not str or len(v) > 256 for v in types)
+            or not isinstance(frames, list) or len(frames) > 128):
+        raise ValueError('Bounded private exception metadata required')
+    found_categories = sorted(set(types) & categories)
+    candidates = []
+    for frame in frames:
+        if not isinstance(frame, dict) or set(frame) != {'class', 'method', 'file', 'line'}:
+            raise ValueError('Closed private stack frame required')
+        cls, method, file, line = (frame[k] for k in ['class', 'method', 'file', 'line'])
+        if (any(type(v) is not str or len(v) > 256 for v in [cls, method, file])
+                or type(line) is not int or not 0 < line < 100000
+                or not re.fullmatch(r'[A-Za-z_$][\w.$]*', cls)
+                or not re.fullmatch(r'[\w$<>]+', method)
+                or not re.fullmatch(r'[A-Za-z_$][\w$]*\.java', file)):
+            continue
+        outer = cls.split('$', 1)[0]
+        paths = ['src/main/java/' + outer.replace('.', '/') + '.java']
+        if outer == SUITE: paths.append(JAVA_SOURCE)
+        source = next((path for path in paths if path in source_hashes), None)
+        if source is None or Path(source).name != file: continue
+        raw = (root / source).read_bytes()
+        if hashlib.sha256(raw).hexdigest() != source_hashes[source]: continue
+        if not 0 < int(line) <= len(raw.splitlines()): continue
+        frame = (cls, method, file, int(line))
+        if frame not in candidates: candidates.append(frame)
+        if len(candidates) == 16: break
+    accepted = []
+    if candidates:
+        classes = sorted({item[0] for item in candidates})
+        try:
+            result = subprocess.run(['javap', '-p', '-l', '-classpath',
+                os.pathsep.join(str(root / path) for path in ['target/classes', 'target/test-classes']),
+                *classes], capture_output=True, text=True, timeout=10, check=True)
+            current_class = None; current_method = None; lines = set()
+            for text in result.stdout.splitlines():
+                declared = re.match(r'^(?:[\w]+\s+)*(?:class|interface|enum) ([\w.$]+)(?:[<\s{]|$)', text)
+                if declared:
+                    current_class = declared.group(1); current_method = None
+                elif re.match(r'^  \S.*\([^)]*\)(?: throws [^;]+)?;$', text):
+                    name = text.strip().split('(', 1)[0].split()[-1]
+                    current_method = '<init>' if name == current_class else name
+                elif text.strip() == 'static {};': current_method = '<clinit>'
+                else:
+                    number = re.match(r'^\s+line ([1-9][0-9]*): [0-9]+$', text)
+                    if number and current_class in classes and current_method:
+                        lines.add((current_class, current_method, int(number.group(1))))
+            accepted = [{'class': cls, 'method': method, 'file': file, 'line': line}
+                        for cls, method, file, line in candidates if (cls, method, line) in lines]
+        except (OSError, subprocess.SubprocessError):
+            pass  # Missing compiler metadata grants no source-frame claim.
+    return {'exceptionCategories': found_categories, 'sourceFrames': accepted}
+
+
 def checked_nonce_diagnostic(value):
     states = {
         'dispatch': {'PREPARED', 'DISPATCH_UNKNOWN', 'NATIVE_ID_CAPTURED'},
@@ -360,6 +428,11 @@ def native(kc, report):
             if diagnostic.exists():
                 if diagnostic.stat().st_size > 4096: raise ValueError('Bounded nonce diagnostic required')
                 receipt['nonceDiagnostic'] = checked_nonce_diagnostic(json.loads(diagnostic.read_text()))
+            failure = exchange / 'java-failure.json'
+            if failure.exists():
+                if failure.stat().st_size > 65536: raise ValueError('Bounded private exception metadata required')
+                receipt['javaFailure'] = checked_java_failure_frames(
+                    json.loads(failure.read_text()), ROOT, before['user_sources'])
         receipt['nativeCheckpoint'] = phases
         inventory = sanitize(reports, report.with_suffix('.xml')); receipt['inventory'] = inventory; receipt['executed'] = inventory['tests']
         witness = json.loads(report.with_name(PREFIX + 'witness.json').read_text())

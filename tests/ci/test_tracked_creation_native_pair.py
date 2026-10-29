@@ -108,6 +108,38 @@ class TrackedCreationNativeControls(unittest.TestCase):
         self.assertFalse(proof.exact_capture(before, after, {**captured, 'private-field': 'secret'}, 'private-pending'))
         self.assertFalse(proof.exact_capture(after, after, captured, 'private-pending'))
 
+    def test_private_java_frames_require_closed_metadata_exact_source_method_and_line(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); source = 'src/main/java/de/caritas/FixtureKnown.java'
+            path = root / source; path.parent.mkdir(parents=True)
+            path.write_text('package de.caritas;\nclass FixtureKnown {\n void run() {\n  throw new IllegalStateException();\n }\n}\n')
+            hashes = {source: hashlib.sha256(path.read_bytes()).hexdigest()}
+            frame = {'class': 'de.caritas.FixtureKnown', 'method': 'run', 'file': 'FixtureKnown.java', 'line': 4}
+            good = {'exceptionClasses': ['java.lang.IllegalStateException'], 'frames': [frame]}
+            bytecode = ('Compiled from "FixtureKnown.java"\nclass de.caritas.FixtureKnown {\n'
+                        '  void run();\n    LineNumberTable:\n      line 4: 0\n}\n')
+            with patch.object(proof.subprocess, 'run', return_value=types.SimpleNamespace(stdout=bytecode)) as call:
+                self.assertEqual({'exceptionCategories': ['java.lang.IllegalStateException'], 'sourceFrames': [frame]},
+                    proof.checked_java_failure_frames(good, root, hashes))
+                self.assertEqual(10, call.call_args.kwargs['timeout'])
+                self.assertEqual(['de.caritas.FixtureKnown'], call.call_args.args[0][-1:])
+                for change in [{'method': 'wrong'}, {'file': 'Other.java'}, {'line': 3}, {'line': 999},
+                               {'line': True}, {'class': 'foreign.FixtureKnown'}, {'class': 'PRIVATE-SENTINEL'}]:
+                    observed = proof.checked_java_failure_frames({**good, 'frames': [{**frame, **change}]}, root, hashes)
+                    self.assertEqual([], observed['sourceFrames'])
+                    self.assertNotIn('PRIVATE-SENTINEL', json.dumps(observed))
+                self.assertEqual([], proof.checked_java_failure_frames(good, root, {source: '0' * 64})['sourceFrames'])
+                self.assertEqual([], proof.checked_java_failure_frames(good, root, {})['sourceFrames'])
+            for private in [{**good, 'message': 'PRIVATE-SENTINEL'},
+                            {**good, 'exceptionClasses': ['x'] * 5}, {**good, 'frames': [frame] * 129},
+                            {**good, 'frames': [{**frame, 'arguments': 'PRIVATE-SENTINEL'}]}]:
+                with self.assertRaises(ValueError) as raised: proof.checked_java_failure_frames(private, root, hashes)
+                self.assertNotIn('PRIVATE-SENTINEL', str(raised.exception))
+            with patch.object(proof.subprocess, 'run', side_effect=OSError('PRIVATE-SENTINEL')):
+                self.assertEqual([], proof.checked_java_failure_frames(good, root, hashes)['sourceFrames'])
+            self.assertEqual({'exceptionCategories': [], 'sourceFrames': []},
+                proof.checked_java_failure_frames({'exceptionClasses': ['PRIVATE-SENTINEL'], 'frames': []}, root, hashes))
+
     def test_nonce_diagnostic_is_closed_bounded_and_never_exports_private_fields(self):
         good = {'responseDone': True, 'responseStatus': 503, 'receiptHeaderPresent': True,
                 'rowReadSucceeded': True, 'rowCount': '1', 'dispatch': 'NATIVE_ID_CAPTURED',

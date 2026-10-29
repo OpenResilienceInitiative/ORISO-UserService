@@ -92,6 +92,8 @@ class TrackedConsultantCreationNativePairProof {
     var singleTenantReads = new AtomicInteger();
     var policyReads = new AtomicInteger();
     var unexpectedTenant = new AtomicBoolean();
+    var observedOperation = new java.util.concurrent.atomic.AtomicReference<String>();
+    var observedFailure = new java.util.concurrent.atomic.AtomicReference<Map<String, Object>>();
     var matrix = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
     var tenant = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
     ConfigurableApplicationContext context = null;
@@ -159,6 +161,17 @@ class TrackedConsultantCreationNativePairProof {
       verifyClasspath();
       witness.put("productionClasspath", true);
       var application = new SpringApplication(UserServiceApplication.class);
+      application.addInitializers(
+          initialized ->
+              initialized
+                  .getBeanFactory()
+                  .addBeanPostProcessor(
+                      new org.springframework.beans.factory.config.BeanPostProcessor() {
+                        @Override
+                        public Object postProcessAfterInitialization(Object bean, String name) {
+                          return observeCreationResolver(bean, observedOperation, observedFailure);
+                        }
+                      }));
       application.setWebApplicationType(WebApplicationType.SERVLET);
       application.setAdditionalProfiles("testing");
       application.setRegisterShutdownHook(false);
@@ -188,6 +201,18 @@ class TrackedConsultantCreationNativePairProof {
               .scopedAccountCommands());
       witness.put("fiveActors", true);
       witness.put("scopedOwners", true);
+      var resolver =
+          context.getBean(
+              de.caritas.cob.userservice.api.adapters.web.controller.interceptor
+                  .ConsultantCreationExceptionResolver.class);
+      assertEquals(
+          de.caritas.cob.userservice.api.adapters.web.controller.interceptor
+              .ConsultantCreationExceptionResolver.class,
+          AopUtils.getTargetClass(resolver));
+      assertEquals(
+          org.springframework.core.Ordered.HIGHEST_PRECEDENCE,
+          org.springframework.core.annotation.OrderUtils.getOrder(
+              AopUtils.getTargetClass(resolver)));
       var jpa = context.getBean(org.springframework.transaction.PlatformTransactionManager.class);
       assertInstanceOf(JpaTransactionManager.class, jpa);
       var source = context.getBean(DataSource.class);
@@ -220,6 +245,7 @@ class TrackedConsultantCreationNativePairProof {
       seedOther(context, fixture.path("other"));
       String bearer = fixture.path("primaryBearer").asText();
       String operationKey = UUID.randomUUID().toString();
+      observedOperation.set(operationKey);
       String username = "tracked-native-" + UUID.randomUUID();
       String email = username + "@fixture.invalid";
       var body =
@@ -240,7 +266,9 @@ class TrackedConsultantCreationNativePairProof {
               request(port, bearer, "POST", "/useradmin/consultants", operationKey, originalBody),
               HttpResponse.BodyHandlers.ofString());
       boolean reachedNonce = nonceReached.await(20, TimeUnit.SECONDS);
-      if (!reachedNonce)
+      if (!reachedNonce) {
+        if (observedFailure.get() != null)
+          privateJson(exchange.resolve("java-failure.json"), observedFailure.get());
         nonceDiagnostic(
             exchange,
             first,
@@ -249,6 +277,7 @@ class TrackedConsultantCreationNativePairProof {
             singleTenantReads.get(),
             policyReads.get(),
             nonceReads.get());
+      }
       assertTrue(reachedNonce, "Actual Matrix nonce must be reached after native capture");
       witness.put("matrixNonceReached", true);
       assertFalse(
@@ -368,6 +397,65 @@ class TrackedConsultantCreationNativePairProof {
           Path.of(required("TRACKED_CREATION_WITNESS")), JSON.writeValueAsString(witness));
     }
     for (String flag : FLAGS) assertTrue(witness.get(flag), flag);
+  }
+
+  private static Object observeCreationResolver(
+      Object bean,
+      java.util.concurrent.atomic.AtomicReference<String> operation,
+      java.util.concurrent.atomic.AtomicReference<Map<String, Object>> observed) {
+    if (AopUtils.getTargetClass(bean)
+        != de.caritas.cob.userservice.api.adapters.web.controller.interceptor
+            .ConsultantCreationExceptionResolver.class) return bean;
+    var proxy = new org.springframework.aop.framework.ProxyFactory(bean);
+    proxy.setProxyTargetClass(true);
+    proxy.addAdvice(
+        (org.aopalliance.intercept.MethodInterceptor)
+            invocation -> {
+              try {
+                Object[] args = invocation.getArguments();
+                if (invocation.getMethod().getName().equals("resolveException")
+                    && args.length == 4
+                    && args[0] instanceof jakarta.servlet.http.HttpServletRequest request
+                    && args[3] instanceof Exception failure
+                    && "POST".equals(request.getMethod())
+                    && "/useradmin/consultants".equals(request.getRequestURI())
+                    && operation.get() != null
+                    && operation.get().equals(request.getHeader(KEY))) {
+                  observed.set(exceptionMetadata(failure));
+                }
+              } catch (RuntimeException ignored) {
+                // Observation must never replace or prevent the real resolver's decision.
+              }
+              return invocation.proceed();
+            });
+    return proxy.getProxy();
+  }
+
+  private static Map<String, Object> exceptionMetadata(Exception failure) {
+    var classes = new ArrayList<String>();
+    var frames = new ArrayList<Map<String, Object>>();
+    var seen = Collections.newSetFromMap(new IdentityHashMap<Throwable, Boolean>());
+    Throwable current = failure;
+    while (current != null && classes.size() < 4 && seen.add(current)) {
+      classes.add(current.getClass().getName());
+      int retained = 0;
+      for (var frame : current.getStackTrace()) {
+        if (retained++ == 32) break;
+        if (frame.getFileName() != null && frame.getLineNumber() > 0)
+          frames.add(
+              Map.of(
+                  "class",
+                  frame.getClassName(),
+                  "method",
+                  frame.getMethodName(),
+                  "file",
+                  frame.getFileName(),
+                  "line",
+                  frame.getLineNumber()));
+      }
+      current = current.getCause();
+    }
+    return Map.of("exceptionClasses", classes, "frames", frames);
   }
 
   private static void nonceDiagnostic(
