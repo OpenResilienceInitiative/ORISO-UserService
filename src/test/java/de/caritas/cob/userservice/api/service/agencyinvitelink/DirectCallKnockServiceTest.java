@@ -120,14 +120,18 @@ class DirectCallKnockServiceTest {
 
   @Test
   void knock_Should_StartAfresh_When_TheOpenKnockIsStale() {
+    var stale = pending(1L, LocalDateTime.now().minusHours(3));
     when(repository.findFirstBySessionIdAndUserIdAndViaAndStatusOrderByIdDesc(
             SESSION_ID, "asker-1", Via.DIRECT_LINK, Status.PENDING))
-        .thenReturn(Optional.of(pending(1L, LocalDateTime.now().minusHours(3))));
+        .thenReturn(Optional.of(stale));
 
     var knock = service.knock(SESSION_ID, asker, 9L, InviteLinkChatType.AUDIO);
 
     assertThat(knock.getId()).isNull();
-    verify(repository).save(any());
+    // Superseded: an old waiting-room view can no longer admit it, so the policy and the
+    // conversation endpoints always judge the same, latest knock.
+    assertThat(stale.getStatus()).isEqualTo(Status.CANCELLED);
+    verify(repository, org.mockito.Mockito.times(2)).save(any());
   }
 
   @Test
