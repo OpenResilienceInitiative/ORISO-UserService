@@ -510,14 +510,14 @@ class CreateConsultantSagaTest {
     org.junit.jupiter.api.Assertions.assertEquals(
         "LOGIN_PASSWORD", consultant.getChatRecoveryMode());
     org.junit.jupiter.api.Assertions.assertEquals(3L, consultant.getChatRecoveryPolicyRevision());
-    verify(identityPasswordUpdater).updatePassword(KEYCLOAK_USER_ID, "GeneratedPass1!");
+    // The generated password is temporary: the counsellor must replace it at first login.
+    verify(identityPasswordUpdater).updateTemporaryPassword(KEYCLOAK_USER_ID, "GeneratedPass1!");
   }
 
   @Test
-  void createNewConsultant_Should_notRequireASecondFactor_When_importingConsultants()
+  void createNewConsultant_Should_requireASecondFactor_When_importingConsultants()
       throws Exception {
-    // Imported counsellors already exist elsewhere; the import is a move, not a new
-    // account, so it must not gate a whole migrated tenant at the next login.
+    // Every new staff account must set up 2FA, imported ones included.
     ImportRecord importRecord = validImportRecord();
     stubHappyPath();
     when(userHelper.getRandomPassword()).thenReturn("GeneratedPass1!");
@@ -526,11 +526,11 @@ class CreateConsultantSagaTest {
         createConsultantSaga.createNewConsultant(
             importRecord, CollectionHelper.asSet(CONSULTANT.getValue()));
 
-    assertThat(consultant.getTwoFactorRequired(), is(false));
+    assertThat(consultant.getTwoFactorRequired(), is(true));
   }
 
   @Test
-  void createNewConsultant_Should_notRequireAPasswordChange_When_importingConsultants()
+  void createNewConsultant_Should_requireAPasswordChange_When_importingConsultants()
       throws Exception {
     ImportRecord importRecord = validImportRecord();
     stubHappyPath();
@@ -540,7 +540,7 @@ class CreateConsultantSagaTest {
         createConsultantSaga.createNewConsultant(
             importRecord, CollectionHelper.asSet(CONSULTANT.getValue()));
 
-    assertThat(consultant.getPasswordChangeRequired(), is(false));
+    assertThat(consultant.getPasswordChangeRequired(), is(true));
   }
 
   @Test
