@@ -54,6 +54,10 @@ public class DeleteDatabaseConsultantActionTest {
 
   @Mock private IdentityTombstoneService identityTombstoneService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.workflow.delete.service.DeletionAuditService
+      deletionAuditService;
+
   private final ch.qos.logback.classic.Logger logger =
       (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(DeleteDatabaseConsultantAction.class);
   private final ListAppender<ILoggingEvent> logAppender = new ListAppender<>();
@@ -67,6 +71,26 @@ public class DeleteDatabaseConsultantActionTest {
   @AfterEach
   public void tearDown() {
     logger.detachAppender(logAppender);
+  }
+
+  @Test
+  public void execute_Should_LeaveAnExecutedDeletionLogEntryBySystem_When_consultantIsDeleted() {
+    var consultant = new Consultant();
+    consultant.setId("c-1");
+    consultant.setTenantId(5L);
+
+    this.deleteDatabaseConsultantAction.execute(
+        new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>()));
+
+    var order = inOrder(consultantRepository, deletionAuditService);
+    order.verify(consultantRepository).delete(consultant);
+    order
+        .verify(deletionAuditService)
+        .recordAsSystem(
+            de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditTargetType.CONSULTANT,
+            "c-1",
+            5L,
+            de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditOutcome.EXECUTED);
   }
 
   @Test
@@ -97,6 +121,16 @@ public class DeleteDatabaseConsultantActionTest {
     assertThat(workflowErrors, hasSize(0));
     assertThat(
         logAppender.list.stream().anyMatch(event -> event.getLevel() == Level.ERROR), is(false));
+  }
+
+  @Test
+  public void execute_Should_NotLogAnExecutedDeletion_When_theRowCouldNotBeDeleted() {
+    doThrow(new RuntimeException()).when(this.consultantRepository).delete(any(Consultant.class));
+
+    this.deleteDatabaseConsultantAction.execute(
+        new ConsultantDeletionWorkflowDTO(new Consultant(), new ArrayList<>()));
+
+    verify(this.deletionAuditService, never()).recordAsSystem(any(), any(), any(), any());
   }
 
   @Test

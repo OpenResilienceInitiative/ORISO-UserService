@@ -85,6 +85,10 @@ public class ConsultantAdminServiceTest {
 
   @Mock private TopicService topicService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.workflow.delete.service.DeletionAuditService
+      deletionAuditService;
+
   @Test
   public void createNewConsultant_Should_enrichResponseWithTopicNames() {
     var embedded = new ConsultantDTO().id("c1");
@@ -389,6 +393,26 @@ public class ConsultantAdminServiceTest {
     var order = inOrder(membersOnlyRevocation, deletionLifecycleService);
     order.verify(membersOnlyRevocation).revokeAllAccessOf(consultant);
     order.verify(deletionLifecycleService).beginConsultantDeletion(any(), any());
+  }
+
+  @Test
+  void markConsultantForDeletion_Should_LeaveAScheduledDeletionLogEntry() {
+    var consultant = new Consultant();
+    consultant.setId("c-1");
+    consultant.setTenantId(5L);
+    when(pictureStore.lockActiveConsultant("c-1")).thenReturn(consultant);
+
+    consultantAdminService.markConsultantForDeletion("c-1", false);
+
+    var order = inOrder(consultantRepository, deletionAuditService);
+    order.verify(consultantRepository).save(consultant);
+    order
+        .verify(deletionAuditService)
+        .recordAsCurrentActor(
+            de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditTargetType.CONSULTANT,
+            "c-1",
+            5L,
+            de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditOutcome.SCHEDULED);
   }
 
   @Test
