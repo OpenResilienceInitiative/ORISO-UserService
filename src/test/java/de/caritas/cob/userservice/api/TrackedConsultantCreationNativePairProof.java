@@ -309,7 +309,8 @@ class TrackedConsultantCreationNativePairProof {
           "Actual native receipt must be durably linked before local saga; no fabricated capture");
       assertEquals(
           0L,
-          jdbc.queryForObject("select count(*) from consultant where id=?", Long.class, nativeId));
+          jdbc.queryForObject(
+              "select count(*) from consultant where consultant_id=?", Long.class, nativeId));
       witness.put("durableNativeCapture", true);
       privateJson(
           exchange.resolve("captured.json"),
@@ -366,7 +367,8 @@ class TrackedConsultantCreationNativePairProof {
       witness.put("failureReceipt", true);
       assertEquals(
           0L,
-          jdbc.queryForObject("select count(*) from consultant where id=?", Long.class, nativeId));
+          jdbc.queryForObject(
+              "select count(*) from consultant where consultant_id=?", Long.class, nativeId));
       assertEquals(
           1L,
           jdbc.queryForObject(
