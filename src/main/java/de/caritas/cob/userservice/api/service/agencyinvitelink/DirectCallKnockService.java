@@ -55,7 +55,7 @@ public class DirectCallKnockService {
                 repository
                     .findFirstBySessionIdAndUserIdAndViaAndStatusOrderByIdDesc(
                         sessionId, user.getUserId(), Via.DIRECT_LINK, Status.PENDING)
-                    .filter(this::stillWaiting))
+                    .filter(this::stillWaitingOrSupersede))
         .orElseGet(
             () ->
                 repository.save(
@@ -204,6 +204,20 @@ public class DirectCallKnockService {
         .filter(k -> k.getVia() == Via.DIRECT_LINK)
         .filter(k -> Objects.equals(k.getUserId(), user.getUserId()))
         .orElseThrow(() -> new NotFoundException("Call knock %s not found", knockId));
+  }
+
+  /**
+   * A stale knock is cancelled before a new one opens, so an old waiting-room view cannot admit it
+   * and the call policy and the conversation endpoints judge the same, latest knock.
+   */
+  private boolean stillWaitingOrSupersede(GroupChatJoinRequest knock) {
+    if (stillWaiting(knock)) {
+      return true;
+    }
+    knock.setStatus(Status.CANCELLED);
+    knock.setDecidedAt(LocalDateTime.now());
+    repository.save(knock);
+    return false;
   }
 
   private boolean stillWaiting(GroupChatJoinRequest knock) {

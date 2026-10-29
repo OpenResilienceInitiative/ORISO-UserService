@@ -178,6 +178,11 @@ public class CounsellorDirectLinkService {
 
     var response =
         createNewSessionFacade.initializeNewSession(registration, user, Lists.newArrayList());
+    // A conversation without its room is a failed step; the next visit provisions it again.
+    if (response.getMatrixRoomId() == null || response.getMatrixRoomId().isBlank()) {
+      throw new org.springframework.web.server.ResponseStatusException(
+          HttpStatus.BAD_GATEWAY, "conversation_room_unavailable");
+    }
     // Calls never reach the room on their own: every visit knocks (ADR-029 §2).
     var knock =
         medium.admission() == InviteLinkAdmission.KNOCK
@@ -196,13 +201,6 @@ public class CounsellorDirectLinkService {
 
   public static boolean defaultTemporary(InviteLinkChatType medium) {
     return medium != InviteLinkChatType.CHAT;
-  }
-
-  private static boolean worksFor(Consultant consultant, Long agencyId) {
-    return consultant.getConsultantAgencies() != null
-        && consultant.getConsultantAgencies().stream()
-            .anyMatch(
-                ca -> ca.getDeleteDate() == null && Objects.equals(ca.getAgencyId(), agencyId));
   }
 
   private AgencyInviteLink requireOwn(Consultant owner, Long linkId) {
@@ -228,7 +226,7 @@ public class CounsellorDirectLinkService {
             "agencyId is required when the counsellor works for more or fewer than one agency");
       }
       agencyId = ids.getFirst();
-    } else if (!worksFor(owner, agencyId)) {
+    } else if (!DirectLinkOwner.worksFor(owner, agencyId)) {
       throw new ForbiddenException("Counsellor does not work for agency %s".formatted(agencyId));
     }
     var agency = agencyService.getAgencyWithoutCaching(agencyId);

@@ -238,7 +238,11 @@ class CounsellorDirectLinkServiceTest {
     publicLink("tok", "CHAT", "ACTIVE");
     when(createNewSessionFacade.initializeNewSession(
             any(NewRegistrationDto.class), any(), anyList()))
-        .thenReturn(new NewRegistrationResponseDto().sessionId(500L).status(HttpStatus.CREATED));
+        .thenReturn(
+            new NewRegistrationResponseDto()
+                .matrixRoomId("!room:example")
+                .sessionId(500L)
+                .status(HttpStatus.CREATED));
     var user = asker("asker-1");
 
     var started = service.startConversation("tok", user);
@@ -257,15 +261,41 @@ class CounsellorDirectLinkServiceTest {
     assertThat(started.admission()).isEqualTo(InviteLinkAdmission.DIRECT);
   }
 
+  /** A conversation without a Matrix room is a failed step, never a 2xx (API error contract). */
+  @Test
+  void startConversation_Should_FailWithBadGateway_When_TheRoomCouldNotBeProvisioned() {
+    publicLink("tok", "CHAT", "ACTIVE");
+    when(createNewSessionFacade.initializeNewSession(any(), any(), anyList()))
+        .thenReturn(new NewRegistrationResponseDto().sessionId(500L).status(HttpStatus.CREATED));
+
+    assertThatThrownBy(() -> service.startConversation("tok", asker("asker-1")))
+        .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+        .satisfies(
+            e ->
+                assertThat(
+                        ((org.springframework.web.server.ResponseStatusException) e)
+                            .getStatusCode()
+                            .value())
+                    .isEqualTo(502));
+  }
+
   @Test
   void startConversation_Should_GiveEachPersonTheirOwnConversation() {
     publicLink("tok", "CHAT", "ACTIVE");
     var first = asker("asker-1");
     var second = asker("asker-2");
     when(createNewSessionFacade.initializeNewSession(any(), eq(first), anyList()))
-        .thenReturn(new NewRegistrationResponseDto().sessionId(501L).status(HttpStatus.CREATED));
+        .thenReturn(
+            new NewRegistrationResponseDto()
+                .matrixRoomId("!room:example")
+                .sessionId(501L)
+                .status(HttpStatus.CREATED));
     when(createNewSessionFacade.initializeNewSession(any(), eq(second), anyList()))
-        .thenReturn(new NewRegistrationResponseDto().sessionId(502L).status(HttpStatus.CREATED));
+        .thenReturn(
+            new NewRegistrationResponseDto()
+                .matrixRoomId("!room:example")
+                .sessionId(502L)
+                .status(HttpStatus.CREATED));
 
     assertThat(service.startConversation("tok", first).sessionId()).isEqualTo(501L);
     assertThat(service.startConversation("tok", second).sessionId()).isEqualTo(502L);
@@ -294,7 +324,11 @@ class CounsellorDirectLinkServiceTest {
   void startConversation_Should_AnswerKnock_ForCalls(InviteLinkChatType medium) {
     publicLink("tok", medium.name(), "ACTIVE");
     when(createNewSessionFacade.initializeNewSession(any(), any(), anyList()))
-        .thenReturn(new NewRegistrationResponseDto().sessionId(503L).status(HttpStatus.CREATED));
+        .thenReturn(
+            new NewRegistrationResponseDto()
+                .matrixRoomId("!room:example")
+                .sessionId(503L)
+                .status(HttpStatus.CREATED));
 
     var knock =
         GroupChatJoinRequest.builder().id(77L).status(GroupChatJoinRequest.Status.PENDING).build();
@@ -311,7 +345,11 @@ class CounsellorDirectLinkServiceTest {
   void startConversation_Should_NotKnock_ForChat() {
     publicLink("tok", "CHAT", "ACTIVE");
     when(createNewSessionFacade.initializeNewSession(any(), any(), anyList()))
-        .thenReturn(new NewRegistrationResponseDto().sessionId(504L).status(HttpStatus.CREATED));
+        .thenReturn(
+            new NewRegistrationResponseDto()
+                .matrixRoomId("!room:example")
+                .sessionId(504L)
+                .status(HttpStatus.CREATED));
 
     assertThat(service.startConversation("tok", asker("a")).knockId()).isNull();
     verifyNoInteractions(knockService);

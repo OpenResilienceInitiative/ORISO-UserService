@@ -196,11 +196,11 @@ public class AgencyInviteLinkService {
     if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now())) {
       throw new BadRequestException("Invite link expired");
     }
-    DirectLinkOwner.requireStillServing(consultantRepository, link);
-
     TenantData previousTenant = TenantContext.getCurrentTenantData();
     try {
       TenantContext.setCurrentTenantData(new TenantData(link.getTenantId(), null));
+      // The owner lookup is tenant-filtered and this route runs without a tenant.
+      DirectLinkOwner.requireStillServing(consultantRepository, link);
       Integer consultingTypeId = pickConsultingTypeId(link);
       Long agencyId =
           InviteLinkChatType.LIVE_CHAT.name().equals(link.getChatType())
@@ -280,13 +280,13 @@ public class AgencyInviteLinkService {
       repository.save(link);
       throw new BadRequestException("Invite link expired");
     }
-    DirectLinkOwner.requireStillServing(consultantRepository, link);
-
     tenantService.requireOperationalTenant(link.getTenantId());
 
     Long previousTenant = TenantContext.getCurrentTenant();
     try {
       TenantContext.setCurrentTenant(link.getTenantId());
+      // The owner lookup is tenant-filtered and this route runs without a tenant.
+      DirectLinkOwner.requireStillServing(consultantRepository, link);
 
       Integer consultingTypeId = pickConsultingTypeId(link);
 
