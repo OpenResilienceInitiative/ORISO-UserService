@@ -478,8 +478,10 @@ class AgencyInviteLinkServiceTest {
   void create_Should_RefuseCallShareLinks_FromTheAdminRoute() {
     var cmd = new AgencyInviteLinkService.CreateInviteLinkCommand();
     cmd.setLinkKind("CALL");
-    cmd.setChatType("VIDEO");
-    assertThatThrownBy(() -> service.create(cmd)).isInstanceOf(BadRequestException.class);
+    // Default chat type (LIVE_CHAT) passes validateEnums, so only the CALL guard can refuse.
+    assertThatThrownBy(() -> service.create(cmd))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessageContaining("created from the call");
     Mockito.verify(repository, Mockito.never()).save(Mockito.any());
   }
 
