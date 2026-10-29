@@ -61,6 +61,13 @@ public class MatrixSynapseService implements MatrixUserClient {
   private static final String ENDPOINT_DEACTIVATE_USER = "/_synapse/admin/v1/deactivate/{userId}";
   private static final String ENDPOINT_REDACT_USER_EVENTS =
       "/_synapse/admin/v1/user/{userId}/redact";
+  private static final String ENDPOINT_REDACT_STATUS =
+      "/_synapse/admin/v1/user/redact_status/{redactId}";
+  private static final String ENDPOINT_ADMIN_ROOM_MESSAGES =
+      "/_synapse/admin/v1/rooms/{roomId}/messages";
+  private static final int REDACT_EVENT_LIMIT = 100_000;
+  private static final int REDACT_STATUS_POLLS = 20;
+  private static final long REDACT_STATUS_POLL_MS = 500;
   private static final String ENDPOINT_PURGE_ROOM = "/_synapse/admin/v2/rooms/{roomId}";
   private static final String ENDPOINT_ROOM_MEMBERS = "/_synapse/admin/v1/rooms/{roomId}/members";
   private static final String ENDPOINT_JOINED_ROOMS = "/_matrix/client/r0/joined_rooms";
@@ -981,19 +988,94 @@ public class MatrixSynapseService implements MatrixUserClient {
       var body = new java.util.HashMap<String, Object>();
       body.put("rooms", roomIds);
       body.put("reason", "Temporary account deleted");
-      ResponseEntity<String> response =
+      // Synapse's default is 1000 events per room; a guest's whole history must go.
+      body.put("limit", REDACT_EVENT_LIMIT);
+      ResponseEntity<java.util.Map> response =
           restTemplate.exchange(
               url,
               org.springframework.http.HttpMethod.POST,
               new HttpEntity<>(body, headers),
-              String.class);
-      return response.getStatusCode().is2xxSuccessful();
+              java.util.Map.class);
+      if (response.getBody() == null || !(response.getBody().get("redact_id") instanceof String id))
+        return false;
+      return redactionCompleted(id, headers);
     } catch (Exception ex) {
       log.warn(
           "Failed to redact Matrix events of user {}: {}",
           redactor.pseudonym(matrixUserId),
           redactor.scrub(ex.getMessage()));
       return false;
+    }
+  }
+
+  /**
+   * Synapse redacts asynchronously: true only once the task completed without failed redactions. A
+   * task still running when the wait ends counts as not done; the cleanup then retries.
+   */
+  private boolean redactionCompleted(String redactId, HttpHeaders headers)
+      throws InterruptedException {
+    var url =
+        MatrixUrlBuilder.buildUrl(
+            matrixConfig, ENDPOINT_REDACT_STATUS, java.util.Map.of("redactId", redactId));
+    for (int poll = 0; poll < REDACT_STATUS_POLLS; poll++) {
+      if (poll > 0) Thread.sleep(REDACT_STATUS_POLL_MS);
+      var status =
+          restTemplate
+              .exchange(
+                  url,
+                  org.springframework.http.HttpMethod.GET,
+                  new HttpEntity<>(headers),
+                  java.util.Map.class)
+              .getBody();
+      var state = status == null ? null : status.get("status");
+      if ("complete".equals(state)) {
+        return !(status.get("failed_redactions") instanceof java.util.Map<?, ?> failed)
+            || failed.isEmpty();
+      }
+      if ("failed".equals(state)) return false;
+    }
+    return false;
+  }
+
+  /**
+   * Epoch millis of the newest message in a room, 0 when it has none. Read with the admin API, so
+   * the admin need not be a member.
+   *
+   * @throws RoomEventUnavailableException when Matrix cannot tell
+   */
+  public long latestMessageTimestamp(String roomId) {
+    try {
+      String adminToken = getAdminToken();
+      if (adminToken == null) throw new IllegalStateException("no admin token");
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig,
+              ENDPOINT_ADMIN_ROOM_MESSAGES,
+              java.util.Map.of("roomId", roomId),
+              java.util.Map.of("dir", "b", "limit", 50));
+      var headers = new HttpHeaders();
+      headers.setBearerAuth(adminToken);
+      var body =
+          restTemplate
+              .exchange(
+                  url,
+                  org.springframework.http.HttpMethod.GET,
+                  new HttpEntity<>(headers),
+                  java.util.Map.class)
+              .getBody();
+      if (body == null || !(body.get("chunk") instanceof java.util.List<?> chunk))
+        throw new IllegalStateException("no chunk");
+      return chunk.stream()
+          .filter(java.util.Map.class::isInstance)
+          .map(java.util.Map.class::cast)
+          .filter(event -> "m.room.message".equals(event.get("type")))
+          .map(event -> event.get("origin_server_ts"))
+          .filter(Number.class::isInstance)
+          .mapToLong(ts -> ((Number) ts).longValue())
+          .max()
+          .orElse(0L);
+    } catch (RuntimeException ex) {
+      throw new RoomEventUnavailableException(ex);
     }
   }
 

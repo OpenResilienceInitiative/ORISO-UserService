@@ -177,6 +177,75 @@ class MatrixSynapseServiceTest {
     verifyNoInteractions(restTemplate);
   }
 
+  private static final URI REDACT_URI =
+      URI.create(
+          "https://matrix.example.com/_synapse/admin/v1/user/%40seeker%3Amatrix.example.com/redact");
+  private static final URI REDACT_STATUS_URI =
+      URI.create("https://matrix.example.com/_synapse/admin/v1/user/redact_status/r1");
+
+  /** Synapse redacts asynchronously: only a completed task without failures counts. */
+  @Test
+  void redactUserEventsShouldWaitForTheRedactionTaskToComplete() {
+    stubAdminLogin();
+    var body = ArgumentCaptor.forClass(HttpEntity.class);
+    when(restTemplate.exchange(eq(REDACT_URI), eq(HttpMethod.POST), body.capture(), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("redact_id", "r1")));
+    when(restTemplate.exchange(
+            eq(REDACT_STATUS_URI), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("status", "active")))
+        .thenReturn(ResponseEntity.ok(Map.of("status", "complete", "failed_redactions", Map.of())));
+
+    assertThat(matrixSynapseService().redactUserEvents(MATRIX_USER_ID, List.of("!room:x")))
+        .isTrue();
+    @SuppressWarnings("unchecked")
+    var sent = (Map<String, Object>) body.getValue().getBody();
+    assertThat(sent).containsKey("limit");
+  }
+
+  @Test
+  void redactUserEventsShouldFailWhenSomeRedactionsFailed() {
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            eq(REDACT_URI), eq(HttpMethod.POST), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("redact_id", "r1")));
+    when(restTemplate.exchange(
+            eq(REDACT_STATUS_URI), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(
+            ResponseEntity.ok(
+                Map.of("status", "complete", "failed_redactions", Map.of("$e", "error"))));
+
+    assertThat(matrixSynapseService().redactUserEvents(MATRIX_USER_ID, List.of("!room:x")))
+        .isFalse();
+  }
+
+  @Test
+  void latestMessageTimestampShouldReadTheNewestMessageOfTheRoom() {
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(
+            ResponseEntity.ok(
+                Map.of(
+                    "chunk",
+                    List.of(
+                        Map.of("type", "m.room.member", "origin_server_ts", 900L),
+                        Map.of("type", "m.room.message", "origin_server_ts", 800L)))));
+
+    assertThat(matrixSynapseService().latestMessageTimestamp("!room:x")).isEqualTo(800L);
+  }
+
+  @Test
+  void latestMessageTimestampShouldThrowWhenMatrixCannotTell() {
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenThrow(new HttpServerErrorException(HttpStatus.SERVICE_UNAVAILABLE));
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> matrixSynapseService().latestMessageTimestamp("!room:x"))
+        .isInstanceOf(MatrixSynapseService.RoomEventUnavailableException.class);
+  }
+
   @Test
   void deactivateUserShouldReturnTrueWhenSynapseAdminApiSucceeds() {
     stubAdminLogin();

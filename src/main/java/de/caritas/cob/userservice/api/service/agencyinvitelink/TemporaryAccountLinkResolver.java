@@ -27,6 +27,7 @@ public class TemporaryAccountLinkResolver {
 
   private final @NonNull AgencyInviteLinkRepository repository;
   private final @NonNull ConsultantRepository consultantRepository;
+  private final @NonNull DirectInvitePolicy directInvitePolicy;
 
   /** The direct link the registration names, or empty for every other registration. */
   public Optional<AgencyInviteLink> resolve(UserDTO userDTO) {
@@ -62,6 +63,10 @@ public class TemporaryAccountLinkResolver {
     var registrationTenant = TenantContext.getCurrentTenant();
     if (registrationTenant != null && !Objects.equals(registrationTenant, link.getTenantId())) {
       throw new ForbiddenException("Invite link belongs to another tenant");
+    }
+    if (!directInvitePolicy.allows(
+        link.getTenantId(), link.getAgencyId(), InviteLinkChatType.valueOf(link.getChatType()))) {
+      throw new ForbiddenException("Direct invitations are not allowed here");
     }
     DirectLinkOwner.requireStillServing(consultantRepository, link);
     return Optional.of(link);

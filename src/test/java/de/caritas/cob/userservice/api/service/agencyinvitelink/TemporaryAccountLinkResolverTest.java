@@ -33,6 +33,7 @@ class TemporaryAccountLinkResolverTest {
 
   @Mock private AgencyInviteLinkRepository repository;
   @Mock private ConsultantRepository consultantRepository;
+  @Mock private DirectInvitePolicy directInvitePolicy;
   @InjectMocks private TemporaryAccountLinkResolver resolver;
 
   private AgencyInviteLink link;
@@ -57,7 +58,17 @@ class TemporaryAccountLinkResolverTest {
     owner.setConsultantAgencies(
         new HashSet<>(Set.of(ConsultantAgency.builder().id(1L).agencyId(99L).build())));
     when(consultantRepository.findByIdAndDeleteDateIsNull("owner")).thenReturn(Optional.of(owner));
+    when(directInvitePolicy.allows(5L, 99L, InviteLinkChatType.VIDEO)).thenReturn(true);
     TenantContext.setCurrentTenant(5L);
+  }
+
+  /** A withdrawn direct-invite permission refuses before any account exists. */
+  @Test
+  void resolve_Should_Refuse_When_DirectInvitationsAreNotAllowed() {
+    when(directInvitePolicy.allows(5L, 99L, InviteLinkChatType.VIDEO)).thenReturn(false);
+
+    assertThatThrownBy(() -> resolver.resolve(registration("tok", true)))
+        .isInstanceOf(ForbiddenException.class);
   }
 
   @AfterEach

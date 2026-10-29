@@ -1,5 +1,7 @@
 package de.caritas.cob.userservice.api.workflow.delete.scheduler;
 
+import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
+
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
@@ -87,10 +89,11 @@ public class DeleteTemporaryAccountsScheduler {
     try {
       tenantContextProvider.setTechnicalContextIfMultiTenancyIsEnabled();
       List<DeletionWorkflowError> workflowErrors = new ArrayList<>();
-      var now = java.time.LocalDateTime.now();
+      // Session timestamps are written in UTC; compare on the same clock.
+      var now = nowInUtc();
       for (String userId : directLinkCleanup.dueAccountIds(now)) {
         if (!taskClaimService.runIfHeld(
-            lease.get(), () -> workflowErrors.addAll(directLinkCleanup.delete(userId, now)))) {
+            lease.get(), () -> workflowErrors.addAll(deleteOne(userId, now)))) {
           break;
         }
       }
@@ -104,6 +107,27 @@ public class DeleteTemporaryAccountsScheduler {
             "Could not release direct-link temporary account deletion claim ({})",
             exception.getClass().getSimpleName());
       }
+    }
+  }
+
+  /** One failing account must not cost the rest of the batch its deletion or the error mail. */
+  private List<DeletionWorkflowError> deleteOne(String userId, java.time.LocalDateTime now) {
+    try {
+      return directLinkCleanup.delete(userId, now);
+    } catch (RuntimeException exception) {
+      log.error(
+          "Direct-link temporary account deletion failed ({})",
+          exception.getClass().getSimpleName());
+      return List.of(
+          DeletionWorkflowError.builder()
+              .deletionSourceType(
+                  de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType.ASKER)
+              .deletionTargetType(
+                  de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.ALL)
+              .identifier(userId)
+              .reason("Unexpected error during temporary account deletion")
+              .timestamp(nowInUtc())
+              .build());
     }
   }
 }

@@ -19,7 +19,7 @@ import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
@@ -65,15 +65,57 @@ public class DirectLinkTemporaryAccountCleanup {
     return userRepository.findLiveDirectLinkTemporaryAccountIds().stream()
         .map(userRepository::findById)
         .flatMap(java.util.Optional::stream)
-        .filter(
-            user ->
-                expiryPolicy.isDue(
-                    user.getTemporaryAccountSnapshot(),
-                    user.getCreateDate(),
-                    factsOf(sessionRepository.findByUser(user)),
-                    now))
+        .filter(user -> isDue(user, now))
         .map(User::getUserId)
         .toList();
+  }
+
+  private boolean isDue(User user, LocalDateTime now) {
+    var snapshot = user.getTemporaryAccountSnapshot();
+    var sessions = sessionRepository.findByUser(user);
+    var facts = factsOf(sessions);
+    if (!expiryPolicy.isDue(snapshot, user.getCreateDate(), facts, now)) {
+      return false;
+    }
+    if (snapshot.isCall() || facts.closed()) {
+      return true;
+    }
+    // Messages go through Matrix and never touch the session row: ask Matrix for the last one.
+    // Unknown counts as recent, because a deletion cannot be undone.
+    LocalDateTime lastMessage;
+    try {
+      lastMessage = lastMessageAt(sessions);
+    } catch (MatrixSynapseService.RoomEventUnavailableException unavailable) {
+      log.warn("Temporary account inactivity unknown, deletion deferred");
+      return false;
+    }
+    if (lastMessage == null
+        || (facts.lastActivityAt() != null && !lastMessage.isAfter(facts.lastActivityAt()))) {
+      return true;
+    }
+    return expiryPolicy.isDue(
+        snapshot,
+        user.getCreateDate(),
+        new ConversationFacts(
+            facts.closed(), lastMessage, facts.lastCallEndedAt(), facts.callRunning()),
+        now);
+  }
+
+  private LocalDateTime lastMessageAt(List<Session> sessions) {
+    return sessions.stream()
+        .map(Session::getMatrixRoomId)
+        .filter(room -> room != null && !room.isBlank())
+        .mapToLong(matrixSynapseService::latestMessageTimestamp)
+        .filter(millis -> millis > 0)
+        .max()
+        .stream()
+        .mapToObj(DirectLinkTemporaryAccountCleanup::utc)
+        .findFirst()
+        .orElse(null);
+  }
+
+  private static LocalDateTime utc(long epochMillis) {
+    return LocalDateTime.ofInstant(Instant.ofEpochMilli(epochMillis), ZoneOffset.UTC);
   }
 
   /** Deletes one account in a transaction of its own; failures come back as workflow errors. */
@@ -83,6 +125,10 @@ public class DirectLinkTemporaryAccountCleanup {
     if (user == null
         || user.getTemporaryAccountSnapshot() == null
         || user.getTemporaryAccountSnapshot().getDeletedAt() != null) {
+      return List.of();
+    }
+    // The selection may be stale: a call or message since then keeps the account.
+    if (!isDue(user, now)) {
       return List.of();
     }
     try {
@@ -103,12 +149,11 @@ public class DirectLinkTemporaryAccountCleanup {
               .filter(room -> !room.isBlank())
               .toList();
       if (!keep && !matrixSynapseService.redactUserEvents(matrixUserId, rooms)) {
-        return List.of(
-            error(matrixUserId, DeletionTargetType.MATRIX, "Unable to delete guest messages"));
+        return List.of(error(userId, DeletionTargetType.MATRIX, "Unable to delete guest messages"));
       }
       if (!matrixSynapseService.deactivateUser(matrixUserId, !keep)) {
         return List.of(
-            error(matrixUserId, DeletionTargetType.MATRIX, "Unable to delete Matrix user account"));
+            error(userId, DeletionTargetType.MATRIX, "Unable to delete Matrix user account"));
       }
     }
     snapshot.setDeletedAt(now);
@@ -150,9 +195,7 @@ public class DirectLinkTemporaryAccountCleanup {
             .map(MatrixCallBinding::getEndedAt)
             .filter(Objects::nonNull)
             .max(Comparator.naturalOrder())
-            .map(
-                millis ->
-                    LocalDateTime.ofInstant(Instant.ofEpochMilli(millis), ZoneId.systemDefault()))
+            .map(DirectLinkTemporaryAccountCleanup::utc)
             .orElse(null);
     return new ConversationFacts(closed, lastActivity, lastHangUp, running);
   }

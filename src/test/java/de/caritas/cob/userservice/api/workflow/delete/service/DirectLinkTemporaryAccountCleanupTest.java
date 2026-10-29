@@ -24,7 +24,7 @@ import de.caritas.cob.userservice.api.service.temporaryaccount.MessageRetentionM
 import de.caritas.cob.userservice.api.service.temporaryaccount.TemporaryAccountExpiryPolicy;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -74,7 +74,8 @@ class DirectLinkTemporaryAccountCleanupTest {
     session.setId(7L);
     session.setUser(user);
     session.setMatrixRoomId(ROOM);
-    session.setStatus(SessionStatus.IN_PROGRESS);
+    // Closed, so the account is due and the delete tests reach the destructive steps.
+    session.setStatus(SessionStatus.DONE);
     session.setCreateDate(NOW.minusDays(2));
     session.setUpdateDate(NOW.minusHours(1));
     when(userRepository.findLiveDirectLinkTemporaryAccountIds()).thenReturn(List.of(USER_ID));
@@ -83,6 +84,91 @@ class DirectLinkTemporaryAccountCleanupTest {
     when(callBindings.findBySessionIdIn(any())).thenReturn(List.of());
     when(matrix.redactUserEvents(anyString(), anyList())).thenReturn(true);
     when(matrix.deactivateUser(anyString(), anyBoolean())).thenReturn(true);
+  }
+
+  private static long utcMillis(LocalDateTime time) {
+    return time.toInstant(ZoneOffset.UTC).toEpochMilli();
+  }
+
+  /** Messages go through Matrix and never touch the session row; Matrix tells the last one. */
+  @Test
+  void dueAccountIds_Should_KeepAChatAccount_While_TheGuestKeepsWriting() {
+    session.setStatus(SessionStatus.IN_PROGRESS);
+    user.setCreateDate(NOW.minusDays(40));
+    session.setCreateDate(NOW.minusDays(40));
+    session.setUpdateDate(NOW.minusDays(40));
+    when(matrix.latestMessageTimestamp(ROOM)).thenReturn(utcMillis(NOW.minusDays(1)));
+
+    assertThat(cleanup.dueAccountIds(NOW)).isEmpty();
+
+    when(matrix.latestMessageTimestamp(ROOM)).thenReturn(utcMillis(NOW.minusDays(31)));
+
+    assertThat(cleanup.dueAccountIds(NOW)).containsExactly(USER_ID);
+  }
+
+  @Test
+  void dueAccountIds_Should_KeepAChatAccount_When_MatrixCannotTellTheLastMessage() {
+    session.setStatus(SessionStatus.IN_PROGRESS);
+    user.setCreateDate(NOW.minusDays(40));
+    session.setCreateDate(NOW.minusDays(40));
+    session.setUpdateDate(NOW.minusDays(40));
+    when(matrix.latestMessageTimestamp(ROOM))
+        .thenThrow(new MatrixSynapseService.RoomEventUnavailableException(new RuntimeException()));
+
+    assertThat(cleanup.dueAccountIds(NOW)).isEmpty();
+  }
+
+  /** Selection can be stale by the time the account comes up; delete checks again. */
+  @Test
+  void delete_Should_LeaveTheAccount_When_ItIsNoLongerDue() {
+    session.setStatus(SessionStatus.IN_PROGRESS);
+
+    assertThat(cleanup.delete(USER_ID, NOW)).isEmpty();
+    verify(identityAccountRemover, never()).deleteUser(anyString());
+    assertThat(user.getTemporaryAccountSnapshot().getDeletedAt()).isNull();
+  }
+
+  @Test
+  void delete_Should_ReportKeycloak_AndLeaveMatrixAlone_When_KeycloakFails() {
+    doThrow(new RuntimeException("down")).when(identityAccountRemover).deleteUser(USER_ID);
+
+    assertThat(cleanup.delete(USER_ID, NOW))
+        .singleElement()
+        .satisfies(
+            error ->
+                assertThat(error.getDeletionTargetType()).isEqualTo(DeletionTargetType.KEYCLOAK));
+    verify(matrix, never()).redactUserEvents(anyString(), anyList());
+    verify(matrix, never()).deactivateUser(anyString(), anyBoolean());
+    verify(userRepository, never()).save(any());
+  }
+
+  @Test
+  void delete_Should_RetryLater_When_DeactivationFails() {
+    when(matrix.deactivateUser(anyString(), anyBoolean())).thenReturn(false);
+
+    assertThat(cleanup.delete(USER_ID, NOW)).singleElement();
+    assertThat(user.getTemporaryAccountSnapshot().getDeletedAt()).isNull();
+    verify(userRepository, never()).save(any());
+  }
+
+  @Test
+  void delete_Should_SkipMatrix_When_TheAccountHasNoMatrixUser() {
+    user.setMatrixUserId(" ");
+
+    assertThat(cleanup.delete(USER_ID, NOW)).isEmpty();
+    verify(matrix, never()).redactUserEvents(anyString(), anyList());
+    verify(matrix, never()).deactivateUser(anyString(), anyBoolean());
+    assertThat(user.getTemporaryAccountSnapshot().getDeletedAt()).isEqualTo(NOW);
+  }
+
+  /** The error mail must not carry a Matrix identifier in clear text. */
+  @Test
+  void delete_Should_NameTheAccountNotTheMatrixUser_InErrors() {
+    when(matrix.deactivateUser(anyString(), anyBoolean())).thenReturn(false);
+
+    assertThat(cleanup.delete(USER_ID, NOW))
+        .singleElement()
+        .satisfies(error -> assertThat(error.getIdentifier()).isEqualTo(USER_ID));
   }
 
   private static TemporaryAccountSnapshot snapshot(String medium, MessageRetentionMode mode) {
@@ -102,6 +188,7 @@ class DirectLinkTemporaryAccountCleanupTest {
 
   @Test
   void dueAccountIds_Should_ListAChatAccount_When_TheCounsellorArchivedTheConversation() {
+    session.setStatus(SessionStatus.IN_PROGRESS);
     assertThat(cleanup.dueAccountIds(NOW)).isEmpty();
 
     session.setStatus(SessionStatus.IN_ARCHIVE);
@@ -113,7 +200,7 @@ class DirectLinkTemporaryAccountCleanupTest {
   void dueAccountIds_Should_ListACallAccount_FifteenMinutesAfterHangUp() {
     user.setTemporaryAccountSnapshot(snapshot("VIDEO", MessageRetentionMode.ALWAYS_TEMPORARY));
     user.setCreateDate(NOW.minusHours(1));
-    var hangUp = NOW.minusMinutes(15).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+    var hangUp = utcMillis(NOW.minusMinutes(15));
     var call =
         MatrixCallBinding.builder()
             .sessionId(7L)
