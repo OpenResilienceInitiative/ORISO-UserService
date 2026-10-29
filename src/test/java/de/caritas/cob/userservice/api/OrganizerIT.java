@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api;
 
 import static org.assertj.core.api.AssertionsForInterfaceTypes.assertThat;
+import static org.mockito.Mockito.doReturn;
 
 import de.caritas.cob.userservice.api.model.Appointment;
 import de.caritas.cob.userservice.api.port.out.AppointmentRepository;
@@ -13,21 +14,18 @@ import java.time.temporal.ChronoUnit;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
 import org.jeasy.random.EasyRandom;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Import;
-import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
-@Import(OrganizerIT.FixedClockConfiguration.class)
 class OrganizerIT {
 
   private static final EasyRandom easyRandom = new EasyRandom();
@@ -35,27 +33,26 @@ class OrganizerIT {
   private static final Instant NOW =
       LocalDateTime.of(2022, 2, 15, 13, 37).toInstant(ZoneOffset.UTC);
 
-  /**
-   * A real fixed clock, not a mock. The application enables scheduling, so a scheduled task can
-   * call the clock while {@code when(clock.instant())} is still recording, and Mockito then binds
-   * the stub to whichever call came last - the failure was {@code WrongTypeOfReturnValue: Instant
-   * cannot be returned by getZone()}. A fixed clock has no stubbing window to lose.
-   */
-  @TestConfiguration
-  static class FixedClockConfiguration {
-
-    @Bean
-    @Primary
-    Clock fixedClock() {
-      return Clock.fixed(NOW, ZoneOffset.UTC);
-    }
-  }
-
   @Autowired private ConsultantRepository consultantRepository;
 
   @Autowired private AppointmentRepository appointmentRepository;
 
+  @MockitoBean private Clock clock;
+
   @Autowired private Organizer organizer;
+
+  /**
+   * The application enables scheduling, so a scheduled task can call this mock from another thread.
+   * {@code when(clock.instant())} resolves its target from the mock's shared invocation container,
+   * so a concurrent {@code getZone()} stole the stub and the test failed with {@code
+   * WrongTypeOfReturnValue: Instant cannot be returned by getZone()}. The doReturn form names its
+   * target explicitly, and stubbing getZone() keeps a stray caller from getting null.
+   */
+  @BeforeEach
+  void fixTheClock() {
+    doReturn(ZoneOffset.UTC).when(clock).getZone();
+    doReturn(NOW).when(clock).instant();
+  }
 
   @Test
   void deleteObsoleteAppointmentsShouldDeleteAppointmentsOlderThanLifespan() {
