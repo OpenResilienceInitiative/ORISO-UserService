@@ -73,7 +73,12 @@ import org.springframework.transaction.support.TransactionTemplate;
  * Matrix homeserver and the TenantService are simulated.
  */
 @DataJpaTest
-@TestPropertySource(properties = {"spring.profiles.active=testing,call-guest-account-fixture"})
+@TestPropertySource(
+    properties = {
+      "spring.profiles.active=testing,call-guest-account-fixture",
+      // Retry at once: these tests replay the recovery without waiting for the backoff.
+      "matrix.calls.guest-revoke-retry-ms=0"
+    })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({
   EventNotificationService.class,

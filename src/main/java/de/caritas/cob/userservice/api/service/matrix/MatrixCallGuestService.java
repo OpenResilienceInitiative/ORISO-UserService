@@ -38,6 +38,10 @@ public class MatrixCallGuestService {
   /** Failed removals after which every further failure is logged at ERROR for alerting. */
   public static final int REVOKE_ALERT_THRESHOLD = 10;
 
+  /** Wait after a failed removal before the next try, so a stuck guest is not retried each sync. */
+  @org.springframework.beans.factory.annotation.Value("${matrix.calls.guest-revoke-retry-ms:60000}")
+  private long guestRevokeRetryMillis;
+
   public enum Outcome {
     ADMITTED,
     NOT_FOUND,
@@ -146,7 +150,10 @@ public class MatrixCallGuestService {
   public void revokeOutstanding(MatrixCallBinding binding) {
     if (binding == null || binding.getEndedAt() == null || binding.getId() == null) return;
     List<MatrixCallGuest> outstanding = guests.findByBindingIdAndRevokedAtIsNull(binding.getId());
+    long retryBefore = System.currentTimeMillis() - guestRevokeRetryMillis;
     for (MatrixCallGuest guest : outstanding) {
+      if (guest.getLastRevokeAttemptAt() != null && guest.getLastRevokeAttemptAt() > retryBefore)
+        continue;
       String room = binding.getMediaRoomId();
       String guestId = guest.getMatrixUserId();
       // The caller first, then the admitting counsellor, whose token may hold the needed rights.
@@ -206,6 +213,7 @@ public class MatrixCallGuestService {
   /** Media rooms of ended calls that still hold an unrevoked guest seat (reconcile sweep). */
   public List<String> endedRoomsWithOutstandingGuests() {
     return guests.findEndedMediaRoomsWithOutstandingGuests(
+        System.currentTimeMillis() - guestRevokeRetryMillis,
         org.springframework.data.domain.PageRequest.of(0, 100));
   }
 
