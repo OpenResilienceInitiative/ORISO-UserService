@@ -286,13 +286,36 @@ class AccountInviteProgressIT {
   }
 
   @Test
+  void pluralPhaseFilterMatchesLegacyCsvAndAmbiguousParametersAreRejected() throws Exception {
+    seed(base(AccountInviteTargetRole.COUNSELLOR).status(AccountInviteStatus.EXPIRED).build());
+    seed(base(AccountInviteTargetRole.COUNSELLOR).status(AccountInviteStatus.REVOKED).build());
+    seed(base(AccountInviteTargetRole.COUNSELLOR).build());
+    for (String parameter : List.of("progress_phase", "progress_phases"))
+      mvc.perform(
+              get("/useradmin/account-invites")
+                  .with(admin())
+                  .param(parameter, "NEEDS_ACTION,CLOSED"))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.totalElements").value(2))
+          .andExpect(jsonPath("$.phaseCounts.PREPARED").value(1));
+    mvc.perform(
+            get("/useradmin/account-invites")
+                .with(admin())
+                .param("progress_phase", "CLOSED")
+                .param("progress_phases", "NEEDS_ACTION"))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
   void optionalListSortAndPhaseFiltersRejectUnknownValues() throws Exception {
     for (String filter :
         List.of(
             "sort=unknown",
             "sort_direction=up",
             "progress_phase=CLOSED,unknown",
-            "progress_phase=CLOSED,"))
+            "progress_phase=CLOSED,",
+            "progress_phases=CLOSED,unknown",
+            "progress_phases=CLOSED,"))
       mvc.perform(get("/useradmin/account-invites?" + filter).with(admin()))
           .andExpect(status().isBadRequest());
   }

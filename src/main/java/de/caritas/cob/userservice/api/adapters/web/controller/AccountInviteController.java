@@ -143,6 +143,33 @@ public class AccountInviteController {
     return phases;
   }
 
+  /** Compatibility overload for the original sort-aware Java callers. */
+  @PreAuthorize(ADMIN_AUTH)
+  public ResponseEntity<PagedAccountInviteResponseDTO> listInvites(
+      String tab,
+      String targetRole,
+      String status,
+      String progressPhase,
+      Long tenantId,
+      String query,
+      Integer page,
+      Integer size,
+      String sort,
+      String sortDirection) {
+    return listInvites(
+        tab,
+        targetRole,
+        status,
+        progressPhase,
+        tenantId,
+        query,
+        page,
+        size,
+        sort,
+        sortDirection,
+        null);
+  }
+
   @PreAuthorize(ADMIN_AUTH)
   @GetMapping("/useradmin/account-invites")
   public ResponseEntity<PagedAccountInviteResponseDTO> listInvites(
@@ -155,13 +182,16 @@ public class AccountInviteController {
       @RequestParam(value = "page", required = false) Integer page,
       @RequestParam(value = "size", required = false) Integer size,
       @RequestParam(value = "sort", required = false) String sort,
-      @RequestParam(value = "sort_direction", required = false) String sortDirection) {
+      @RequestParam(value = "sort_direction", required = false) String sortDirection,
+      @RequestParam(value = "progress_phases", required = false) String progressPhases) {
+    if (progressPhase != null && progressPhases != null)
+      throw new BadRequestException("Use either progress_phase or progress_phases, not both");
     InviteBoard.Listing listing =
         inviteBoard.list(
             parseOptionalEnum(InviteBoard.Tab.class, tab, "tab"),
             parseOptionalEnum(AccountInviteTargetRole.class, targetRole, "target_role"),
             parseOptionalEnum(AccountInviteStatus.class, status, "status"),
-            parsePhases(progressPhase),
+            parsePhases(progressPhases == null ? progressPhase : progressPhases),
             tenantId,
             query,
             page == null ? 0 : page,

@@ -1282,10 +1282,19 @@ paths:
             $ref: '#/components/schemas/AccountInviteStatus'
         - name: progress_phase
           in: query
-          description: A single progress phase or comma-separated phases; phaseCounts ignore this and status.
+          description: A single progress phase. Legacy CSV values are still accepted; new multiselect callers use progress_phases. Supplying both phase parameters returns 400. phaseCounts ignore these and status.
           schema:
-            type: string
-            example: NEEDS_ACTION,CLOSED
+            $ref: '#/components/schemas/AccountInviteProgressPhase'
+        - name: progress_phases
+          in: query
+          description: Optional comma-separated progress phases for multiselect. Cannot be combined with progress_phase. phaseCounts ignore these and status.
+          style: form
+          explode: false
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/AccountInviteProgressPhase'
+          example: [NEEDS_ACTION, CLOSED]
         - name: sort
           in: query
           description: Sort all matching invitations before pagination; absent keeps newest first.
