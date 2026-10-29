@@ -53,8 +53,9 @@ public class DirectCallKnockService {
         .or(
             () ->
                 repository
-                    .findFirstBySessionIdAndUserIdAndViaAndStatusOrderByIdDesc(
-                        sessionId, user.getUserId(), Via.DIRECT_LINK, Status.PENDING)
+                    .findPendingCallKnocksForUpdate(sessionId, user.getUserId(), Via.DIRECT_LINK)
+                    .stream()
+                    .findFirst()
                     .filter(this::stillWaitingOrSupersede))
         .orElseGet(
             () ->
@@ -137,6 +138,7 @@ public class DirectCallKnockService {
     if (scope == null) {
       throw new BadRequestException("admit-all needs sessionId or matrixRoomId");
     }
+    lockConversation(scope);
     var now = LocalDateTime.now();
     // Loaded under lock in one query, so a knock cancelled or declined meanwhile is not pending
     // any more; no earlier unlocked read can leave a stale entity in the persistence context.
@@ -155,6 +157,7 @@ public class DirectCallKnockService {
   }
 
   private GroupChatJoinRequest decide(Long knockId, Consultant consultant, Status outcome) {
+    repository.findSessionIdById(knockId).ifPresent(this::lockConversation);
     var knock =
         repository
             .findByIdForUpdate(knockId)
@@ -171,6 +174,16 @@ public class DirectCallKnockService {
     knock.setDecidedAt(LocalDateTime.now());
     knock.setDecidedBy(consultant.getId());
     return repository.save(knock);
+  }
+
+  /**
+   * Admissions take the conversation lock that knock takes, in the same order (conversation, then
+   * knock), so an admission cannot slip between knock's admission check and its pending lookup.
+   */
+  private void lockConversation(Long sessionId) {
+    sessionRepository
+        .findByIdForUpdate(sessionId)
+        .orElseThrow(() -> new NotFoundException("Session %s not found", sessionId));
   }
 
   /** The conversation of the current call; the call room is the conversation's Matrix room. */

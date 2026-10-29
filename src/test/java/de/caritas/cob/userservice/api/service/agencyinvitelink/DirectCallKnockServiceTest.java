@@ -56,6 +56,7 @@ class DirectCallKnockServiceTest {
     when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
     when(sessionRepository.findByIdForUpdate(SESSION_ID)).thenReturn(Optional.of(session));
     when(repository.save(any())).thenAnswer(i -> i.getArgument(0));
+    when(repository.findSessionIdById(any())).thenReturn(Optional.of(SESSION_ID));
   }
 
   @Test
@@ -79,18 +80,14 @@ class DirectCallKnockServiceTest {
 
     var order = inOrder(sessionRepository, repository);
     order.verify(sessionRepository).findByIdForUpdate(SESSION_ID);
-    order
-        .verify(repository)
-        .findFirstBySessionIdAndUserIdAndViaAndStatusOrderByIdDesc(
-            SESSION_ID, "asker-1", Via.DIRECT_LINK, Status.PENDING);
+    order.verify(repository).findPendingCallKnocksForUpdate(SESSION_ID, "asker-1", Via.DIRECT_LINK);
   }
 
   @Test
   void knock_Should_ReturnOpenKnock_When_PersonKnocksAgain() {
     var open = pending(1L, LocalDateTime.now().minusMinutes(5));
-    when(repository.findFirstBySessionIdAndUserIdAndViaAndStatusOrderByIdDesc(
-            SESSION_ID, "asker-1", Via.DIRECT_LINK, Status.PENDING))
-        .thenReturn(Optional.of(open));
+    when(repository.findPendingCallKnocksForUpdate(SESSION_ID, "asker-1", Via.DIRECT_LINK))
+        .thenReturn(List.of(open));
 
     assertThat(service.knock(SESSION_ID, asker, 9L, InviteLinkChatType.AUDIO)).isSameAs(open);
     verify(repository, never()).save(any());
@@ -99,9 +96,8 @@ class DirectCallKnockServiceTest {
   @Test
   void knock_Should_StartAfresh_When_TheOpenKnockIsStale() {
     var stale = pending(1L, LocalDateTime.now().minusHours(3));
-    when(repository.findFirstBySessionIdAndUserIdAndViaAndStatusOrderByIdDesc(
-            SESSION_ID, "asker-1", Via.DIRECT_LINK, Status.PENDING))
-        .thenReturn(Optional.of(stale));
+    when(repository.findPendingCallKnocksForUpdate(SESSION_ID, "asker-1", Via.DIRECT_LINK))
+        .thenReturn(List.of(stale));
 
     var knock = service.knock(SESSION_ID, asker, 9L, InviteLinkChatType.AUDIO);
 
@@ -172,6 +168,30 @@ class DirectCallKnockServiceTest {
     // Idempotent.
     assertThat(service.admit(1L, counsellor).getStatus()).isEqualTo(Status.ADMITTED);
     assertThatThrownBy(() -> service.decline(1L, counsellor)).isInstanceOf(ConflictException.class);
+  }
+
+  /**
+   * Same lock order as knock (conversation, then knock): an admission can never slip between
+   * knock's admission check and its pending lookup and leave a newer pending knock behind.
+   */
+  @Test
+  void decideAndAdmitAll_Should_LockTheConversationBeforeTheKnocks() {
+    when(repository.findByIdForUpdate(1L))
+        .thenReturn(Optional.of(pending(1L, LocalDateTime.now())));
+
+    service.admit(1L, counsellor);
+    var order = inOrder(sessionRepository, repository);
+    order.verify(sessionRepository).findByIdForUpdate(SESSION_ID);
+    order.verify(repository).findByIdForUpdate(1L);
+    // The knock entity is not loaded unlocked first, so no stale copy can be decided.
+    verify(repository, never()).findById(any());
+
+    service.admitAll(counsellor, SESSION_ID, null);
+    order.verify(sessionRepository).findByIdForUpdate(SESSION_ID);
+    order
+        .verify(repository)
+        .findCallKnocksForConsultantForUpdate(
+            eq("counsellor-1"), eq(Via.DIRECT_LINK), eq(Status.PENDING), any(), eq(SESSION_ID));
   }
 
   @Test
