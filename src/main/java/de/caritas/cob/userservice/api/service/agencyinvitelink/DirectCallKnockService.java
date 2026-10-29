@@ -53,8 +53,9 @@ public class DirectCallKnockService {
         .or(
             () ->
                 repository
-                    .findFirstBySessionIdAndUserIdAndViaAndStatusOrderByIdDesc(
-                        sessionId, user.getUserId(), Via.DIRECT_LINK, Status.PENDING)
+                    .findPendingCallKnocksForUpdate(sessionId, user.getUserId(), Via.DIRECT_LINK)
+                    .stream()
+                    .findFirst()
                     .filter(this::stillWaitingOrSupersede))
         .orElseGet(
             () ->

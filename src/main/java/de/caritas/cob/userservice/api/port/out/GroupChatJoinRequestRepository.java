@@ -26,6 +26,16 @@ public interface GroupChatJoinRequestRepository extends CrudRepository<GroupChat
       Long seriesId, String consultantId);
 
   /** Direct-link call knocks (#1475). */
+  /** Newest first, locked: a knock admitted meanwhile must not be superseded from a stale read. */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "SELECT request FROM GroupChatJoinRequest request WHERE request.sessionId = :sessionId"
+          + " AND request.userId = :userId AND request.via = :via"
+          + " AND request.status = de.caritas.cob.userservice.api.model.GroupChatJoinRequest.Status.PENDING"
+          + " ORDER BY request.id DESC")
+  List<GroupChatJoinRequest> findPendingCallKnocksForUpdate(
+      @Param("sessionId") Long sessionId, @Param("userId") String userId, @Param("via") Via via);
+
   Optional<GroupChatJoinRequest> findFirstBySessionIdAndUserIdAndViaAndStatusOrderByIdDesc(
       Long sessionId, String userId, Via via, Status status);
 

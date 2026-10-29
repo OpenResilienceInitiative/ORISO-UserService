@@ -79,18 +79,14 @@ class DirectCallKnockServiceTest {
 
     var order = inOrder(sessionRepository, repository);
     order.verify(sessionRepository).findByIdForUpdate(SESSION_ID);
-    order
-        .verify(repository)
-        .findFirstBySessionIdAndUserIdAndViaAndStatusOrderByIdDesc(
-            SESSION_ID, "asker-1", Via.DIRECT_LINK, Status.PENDING);
+    order.verify(repository).findPendingCallKnocksForUpdate(SESSION_ID, "asker-1", Via.DIRECT_LINK);
   }
 
   @Test
   void knock_Should_ReturnOpenKnock_When_PersonKnocksAgain() {
     var open = pending(1L, LocalDateTime.now().minusMinutes(5));
-    when(repository.findFirstBySessionIdAndUserIdAndViaAndStatusOrderByIdDesc(
-            SESSION_ID, "asker-1", Via.DIRECT_LINK, Status.PENDING))
-        .thenReturn(Optional.of(open));
+    when(repository.findPendingCallKnocksForUpdate(SESSION_ID, "asker-1", Via.DIRECT_LINK))
+        .thenReturn(List.of(open));
 
     assertThat(service.knock(SESSION_ID, asker, 9L, InviteLinkChatType.AUDIO)).isSameAs(open);
     verify(repository, never()).save(any());
@@ -99,9 +95,8 @@ class DirectCallKnockServiceTest {
   @Test
   void knock_Should_StartAfresh_When_TheOpenKnockIsStale() {
     var stale = pending(1L, LocalDateTime.now().minusHours(3));
-    when(repository.findFirstBySessionIdAndUserIdAndViaAndStatusOrderByIdDesc(
-            SESSION_ID, "asker-1", Via.DIRECT_LINK, Status.PENDING))
-        .thenReturn(Optional.of(stale));
+    when(repository.findPendingCallKnocksForUpdate(SESSION_ID, "asker-1", Via.DIRECT_LINK))
+        .thenReturn(List.of(stale));
 
     var knock = service.knock(SESSION_ID, asker, 9L, InviteLinkChatType.AUDIO);
 

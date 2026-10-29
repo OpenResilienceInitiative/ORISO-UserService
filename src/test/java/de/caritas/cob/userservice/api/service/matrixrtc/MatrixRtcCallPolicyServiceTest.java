@@ -139,6 +139,29 @@ class MatrixRtcCallPolicyServiceTest {
     }
   }
 
+  /** Only the person's own direct-link knock on this conversation closes the call. */
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "500,'someone-else','DIRECT_LINK'",
+        "500,'person','INVITE_LINK'",
+        "501,'person','DIRECT_LINK'"
+      })
+  void pendingKnockOutsideTheGateScopeLeavesTheCallOpen(String sessionUserVia) {
+    jdbc.update("INSERT INTO session VALUES (500, ?)", ROOM_ID);
+    jdbc.update("INSERT INTO session VALUES (501, '!other:example')");
+    jdbc.update(
+        "INSERT INTO group_chat_join_request(session_id,user_id,via,status) VALUES ("
+            + sessionUserVia
+            + ",'PENDING')");
+
+    var session = session(ConversationType.AGENCY_COUNSELLING);
+    when(sessionRepository.findByMatrixRoomId(ROOM_ID)).thenReturn(Optional.of(session));
+    when(tenantService.getRestrictedTenantDataFresh(TENANT_ID)).thenReturn(tenant(new Settings()));
+
+    assertThat(service.resolve(ROOM_ID, MATRIX_USER_ID)).isEqualTo(new CallMediaPolicy(true, true));
+  }
+
   @Test
   void missingMatrixBindingLogsOnlyTheCorrelatedDenialReason() {
     jdbc.update("DELETE FROM user WHERE matrix_user_id=?", MATRIX_USER_ID);
