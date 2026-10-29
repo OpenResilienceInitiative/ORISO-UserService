@@ -80,6 +80,56 @@ class CaseHandoverPolicyCacheServiceTest {
         .contains("caseHandoverEnabled", "caseHandoverPolicies", "tenantId");
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+  void freshAuthoritySurvivesCacheReadFailure(boolean enabled) {
+    when(repository.findById(42L))
+        .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("cache offline"));
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenReturn(authoritative(42L, enabled));
+
+    assertThat(service.getCurrent(42L).enabled()).isEqualTo(enabled);
+    verify(tenantControllerApi).getTenantPermissionPolicies(42L);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+  void freshAuthoritySurvivesConcurrentFirstCacheInsert(boolean enabled) {
+    when(repository.findById(42L)).thenReturn(Optional.empty());
+    when(repository.save(any()))
+        .thenThrow(new org.springframework.dao.DuplicateKeyException("concurrent first insert"));
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenReturn(authoritative(42L, enabled));
+
+    assertThat(service.getCurrent(42L).enabled()).isEqualTo(enabled);
+    verify(tenantControllerApi).getTenantPermissionPolicies(42L);
+  }
+
+  @Test
+  void freshAuthorityDoesNotHideAnUnexpectedRepositoryProgrammingFailure() {
+    when(repository.findById(42L)).thenReturn(Optional.empty());
+    when(repository.save(any())).thenThrow(new IllegalArgumentException("programming failure"));
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenReturn(authoritative(42L, false));
+
+    assertThatThrownBy(() -> service.getCurrent(42L)).isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void freshAuthorityDoesNotHideSerializationFailure() throws Exception {
+    var mapper = org.mockito.Mockito.mock(com.fasterxml.jackson.databind.ObjectMapper.class);
+    ReflectionTestUtils.setField(service, "objectMapper", mapper);
+    var authority = authoritative(42L, false);
+    when(tenantControllerApi.getTenantPermissionPolicies(42L)).thenReturn(authority);
+    when(mapper.writeValueAsString(authority))
+        .thenThrow(
+            new com.fasterxml.jackson.core.JsonProcessingException("serialization failure") {});
+
+    assertThatThrownBy(() -> service.getCurrent(42L))
+        .isInstanceOf(ServiceUnavailableException.class);
+    org.mockito.Mockito.verifyNoInteractions(repository);
+  }
+
   @Test
   void runtimeFreshReadObservesOnOffOnWithoutARefreshLease() {
     var stored = useInMemorySnapshots();

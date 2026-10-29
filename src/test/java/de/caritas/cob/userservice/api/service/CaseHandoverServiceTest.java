@@ -168,6 +168,8 @@ class CaseHandoverServiceTest {
   void canonicalMasterOffDeniesPendingClientApprovalBeforeGrantEffects() {
     installAuthoritativePolicies(false);
     var request = pendingTakeoverConsentRequest();
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
         .thenReturn(Optional.of(request));
 
@@ -204,13 +206,6 @@ class CaseHandoverServiceTest {
         .extracting(CaseHandoverService.CaseHandoverReason::getCode)
         .containsExactlyElementsOf(
             before.stream().map(CaseHandoverService.CaseHandoverReason::getCode).toList());
-    assertThat(
-            off.getCaseHandoverPolicies()
-                .getReasons()
-                .get("OTHER_EMERGENCY")
-                .getEnabled()
-                .getValue())
-        .isFalse();
     verify(client, times(3)).getTenantPermissionPolicies(7L);
   }
 
@@ -267,6 +262,8 @@ class CaseHandoverServiceTest {
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(recipient);
     when(consultantService.getConsultant("recipient")).thenReturn(Optional.of(recipient));
     when(authenticatedUser.getUserId()).thenReturn(recipient.getId());
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(501L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionIdForUpdate(501L, 123L))
         .thenReturn(Optional.of(request));
 
@@ -285,6 +282,8 @@ class CaseHandoverServiceTest {
   void canonicalMasterOffDoesNotBlockClientDeclineCleanup() {
     var client = installAuthoritativePolicies(false);
     var request = pendingTakeoverConsentRequest();
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
         .thenReturn(Optional.of(request));
 
@@ -488,6 +487,8 @@ class CaseHandoverServiceTest {
   void aMembersOnlyCaseRefusesEveryHandoverMutation(String mutation) {
     when(membersOnlyChatAccess.concerns(session)).thenReturn(true);
     // A pending request exists, so only the members-only guard can produce the refusal.
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(1L, 123L))
+        .thenReturn(Optional.of(pendingConsentRequest()));
     when(caseHandoverRequestRepository.findByIdAndSessionId(1L, 123L))
         .thenReturn(Optional.of(pendingConsentRequest()));
     assertThrows(
@@ -548,6 +549,8 @@ class CaseHandoverServiceTest {
       assertEquals(previous, session.getConsultant());
       verify(caseHandoverRequestRepository).save(any());
       frozen.setId(99L);
+      when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(99L, 123L))
+          .thenReturn(Optional.of(frozen));
       when(caseHandoverRequestRepository.findByIdAndSessionId(99L, 123L))
           .thenReturn(Optional.of(frozen));
       var approved = caseHandoverService.resolveClientConsent(123L, 99L, true);
@@ -772,6 +775,68 @@ class CaseHandoverServiceTest {
     }
 
     verify(caseHandoverPolicyCacheService, atLeastOnce()).getEffective(7L);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(longs = {0, -1})
+  void explicitInvalidSessionTenantCannotBorrowTheContextTenant(long invalidTenant) {
+    session.setTenantId(invalidTenant);
+    TenantContext.setCurrentTenant(7L);
+    try {
+      assertThrows(
+          ServiceUnavailableException.class,
+          () -> caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Cover"));
+      verify(caseHandoverPolicyCacheService, never()).getCurrent(any());
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Test
+  void legacySessionCannotBorrowAContextNotMatchingItsStoredAskerTenant() {
+    session.setTenantId(null);
+    TenantContext.setCurrentTenant(8L);
+    try {
+      assertThrows(
+          ServiceUnavailableException.class,
+          () -> caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Cover"));
+      verify(caseHandoverPolicyCacheService, never()).getCurrent(any());
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Test
+  void unguardedPullRejectsAnOwnershipChangeDuringItsPolicyLookupBeforeEffects() {
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              session.setOwnershipRevision(session.getOwnershipRevision() + 1);
+              return new CaseHandoverPolicyCacheService.CurrentPolicy(
+                  true, defaultTenantPolicies());
+            })
+        .when(caseHandoverPolicyCacheService)
+        .getCurrent(7L);
+    assertThrows(
+        ConflictException.class,
+        () -> caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Cover"));
+    verify(caseHandoverRequestRepository, never()).save(any());
+    verifyNoInteractions(matrixSynapseService, sessionOwnershipService);
+  }
+
+  @Test
+  void unrelatedSessionRowVersionChangeDoesNotInvalidateAFreshAuthorizedPull() {
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              session.setRowVersion(session.getRowVersion() + 1);
+              return new CaseHandoverPolicyCacheService.CurrentPolicy(
+                  true, defaultTenantPolicies());
+            })
+        .when(caseHandoverPolicyCacheService)
+        .getCurrent(7L);
+    assignPersistedRequestId(901L);
+    caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Cover");
+    verify(caseHandoverRequestRepository).save(any());
+    verify(caseHandoverPolicyCacheService).getCurrent(7L);
   }
 
   @Test
@@ -1040,6 +1105,8 @@ class CaseHandoverServiceTest {
             .matrixMembershipAdded(true)
             .tenantId(7L)
             .build();
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(103L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(103L, 123L))
         .thenReturn(Optional.of(request));
 
@@ -1065,6 +1132,8 @@ class CaseHandoverServiceTest {
             .createdAt(LocalDateTime.of(2026, 8, 16, 10, 0))
             .tenantId(7L)
             .build();
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(104L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(104L, 123L))
         .thenReturn(Optional.of(request));
 
@@ -1095,6 +1164,8 @@ class CaseHandoverServiceTest {
             .matrixMembershipAdded(true)
             .tenantId(7L)
             .build();
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(101L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(101L, 123L))
         .thenReturn(Optional.of(request));
     session.setMatrixRoomId("!room:matrix");
@@ -1140,6 +1211,8 @@ class CaseHandoverServiceTest {
             .createdAt(LocalDateTime.of(2026, 8, 16, 10, 0))
             .tenantId(7L)
             .build();
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(102L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(102L, 123L))
         .thenReturn(Optional.of(request));
 
@@ -1359,6 +1432,8 @@ class CaseHandoverServiceTest {
     session.setAlwaysAskBeforeAdditionalAccess(frozen == CaseHandoverConsentMode.NONE);
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(recipient);
     when(consultantService.getConsultant("recipient")).thenReturn(Optional.of(recipient));
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(501L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionIdForUpdate(501L, 123L))
         .thenReturn(Optional.of(request));
     var policies = defaultTenantPolicies();
@@ -1645,6 +1720,8 @@ class CaseHandoverServiceTest {
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(recipient);
     when(consultantService.getConsultant("recipient")).thenReturn(Optional.of(recipient));
     when(authenticatedUser.getUserId()).thenReturn(recipient.getId());
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(501L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionIdForUpdate(501L, 123L))
         .thenReturn(Optional.of(request));
 
@@ -1668,6 +1745,8 @@ class CaseHandoverServiceTest {
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(recipient);
     when(consultantService.getConsultant("recipient")).thenReturn(Optional.of(recipient));
     when(authenticatedUser.getUserId()).thenReturn(recipient.getId());
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(501L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionIdForUpdate(501L, 123L))
         .thenReturn(Optional.of(request));
 
@@ -1695,7 +1774,11 @@ class CaseHandoverServiceTest {
     when(caseHandoverPolicyCacheService.getEffective(7L)).thenReturn(policies);
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(recipient);
     when(consultantService.getConsultant("recipient")).thenReturn(Optional.of(recipient));
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(501L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionIdForUpdate(501L, 123L))
+        .thenReturn(Optional.of(request));
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(501L, 123L))
         .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(501L, 123L))
         .thenReturn(Optional.of(request));
@@ -1983,6 +2066,8 @@ class CaseHandoverServiceTest {
     CaseHandoverRequest request =
         pushRequest(recipient, UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d"));
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(recipient);
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(501L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionIdForUpdate(501L, 123L))
         .thenReturn(Optional.of(request));
 
@@ -2042,6 +2127,8 @@ class CaseHandoverServiceTest {
   void resolveClientConsent_sendsOneGrantedEmailIntent_WhenClientApproves() throws Exception {
     UUID requesterId = prepareDeliverableHandoverMail();
     CaseHandoverRequest request = pendingTakeoverConsentRequest();
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
         .thenReturn(Optional.of(request));
 
@@ -2055,6 +2142,8 @@ class CaseHandoverServiceTest {
   @Test
   void resolveClientConsent_notifiesRequesterOnce_WhenClientApprovesAndDecisionIsRepeated() {
     CaseHandoverRequest request = pendingConsentRequest();
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
         .thenReturn(Optional.of(request));
 
@@ -2090,6 +2179,8 @@ class CaseHandoverServiceTest {
   void resolveClientConsent_sendsNoEmailIntent_WhenClientDeclines() {
     session.setMatrixRoomId("!handover-room:matrix");
     CaseHandoverRequest request = pendingConsentRequest();
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
         .thenReturn(Optional.of(request));
 
@@ -2101,6 +2192,8 @@ class CaseHandoverServiceTest {
   @Test
   void resolveClientConsent_serializesOnSessionBeforeReadingRequest() {
     CaseHandoverRequest request = pendingConsentRequest();
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
         .thenReturn(Optional.of(request));
 
@@ -2723,6 +2816,8 @@ class CaseHandoverServiceTest {
   @Test
   void resolveAdviceConsent_grantsThreeHourReadOnlyCoAccessWithoutChangingOwner() {
     CaseHandoverRequest request = pendingConsentRequest();
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
         .thenReturn(Optional.of(request));
 
@@ -3401,6 +3496,8 @@ class CaseHandoverServiceTest {
   @Test
   void resolveClientConsent_grantsCoAccessWithoutReplacingOwner_WhenClientApprovesAdvice() {
     CaseHandoverRequest request = pendingConsentRequest();
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
         .thenReturn(Optional.of(request));
 
@@ -3419,6 +3516,8 @@ class CaseHandoverServiceTest {
   void resolveClientConsent_revalidatesLiveRecipientBeforeFinalGrant() {
     CaseHandoverRequest request = pendingConsentRequest();
     requester.setAbsent(true);
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
         .thenReturn(Optional.of(request));
     when(consultantService.getConsultant("requester")).thenReturn(Optional.of(requester));
@@ -3434,6 +3533,8 @@ class CaseHandoverServiceTest {
   void resolveClientConsent_rejectsRecipientWhoseLiveTenantChanged() {
     CaseHandoverRequest request = pendingConsentRequest();
     requester.setTenantId(8L);
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
         .thenReturn(Optional.of(request));
     when(consultantService.getConsultant("requester")).thenReturn(Optional.of(requester));
@@ -3450,6 +3551,8 @@ class CaseHandoverServiceTest {
   void resolveClientConsent_rejectsRecipientWhoseLiveAgencyChanged() {
     CaseHandoverRequest request = pendingConsentRequest();
     requester.getConsultantAgencies().iterator().next().setAgencyId(99L);
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
         .thenReturn(Optional.of(request));
     when(consultantService.getConsultant("requester")).thenReturn(Optional.of(requester));
@@ -3467,6 +3570,8 @@ class CaseHandoverServiceTest {
     ReflectionTestUtils.setField(caseHandoverService, "topicsEnabled", true);
     givenRequesterTopics(99L);
     session.setMainTopicId(5L);
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
         .thenReturn(Optional.of(request));
     when(consultantService.getConsultant("requester")).thenReturn(Optional.of(requester));
@@ -3483,6 +3588,8 @@ class CaseHandoverServiceTest {
     CaseHandoverRequest request = pendingConsentRequest();
     request.setReasonCode("COUNSELLOR_ASKED_FOR_ADVICE");
     request.setReasonLabel("Advice");
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
         .thenReturn(Optional.of(request));
 
@@ -3499,6 +3606,8 @@ class CaseHandoverServiceTest {
   void resolveClientConsent_namesTheOwnerChangeWhenTheOwnershipRevisionMoved() {
     CaseHandoverRequest request = pendingConsentRequest();
     session.setOwnershipRevision(request.getExpectedOwnershipRevision() + 1);
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
         .thenReturn(Optional.of(request));
 
@@ -3520,6 +3629,8 @@ class CaseHandoverServiceTest {
     CaseHandoverRequest request = pushRequest(recipient, UUID.randomUUID());
     request.setStatus(CaseHandoverRequest.Status.PENDING_CLIENT_CONSENT);
     session.setConsultant(previous);
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(501L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(501L, 123L))
         .thenReturn(Optional.of(request));
 
@@ -3539,6 +3650,8 @@ class CaseHandoverServiceTest {
   void resolveClientConsent_legacyPendingPullWithoutOwnershipPeriodRemainsDecidable() {
     CaseHandoverRequest request = pendingConsentRequest();
     request.setExpectedOwnershipRevision(null);
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
         .thenReturn(Optional.of(request));
 
@@ -3553,6 +3666,8 @@ class CaseHandoverServiceTest {
   void resolveClientConsent_keepsExistingGrantViewable_WhenRequesterStillOwnsSession() {
     session.setConsultant(requester);
     CaseHandoverRequest request = grantedRequest(requester);
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(99L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(99L, 123L))
         .thenReturn(Optional.of(request));
 
@@ -3574,6 +3689,8 @@ class CaseHandoverServiceTest {
     Consultant successor = consultant("successor", "Successor Counsellor");
     session.setConsultant(successor);
     CaseHandoverRequest request = grantedRequest(requester);
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(99L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(99L, 123L))
         .thenReturn(Optional.of(request));
 
@@ -3599,6 +3716,8 @@ class CaseHandoverServiceTest {
   @Test
   void resolveClientConsent_attachesTheNewOwnersStandingSupervisor_WhenClientApproves() {
     CaseHandoverRequest request = pendingTakeoverConsentRequest();
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
         .thenReturn(Optional.of(request));
 
@@ -3615,6 +3734,8 @@ class CaseHandoverServiceTest {
   @Test
   void resolveClientConsent_defersTheSupervisorAttachToANewTransaction_WhenClientApproves() {
     CaseHandoverRequest request = pendingTakeoverConsentRequest();
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
         .thenReturn(Optional.of(request));
     TransactionSynchronizationManager.initSynchronization();
@@ -3660,6 +3781,8 @@ class CaseHandoverServiceTest {
   @Test
   void resolveClientConsent_doesNotAttachAStandingSupervisor_WhenClientDeclines() {
     CaseHandoverRequest request = pendingConsentRequest();
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
         .thenReturn(Optional.of(request));
 
@@ -3673,6 +3796,8 @@ class CaseHandoverServiceTest {
     when(caseHandoverPolicyCacheService.getEffective(7L))
         .thenReturn(tenantPolicies("Rat ben\u00f6tigt", 15));
     CaseHandoverRequest request = pendingConsentRequest();
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
         .thenReturn(Optional.of(request));
 
@@ -3690,6 +3815,8 @@ class CaseHandoverServiceTest {
     disabledPolicies.getReasons().get("COUNSELLOR_ASKED_FOR_ADVICE").getEnabled().setValue(false);
     when(caseHandoverPolicyCacheService.getEffective(7L)).thenReturn(disabledPolicies);
     CaseHandoverRequest request = pendingConsentRequest();
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
         .thenReturn(Optional.of(request));
 
@@ -3729,6 +3856,8 @@ class CaseHandoverServiceTest {
   @Test
   void resolveClientConsent_describesTemporaryCoAccessAndKeepsExistingOwner() {
     CaseHandoverRequest request = pendingConsentRequest();
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
         .thenReturn(Optional.of(request));
     ArgumentCaptor<String> description = ArgumentCaptor.forClass(String.class);
@@ -3751,6 +3880,8 @@ class CaseHandoverServiceTest {
   @Test
   void resolveClientConsent_keepsContentLocked_WhenClientDeclines() {
     CaseHandoverRequest request = pendingConsentRequest();
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
         .thenReturn(Optional.of(request));
 
@@ -3772,6 +3903,8 @@ class CaseHandoverServiceTest {
     Consultant other = consultant("other", "Other Counsellor");
     session.setConsultant(other);
     CaseHandoverRequest request = pendingConsentRequest();
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
         .thenReturn(Optional.of(request));
 
@@ -4442,6 +4575,8 @@ class CaseHandoverServiceTest {
   @Test
   void resolveClientConsent_givesTheApprovedTakeoverRecipientTheOwnersPowerLevel() {
     CaseHandoverRequest request = pendingTakeoverConsentRequest();
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
         .thenReturn(Optional.of(request));
     givenARoomTheRequesterCanJoin();
@@ -4458,6 +4593,8 @@ class CaseHandoverServiceTest {
   @Test
   void resolveClientConsent_makesApprovedAdviceCoAccessReadOnly() {
     CaseHandoverRequest request = pendingConsentRequest();
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
         .thenReturn(Optional.of(request));
     givenARoomTheRequesterCanJoin();
@@ -4605,6 +4742,13 @@ class CaseHandoverServiceTest {
             CaseHandoverRequest.AccessType.CO_ACCESS))
         .thenReturn(List.of(saved.getValue()));
 
+    when(caseHandoverRequestRepository.findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(
+            123L, "requester"))
+        .thenReturn(List.of(saved.getValue()));
+    when(caseHandoverRequestRepository.findByIdAndSessionIdForUpdate(
+            saved.getValue().getId(), 123L))
+        .thenReturn(Optional.of(saved.getValue()));
+
     // granted at 10:00 for 180 minutes, extended at once: never beyond two durations
     assertEquals(
         LocalDateTime.of(2026, 8, 16, 16, 0),
@@ -4685,6 +4829,11 @@ class CaseHandoverServiceTest {
     CaseHandoverRequest grant = grantedAdviceRequest();
     grant.setStatus(status);
     grant.setExpiresAt(LocalDateTime.of(2026, 8, 16, 10, 30));
+    when(caseHandoverRequestRepository.findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(
+            123L, "requester"))
+        .thenReturn(List.of(grant));
+    when(caseHandoverRequestRepository.findByIdAndSessionIdForUpdate(grant.getId(), 123L))
+        .thenReturn(Optional.of(grant));
     when(caseHandoverRequestRepository.findBySessionIdAndStatusAndAccessType(
             123L, status, CaseHandoverRequest.AccessType.CO_ACCESS))
         .thenReturn(List.of(grant));

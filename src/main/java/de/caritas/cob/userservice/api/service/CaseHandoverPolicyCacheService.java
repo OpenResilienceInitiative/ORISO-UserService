@@ -16,10 +16,12 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataAccessException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionException;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /** Tenant-safe last-known-good cache for the TenantService-owned Case Handover policy. */
@@ -46,7 +48,6 @@ public class CaseHandoverPolicyCacheService {
     if (tenantId == null || tenantId <= 0) {
       throw new ServiceUnavailableException("A tenant is required for Case Handover policy");
     }
-    var existing = inNewTransaction(() -> repository.findById(tenantId));
     TenantPermissionPolicies response;
     try {
       response = tenantPolicyReadClient.getTenantPermissionPolicies(tenantId);
@@ -57,6 +58,12 @@ public class CaseHandoverPolicyCacheService {
           "Tenant {} current Case Handover policy unavailable: {}",
           tenantId,
           TenantCaseHandoverPolicyReadClient.failureSummary(unavailable));
+      Optional<TenantCaseHandoverPolicyCache> existing;
+      try {
+        existing = inNewTransaction(() -> repository.findById(tenantId));
+      } catch (DataAccessException | TransactionException cacheUnavailable) {
+        throw new ServiceUnavailableException("Tenant Case Handover policy is unavailable");
+      }
       if (existing.isEmpty()) {
         throw new ServiceUnavailableException("Tenant Case Handover policy is unavailable");
       }
@@ -77,7 +84,16 @@ public class CaseHandoverPolicyCacheService {
     }
     // A malformed live authority must not fall back to an older permissive snapshot.
     CurrentPolicy current = validateCurrent(tenantId, response);
-    putEffective(tenantId, response);
+    String serialized = serialize(response);
+    try {
+      persistSnapshot(tenantId, serialized);
+    } catch (DataAccessException | TransactionException cacheUnavailable) {
+      // A cache write (including a concurrent first insert) cannot override fresh authority.
+      log.warn(
+          "Tenant {} live Case Handover policy cache write failed: {}",
+          tenantId,
+          cacheUnavailable.getClass().getSimpleName());
+    }
     return current;
   }
 
@@ -200,12 +216,19 @@ public class CaseHandoverPolicyCacheService {
   /** Persists a provider-confirmed response without another downstream round trip. */
   public CaseHandoverPolicies putEffective(Long tenantId, TenantPermissionPolicies response) {
     validateCurrent(tenantId, response);
-    String serialized;
+    persistSnapshot(tenantId, serialize(response));
+    return response.getCaseHandoverPolicies();
+  }
+
+  private String serialize(TenantPermissionPolicies response) {
     try {
-      serialized = objectMapper.writeValueAsString(response);
+      return objectMapper.writeValueAsString(response);
     } catch (JsonProcessingException invalid) {
       throw new ServiceUnavailableException("Tenant Case Handover policy could not be cached");
     }
+  }
+
+  private void persistSnapshot(Long tenantId, String serialized) {
     inNewTransaction(
         () -> {
           var cache = repository.findById(tenantId).orElseGet(TenantCaseHandoverPolicyCache::new);
@@ -216,7 +239,6 @@ public class CaseHandoverPolicyCacheService {
           repository.save(cache);
           return null;
         });
-    return response.getCaseHandoverPolicies();
   }
 
   /**
