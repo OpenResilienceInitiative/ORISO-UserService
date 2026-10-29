@@ -9,6 +9,9 @@ public interface MatrixCallBindingRepository extends JpaRepository<MatrixCallBin
 
   Optional<MatrixCallBinding> findByMediaRoomId(String mediaRoomId);
 
+  /** A call ran or runs in this conversation room (#1487 knock scope). */
+  boolean existsBySourceRoomId(String sourceRoomId);
+
   @org.springframework.data.jpa.repository.Query(
       "select b.mediaRoomId from MatrixCallBinding b where b.mediaRoomId in :rooms")
   java.util.Set<String> findKnownMediaRooms(

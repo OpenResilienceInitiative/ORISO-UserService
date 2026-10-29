@@ -487,6 +487,25 @@ class AgencyInviteLinkServiceTest {
 
   // --- list ---
 
+  /** Security review of #1488: admins never list call share links, so never see their token. */
+  @Test
+  void list_Should_RefuseCallShareLinks_WithoutTouchingTheRepository() {
+    assertThatThrownBy(() -> service.list("CALL", null, null, null, 0, 20))
+        .isInstanceOf(BadRequestException.class);
+    Mockito.verifyNoInteractions(repository);
+  }
+
+  @Test
+  void create_Should_RefuseCallShareLinks_FromTheAdminRoute() {
+    var cmd = new AgencyInviteLinkService.CreateInviteLinkCommand();
+    cmd.setLinkKind("CALL");
+    // Default chat type (LIVE_CHAT) passes validateEnums, so only the CALL guard can refuse.
+    assertThatThrownBy(() -> service.create(cmd))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessageContaining("created from the call");
+    Mockito.verify(repository, Mockito.never()).save(Mockito.any());
+  }
+
   @Test
   void list_Should_ThrowBadRequest_When_InvalidLinkKind() {
     assertThatThrownBy(() -> service.list("INVALID", null, null, null, 0, 20))

@@ -22,6 +22,7 @@ import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.picture.PictureDiagnostics;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
+import de.caritas.cob.userservice.api.service.agencyinvitelink.CallShareLinkEndedException;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.DirectLinkInactiveException;
 import jakarta.persistence.OptimisticLockException;
 import jakarta.validation.ConstraintViolationException;
@@ -349,6 +350,17 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
     return handleExceptionInternal(
         ex,
         reasonBody(DirectLinkInactiveException.REASON),
+        new HttpHeaders(),
+        HttpStatus.GONE,
+        request);
+  }
+
+  @ExceptionHandler({CallShareLinkEndedException.class})
+  public ResponseEntity<Object> handleCallShareLinkEnded(
+      final CallShareLinkEndedException ex, final WebRequest request) {
+    return handleExceptionInternal(
+        ex,
+        reasonBody(CallShareLinkEndedException.REASON),
         new HttpHeaders(),
         HttpStatus.GONE,
         request);

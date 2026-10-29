@@ -117,4 +117,16 @@ public class AgencyInviteLink {
 
   @Column(name = "update_date")
   private LocalDateTime updateDate;
+
+  /**
+   * Call share links (#1487): guests wait for the counsellor ("Anklopfen") instead of joining
+   * straight away. Read only for {@code link_kind = CALL}.
+   */
+  @Builder.Default
+  @Column(name = "knock", nullable = false)
+  private boolean knock = true;
+
+  /** Call share links (#1487): the one running call ({@code matrix_call_binding.id}). */
+  @Column(name = "call_binding_id", unique = true)
+  private Long callBindingId;
 }

@@ -843,6 +843,22 @@
       "status": "bounded"
     },
     {
+      "id": "call-share-link-sweep",
+      "kind": "scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/agencyinvitelink/CallShareLinkSweep.java",
+      "components": [
+        "sweep"
+      ],
+      "owner": "sessions-matrix",
+      "risk": "correctness",
+      "decision": "Database-only expiry of call share links whose call is over. Each link is closed in its own transaction under a pessimistic row lock and only from ACTIVE, so competing replicas close it once and a second run is a no-op; no Matrix call is made.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "safe"
+    },
+    {
       "id": "matrix-feed-signal-coalescer",
       "source": "src/main/java/de/caritas/cob/userservice/api/service/matrix/FeedSignalCoalescer.java",
       "kind": "local-state",

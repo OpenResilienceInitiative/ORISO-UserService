@@ -171,6 +171,17 @@ class MatrixCallGuestServiceTest {
             });
   }
 
+  /** A transient membership lookup failure is "Matrix unavailable" (502), never a 500. */
+  @Test
+  void failedMembershipLookupIsMatrixUnavailable() {
+    when(matrix.getCallRoomMembers(SOURCE))
+        .thenThrow(new MatrixSynapseService.CallLookupUnavailableException("x"));
+
+    assertThat(service.counsellorCall(7L, "counsellor", SOURCE, "call").outcome())
+        .isEqualTo(Outcome.MATRIX_UNAVAILABLE);
+    assertThat(service.counsellorsInConversation(7L, SOURCE)).isEmpty();
+  }
+
   @Test
   void askerCannotAdmitGuests() throws Exception {
     var asker = new AuthenticatedUser();
@@ -199,6 +210,26 @@ class MatrixCallGuestServiceTest {
     assertThat(service.admit(counsellor, SOURCE, "call", "guest").outcome())
         .isEqualTo(Outcome.NOT_FOUND);
     verify(matrix, never()).inviteUserToRoom(anyString(), anyString(), anyString());
+  }
+
+  @Test
+  void counsellorsInConversationAreTheTraegersCounsellorsAmongItsMembers() throws Exception {
+    when(matrix.getCallRoomMembers(SOURCE))
+        .thenReturn(Optional.of(List.of(COUNSELLOR, GUEST, "@foreign:example", "@second:example")));
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull(COUNSELLOR))
+        .thenReturn(Optional.of(consultant("counsellor", COUNSELLOR, 7L)));
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull("@foreign:example"))
+        .thenReturn(Optional.of(consultant("foreign", "@foreign:example", 8L)));
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull("@second:example"))
+        .thenReturn(Optional.of(consultant("second", "@second:example", 7L)));
+
+    assertThat(service.counsellorsInConversation(7L, SOURCE))
+        .containsExactly("counsellor", "second");
+  }
+
+  @Test
+  void counsellorsInConversationIsEmptyForAnotherTraegersConversation() throws Exception {
+    assertThat(service.counsellorsInConversation(8L, SOURCE)).isEmpty();
   }
 
   @Test

@@ -64,6 +64,9 @@ public class AgencyInviteLinkService {
           .TemporaryAccountSettingsService
       temporaryAccountSettings;
 
+  /** Call share links (#1487) in the public context; not {@code @NonNull} for older test wiring. */
+  private final CallShareLinkService callShareLinkService;
+
   /** Create a new invite link. All classification fields are optional — defaults are applied. */
   public AgencyInviteLink create(CreateInviteLinkCommand cmd) {
     if (cmd == null) {
@@ -71,6 +74,10 @@ public class AgencyInviteLinkService {
     }
     applyDefaults(cmd);
     validateEnums(cmd);
+    if (InviteLinkKind.CALL.name().equals(cmd.getLinkKind())) {
+      // Only a counsellor in a running call creates its share link (#1487).
+      throw new BadRequestException("Call share links are created from the call");
+    }
 
     if (InviteLinkKind.COUNSELLOR.name().equals(cmd.getLinkKind())
         && isBlank(cmd.getConsultantId())) {
@@ -144,6 +151,10 @@ public class AgencyInviteLinkService {
     if (linkKind != null && !isValidEnumValue(linkKind, InviteLinkKind.class)) {
       throw new BadRequestException("Unknown linkKind: " + linkKind);
     }
+    if (InviteLinkKind.CALL.name().equals(linkKind)) {
+      // Call share links are never listed for admins (#1487).
+      throw new BadRequestException("Call share links are not listed");
+    }
     if (chatType != null && !isValidEnumValue(chatType, InviteLinkChatType.class)) {
       throw new BadRequestException("Unknown chatType: " + chatType);
     }
@@ -180,6 +191,21 @@ public class AgencyInviteLinkService {
     return result;
   }
 
+  /**
+   * Public entry metadata of any link (the {@code /context} route): a call share link (#1487) has
+   * its own, smaller shape.
+   */
+  @Transactional(readOnly = true)
+  public Object getPublicContext(String token) {
+    AgencyInviteLink link =
+        repository
+            .findByToken(token)
+            .orElseThrow(() -> new NotFoundException("Invite link not found"));
+    return InviteLinkKind.CALL.name().equals(link.getLinkKind())
+        ? callShareContext(link)
+        : contextOf(link);
+  }
+
   /** Read public entry metadata without provisioning a session or changing the link. */
   @Transactional(readOnly = true)
   public InvitationContext getContext(String token) {
@@ -187,6 +213,13 @@ public class AgencyInviteLinkService {
         repository
             .findByToken(token)
             .orElseThrow(() -> new NotFoundException("Invite link not found"));
+    if (InviteLinkKind.CALL.name().equals(link.getLinkKind())) {
+      throw new BadRequestException("Not a registration link");
+    }
+    return contextOf(link);
+  }
+
+  private InvitationContext contextOf(AgencyInviteLink link) {
     if (InviteLinkStatus.DISABLED.name().equals(link.getStatus())
         && InviteLinkChatType.isDirectMedium(link.getChatType())) {
       throw new DirectLinkInactiveException();
@@ -230,6 +263,37 @@ public class AgencyInviteLinkService {
       }
     }
   }
+
+  /**
+   * Call share link (#1487): 410 once the call is over. {@code temporaryAccount} is effective (the
+   * counsellor's setting, and allowed by platform and Träger); {@code admission} follows
+   * "Anklopfen" and changes while the call runs. Beratungsstelle, consulting type and topic stay in
+   * the context for the entry room's consent and registration (decision pending, #1487); nothing
+   * about the call or its conversation is exposed.
+   */
+  private CallShareContext callShareContext(AgencyInviteLink link) {
+    callShareLinkService.requireUsable(link);
+    return new CallShareContext(
+        link.getTenantId(),
+        link.getAgencyId(),
+        link.getConsultingTypeId(),
+        link.getTopicId(),
+        link.getChatType(),
+        link.isTemporaryAccount() && callShareLinkService.temporaryAccountAllowed(link),
+        (link.isKnock() ? InviteLinkAdmission.KNOCK : InviteLinkAdmission.DIRECT).name(),
+        InviteLinkKind.CALL.name());
+  }
+
+  /** Public context of a call share link (#1487). */
+  public record CallShareContext(
+      Long tenantId,
+      Long agencyId,
+      Integer consultingTypeId,
+      Long topicId,
+      String chatType,
+      boolean temporaryAccount,
+      String admission,
+      String linkKind) {}
 
   /**
    * Public context deliberately excludes credentials and invitation administration data, including
@@ -277,6 +341,10 @@ public class AgencyInviteLinkService {
       throw new BadRequestException("Invite link is not active");
     }
 
+    if (InviteLinkKind.CALL.name().equals(link.getLinkKind())) {
+      // A call share link opens one running call only (#1487), never a registration context.
+      throw new BadRequestException("Not a registration link");
+    }
     if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now())) {
       link.setStatus(InviteLinkStatus.EXPIRED.name());
       repository.save(link);

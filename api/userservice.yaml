@@ -101,7 +101,9 @@ paths:
       summary: 'People waiting to be let into a call in one of the caller''s conversations, oldest first [Authorization: Role: consultant]'
       description: >-
         With sessionId or matrixRoomId only the knocks of that call; without either all of the
-        caller's waiting knocks (unchanged behaviour).
+        caller's waiting knocks (unchanged behaviour). Knocks through a call share link (#1487)
+        count as knocks of the call whose conversation room is matrixRoomId; a room without a 1:1
+        conversation (a group call) is accepted when a call ran in it and lists only those.
       security:
         - Bearer: [ ]
       parameters:
@@ -3387,10 +3389,17 @@ components:
       enum: [PENDING, ADMITTED, DECLINED, CANCELLED]
     CallKnockDTO:
       type: object
-      required: [id, sessionId, status, medium, requestedAt]
+      required: [id, status, medium, requestedAt]
       properties:
         id: {type: integer, format: int64}
-        sessionId: {type: integer, format: int64}
+        sessionId:
+          type: integer
+          format: int64
+          description: 'The conversation whose call is knocked on; empty for a call share link knock of a call without a 1:1 conversation (#1487).'
+        callShareLinkId:
+          type: integer
+          format: int64
+          description: 'Set when the guest knocked through the share link of a running call (#1487); the id returned by POST /matrix/calls/share-links.'
         displayName:
           type: string
           description: 'The knocking person''s username (pseudonym), decoded; never the e-mail address or a real name.'

@@ -77,6 +77,72 @@ public interface GroupChatJoinRequestRepository extends CrudRepository<GroupChat
       @Param("since") java.time.LocalDateTime since,
       @Param("sessionId") Long sessionId);
 
+  /** Call share link knocks (#1487): one guest on one link. */
+  Optional<GroupChatJoinRequest> findFirstByInviteLinkIdAndUserIdAndViaAndStatusOrderByIdDesc(
+      Long inviteLinkId, String userId, Via via, Status status);
+
+  /** The same, locked: seating a guest and declining the admission serialise on this row. */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "SELECT request FROM GroupChatJoinRequest request WHERE request.inviteLinkId = :linkId"
+          + " AND request.userId = :userId AND request.via = :via AND request.status = :status"
+          + " ORDER BY request.id DESC")
+  List<GroupChatJoinRequest> findCallLinkKnocksForUpdate(
+      @Param("linkId") Long inviteLinkId,
+      @Param("userId") String userId,
+      @Param("via") Via via,
+      @Param("status") Status status,
+      Pageable page);
+
+  List<GroupChatJoinRequest> findByInviteLinkIdAndViaAndStatus(
+      Long inviteLinkId, Via via, Status status);
+
+  List<GroupChatJoinRequest> findByInviteLinkIdAndUserIdAndVia(
+      Long inviteLinkId, String userId, Via via);
+
+  /**
+   * Waiting guests on call share links (#1487). Scoped to a room: every link of a call there, for
+   * any counsellor of that call (the caller checks call membership). Unscoped: the links the
+   * counsellor created.
+   */
+  @Query(
+      "SELECT request FROM GroupChatJoinRequest request, AgencyInviteLink link"
+          + " WHERE request.inviteLinkId = link.id"
+          + " AND (:roomId IS NOT NULL OR link.consultantId = :consultantId)"
+          + " AND link.linkKind = 'CALL' AND link.status = 'ACTIVE'"
+          + " AND request.via = :via AND request.status = :status"
+          + " AND request.requestedAt >= :since"
+          + " AND (:roomId IS NULL OR request.inviteLinkId IN (SELECT scoped.id FROM AgencyInviteLink scoped,"
+          + " MatrixCallBinding binding WHERE scoped.callBindingId = binding.id"
+          + " AND binding.sourceRoomId = :roomId))"
+          + " ORDER BY request.requestedAt ASC, request.id ASC")
+  List<GroupChatJoinRequest> findCallLinkKnocksForConsultant(
+      @Param("consultantId") String consultantId,
+      @Param("via") Via via,
+      @Param("status") Status status,
+      @Param("since") java.time.LocalDateTime since,
+      @Param("roomId") String roomId);
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "SELECT request FROM GroupChatJoinRequest request"
+          + " WHERE request.inviteLinkId IN"
+          + " (SELECT link.id FROM AgencyInviteLink link"
+          + " WHERE (:roomId IS NOT NULL OR link.consultantId = :consultantId)"
+          + " AND link.linkKind = 'CALL' AND link.status = 'ACTIVE')"
+          + " AND request.via = :via AND request.status = :status"
+          + " AND request.requestedAt >= :since"
+          + " AND (:roomId IS NULL OR request.inviteLinkId IN (SELECT scoped.id FROM AgencyInviteLink scoped,"
+          + " MatrixCallBinding binding WHERE scoped.callBindingId = binding.id"
+          + " AND binding.sourceRoomId = :roomId))"
+          + " ORDER BY request.requestedAt ASC, request.id ASC")
+  List<GroupChatJoinRequest> findCallLinkKnocksForConsultantForUpdate(
+      @Param("consultantId") String consultantId,
+      @Param("via") Via via,
+      @Param("status") Status status,
+      @Param("since") java.time.LocalDateTime since,
+      @Param("roomId") String roomId);
+
   List<GroupChatJoinRequest> findBySeriesIdInAndStatusOrderByRequestedAtAscIdAsc(
       Collection<Long> seriesIds, Status status);
 

@@ -255,4 +255,5 @@
   <include file="db/changelog/changeset/20261028_matrix_call_guest_1477/changeSet.xml"/>
   <include file="db/changelog/changeset/20261028_direct_links_1475/changeSet.xml"/>
   <include file="db/changelog/changeset/20261028_temporary_accounts_1476/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261028_call_share_link_1487/changeSet.xml"/>
 </databaseChangeLog>

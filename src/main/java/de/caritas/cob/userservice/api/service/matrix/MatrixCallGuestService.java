@@ -59,30 +59,45 @@ public class MatrixCallGuestService {
   @Transactional
   public Admission admit(
       AuthenticatedUser actor, String sourceRoomId, String callId, String guestUserId) {
-    if (!actor.isConsultant()
-        || actor.getUserId() == null
-        || actor.getTenantId() == null
-        || blank(sourceRoomId)
-        || blank(callId)
-        || blank(guestUserId)) return Admission.of(Outcome.NOT_FOUND);
-    Long tenant = actor.getTenantId();
+    if (!actor.isConsultant()) return Admission.of(Outcome.NOT_FOUND);
+    return admitAs(actor.getTenantId(), actor.getUserId(), sourceRoomId, callId, guestUserId);
+  }
+
+  /** A running call as seen by one counsellor of its conversation (US#1477, US#1487). */
+  public record CounsellorCall(
+      Outcome outcome, MatrixCallBinding binding, String counsellorMatrixId, List<String> members) {
+    static CounsellorCall of(Outcome outcome) {
+      return new CounsellorCall(outcome, null, null, null);
+    }
+  }
+
+  /**
+   * The running call {@code callId} of {@code sourceRoomId}, locked, when {@code consultantId} is a
+   * counsellor of that Träger and in the conversation; else {@code NOT_FOUND}. Never tells another
+   * Träger's call apart from a missing one.
+   */
+  @Transactional
+  public CounsellorCall counsellorCall(
+      Long tenant, String consultantId, String sourceRoomId, String callId) {
+    if (consultantId == null || tenant == null || blank(sourceRoomId) || blank(callId))
+      return CounsellorCall.of(Outcome.NOT_FOUND);
     var conversation =
         conversations
             .resolve(sourceRoomId)
             .filter(value -> tenant.equals(value.getTenantId()))
             .orElse(null);
-    String admitter =
+    String counsellor =
         consultants
-            .findByIdAndDeleteDateIsNull(actor.getUserId())
+            .findByIdAndDeleteDateIsNull(consultantId)
             .filter(value -> tenant.equals(value.getTenantId()))
             .map(value -> value.getMatrixUserId())
             .filter(value -> !blank(value))
             .orElse(null);
-    if (conversation == null || admitter == null) return Admission.of(Outcome.NOT_FOUND);
-    var members = matrix.getCallRoomMembers(sourceRoomId).orElse(null);
-    if (members == null) return Admission.of(Outcome.MATRIX_UNAVAILABLE);
+    if (conversation == null || counsellor == null) return CounsellorCall.of(Outcome.NOT_FOUND);
+    var members = callRoomMembers(sourceRoomId).orElse(null);
+    if (members == null) return CounsellorCall.of(Outcome.MATRIX_UNAVAILABLE);
     // Only a counsellor who is in the conversation may open its call to somebody else.
-    if (!members.contains(admitter)) return Admission.of(Outcome.NOT_FOUND);
+    if (!members.contains(counsellor)) return CounsellorCall.of(Outcome.NOT_FOUND);
     var binding =
         bindings
             .findBySourceRoomIdAndCallId(sourceRoomId, callId)
@@ -91,11 +106,49 @@ public class MatrixCallGuestService {
                     Objects.equals(value.getTenantId(), conversation.getTenantId())
                         && Objects.equals(value.getSessionId(), conversation.getSessionId())
                         && Objects.equals(value.getChatId(), conversation.getChatId()))
-            // Serialise with the lifecycle, so a call cannot end between the check and the invite.
+            // Serialise with the lifecycle, so a call cannot end between the check and the use.
             .flatMap(value -> bindings.lockByMediaRoomId(value.getMediaRoomId()))
             .filter(value -> value.getEndedAt() == null)
             .orElse(null);
-    if (binding == null) return Admission.of(Outcome.NOT_FOUND);
+    if (binding == null) return CounsellorCall.of(Outcome.NOT_FOUND);
+    return new CounsellorCall(Outcome.ADMITTED, binding, counsellor, members);
+  }
+
+  /**
+   * The counsellors of {@code tenant} who are members of conversation {@code sourceRoomId}; empty
+   * for another Träger's conversation or when Matrix cannot tell.
+   */
+  @Transactional(readOnly = true)
+  public List<String> counsellorsInConversation(Long tenant, String sourceRoomId) {
+    if (tenant == null || blank(sourceRoomId)) return List.of();
+    var conversation =
+        conversations
+            .resolve(sourceRoomId)
+            .filter(value -> tenant.equals(value.getTenantId()))
+            .orElse(null);
+    if (conversation == null) return List.of();
+    return callRoomMembers(sourceRoomId).orElse(List.of()).stream()
+        .map(consultants::findByMatrixUserIdAndDeleteDateIsNull)
+        .flatMap(Optional::stream)
+        .filter(value -> tenant.equals(value.getTenantId()))
+        .map(value -> value.getId())
+        .toList();
+  }
+
+  /**
+   * Seats {@code guestUserId} in the running call on the authority of counsellor {@code
+   * consultantId}: the counsellor's own admission (US#1477), or the share link they created
+   * (US#1487).
+   */
+  @Transactional
+  public Admission admitAs(
+      Long tenant, String consultantId, String sourceRoomId, String callId, String guestUserId) {
+    if (blank(guestUserId)) return Admission.of(Outcome.NOT_FOUND);
+    var call = counsellorCall(tenant, consultantId, sourceRoomId, callId);
+    if (call.outcome() != Outcome.ADMITTED) return Admission.of(call.outcome());
+    var binding = call.binding();
+    var members = call.members();
+    String admitter = call.counsellorMatrixId();
     var guest = identity(guestUserId, tenant).orElse(null);
     if (guest == null || !isActive(guest.id())) return Admission.of(Outcome.NOT_FOUND);
     // A member of the conversation already has the normal join path; never record them as a
@@ -133,6 +186,52 @@ public class MatrixCallGuestService {
     var row = reserved != null ? reserved : existing.get();
     return new Admission(
         Outcome.ADMITTED, binding.getMediaRoomId(), guest.matrixId(), row.getAdmittedAt());
+  }
+
+  /**
+   * A counsellor removes a guest from the running call (#1487). The seat is revoked first, so the
+   * media gate and {@link #admitAs} refuse the guest at once; the call-room removal is best effort,
+   * because without a seat the guest gets no media anyway.
+   */
+  @Transactional
+  public boolean revokeSeat(
+      MatrixCallBinding binding, String guestMatrixId, String moderatorMatrixId) {
+    if (binding == null || binding.getId() == null || blank(guestMatrixId)) return false;
+    var seat =
+        guests
+            .findByBindingIdAndMatrixUserId(binding.getId(), guestMatrixId)
+            .filter(row -> row.getRevokedAt() == null)
+            .orElse(null);
+    if (seat == null) return false;
+    seat.revoke(System.currentTimeMillis());
+    guests.save(seat);
+    String room = binding.getMediaRoomId();
+    String token =
+        blank(moderatorMatrixId) ? null : matrix.loginAsUserAccessToken(moderatorMatrixId);
+    if (token == null) {
+      log.warn(
+          "Call guest seat revoked without call-room removal in {} (no moderator token)", room);
+      return true;
+    }
+    matrix.removeUserFromRoom(room, guestMatrixId, token);
+    if (!isGone(room, guestMatrixId, token)) {
+      matrix.kickUserFromRoom(room, guestMatrixId, token);
+      if (!isGone(room, guestMatrixId, token))
+        log.warn("Call guest seat revoked but still in call room {}", room);
+    }
+    if (!matrix.clearUserPowerLevel(room, guestMatrixId, token))
+      log.warn("Call guest power level could not be cleared in call room {}", room);
+    return true;
+  }
+
+  /** True when a counsellor removed the person from this call; they cannot come back (#1487). */
+  public boolean wasRemoved(MatrixCallBinding binding, String matrixUserId) {
+    return binding.getId() != null
+        && !blank(matrixUserId)
+        && guests
+            .findByBindingIdAndMatrixUserId(binding.getId(), matrixUserId)
+            .map(row -> row.getRevokedAt() != null)
+            .orElse(false);
   }
 
   /** True while the call runs and the person holds an unrevoked guest seat in it. */
@@ -215,6 +314,15 @@ public class MatrixCallGuestService {
     return guests.findEndedMediaRoomsWithOutstandingGuests(
         System.currentTimeMillis() - guestRevokeRetryMillis,
         org.springframework.data.domain.PageRequest.of(0, 100));
+  }
+
+  /** Empty also when the lookup fails transiently, so callers answer "Matrix unavailable". */
+  private Optional<List<String>> callRoomMembers(String sourceRoomId) {
+    try {
+      return matrix.getCallRoomMembers(sourceRoomId);
+    } catch (MatrixSynapseService.CallLookupUnavailableException unavailable) {
+      return Optional.empty();
+    }
   }
 
   private boolean isGone(String room, String matrixId, String token) {
