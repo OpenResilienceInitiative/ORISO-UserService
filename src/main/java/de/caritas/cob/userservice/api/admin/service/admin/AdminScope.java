@@ -86,6 +86,14 @@ public class AdminScope {
       return new AdminTarget(id);
     }
 
+    /**
+     * An admin account to change, delete, pause, re-invite or (un)assign agencies for. Admin
+     * accounts are managed from above: an agency admin manages none, not even its own (#1407).
+     */
+    static Target managedAdmin(String id) {
+      return new ManagedAdminTarget(id);
+    }
+
     static Target counsellor(String id) {
       return new CounsellorTarget(id);
     }
@@ -120,6 +128,8 @@ public class AdminScope {
   }
 
   private record AdminTarget(String id) implements Target {}
+
+  private record ManagedAdminTarget(String id) implements Target {}
 
   private record CounsellorTarget(String id) implements Target {}
 
@@ -204,6 +214,8 @@ public class AdminScope {
     boolean allowed =
         switch (target) {
           case AdminTarget admin -> mayActOnAdmin(reach, admin.id());
+          case ManagedAdminTarget admin ->
+              !(reach instanceof Agencies) && mayActOnAdmin(reach, admin.id());
           case CounsellorTarget counsellor -> mayActOnCounsellor(reach, counsellor.id());
           case AdviceSeekerTarget asker -> mayActOnAdviceSeeker(reach, asker.id());
           case AccountTarget account -> mayReadAccount(reach, account.id());

@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.UserServiceMapper;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.PatchAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantAdminDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.create.CreateAdminService;
 import de.caritas.cob.userservice.api.admin.service.admin.delete.DeleteAdminService;
@@ -16,6 +17,7 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
+import de.caritas.cob.userservice.api.model.AdminAgency;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
@@ -672,6 +674,47 @@ class TenantAdminUserServiceTest {
     List<AdminResponseDTO> admins = tenantAdminUserService.findTenantAdmins(1L);
 
     assertThat(admins).hasSize(1);
+  }
+
+  @Test
+  void deleteTenantAdmin_Should_ThrowForbidden_When_AgencyAdminSharesAnAgencyWithTheAdmin() {
+    givenAgencyAdminSharingAgencyWith("shared-admin");
+
+    assertThatThrownBy(() -> tenantAdminUserService.deleteTenantAdmin("shared-admin"))
+        .isInstanceOf(ForbiddenException.class);
+    Mockito.verifyNoInteractions(deleteAdminService);
+  }
+
+  @Test
+  void updateTenantAdmin_Should_ThrowForbidden_When_AgencyAdminSharesAnAgencyWithTheAdmin() {
+    givenAgencyAdminSharingAgencyWith("shared-admin");
+    UpdateTenantAdminDTO dto = new EasyRandom().nextObject(UpdateTenantAdminDTO.class);
+    dto.setTenantId(9);
+
+    assertThatThrownBy(() -> tenantAdminUserService.updateTenantAdmin("shared-admin", dto))
+        .isInstanceOf(ForbiddenException.class);
+    Mockito.verifyNoInteractions(updateAdminService);
+  }
+
+  @Test
+  void patchTenantAdmin_Should_ThrowForbidden_When_AgencyAdminSharesAnAgencyWithTheAdmin() {
+    givenAgencyAdminSharingAgencyWith("shared-admin");
+
+    assertThatThrownBy(
+            () -> tenantAdminUserService.patchTenantAdmin("shared-admin", new PatchAdminDTO()))
+        .isInstanceOf(ForbiddenException.class);
+    Mockito.verifyNoInteractions(updateAdminService);
+  }
+
+  /** An agency admin that also holds tenant-admin reaches the endpoint, but manages no admins. */
+  private void givenAgencyAdminSharingAgencyWith(String adminId) {
+    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(true);
+    when(authenticatedUser.getTenantId()).thenReturn(9L);
+    when(authenticatedUser.getUserId()).thenReturn("agency-admin");
+    when(retrieveAdminService.findAdmin(adminId, Admin.AdminType.TENANT))
+        .thenReturn(tenantAdmin(adminId, 9L));
+    when(adminAgencyRepository.findByAdminId(Mockito.anyString()))
+        .thenReturn(List.of(AdminAgency.builder().agencyId(7L).build()));
   }
 
   private Admin tenantAdmin(String id, Long tenantId) {
