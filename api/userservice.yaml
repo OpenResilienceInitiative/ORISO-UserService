@@ -417,9 +417,19 @@ paths:
         201:
           description: CREATED - user was created successfully
         400:
-          description: BAD REQUEST - invalid/incomplete request or body object
+          description: BAD REQUEST - invalid/incomplete request or body object, or X-Reason GROUP_INVITE_INVALID when a group invite link names an unknown group, a group of another agency or not a self-help group, or is combined with a consultant link
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: GROUP_INVITE_INVALID
         403:
-          description: FORBIDDEN - no/invalid CSRF token
+          description: FORBIDDEN - no/invalid CSRF token, or X-Reason GROUP_INVITE_INVALID when the group invite token is missing or wrong
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: GROUP_INVITE_INVALID
         409:
           description: CONFLICT - invalid/unavailable username
         500:
@@ -2109,7 +2119,7 @@ paths:
         401:
           description: UNAUTHORIZED - no/invalid Keycloak token
         403:
-          description: FORBIDDEN - invalid CSRF/authority or group permission, or AVV does not permit new external counselling
+          description: FORBIDDEN - invalid CSRF/authority or group permission, or AVV does not permit new external counselling (X-Reason DPA_NEW_COUNSELLING_NOT_ALLOWED), or X-Reason GROUP_INVITE_INVALID when an invite link (numeric series ID) has a missing or wrong token or points to a group that cannot be joined by link
           headers:
             X-Reason:
               schema:
@@ -2120,7 +2130,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/DpaPolicyErrorDTO'
         404:
-          description: NOT FOUND - Chat not found
+          description: NOT FOUND - Chat not found; X-Reason GROUP_INVITE_INVALID when an invite link names an unknown series ID
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: GROUP_INVITE_INVALID
         409:
           description: CONFLICT - user is already enrolled in the group
         502:
