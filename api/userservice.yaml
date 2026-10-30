@@ -2538,7 +2538,7 @@ paths:
                       Existing CaseHandoverRequest status, or EXPIRED once the access window has
                       passed. An advice seeker never receives PENDING_RECIPIENT_ACCEPTANCE,
                       RECIPIENT_DECLINED, WITHDRAWN or DENIED.
-                    enum:
+                    x-extensible-enum:
                       - PENDING
                       - PENDING_RECIPIENT_ACCEPTANCE
                       - RECIPIENT_DECLINED
