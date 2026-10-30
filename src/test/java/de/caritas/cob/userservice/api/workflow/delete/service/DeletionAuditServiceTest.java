@@ -22,6 +22,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @ExtendWith(MockitoExtension.class)
 class DeletionAuditServiceTest {
@@ -68,6 +70,40 @@ class DeletionAuditServiceTest {
         DeletionAuditTargetType.AGENCY_ADMIN, "a-1", null, DeletionAuditOutcome.EXECUTED);
 
     assertThat(savedEntry().getActorRole()).isEqualTo("UNKNOWN");
+  }
+
+  @Test
+  void record_Should_WaitForTheCallersCommit_And_SkipARolledBackDeletion() {
+    when(authenticatedUser.getUserId()).thenReturn("admin-1");
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      service.recordAsCurrentActor(
+          DeletionAuditTargetType.CONSULTANT, "consultant-9", 4L, DeletionAuditOutcome.SCHEDULED);
+      verify(repository, never()).save(any());
+
+      // The caller's transaction rolls back: no "scheduled" entry may appear.
+      TransactionSynchronizationManager.getSynchronizations()
+          .forEach(sync -> sync.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+      verify(repository, never()).save(any());
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+  }
+
+  @Test
+  void record_Should_WriteAfterTheCallersCommit() {
+    when(authenticatedUser.getUserId()).thenReturn("admin-1");
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      service.recordAsCurrentActor(
+          DeletionAuditTargetType.CONSULTANT, "consultant-9", 4L, DeletionAuditOutcome.SCHEDULED);
+      TransactionSynchronizationManager.getSynchronizations()
+          .forEach(TransactionSynchronization::afterCommit);
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+
+    assertThat(savedEntry().getActorId()).isEqualTo("admin-1");
   }
 
   @Test

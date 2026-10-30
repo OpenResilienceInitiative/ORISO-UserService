@@ -12,13 +12,16 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Writes the deletion log read by Admin &gt; Logs. Records ids, role/type labels and the outcome
  * only. The write is best effort and runs in its own transaction: a failing audit insert is logged
  * and swallowed, so it can neither block a deletion nor mark the caller's transaction
- * rollback-only. Callers record after their last fallible step.
+ * rollback-only. Inside a caller's transaction the entry is written only after that transaction
+ * commits, so a rolled-back deletion never leaves a success entry.
  */
 @Service
 @Slf4j
@@ -66,24 +69,38 @@ public class DeletionAuditService {
       DeletionAuditOutcome outcome,
       String actorId,
       String actorRole) {
+    var entry =
+        DeletionAuditLog.builder()
+            .actorId(actorId)
+            .actorRole(actorRole)
+            .targetType(targetType)
+            .targetId(targetId)
+            .tenantId(tenantId)
+            .outcome(outcome)
+            .createDate(LocalDateTime.now(ZoneOffset.UTC))
+            .build();
+    if (TransactionSynchronizationManager.isSynchronizationActive()) {
+      TransactionSynchronizationManager.registerSynchronization(
+          new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+              persist(entry);
+            }
+          });
+    } else {
+      persist(entry);
+    }
+  }
+
+  private void persist(DeletionAuditLog entry) {
     try {
-      var entry =
-          DeletionAuditLog.builder()
-              .actorId(actorId)
-              .actorRole(actorRole)
-              .targetType(targetType)
-              .targetId(targetId)
-              .tenantId(tenantId)
-              .outcome(outcome)
-              .createDate(LocalDateTime.now(ZoneOffset.UTC))
-              .build();
       ownTransaction.executeWithoutResult(status -> deletionAuditLogRepository.save(entry));
     } catch (RuntimeException e) {
       log.error(
           "Could not write deletion log entry targetType={} targetId={} outcome={}",
-          targetType,
-          targetId,
-          outcome,
+          entry.getTargetType(),
+          entry.getTargetId(),
+          entry.getOutcome(),
           e);
     }
   }
