@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditTargetT
 import java.lang.reflect.Modifier;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -70,6 +71,24 @@ class DeletionAuditServiceTest {
         DeletionAuditTargetType.AGENCY_ADMIN, "a-1", null, DeletionAuditOutcome.EXECUTED);
 
     assertThat(savedEntry().getActorRole()).isEqualTo("UNKNOWN");
+  }
+
+  @Test
+  void recordAsCurrentActor_Should_NameTheUserAdminCaller() {
+    when(authenticatedUser.getUserId()).thenReturn("svc");
+    when(authenticatedUser.getRoles()).thenReturn(Set.of("user-admin"));
+    service.recordAsCurrentActor(
+        DeletionAuditTargetType.CONSULTANT, "c-1", null, DeletionAuditOutcome.SCHEDULED);
+    assertThat(savedEntry().getActorRole()).isEqualTo("USER_ADMIN");
+  }
+
+  @Test
+  void recordAsCurrentActor_Should_NameTheTechnicalCaller() {
+    when(authenticatedUser.getUserId()).thenReturn("svc");
+    when(authenticatedUser.getRoles()).thenReturn(Set.of("technical"));
+    service.recordAsCurrentActor(
+        DeletionAuditTargetType.CONSULTANT, "c-1", null, DeletionAuditOutcome.SCHEDULED);
+    assertThat(savedEntry().getActorRole()).isEqualTo("TECHNICAL");
   }
 
   @Test

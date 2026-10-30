@@ -35,7 +35,7 @@ public class DeletionAuditLogsService {
             .addValue("outcome", normalize(outcome))
             .addValue("targetId", normalize(targetId))
             .addValue("limit", safePerPage)
-            .addValue("offset", (safePage - 1) * safePerPage);
+            .addValue("offset", (long) (safePage - 1) * safePerPage);
 
     final String filtersSql =
         " WHERE (:targetType IS NULL OR UPPER(l.target_type) = :targetType)"

@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.workflow.delete.service;
 
+import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.DeletionAuditLog;
 import de.caritas.cob.userservice.api.port.out.DeletionAuditLogRepository;
@@ -118,6 +119,13 @@ public class DeletionAuditService {
     }
     if (authenticatedUser.isConsultant()) {
       return "CONSULTANT";
+    }
+    var roles = authenticatedUser.getRoles();
+    if (roles != null && roles.contains(UserRole.USER_ADMIN.getValue())) {
+      return "USER_ADMIN";
+    }
+    if (roles != null && roles.contains(UserRole.TECHNICAL.getValue())) {
+      return "TECHNICAL";
     }
     return "UNKNOWN";
   }

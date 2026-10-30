@@ -8,6 +8,11 @@
        person beyond the id that already survives in identity_tombstone. No foreign keys: the
        entry must outlive the account it describes. -->
   <changeSet id="20261029-deletion-audit-log" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <tableExists tableName="deletion_audit_log"/>
+      </not>
+    </preConditions>
     <createTable tableName="deletion_audit_log">
       <column name="id" type="BIGINT" autoIncrement="true">
         <constraints primaryKey="true" nullable="false"/>
