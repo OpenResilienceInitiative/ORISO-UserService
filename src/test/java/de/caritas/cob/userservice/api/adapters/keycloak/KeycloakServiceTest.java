@@ -2940,4 +2940,26 @@ public class KeycloakServiceTest {
     assertThat(attributes.get("userId"), is(singletonList(USER_ID)));
     assertThat(attributes.get("username"), is(singletonList("username")));
   }
+
+  @Test
+  public void activateUser_Should_enableTheLoginAndTouchNothingElse() {
+    var stored = givenStoredUserWithAttributes("email");
+    stored.setEnabled(false);
+    stored.setRequiredActions(List.of("CONFIGURE_TOTP"));
+    UserResource userResource = givenUserResourceHolding(stored);
+
+    this.keycloakService.activateUser("userId");
+
+    var representationCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
+    verify(userResource).update(representationCaptor.capture());
+    assertThat(representationCaptor.getValue().isEnabled(), is(true));
+    // Authentication is not weakened: required actions (2FA setup) and attributes stay as they
+    // were, and no credential is reset, removed or created.
+    assertThat(representationCaptor.getValue().getRequiredActions(), is(List.of("CONFIGURE_TOTP")));
+    assertThat(
+        representationCaptor.getValue().getAttributes().get("userId"), is(singletonList("userId")));
+    verify(userResource, never()).resetPassword(any());
+    verify(userResource, never()).removeCredential(any());
+    verify(userResource, never()).credentials();
+  }
 }

@@ -473,4 +473,62 @@ public class ConsultantAdminServiceTest {
     // fail.
     verify(consultantPreDeletionService, never()).deactivateIdentity(any());
   }
+
+  // ---------------------------------------------------------------------------
+  // cancelConsultantDeletion (OBP 2.1 #123)
+  // ---------------------------------------------------------------------------
+
+  private Consultant consultantInDeletion() {
+    var consultant = new Consultant();
+    consultant.setId("c-1");
+    consultant.setDeleteDate(java.time.LocalDateTime.of(2026, 10, 1, 12, 0));
+    consultant.setStatus(ConsultantStatus.IN_DELETION);
+    return consultant;
+  }
+
+  @Test
+  void cancelConsultantDeletion_Should_ThrowNotFound_When_ConsultantNotFound() {
+    when(consultantRepository.findPictureOwnerForUpdate("c-1")).thenReturn(Optional.empty());
+
+    assertThrows(
+        NotFoundException.class, () -> consultantAdminService.cancelConsultantDeletion("c-1"));
+
+    verify(consultantPreDeletionService, never()).activateIdentity(any());
+  }
+
+  @Test
+  void cancelConsultantDeletion_Should_RestoreRelationsStatusAndLogin_InThisOrder() {
+    var consultant = consultantInDeletion();
+    var deletedAt = consultant.getDeleteDate();
+    when(consultantRepository.findPictureOwnerForUpdate("c-1")).thenReturn(Optional.of(consultant));
+
+    consultantAdminService.cancelConsultantDeletion("c-1");
+
+    assertThat(consultant.getStatus()).isEqualTo(ConsultantStatus.CREATED);
+    var order =
+        inOrder(consultantPreDeletionService, deletionLifecycleService, consultantRepository);
+    // Eligibility is decided first, so a refused cancel changes nothing.
+    order.verify(deletionLifecycleService).cancelConsultantDeletion(consultant);
+    order.verify(consultantPreDeletionService).restoreAgencyRelations(consultant, deletedAt);
+    order.verify(consultantRepository).save(consultant);
+    // Keycloak is not rolled back with the transaction, so the login comes back last.
+    order.verify(consultantPreDeletionService).activateIdentity(consultant);
+  }
+
+  @Test
+  void cancelConsultantDeletion_Should_NotEnableTheLogin_When_DeletionCannotBeCancelled() {
+    var consultant = consultantInDeletion();
+    when(consultantRepository.findPictureOwnerForUpdate("c-1")).thenReturn(Optional.of(consultant));
+    org.mockito.Mockito.doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException("past"))
+        .when(deletionLifecycleService)
+        .cancelConsultantDeletion(consultant);
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class,
+        () -> consultantAdminService.cancelConsultantDeletion("c-1"));
+
+    verify(consultantPreDeletionService, never()).activateIdentity(any());
+    verify(consultantRepository, never()).save(any());
+  }
 }

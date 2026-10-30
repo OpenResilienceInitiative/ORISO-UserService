@@ -278,7 +278,12 @@ public class UserAccountService {
         .getUser(userId)
         .or(() -> this.userService.findDeletedById(userId))
         .ifPresent(this::assertWritable);
-    this.consultantService.getConsultant(userId).ifPresent(this::assertWritable);
+    // Same reasoning as for the user above: getConsultant filters deleteDate IS NULL, so the
+    // consultant in the safeguard window is only found by the lookup that includes deleted ones.
+    this.consultantService
+        .getConsultant(userId)
+        .or(() -> this.consultantService.findConsultantIncludingDeleted(userId))
+        .ifPresent(this::assertWritable);
   }
 
   private void assertWritable(User user) {

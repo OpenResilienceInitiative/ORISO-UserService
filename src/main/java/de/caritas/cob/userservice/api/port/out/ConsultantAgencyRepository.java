@@ -16,6 +16,10 @@ public interface ConsultantAgencyRepository extends CrudRepository<ConsultantAge
 
   List<ConsultantAgency> findByConsultantIdAndDeleteDateIsNull(String consultantId);
 
+  /** The relations removed together with the consultant, i.e. stamped with its delete date. */
+  List<ConsultantAgency> findByConsultantIdAndDeleteDate(
+      String consultantId, java.time.LocalDateTime deleteDate);
+
   List<ConsultantAgency> findByAgencyIdAndDeleteDateIsNullOrderByConsultantFirstNameAsc(
       Long agencyId);
 

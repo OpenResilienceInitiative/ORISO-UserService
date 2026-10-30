@@ -657,4 +657,12 @@ class UserAdminControllerTest {
       Locale.setDefault(originalLocale);
     }
   }
+
+  @Test
+  void cancelConsultantDeletion_Should_delegate() {
+    var response = controller.cancelConsultantDeletion("c-1");
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    verify(consultantAdminFacade).cancelConsultantDeletion("c-1");
+  }
 }
