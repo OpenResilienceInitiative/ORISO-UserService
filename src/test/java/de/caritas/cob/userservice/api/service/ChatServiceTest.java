@@ -98,6 +98,10 @@ class ChatServiceTest {
 
   @Mock private ChatRepository chatRepository;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.matrixgroup.GroupMatrixLifecycleCleanup
+      participationHistory;
+
   @Mock private MatrixChatShutdownService shutdown;
 
   @Mock private ChatAgencyRepository chatAgencyRepository;
@@ -832,6 +836,15 @@ class ChatServiceTest {
     assertEquals(
         de.caritas.cob.userservice.api.model.ConversationType.INTERNAL_GROUP,
         chat.getConversationType());
+  }
+
+  @Test
+  void savingARepetitiveLegacySeriesDoesNotTurnItIntoAnInternalChat() {
+    var chat = new Chat();
+    chat.setRepetitive(true);
+    chatService.saveChat(chat);
+    org.assertj.core.api.Assertions.assertThat(chat.getConversationType())
+        .isEqualTo(de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP);
   }
 
   @Test

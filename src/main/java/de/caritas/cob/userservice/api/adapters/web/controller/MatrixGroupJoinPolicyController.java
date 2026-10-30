@@ -42,18 +42,45 @@ public class MatrixGroupJoinPolicyController {
               .readTree(bytes);
       if (body == null
           || !body.isObject()
-          || body.size() != 3
           || !body.path("contractVersion").isIntegralNumber()
           || !body.path("contractVersion").canConvertToInt()
-          || body.path("contractVersion").intValue() != 1
           || !GroupMatrixPolicySettings.validRoom(body.path("roomId").textValue())
           || !GroupMatrixPolicySettings.validActor(body.path("matrixUserId").textValue()))
         return ResponseEntity.badRequest().build();
     } catch (Exception malformed) {
       return ResponseEntity.badRequest().build();
     }
+    int version = body.path("contractVersion").intValue();
+    boolean contextRequest =
+        version == 2 && body.size() == 4 && "CONTEXT".equals(body.path("operation").textValue());
+    if (!contextRequest && (version != 1 || body.size() != 3))
+      return ResponseEntity.badRequest().build();
     var room = body.get("roomId").textValue();
     var actor = body.get("matrixUserId").textValue();
+    if (contextRequest) {
+      var context = policy.context(room);
+      Map<String, Object> response =
+          Map.of(
+              "contractVersion",
+              2,
+              "roomId",
+              room,
+              "matrixUserId",
+              actor,
+              "applicable",
+              context.map(c -> c.applicable()).orElse(false),
+              "roomIds",
+              context.map(c -> c.roomIds()).orElse(java.util.List.of()),
+              "historyComplete",
+              context.map(c -> c.historyComplete()).orElse(true));
+      try {
+        if (json.writeValueAsBytes(response).length > 65536) throw new IllegalArgumentException();
+      } catch (Exception invalid) {
+        throw de.caritas.cob.userservice.api.service.matrixgroup.MatrixGroupParticipationHistory
+            .unavailable();
+      }
+      return ResponseEntity.ok(response);
+    }
     var applicable = policy.applicableAndAllowed(room);
     return ResponseEntity.ok(
         Map.of(

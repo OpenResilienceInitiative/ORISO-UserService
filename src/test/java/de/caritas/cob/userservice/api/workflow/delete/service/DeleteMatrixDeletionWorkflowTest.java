@@ -125,7 +125,13 @@ class DeleteMatrixDeletionWorkflowTest {
     when(matrixSynapseService.purgeRoom(GROUP_CHAT_ROOM_ID)).thenReturn(true);
 
     var workflowDTO = new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>());
-    new DeleteChatAction(chatRepository, matrixSynapseService).execute(workflowDTO);
+    new DeleteChatAction(
+            chatRepository,
+            matrixSynapseService,
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.service.matrixgroup.GroupMatrixLifecycleCleanup
+                    .class))
+        .execute(workflowDTO);
 
     verify(matrixSynapseService, times(1)).purgeRoom(GROUP_CHAT_ROOM_ID);
     assertThat(workflowDTO.getDeletionWorkflowErrors(), hasSize(0));

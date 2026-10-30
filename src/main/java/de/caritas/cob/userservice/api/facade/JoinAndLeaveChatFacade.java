@@ -57,12 +57,8 @@ public class JoinAndLeaveChatFacade {
     requireMatrixRoom(chat);
     String matrixUserId = retrieveMatrixUserId(authenticatedUser);
     if (!isBlank(matrixUserId)
-        && (chat.getConversationType() == ConversationType.SELF_HELP
-            || (groupCounsellingDpaPolicy.historicalReturnEnabled()
-                && ChatConverter.conversationTypeOf(chat) == ConversationType.SELF_HELP))
-        && chat.getCurrentOccurrenceIndex() == 0) {
-      // Assignment does not prove participation. The active first room plus a
-      // current JOIN membership establishes a begun consultation for this caller.
+        && ChatConverter.conversationTypeOf(chat) == ConversationType.SELF_HELP) {
+      // A current JOIN establishes continuation for this caller in every occurrence.
       var joinedMembers =
           matrixSynapseService
               .getRoomMembers(groupChatMembershipService.resolveMatrixRoomId(chat))

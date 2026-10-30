@@ -48,6 +48,13 @@ class ChatReCreatorTest {
 
   @Mock private ChatService chatService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.matrixgroup.MatrixGroupParticipationHistory
+      participationHistory;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.matrixgroup.ChatMatrixRoomHistory roomHistory;
+
   @Mock private MatrixSynapseService matrixSynapseService;
 
   @Mock private MatrixChatShutdownService matrixChatShutdownService;
@@ -56,6 +63,10 @@ class ChatReCreatorTest {
 
   @BeforeEach
   void resolveRoomIdFromChatFixture() {
+    lenient()
+        .when(roomHistory.reserveNextRoom(any(Chat.class), anyString()))
+        .thenAnswer(i -> i.getArgument(1));
+
     lenient()
         .when(groupChatMembershipService.resolveMatrixRoomId(any(Chat.class)))
         .thenAnswer(invocation -> invocation.getArgument(0, Chat.class).getMatrixRoomId());
