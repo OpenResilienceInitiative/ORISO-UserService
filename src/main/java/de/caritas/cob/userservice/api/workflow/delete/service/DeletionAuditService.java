@@ -64,6 +64,19 @@ public class DeletionAuditService {
   }
 
   /**
+   * Records a deletion a scheduler learned about after the fact, at the time it actually happened
+   * (UTC). Falls back to now when that time is unknown.
+   */
+  public void recordAsSystem(
+      DeletionAuditTargetType targetType,
+      String targetId,
+      Long tenantId,
+      DeletionAuditOutcome outcome,
+      LocalDateTime occurredAt) {
+    write(targetType, targetId, tenantId, outcome, null, SYSTEM, occurredAt);
+  }
+
+  /**
    * Records a deletion another service (AgencyService, TenantService) reports on behalf of the
    * actor it names. Only the technical account may reach this; ids and role labels are validated at
    * the edge, so no free text lands in the log.
@@ -85,6 +98,17 @@ public class DeletionAuditService {
       DeletionAuditOutcome outcome,
       String actorId,
       String actorRole) {
+    write(targetType, targetId, tenantId, outcome, actorId, actorRole, null);
+  }
+
+  private void write(
+      DeletionAuditTargetType targetType,
+      String targetId,
+      Long tenantId,
+      DeletionAuditOutcome outcome,
+      String actorId,
+      String actorRole,
+      LocalDateTime occurredAt) {
     var entry =
         DeletionAuditLog.builder()
             .actorId(actorId)
@@ -93,7 +117,7 @@ public class DeletionAuditService {
             .targetId(targetId)
             .tenantId(tenantId)
             .outcome(outcome)
-            .createDate(LocalDateTime.now(ZoneOffset.UTC))
+            .createDate(occurredAt != null ? occurredAt : LocalDateTime.now(ZoneOffset.UTC))
             .build();
     if (TransactionSynchronizationManager.isSynchronizationActive()) {
       TransactionSynchronizationManager.registerSynchronization(

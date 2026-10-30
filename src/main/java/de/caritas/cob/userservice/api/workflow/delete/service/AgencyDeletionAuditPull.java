@@ -5,6 +5,8 @@ import de.caritas.cob.userservice.api.service.agency.AgencyDeletionAuditOutboxCl
 import de.caritas.cob.userservice.api.service.agency.AgencyDeletionAuditOutboxClient.PendingEntry;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditOutcome;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditTargetType;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -40,7 +42,8 @@ public class AgencyDeletionAuditPull {
       }
       String agencyId = String.valueOf(row.agencyId());
       if (!logged(agencyId)) {
-        deletionAuditService.recordAsSystem(AGENCY, agencyId, row.tenantId(), EXECUTED);
+        deletionAuditService.recordAsSystem(
+            AGENCY, agencyId, row.tenantId(), EXECUTED, purgedAt(row.createdAt()));
         if (!logged(agencyId)) {
           continue;
         }
@@ -51,6 +54,18 @@ public class AgencyDeletionAuditPull {
       outbox.acknowledge(recorded);
     }
     return recorded.size();
+  }
+
+  /** AgencyService sends its UTC purge time as an ISO local date-time; unreadable means unknown. */
+  private static LocalDateTime purgedAt(String createdAt) {
+    if (createdAt == null) {
+      return null;
+    }
+    try {
+      return LocalDateTime.parse(createdAt);
+    } catch (DateTimeParseException unreadable) {
+      return null;
+    }
   }
 
   private boolean logged(String agencyId) {

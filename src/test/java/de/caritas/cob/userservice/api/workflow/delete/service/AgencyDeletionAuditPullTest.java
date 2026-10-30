@@ -28,6 +28,8 @@ class AgencyDeletionAuditPullTest {
 
   private static final DeletionAuditTargetType AGENCY = DeletionAuditTargetType.AGENCY;
   private static final DeletionAuditOutcome EXECUTED = DeletionAuditOutcome.EXECUTED;
+  private static final java.time.LocalDateTime PURGED_AT =
+      java.time.LocalDateTime.of(2026, 10, 30, 1, 0);
 
   @Mock private AgencyDeletionAuditOutboxClient outbox;
   @Mock private DeletionAuditService deletionAuditService;
@@ -46,8 +48,8 @@ class AgencyDeletionAuditPullTest {
 
     assertThat(pull.pullOnce()).isEqualTo(2);
 
-    verify(deletionAuditService).recordAsSystem(AGENCY, "268", 4L, EXECUTED);
-    verify(deletionAuditService).recordAsSystem(AGENCY, "269", null, EXECUTED);
+    verify(deletionAuditService).recordAsSystem(AGENCY, "268", 4L, EXECUTED, PURGED_AT);
+    verify(deletionAuditService).recordAsSystem(AGENCY, "269", null, EXECUTED, PURGED_AT);
     verify(outbox).acknowledge(List.of(1L, 2L));
   }
 
@@ -60,7 +62,7 @@ class AgencyDeletionAuditPullTest {
 
     pull.pullOnce();
 
-    verify(deletionAuditService, never()).recordAsSystem(any(), any(), any(), any());
+    verify(deletionAuditService, never()).recordAsSystem(any(), any(), any(), any(), any());
     verify(outbox).acknowledge(List.of(1L));
   }
 
@@ -91,7 +93,7 @@ class AgencyDeletionAuditPullTest {
 
     assertThat(pull.pullOnce()).isZero();
 
-    verify(deletionAuditService, never()).recordAsSystem(any(), any(), any(), any());
+    verify(deletionAuditService, never()).recordAsSystem(any(), any(), any(), any(), any());
     verify(outbox, never()).acknowledge(anyList());
   }
 
@@ -115,6 +117,20 @@ class AgencyDeletionAuditPullTest {
     assertThatThrownBy(() -> pull.pullOnce()).isInstanceOf(IllegalStateException.class);
     assertThatThrownBy(() -> pull.pullOnce()).isInstanceOf(IllegalStateException.class);
 
-    verify(deletionAuditService, times(1)).recordAsSystem(AGENCY, "268", 4L, EXECUTED);
+    verify(deletionAuditService, times(1)).recordAsSystem(AGENCY, "268", 4L, EXECUTED, PURGED_AT);
+  }
+
+  @Test
+  void anUnreadablePurgeTimeIsLoggedWithTheTimeOfThePull() {
+    when(outbox.fetchPending(anyInt()))
+        .thenReturn(List.of(new PendingEntry(1L, 268L, 4L, "EXECUTED", "yesterday")));
+    when(deletionAuditLogRepository.existsByTargetTypeAndTargetIdAndOutcome(
+            AGENCY, "268", EXECUTED))
+        .thenReturn(false, true);
+
+    pull.pullOnce();
+
+    verify(deletionAuditService).recordAsSystem(AGENCY, "268", 4L, EXECUTED, null);
+    verify(outbox).acknowledge(List.of(1L));
   }
 }
