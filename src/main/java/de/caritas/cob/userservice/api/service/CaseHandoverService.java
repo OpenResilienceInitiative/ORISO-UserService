@@ -747,6 +747,7 @@ public class CaseHandoverService {
    *
    * <ul>
    *   <li>colleague offers (PENDING_RECIPIENT_ACCEPTANCE, RECIPIENT_DECLINED) are never shown;
+   *   <li>WITHDRAWN is shown only once the colleague had accepted, i.e. after the consent prompt;
    *   <li>DENIED is never shown: it arises either before the advice seeker is asked or from their
    *       own just-returned decision, which the decision response already carries;
    *   <li>GRANTED, CLIENT_CONSENT_DECLINED and EXPIRED are reached only through the consent prompt
@@ -759,6 +760,11 @@ public class CaseHandoverService {
         || status == Status.PENDING_CLIENT_CONSENT
         || status == Status.GRANTED_PENDING_CLIENT_OPTOUT) {
       return true;
+    }
+    if (status == Status.WITHDRAWN) {
+      // Withdrawn after the colleague accepted: the advice seeker was already asked and must be
+      // able to settle that prompt. Withdrawn before that, the offer stays staff-only.
+      return request.getRecipientDecisionAt() != null;
     }
     if (status != Status.GRANTED
         && status != Status.CLIENT_CONSENT_DECLINED

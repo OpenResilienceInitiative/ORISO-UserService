@@ -2505,7 +2505,7 @@ paths:
         including a final one (GRANTED, CLIENT_CONSENT_DECLINED, EXPIRED), so a consent prompt that
         is no longer open can be settled instead of showing an error. Everything else answers 404:
         a request of another session or advice seeker or tenant, a colleague-to-colleague offer
-        (PENDING_RECIPIENT_ACCEPTANCE, RECIPIENT_DECLINED, WITHDRAWN), a DENIED request (denied before the
+        (PENDING_RECIPIENT_ACCEPTANCE, RECIPIENT_DECLINED, and WITHDRAWN before the colleague accepted), a DENIED request (denied before the
         advice seeker was asked, or their own decision, which the decision response carries) and a
         request without consent involvement. A request whose case owner changed after it was
         created keeps its stored status here; deciding it answers 409 with X-Reason
@@ -2537,7 +2537,7 @@ paths:
                     description: >-
                       Existing CaseHandoverRequest status, or EXPIRED once the access window has
                       passed. An advice seeker never receives PENDING_RECIPIENT_ACCEPTANCE,
-                      RECIPIENT_DECLINED, WITHDRAWN or DENIED.
+                      RECIPIENT_DECLINED or DENIED, and WITHDRAWN only once it had been asked for consent.
                     x-extensible-enum:
                       - PENDING
                       - PENDING_RECIPIENT_ACCEPTANCE

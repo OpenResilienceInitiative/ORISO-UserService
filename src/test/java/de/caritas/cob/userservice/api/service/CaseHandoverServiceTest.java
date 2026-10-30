@@ -1935,6 +1935,36 @@ class CaseHandoverServiceTest {
         () -> caseHandoverService.getRequestStatus(123L, 88L));
   }
 
+  @Test
+  void getRequestStatus_adviceSeekerReadsAnOfferWithdrawnAfterTheyWereAskedForConsent() {
+    CaseHandoverRequest request = pendingConsentRequest();
+    request.setStatus(CaseHandoverRequest.Status.WITHDRAWN);
+    request.setRecipientDecisionAt(LocalDateTime.now());
+    request.setResolvedAt(LocalDateTime.now());
+    when(authenticatedUser.isAdviceSeeker()).thenReturn(true);
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+
+    CaseHandoverStatus status = caseHandoverService.getRequestStatus(123L, 88L);
+
+    assertEquals("WITHDRAWN", status.getStatus());
+    assertNull(status.getInitiatorConsultantId());
+  }
+
+  @Test
+  void getRequestStatus_adviceSeekerNeverSeesAnOfferWithdrawnBeforeTheColleagueAnswered() {
+    CaseHandoverRequest request = pendingConsentRequest();
+    request.setStatus(CaseHandoverRequest.Status.WITHDRAWN);
+    request.setRecipientDecisionAt(null);
+    when(authenticatedUser.isAdviceSeeker()).thenReturn(true);
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException.class,
+        () -> caseHandoverService.getRequestStatus(123L, 88L));
+  }
+
   @ParameterizedTest
   @org.junit.jupiter.params.provider.EnumSource(
       value = CaseHandoverRequest.Status.class,
