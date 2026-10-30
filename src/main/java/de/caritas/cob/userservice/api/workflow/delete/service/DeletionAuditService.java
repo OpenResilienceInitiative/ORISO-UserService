@@ -63,6 +63,21 @@ public class DeletionAuditService {
     write(targetType, targetId, tenantId, outcome, null, SYSTEM);
   }
 
+  /**
+   * Records a deletion another service (AgencyService, TenantService) reports on behalf of the
+   * actor it names. Only the technical account may reach this; ids and role labels are validated at
+   * the edge, so no free text lands in the log.
+   */
+  public void recordReported(
+      DeletionAuditTargetType targetType,
+      String targetId,
+      Long tenantId,
+      DeletionAuditOutcome outcome,
+      String actorId,
+      String actorRole) {
+    write(targetType, targetId, tenantId, outcome, actorId, actorRole);
+  }
+
   private void write(
       DeletionAuditTargetType targetType,
       String targetId,

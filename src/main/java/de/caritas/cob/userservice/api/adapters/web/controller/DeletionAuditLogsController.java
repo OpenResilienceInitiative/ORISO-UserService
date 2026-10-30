@@ -1,21 +1,32 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.service.DeletionAuditLogsService;
 import de.caritas.cob.userservice.api.service.DeletionAuditLogsService.DeletionAuditLogEntry;
 import de.caritas.cob.userservice.api.service.DeletionAuditLogsService.DeletionAuditLogsResult;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditTargetType;
+import de.caritas.cob.userservice.api.workflow.delete.service.DeletionAuditService;
 import io.swagger.annotations.Api;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-/** Read-only API for the deletion log (who deleted what, when, with which outcome). */
+/**
+ * API for the deletion log (who deleted what, when, with which outcome): the platform-admin read
+ * side, and the write side AgencyService and TenantService report their deletions to.
+ */
 @RestController
 @RequiredArgsConstructor
 @Api(tags = "deletion-audit-logs-controller")
@@ -23,6 +34,53 @@ import org.springframework.web.bind.annotation.RestController;
 public class DeletionAuditLogsController {
 
   private final @NonNull DeletionAuditLogsService deletionAuditLogsService;
+  private final @NonNull DeletionAuditService deletionAuditService;
+  private final @NonNull AuthenticatedUser authenticatedUser;
+
+  /**
+   * Records an agency or tenant deletion. Best effort: the write never reports a failure back, so
+   * the calling service's deletion is never held up by it. The technical account (scheduler, no
+   * user) names the actor itself. An admin who forwards its own token is recorded as that admin,
+   * whatever the body says, and only for its own tenant unless it is a platform admin.
+   */
+  @PostMapping
+  public ResponseEntity<Void> recordDeletion(
+      @Valid @RequestBody DeletionAuditEntryRequestDTO request) {
+    if (request.getTargetType() != DeletionAuditTargetType.AGENCY
+        && request.getTargetType() != DeletionAuditTargetType.TENANT) {
+      return ResponseEntity.badRequest().build();
+    }
+    var authorities = authenticatedUser.getGrantedAuthorities();
+    if (authorities != null && authorities.contains(AuthorityValue.TECHNICAL_DEFAULT)) {
+      if (request.getActorRole() == null) {
+        deletionAuditService.recordAsSystem(
+            request.getTargetType(),
+            request.getTargetId(),
+            request.getTenantId(),
+            request.getOutcome());
+      } else {
+        deletionAuditService.recordReported(
+            request.getTargetType(),
+            request.getTargetId(),
+            request.getTenantId(),
+            request.getOutcome(),
+            request.getActorId(),
+            request.getActorRole());
+      }
+    } else {
+      if (!authenticatedUser.isPlatformAdmin()
+          && (request.getTenantId() == null
+              || !request.getTenantId().equals(authenticatedUser.getTenantId()))) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+      }
+      deletionAuditService.recordAsCurrentActor(
+          request.getTargetType(),
+          request.getTargetId(),
+          request.getTenantId(),
+          request.getOutcome());
+    }
+    return ResponseEntity.noContent().build();
+  }
 
   @GetMapping
   public ResponseEntity<DeletionAuditLogsResponseDTO> listAuditLogs(

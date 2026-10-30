@@ -678,6 +678,12 @@ public class SecurityConfig {
                     "/users/inactive-accounts/audit-logs",
                     "/service/users/inactive-accounts/audit-logs")
                 .access(this::canAccessPlatformAuditLogs)
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/users/deletion-audit-logs",
+                    "/service/users/deletion-audit-logs")
+                .hasAnyAuthority(
+                    TECHNICAL_DEFAULT, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
                 .requestMatchers("/users/deletion-audit-logs", "/service/users/deletion-audit-logs")
                 .access(this::canAccessPlatformAuditLogs)
                 .requestMatchers(
