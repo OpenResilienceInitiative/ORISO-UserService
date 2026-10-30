@@ -61,6 +61,7 @@ class CounsellorDirectLinkServiceTest {
   @Mock private ConsultantRepository consultantRepository;
   @Mock private TenantService tenantService;
   @Mock private DirectCallKnockService knockService;
+  @Mock private de.caritas.cob.userservice.api.port.out.SessionRepository sessionRepository;
 
   private CounsellorDirectLinkService service;
   private Consultant owner;
@@ -76,7 +77,8 @@ class CounsellorDirectLinkServiceTest {
             createNewSessionFacade,
             consultantRepository,
             tenantService,
-            knockService);
+            knockService,
+            sessionRepository);
     owner = consultantIn(AGENCY);
     when(consultantRepository.findByIdAndDeleteDateIsNull(OWNER_ID)).thenReturn(Optional.of(owner));
     var agency = new AgencyDTO().id(AGENCY).tenantId(TENANT).consultingType(3).postcode("12345");
@@ -339,6 +341,44 @@ class CounsellorDirectLinkServiceTest {
     assertThat(started.admission()).isEqualTo(InviteLinkAdmission.KNOCK);
     assertThat(started.knockId()).isEqualTo(77L);
     assertThat(started.knockStatus()).isEqualTo("PENDING");
+  }
+
+  /**
+   * FE#1952: the counsellor's list must say where the conversation came from ("Videoanruf",
+   * "Audioanruf", "Direktlink") instead of "Mail", so the conversation keeps its link's medium. It
+   * is recorded before the knock, so the knock notice already finds it.
+   */
+  @ParameterizedTest
+  @EnumSource(
+      value = InviteLinkChatType.class,
+      names = {"CHAT", "AUDIO", "VIDEO"})
+  void startConversation_Should_RecordTheLinkMediumOnTheConversation(InviteLinkChatType medium) {
+    publicLink("tok", medium.name(), "ACTIVE");
+    when(createNewSessionFacade.initializeNewSession(any(), any(), anyList()))
+        .thenReturn(
+            new NewRegistrationResponseDto()
+                .matrixRoomId("!room:example")
+                .sessionId(505L)
+                .status(HttpStatus.CREATED));
+
+    service.startConversation("tok", asker("a"));
+
+    var order = org.mockito.Mockito.inOrder(sessionRepository, knockService);
+    order.verify(sessionRepository).recordDirectLinkOrigin(505L, medium.name());
+    if (medium != InviteLinkChatType.CHAT) {
+      order.verify(knockService).knock(eq(505L), any(), any(), eq(medium));
+    }
+  }
+
+  @Test
+  void startConversation_Should_RecordNothing_When_TheRoomCouldNotBeProvisioned() {
+    publicLink("tok", "VIDEO", "ACTIVE");
+    when(createNewSessionFacade.initializeNewSession(any(), any(), anyList()))
+        .thenReturn(new NewRegistrationResponseDto().sessionId(500L).status(HttpStatus.CREATED));
+
+    assertThatThrownBy(() -> service.startConversation("tok", asker("a")))
+        .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+    verifyNoInteractions(sessionRepository);
   }
 
   @Test

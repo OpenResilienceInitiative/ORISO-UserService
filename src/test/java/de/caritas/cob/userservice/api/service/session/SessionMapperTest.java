@@ -95,6 +95,35 @@ class SessionMapperTest {
         .doesNotContain("\"conversationType\":{\"present\":true}");
   }
 
+  /** FE#1952: the list labels a direct-link conversation by its medium instead of "Mail". */
+  @Test
+  void convertToSessionDTO_Should_projectTheDirectLinkMedium() throws Exception {
+    Session session = new EasyRandom().nextObject(Session.class);
+    session.setConversationType(ConversationType.AGENCY_COUNSELLING);
+    session.setDirectLinkMedium("VIDEO");
+
+    SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
+
+    org.assertj.core.api.Assertions.assertThat(
+            new AppConfig().objectMapper().writeValueAsString(sessionDTO))
+        .contains("\"directLinkMedium\":\"VIDEO\"")
+        // The modality stays ADR-006's: a direct-link conversation is still agency counselling.
+        .contains("\"conversationType\":\"AGENCY_COUNSELLING\"");
+  }
+
+  @Test
+  void convertToSessionDTO_Should_leaveTheDirectLinkMediumEmpty_ForOtherConversations()
+      throws Exception {
+    Session session = new EasyRandom().nextObject(Session.class);
+    session.setDirectLinkMedium(null);
+
+    SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
+
+    org.assertj.core.api.Assertions.assertThat(
+            new AppConfig().objectMapper().writeValueAsString(sessionDTO))
+        .doesNotContain("\"directLinkMedium\":\"");
+  }
+
   @Test
   void
       convertToSessionDTO_Should_returnSessionDTOWithRegistrationType_When_registrationTypeIsAnonymous() {
