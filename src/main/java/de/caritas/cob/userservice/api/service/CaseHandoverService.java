@@ -2582,16 +2582,29 @@ public class CaseHandoverService {
                 session.getTenantId()));
   }
 
+  /**
+   * Runs a notification after the caller's commit. Each action is isolated: one failing
+   * notification must not stop the ones registered after it, since a retry of the already settled
+   * request notifies nobody again.
+   */
   private void runAfterCommit(Runnable action) {
+    Runnable isolated =
+        () -> {
+          try {
+            action.run();
+          } catch (RuntimeException notificationFailure) {
+            log.warn("Case handover after-commit notification failed", notificationFailure);
+          }
+        };
     if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-      action.run();
+      isolated.run();
       return;
     }
     TransactionSynchronizationManager.registerSynchronization(
         new TransactionSynchronization() {
           @Override
           public void afterCommit() {
-            action.run();
+            isolated.run();
           }
         });
   }

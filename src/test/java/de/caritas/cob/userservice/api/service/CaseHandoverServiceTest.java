@@ -1471,6 +1471,43 @@ class CaseHandoverServiceTest {
   }
 
   @Test
+  void withdrawOffer_stillTellsTheOfferingCounsellorWhenTheRecipientNotificationFails() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    CaseHandoverRequest request =
+        pushRequest(recipient, UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d"));
+    offerWithdrawSetup(request);
+    doThrow(new IllegalStateException("notification store down"))
+        .when(eventNotificationService)
+        .createEventOnce(
+            eq("case-handover-offer-withdrawn:501:recipient"),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            any());
+
+    CaseHandoverStatus result = caseHandoverService.withdrawOffer(123L, 501L);
+
+    assertEquals("WITHDRAWN", result.getStatus());
+    verify(eventNotificationService)
+        .createEventOnce(
+            eq("case-handover-offer-withdrawn:501:requester"),
+            eq("requester"),
+            eq("case.handover.offer.withdrawn"),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            eq(123L),
+            eq(7L));
+  }
+
+  @Test
   void withdrawOffer_neverPostsIntoTheRoomTheAdviceSeekerReads() {
     // A colleague-to-colleague offer is staff-only: the advice seeker is never told about it
     // (see isReadableBySessionAsker), so a withdrawal must not surface in the shared room either.
