@@ -29,9 +29,12 @@ import java.util.function.Predicate;
 import java.util.stream.Stream;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * Knock-first admission for audio and video direct links (#1475, ADR-029 §2), on the knock model of
@@ -45,6 +48,7 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class DirectCallKnockService {
 
   private final @NonNull GroupChatJoinRequestRepository repository;
@@ -103,8 +107,35 @@ public class DirectCallKnockService {
                 .status(Status.PENDING)
                 .requestedAt(LocalDateTime.now())
                 .build());
-    eventNotifications.createCallKnockRequestedNotification(session, knock);
+    tellCounsellorAfterCommit(session, knock);
     return knock;
+  }
+
+  /**
+   * The entry is written in its own transaction, so it waits for the knock to commit: a knock that
+   * rolls back must not ring the counsellor for a person who is not waiting. At afterCommit the
+   * writer's REQUIRES_NEW boundary still persists; a failure there never reaches the person.
+   */
+  private void tellCounsellorAfterCommit(Session session, GroupChatJoinRequest knock) {
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      eventNotifications.createCallKnockRequestedNotification(session, knock);
+      return;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            try {
+              eventNotifications.createCallKnockRequestedNotification(session, knock);
+            } catch (RuntimeException notificationFailure) {
+              log.warn(
+                  "Knock {} committed, but its notification for session {} failed",
+                  knock.getId(),
+                  session.getId(),
+                  notificationFailure);
+            }
+          }
+        });
   }
 
   /**

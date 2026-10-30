@@ -63,6 +63,37 @@ class SessionDirectLinkMediumMigrationTest {
     }
   }
 
+  /** The master changelog's rule: safe on a database that already received the column by hand. */
+  @Test
+  void update_Should_MarkRanAndKeepTheData_When_TheColumnIsAlreadyThere() throws Exception {
+    try (Connection c =
+        DriverManager.getConnection(
+            "jdbc:h2:mem:direct-link-medium-" + UUID.randomUUID() + ";MODE=MariaDB", "sa", "")) {
+      try (var sql = c.createStatement()) {
+        sql.execute(
+            "CREATE TABLE session (id BIGINT UNSIGNED NOT NULL, postcode VARCHAR(5) NOT NULL,"
+                + " direct_link_medium VARCHAR(16), PRIMARY KEY (id))");
+        sql.execute(
+            "INSERT INTO session (id, postcode, direct_link_medium) VALUES (500, '1', 'AUDIO')");
+      }
+      var database =
+          DatabaseFactory.getInstance().findCorrectDatabaseImplementation(new JdbcConnection(c));
+      try (var liquibase = new Liquibase(CHANGELOG, new ClassLoaderResourceAccessor(), database)) {
+        liquibase.update(new Contexts(), new LabelExpression());
+
+        assertThat(count(c, "direct_link_medium = 'AUDIO'")).isEqualTo(1);
+        try (var sql = c.createStatement();
+            var rs =
+                sql.executeQuery(
+                    "SELECT EXECTYPE FROM DATABASECHANGELOG"
+                        + " WHERE ID = '20261030-session-direct-link-medium-1952'")) {
+          rs.next();
+          assertThat(rs.getString(1)).isEqualTo("MARK_RAN");
+        }
+      }
+    }
+  }
+
   private static int count(Connection c, String where) throws Exception {
     try (var sql = c.createStatement();
         var rs = sql.executeQuery("SELECT COUNT(*) FROM session WHERE " + where)) {

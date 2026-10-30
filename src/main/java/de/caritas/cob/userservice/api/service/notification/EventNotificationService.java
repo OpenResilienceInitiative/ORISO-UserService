@@ -398,8 +398,9 @@ public class EventNotificationService {
    * ORISO-Frontend#1952: someone opened the counsellor's audio or video direct link and knocks on
    * the call in their conversation. Without this the counsellor heard nothing: the knock only sat
    * in a list read inside a running call. The entry goes to the counsellor of the conversation (the
-   * link owner, ADR-029 §2), plays the calls-family tone and opens the conversation, where the
-   * counsellor starts the call and lets the person in.
+   * link owner, ADR-029 §2), plays the calls-family tone, and one click starts (or rejoins) the
+   * call in that conversation, where the counsellor lets the person in. The roomRef param names
+   * that conversation's room; the action path is the fallback that opens it.
    *
    * <p>Once per knock (the knock id is the deduplication key), written in its own transaction like
    * every once-only entry, so it is in the feed when the feed-update signal reaches the client. The

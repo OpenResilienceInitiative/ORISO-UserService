@@ -33,6 +33,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -110,6 +112,39 @@ class DirectCallKnockServiceTest {
     verify(eventNotifications).createCallKnockRequestedNotification(session, knock);
   }
 
+  /**
+   * The entry is written in its own transaction. Written before the knock commits, a rolled-back
+   * knock would still ring the counsellor for a person who is not waiting.
+   */
+  @Test
+  void knock_Should_TellTheCounsellorOnlyAfterTheKnockCommits() {
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      var knock = service.knock(SESSION_ID, asker, 9L, InviteLinkChatType.VIDEO);
+
+      verify(eventNotifications, never()).createCallKnockRequestedNotification(any(), any());
+      TransactionSynchronizationManager.getSynchronizations()
+          .forEach(TransactionSynchronization::afterCommit);
+      verify(eventNotifications).createCallKnockRequestedNotification(session, knock);
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+  }
+
+  @Test
+  void knock_Should_NotTellTheCounsellor_When_TheKnockRollsBack() {
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      service.knock(SESSION_ID, asker, 9L, InviteLinkChatType.VIDEO);
+
+      TransactionSynchronizationManager.getSynchronizations()
+          .forEach(sync -> sync.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+      verify(eventNotifications, never()).createCallKnockRequestedNotification(any(), any());
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+  }
+
   @Test
   void knock_Should_NotTellTheCounsellorAgain_When_ThePersonKnocksAgain() {
     var open = pending(1L, LocalDateTime.now().minusMinutes(5));
@@ -166,6 +201,8 @@ class DirectCallKnockServiceTest {
     // conversation endpoints always judge the same, latest knock.
     assertThat(stale.getStatus()).isEqualTo(Status.CANCELLED);
     verify(repository, org.mockito.Mockito.times(2)).save(any());
+    // The fresh knock is a new knock: the counsellor hears it.
+    verify(eventNotifications).createCallKnockRequestedNotification(session, knock);
   }
 
   @Test
