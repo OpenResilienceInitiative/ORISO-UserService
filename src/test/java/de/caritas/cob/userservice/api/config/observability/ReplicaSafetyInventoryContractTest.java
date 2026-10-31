@@ -69,6 +69,7 @@ class ReplicaSafetyInventoryContractTest {
           "event-notification-retention-scheduler",
           "team-discussion-retention-scheduler",
           "team-discussion-orphan-cleanup-scheduler",
+          "agency-deletion-audit-pull-scheduler",
           "team-discussion-access-repair");
 
   @Test

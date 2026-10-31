@@ -683,6 +683,22 @@
       "status": "bounded"
     },
     {
+      "id": "agency-deletion-audit-pull-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/delete/scheduler/AgencyDeletionAuditPullScheduler.java",
+      "kind": "scheduler",
+      "owner": "deletion",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "pull"
+      ],
+      "decision": "Leases each run through ScheduledTaskClaimService. A pulled entry is recorded before it is acknowledged, and recording deduplicates on target type, id and outcome, so a replayed batch after a lost acknowledgement adds no second log row.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
       "id": "team-discussion-retention-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/workflow/teamdiscussionretention/scheduler/TeamDiscussionRetentionScheduler.java",
       "kind": "scheduler",

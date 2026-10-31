@@ -137,6 +137,28 @@ class DeletionAuditServiceTest {
   }
 
   @Test
+  void recordAsSystem_Should_KeepTheTimeTheReportingServiceDeletedTheTarget() {
+    var purgedAt = java.time.LocalDateTime.of(2026, 10, 30, 1, 0, 5);
+
+    service.recordAsSystem(
+        DeletionAuditTargetType.AGENCY, "268", 4L, DeletionAuditOutcome.EXECUTED, purgedAt);
+
+    var saved = savedEntry();
+    assertThat(saved.getCreateDate()).isEqualTo(purgedAt);
+    assertThat(saved.getActorRole()).isEqualTo("SYSTEM");
+  }
+
+  @Test
+  void recordAsSystem_Should_FallBackToNow_When_NoDeletionTimeIsKnown() {
+    var before = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusSeconds(1);
+
+    service.recordAsSystem(
+        DeletionAuditTargetType.AGENCY, "268", 4L, DeletionAuditOutcome.EXECUTED, null);
+
+    assertThat(savedEntry().getCreateDate()).isAfter(before);
+  }
+
+  @Test
   void recordReported_Should_StoreTheActorTheTechnicalCallerNamed_NotTheTechnicalAccount() {
     service.recordReported(
         DeletionAuditTargetType.AGENCY,
