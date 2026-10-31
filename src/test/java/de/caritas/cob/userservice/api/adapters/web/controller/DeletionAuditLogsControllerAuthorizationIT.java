@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.TECHNICAL_DEFAULT;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -11,7 +12,10 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.service.DeletionAuditLogsService;
 import de.caritas.cob.userservice.api.service.DeletionAuditLogsService.DeletionAuditLogsResult;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditOutcome;
@@ -66,6 +70,7 @@ class DeletionAuditLogsControllerAuthorizationIT {
 
   @MockitoBean private DeletionAuditLogsService deletionAuditLogsService;
   @MockitoBean private DeletionAuditService deletionAuditService;
+  @MockitoBean private AdminScope adminScope;
 
   @BeforeEach
   void returnEmptyAuditLogPage() {
@@ -304,9 +309,60 @@ class DeletionAuditLogsControllerAuthorizationIT {
                         + "\"outcome\":\"EXECUTED\"}"))
         .andExpect(status().isNoContent());
 
+    verify(adminScope).assertMay(Target.tenant(4L));
     verify(deletionAuditService)
         .recordAsCurrentActor(
             DeletionAuditTargetType.TENANT, "4", 4L, DeletionAuditOutcome.EXECUTED);
+  }
+
+  @Test
+  void report_Should_ReturnForbidden_WhenATenantAdminReportsAnotherTenantAsTheTarget()
+      throws Exception {
+    doThrow(new ForbiddenException("act on another Träger"))
+        .when(adminScope)
+        .assertMay(Target.tenant(9L));
+
+    mvc.perform(
+            postWithCsrf()
+                .with(adminOfTenant(4, AuthorityValue.TENANT_ADMIN, "tenant-admin"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"targetType\":\"TENANT\",\"targetId\":\"9\",\"tenantId\":4,"
+                        + "\"outcome\":\"EXECUTED\"}"))
+        .andExpect(status().isForbidden());
+
+    verifyNoInteractions(deletionAuditService);
+  }
+
+  @Test
+  void report_Should_ReturnForbidden_WhenAnAgencyAdminReportsAnAgencyItDoesNotAdminister()
+      throws Exception {
+    doThrow(new ForbiddenException("act on agency 268"))
+        .when(adminScope)
+        .assertMay(Target.agencies(List.of(268L)));
+
+    mvc.perform(
+            postWithCsrf()
+                .with(
+                    adminOfTenant(
+                        4, AuthorityValue.RESTRICTED_AGENCY_ADMIN, "restricted-agency-admin"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(AGENCY_REPORT))
+        .andExpect(status().isForbidden());
+
+    verifyNoInteractions(deletionAuditService);
+  }
+
+  @Test
+  void report_Should_ReturnBadRequest_WhenTechnicalAccountNamesARoleButNoActor() throws Exception {
+    mvc.perform(
+            postWithCsrf()
+                .with(jwt().authorities(new SimpleGrantedAuthority(TECHNICAL_DEFAULT)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(AGENCY_REPORT.replace("\"actorId\":\"admin-7\",", "")))
+        .andExpect(status().isBadRequest());
+
+    verifyNoInteractions(deletionAuditService);
   }
 
   @Test

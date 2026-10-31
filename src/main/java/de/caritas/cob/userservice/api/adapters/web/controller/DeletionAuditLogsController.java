@@ -1,5 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.service.DeletionAuditLogsService;
@@ -39,6 +41,7 @@ public class DeletionAuditLogsController {
   private final @NonNull DeletionAuditLogsService deletionAuditLogsService;
   private final @NonNull DeletionAuditService deletionAuditService;
   private final @NonNull AuthenticatedUser authenticatedUser;
+  private final @NonNull AdminScope adminScope;
 
   /**
    * Records an agency or tenant deletion. Best effort: the write never reports a failure back, so
@@ -55,6 +58,10 @@ public class DeletionAuditLogsController {
     }
     var authorities = authenticatedUser.getGrantedAuthorities();
     if (authorities != null && authorities.contains(AuthorityValue.TECHNICAL_DEFAULT)) {
+      // A role without a person would read as a person's action that names nobody.
+      if (request.getActorRole() != null && request.getActorId() == null) {
+        return ResponseEntity.badRequest().build();
+      }
       if (request.getActorRole() == null) {
         deletionAuditService.recordAsSystem(
             request.getTargetType(),
@@ -82,6 +89,13 @@ public class DeletionAuditLogsController {
               || !request.getTenantId().equals(authenticatedUser.getTenantId()))) {
         return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
       }
+      // The target itself must be within the caller's reach too, not only the tenant: a Träger
+      // admin reports only its own Träger, an agency admin only an agency it administers.
+      Long targetId = Long.valueOf(request.getTargetId());
+      adminScope.assertMay(
+          request.getTargetType() == DeletionAuditTargetType.TENANT
+              ? Target.tenant(targetId)
+              : Target.agencies(List.of(targetId)));
       deletionAuditService.recordAsCurrentActor(
           request.getTargetType(),
           request.getTargetId(),
