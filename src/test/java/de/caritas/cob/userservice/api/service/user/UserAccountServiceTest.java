@@ -406,15 +406,22 @@ public class UserAccountServiceTest {
     accountProvider.updateUserMobileToken("token");
   }
 
-  @Test
-  public void
-      ensureCurrentAccountIsWritable_Should_ThrowForbiddenException_When_ConsultantIsInReadOnlySafeguard() {
+  @ParameterizedTest
+  @EnumSource(
+      value = DeletionLifecycleState.class,
+      names = {
+        "READ_ONLY_SAFEGUARD",
+        "REACTIVATION_IN_PROGRESS",
+        "REACTIVATION_REPAIR_REQUIRED",
+        "HARD_DELETE_IN_PROGRESS",
+        "HARD_DELETE_PARTIAL_FAILURE"
+      })
+  void ensureCurrentAccountIsWritable_Should_ThrowForbiddenException_When_ConsultantIsFrozen(
+      DeletionLifecycleState frozenState) {
     when(userService.getUser(USER_ID)).thenReturn(Optional.empty());
     Consultant consultant = new Consultant();
     consultant.setDeleteDate(java.time.LocalDateTime.now());
-    consultant.setDeletionLifecycleState(
-        de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState
-            .READ_ONLY_SAFEGUARD);
+    consultant.setDeletionLifecycleState(frozenState);
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
     // getConsultant is findByIdAndDeleteDateIsNull: it can never return a soft-deleted account,
     // so the safeguard has to look the consultant up including deleted ones.

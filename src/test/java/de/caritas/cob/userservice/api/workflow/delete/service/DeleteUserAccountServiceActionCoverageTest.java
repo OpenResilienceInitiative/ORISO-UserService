@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.workflow.delete.service;
 import static java.util.Collections.singletonList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
@@ -116,8 +117,13 @@ class DeleteUserAccountServiceActionCoverageTest {
         .when(userHardDeleteClaimService.claim(any()))
         .thenAnswer(invocation -> Optional.of(new User()));
     lenient()
-        .when(consultantHardDeleteClaimService.claim(any()))
-        .thenAnswer(invocation -> Optional.of(new Consultant()));
+        .when(consultantHardDeleteClaimService.claim(anyString()))
+        .thenAnswer(
+            invocation -> {
+              var claimed = new Consultant();
+              claimed.setId(invocation.getArgument(0));
+              return Optional.of(claimed);
+            });
     lenient()
         .when(deletionLifecycleService.isReadyForHardDelete(any(Consultant.class)))
         .thenReturn(true);
@@ -139,8 +145,10 @@ class DeleteUserAccountServiceActionCoverageTest {
 
   @Test
   void consultantDeletion_registersEveryActionOfTheChain_inOrder() {
+    var consultant = new Consultant();
+    consultant.setId("chain-consultant");
     when(this.consultantRepository.findAllByDeleteDateNotNull())
-        .thenReturn(singletonList(new Consultant()));
+        .thenReturn(singletonList(consultant));
     when(this.actionsRegistry.buildContainerForType(ConsultantDeletionWorkflowDTO.class))
         .thenReturn(this.consultantContainer);
     when(this.consultantContainer.addActionToExecute(any())).thenReturn(this.consultantContainer);
