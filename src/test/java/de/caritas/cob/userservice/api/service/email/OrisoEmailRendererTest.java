@@ -422,6 +422,20 @@ class OrisoEmailRendererTest {
   }
 
   @Test
+  void paintsTheLogoBoxInThePageColourSoABlockedImageShowsNoColouredBox() {
+    // Frank, 2026-10-09: with remote images blocked, clients draw their own coloured
+    // placeholder for the logo. The image background matches the page, so it blends in.
+    Map<String, String> values = brand();
+    values.put("loginUrl", "https://example.org/login");
+    values.put("expiryMinutes", "15");
+
+    String html = renderer.render("anmeldelink", OrisoEmailRenderer.Tone.DE_FORMAL, values).html();
+    String img = html.substring(html.indexOf("<img"), html.indexOf('>', html.indexOf("<img")) + 1);
+
+    assertThat(img).contains("background:#f2efef");
+  }
+
+  @Test
   void showsTheNameBesideADecorativeLogoSoAFailedImageRepeatsNothing() {
     // Frank, 2026-09-23: logo AND name. The name is text in the next cell, so the
     // logo is decorative: alt="" and never the platform name a second time.
