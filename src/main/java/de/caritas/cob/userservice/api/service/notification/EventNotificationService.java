@@ -35,6 +35,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Slf4j
@@ -405,9 +406,10 @@ public class EventNotificationService {
    * <p>Once per knock (the knock id is the deduplication key), written in its own transaction like
    * every once-only entry, so it is in the feed when the feed-update signal reaches the client. The
    * params carry the medium and the conversation, never who knocks. Best-effort: a failed entry
-   * never fails the knock.
+   * never fails the knock. REQUIRES_NEW: the caller runs this in afterCommit, where the knock's
+   * finished transaction is still bound and a joined transaction would never commit.
    */
-  @Transactional
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
   public void createCallKnockRequestedNotification(
       Session session, de.caritas.cob.userservice.api.model.GroupChatJoinRequest knock) {
     if (session == null

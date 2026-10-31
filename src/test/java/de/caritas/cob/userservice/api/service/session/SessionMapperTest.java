@@ -96,19 +96,33 @@ class SessionMapperTest {
   }
 
   /** FE#1952: the list labels a direct-link conversation by its medium instead of "Mail". */
-  @Test
-  void convertToSessionDTO_Should_projectTheDirectLinkMedium() throws Exception {
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"CHAT", "AUDIO", "VIDEO"})
+  void convertToSessionDTO_Should_projectTheDirectLinkMedium(String medium) throws Exception {
     Session session = new EasyRandom().nextObject(Session.class);
     session.setConversationType(ConversationType.AGENCY_COUNSELLING);
-    session.setDirectLinkMedium("VIDEO");
+    session.setDirectLinkMedium(medium);
 
     SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
 
     org.assertj.core.api.Assertions.assertThat(
             new AppConfig().objectMapper().writeValueAsString(sessionDTO))
-        .contains("\"directLinkMedium\":\"VIDEO\"")
+        .contains("\"directLinkMedium\":\"" + medium + "\"")
         // The modality stays ADR-006's: a direct-link conversation is still agency counselling.
         .contains("\"conversationType\":\"AGENCY_COUNSELLING\"");
+  }
+
+  /** An unknown stored value is left out; it never fails the whole session list. */
+  @Test
+  void convertToSessionDTO_Should_leaveAnUnknownDirectLinkMediumOut() throws Exception {
+    Session session = new EasyRandom().nextObject(Session.class);
+    session.setDirectLinkMedium("FAX");
+
+    SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
+
+    org.assertj.core.api.Assertions.assertThat(
+            new AppConfig().objectMapper().writeValueAsString(sessionDTO))
+        .doesNotContain("\"directLinkMedium\":\"");
   }
 
   @Test

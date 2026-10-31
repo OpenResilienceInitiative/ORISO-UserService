@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.agencyinvitelink;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -140,6 +141,26 @@ class DirectCallKnockServiceTest {
       TransactionSynchronizationManager.getSynchronizations()
           .forEach(sync -> sync.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
       verify(eventNotifications, never()).createCallKnockRequestedNotification(any(), any());
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+  }
+
+  @Test
+  void knock_Should_KeepTheKnock_When_TheNotificationFails() {
+    org.mockito.Mockito.doThrow(new IllegalStateException("feed down"))
+        .when(eventNotifications)
+        .createCallKnockRequestedNotification(any(), any());
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      var knock = service.knock(SESSION_ID, asker, 9L, InviteLinkChatType.VIDEO);
+
+      assertThatCode(
+              () ->
+                  TransactionSynchronizationManager.getSynchronizations()
+                      .forEach(TransactionSynchronization::afterCommit))
+          .doesNotThrowAnyException();
+      verify(eventNotifications).createCallKnockRequestedNotification(session, knock);
     } finally {
       TransactionSynchronizationManager.clearSynchronization();
     }
