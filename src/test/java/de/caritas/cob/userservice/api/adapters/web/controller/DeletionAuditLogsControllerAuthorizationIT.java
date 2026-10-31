@@ -366,6 +366,18 @@ class DeletionAuditLogsControllerAuthorizationIT {
   }
 
   @Test
+  void report_Should_ReturnBadRequest_WhenTechnicalAccountNamesAnActorButNoRole() throws Exception {
+    mvc.perform(
+            postWithCsrf()
+                .with(jwt().authorities(new SimpleGrantedAuthority(TECHNICAL_DEFAULT)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(AGENCY_REPORT.replace(",\"actorRole\":\"AGENCY_ADMIN\"", "")))
+        .andExpect(status().isBadRequest());
+
+    verifyNoInteractions(deletionAuditService);
+  }
+
+  @Test
   void report_Should_ReturnForbidden_WhenCallerIsAConsultant() throws Exception {
     mvc.perform(
             postWithCsrf()
