@@ -1180,10 +1180,21 @@ public class KeycloakService
    */
   @Override
   public void deactivateUser(String userId) {
-    var userResource = keycloakClient.getUsersResource().get(userId);
-    var userRepresentation = userResource.toRepresentation();
-    userRepresentation.setEnabled(false);
-    userResource.update(userRepresentation);
+    try {
+      var userResource = keycloakClient.getUsersResource().get(userId);
+      var userRepresentation = userResource.toRepresentation();
+      if (userRepresentation == null) {
+        log.warn("User {} not found in Keycloak, skipping deactivation.", userId);
+        return;
+      }
+      userRepresentation.setEnabled(false);
+      userResource.update(userRepresentation);
+    } catch (NotFoundException e) {
+      // An account that no longer exists in Keycloak cannot be signed in to, so it is already
+      // deactivated for every purpose this call serves. Failing here instead made a deletion
+      // whose Keycloak step had succeeded impossible to retry (#1466).
+      log.warn("User {} not found in Keycloak, skipping deactivation.", userId);
+    }
   }
 
   @Override
