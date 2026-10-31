@@ -244,12 +244,12 @@ class UserConsultantControllerDelegateTest {
             "person@example.org", true, List.of(1L), SearchFilter.NONE, 0, 20, "lastName", true))
         .thenReturn(resultMap);
     when(consultantDtoMapper.consultantSearchResultOf(
-            resultMap, "person%40example.org", 1, 20, "LASTNAME", "asc", SearchFilter.NONE))
+            resultMap, "person@example.org", 1, 20, "LASTNAME", "asc", SearchFilter.NONE))
         .thenReturn(searchResult);
 
     var response =
         delegate.searchConsultants(
-            "person%40example.org", 1, 20, "LASTNAME", "asc", SearchFilter.NONE);
+            "person@example.org", 1, 20, "LASTNAME", "asc", SearchFilter.NONE);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     assertThat(response.getBody()).isSameAs(searchResult);
@@ -292,8 +292,8 @@ class UserConsultantControllerDelegateTest {
   }
 
   @Test
-  void searchConsultants_nonEmailQuery_urlDecodePathUsed() {
-    // Non-email search queries are URL-decoded before hitting the account manager.
+  void searchConsultants_nonEmailQuery_preservesBoundText() {
+    // The controller receives already-decoded request parameters.
     var resultMap = Map.<String, Object>of("consultants", List.of(), "totalElements", 0);
     var searchResult = new ConsultantSearchResultDTO();
     when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(false);
@@ -302,11 +302,11 @@ class UserConsultantControllerDelegateTest {
             "Müller", false, List.of(), SearchFilter.NONE, 0, 20, "firstName", true))
         .thenReturn(resultMap);
     when(consultantDtoMapper.consultantSearchResultOf(
-            resultMap, "M%C3%BCller", 1, 20, "FIRSTNAME", "asc", SearchFilter.NONE))
+            resultMap, "Müller", 1, 20, "FIRSTNAME", "asc", SearchFilter.NONE))
         .thenReturn(searchResult);
 
     var response =
-        delegate.searchConsultants("M%C3%BCller", 1, 20, "FIRSTNAME", "asc", SearchFilter.NONE);
+        delegate.searchConsultants("Müller", 1, 20, "FIRSTNAME", "asc", SearchFilter.NONE);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     verify(accountManager)

@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.port.out;
 
+import de.caritas.cob.userservice.api.admin.service.search.InviteSearchSpecification;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteProvisioningStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose;
@@ -16,12 +17,14 @@ import java.util.Optional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-public interface AccountInviteRepository extends JpaRepository<AccountInvite, Long> {
+public interface AccountInviteRepository
+    extends JpaRepository<AccountInvite, Long>, JpaSpecificationExecutor<AccountInvite> {
 
   boolean existsByQueuedTemplateIdAndStatus(Long templateId, AccountInviteStatus status);
 
@@ -330,54 +333,30 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       @Param("statuses") Collection<AccountInviteStatus> statuses,
       @Param("now") LocalDateTime now);
 
-  /**
-   * The {@code search} match against recipient email/first/last name and the {@code searchTenantId}
-   * exact tenant-ID match are two independent legs of the same query-box term
-   * (ORISO-UserService#479): the service lower-cases and trims the raw query once for {@code
-   * search}, and additionally parses it as a tenant ID for {@code searchTenantId} when it is purely
-   * numeric. A blank/absent query leaves both null, which short-circuits this clause to true and
-   * preserves the existing result set.
-   */
-  @Query(
-      "SELECT i FROM AccountInvite i"
-          + " WHERE (:tenantId IS NULL OR i.tenantId = :tenantId)"
-          + " AND (:targetRole IS NULL OR i.targetRole = :targetRole)"
-          + " AND (:status IS NULL OR i.status = :status)"
-          + " AND (:search IS NULL"
-          + "      OR LOWER(i.recipientEmail) LIKE CONCAT('%', :search, '%')"
-          + "      OR LOWER(i.firstName) LIKE CONCAT('%', :search, '%')"
-          + "      OR LOWER(i.lastName) LIKE CONCAT('%', :search, '%')"
-          + "      OR (:searchTenantId IS NOT NULL AND i.tenantId = :searchTenantId))"
-          + " ORDER BY i.createDate DESC")
-  Page<AccountInvite> findAllByFilters(
-      @Param("tenantId") Long tenantId,
-      @Param("targetRole") AccountInviteTargetRole targetRole,
-      @Param("status") AccountInviteStatus status,
-      @Param("search") String search,
-      @Param("searchTenantId") Long searchTenantId,
-      Pageable pageable);
+  /** Compatibility entry point; every word is matched before paging. */
+  default Page<AccountInvite> findAllByFilters(
+      Long tenantId,
+      AccountInviteTargetRole targetRole,
+      AccountInviteStatus status,
+      String search,
+      Long searchTenantId,
+      Pageable pageable) {
+    return findAll(
+        InviteSearchSpecification.matching(tenantId, targetRole, status, search, null), pageable);
+  }
 
-  /** {@link #findAllByFilters} narrowed to the given agencies, which are never empty. */
-  @Query(
-      "SELECT i FROM AccountInvite i"
-          + " WHERE i.agencyId IN :agencyIds"
-          + " AND (:tenantId IS NULL OR i.tenantId = :tenantId)"
-          + " AND (:targetRole IS NULL OR i.targetRole = :targetRole)"
-          + " AND (:status IS NULL OR i.status = :status)"
-          + " AND (:search IS NULL"
-          + "      OR LOWER(i.recipientEmail) LIKE CONCAT('%', :search, '%')"
-          + "      OR LOWER(i.firstName) LIKE CONCAT('%', :search, '%')"
-          + "      OR LOWER(i.lastName) LIKE CONCAT('%', :search, '%')"
-          + "      OR (:searchTenantId IS NOT NULL AND i.tenantId = :searchTenantId))"
-          + " ORDER BY i.createDate DESC")
-  Page<AccountInvite> findAllByFiltersWithinAgencies(
-      @Param("tenantId") Long tenantId,
-      @Param("targetRole") AccountInviteTargetRole targetRole,
-      @Param("status") AccountInviteStatus status,
-      @Param("search") String search,
-      @Param("searchTenantId") Long searchTenantId,
-      @Param("agencyIds") Collection<Long> agencyIds,
-      Pageable pageable);
+  default Page<AccountInvite> findAllByFiltersWithinAgencies(
+      Long tenantId,
+      AccountInviteTargetRole targetRole,
+      AccountInviteStatus status,
+      String search,
+      Long searchTenantId,
+      Collection<Long> agencyIds,
+      Pageable pageable) {
+    return findAll(
+        InviteSearchSpecification.matching(tenantId, targetRole, status, search, agencyIds),
+        pageable);
+  }
 
   /** Null {@code tenantId} matches any tenant; null {@code excludedId} excludes nothing. */
   @Query(

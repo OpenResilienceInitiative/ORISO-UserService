@@ -47,6 +47,8 @@ class AccountManagerTest {
 
   @Mock ConsultantRepository consultantRepository;
 
+  @Mock de.caritas.cob.userservice.api.admin.service.search.AccountSearch accountSearch;
+
   @Mock de.caritas.cob.userservice.api.port.out.AdminRepository adminRepository;
 
   @Mock ConsultantAgencyRepository consultantAgencyRepository;
@@ -74,8 +76,11 @@ class AccountManagerTest {
   void findConsultantsByInfix_Should_NotFilterByAgenciesIfAgencyListIsEmpty() {
     // given
     Mockito.when(
-            consultantRepository.findAllByInfix(
-                Mockito.eq("infix"), Mockito.isNull(), Mockito.any(PageRequest.class)))
+            accountSearch.consultants(
+                Mockito.eq("infix"),
+                Mockito.isNull(),
+                Mockito.isNull(),
+                Mockito.any(PageRequest.class)))
         .thenReturn(page);
 
     // when
@@ -83,8 +88,12 @@ class AccountManagerTest {
         "infix", false, Lists.newArrayList(), SearchFilter.NONE, 1, 10, "email", true);
 
     // then
-    Mockito.verify(consultantRepository)
-        .findAllByInfix(Mockito.eq("infix"), Mockito.isNull(), Mockito.any(PageRequest.class));
+    Mockito.verify(accountSearch)
+        .consultants(
+            Mockito.eq("infix"),
+            Mockito.isNull(),
+            Mockito.isNull(),
+            Mockito.any(PageRequest.class));
   }
 
   @Test
@@ -92,8 +101,11 @@ class AccountManagerTest {
     // given: consultants whose agencies were all deleted make the AgencyService
     // bulk lookup respond with 404, raised by the generated client as a client error
     Mockito.when(
-            consultantRepository.findAllByInfix(
-                Mockito.eq("infix"), Mockito.isNull(), Mockito.any(PageRequest.class)))
+            accountSearch.consultants(
+                Mockito.eq("infix"),
+                Mockito.isNull(),
+                Mockito.isNull(),
+                Mockito.any(PageRequest.class)))
         .thenReturn(page);
     Mockito.when(agencyService.getAgenciesWithoutCaching(Mockito.anyList()))
         .thenThrow(
@@ -120,8 +132,11 @@ class AccountManagerTest {
   void findConsultantsByInfix_Should_OnlyResolveAgenciesOfNotDeletedRelations() {
     // given
     Mockito.when(
-            consultantRepository.findAllByInfix(
-                Mockito.eq("infix"), Mockito.isNull(), Mockito.any(PageRequest.class)))
+            accountSearch.consultants(
+                Mockito.eq("infix"),
+                Mockito.isNull(),
+                Mockito.isNull(),
+                Mockito.any(PageRequest.class)))
         .thenReturn(page);
 
     // when
@@ -137,10 +152,10 @@ class AccountManagerTest {
   void findConsultantsByInfix_Should_FilterByAgenciesIfAgencyListIsNotEmpty() {
     // given
     Mockito.when(
-            consultantRepository.findAllByInfixAndAgencyIds(
+            accountSearch.consultants(
                 Mockito.eq("infix"),
-                Mockito.anyCollection(),
                 Mockito.isNull(),
+                Mockito.anyCollection(),
                 Mockito.any(PageRequest.class)))
         .thenReturn(page);
 
@@ -149,11 +164,11 @@ class AccountManagerTest {
         "infix", true, Lists.newArrayList(1L), SearchFilter.NONE, 1, 10, "email", true);
 
     // then
-    Mockito.verify(consultantRepository)
-        .findAllByInfixAndAgencyIds(
+    Mockito.verify(accountSearch)
+        .consultants(
             Mockito.eq("infix"),
-            Mockito.eq(Lists.newArrayList(1L)),
             Mockito.isNull(),
+            Mockito.eq(Lists.newArrayList(1L)),
             Mockito.any(PageRequest.class));
   }
 
@@ -363,15 +378,16 @@ class AccountManagerTest {
     Mockito.when(authenticatedUser.getAccessToken())
         .thenReturn("eyJhbGciOiJSUzI1NiJ9.eyJ0ZW5hbnRJZCI6NX0.signature");
     Mockito.when(
-            consultantRepository.findAllByInfix(
-                Mockito.any(), Mockito.any(), Mockito.any(PageRequest.class)))
+            accountSearch.consultants(
+                Mockito.any(), Mockito.any(), Mockito.isNull(), Mockito.any(PageRequest.class)))
         .thenReturn(page);
 
     accountManager.findConsultantsByInfix(
         "test", false, List.of(), SearchFilter.NONE, 0, 10, "id", true);
 
-    Mockito.verify(consultantRepository)
-        .findAllByInfix(Mockito.eq("test"), Mockito.eq(5L), Mockito.any(PageRequest.class));
+    Mockito.verify(accountSearch)
+        .consultants(
+            Mockito.eq("test"), Mockito.eq(5L), Mockito.isNull(), Mockito.any(PageRequest.class));
   }
 
   @Test
@@ -386,8 +402,8 @@ class AccountManagerTest {
 
     Mockito.when(authenticatedUser.getAccessToken()).thenReturn(null);
     Mockito.when(
-            consultantRepository.findAllByInfix(
-                Mockito.any(), Mockito.any(), Mockito.any(PageRequest.class)))
+            accountSearch.consultants(
+                Mockito.any(), Mockito.any(), Mockito.isNull(), Mockito.any(PageRequest.class)))
         .thenReturn(page);
     Mockito.when(page.stream()).thenReturn(java.util.stream.Stream.of(consultantBase));
     Mockito.when(consultantRepository.findAllByIdIn(List.of("c-1")))
@@ -425,8 +441,8 @@ class AccountManagerTest {
 
     Mockito.when(authenticatedUser.getAccessToken()).thenReturn(null);
     Mockito.when(
-            consultantRepository.findAllByInfix(
-                Mockito.any(), Mockito.any(), Mockito.any(PageRequest.class)))
+            accountSearch.consultants(
+                Mockito.any(), Mockito.any(), Mockito.isNull(), Mockito.any(PageRequest.class)))
         .thenReturn(page);
     Mockito.when(page.stream()).thenReturn(java.util.stream.Stream.of(consultantBase));
     Mockito.when(consultantRepository.findAllByIdIn(List.of("c-1")))
@@ -473,8 +489,8 @@ class AccountManagerTest {
 
     Mockito.when(authenticatedUser.getAccessToken()).thenReturn(null);
     Mockito.when(
-            consultantRepository.findAllByInfix(
-                Mockito.any(), Mockito.any(), Mockito.any(PageRequest.class)))
+            accountSearch.consultants(
+                Mockito.any(), Mockito.any(), Mockito.isNull(), Mockito.any(PageRequest.class)))
         .thenReturn(page);
     Mockito.when(page.stream()).thenReturn(java.util.stream.Stream.of(consultantBase));
     Mockito.when(consultantRepository.findAllByIdIn(List.of("c-1")))

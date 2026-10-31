@@ -6,13 +6,20 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anySet;
+import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.UserServiceApplication;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NoContentException;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminBase;
+import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -26,6 +33,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
 @SpringBootTest(classes = UserServiceApplication.class)
@@ -41,9 +49,27 @@ public class RetrieveAdminServiceTenantAwareIT {
 
   @Autowired private RetrieveAdminService retrieveAdminService;
 
+  @MockitoBean private AgencyService agencyService;
+  @MockitoBean private TenantService tenantService;
+
   @BeforeEach
   public void beforeTest() {
     TenantContext.setCurrentTenant(1L);
+    // Owner metadata is a deterministic fixture; unavailable real owners must still fail502.
+    when(agencyService.getAgenciesWithoutCaching(anyList()))
+        .thenAnswer(
+            call -> {
+              List<Long> ids = call.getArgument(0);
+              return ids.stream().map(id -> new AgencyDTO().id(id).name("Agency " + id)).toList();
+            });
+    when(tenantService.getRestrictedTenantData(anySet()))
+        .thenAnswer(
+            call -> {
+              Set<Long> ids = call.getArgument(0);
+              return ids.stream()
+                  .map(id -> new RestrictedTenantDTO().id(id).name("Tenant " + id))
+                  .toList();
+            });
   }
 
   @AfterEach

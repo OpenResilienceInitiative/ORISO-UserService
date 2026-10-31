@@ -86,6 +86,33 @@ class AccountInviteApiContractTest {
         .allMatch(known::contains);
   }
 
+  @Test
+  void invitePhaseFiltersPreserveTheScalarEnumAndAddCsvWithoutReplacingIt() {
+    Map<String, Object> operation =
+        map(map(map(specification.get("paths")).get("/useradmin/account-invites")).get("get"));
+    List<?> parameters = (List<?>) operation.get("parameters");
+    Map<String, Object> single =
+        parameters.stream()
+            .map(AccountInviteApiContractTest::map)
+            .filter(p -> "progress_phase".equals(p.get("name")))
+            .findFirst()
+            .orElseThrow();
+    assertThat(map(single.get("schema")).get("$ref"))
+        .isEqualTo("#/components/schemas/AccountInviteProgressPhase");
+    Map<String, Object> plural =
+        parameters.stream()
+            .map(AccountInviteApiContractTest::map)
+            .filter(p -> "progress_phases".equals(p.get("name")))
+            .findFirst()
+            .orElseThrow();
+    assertThat(plural.get("required")).isNotEqualTo(true);
+    assertThat(plural.get("style")).isEqualTo("form");
+    assertThat(plural.get("explode")).isEqualTo(false);
+    assertThat(map(plural.get("schema")).get("type")).isEqualTo("array");
+    assertThat(map(map(plural.get("schema")).get("items")).get("$ref"))
+        .isEqualTo("#/components/schemas/AccountInviteProgressPhase");
+  }
+
   /** Merged lookup covers every verb shortcut and a class-level @RequestMapping prefix. */
   private static Set<String> adminRoutes() {
     Set<String> routes = new HashSet<>();

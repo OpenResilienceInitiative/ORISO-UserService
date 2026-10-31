@@ -50,6 +50,7 @@ mariadb_owned_tests=(
   ConsultantTopicUniqueKeyMariaDbIT
   ConsultantPictureDatabaseIT
   AdminStatisticsRepositoryMariaDbIT
+  UserAdminSearchMariaDbIT
   ProvisioningCompensationMariaDbIT
   ScheduledTaskClaimMariaDbIT
   TutorialProgressServiceMariaDbReplicaIT
