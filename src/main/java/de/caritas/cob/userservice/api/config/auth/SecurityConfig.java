@@ -521,6 +521,8 @@ public class SecurityConfig {
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover/recipients",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/recipient-decision",
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/recipient-decision",
+                    "/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/withdraw",
+                    "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/withdraw",
                     "/users/chat-series/**",
                     "/service/users/chat-series/**",
                     "/users/agencies/{agencyId:[0-9]+}/admin-contacts",
@@ -628,6 +630,16 @@ public class SecurityConfig {
                         + "}/deletion/pause")
                 .hasAnyAuthority(
                     USER_ADMIN, RESTRICTED_AGENCY_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+                // Cancelling a consultant deletion: the same callers who may delete or pause it,
+                // scoped to their own agencies/tenant in ConsultantAdminFacade (AdminScope).
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/deletion/cancel",
+                    "/service/useradmin/consultants/{consultantId:"
+                        + UUID_PATTERN
+                        + "}/deletion/cancel")
+                .hasAnyAuthority(
+                    USER_ADMIN, RESTRICTED_AGENCY_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
                 .requestMatchers(
                     HttpMethod.POST,
                     "/useradmin/askers/deletion/reactivate",
@@ -677,7 +689,9 @@ public class SecurityConfig {
                 .requestMatchers(
                     "/users/inactive-accounts/audit-logs",
                     "/service/users/inactive-accounts/audit-logs")
-                .access(this::canAccessInactiveAccountAuditLogs)
+                .access(this::canAccessPlatformAuditLogs)
+                .requestMatchers("/users/deletion-audit-logs", "/service/users/deletion-audit-logs")
+                .access(this::canAccessPlatformAuditLogs)
                 .requestMatchers(
                     "/users/consultants/sessions/{sessionId:[0-9]+}",
                     "/users/sessions/{sessionId:[0-9]+}/archive",
@@ -792,7 +806,7 @@ public class SecurityConfig {
             && isPlatformAdmin(authenticationSupplier, requestContext).isGranted());
   }
 
-  private AuthorizationDecision canAccessInactiveAccountAuditLogs(
+  private AuthorizationDecision canAccessPlatformAuditLogs(
       Supplier<? extends Authentication> authenticationSupplier,
       RequestAuthorizationContext requestContext) {
     Authentication authentication = authenticationSupplier.get();

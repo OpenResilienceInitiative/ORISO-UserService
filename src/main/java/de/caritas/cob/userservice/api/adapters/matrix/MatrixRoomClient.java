@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserRespon
 import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics;
 import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics.Outcome;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteRateLimitedException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import java.net.URI;
 import java.util.HashMap;
@@ -445,16 +446,76 @@ public class MatrixRoomClient {
         String.format("Could not invite user (%s) to room (%s) in Matrix", userId, roomId));
   }
 
+  /**
+   * One invite attempt that never sleeps. A rate-limited invite surfaces as {@link
+   * MatrixInviteRateLimitedException} with the server's uncapped {@code retry_after_ms}, so a
+   * caller on a request thread can defer the work instead of holding the request open.
+   */
+  public ResponseEntity<MatrixInviteUserResponseDTO> inviteUserToRoomOnce(
+      String roomId, String userId, String accessToken) throws MatrixInviteUserException {
+
+    var headers = getClientHttpHeaders(accessToken);
+    headers.setContentType(MediaType.APPLICATION_JSON);
+
+    var inviteRequest = new MatrixInviteUserRequestDTO();
+    inviteRequest.setUserId(userId);
+
+    var url = buildUrl(ENDPOINT_INVITE_USER, Map.of("roomId", roomId));
+
+    try {
+      var response =
+          restTemplate.postForEntity(
+              url, new HttpEntity<>(inviteRequest, headers), MatrixInviteUserResponseDTO.class);
+      log.info("Successfully invited Matrix user: {} to room: {}", userId, roomId);
+      return response;
+    } catch (HttpClientErrorException ex) {
+      if (isRateLimited(ex)) {
+        var retryAfterMs = serverRetryAfterMs(ex);
+        log.warn(
+            "Matrix invite for user {} to room {} was rate limited; server asks to retry after {} ms",
+            userId,
+            roomId,
+            retryAfterMs);
+        throw new MatrixInviteRateLimitedException(
+            String.format(
+                "Matrix invite for user (%s) to room (%s) was rate limited", userId, roomId),
+            retryAfterMs);
+      }
+      log.error(
+          "Matrix Error: Could not invite user ({}) to room ({}) in Matrix. Status: {}, Response: {}",
+          userId,
+          roomId,
+          ex.getStatusCode(),
+          ex.getResponseBodyAsString());
+      throw new MatrixInviteUserException(
+          String.format(
+              "Could not invite user (%s) to room (%s) in Matrix: %s",
+              userId, roomId, ex.getResponseBodyAsString()));
+    } catch (Exception ex) {
+      log.error(
+          "Matrix Error: Could not invite user ({}) to room ({}) in Matrix. Reason",
+          userId,
+          roomId,
+          ex);
+      throw new MatrixInviteUserException(
+          String.format("Could not invite user (%s) to room (%s) in Matrix", userId, roomId));
+    }
+  }
+
   private boolean isRateLimited(HttpClientErrorException ex) {
     return ex.getStatusCode().value() == 429
         || ex.getResponseBodyAsString().contains("M_LIMIT_EXCEEDED");
   }
 
   private long retryAfterMs(HttpClientErrorException ex) {
+    return Math.min(serverRetryAfterMs(ex), MAX_INVITE_RETRY_DELAY_MS);
+  }
+
+  private long serverRetryAfterMs(HttpClientErrorException ex) {
     var matcher = RETRY_AFTER_MS_PATTERN.matcher(ex.getResponseBodyAsString());
     if (matcher.find()) {
       try {
-        return Math.min(Long.parseLong(matcher.group(1)), MAX_INVITE_RETRY_DELAY_MS);
+        return Long.parseLong(matcher.group(1));
       } catch (NumberFormatException ignored) {
         return DEFAULT_INVITE_RETRY_DELAY_MS;
       }

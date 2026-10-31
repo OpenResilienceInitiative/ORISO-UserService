@@ -327,6 +327,17 @@ public class UserAdminController implements UseradminApi {
     return new ResponseEntity<>(HttpStatus.OK);
   }
 
+  /** Cancels a consultant deletion while it is still within the safeguard window. */
+  @PostMapping(
+      value = {
+        "/useradmin/consultants/{consultantId}/deletion/cancel",
+        "/service/useradmin/consultants/{consultantId}/deletion/cancel"
+      })
+  public ResponseEntity<Void> cancelConsultantDeletion(@PathVariable String consultantId) {
+    this.consultantAdminFacade.cancelConsultantDeletion(consultantId);
+    return new ResponseEntity<>(HttpStatus.OK);
+  }
+
   /**
    * Entry point to update a consultant. Accepts the full {@link UpdateAdminConsultantDTO} including
    * an optional {@code topicIds} list that fully replaces the consultant's current topics (add new

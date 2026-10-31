@@ -257,5 +257,6 @@
   <include file="db/changelog/changeset/20261028_temporary_accounts_1476/changeSet.xml"/>
   <include file="db/changelog/changeset/20261028_call_share_link_1487/changeSet.xml"/>
   <include file="db/changelog/changeset/20261028_chat_matrix_room_lineage/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261029_deletion_audit_log/changeSet.xml"/>
   <include file="db/changelog/changeset/20261030_session_direct_link_medium_1952/changeSet.xml"/>
 </databaseChangeLog>
