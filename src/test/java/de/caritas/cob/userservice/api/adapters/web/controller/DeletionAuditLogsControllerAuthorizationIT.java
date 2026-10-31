@@ -256,6 +256,60 @@ class DeletionAuditLogsControllerAuthorizationIT {
   }
 
   @Test
+  void report_Should_AcceptAPlainAgencyAdmin_WhoMayDeleteABeratungsstelleInAgencyService()
+      throws Exception {
+    mvc.perform(
+            postWithCsrf()
+                .with(
+                    jwt()
+                        .jwt(
+                            token ->
+                                token
+                                    .claim("realm_access", Map.of("roles", List.of("agency-admin")))
+                                    .claim("tenantId", 4L))
+                        .authorities())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(AGENCY_REPORT))
+        .andExpect(status().isNoContent());
+
+    verify(deletionAuditService)
+        .recordAsCurrentActor(
+            DeletionAuditTargetType.AGENCY, "268", 4L, DeletionAuditOutcome.SCHEDULED);
+  }
+
+  @Test
+  void report_Should_ReturnForbidden_WhenAnAdminReportsAnAgencyAsExecuted() throws Exception {
+    // Only the nightly purge (technical account, via the AgencyService outbox) executes an
+    // agency deletion; a person's EXECUTED row would make the outbox pull skip the real one.
+    mvc.perform(
+            postWithCsrf()
+                .with(
+                    adminOfTenant(
+                        4, AuthorityValue.RESTRICTED_AGENCY_ADMIN, "restricted-agency-admin"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(AGENCY_REPORT.replace("SCHEDULED", "EXECUTED")))
+        .andExpect(status().isForbidden());
+
+    verifyNoInteractions(deletionAuditService);
+  }
+
+  @Test
+  void report_Should_RecordATenantAsExecuted_WhenItsAdminDeletedIt() throws Exception {
+    mvc.perform(
+            postWithCsrf()
+                .with(adminOfTenant(4, AuthorityValue.TENANT_ADMIN, "tenant-admin"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"targetType\":\"TENANT\",\"targetId\":\"4\",\"tenantId\":4,"
+                        + "\"outcome\":\"EXECUTED\"}"))
+        .andExpect(status().isNoContent());
+
+    verify(deletionAuditService)
+        .recordAsCurrentActor(
+            DeletionAuditTargetType.TENANT, "4", 4L, DeletionAuditOutcome.EXECUTED);
+  }
+
+  @Test
   void report_Should_ReturnForbidden_WhenCallerIsAConsultant() throws Exception {
     mvc.perform(
             postWithCsrf()

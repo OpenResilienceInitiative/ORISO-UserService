@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.service.DeletionAuditLogsService;
 import de.caritas.cob.userservice.api.service.DeletionAuditLogsService.DeletionAuditLogEntry;
 import de.caritas.cob.userservice.api.service.DeletionAuditLogsService.DeletionAuditLogsResult;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditOutcome;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditTargetType;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionAuditService;
 import io.swagger.annotations.Api;
@@ -68,6 +69,12 @@ public class DeletionAuditLogsController {
             request.getActorRole());
       }
     } else {
+      // A Beratungsstelle is purged by the nightly job, which reports EXECUTED through the
+      // AgencyService outbox. A person's EXECUTED row would make that pull skip the real one.
+      if (request.getTargetType() == DeletionAuditTargetType.AGENCY
+          && request.getOutcome() == DeletionAuditOutcome.EXECUTED) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+      }
       if (!authenticatedUser.isPlatformAdmin()
           && (request.getTenantId() == null
               || !request.getTenantId().equals(authenticatedUser.getTenantId()))) {
