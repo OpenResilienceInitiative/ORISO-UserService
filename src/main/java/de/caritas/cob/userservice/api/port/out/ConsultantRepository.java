@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Consultant.ConsultantBase;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
@@ -161,4 +162,30 @@ public interface ConsultantRepository
               + " AND delete_date IS NULL",
       nativeQuery = true)
   int clearPasswordChangeRequired(@Param("id") String id, @Param("now") LocalDateTime now);
+
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      """
+      UPDATE Consultant consultant
+         SET consultant.deletionLifecycleState = :readyState
+       WHERE consultant.id = :id
+         AND consultant.deleteDate IS NOT NULL
+         AND consultant.deletionLifecycleState = :claimedState
+      """)
+  int releaseConsultantHardDeleteClaim(
+      @Param("id") String id,
+      @Param("claimedState") DeletionLifecycleState claimedState,
+      @Param("readyState") DeletionLifecycleState readyState);
+
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      """
+      UPDATE Consultant consultant
+         SET consultant.deletionLifecycleState = :readyState
+       WHERE consultant.deleteDate IS NOT NULL
+         AND consultant.deletionLifecycleState = :claimedState
+      """)
+  int releaseInterruptedConsultantHardDeleteClaims(
+      @Param("claimedState") DeletionLifecycleState claimedState,
+      @Param("readyState") DeletionLifecycleState readyState);
 }
