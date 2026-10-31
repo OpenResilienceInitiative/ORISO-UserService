@@ -58,8 +58,9 @@ public class DeletionAuditLogsController {
     }
     var authorities = authenticatedUser.getGrantedAuthorities();
     if (authorities != null && authorities.contains(AuthorityValue.TECHNICAL_DEFAULT)) {
-      // A role without a person would read as a person's action that names nobody.
-      if (request.getActorRole() != null && request.getActorId() == null) {
+      // Actor and role come as a pair: a role without a person would read as a person's action
+      // that names nobody, and a person without a role would be recorded as SYSTEM.
+      if ((request.getActorRole() == null) != (request.getActorId() == null)) {
         return ResponseEntity.badRequest().build();
       }
       if (request.getActorRole() == null) {
