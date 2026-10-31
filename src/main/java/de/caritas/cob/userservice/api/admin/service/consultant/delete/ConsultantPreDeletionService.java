@@ -60,6 +60,19 @@ public class ConsultantPreDeletionService {
     this.identityDeactivator.deactivateUser(consultant.getId());
   }
 
+  /** Restores the agency relations that {@link #performPreDeletionSteps} removed. */
+  public void restoreAgencyRelations(Consultant consultant, LocalDateTime deletedAt) {
+    agencyDeletionValidationService.restoreRelationsMarkedWith(consultant, deletedAt);
+  }
+
+  /**
+   * Turns the login back on after a cancelled deletion. Like {@link #deactivateIdentity} it must be
+   * the last step of the transaction, because Keycloak is not rolled back with the database.
+   */
+  public void activateIdentity(Consultant consultant) {
+    this.identityDeactivator.activateUser(consultant.getId());
+  }
+
   private boolean hasConsultantActiveSessions(Consultant consultant) {
     return !this.sessionRepository
         .findByConsultantAndStatusIn(consultant, Lists.newArrayList(IN_PROGRESS, IN_ARCHIVE))

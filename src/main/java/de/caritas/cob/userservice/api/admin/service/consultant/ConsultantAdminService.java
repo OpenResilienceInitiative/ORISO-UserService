@@ -267,6 +267,39 @@ public class ConsultantAdminService {
     this.consultantRepository.save(consultant);
   }
 
+  /**
+   * Cancels a consultant deletion during the safeguard window: clears the deletion state, restores
+   * the agency relations removed with the account and turns the login back on. Not restored
+   * (removed irreversibly by the deletion): private-room memberships, the public slug and the
+   * picture, and sessions deleted with {@code forceDeleteSessions}.
+   */
+  @Transactional
+  public void cancelConsultantDeletion(String consultantId) {
+    var consultant =
+        this.consultantRepository
+            .findPictureOwnerForUpdate(consultantId)
+            .orElseThrow(() -> new NotFoundException("Consultant not found"));
+    var deletedAt = consultant.getDeleteDate();
+    deletionLifecycleService.cancelConsultantDeletion(consultant);
+    consultantPreDeletionService.restoreAgencyRelations(consultant, deletedAt);
+    consultant.setStatus(ConsultantStatus.CREATED);
+    this.consultantRepository.save(consultant);
+    log.info(
+        "Deletion of consultant {} was cancelled by {}",
+        consultantId,
+        authenticatedUser.getUserId());
+
+    // Last: Keycloak is not rolled back with this transaction.
+    this.consultantPreDeletionService.activateIdentity(consultant);
+
+    // Written after this transaction commits, like the SCHEDULED row; ids only.
+    deletionAuditService.recordAsCurrentActor(
+        DeletionAuditTargetType.CONSULTANT,
+        consultantId,
+        consultant.getTenantId(),
+        DeletionAuditOutcome.CANCELLED);
+  }
+
   private void deleteAndUnassignSessions(Consultant consultant) {
     deleteSessionsInProgressOrArchived(consultant);
     unassignNewOrInitialSessions(consultant);
