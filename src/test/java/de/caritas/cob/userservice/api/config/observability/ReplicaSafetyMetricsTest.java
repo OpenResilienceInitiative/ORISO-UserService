@@ -59,7 +59,7 @@ class ReplicaSafetyMetricsTest {
                     "risk",
                     "duplicate-side-effect",
                     "status",
-                    "blocker")
+                    "bounded")
                 .gauge()
                 .value())
         .isEqualTo(1);
