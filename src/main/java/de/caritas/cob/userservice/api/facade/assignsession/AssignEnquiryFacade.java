@@ -6,6 +6,7 @@ import static de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW;
 import static java.util.Objects.nonNull;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
 import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
@@ -222,13 +223,24 @@ public class AssignEnquiryFacade {
           anonymousEnquiryDepartmentResolver.resolveAgencyId(session, consultant).orElse(null);
     }
     if (session.getStatus() == INITIAL || session.getStatus() == NEW) {
-      if (servingAgencyId != null) {
-        dpaPolicy.requireForAgency(servingAgencyId);
-      } else if (bindDepartment) {
-        // A topic queue may have no matching department. The accepting organisation serves it.
-        dpaPolicy.requireForConcreteTenant(consultant.getTenantId());
-      } else {
-        dpaPolicy.requireForAgency((Long) null);
+      try {
+        if (servingAgencyId != null) {
+          dpaPolicy.requireForAgency(servingAgencyId);
+        } else if (bindDepartment) {
+          // A topic queue may have no matching department. The accepting organisation serves it.
+          dpaPolicy.requireForConcreteTenant(consultant.getTenantId());
+        } else {
+          dpaPolicy.requireForAgency((Long) null);
+        }
+      } catch (CustomValidationHttpStatusException refusal) {
+        // #1799: an AVV refusal of the first acceptance was otherwise invisible in the log.
+        log.warn(
+            "AVV refused accepting session {} (agency {}): status={}, reason={}",
+            session.getId(),
+            servingAgencyId,
+            refusal.getHttpStatus(),
+            refusal.getCustomHttpHeaders().getFirst("X-Reason"));
+        throw refusal;
       }
     }
     var departmentBound =
