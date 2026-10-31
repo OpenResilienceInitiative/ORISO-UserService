@@ -396,7 +396,7 @@ class AgencyPreAssignmentRoomServiceTest {
     inOrder.verify(sessionService).saveSession(session);
     inOrder
         .verify(departmentMembershipBackfill)
-        .schedule(AGENCY_ID, NEW_ROOM_ID, AGENCY_MATRIX_ID, deferred);
+        .schedule(AGENCY_ID, SESSION_ID, NEW_ROOM_ID, AGENCY_MATRIX_ID, deferred);
     assertEquals(NEW_ROOM_ID, session.getMatrixRoomId());
   }
 

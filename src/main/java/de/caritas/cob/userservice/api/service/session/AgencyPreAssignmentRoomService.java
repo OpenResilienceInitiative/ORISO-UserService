@@ -148,6 +148,7 @@ public class AgencyPreAssignmentRoomService {
       // invite budget, and a room that was never persisted needs no department.
       departmentMembershipBackfill.schedule(
           session.getAgencyId(),
+          session.getId(),
           roomId,
           credentials.getMatrixUserId(),
           departmentFanOut.deferred());

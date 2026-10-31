@@ -440,7 +440,14 @@ class AgencyPasswordFreeSynapseIT {
             gateway,
             sessions,
             silentMembership,
-            new AgencyDepartmentMembershipBackfill(silentMembership, gateway, pause, Runnable::run),
+            new AgencyDepartmentMembershipBackfill(
+                silentMembership,
+                gateway,
+                pause,
+                Runnable::run,
+                consultants,
+                mock(ConsultantAgencyRepository.class),
+                sessionRepository),
             pause)
         .ensureHoldingRoom(session, session.getUser());
     assertThat(session.getMatrixRoomId()).isNotBlank();

@@ -4,6 +4,11 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.config.AgencyMembershipBackfillExecutorConfig;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService.JoinAttempt;
 import java.util.ArrayList;
@@ -13,6 +18,8 @@ import java.util.concurrent.RejectedExecutionException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * Joins the counsellors that the registration request could not join without waiting (see {@link
@@ -23,6 +30,13 @@ import org.springframework.stereotype.Service;
  * says: a {@code 429} is retried after the server's own {@code retry_after_ms} (capped at {@link
  * #MAX_RATE_LIMIT_WAIT_MS}), any other failure after a doubling backoff. Counsellors are joined one
  * at a time, because the limit that throttles them is per room.
+ *
+ * <p>Entitlement is re-checked from the database before every attempt, because minutes can pass
+ * between queueing and joining: a counsellor detached from the agency, or an enquiry accepted
+ * meanwhile, must not gain membership the at-creation fan-out would no longer grant (ADR-002). The
+ * check is repeated after a successful join and the counsellor removed again if it no longer holds,
+ * which closes the window against a concurrent revocation in {@link
+ * AgencyLateJoinerMembershipService#removeConsultantFromAgencyRooms} without sharing its lease.
  *
  * <p>Observability: every retry is a WARN, the end of each room's backfill is one INFO line, and a
  * counsellor given up on after {@link #MAX_ATTEMPTS} is an ERROR naming them. Pending work lives
@@ -37,20 +51,33 @@ public class AgencyDepartmentMembershipBackfill {
   static final long MAX_RATE_LIMIT_WAIT_MS = 60_000L;
   static final long INITIAL_FAILURE_BACKOFF_MS = 2_000L;
 
+  /** Same scope as the late-joiner backfill: only enquiries the whole department may pick up. */
+  private static final List<SessionStatus> OPEN_ENQUIRY_STATES =
+      List.of(SessionStatus.NEW, SessionStatus.INITIAL);
+
   private final AgencySilentMembershipService agencySilentMembershipService;
   private final SessionRoomGateway sessionRoomGateway;
   private final MatrixRateLimitPause rateLimitPause;
   private final Executor executor;
+  private final ConsultantRepository consultantRepository;
+  private final ConsultantAgencyRepository consultantAgencyRepository;
+  private final SessionRepository sessionRepository;
 
   public AgencyDepartmentMembershipBackfill(
       AgencySilentMembershipService agencySilentMembershipService,
       SessionRoomGateway sessionRoomGateway,
       MatrixRateLimitPause rateLimitPause,
-      @Qualifier(AgencyMembershipBackfillExecutorConfig.EXECUTOR_BEAN) Executor executor) {
+      @Qualifier(AgencyMembershipBackfillExecutorConfig.EXECUTOR_BEAN) Executor executor,
+      ConsultantRepository consultantRepository,
+      ConsultantAgencyRepository consultantAgencyRepository,
+      SessionRepository sessionRepository) {
     this.agencySilentMembershipService = agencySilentMembershipService;
     this.sessionRoomGateway = sessionRoomGateway;
     this.rateLimitPause = rateLimitPause;
     this.executor = executor;
+    this.consultantRepository = consultantRepository;
+    this.consultantAgencyRepository = consultantAgencyRepository;
+    this.sessionRepository = sessionRepository;
   }
 
   /**
@@ -60,13 +87,38 @@ public class AgencyDepartmentMembershipBackfill {
    *     because a large department can outlive a single server-operation token
    */
   public void schedule(
-      Long agencyId, String roomId, String agencyMatrixUserId, List<Consultant> consultants) {
-    if (consultants == null || consultants.isEmpty() || isBlank(roomId)) {
+      Long agencyId,
+      Long sessionId,
+      String roomId,
+      String agencyMatrixUserId,
+      List<Consultant> consultants) {
+    if (consultants == null || consultants.isEmpty() || isBlank(roomId) || sessionId == null) {
       return;
     }
     var pending = List.copyOf(consultants);
+    // The worker re-reads the session to check entitlement, so it must not start before the
+    // registration transaction that saved the room id has committed.
+    if (TransactionSynchronizationManager.isSynchronizationActive()) {
+      TransactionSynchronizationManager.registerSynchronization(
+          new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+              submit(agencyId, sessionId, roomId, agencyMatrixUserId, pending);
+            }
+          });
+      return;
+    }
+    submit(agencyId, sessionId, roomId, agencyMatrixUserId, pending);
+  }
+
+  private void submit(
+      Long agencyId,
+      Long sessionId,
+      String roomId,
+      String agencyMatrixUserId,
+      List<Consultant> pending) {
     try {
-      executor.execute(() -> backfill(agencyId, roomId, agencyMatrixUserId, pending));
+      executor.execute(() -> backfill(agencyId, sessionId, roomId, agencyMatrixUserId, pending));
       log.info(
           "Queued {} consultants of agency {} for background membership of room {}",
           pending.size(),
@@ -83,15 +135,28 @@ public class AgencyDepartmentMembershipBackfill {
   }
 
   int backfill(
-      Long agencyId, String roomId, String agencyMatrixUserId, List<Consultant> consultants) {
+      Long agencyId,
+      Long sessionId,
+      String roomId,
+      String agencyMatrixUserId,
+      List<Consultant> consultants) {
     int joined = 0;
+    int skipped = 0;
     List<Consultant> givenUp = new ArrayList<>();
-    for (Consultant consultant : consultants) {
-      if (joinWithRetry(consultant, roomId, agencyMatrixUserId)) {
-        joined++;
-      } else {
-        givenUp.add(consultant);
+    for (Consultant queued : consultants) {
+      var outcome = joinWithRetry(queued, agencyId, sessionId, roomId, agencyMatrixUserId);
+      switch (outcome) {
+        case JOINED -> joined++;
+        case NOT_ENTITLED -> skipped++;
+        case GAVE_UP -> givenUp.add(queued);
       }
+    }
+    if (skipped > 0) {
+      log.info(
+          "Background membership skipped {} consultants of agency {} for room {}: no longer entitled",
+          skipped,
+          agencyId,
+          roomId);
     }
 
     if (givenUp.isEmpty()) {
@@ -112,12 +177,27 @@ public class AgencyDepartmentMembershipBackfill {
     return joined;
   }
 
-  private boolean joinWithRetry(Consultant consultant, String roomId, String agencyMatrixUserId) {
+  enum Outcome {
+    JOINED,
+    NOT_ENTITLED,
+    GAVE_UP
+  }
+
+  private Outcome joinWithRetry(
+      Consultant queued, Long agencyId, Long sessionId, String roomId, String agencyMatrixUserId) {
     long failureBackoffMs = INITIAL_FAILURE_BACKOFF_MS;
     for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      var consultant = entitledConsultant(queued.getId(), agencyId, sessionId, roomId);
+      if (consultant == null) {
+        return Outcome.NOT_ENTITLED;
+      }
       var result = tryJoin(consultant, roomId, agencyMatrixUserId);
       if (result.joined()) {
-        return true;
+        if (entitledConsultant(consultant.getId(), agencyId, sessionId, roomId) == null) {
+          revoke(consultant, roomId, agencyMatrixUserId);
+          return Outcome.NOT_ENTITLED;
+        }
+        return Outcome.JOINED;
       }
       if (attempt == MAX_ATTEMPTS) {
         break;
@@ -139,10 +219,63 @@ public class AgencyDepartmentMembershipBackfill {
           MAX_ATTEMPTS,
           waitMs);
       if (!rateLimitPause.pause(waitMs)) {
-        return false;
+        return Outcome.GAVE_UP;
       }
     }
-    return false;
+    return Outcome.GAVE_UP;
+  }
+
+  /**
+   * The counsellor reloaded from the database, or {@code null} once they may no longer be a member:
+   * deleted, detached from the agency, or the enquiry is no longer open to the whole department.
+   */
+  private Consultant entitledConsultant(
+      String consultantId, Long agencyId, Long sessionId, String roomId) {
+    try {
+      var consultant = consultantRepository.findByIdAndDeleteDateIsNull(consultantId);
+      if (consultant.isEmpty()
+          || !consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
+              consultantId, agencyId)) {
+        return null;
+      }
+      var session = sessionRepository.findById(sessionId);
+      return session.isPresent() && isOpenToDepartment(session.get(), roomId)
+          ? consultant.get()
+          : null;
+    } catch (RuntimeException ex) {
+      log.warn(
+          "Could not verify entitlement of consultant {} for room {}; not joining: {}",
+          consultantId,
+          roomId,
+          ex.getMessage());
+      return null;
+    }
+  }
+
+  private static boolean isOpenToDepartment(Session session, String roomId) {
+    return OPEN_ENQUIRY_STATES.contains(session.getStatus())
+        && session.getConsultant() == null
+        && !Boolean.TRUE.equals(session.getIsConsultantDirectlySet())
+        && roomId.equals(session.getMatrixRoomId());
+  }
+
+  private void revoke(Consultant consultant, String roomId, String agencyMatrixUserId) {
+    var agencyToken = sessionRoomGateway.loginAsUser(agencyMatrixUserId);
+    var removed =
+        !isBlank(agencyToken)
+            && sessionRoomGateway.removeUserFromRoom(
+                roomId, consultant.getMatrixUserId(), agencyToken);
+    if (removed) {
+      log.info(
+          "Removed consultant {} from room {} again: entitlement ended during background join",
+          consultant.getId(),
+          roomId);
+    } else {
+      log.error(
+          "Consultant {} joined room {} after their entitlement ended and could not be removed",
+          consultant.getId(),
+          roomId);
+    }
   }
 
   private JoinAttempt tryJoin(Consultant consultant, String roomId, String agencyMatrixUserId) {
