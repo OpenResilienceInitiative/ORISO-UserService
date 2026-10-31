@@ -521,6 +521,8 @@ public class SecurityConfig {
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover/recipients",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/recipient-decision",
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/recipient-decision",
+                    "/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/withdraw",
+                    "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/withdraw",
                     "/users/chat-series/**",
                     "/service/users/chat-series/**",
                     "/users/agencies/{agencyId:[0-9]+}/admin-contacts",
@@ -628,6 +630,16 @@ public class SecurityConfig {
                         + "}/deletion/pause")
                 .hasAnyAuthority(
                     USER_ADMIN, RESTRICTED_AGENCY_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+                // Cancelling a consultant deletion: the same callers who may delete or pause it,
+                // scoped to their own agencies/tenant in ConsultantAdminFacade (AdminScope).
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/deletion/cancel",
+                    "/service/useradmin/consultants/{consultantId:"
+                        + UUID_PATTERN
+                        + "}/deletion/cancel")
+                .hasAnyAuthority(
+                    USER_ADMIN, RESTRICTED_AGENCY_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
                 .requestMatchers(
                     HttpMethod.POST,
                     "/useradmin/askers/deletion/reactivate",
@@ -682,8 +694,7 @@ public class SecurityConfig {
                     HttpMethod.POST,
                     "/users/deletion-audit-logs",
                     "/service/users/deletion-audit-logs")
-                .hasAnyAuthority(
-                    TECHNICAL_DEFAULT, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
+                .access(this::canReportDeletion)
                 .requestMatchers("/users/deletion-audit-logs", "/service/users/deletion-audit-logs")
                 .access(this::canAccessPlatformAuditLogs)
                 .requestMatchers(
@@ -813,6 +824,29 @@ public class SecurityConfig {
     }
 
     return isPlatformAdmin(authenticationSupplier, requestContext);
+  }
+
+  /**
+   * Who may report an agency or tenant deletion: everyone AgencyService and TenantService let
+   * delete one. The plain agency-admin role maps to no authority here but may delete a
+   * Beratungsstelle in AgencyService, so it is checked as a realm role.
+   */
+  private AuthorizationDecision canReportDeletion(
+      Supplier<? extends Authentication> authenticationSupplier,
+      RequestAuthorizationContext requestContext) {
+    Authentication authentication = authenticationSupplier.get();
+    Set<String> allowed =
+        Set.of(TECHNICAL_DEFAULT, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN);
+    if (authentication.getAuthorities().stream()
+        .anyMatch(authority -> allowed.contains(authority.getAuthority()))) {
+      return new AuthorizationDecision(true);
+    }
+    if (!(authentication instanceof JwtAuthenticationToken jwtAuthentication)) {
+      return new AuthorizationDecision(false);
+    }
+    return new AuthorizationDecision(
+        KeycloakRoles.of(jwtAuthentication.getToken().getClaims())
+            .contains(UserRole.AGENCY_ADMIN.getValue()));
   }
 
   private AuthorizationDecision isPlatformAdmin(

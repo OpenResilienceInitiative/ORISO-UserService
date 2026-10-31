@@ -78,6 +78,9 @@ public class DeleteDatabaseConsultantActionTest {
     var consultant = new Consultant();
     consultant.setId("c-1");
     consultant.setTenantId(5L);
+    consultant.setDeletionLifecycleState(
+        de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState
+            .HARD_DELETE_IN_PROGRESS);
 
     this.deleteDatabaseConsultantAction.execute(
         new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>()));
@@ -91,6 +94,20 @@ public class DeleteDatabaseConsultantActionTest {
             "c-1",
             5L,
             de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditOutcome.EXECUTED);
+  }
+
+  @Test
+  public void execute_Should_NotLogADeletion_When_aHalfCreatedAccountIsRolledBack() {
+    // RollbackFacade removes a consultant whose creation failed; it never entered the deletion
+    // lifecycle, so nobody deleted it and the log must not say SYSTEM did.
+    var consultant = new Consultant();
+    consultant.setId("c-rollback");
+
+    this.deleteDatabaseConsultantAction.execute(
+        new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>()));
+
+    verify(consultantRepository).delete(consultant);
+    verify(this.deletionAuditService, never()).recordAsSystem(any(), any(), any(), any());
   }
 
   @Test

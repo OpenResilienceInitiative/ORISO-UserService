@@ -33,14 +33,14 @@ public class DeletionAuditLogsService {
         new MapSqlParameterSource()
             .addValue("targetType", normalize(targetType))
             .addValue("outcome", normalize(outcome))
-            .addValue("targetId", normalize(targetId))
+            .addValue("targetId", likeLiteral(normalize(targetId)))
             .addValue("limit", safePerPage)
             .addValue("offset", (long) (safePage - 1) * safePerPage);
 
     final String filtersSql =
         " WHERE (:targetType IS NULL OR UPPER(l.target_type) = :targetType)"
             + " AND (:outcome IS NULL OR UPPER(l.outcome) = :outcome)"
-            + " AND (:targetId IS NULL OR UPPER(l.target_id) LIKE CONCAT('%', :targetId, '%'))";
+            + " AND (:targetId IS NULL OR UPPER(l.target_id) LIKE CONCAT('%', :targetId, '%') ESCAPE '!')";
 
     Long total =
         namedParameterJdbcTemplate.queryForObject(
@@ -64,6 +64,14 @@ public class DeletionAuditLogsService {
         .page(safePage)
         .perPage(safePerPage)
         .build();
+  }
+
+  /** A typed % or _ is part of the id searched for, not a wildcard. */
+  private static String likeLiteral(String value) {
+    if (value == null) {
+      return null;
+    }
+    return value.replace("!", "!!").replace("%", "!%").replace("_", "!_");
   }
 
   private String normalize(String value) {

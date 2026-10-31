@@ -2505,7 +2505,7 @@ paths:
         including a final one (GRANTED, CLIENT_CONSENT_DECLINED, EXPIRED), so a consent prompt that
         is no longer open can be settled instead of showing an error. Everything else answers 404:
         a request of another session or advice seeker or tenant, a colleague-to-colleague offer
-        (PENDING_RECIPIENT_ACCEPTANCE, RECIPIENT_DECLINED), a DENIED request (denied before the
+        (PENDING_RECIPIENT_ACCEPTANCE, RECIPIENT_DECLINED, and WITHDRAWN before the colleague accepted), a DENIED request (denied before the
         advice seeker was asked, or their own decision, which the decision response carries) and a
         request without consent involvement. A request whose case owner changed after it was
         created keeps its stored status here; deciding it answers 409 with X-Reason
@@ -2537,8 +2537,8 @@ paths:
                     description: >-
                       Existing CaseHandoverRequest status, or EXPIRED once the access window has
                       passed. An advice seeker never receives PENDING_RECIPIENT_ACCEPTANCE,
-                      RECIPIENT_DECLINED or DENIED.
-                    enum:
+                      RECIPIENT_DECLINED or DENIED, and WITHDRAWN only once it had been asked for consent.
+                    x-extensible-enum:
                       - PENDING
                       - PENDING_RECIPIENT_ACCEPTANCE
                       - RECIPIENT_DECLINED
@@ -2548,6 +2548,8 @@ paths:
                       - DENIED
                       - CLIENT_CONSENT_DECLINED
                       - EXPIRED
+                      - RECLAIMED
+                      - WITHDRAWN
                   canViewContent: {type: boolean}
                   clientConsent: {type: string, enum: [NONE, OPT_IN, OPT_OUT]}
                   clientConsentRequired: {type: boolean}
@@ -2572,6 +2574,47 @@ paths:
           description: Role is neither consultant nor registered advice seeker
         '404':
           description: Request or session does not exist, or the caller may not read it (see description)
+      security:
+        - Bearer: []
+  /users/sessions/{sessionId}/case-handover/{requestId}/withdraw:
+    post:
+      tags: [case-handover-controller]
+      summary: The offering counsellor withdraws a colleague handover offer that is still open
+      description: >-
+        Also available with /service prefix. Only the counsellor who made the offer
+        (initiator of a PUSH request) may withdraw it, and only while it is
+        PENDING_RECIPIENT_ACCEPTANCE or PENDING_CLIENT_CONSENT. The request ends as WITHDRAWN
+        (audit outcome OFFER_WITHDRAWN); ownership does not change. Idempotent: withdrawing a
+        withdrawn offer answers 200 with the same status and notifies nobody again. Both
+        counsellors get a case.handover.offer.withdrawn activity-timeline entry. Nothing is posted
+        into the chat room, because a colleague offer is never shown to the advice seeker.
+      operationId: withdrawCaseHandoverOffer
+      # Dedicated handwritten controller owns both prefixes; prevent a duplicate UsersApi mapping.
+      x-internal: true
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+        - name: requestId
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        '200':
+          description: The offer is withdrawn; body is the case-handover status of the request
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          description: Authentication required
+        '403':
+          description: The caller is not the counsellor who made this offer, or the request is not an offer
+        '404':
+          description: Session or request does not exist
+        '409':
+          description: The offer was already settled (accepted, declined, granted), so it cannot be withdrawn
       security:
         - Bearer: []
   /users/sessions/{sessionId}/case-handover/{requestId}/client-consent:

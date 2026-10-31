@@ -64,6 +64,17 @@ class DeletionAuditLogsServiceTest {
   }
 
   @Test
+  void listAuditLogs_Should_TreatPercentAndUnderscoreInTheTargetIdAsText() {
+    insert("admin-3", "TENANT_ADMIN", "AGENCY", "a_9", "SCHEDULED", "2026-10-04 10:00:00");
+
+    assertThat(service.listAuditLogs(1, 20, null, null, "%").getTotal()).isZero();
+    assertThat(service.listAuditLogs(1, 20, null, null, "_").getData())
+        .extracting(e -> e.getTargetId())
+        .containsExactly("a_9");
+    assertThat(service.listAuditLogs(1, 20, null, null, "c_1").getTotal()).isZero();
+  }
+
+  @Test
   void listAuditLogs_Should_PageAndClamp() {
     var page = service.listAuditLogs(2, 2, null, null, null);
     assertThat(page.getData()).hasSize(1);

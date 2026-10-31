@@ -1,10 +1,13 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.service.DeletionAuditLogsService;
 import de.caritas.cob.userservice.api.service.DeletionAuditLogsService.DeletionAuditLogEntry;
 import de.caritas.cob.userservice.api.service.DeletionAuditLogsService.DeletionAuditLogsResult;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditOutcome;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditTargetType;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionAuditService;
 import io.swagger.annotations.Api;
@@ -16,6 +19,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -28,6 +32,7 @@ import org.springframework.web.bind.annotation.RestController;
  * side, and the write side AgencyService and TenantService report their deletions to.
  */
 @RestController
+@Validated
 @RequiredArgsConstructor
 @Api(tags = "deletion-audit-logs-controller")
 @RequestMapping({"/users/deletion-audit-logs", "/service/users/deletion-audit-logs"})
@@ -36,6 +41,7 @@ public class DeletionAuditLogsController {
   private final @NonNull DeletionAuditLogsService deletionAuditLogsService;
   private final @NonNull DeletionAuditService deletionAuditService;
   private final @NonNull AuthenticatedUser authenticatedUser;
+  private final @NonNull AdminScope adminScope;
 
   /**
    * Records an agency or tenant deletion. Best effort: the write never reports a failure back, so
@@ -52,6 +58,11 @@ public class DeletionAuditLogsController {
     }
     var authorities = authenticatedUser.getGrantedAuthorities();
     if (authorities != null && authorities.contains(AuthorityValue.TECHNICAL_DEFAULT)) {
+      // Actor and role come as a pair: a role without a person would read as a person's action
+      // that names nobody, and a person without a role would be recorded as SYSTEM.
+      if ((request.getActorRole() == null) != (request.getActorId() == null)) {
+        return ResponseEntity.badRequest().build();
+      }
       if (request.getActorRole() == null) {
         deletionAuditService.recordAsSystem(
             request.getTargetType(),
@@ -68,11 +79,24 @@ public class DeletionAuditLogsController {
             request.getActorRole());
       }
     } else {
+      // A Beratungsstelle is purged by the nightly job, which reports EXECUTED through the
+      // AgencyService outbox. A person's EXECUTED row would make that pull skip the real one.
+      if (request.getTargetType() == DeletionAuditTargetType.AGENCY
+          && request.getOutcome() == DeletionAuditOutcome.EXECUTED) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+      }
       if (!authenticatedUser.isPlatformAdmin()
           && (request.getTenantId() == null
               || !request.getTenantId().equals(authenticatedUser.getTenantId()))) {
         return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
       }
+      // The target itself must be within the caller's reach too, not only the tenant: a Träger
+      // admin reports only its own Träger, an agency admin only an agency it administers.
+      Long targetId = Long.valueOf(request.getTargetId());
+      adminScope.assertMay(
+          request.getTargetType() == DeletionAuditTargetType.TENANT
+              ? Target.tenant(targetId)
+              : Target.agencies(List.of(targetId)));
       deletionAuditService.recordAsCurrentActor(
           request.getTargetType(),
           request.getTargetId(),
