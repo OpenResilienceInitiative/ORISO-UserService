@@ -689,7 +689,9 @@ public class SecurityConfig {
                 .requestMatchers(
                     "/users/inactive-accounts/audit-logs",
                     "/service/users/inactive-accounts/audit-logs")
-                .access(this::canAccessInactiveAccountAuditLogs)
+                .access(this::canAccessPlatformAuditLogs)
+                .requestMatchers("/users/deletion-audit-logs", "/service/users/deletion-audit-logs")
+                .access(this::canAccessPlatformAuditLogs)
                 .requestMatchers(
                     "/users/consultants/sessions/{sessionId:[0-9]+}",
                     "/users/sessions/{sessionId:[0-9]+}/archive",
@@ -804,7 +806,7 @@ public class SecurityConfig {
             && isPlatformAdmin(authenticationSupplier, requestContext).isGranted());
   }
 
-  private AuthorizationDecision canAccessInactiveAccountAuditLogs(
+  private AuthorizationDecision canAccessPlatformAuditLogs(
       Supplier<? extends Authentication> authenticationSupplier,
       RequestAuthorizationContext requestContext) {
     Authentication authentication = authenticationSupplier.get();

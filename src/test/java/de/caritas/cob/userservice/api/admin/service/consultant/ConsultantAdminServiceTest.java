@@ -85,6 +85,10 @@ public class ConsultantAdminServiceTest {
 
   @Mock private TopicService topicService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.workflow.delete.service.DeletionAuditService
+      deletionAuditService;
+
   @Test
   public void createNewConsultant_Should_enrichResponseWithTopicNames() {
     var embedded = new ConsultantDTO().id("c1");
@@ -392,6 +396,26 @@ public class ConsultantAdminServiceTest {
   }
 
   @Test
+  void markConsultantForDeletion_Should_LeaveAScheduledDeletionLogEntry() {
+    var consultant = new Consultant();
+    consultant.setId("c-1");
+    consultant.setTenantId(5L);
+    when(pictureStore.lockActiveConsultant("c-1")).thenReturn(consultant);
+
+    consultantAdminService.markConsultantForDeletion("c-1", false);
+
+    var order = inOrder(consultantRepository, deletionAuditService);
+    order.verify(consultantRepository).save(consultant);
+    order
+        .verify(deletionAuditService)
+        .recordAsCurrentActor(
+            de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditTargetType.CONSULTANT,
+            "c-1",
+            5L,
+            de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditOutcome.SCHEDULED);
+  }
+
+  @Test
   void pauseConsultantDeletion_Should_ThrowNotFound_When_ConsultantNotFound() {
     when(consultantRepository.findById("c-1")).thenReturn(Optional.empty());
     assertThrows(
@@ -516,6 +540,22 @@ public class ConsultantAdminServiceTest {
   }
 
   @Test
+  void cancelConsultantDeletion_Should_LeaveACancelledDeletionLogEntry() {
+    var consultant = consultantInDeletion();
+    consultant.setTenantId(5L);
+    when(consultantRepository.findPictureOwnerForUpdate("c-1")).thenReturn(Optional.of(consultant));
+
+    consultantAdminService.cancelConsultantDeletion("c-1");
+
+    verify(deletionAuditService)
+        .recordAsCurrentActor(
+            de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditTargetType.CONSULTANT,
+            "c-1",
+            5L,
+            de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditOutcome.CANCELLED);
+  }
+
+  @Test
   void cancelConsultantDeletion_Should_NotEnableTheLogin_When_DeletionCannotBeCancelled() {
     var consultant = consultantInDeletion();
     when(consultantRepository.findPictureOwnerForUpdate("c-1")).thenReturn(Optional.of(consultant));
@@ -530,5 +570,6 @@ public class ConsultantAdminServiceTest {
 
     verify(consultantPreDeletionService, never()).activateIdentity(any());
     verify(consultantRepository, never()).save(any());
+    verify(deletionAuditService, never()).recordAsCurrentActor(any(), any(), any(), any());
   }
 }

@@ -13,8 +13,12 @@ import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.service.session.SessionOwnershipService;
 import de.caritas.cob.userservice.api.workflow.delete.action.UserContentCleanup;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditOutcome;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditTargetType;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
+import de.caritas.cob.userservice.api.workflow.delete.service.DeletionAuditService;
 import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -33,6 +37,7 @@ public class DeleteDatabaseConsultantAction
   private final @NonNull SessionSupervisorRepository sessionSupervisorRepository;
   private final @NonNull ConsultantMobileTokenRepository consultantMobileTokenRepository;
   private final @NonNull IdentityTombstoneService identityTombstoneService;
+  private final @NonNull DeletionAuditService deletionAuditService;
 
   /**
    * Deletes the given {@link Consultant} in database, together with the dependencies that hold a
@@ -94,7 +99,25 @@ public class DeleteDatabaseConsultantAction
       this.consultantRepository.delete(actionTarget.getConsultant());
     } catch (Exception e) {
       handleExceptionWithMessage(actionTarget, e, "Unable to delete consultant in database");
+      return;
     }
+
+    // A rollback of a half-created account (RollbackFacade) runs this action too, but nobody
+    // deleted that account: only a deletion that went through the lifecycle is logged.
+    if (!wentThroughDeletionLifecycle(actionTarget.getConsultant())) {
+      return;
+    }
+    // The scheduler is the actor of the hard delete; the scheduling admin is on the SCHEDULED row.
+    deletionAuditService.recordAsSystem(
+        DeletionAuditTargetType.CONSULTANT,
+        actionTarget.getConsultant().getId(),
+        actionTarget.getConsultant().getTenantId(),
+        DeletionAuditOutcome.EXECUTED);
+  }
+
+  private static boolean wentThroughDeletionLifecycle(Consultant consultant) {
+    var state = consultant.getDeletionLifecycleState();
+    return state != null && state != DeletionLifecycleState.ACTIVE;
   }
 
   private static void handleExceptionWithMessage(
