@@ -56,6 +56,12 @@ public class MatrixSessionRoomGateway implements SessionRoomGateway {
   }
 
   @Override
+  public void inviteUserOnce(String roomId, String userId, String accessToken)
+      throws MatrixInviteUserException {
+    matrixSynapseService.inviteUserToRoomOnce(roomId, userId, accessToken);
+  }
+
+  @Override
   public boolean isJoinedMember(String roomId, String userId) {
     return matrixSynapseService
         .getRoomMembers(roomId)

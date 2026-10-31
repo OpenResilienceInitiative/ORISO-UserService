@@ -2,12 +2,16 @@ package de.caritas.cob.userservice.api.service.session;
 
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
+import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteRateLimitedException;
 import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -85,6 +89,76 @@ public class AgencySilentMembershipService {
   }
 
   /**
+   * The registration-time variant of {@link #joinAgencyConsultants}: joins counsellors only while
+   * Synapse lets it happen without waiting, and hands everyone else back as {@code deferred}.
+   *
+   * <p>Why: Synapse paces invites per room ({@code rc_invites.per_room}, by default a burst of 10,
+   * then one every ~3 s). A department of 32 counsellors therefore needs well over a minute of
+   * invites, and doing that inside {@code POST /users/askers/new} ran past the 60 s ingress timeout
+   * on Dev while still losing counsellors whose three short retries ran out. The pass stops at the
+   * first rate-limited invite, since that limit is room-wide and every later invite would hit it
+   * too, or when {@code budget} is spent. Counsellors joined here still precede the asker, as
+   * ADR-002 §1 wants; the rest are joined in the background by {@link
+   * AgencyDepartmentMembershipBackfill}.
+   *
+   * @param agencyId the enquiry's agency
+   * @param roomId the Matrix room to join them into
+   * @param agencyToken access token of the agency service account that created the room
+   * @param budget how long the caller's request may spend on this pass
+   * @return who joined, who still has to, and the server's retry delay if it throttled the pass
+   */
+  public DepartmentFanOut joinAgencyConsultantsWithoutWaiting(
+      Long agencyId, String roomId, String agencyToken, Duration budget) {
+    if (agencyId == null || isBlank(roomId) || isBlank(agencyToken)) {
+      return DepartmentFanOut.NONE;
+    }
+
+    var consultants =
+        consultantRepository.findByConsultantAgenciesAgencyIdAndDeleteDateIsNull(agencyId);
+    if (consultants.isEmpty()) {
+      log.warn("Agency {} has no consultants to join into room {}", agencyId, roomId);
+      return DepartmentFanOut.NONE;
+    }
+
+    long deadline = System.nanoTime() + budget.toNanos();
+    int joined = 0;
+    long retryAfterMs = 0;
+    List<Consultant> deferred = new ArrayList<>();
+    for (Consultant consultant : consultants) {
+      if (retryAfterMs > 0 || System.nanoTime() - deadline >= 0) {
+        deferred.add(consultant);
+        continue;
+      }
+      var attempt = joinIntoRoom(consultant, roomId, agencyToken, false);
+      if (attempt.joined()) {
+        joined++;
+      } else {
+        retryAfterMs = attempt.retryAfterMs();
+        deferred.add(consultant);
+      }
+    }
+
+    log.info(
+        "Joined {} of {} consultants of agency {} as silent members of room {} in-request; {} deferred to background",
+        joined,
+        consultants.size(),
+        agencyId,
+        roomId,
+        deferred.size());
+    return new DepartmentFanOut(joined, List.copyOf(deferred), retryAfterMs);
+  }
+
+  /**
+   * One counsellor's join without waiting on Synapse's rate limiter. A throttled invite comes back
+   * as {@link JoinAttempt#rateLimited()} with the server's delay, so the caller decides whether to
+   * wait.
+   */
+  public JoinAttempt tryJoinConsultantIntoRoom(
+      Consultant consultant, String roomId, String agencyToken) {
+    return joinIntoRoom(consultant, roomId, agencyToken, false);
+  }
+
+  /**
    * Invites and joins a single counsellor into an already existing room, provisioning their Matrix
    * account if they never had one.
    *
@@ -99,16 +173,28 @@ public class AgencySilentMembershipService {
    * @return whether the counsellor ended up joined
    */
   public boolean joinConsultantIntoRoom(Consultant consultant, String roomId, String agencyToken) {
+    return joinIntoRoom(consultant, roomId, agencyToken, true).joined();
+  }
+
+  private JoinAttempt joinIntoRoom(
+      Consultant consultant, String roomId, String agencyToken, boolean waitOnRateLimit) {
     try {
       var matrixUserId = ensureMatrixAccount(consultant);
       if (isBlank(matrixUserId)) {
         log.warn(
             "Consultant {} has no Matrix account, cannot join room {}", consultant.getId(), roomId);
-        return false;
+        return JoinAttempt.FAILED;
       }
 
       try {
-        sessionRoomGateway.inviteUser(roomId, matrixUserId, agencyToken);
+        if (waitOnRateLimit) {
+          sessionRoomGateway.inviteUser(roomId, matrixUserId, agencyToken);
+        } else {
+          sessionRoomGateway.inviteUserOnce(roomId, matrixUserId, agencyToken);
+        }
+      } catch (MatrixInviteRateLimitedException rateLimited) {
+        // Not invited, so the join below would only answer 403. Report the delay instead.
+        return JoinAttempt.rateLimited(rateLimited.getRetryAfterMs());
       } catch (Exception inviteError) {
         // An already-invited or already-joined member answers with an error here. The join below
         // is the actual assertion, so let it decide rather than bailing out on a benign 403.
@@ -122,17 +208,19 @@ public class AgencySilentMembershipService {
       var consultantToken = sessionRoomGateway.loginAsUser(matrixUserId);
       if (isBlank(consultantToken)) {
         log.warn("Could not mint Matrix token for consultant {}", matrixUserId);
-        return false;
+        return JoinAttempt.FAILED;
       }
 
-      return sessionRoomGateway.joinRoom(roomId, consultantToken);
+      return sessionRoomGateway.joinRoom(roomId, consultantToken)
+          ? JoinAttempt.JOINED
+          : JoinAttempt.FAILED;
     } catch (Exception ex) {
       log.warn(
           "Could not join consultant {} into room {}: {}",
           consultant.getId(),
           roomId,
           ex.getMessage());
-      return false;
+      return JoinAttempt.FAILED;
     }
   }
 
@@ -185,5 +273,27 @@ public class AgencySilentMembershipService {
     consultantRepository.save(consultant);
     log.info("Ensured Matrix account {} for consultant {}", matrixUserId, consultant.getId());
     return matrixUserId;
+  }
+
+  /** One counsellor's outcome; {@code retryAfterMs > 0} means Synapse throttled the invite. */
+  public record JoinAttempt(boolean joined, long retryAfterMs) {
+    static final JoinAttempt JOINED = new JoinAttempt(true, 0);
+    static final JoinAttempt FAILED = new JoinAttempt(false, 0);
+
+    static JoinAttempt rateLimited(long retryAfterMs) {
+      return new JoinAttempt(false, Math.max(1, retryAfterMs));
+    }
+
+    public boolean rateLimited() {
+      return retryAfterMs > 0;
+    }
+  }
+
+  /**
+   * Result of the in-request department pass: counsellors still to be joined, and the server's
+   * retry delay when a rate limit ended the pass ({@code 0} otherwise).
+   */
+  public record DepartmentFanOut(int joined, List<Consultant> deferred, long retryAfterMs) {
+    static final DepartmentFanOut NONE = new DepartmentFanOut(0, List.of(), 0);
   }
 }
