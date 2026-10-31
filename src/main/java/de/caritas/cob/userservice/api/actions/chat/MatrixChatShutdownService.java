@@ -69,6 +69,24 @@ public class MatrixChatShutdownService {
   }
 
   /**
+   * Shuts the room down or fails: a room that is still open answers 502, so the caller can stop
+   * before it changes anything in the database and the stop can simply be repeated. Used when a
+   * counsellor ends a group chat, because the DB would otherwise say "ended" while everyone is
+   * still in a working room. A room Synapse no longer knows counts as shut down, so a repeat after
+   * a half-finished stop succeeds. Chats without a Matrix room id are skipped.
+   *
+   * @param chat the group chat being ended
+   */
+  public void shutdownRoomStrictly(Chat chat) {
+    var matrixRoomId = chat.getMatrixRoomId();
+    if (isBlank(matrixRoomId)) {
+      log.debug("Chat {} has no Matrix room id; skipping Matrix room shutdown", chat.getId());
+      return;
+    }
+    purgeStrictly(chat, matrixRoomId);
+  }
+
+  /**
    * A members-only room is private and encrypted: a room that stays purge-less keeps everyone in it
    * while the chat, its participants and the way to try again are gone from the database. So a
    * failed purge answers 502 and the caller, which runs this in the transaction that deletes the

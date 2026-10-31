@@ -23,9 +23,11 @@ public class StopChatActionCommand implements ActionCommand<Chat> {
 
   /**
    * Deletes the given active chat and recreates it if repetitive. Repetitive chats get a fresh
-   * Matrix room for their next occurrence and the old room is shut down (via {@link
-   * ChatReCreator}); for non-repetitive chats the Matrix room is shut down directly. Either way the
-   * shutdown is best-effort and removes all members so their clients can show the chat as stopped.
+   * Matrix room for their next occurrence and the old room is shut down (via {@link ChatReCreator},
+   * best-effort); for non-repetitive chats and the last occurrence of a series the Matrix room is
+   * shut down first and strictly: if that fails, the exception propagates (502), the chat stays
+   * active and the stop can be repeated. A successful shutdown removes all members so their clients
+   * can show the chat as stopped.
    *
    * @param chat the {@link Chat} to be stopped
    */
@@ -48,17 +50,17 @@ public class StopChatActionCommand implements ActionCommand<Chat> {
         var matrixRoomId = chatReCreator.recreateMessengerChat(chat);
         chatReCreator.updateAsNextChat(chat, matrixRoomId);
       } else {
-        matrixChatShutdownService.shutdownRoom(chat);
+        matrixChatShutdownService.shutdownRoomStrictly(chat);
         chat.setActive(false);
         chatService.saveChat(chat);
       }
     } else {
-      chatService.deleteChat(chat);
       if (!chat.isMembersOnly()) {
-        // A members-only room was purged strictly by deleteChat, in its transaction. A second purge
-        // here could fail after everything is gone and report an error for a stop that worked.
-        matrixChatShutdownService.shutdownRoom(chat);
+        // Room first, strictly: a failed purge leaves the chat untouched and the stop repeatable.
+        // A members-only room is purged by deleteChat itself, last, in its transaction.
+        matrixChatShutdownService.shutdownRoomStrictly(chat);
       }
+      chatService.deleteChat(chat);
     }
   }
 
