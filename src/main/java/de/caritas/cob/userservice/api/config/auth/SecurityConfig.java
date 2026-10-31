@@ -442,6 +442,10 @@ public class SecurityConfig {
                     "/users/sessions/{sessionId:[0-9]+}/contact-sheet-email",
                     "/service/users/sessions/{sessionId:[0-9]+}/contact-sheet-email")
                 .hasAnyAuthority(USER_DEFAULT, ANONYMOUS_DEFAULT)
+                // Anonymous live-chat owners set the same session-scoped alias as registered
+                // askers. SessionDataService checks owner/session access before any mutation.
+                .requestMatchers(HttpMethod.PUT, "/users/sessions/{sessionId:[0-9]+}/data")
+                .hasAnyAuthority(USER_DEFAULT, ANONYMOUS_DEFAULT)
                 .requestMatchers(
                     HttpMethod.GET, "/users/sessions/{sessionId:[0-9]+}/enquiry/permission")
                 .hasAuthority(USER_DEFAULT)

@@ -31,6 +31,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
+import de.caritas.cob.userservice.api.service.AskerIdentityPolicy;
 import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService;
 import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService.RecoveryPolicySnapshot;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -115,6 +116,10 @@ public class CreateUserFacade {
 
     initializeTenantContextForRegistration(userDTO);
     tenantService.requireOperationalTenant(TenantContext.getCurrentTenant());
+    if (userDTO.getEmail() != null && !userDTO.getEmail().isBlank()) {
+      AskerIdentityPolicy.requireEmailCollectionAllowed(
+          tenantService, TenantContext.getCurrentTenant());
+    }
 
     // MATRIX MIGRATION: Get plain credentials from ThreadLocal (captured during JSON
     // deserialization)
@@ -378,6 +383,11 @@ public class CreateUserFacade {
 
   private User updateIdentityAndCreateAccount(
       String userId, UserDTO userDTO, UserRole role, RecoveryPolicySnapshot snapshot) {
+
+    if (userDTO.getEmail() != null && !userDTO.getEmail().isBlank()) {
+      AskerIdentityPolicy.requireEmailCollectionAllowed(
+          tenantService, TenantContext.getCurrentTenant());
+    }
 
     try {
       updateKeycloakRoleAndPassword(userId, userDTO, role);
