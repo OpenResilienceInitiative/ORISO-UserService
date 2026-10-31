@@ -12,6 +12,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteRateLimitedException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UserHelper;
@@ -19,7 +20,9 @@ import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
+import java.time.Duration;
 import java.util.List;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -183,5 +186,72 @@ class AgencySilentMembershipServiceTest {
 
     verifyNoInteractions(sessionRoomGateway);
     verifyNoInteractions(consultantRepository);
+  }
+
+  @Test
+  @DisplayName(
+      "the in-request pass stops at the first rate-limited invite and defers everyone left, unwaited")
+  void joinAgencyConsultantsWithoutWaiting_defersTheRestOnFirstRateLimit() throws Exception {
+    var consultants =
+        IntStream.range(0, 64)
+            .mapToObj(i -> consultantWithAccount("c" + i, "@c" + i + ":example.org"))
+            .toList();
+    when(consultantRepository.findByConsultantAgenciesAgencyIdAndDeleteDateIsNull(AGENCY_ID))
+        .thenReturn(consultants);
+    // Synapse's per-room burst: ten invites pass, the eleventh is refused with a retry delay.
+    doThrow(new MatrixInviteRateLimitedException("limited", 3_300L))
+        .when(sessionRoomGateway)
+        .inviteUserOnce(ROOM_ID, "@c10:example.org", AGENCY_TOKEN);
+    lenient().when(sessionRoomGateway.loginAsUser(anyString())).thenReturn("consultant-token");
+    lenient().when(sessionRoomGateway.joinRoom(ROOM_ID, "consultant-token")).thenReturn(true);
+
+    var fanOut =
+        underTest.joinAgencyConsultantsWithoutWaiting(
+            AGENCY_ID, ROOM_ID, AGENCY_TOKEN, Duration.ofSeconds(10));
+
+    assertEquals(10, fanOut.joined());
+    assertEquals(54, fanOut.deferred().size());
+    assertEquals("c10", fanOut.deferred().get(0).getId());
+    assertEquals(3_300L, fanOut.retryAfterMs());
+    // Eleven invite attempts, not 64 — and never the retrying invite that sleeps on the request.
+    verify(sessionRoomGateway, org.mockito.Mockito.times(11))
+        .inviteUserOnce(eq(ROOM_ID), anyString(), eq(AGENCY_TOKEN));
+    verify(sessionRoomGateway, never()).inviteUser(anyString(), anyString(), anyString());
+  }
+
+  @Test
+  @DisplayName("an exhausted in-request budget defers the remaining consultants")
+  void joinAgencyConsultantsWithoutWaiting_defersEveryoneWhenBudgetIsSpent() {
+    var consultants =
+        List.of(
+            consultantWithAccount("a", "@a:example.org"),
+            consultantWithAccount("b", "@b:example.org"));
+    when(consultantRepository.findByConsultantAgenciesAgencyIdAndDeleteDateIsNull(AGENCY_ID))
+        .thenReturn(consultants);
+
+    var fanOut =
+        underTest.joinAgencyConsultantsWithoutWaiting(
+            AGENCY_ID, ROOM_ID, AGENCY_TOKEN, Duration.ZERO);
+
+    assertEquals(0, fanOut.joined());
+    assertEquals(consultants, fanOut.deferred());
+    assertEquals(0L, fanOut.retryAfterMs());
+    verifyNoInteractions(sessionRoomGateway);
+  }
+
+  @Test
+  @DisplayName("a rate-limited invite is reported with the server's delay instead of a 403 join")
+  void tryJoinConsultantIntoRoom_reportsRateLimit() throws Exception {
+    var consultant = consultantWithAccount("a", "@a:example.org");
+    doThrow(new MatrixInviteRateLimitedException("limited", 1_234L))
+        .when(sessionRoomGateway)
+        .inviteUserOnce(ROOM_ID, "@a:example.org", AGENCY_TOKEN);
+
+    var attempt = underTest.tryJoinConsultantIntoRoom(consultant, ROOM_ID, AGENCY_TOKEN);
+
+    assertEquals(false, attempt.joined());
+    assertEquals(true, attempt.rateLimited());
+    assertEquals(1_234L, attempt.retryAfterMs());
+    verify(sessionRoomGateway, never()).joinRoom(anyString(), anyString());
   }
 }
