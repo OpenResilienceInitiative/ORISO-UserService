@@ -370,7 +370,9 @@ class EventNotificationServiceTest {
             "maintenanceDate",
             "maintenanceStart",
             "maintenanceEnd",
-            "statusUrl");
+            "statusUrl",
+            // FE#1952: which call the person knocks on (AUDIO / VIDEO). A medium, never content.
+            "medium");
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
@@ -394,6 +396,8 @@ class EventNotificationServiceTest {
     eventNotificationService.createSupervisorRemovedNotification(
         session, "asker-1", "Sue Pervisor");
     eventNotificationService.createCounselorRenamedNotification(session, "asker-1");
+    eventNotificationService.createCallKnockRequestedNotification(
+        directLinkConversation(), knock(31L, "VIDEO"));
     // Envelope-bearing producers emit `matrixEventId` and take the dedup path,
     // so without this call and the second captor below the sweep would never
     // see the one key #924 added.
@@ -1287,6 +1291,83 @@ class EventNotificationServiceTest {
 
     verify(eventNotificationRepository).save(any());
     verify(deduplicationWriter, never()).persistInNewTransaction(any());
+  }
+
+  // ---------------------------------------------------------------------------
+  // createCallKnockRequestedNotification (FE#1952: direct-link knock reaches the counsellor)
+  // ---------------------------------------------------------------------------
+
+  private Session directLinkConversation() {
+    var counsellor = new Consultant();
+    counsellor.setId("link-owner");
+    var session = new Session();
+    session.setId(500L);
+    session.setTenantId(7L);
+    session.setMatrixRoomId("!direct:matrix.example");
+    session.setConsultant(counsellor);
+    return session;
+  }
+
+  private static de.caritas.cob.userservice.api.model.GroupChatJoinRequest knock(
+      Long id, String medium) {
+    return de.caritas.cob.userservice.api.model.GroupChatJoinRequest.builder()
+        .id(id)
+        .sessionId(500L)
+        .userId("asker-1")
+        .medium(medium)
+        .build();
+  }
+
+  @Test
+  void callKnockRequested_tellsTheCounsellorOfTheConversationWhoKnocksOnWhichCall()
+      throws Exception {
+    eventNotificationService.createCallKnockRequestedNotification(
+        directLinkConversation(), knock(31L, "VIDEO"));
+
+    verify(deduplicationWriter).persistInNewTransaction(eventCaptor.capture());
+    var event = eventCaptor.getValue();
+    assertThat(event.getRecipientUserId()).isEqualTo("link-owner");
+    assertThat(event.getEventType()).isEqualTo("call.knock.requested");
+    assertThat(event.getCategory()).isEqualTo(EventNotificationService.CATEGORY_SYSTEM);
+    assertThat(event.getSourceSessionId()).isEqualTo(500L);
+    assertThat(event.getTenantId()).isEqualTo(7L);
+    // The counsellor opens the conversation, where they start the call and let the person in.
+    assertThat(event.getActionPath())
+        .isEqualTo("/sessions/consultant/sessionView/!direct:matrix.example/500");
+    // One entry per knock: a second delivery of the same knock never rings twice.
+    assertThat(event.getDeduplicationKey()).isEqualTo("call.knock.requested:31");
+    JsonNode params = objectMapper.readTree(event.getParams());
+    assertThat(params.get("medium").asText()).isEqualTo("VIDEO");
+    assertThat(params.get("sessionId").asLong()).isEqualTo(500L);
+    assertThat(params.get("roomRef").asText()).isEqualTo("!direct:matrix.example");
+    // Nothing that names the person: the card says "someone is knocking".
+    assertThat(event.getParams()).doesNotContain("asker-1");
+  }
+
+  @Test
+  void callKnockRequested_isSkippedWithoutACounsellorOrKnockId() {
+    var unassigned = directLinkConversation();
+    unassigned.setConsultant(null);
+
+    eventNotificationService.createCallKnockRequestedNotification(unassigned, knock(31L, "AUDIO"));
+    eventNotificationService.createCallKnockRequestedNotification(
+        directLinkConversation(), knock(null, "AUDIO"));
+    eventNotificationService.createCallKnockRequestedNotification(null, knock(31L, "AUDIO"));
+
+    verifyNoInteractions(deduplicationWriter);
+    verify(eventNotificationRepository, never()).save(any());
+  }
+
+  @Test
+  void callKnockRequested_neverBreaksTheKnock_When_TheEntryCannotBeWritten() {
+    Mockito.doThrow(new IllegalStateException("db down"))
+        .when(deduplicationWriter)
+        .persistInNewTransaction(any());
+
+    eventNotificationService.createCallKnockRequestedNotification(
+        directLinkConversation(), knock(31L, "VIDEO"));
+
+    verify(deduplicationWriter).persistInNewTransaction(any());
   }
 
   @Test
