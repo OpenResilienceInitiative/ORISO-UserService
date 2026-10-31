@@ -30,9 +30,7 @@ public class CustomLocalDateTime {
    * @return unix time
    */
   public static long toUnixTime(LocalDateTime localDateTime) {
-    return nonNull(localDateTime)
-        ? LocalDateTime.now(ZoneOffset.UTC).toEpochSecond(ZoneOffset.UTC)
-        : 0;
+    return nonNull(localDateTime) ? localDateTime.toEpochSecond(ZoneOffset.UTC) : 0;
   }
 
   /**

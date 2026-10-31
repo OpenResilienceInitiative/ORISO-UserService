@@ -71,6 +71,17 @@ class SessionMapperTest {
   }
 
   @Test
+  void convertToSessionDTOShouldCarryTheEnquiryMessageDateAsMessageDate() {
+    Session session = new EasyRandom().nextObject(Session.class);
+    session.setEnquiryMessageDate(LocalDateTime.of(2026, 10, 27, 8, 15, 0));
+
+    SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
+
+    // 2026-10-27T08:15:00Z, not the time the list was loaded (FE#1800)
+    assertEquals(1793088900L, sessionDTO.getMessageDate());
+  }
+
+  @Test
   void convertToSessionDTOShouldProjectConversationType() {
     Session session = new EasyRandom().nextObject(Session.class);
     session.setConversationType(ConversationType.LIVE_CHAT);
