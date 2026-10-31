@@ -90,6 +90,12 @@ class SessionOwnershipMariaDbIT {
   @Autowired private CaseHandoverReasonPolicyRepository caseHandoverReasonPolicyRepository;
   @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
   @Autowired private EntityManager entityManager;
+  @Autowired private javax.sql.DataSource dataSource;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.port.out.TenantCaseHandoverPolicyCacheRepository
+      policyCacheRepository;
+
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private EventNotificationService eventNotificationService;
   @MockitoBean private IdentityTombstoneService identityTombstoneService;
@@ -194,6 +200,168 @@ class SessionOwnershipMariaDbIT {
           consultantRepository.deleteAllById(List.of(OWNER_A_ID, OWNER_B_ID, OWNER_C_ID));
           userRepository.deleteById(USER_ID);
         });
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({"1,false", "2,false", "1,true", "2,true"})
+  void blockedPolicyLookupHoldsNoSessionOrGrantLockAndRechecksAuthority(
+      int poolSize, boolean extension) throws Exception {
+    var accounts = mock(UserAccountService.class);
+    when(accounts.retrieveValidatedConsultant())
+        .thenAnswer(ignored -> consultantRepository.findById(OWNER_B_ID).orElseThrow());
+    var messages = mock(MatrixSessionSystemMessageService.class);
+    var handovers =
+        handoverService(
+            caseHandoverRequestRepository,
+            sessionRepository,
+            accounts,
+            mock(EventNotificationService.class),
+            messages,
+            mock(ConsultantService.class),
+            mock(AuthenticatedUser.class));
+    Long grantId =
+        extension
+            ? transactions.execute(
+                ignored ->
+                    caseHandoverRequestRepository
+                        .save(
+                            CaseHandoverRequest.builder()
+                                .session(sessionRepository.findById(sessionId).orElseThrow())
+                                .requesterConsultant(ownerB)
+                                .initiatorConsultant(ownerB)
+                                .previousConsultant(ownerA)
+                                .direction(CaseHandoverRequest.Direction.PULL)
+                                .reasonCode("COUNSELLOR_ASKED_FOR_ADVICE")
+                                .reasonLabel("Advice")
+                                .explanation("Concurrency proof")
+                                .status(CaseHandoverRequest.Status.GRANTED)
+                                .accessType(CaseHandoverRequest.AccessType.CO_ACCESS)
+                                .clientConsent(
+                                    de.caritas.cob.userservice.api.model.CaseHandoverConsentMode
+                                        .NONE)
+                                .clientConsentRequired(false)
+                                .maxAccessDurationMinutes(180)
+                                .expiresAt(LocalDateTime.now().plusHours(1))
+                                .policyAuthority("test")
+                                .auditOutcome("ACCESS_GRANTED")
+                                .createdAt(LocalDateTime.now())
+                                .tenantId(7L)
+                                .build())
+                        .getId())
+            : null;
+    var policyStarted = new CountDownLatch(1);
+    var releasePolicy = new CountDownLatch(1);
+    var reader =
+        mock(de.caritas.cob.userservice.api.service.TenantCaseHandoverPolicyReadClient.class);
+    var originalCache =
+        (de.caritas.cob.userservice.api.service.CaseHandoverPolicyCacheService)
+            org.springframework.test.util.ReflectionTestUtils.getField(
+                handovers, "caseHandoverPolicyCacheService");
+    var authority =
+        new de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                .TenantPermissionPolicies()
+            .tenantId(7L)
+            .caseHandoverPolicies(originalCache.getEffective(7L))
+            .policies(
+                java.util.Map.of(
+                    "caseHandoverEnabled",
+                    new de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                            .BooleanPermissionPolicy(null)
+                        .value(true)
+                        .mode(
+                            de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                                .PermissionPolicyMode.ENFORCED)));
+    when(reader.getTenantPermissionPolicies(7L))
+        .thenAnswer(
+            ignored -> {
+              policyStarted.countDown();
+              await(releasePolicy);
+              return authority;
+            });
+    var cache =
+        new de.caritas.cob.userservice.api.service.CaseHandoverPolicyCacheService(
+            policyCacheRepository,
+            reader,
+            mock(
+                de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService.class),
+            java.time.Clock.systemUTC(),
+            transactionManager);
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        handovers, "caseHandoverPolicyCacheService", cache);
+    var proxied = handovers;
+    var pool = dataSource.unwrap(com.zaxxer.hikari.HikariDataSource.class);
+    int oldMax = pool.getMaximumPoolSize();
+    int oldMin = pool.getMinimumIdle();
+    long oldTimeout = pool.getConnectionTimeout();
+    pool.setMinimumIdle(0);
+    pool.setMaximumPoolSize(poolSize);
+    pool.setConnectionTimeout(1000);
+    pool.getHikariPoolMXBean().softEvictConnections();
+    var executor = Executors.newFixedThreadPool(2);
+    try {
+      var action =
+          executor.submit(
+              () ->
+                  extension
+                      ? proxied.extendCoAccess(sessionId)
+                      : proxied.requestAccess(
+                          sessionId,
+                          "COUNSELLOR_IS_ILL",
+                          "Cover",
+                          0L,
+                          java.util.UUID.randomUUID()));
+      assertThat(policyStarted.await(5, TimeUnit.SECONDS))
+          .as("fresh lookup must work with one connection")
+          .isTrue();
+      assertThat(pool.getHikariPoolMXBean().getActiveConnections())
+          .as("RPC must release the database connection")
+          .isZero();
+      var update =
+          executor.submit(
+              () ->
+                  transactions.execute(
+                      ignored -> {
+                        if (extension) {
+                          var grant =
+                              caseHandoverRequestRepository
+                                  .findByIdForUpdate(grantId)
+                                  .orElseThrow();
+                          grant.setExpiresAt(LocalDateTime.now().minusMinutes(1));
+                          caseHandoverRequestRepository.saveAndFlush(grant);
+                        } else {
+                          var current =
+                              sessionRepository.findByIdForUpdate(sessionId).orElseThrow();
+                          current.setConsultant(ownerC);
+                          current.setOwnershipRevision(1L);
+                          sessionRepository.save(current);
+                          entityManager.flush();
+                        }
+                        return true;
+                      }));
+      assertThat(update.get(3, TimeUnit.SECONDS)).as("RPC must not hold the session lock").isTrue();
+      releasePolicy.countDown();
+      assertThatThrownBy(() -> action.get(5, TimeUnit.SECONDS))
+          .isInstanceOf(java.util.concurrent.ExecutionException.class)
+          .hasCauseInstanceOf(ConflictException.class);
+      if (extension) {
+        assertThat(caseHandoverRequestRepository.findById(grantId).orElseThrow().getExtendedAt())
+            .isNull();
+        assertThat(readSession().getConsultant().getId()).isEqualTo(OWNER_A_ID);
+      } else {
+        assertThat(caseHandoverRequestRepository.findBySessionId(sessionId)).isEmpty();
+        assertThat(readSession().getConsultant().getId()).isEqualTo(OWNER_C_ID);
+      }
+      verify(messages, never()).postCaseHandoverGrantedMessage(any(), any(), any(), any());
+      verify(reader).getTenantPermissionPolicies(7L);
+    } finally {
+      releasePolicy.countDown();
+      executor.shutdownNow();
+      executor.awaitTermination(5, TimeUnit.SECONDS);
+      pool.setMaximumPoolSize(oldMax);
+      pool.setMinimumIdle(oldMin);
+      pool.setConnectionTimeout(oldTimeout);
+      transactions.executeWithoutResult(ignored -> policyCacheRepository.deleteById(7L));
+    }
   }
 
   @Test
@@ -323,7 +491,14 @@ class SessionOwnershipMariaDbIT {
     var releaseDecline = new CountDownLatch(1);
     var approveReadRequest = new CountDownLatch(1);
     SessionRepository serializedSessions = mock(SessionRepository.class);
+    when(serializedSessions.findById(sessionId))
+        .thenAnswer(ignored -> sessionRepository.findById(sessionId));
     CaseHandoverRequestRepository observedRequests = mock(CaseHandoverRequestRepository.class);
+    when(observedRequests.findWithoutLockByIdAndSessionId(requestId, sessionId))
+        .thenAnswer(
+            ignored ->
+                caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(
+                    requestId, sessionId));
     when(serializedSessions.findByIdForUpdate(sessionId))
         .thenAnswer(
             invocation -> {
@@ -400,7 +575,7 @@ class SessionOwnershipMariaDbIT {
                     .getStatus());
     assertThat(storedStatus).isEqualTo(CaseHandoverRequest.Status.CLIENT_CONSENT_DECLINED);
     assertThat(readSession().getConsultant().getId()).isEqualTo(ownerA.getId());
-    verify(matrixMessages, never()).postCaseHandoverGrantedMessage(any(), any(), any());
+    verify(matrixMessages, never()).postCaseHandoverGrantedMessage(any(), any(), any(), any());
   }
 
   @Test
@@ -437,6 +612,8 @@ class SessionOwnershipMariaDbIT {
     var declineHasSessionLock = new CountDownLatch(1);
     var releaseDecline = new CountDownLatch(1);
     SessionRepository serializedSessions = mock(SessionRepository.class);
+    when(serializedSessions.findById(sessionId))
+        .thenAnswer(ignored -> sessionRepository.findById(sessionId));
     when(serializedSessions.findByIdForUpdate(sessionId))
         .thenAnswer(
             invocation -> {
@@ -448,6 +625,11 @@ class SessionOwnershipMariaDbIT {
               return result;
             });
     CaseHandoverRequestRepository observedRequests = mock(CaseHandoverRequestRepository.class);
+    when(observedRequests.findWithoutLockByIdAndSessionId(requestId, sessionId))
+        .thenAnswer(
+            ignored ->
+                caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(
+                    requestId, sessionId));
     when(observedRequests.findByIdAndSessionIdForUpdate(requestId, sessionId))
         .thenAnswer(
             ignored ->
@@ -504,7 +686,7 @@ class SessionOwnershipMariaDbIT {
 
     assertThat(readSession().getConsultant().getId()).isEqualTo(ownerA.getId());
     assertThat(readSession().getOwnershipRevision()).isZero();
-    verify(matrixMessages, never()).postCaseHandoverGrantedMessage(any(), any(), any());
+    verify(matrixMessages, never()).postCaseHandoverGrantedMessage(any(), any(), any(), any());
   }
 
   @Test
@@ -521,9 +703,33 @@ class SessionOwnershipMariaDbIT {
             ignored -> transactions.execute(tx -> consultantRepository.findById(OWNER_B_ID)));
     AuthenticatedUser actor = mock(AuthenticatedUser.class);
     when(actor.getUserId()).thenReturn(OWNER_A_ID);
+    var abortFirstCommit = new java.util.concurrent.atomic.AtomicBoolean(true);
+    var observedRequests =
+        mock(
+            CaseHandoverRequestRepository.class,
+            org.mockito.AdditionalAnswers.delegatesTo(caseHandoverRequestRepository));
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              var saved =
+                  caseHandoverRequestRepository.save((CaseHandoverRequest) call.getArgument(0));
+              if (abortFirstCommit.getAndSet(false)) {
+                org.springframework.transaction.support.TransactionSynchronizationManager
+                    .registerSynchronization(
+                        new org.springframework.transaction.support.TransactionSynchronization() {
+                          @Override
+                          public void beforeCommit(boolean readOnly) {
+                            throw new IllegalStateException(
+                                "force actual offer transaction rollback");
+                          }
+                        });
+              }
+              return saved;
+            })
+        .when(observedRequests)
+        .save(any(CaseHandoverRequest.class));
     CaseHandoverService handovers =
         handoverService(
-            caseHandoverRequestRepository,
+            observedRequests,
             sessionRepository,
             accounts,
             eventNotificationService,
@@ -532,34 +738,26 @@ class SessionOwnershipMariaDbIT {
             actor);
     var committedOperation = java.util.UUID.fromString("de949f0d-d1d5-48bb-8694-cbd786863623");
 
-    // The rolled-back offer runs first: once an offer is open, a second one is refused.
+    // Fail inside the service's actual mutation commit, after its notification is registered.
     assertThatThrownBy(
             () ->
-                transactions.executeWithoutResult(
-                    ignored -> {
-                      handovers.createOffer(
-                          sessionId,
-                          OWNER_B_ID,
-                          "UNPLANNED_ABSENCE",
-                          null,
-                          0L,
-                          java.util.UUID.fromString("0d91227b-9390-4643-984e-cd3b7c035657"));
-                      throw new IllegalStateException("force rollback");
-                    }))
-        .isInstanceOf(IllegalStateException.class);
+                handovers.createOffer(
+                    sessionId,
+                    OWNER_B_ID,
+                    "UNPLANNED_ABSENCE",
+                    null,
+                    0L,
+                    java.util.UUID.fromString("0d91227b-9390-4643-984e-cd3b7c035657")))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("force actual offer transaction rollback");
+    assertThat(caseHandoverRequestRepository.findBySessionId(sessionId)).isEmpty();
     assertThat(offerNotifications()).isEmpty();
 
-    transactions.execute(
-        ignored ->
-            handovers.createOffer(
-                sessionId, OWNER_B_ID, "UNPLANNED_ABSENCE", null, 0L, committedOperation));
+    handovers.createOffer(sessionId, OWNER_B_ID, "UNPLANNED_ABSENCE", null, 0L, committedOperation);
 
     assertThat(offerNotifications()).hasSize(1);
 
-    transactions.execute(
-        ignored ->
-            handovers.createOffer(
-                sessionId, OWNER_B_ID, "UNPLANNED_ABSENCE", null, 0L, committedOperation));
+    handovers.createOffer(sessionId, OWNER_B_ID, "UNPLANNED_ABSENCE", null, 0L, committedOperation);
     assertThat(offerNotifications()).hasSize(1);
   }
 
@@ -714,28 +912,42 @@ class SessionOwnershipMariaDbIT {
             new de.caritas.cob.userservice.tenantadminservice.generated.web.model
                     .CaseHandoverPolicies()
                 .reasons(java.util.Map.of("COUNSELLOR_IS_ILL", policy)));
-    return new CaseHandoverService(
-        requests,
-        mock(SessionSupervisorFacade.class),
-        caseHandoverReasonPolicyRepository,
-        cache,
-        sessions,
-        ownershipService,
-        consultantAgencyRepository,
-        accounts,
-        events,
-        mock(CaseHandoverEmailNotification.class),
-        mock(MatrixSynapseService.class),
-        mock(de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairService.class),
-        messages,
-        consultants,
-        caller,
-        new de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver(),
-        mock(de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService.class),
-        java.time.Clock.systemUTC(),
-        transactionManager,
-        mock(de.caritas.cob.userservice.api.service.agency.AgencyService.class),
-        mock(de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class),
-        mock(de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess.class));
+    when(cache.getCurrent(7L))
+        .thenAnswer(
+            call ->
+                new de.caritas.cob.userservice.api.service.CaseHandoverPolicyCacheService
+                    .CurrentPolicy(true, cache.getEffective(7L)));
+    var service =
+        new CaseHandoverService(
+            requests,
+            mock(SessionSupervisorFacade.class),
+            caseHandoverReasonPolicyRepository,
+            cache,
+            sessions,
+            ownershipService,
+            consultantAgencyRepository,
+            accounts,
+            events,
+            mock(CaseHandoverEmailNotification.class),
+            mock(MatrixSynapseService.class),
+            mock(de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairService.class),
+            messages,
+            consultants,
+            caller,
+            new de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver(),
+            mock(
+                de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService.class),
+            java.time.Clock.systemUTC(),
+            transactionManager,
+            mock(de.caritas.cob.userservice.api.service.agency.AgencyService.class),
+            mock(de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class),
+            mock(de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess.class));
+    var factory = new org.springframework.aop.framework.ProxyFactory(service);
+    factory.setProxyTargetClass(true);
+    factory.addAdvice(
+        new org.springframework.transaction.interceptor.TransactionInterceptor(
+            transactionManager,
+            new org.springframework.transaction.annotation.AnnotationTransactionAttributeSource()));
+    return (CaseHandoverService) factory.getProxy();
   }
 }
