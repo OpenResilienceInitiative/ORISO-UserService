@@ -137,6 +137,40 @@ class DeletionAuditServiceTest {
   }
 
   @Test
+  void recordReported_Should_StoreTheActorTheTechnicalCallerNamed_NotTheTechnicalAccount() {
+    service.recordReported(
+        DeletionAuditTargetType.AGENCY,
+        "268",
+        4L,
+        DeletionAuditOutcome.SCHEDULED,
+        "admin-7",
+        "AGENCY_ADMIN");
+
+    var saved = savedEntry();
+    assertThat(saved.getActorId()).isEqualTo("admin-7");
+    assertThat(saved.getActorRole()).isEqualTo("AGENCY_ADMIN");
+    assertThat(saved.getTargetType()).isEqualTo(DeletionAuditTargetType.AGENCY);
+    assertThat(saved.getTargetId()).isEqualTo("268");
+    assertThat(saved.getTenantId()).isEqualTo(4L);
+    verify(authenticatedUser, never()).getUserId();
+  }
+
+  @Test
+  void recordReported_Should_NeverBreakTheReportingService_When_TheAuditWriteFails() {
+    when(repository.save(any())).thenThrow(new IllegalStateException("db down"));
+
+    service.recordReported(
+        DeletionAuditTargetType.TENANT,
+        "9",
+        9L,
+        DeletionAuditOutcome.EXECUTED,
+        "a",
+        "TENANT_ADMIN");
+
+    verify(repository).save(any());
+  }
+
+  @Test
   void record_Should_NeverBreakTheDeletion_When_TheAuditWriteFails() {
     when(repository.save(any())).thenThrow(new IllegalStateException("db down"));
 
