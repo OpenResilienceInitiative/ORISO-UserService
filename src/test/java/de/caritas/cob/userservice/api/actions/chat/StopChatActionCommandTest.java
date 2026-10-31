@@ -69,13 +69,13 @@ class StopChatActionCommandTest {
 
     command.execute(chat);
 
-    var order = inOrder(matrixChatShutdownService, chatService);
-    order.verify(matrixChatShutdownService).shutdownRoomStrictly(chat);
+    var order = inOrder(chatService, matrixChatShutdownService);
     order.verify(chatService).deleteChat(chat);
+    order.verify(matrixChatShutdownService).shutdownRoomStrictly(chat);
   }
 
   @Test
-  void stopChatShouldKeepTheChatAndFailWhenTheMatrixRoomCannotBeShutDown() {
+  void stopChatShouldFailWhenTheMatrixRoomCannotBeShutDownSoTheCallerRollsBack() {
     Chat chat = activeMatrixChat();
     var refused =
         new CustomValidationHttpStatusException(
@@ -84,8 +84,8 @@ class StopChatActionCommandTest {
 
     var thrown = assertThrows(refused.getClass(), () -> command.execute(chat));
 
+    // The exception reaches StopChatFacade's transaction, which rolls the deletion back.
     assertSame(refused, thrown);
-    verify(chatService, never()).deleteChat(chat);
   }
 
   @Test

@@ -25,9 +25,9 @@ public class StopChatActionCommand implements ActionCommand<Chat> {
    * Deletes the given active chat and recreates it if repetitive. Repetitive chats get a fresh
    * Matrix room for their next occurrence and the old room is shut down (via {@link ChatReCreator},
    * best-effort); for non-repetitive chats and the last occurrence of a series the Matrix room is
-   * shut down first and strictly: if that fails, the exception propagates (502), the chat stays
-   * active and the stop can be repeated. A successful shutdown removes all members so their clients
-   * can show the chat as stopped.
+   * shut down strictly: if that fails, the exception propagates (502) and the caller's transaction
+   * keeps the chat, so the stop can be repeated. A successful shutdown removes all members so their
+   * clients can show the chat as stopped.
    *
    * @param chat the {@link Chat} to be stopped
    */
@@ -55,12 +55,13 @@ public class StopChatActionCommand implements ActionCommand<Chat> {
         chatService.saveChat(chat);
       }
     } else {
+      chatService.deleteChat(chat);
       if (!chat.isMembersOnly()) {
-        // Room first, strictly: a failed purge leaves the chat untouched and the stop repeatable.
-        // A members-only room is purged by deleteChat itself, last, in its transaction.
+        // Last and strictly, inside the caller's transaction (StopChatFacade): a room that stays
+        // open rolls the deletion back, so the chat is kept and the stop can be repeated. A
+        // members-only room was already purged strictly by deleteChat itself.
         matrixChatShutdownService.shutdownRoomStrictly(chat);
       }
-      chatService.deleteChat(chat);
     }
   }
 

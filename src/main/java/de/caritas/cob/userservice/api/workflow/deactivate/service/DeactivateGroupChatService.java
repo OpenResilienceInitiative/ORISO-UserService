@@ -64,9 +64,10 @@ public class DeactivateGroupChatService {
           .addActionToExecute(StopChatActionCommand.class)
           .executeActions(staleChat);
     } catch (RuntimeException e) {
-      // A room that cannot be shut down keeps its chat active; the next sweep tries it again.
+      // One stuck chat must not stop the sweep for all others. The final occurrence of a series
+      // stays active and is retried next run; for a one-off chat this is the old best-effort end.
       log.warn(
-          "Could not stop stale group chat {} ({}); retrying in the next run",
+          "Could not shut down the Matrix room of stale group chat {} ({})",
           staleChat.getId(),
           e.getClass().getSimpleName());
     }
