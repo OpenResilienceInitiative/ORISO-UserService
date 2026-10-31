@@ -1371,10 +1371,14 @@ class CaseHandoverServiceTest {
           null,
           0L,
           UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d"));
+      // recipient's offer card + the offering counsellor's own "offer sent" timeline entry
       var callbacks = TransactionSynchronizationManager.getSynchronizations();
-      assertEquals(1, callbacks.size());
-      callbacks.get(0).afterCommit();
-      callbacks.get(0).afterCompletion(0);
+      assertEquals(2, callbacks.size());
+      callbacks.forEach(
+          callback -> {
+            callback.afterCommit();
+            callback.afterCompletion(0);
+          });
     } finally {
       TransactionSynchronizationManager.clearSynchronization();
     }
@@ -1414,6 +1418,346 @@ class CaseHandoverServiceTest {
     assertEquals(requester, session.getConsultant());
     verify(sessionOwnershipService, never()).updateOwner(any(), any(), any(), any());
     verify(caseHandoverEmailNotification, never()).ownershipGranted(any(CaseHandoverRequest.class));
+  }
+
+  // ---- Withdraw a pending offer (OBP 2.1: "Pending handover offer cannot be cancelled") ----
+
+  private void offerWithdrawSetup(CaseHandoverRequest request) {
+    session.setConsultant(requester);
+    when(caseHandoverRequestRepository.findByIdAndSessionIdForUpdate(501L, 123L))
+        .thenReturn(Optional.of(request));
+  }
+
+  @Test
+  void withdrawOffer_byTheOfferingCounsellorEndsTheOfferAndTellsBothSides() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    CaseHandoverRequest request =
+        pushRequest(recipient, UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d"));
+    offerWithdrawSetup(request);
+
+    CaseHandoverStatus result = caseHandoverService.withdrawOffer(123L, 501L);
+
+    assertEquals("WITHDRAWN", result.getStatus());
+    assertEquals(CaseHandoverRequest.Status.WITHDRAWN, request.getStatus());
+    assertEquals("OFFER_WITHDRAWN", request.getAuditOutcome());
+    assertNotNull(request.getResolvedAt());
+    assertEquals(requester, session.getConsultant());
+    verify(sessionOwnershipService, never()).updateOwner(any(), any(), any(), any());
+    verify(caseHandoverEmailNotification, never()).ownershipGranted(any(CaseHandoverRequest.class));
+    verify(eventNotificationService)
+        .createEventOnce(
+            eq("case-handover-offer-withdrawn:501:recipient"),
+            eq("recipient"),
+            eq("case.handover.offer.withdrawn"),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            eq(123L),
+            eq(7L));
+    verify(eventNotificationService)
+        .createEventOnce(
+            eq("case-handover-offer-withdrawn:501:requester"),
+            eq("requester"),
+            eq("case.handover.offer.withdrawn"),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            eq(123L),
+            eq(7L));
+  }
+
+  @Test
+  void withdrawOffer_stillTellsTheOfferingCounsellorWhenTheRecipientNotificationFails() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    CaseHandoverRequest request =
+        pushRequest(recipient, UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d"));
+    offerWithdrawSetup(request);
+    doThrow(new IllegalStateException("notification store down"))
+        .when(eventNotificationService)
+        .createEventOnce(
+            eq("case-handover-offer-withdrawn:501:recipient"),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            any());
+
+    CaseHandoverStatus result = caseHandoverService.withdrawOffer(123L, 501L);
+
+    assertEquals("WITHDRAWN", result.getStatus());
+    verify(eventNotificationService)
+        .createEventOnce(
+            eq("case-handover-offer-withdrawn:501:requester"),
+            eq("requester"),
+            eq("case.handover.offer.withdrawn"),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            eq(123L),
+            eq(7L));
+  }
+
+  @Test
+  void withdrawOffer_neverPostsIntoTheRoomTheAdviceSeekerReads() {
+    // A colleague-to-colleague offer is staff-only: the advice seeker is never told about it
+    // (see isReadableBySessionAsker), so a withdrawal must not surface in the shared room either.
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    offerWithdrawSetup(
+        pushRequest(recipient, UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d")));
+
+    caseHandoverService.withdrawOffer(123L, 501L);
+
+    verifyNoInteractions(matrixSessionSystemMessageService);
+  }
+
+  @Test
+  void withdrawOffer_isIdempotentAndDoesNotNotifyTwice() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    offerWithdrawSetup(
+        pushRequest(recipient, UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d")));
+
+    CaseHandoverStatus first = caseHandoverService.withdrawOffer(123L, 501L);
+    CaseHandoverStatus replay = caseHandoverService.withdrawOffer(123L, 501L);
+
+    assertEquals("WITHDRAWN", first.getStatus());
+    assertEquals("WITHDRAWN", replay.getStatus());
+    verify(caseHandoverRequestRepository, times(1)).save(any(CaseHandoverRequest.class));
+    verify(eventNotificationService, times(2))
+        .createEventOnce(
+            any(),
+            any(),
+            eq("case.handover.offer.withdrawn"),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            any());
+  }
+
+  @Test
+  void withdrawOffer_isAlsoPossibleWhileTheAdviceSeekersConsentIsPending() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    CaseHandoverRequest request =
+        pushRequest(recipient, UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d"));
+    request.setStatus(CaseHandoverRequest.Status.PENDING_CLIENT_CONSENT);
+    offerWithdrawSetup(request);
+
+    assertEquals("WITHDRAWN", caseHandoverService.withdrawOffer(123L, 501L).getStatus());
+  }
+
+  @Test
+  void withdrawOffer_theRecipientMayNotWithdrawSomeoneElsesOffer() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    CaseHandoverRequest request =
+        pushRequest(recipient, UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d"));
+    offerWithdrawSetup(request);
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(recipient);
+    when(authenticatedUser.getUserId()).thenReturn(recipient.getId());
+
+    assertThrows(ForbiddenException.class, () -> caseHandoverService.withdrawOffer(123L, 501L));
+
+    assertEquals(CaseHandoverRequest.Status.PENDING_RECIPIENT_ACCEPTANCE, request.getStatus());
+    verify(caseHandoverRequestRepository, never()).save(any(CaseHandoverRequest.class));
+    verifyNoInteractions(eventNotificationService);
+  }
+
+  @Test
+  void withdrawOffer_anUnrelatedCounsellorMayNotWithdraw() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    Consultant stranger = eligibleConsultant("stranger", "Stranger");
+    CaseHandoverRequest request =
+        pushRequest(recipient, UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d"));
+    offerWithdrawSetup(request);
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(stranger);
+    when(authenticatedUser.getUserId()).thenReturn(stranger.getId());
+
+    assertThrows(ForbiddenException.class, () -> caseHandoverService.withdrawOffer(123L, 501L));
+    verify(caseHandoverRequestRepository, never()).save(any(CaseHandoverRequest.class));
+  }
+
+  @Test
+  void withdrawOffer_aRequestForAccessIsNotAnOffer() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    CaseHandoverRequest request =
+        pushRequest(recipient, UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d"));
+    request.setDirection(CaseHandoverRequest.Direction.PULL);
+    request.setStatus(CaseHandoverRequest.Status.PENDING_CLIENT_CONSENT);
+    offerWithdrawSetup(request);
+
+    assertThrows(ForbiddenException.class, () -> caseHandoverService.withdrawOffer(123L, 501L));
+    verify(caseHandoverRequestRepository, never()).save(any(CaseHandoverRequest.class));
+  }
+
+  @Test
+  void withdrawOffer_afterTheRecipientDecidedIsAConflictAndChangesNothing() {
+    for (CaseHandoverRequest.Status settled :
+        List.of(
+            CaseHandoverRequest.Status.GRANTED,
+            CaseHandoverRequest.Status.RECIPIENT_DECLINED,
+            CaseHandoverRequest.Status.CLIENT_CONSENT_DECLINED)) {
+      Consultant recipient = eligibleConsultant("recipient", "Recipient");
+      CaseHandoverRequest request =
+          pushRequest(recipient, UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d"));
+      request.setStatus(settled);
+      offerWithdrawSetup(request);
+
+      assertThrows(ConflictException.class, () -> caseHandoverService.withdrawOffer(123L, 501L));
+      assertEquals(settled, request.getStatus());
+    }
+    verify(caseHandoverRequestRepository, never()).save(any(CaseHandoverRequest.class));
+  }
+
+  @Test
+  void withdrawOffer_unknownRequestIsNotFound() {
+    session.setConsultant(requester);
+    when(caseHandoverRequestRepository.findByIdAndSessionIdForUpdate(999L, 123L))
+        .thenReturn(Optional.empty());
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException.class,
+        () -> caseHandoverService.withdrawOffer(123L, 999L));
+  }
+
+  @Test
+  void resolveRecipientDecision_onAWithdrawnOfferChangesNothing() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    CaseHandoverRequest request =
+        pushRequest(recipient, UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d"));
+    request.setStatus(CaseHandoverRequest.Status.WITHDRAWN);
+    session.setConsultant(requester);
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(recipient);
+    when(consultantService.getConsultant("recipient")).thenReturn(Optional.of(recipient));
+    when(authenticatedUser.getUserId()).thenReturn(recipient.getId());
+    when(caseHandoverRequestRepository.findByIdAndSessionIdForUpdate(501L, 123L))
+        .thenReturn(Optional.of(request));
+
+    CaseHandoverStatus result = caseHandoverService.resolveRecipientDecision(123L, 501L, true);
+
+    assertEquals("WITHDRAWN", result.getStatus());
+    assertEquals(requester, session.getConsultant());
+    verify(sessionOwnershipService, never()).updateOwner(any(), any(), any(), any());
+  }
+
+  @Test
+  void createOffer_afterAWithdrawalAnotherOfferIsAllowed() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    session.setConsultant(requester);
+    when(consultantService.getConsultant("recipient")).thenReturn(Optional.of(recipient));
+    CaseHandoverRequest withdrawn =
+        pushRequest(recipient, UUID.fromString("0d2b6a0e-61a4-4c3e-9f5e-1c7b8a9d0e11"));
+    withdrawn.setStatus(CaseHandoverRequest.Status.WITHDRAWN);
+    when(caseHandoverRequestRepository.findBySessionIdAndStatusOrderByCreatedAtDesc(
+            123L, CaseHandoverRequest.Status.WITHDRAWN))
+        .thenReturn(List.of(withdrawn));
+    assignPersistedRequestId(502L);
+
+    CaseHandoverStatus result =
+        caseHandoverService.createOffer(
+            123L,
+            "recipient",
+            "UNPLANNED_ABSENCE",
+            null,
+            0L,
+            UUID.fromString("7f0c2c1e-3b8a-4f6d-9a2e-5d4c3b2a1f00"));
+
+    assertEquals("PENDING_RECIPIENT_ACCEPTANCE", result.getStatus());
+  }
+
+  @Test
+  void createOffer_confirmsTheOfferInTheOfferingCounsellorsTimelineToo() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    session.setConsultant(requester);
+    when(consultantService.getConsultant("recipient")).thenReturn(Optional.of(recipient));
+    assignPersistedRequestId(501L);
+
+    caseHandoverService.createOffer(
+        123L,
+        "recipient",
+        "UNPLANNED_ABSENCE",
+        null,
+        0L,
+        UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d"));
+
+    verify(eventNotificationService)
+        .createEventOnce(
+            eq("case-handover-offer-sent:501"),
+            eq("requester"),
+            eq("case.handover.offer.sent"),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            eq(123L),
+            eq(7L));
+    verifyNoInteractions(matrixSessionSystemMessageService);
+  }
+
+  @Test
+  void resolveRecipientDecision_declineTellsTheOfferingCounsellor() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    CaseHandoverRequest request =
+        pushRequest(recipient, UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d"));
+    session.setConsultant(requester);
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(recipient);
+    when(consultantService.getConsultant("recipient")).thenReturn(Optional.of(recipient));
+    when(authenticatedUser.getUserId()).thenReturn(recipient.getId());
+    when(caseHandoverRequestRepository.findByIdAndSessionIdForUpdate(501L, 123L))
+        .thenReturn(Optional.of(request));
+
+    caseHandoverService.resolveRecipientDecision(123L, 501L, false);
+    caseHandoverService.resolveRecipientDecision(123L, 501L, false);
+
+    verify(eventNotificationService, times(1))
+        .createEventOnce(
+            eq("case-handover-offer-declined:501"),
+            eq("requester"),
+            eq("case.handover.offer.declined"),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            eq(123L),
+            eq(7L));
+  }
+
+  @Test
+  void getStatus_theOwnerSeesTheirOwnOpenOfferSoItCanBeWithdrawnAfterAReload() {
+    Consultant recipient = eligibleConsultant("recipient", "Recipient");
+    session.setConsultant(requester);
+    when(caseHandoverRequestRepository.findBySessionIdAndStatusOrderByCreatedAtDesc(
+            123L, CaseHandoverRequest.Status.PENDING_RECIPIENT_ACCEPTANCE))
+        .thenReturn(
+            List.of(
+                pushRequest(recipient, UUID.fromString("ca40d769-e617-43a8-8c89-5da47316672d"))));
+
+    CaseHandoverStatus status = caseHandoverService.getStatus(123L);
+
+    assertEquals("GRANTED", status.getStatus());
+    assertNotNull(status.getOpenOffer());
+    assertEquals(501L, status.getOpenOffer().getRequestId());
+    assertEquals("PENDING_RECIPIENT_ACCEPTANCE", status.getOpenOffer().getStatus());
+    assertEquals("recipient", status.getOpenOffer().getRecipientConsultantId());
+  }
+
+  @Test
+  void getStatus_theOwnerWithoutAnOpenOfferHasNone() {
+    session.setConsultant(requester);
+
+    assertNull(caseHandoverService.getStatus(123L).getOpenOffer());
   }
 
   @Test
@@ -1619,6 +1963,36 @@ class CaseHandoverServiceTest {
     CaseHandoverRequest request = pendingConsentRequest();
     request.setStatus(CaseHandoverRequest.Status.GRANTED);
     asker.setTenantId(8L);
+    when(authenticatedUser.isAdviceSeeker()).thenReturn(true);
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException.class,
+        () -> caseHandoverService.getRequestStatus(123L, 88L));
+  }
+
+  @Test
+  void getRequestStatus_adviceSeekerReadsAnOfferWithdrawnAfterTheyWereAskedForConsent() {
+    CaseHandoverRequest request = pendingConsentRequest();
+    request.setStatus(CaseHandoverRequest.Status.WITHDRAWN);
+    request.setRecipientDecisionAt(LocalDateTime.now());
+    request.setResolvedAt(LocalDateTime.now());
+    when(authenticatedUser.isAdviceSeeker()).thenReturn(true);
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+
+    CaseHandoverStatus status = caseHandoverService.getRequestStatus(123L, 88L);
+
+    assertEquals("WITHDRAWN", status.getStatus());
+    assertNull(status.getInitiatorConsultantId());
+  }
+
+  @Test
+  void getRequestStatus_adviceSeekerNeverSeesAnOfferWithdrawnBeforeTheColleagueAnswered() {
+    CaseHandoverRequest request = pendingConsentRequest();
+    request.setStatus(CaseHandoverRequest.Status.WITHDRAWN);
+    request.setRecipientDecisionAt(null);
     when(authenticatedUser.isAdviceSeeker()).thenReturn(true);
     when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(88L, 123L))
         .thenReturn(Optional.of(request));

@@ -521,6 +521,8 @@ public class SecurityConfig {
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover/recipients",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/recipient-decision",
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/recipient-decision",
+                    "/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/withdraw",
+                    "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/withdraw",
                     "/users/chat-series/**",
                     "/service/users/chat-series/**",
                     "/users/agencies/{agencyId:[0-9]+}/admin-contacts",
