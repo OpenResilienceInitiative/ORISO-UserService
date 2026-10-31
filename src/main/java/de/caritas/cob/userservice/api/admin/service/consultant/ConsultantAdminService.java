@@ -291,6 +291,13 @@ public class ConsultantAdminService {
 
     // Last: Keycloak is not rolled back with this transaction.
     this.consultantPreDeletionService.activateIdentity(consultant);
+
+    // Written after this transaction commits, like the SCHEDULED row; ids only.
+    deletionAuditService.recordAsCurrentActor(
+        DeletionAuditTargetType.CONSULTANT,
+        consultantId,
+        consultant.getTenantId(),
+        DeletionAuditOutcome.CANCELLED);
   }
 
   private void deleteAndUnassignSessions(Consultant consultant) {

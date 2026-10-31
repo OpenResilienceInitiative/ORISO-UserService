@@ -10,6 +10,7 @@ import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -17,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 /** Read-only API for the deletion log (who deleted what, when, with which outcome). */
 @RestController
+@Validated
 @RequiredArgsConstructor
 @Api(tags = "deletion-audit-logs-controller")
 @RequestMapping({"/users/deletion-audit-logs", "/service/users/deletion-audit-logs"})

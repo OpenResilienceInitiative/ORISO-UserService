@@ -540,6 +540,22 @@ public class ConsultantAdminServiceTest {
   }
 
   @Test
+  void cancelConsultantDeletion_Should_LeaveACancelledDeletionLogEntry() {
+    var consultant = consultantInDeletion();
+    consultant.setTenantId(5L);
+    when(consultantRepository.findPictureOwnerForUpdate("c-1")).thenReturn(Optional.of(consultant));
+
+    consultantAdminService.cancelConsultantDeletion("c-1");
+
+    verify(deletionAuditService)
+        .recordAsCurrentActor(
+            de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditTargetType.CONSULTANT,
+            "c-1",
+            5L,
+            de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditOutcome.CANCELLED);
+  }
+
+  @Test
   void cancelConsultantDeletion_Should_NotEnableTheLogin_When_DeletionCannotBeCancelled() {
     var consultant = consultantInDeletion();
     when(consultantRepository.findPictureOwnerForUpdate("c-1")).thenReturn(Optional.of(consultant));
@@ -554,5 +570,6 @@ public class ConsultantAdminServiceTest {
 
     verify(consultantPreDeletionService, never()).activateIdentity(any());
     verify(consultantRepository, never()).save(any());
+    verify(deletionAuditService, never()).recordAsCurrentActor(any(), any(), any(), any());
   }
 }
