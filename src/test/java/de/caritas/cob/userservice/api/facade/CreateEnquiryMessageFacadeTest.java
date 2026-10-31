@@ -78,7 +78,11 @@ class CreateEnquiryMessageFacadeTest {
             eventNotificationService,
             agencyPreAssignmentRoomService,
             erstantwortPayloadBuilder,
-            matrixSessionSystemMessageService);
+            matrixSessionSystemMessageService,
+            new de.caritas.cob.userservice.api.service.erstantwort.ErstantwortTenantTextResolver(
+                org.mockito.Mockito.mock(
+                    de.caritas.cob.userservice.api.service.erstantwort
+                        .TenantErstantwortContentClient.class)));
     user = new User();
     user.setUserId(USER_ID);
     user.setMatrixUserId(MATRIX_USER_ID);

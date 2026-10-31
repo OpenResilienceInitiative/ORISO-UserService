@@ -1221,6 +1221,64 @@ paths:
   # Account invites and self-assignment are served by hand-written controllers
   # (AccountInviteController, AdminSelfAssignmentController). x-internal keeps the generator from
   # adding them to UseradminApi, whose implementation would then map the same routes twice.
+  /useradmin/erstantwort/defaults:
+    get:
+      x-internal: true
+      tags:
+        - erstantwort-defaults-controller
+      summary: 'Platform default Erstantwort texts as plain text, for the Träger editor [Authorization: tenant-admin, single-tenant-admin, restricted-agency-admin, user-admin]'
+      description: >-
+        Read-only. Returns the texts that are sent when a Träger leaves a field empty:
+        greeting, whoReadsAlong, closing, the fixed emergencyNumbers sentence and the derived
+        responseDeadline sentence with the platform default number. There is no platform default
+        for emergencyAddition or freeNotice. Served by the hand-written
+        ErstantwortDefaultsController, hence x-internal.
+      operationId: getErstantwortDefaults
+      parameters:
+        - name: locale
+          in: query
+          required: false
+          description: One of de, de@informal, en, fr, ru, ti, tr. Defaults to de.
+          schema:
+            type: string
+        - name: informal
+          in: query
+          required: false
+          description: With locale de, selects the informal (Du) German variant.
+          schema:
+            type: boolean
+            default: false
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  locale:
+                    type: string
+                  greeting:
+                    type: string
+                  whoReadsAlong:
+                    type: string
+                  closing:
+                    type: string
+                  emergencyNumbers:
+                    type: string
+                  responseDeadline:
+                    type: string
+                  responseDeadlineDays:
+                    type: integer
+        400:
+          description: BAD REQUEST - locale outside the supported list
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization
+      security:
+        - Bearer: [ ]
+
   /useradmin/account-invites:
     post:
       x-internal: true

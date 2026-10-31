@@ -658,6 +658,13 @@ public class SecurityConfig {
                 .hasAnyAuthority(TENANT_ADMIN, SINGLE_TENANT_ADMIN)
                 // An admin's own list sorts (#1263): every admin role that sees a user list keeps
                 // its own; the data is always the caller's, so no other access widens.
+                // Platform default Erstantwort texts for the Träger editor (Admin#601); read-only.
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/useradmin/erstantwort/defaults",
+                    "/service/useradmin/erstantwort/defaults")
+                .hasAnyAuthority(
+                    USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
                 .requestMatchers("/useradmin/list-preferences", "/useradmin/list-preferences/**")
                 .hasAnyAuthority(
                     USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
