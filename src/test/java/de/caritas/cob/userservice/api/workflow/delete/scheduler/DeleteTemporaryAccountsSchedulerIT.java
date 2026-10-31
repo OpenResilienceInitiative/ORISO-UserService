@@ -321,6 +321,8 @@ class DeleteTemporaryAccountsSchedulerIT {
     assertFalse(userService.getUser(participant.getUserId()).isPresent());
     assertTrue(chatRepository.existsById(group.getId()));
     verify(matrixSynapseService, never()).purgeRoom("!self-help-group:matrix.oriso.org");
+    verify(matrixSynapseService, never())
+        .purgeRoomOrConfirmGone("!self-help-group:matrix.oriso.org");
   }
 
   @Test
@@ -373,6 +375,8 @@ class DeleteTemporaryAccountsSchedulerIT {
     assertFalse(userService.getUser(participant.getUserId()).isPresent());
     assertTrue(chatRepository.findById(group.getId()).orElseThrow().isActive());
     verify(matrixSynapseService, never()).purgeRoom("!self-help-group:matrix.oriso.org");
+    verify(matrixSynapseService, never())
+        .purgeRoomOrConfirmGone("!self-help-group:matrix.oriso.org");
   }
 
   private User register(boolean temporary) throws Exception {
