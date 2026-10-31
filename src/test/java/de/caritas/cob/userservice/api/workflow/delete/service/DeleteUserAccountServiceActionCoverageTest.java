@@ -101,6 +101,8 @@ class DeleteUserAccountServiceActionCoverageTest {
 
   @Mock private UserHardDeleteClaimService userHardDeleteClaimService;
 
+  @Mock private ConsultantHardDeleteClaimService consultantHardDeleteClaimService;
+
   @Mock private ActionContainer<AskerDeletionWorkflowDTO> askerContainer;
 
   @Mock private ActionContainer<ConsultantDeletionWorkflowDTO> consultantContainer;
@@ -113,6 +115,9 @@ class DeleteUserAccountServiceActionCoverageTest {
     lenient()
         .when(userHardDeleteClaimService.claim(any()))
         .thenAnswer(invocation -> Optional.of(new User()));
+    lenient()
+        .when(consultantHardDeleteClaimService.claim(any()))
+        .thenAnswer(invocation -> Optional.of(new Consultant()));
     lenient()
         .when(deletionLifecycleService.isReadyForHardDelete(any(Consultant.class)))
         .thenReturn(true);
