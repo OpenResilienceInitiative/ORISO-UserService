@@ -55,14 +55,18 @@ public class OrisoEmailRenderer {
    * src="">} renders as a broken-image icon next to the platform name, so the text wordmark has to
    * carry the header alone. Known logos wider than 3:1 hide the adjacent name on phones, so their
    * image carries the platform name as alternative text. Other logos stay decorative beside the
-   * visible name. The dialect has no conditional syntax — this constant is one of the conditionals
-   * the mails need, and it stays in the renderer so the markup remains e-mail-client table markup
-   * reviewed together with the templates.
+   * visible name. The image carries the page colour {@code #f2efef} as its background: while a
+   * client blocks remote images it paints the empty image box, and without a background that box
+   * shows up as the client's own coloured placeholder beside the name (Frank, 2026-10-09). The
+   * dialect has no conditional syntax — this constant is one of the conditionals the mails need,
+   * and it stays in the renderer so the markup remains e-mail-client table markup reviewed together
+   * with the templates.
    */
   private static final String LOGO_CELL =
       "<td class=\"logo-cell{{logoCellClass}}\" valign=\"middle\" style=\"padding-right:12px;\">"
           + "<img src=\"{{logoUrl}}\" {{logoWidthAttribute}}height=\"48\" alt=\"{{logoAlt}}\""
-          + " style=\"display:block;width:{{logoWidthStyle}};height:48px;max-width:none;border:0;\"></td>";
+          + " style=\"display:block;width:{{logoWidthStyle}};height:48px;max-width:none;border:0;"
+          + "background:#f2efef;\"></td>";
 
   /**
    * The call-to-action button plus the visible copy-paste fallback line, for templates whose action
