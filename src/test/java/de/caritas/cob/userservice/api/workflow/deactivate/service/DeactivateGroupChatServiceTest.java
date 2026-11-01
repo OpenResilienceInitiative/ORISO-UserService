@@ -250,6 +250,19 @@ class DeactivateGroupChatServiceTest {
   }
 
   @Test
+  void deactivateStaleGroupChats_Should_skipAChat_When_itWasRescheduledMeanwhile() {
+    var chat = overdueChat(5L);
+    givenActiveChats(chat);
+    var rescheduled = overdueChat(5L);
+    rescheduled.setStartDate(LocalDateTime.now().plusDays(1));
+    when(this.chatRepository.findByIdForUpdate(5L)).thenReturn(Optional.of(rescheduled));
+
+    this.deactivateGroupChatService.deactivateStaleGroupChats();
+
+    verifyNoMoreInteractions(this.actionsRegistry);
+  }
+
+  @Test
   void deactivateStaleGroupChats_Should_skipAChat_When_itWasDeletedMeanwhile() {
     var chat = overdueChat(4L);
     givenActiveChats(chat);

@@ -159,6 +159,9 @@ class DeactivateGroupChatSchedulerMariaDbReplicaIT {
     assertThat(chatRepository.findById(stuck.getId()))
         .hasValueSatisfying(chat -> assertThat(chat.isActive()).isTrue());
     assertThat(chatRepository.findById(other.getId())).isEmpty();
+    // The stuck chat stayed active because its purge failed, not because the run skipped it.
+    verify(matrixSynapseService).purgeRoomOrConfirmGone(STUCK_ROOM_ID);
+    verify(matrixSynapseService).purgeRoomOrConfirmGone(ROOM_ID);
   }
 
   private Chat createExpiredChat(String roomId) {
