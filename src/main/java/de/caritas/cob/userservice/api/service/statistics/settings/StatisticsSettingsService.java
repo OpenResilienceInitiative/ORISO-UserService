@@ -120,6 +120,23 @@ public class StatisticsSettingsService {
     return Integer.parseInt(currentValue(setting));
   }
 
+  /**
+   * How many weeks the "requests per week" chart covers, the current week included. No
+   * authorization: called while building the dashboard. Falls back to the default when the store
+   * cannot be read.
+   */
+  public int chartWeeks() {
+    return Integer.parseInt(currentValue(StatisticsSetting.REQUEST_CHART_WEEKS));
+  }
+
+  /**
+   * How many months "most frequent topics" covers, the current month included. No authorization:
+   * called while building the dashboard. Falls back to the default when the store cannot be read.
+   */
+  public int topicMonths() {
+    return Integer.parseInt(currentValue(StatisticsSetting.TOPIC_MONTHS));
+  }
+
   public boolean isMessageCountTrackingEnabled() {
     return StatisticsSetting.ENABLED.equals(currentValue(StatisticsSetting.MESSAGE_COUNT_TRACKING));
   }

@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.config.auth.UserRole;
@@ -25,6 +27,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Set;
@@ -32,6 +35,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -77,6 +81,8 @@ class AdminDashboardStatisticsServiceTest {
             mockEnvironment,
             statisticsSettingsService);
     lenient().when(statisticsSettingsService.minimumCounsellors(any())).thenReturn(5);
+    lenient().when(statisticsSettingsService.chartWeeks()).thenReturn(5);
+    lenient().when(statisticsSettingsService.topicMonths()).thenReturn(4);
     TenantContext.clear();
   }
 
@@ -533,5 +539,80 @@ class AdminDashboardStatisticsServiceTest {
 
     assertThat(dashboard.targets().get(0).targetType()).isEqualTo(TargetType.TENANT);
     assertThat(dashboard.targets().get(0).suppressed()).isFalse();
+  }
+
+  @Test
+  void buildDashboard_Should_QueryTodaysTimeWindows_ByDefault() {
+    givenTenantAdmin();
+    givenEmptyTenantScopedQueries();
+
+    service.buildDashboard();
+
+    // Saturday 2026-07-11: this week starts Monday 2026-07-06, plus four weeks before
+    verify(adminStatisticsRepository)
+        .countDailyNewSessionsByAgency(TENANT_ID, LocalDateTime.of(2026, 6, 8, 0, 0));
+    assertThat(topicMonthsQueried()).containsExactly("2026-07", "2026-06", "2026-05", "2026-04");
+  }
+
+  @Test
+  void buildDashboard_Should_UseTheConfiguredChartWeeks() {
+    givenTenantAdmin();
+    givenEmptyTenantScopedQueries();
+    when(statisticsSettingsService.chartWeeks()).thenReturn(12);
+
+    service.buildDashboard();
+
+    // this week plus eleven before
+    verify(adminStatisticsRepository)
+        .countDailyNewSessionsByAgency(TENANT_ID, LocalDateTime.of(2026, 4, 20, 0, 0));
+  }
+
+  @Test
+  void buildDashboard_Should_UseTheConfiguredTopicMonths() {
+    givenTenantAdmin();
+    givenEmptyTenantScopedQueries();
+    when(statisticsSettingsService.topicMonths()).thenReturn(12);
+    when(adminStatisticsRepository.countConsultantsByAgency(TENANT_ID))
+        .thenReturn(List.of(groupCount(AGENCY_WITH_TEAM, 5)));
+    when(adminStatisticsRepository.countConsultantsForTenant(TENANT_ID)).thenReturn(5L);
+    when(adminStatisticsRepository.countSessionTopicsByAgency(
+            any(), any(LocalDateTime.class), any(LocalDateTime.class)))
+        .thenAnswer(
+            invocation -> {
+              LocalDateTime from = invocation.getArgument(1);
+              return from.toLocalDate().equals(LocalDate.of(2025, 8, 1))
+                  ? List.of(topicCount(AGENCY_WITH_TEAM, 300L, 2))
+                  : List.of();
+            });
+
+    var dashboard = service.buildDashboard();
+
+    assertThat(topicMonthsQueried())
+        .containsExactly(
+            "2026-07", "2026-06", "2026-05", "2026-04", "2026-03", "2026-02", "2026-01", "2025-12",
+            "2025-11", "2025-10", "2025-09", "2025-08");
+    assertThat(dashboard.targets().get(0).monthlyTopTopics())
+        .extracting(AdminDashboardStatisticsService.MonthlyTopic::month)
+        .containsExactly("2025-08");
+  }
+
+  @Test
+  void buildDashboard_Should_TellTheDashboardWhichWindowsItCovers() {
+    givenTenantAdmin();
+    givenEmptyTenantScopedQueries();
+    when(statisticsSettingsService.chartWeeks()).thenReturn(26);
+    when(statisticsSettingsService.topicMonths()).thenReturn(6);
+
+    var dashboard = service.buildDashboard();
+
+    assertThat(dashboard.chartWeeks()).isEqualTo(26);
+    assertThat(dashboard.topicMonths()).isEqualTo(6);
+  }
+
+  private List<String> topicMonthsQueried() {
+    var from = ArgumentCaptor.forClass(LocalDateTime.class);
+    verify(adminStatisticsRepository, atLeast(0))
+        .countSessionTopicsByAgency(any(), from.capture(), any(LocalDateTime.class));
+    return from.getAllValues().stream().map(value -> YearMonth.from(value).toString()).toList();
   }
 }
