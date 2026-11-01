@@ -258,4 +258,5 @@
   <include file="db/changelog/changeset/20261028_call_share_link_1487/changeSet.xml"/>
   <include file="db/changelog/changeset/20261028_chat_matrix_room_lineage/changeSet.xml"/>
   <include file="db/changelog/changeset/20261029_deletion_audit_log/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261031_invite_avatar_name_1274/changeSet.xml"/>
 </databaseChangeLog>
