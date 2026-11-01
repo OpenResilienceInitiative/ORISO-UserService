@@ -223,7 +223,14 @@ public class SessionMapper {
     sessionUserDto.setAvatarId(session.getUser().getAvatarId());
     sessionUserDto.setUsername(
         new UsernameTranscoder().decodeUsername(session.getUser().getUsername()));
-    sessionUserDto.setDeleted(session.getUser().getDeleteDate() != null);
+    var temporaryAccount =
+        de.caritas.cob.userservice.api.service.temporaryaccount.TemporaryAccountService.toDtoOrNull(
+            session.getUser());
+    sessionUserDto.setTemporaryAccount(temporaryAccount);
+    // A deleted direct-link guest shows as "Gast (gelöscht)" (ADR-029 §5, #1476).
+    sessionUserDto.setDeleted(
+        session.getUser().getDeleteDate() != null
+            || (temporaryAccount != null && Boolean.TRUE.equals(temporaryAccount.getDeleted())));
     if (nonNull(session.getSessionData())) {
       var sessionData = buildSessionDataMapFromSession(session);
       sessionUserDto.setSessionData(sessionData);

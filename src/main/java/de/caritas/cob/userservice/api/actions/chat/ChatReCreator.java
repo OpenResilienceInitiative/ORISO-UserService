@@ -10,11 +10,14 @@ import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
+import de.caritas.cob.userservice.api.service.matrixgroup.ChatMatrixRoomHistory;
+import de.caritas.cob.userservice.api.service.matrixgroup.MatrixGroupParticipationHistory;
 import java.time.Instant;
 import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Re-creates the Matrix room of a repetitive group chat for its next occurrence.
@@ -34,6 +37,8 @@ public class ChatReCreator {
   private static final String ROOM_ALIAS_PREFIX = "group_chat_";
 
   private final ChatService chatService;
+  private final MatrixGroupParticipationHistory participationHistory;
+  private final ChatMatrixRoomHistory roomHistory;
   private final MatrixSynapseService matrixSynapseService;
   private final MatrixChatShutdownService matrixChatShutdownService;
   private final GroupChatMembershipService groupChatMembershipService;
@@ -45,7 +50,9 @@ public class ChatReCreator {
    * @param chat the repetitive {@link Chat} to update
    * @param matrixRoomId the id of the freshly created Matrix room
    */
+  @Transactional
   public void updateAsNextChat(Chat chat, String matrixRoomId) {
+    roomHistory.recordRotation(chat, matrixRoomId);
     var nextStart = chat.nextStart();
     chat.setMatrixRoomId(matrixRoomId);
     chat.setStartDate(nextStart);
@@ -74,7 +81,20 @@ public class ChatReCreator {
               chat.getId()));
     }
 
-    var newRoomId = createMatrixRoom(chat);
+    var prepared = roomHistory.preparedNextRoom(chat);
+    String newRoomId;
+    if (prepared.isPresent()) {
+      newRoomId = prepared.get();
+    } else {
+      var candidate = createMatrixRoom(chat);
+      try {
+        newRoomId = roomHistory.reserveNextRoom(chat, candidate);
+      } catch (RuntimeException failure) {
+        matrixSynapseService.purgeRoom(candidate);
+        throw failure;
+      }
+      if (!candidate.equals(newRoomId)) matrixSynapseService.purgeRoom(candidate);
+    }
     var ownerMatrixUserId = chat.getChatOwner().getMatrixUserId();
     for (var member : humanMembers) {
       if (Objects.equals(ownerMatrixUserId, member.matrixUserId())) {
@@ -88,6 +108,7 @@ public class ChatReCreator {
                 member.matrixUserId(), chat.getId()));
       }
     }
+    participationHistory.snapshotRoom(oldRoomId);
     matrixChatShutdownService.shutdownRoom(chat);
 
     return newRoomId;

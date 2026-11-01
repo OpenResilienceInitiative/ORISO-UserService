@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- Call share links (ORISO-UserService#1487): an invite link of kind CALL belongs to one
+       running call (matrix_call_binding) and carries the "Anklopfen" setting. One link per call;
+       the link goes with its call. Guests knock with via = CALL_LINK, found by link and user. -->
+  <changeSet id="20261028-call-share-link-1487" author="oriso">
+    <addColumn tableName="agency_invite_link">
+      <column name="knock" type="BOOLEAN" defaultValueBoolean="true">
+        <constraints nullable="false"/>
+      </column>
+      <column name="call_binding_id" type="BIGINT"/>
+    </addColumn>
+    <addUniqueConstraint tableName="agency_invite_link" columnNames="call_binding_id"
+      constraintName="uk_ail_call_binding"/>
+    <addForeignKeyConstraint baseTableName="agency_invite_link" baseColumnNames="call_binding_id"
+      constraintName="fk_ail_call_binding" referencedTableName="matrix_call_binding"
+      referencedColumnNames="id" onDelete="CASCADE"/>
+    <createIndex tableName="group_chat_join_request" indexName="idx_gcjr_invite_link_user">
+      <column name="invite_link_id"/>
+      <column name="user_id"/>
+    </createIndex>
+    <rollback>
+      <delete tableName="group_chat_join_request">
+        <where>via = 'CALL_LINK'</where>
+      </delete>
+      <dropIndex tableName="group_chat_join_request" indexName="idx_gcjr_invite_link_user"/>
+      <delete tableName="agency_invite_link">
+        <where>link_kind = 'CALL'</where>
+      </delete>
+      <dropForeignKeyConstraint baseTableName="agency_invite_link"
+        constraintName="fk_ail_call_binding"/>
+      <dropUniqueConstraint tableName="agency_invite_link" constraintName="uk_ail_call_binding"/>
+      <dropColumn tableName="agency_invite_link" columnName="call_binding_id"/>
+      <dropColumn tableName="agency_invite_link" columnName="knock"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

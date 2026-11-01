@@ -1610,7 +1610,7 @@ paths:
       x-internal: true
       tags:
         - account-invite-controller
-      summary: 'Waives the mandatory 2FA setup of an invite [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
+      summary: 'Deprecated, always refused with 400: 2FA is mandatory for new accounts and cannot be waived [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
       operationId: waiveAccountInviteTwoFactor
       parameters:
         - $ref: '#/components/parameters/InviteId'
@@ -1631,7 +1631,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/AccountInvite'
         400:
-          description: BAD REQUEST - reason missing
+          description: BAD REQUEST - always returned, 2FA cannot be waived
         403:
           description: FORBIDDEN - invite outside the caller's scope
       security:
@@ -1864,8 +1864,67 @@ paths:
       security:
         - Bearer: [ ]
 
+  # Served by the hand-written DeletionAuditLogsController; x-internal keeps it out of UseradminApi.
+  /users/deletion-audit-logs:
+    post:
+      x-internal: true
+      tags:
+        - deletion-audit-logs-controller
+      summary: 'Reports a deleted Beratungsstelle or Traeger to the deletion log (best effort). [Authorization: technical, tenant-admin, single-tenant-admin, restricted-agency-admin]'
+      operationId: recordDeletion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeletionAuditEntryRequestDTO'
+      responses:
+        '204':
+          description: NO CONTENT - accepted
+        '400':
+          description: BAD REQUEST - unsupported target type or malformed ids
+        '401':
+          description: UNAUTHORIZED - no/invalid role/authorization
+        '403':
+          description: FORBIDDEN - caller may not report for this tenant
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: []
 components:
   schemas:
+    DeletionAuditEntryRequestDTO:
+      type: object
+      required:
+        - targetType
+        - targetId
+        - outcome
+      properties:
+        targetType:
+          type: string
+          enum:
+            - AGENCY
+            - TENANT
+        targetId:
+          type: string
+          pattern: '[0-9]{1,18}'
+          description: Opaque numeric id of the deleted agency or tenant
+        tenantId:
+          type: integer
+          format: int64
+        outcome:
+          type: string
+          enum:
+            - SCHEDULED
+            - EXECUTED
+            - CANCELLED
+        actorId:
+          type: string
+          pattern: '[A-Za-z0-9-]{1,64}'
+          description: Honoured for the technical account only
+        actorRole:
+          type: string
+          pattern: '[A-Z_]{1,32}'
     IdentityObservationRequestDTO:
       type: object
       additionalProperties: false

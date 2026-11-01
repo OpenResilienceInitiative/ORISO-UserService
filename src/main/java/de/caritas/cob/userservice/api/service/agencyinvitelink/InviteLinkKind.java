@@ -9,5 +9,11 @@ public enum InviteLinkKind {
   COUNSELLOR,
 
   /** Link distributed through an external referral channel or third-party integration. */
-  EXTERNAL_INBOUND
+  EXTERNAL_INBOUND,
+
+  /**
+   * Share link of one running audio or video call (#1487). Guests join that call only; the link
+   * stops working when the call ends.
+   */
+  CALL
 }

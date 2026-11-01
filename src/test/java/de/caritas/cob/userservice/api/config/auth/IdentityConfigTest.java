@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validation;
 import jakarta.validation.Validator;
+import java.io.IOException;
 import java.util.Locale;
 import java.util.Set;
 import org.apache.commons.lang3.RandomStringUtils;
@@ -17,6 +18,11 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.source.ConfigurationPropertySources;
+import org.springframework.boot.env.PropertiesPropertySourceLoader;
+import org.springframework.core.env.MutablePropertySources;
+import org.springframework.core.io.ClassPathResource;
 
 @ExtendWith(MockitoExtension.class)
 class IdentityConfigTest {
@@ -203,5 +209,27 @@ class IdentityConfigTest {
     var violation = violations.iterator().next();
     assertEquals(property, violation.getPropertyPath().toString());
     assertEquals(message, violation.getMessage());
+  }
+
+  @Test
+  void shippedDefaults_Should_allowOtpForStaffRolesButNotForAdviceSeekers() throws IOException {
+    // Every new staff account must set up 2FA. "Allowed" is the precondition: while it is false,
+    // enrolment answers 409 and the requirement is not announced, so staff could never comply.
+    var sources = new MutablePropertySources();
+    new PropertiesPropertySourceLoader()
+        .load("application", new ClassPathResource("application.properties"))
+        .forEach(sources::addLast);
+    var bound =
+        new Binder(ConfigurationPropertySources.from(sources))
+            .bind(
+                "identity",
+                org.springframework.boot.context.properties.bind.Bindable.of(IdentityConfig.class))
+            .get();
+
+    assertTrue(bound.isOtpAllowed(Set.of(UserRole.CONSULTANT.getValue())));
+    assertTrue(bound.isOtpAllowed(Set.of(UserRole.SINGLE_TENANT_ADMIN.getValue())));
+    assertTrue(bound.isOtpAllowed(Set.of(UserRole.TENANT_ADMIN.getValue())));
+    assertTrue(bound.isOtpAllowed(Set.of(UserRole.RESTRICTED_AGENCY_ADMIN.getValue())));
+    assertFalse(bound.isOtpAllowed(Set.of(UserRole.USER.getValue())));
   }
 }

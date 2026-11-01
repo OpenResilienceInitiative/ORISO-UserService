@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.workflow.delete.service;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
@@ -56,6 +57,37 @@ public class DeletionLifecycleService {
     consultant.setPublicSlugReviewedAt(null);
     consultant.setDeletionLifecycleState(DeletionLifecycleState.PENDING_DELETION);
     transitionToReadOnlySafeguard(consultant, actorId);
+  }
+
+  /**
+   * Cancels a consultant deletion by clearing the complete lifecycle state. Only possible while the
+   * deletion is still in its soft stage (pending or read-only safeguard, paused or not): once a
+   * reactivation or hard delete has started, the row is no longer ours to put back.
+   */
+  public void cancelConsultantDeletion(Consultant consultant) {
+    if (consultant == null) {
+      return;
+    }
+    if (consultant.getDeleteDate() == null) {
+      throw new ConflictException("Consultant is not marked for deletion");
+    }
+    DeletionLifecycleState state = consultant.getDeletionLifecycleState();
+    // A delete date with no state (or ACTIVE) is a record from before the lifecycle existed; the
+    // scheduler normalises it to PENDING_DELETION, so it is still in its soft stage.
+    if (state != null
+        && state != DeletionLifecycleState.ACTIVE
+        && state != DeletionLifecycleState.PENDING_DELETION
+        && state != DeletionLifecycleState.READ_ONLY_SAFEGUARD) {
+      throw new ConflictException(
+          "Consultant deletion is past the safeguard window and cannot be cancelled");
+    }
+    consultant.setDeleteDate(null);
+    consultant.setDeletionLifecycleState(DeletionLifecycleState.ACTIVE);
+    consultant.setDeletionReadOnlyUntil(null);
+    consultant.setDeletionPausedUntil(null);
+    consultant.setDeletionPauseReason(null);
+    consultant.setDeletionPausedBy(null);
+    consultant.setDeletionPauseCreatedAt(null);
   }
 
   /** Cancels an asker deletion by clearing the complete lifecycle state. */

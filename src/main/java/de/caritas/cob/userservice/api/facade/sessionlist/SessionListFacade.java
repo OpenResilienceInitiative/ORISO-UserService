@@ -62,6 +62,7 @@ public class SessionListFacade {
         userSessionListService.retrieveSessionsForAuthenticatedUser(userId);
     userSessions.sort(
         comparing(UserSessionResponseDTO::getLatestMessage, nullsLast(reverseOrder())));
+    TopicDuplicateMarker.mark(userSessions);
 
     return new UserSessionListResponseDTO().sessions(userSessions);
   }

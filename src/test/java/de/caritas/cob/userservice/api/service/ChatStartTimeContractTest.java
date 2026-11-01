@@ -61,6 +61,11 @@ class ChatStartTimeContractTest {
 
   @Mock private de.caritas.cob.userservice.api.actions.chat.MatrixChatShutdownService shutdown;
   @Mock private ChatRepository chatRepository;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.matrixgroup.GroupMatrixLifecycleCleanup
+      participationHistory;
+
   @Mock private ChatAgencyRepository chatAgencyRepository;
   @Mock private UserChatRepository chatUserRepository;
   @Mock private ConsultantService consultantService;

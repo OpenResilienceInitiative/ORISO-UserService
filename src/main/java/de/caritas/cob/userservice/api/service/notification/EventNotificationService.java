@@ -88,6 +88,64 @@ public class EventNotificationService {
         session.getTenantId());
   }
 
+  /** FE#1876: bell type for the existing counsellor when a same-topic conversation starts. */
+  public static final String TOPIC_DUPLICATE_STARTED_EVENT = "topic_duplicate.started";
+
+  /**
+   * FE#1876: bell entry for the existing conversation's counsellor, at most once per (existing,
+   * new) pair. The params carry ids only; the new centre is not named.
+   *
+   * @return true only when this call persisted the entry; false when it already existed or there is
+   *     no counsellor to notify
+   */
+  public boolean createTopicDuplicateStartedNotification(Session existing, Long newSessionId) {
+    if (existing == null
+        || existing.getId() == null
+        || newSessionId == null
+        || existing.getConsultant() == null
+        || existing.getConsultant().getId() == null
+        || existing.getConsultant().getId().isBlank()) {
+      return false;
+    }
+    String recipientId = existing.getConsultant().getId();
+    String key = topicDuplicateStartedKey(existing, newSessionId);
+    Map<String, Object> params = baseParams(existing);
+    params.put("topicId", existing.getMainTopicId());
+    return persistOnce(
+        key,
+        recipientId,
+        TOPIC_DUPLICATE_STARTED_EVENT,
+        CATEGORY_SYSTEM,
+        "Another counselling on the same topic",
+        String.format(
+            "Another counselling on the topic of chat #%s has started.", existing.getId()),
+        serializeParams(params),
+        buildSessionActionPath(existing),
+        existing.getId(),
+        existing.getTenantId());
+  }
+
+  /**
+   * FE#1876: releases the once-per-pair marker when the room notice was not delivered, so a later
+   * acceptance run can deliver it. Commits on its own, like the write.
+   */
+  public void removeTopicDuplicateStartedNotification(Session existing, Long newSessionId) {
+    if (existing == null
+        || existing.getId() == null
+        || newSessionId == null
+        || existing.getConsultant() == null
+        || existing.getConsultant().getId() == null
+        || existing.getConsultant().getId().isBlank()) {
+      return;
+    }
+    deduplicationWriter.deleteInNewTransaction(
+        existing.getConsultant().getId(), topicDuplicateStartedKey(existing, newSessionId));
+  }
+
+  private static String topicDuplicateStartedKey(Session existing, Long newSessionId) {
+    return TOPIC_DUPLICATE_STARTED_EVENT + ":" + existing.getId() + ":" + newSessionId;
+  }
+
   @Transactional
   public void createSupervisorAddedNotification(
       Session session, String recipientUserId, String supervisorName) {
@@ -1038,13 +1096,38 @@ public class EventNotificationService {
       String actionPath,
       Long sourceSessionId,
       Long tenantId) {
+    persistOnce(
+        deduplicationKey,
+        recipientUserId,
+        eventType,
+        category,
+        title,
+        text,
+        params,
+        actionPath,
+        sourceSessionId,
+        tenantId);
+  }
+
+  /** Same as {@link #createEventOnce}; true only when this call persisted the event. */
+  private boolean persistOnce(
+      String deduplicationKey,
+      String recipientUserId,
+      String eventType,
+      String category,
+      String title,
+      String text,
+      String params,
+      String actionPath,
+      Long sourceSessionId,
+      Long tenantId) {
     if (recipientUserId == null
         || recipientUserId.isBlank()
         || deduplicationKey == null
         || deduplicationKey.isBlank()
         || eventNotificationRepository.existsByRecipientUserIdAndDeduplicationKey(
             recipientUserId, deduplicationKey)) {
-      return;
+      return false;
     }
 
     try {
@@ -1062,10 +1145,12 @@ public class EventNotificationService {
               deduplicationKey));
       // Only nudge on a genuine first persist — a duplicate-key race (below) already delivered.
       signalFeedUpdatedSafely(recipientUserId);
+      return true;
     } catch (DataIntegrityViolationException duplicate) {
       // Another scheduler replica won the unique-key race. The desired event already exists.
       log.debug(
           "Notification {} already persisted for recipient {}", deduplicationKey, recipientUserId);
+      return false;
     }
   }
 

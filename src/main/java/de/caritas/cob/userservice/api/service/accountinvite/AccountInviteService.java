@@ -575,7 +575,11 @@ public class AccountInviteService {
                       .expiresAt(resolveExpiry(now, DEFAULT_EXPIRY_DAYS))
                       .status(AccountInviteStatus.EMAIL_SENT)
                       .emailVerificationStatus(oldInvite.getEmailVerificationStatus())
-                      .twoFactorStatus(oldInvite.getTwoFactorStatus())
+                      .twoFactorStatus(
+                          // A legacy waiver never carries over: new staff accounts owe 2FA.
+                          oldInvite.getTwoFactorStatus() == TwoFactorGateStatus.WAIVED
+                              ? defaultTwoFactorStatus(oldInvite.getTargetRole())
+                              : oldInvite.getTwoFactorStatus())
                       .createdByUserId(authenticatedUser.getUserId())
                       .createdByUsername(authenticatedUser.getUsername())
                       .createDate(now)
@@ -911,21 +915,15 @@ public class AccountInviteService {
     return waive(findAuthorizedInviteForUpdate(invite.getId()), command);
   }
 
+  /**
+   * Always refuses. Every new staff account (counsellor, agency admin, Träger admin) must set up
+   * two-factor authentication, so an administrator can no longer waive the gate with a free-text
+   * reason. The endpoint, DTO fields and the {@code WAIVED} status stay so that existing rows
+   * remain readable and clients get a clear refusal instead of a 404; nothing is written.
+   */
   private AccountInvite waive(AccountInvite invite, WaiveTwoFactorCommand command) {
-    if (invite.getPurpose() != AccountInvitePurpose.INVITE) {
-      throw new BadRequestException("Existing-account setup requires the normal two-factor gate");
-    }
-    if (command == null || isBlank(command.reason())) {
-      throw new BadRequestException("Waiver reason is required");
-    }
-    LocalDateTime now = LocalDateTime.now();
-    invite.setTwoFactorStatus(TwoFactorGateStatus.WAIVED);
-    invite.setTwoFactorWaivedBy(authenticatedUser.getUserId());
-    invite.setTwoFactorWaivedAt(now);
-    invite.setTwoFactorWaiverReason(command.reason());
-    invite.setUpdateDate(now);
-    accountInviteRepository.save(invite);
-    return invite;
+    throw new BadRequestException(
+        "Two-factor authentication is mandatory for new accounts and cannot be waived");
   }
 
   /** Marks pending invite gates as satisfied once the user has an OTP credential. */

@@ -1290,6 +1290,66 @@ class EventNotificationServiceTest {
   }
 
   @Test
+  void topicDuplicateStarted_isWrittenOncePerPairForTheExistingCounsellor() {
+    var counsellor = new Consultant();
+    counsellor.setId("old-counsellor");
+    var existing = new Session();
+    existing.setId(5L);
+    existing.setMainTopicId(3L);
+    existing.setConsultant(counsellor);
+    existing.setMatrixRoomId("!old:matrix");
+    existing.setPostcode("79098");
+    when(eventNotificationRepository.existsByRecipientUserIdAndDeduplicationKey(
+            "old-counsellor", "topic_duplicate.started:5:9"))
+        .thenReturn(false, true);
+
+    assertThat(eventNotificationService.createTopicDuplicateStartedNotification(existing, 9L))
+        .isTrue();
+    assertThat(eventNotificationService.createTopicDuplicateStartedNotification(existing, 9L))
+        .isFalse();
+
+    verify(deduplicationWriter).persistInNewTransaction(eventCaptor.capture());
+    var event = eventCaptor.getValue();
+    assertThat(event.getRecipientUserId()).isEqualTo("old-counsellor");
+    assertThat(event.getEventType()).isEqualTo("topic_duplicate.started");
+    assertThat(event.getParams()).contains("\"topicId\":3").doesNotContain("79098");
+  }
+
+  @Test
+  void topicDuplicateStarted_removalDeletesExactlyThePairMarker() {
+    var counsellor = new Consultant();
+    counsellor.setId("old-counsellor");
+    var existing = new Session();
+    existing.setId(5L);
+    existing.setConsultant(counsellor);
+
+    eventNotificationService.removeTopicDuplicateStartedNotification(existing, 9L);
+
+    verify(deduplicationWriter)
+        .deleteInNewTransaction("old-counsellor", "topic_duplicate.started:5:9");
+  }
+
+  @Test
+  void topicDuplicateStarted_removalWithoutCounsellorDeletesNothing() {
+    var existing = new Session();
+    existing.setId(5L);
+
+    eventNotificationService.removeTopicDuplicateStartedNotification(existing, 9L);
+
+    verify(deduplicationWriter, never()).deleteInNewTransaction(any(), any());
+  }
+
+  @Test
+  void topicDuplicateStarted_withoutCounsellorWritesNothing() {
+    var existing = new Session();
+    existing.setId(5L);
+
+    assertThat(eventNotificationService.createTopicDuplicateStartedNotification(existing, 9L))
+        .isFalse();
+    verify(deduplicationWriter, never()).persistInNewTransaction(any());
+  }
+
+  @Test
   void createEventOnce_persistsTheDeduplicationKeyOnlyOnce() {
     when(eventNotificationRepository.existsByRecipientUserIdAndDeduplicationKey(
             "consultant-1", "group-chat:reminder:42:0"))

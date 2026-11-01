@@ -76,6 +76,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.*;
+import de.caritas.cob.userservice.api.service.AgencyAdminContactService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.agency.EffectiveAgencySettingsLookup;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
@@ -292,6 +293,7 @@ class UserControllerIT {
   @MockitoBean private PasswordResetService passwordResetService;
   @MockitoBean private AccountInviteService accountInviteService;
   @MockitoBean private TenantService tenantService;
+  @MockitoBean private AgencyAdminContactService agencyAdminContactService;
   @MockitoBean private EffectiveAgencySettingsLookup effectiveAgencySettingsLookup;
   @MockitoBean private ChatOccurrenceCommandService chatOccurrenceCommandService;
   @MockitoBean private ChatOccurrenceQueryService chatOccurrenceQueryService;
@@ -372,6 +374,11 @@ class UserControllerIT {
   @MockitoBean private SessionArchiveService sessionArchiveService;
 
   @MockitoBean
+  private de.caritas.cob.userservice.api.service.furthercounselling
+          .FurtherCounsellingRecommendationService
+      furtherCounsellingRecommendationService;
+
+  @MockitoBean
   @SuppressWarnings("unused")
   private IdentityPolicy identityPolicy;
 
@@ -434,6 +441,10 @@ class UserControllerIT {
   private de.caritas.cob.userservice.api.adapters.web.controller
           .IdentitySuggestionControllerDelegate
       identitySuggestionControllerDelegate;
+
+  @MockitoBean
+  @SuppressWarnings("unused")
+  private DirectLinkControllerDelegate directLinkControllerDelegate;
 
   @MockitoBean
   @SuppressWarnings("unused")

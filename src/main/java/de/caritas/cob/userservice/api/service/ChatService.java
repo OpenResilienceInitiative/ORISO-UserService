@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.facade.ChatConverter;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Chat.ChatInterval;
@@ -21,7 +22,6 @@ import de.caritas.cob.userservice.api.model.Chat.ChatModality;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
-import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.GroupAppointmentMailOutbox.RecipientRole;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
 import de.caritas.cob.userservice.api.model.User;
@@ -65,6 +65,9 @@ import org.springframework.transaction.annotation.Transactional;
 public class ChatService {
 
   private final @NonNull ChatRepository chatRepository;
+  private final @NonNull de.caritas.cob.userservice.api.service.matrixgroup
+          .GroupMatrixLifecycleCleanup
+      participationHistory;
   private final @NonNull ChatAgencyRepository chatAgencyRepository;
   private final @NonNull UserChatRepository userChatRepository;
   private final @NonNull ConsultantService consultantService;
@@ -220,7 +223,7 @@ public class ChatService {
    */
   public Chat saveChat(Chat chat) {
     if (chat.getConversationType() == null) {
-      chat.setConversationType(ConversationType.INTERNAL_GROUP);
+      chat.setConversationType(ChatConverter.conversationTypeOf(chat));
     }
     // Every chat mutation goes through here, so this is the one place to stamp it.
     chat.setUpdateDate(nowInUtc());
@@ -536,6 +539,7 @@ public class ChatService {
    */
   @Transactional
   public void deleteChatRecords(Chat chat) {
+    participationHistory.deleteSeries(chat);
     // Needs the participations: they name the case of a members-only chat.
     membersOnlyRevocation.retireCaseOf(chat);
     groupChatParticipantRepository.deleteBySeriesId(chat.getId());

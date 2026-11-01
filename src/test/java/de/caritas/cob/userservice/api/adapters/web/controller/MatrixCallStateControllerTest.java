@@ -30,6 +30,8 @@ class MatrixCallStateControllerTest {
   private final UserRepository users = mock(UserRepository.class);
   private final ConsultantRepository consultants = mock(ConsultantRepository.class);
   private final MatrixSynapseService matrix = mock(MatrixSynapseService.class);
+  private final de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService callGuests =
+      mock(de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService.class);
   private final AuthenticatedUser actor = new AuthenticatedUser();
   private MockMvc mvc;
 
@@ -81,7 +83,9 @@ class MatrixCallStateControllerTest {
                         new MatrixCallConversationResolver(sessions, chats),
                         users,
                         consultants,
-                        matrix),
+                        matrix,
+                        callGuests),
+                    callGuests,
                     actor))
             .build();
   }

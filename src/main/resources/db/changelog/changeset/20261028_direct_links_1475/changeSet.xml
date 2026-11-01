@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- Counsellor direct links (ORISO-UserService#1475, ADR-029): a COUNSELLOR invite link gets a
+       display name and the temporary-account flag. On/off reuses the status column
+       (ACTIVE / DISABLED); the medium reuses chat_type (CHAT / AUDIO / VIDEO). -->
+  <changeSet id="20261028-direct-links-1475" author="oriso">
+    <addColumn tableName="agency_invite_link">
+      <column name="name" type="VARCHAR(100)"/>
+      <column name="temporary_account" type="BOOLEAN" defaultValueBoolean="false">
+        <constraints nullable="false"/>
+      </column>
+      <column name="update_date" type="DATETIME"/>
+    </addColumn>
+    <createIndex tableName="agency_invite_link" indexName="idx_ail_consultant_kind">
+      <column name="consultant_id"/>
+      <column name="link_kind"/>
+    </createIndex>
+    <rollback>
+      <dropIndex tableName="agency_invite_link" indexName="idx_ail_consultant_kind"/>
+      <dropColumn tableName="agency_invite_link" columnName="update_date"/>
+      <dropColumn tableName="agency_invite_link" columnName="temporary_account"/>
+      <dropColumn tableName="agency_invite_link" columnName="name"/>
+    </rollback>
+  </changeSet>
+  <!-- Call knocks for direct links reuse the knock model of ORISO-Frontend#1499 (ADR-029 §2):
+       a person knocks on the call in their own 1:1 session, the counsellor admits. Series and
+       consultant become optional; a DIRECT_LINK row carries session and user instead. -->
+  <changeSet id="20261028-direct-link-call-knock-1475" author="oriso">
+    <dropNotNullConstraint tableName="group_chat_join_request" columnName="series_id"
+      columnDataType="BIGINT UNSIGNED"/>
+    <dropNotNullConstraint tableName="group_chat_join_request" columnName="consultant_id"
+      columnDataType="VARCHAR(36)"/>
+    <addColumn tableName="group_chat_join_request">
+      <column name="session_id" type="BIGINT UNSIGNED"/>
+      <column name="user_id" type="VARCHAR(36)"/>
+      <column name="invite_link_id" type="BIGINT"/>
+      <column name="medium" type="VARCHAR(16)"/>
+    </addColumn>
+    <createIndex tableName="group_chat_join_request" indexName="idx_gcjr_session_status">
+      <column name="session_id"/>
+      <column name="status"/>
+    </createIndex>
+    <!-- A knock holds a session and a user id: it goes when its conversation goes (also on
+         account deletion, which deletes the asker's sessions). -->
+    <addForeignKeyConstraint baseTableName="group_chat_join_request" baseColumnNames="session_id"
+      referencedTableName="session" referencedColumnNames="id" constraintName="fk_gcjr_session"
+      onDelete="CASCADE"/>
+    <rollback>
+      <delete tableName="group_chat_join_request">
+        <where>via = 'DIRECT_LINK'</where>
+      </delete>
+      <dropForeignKeyConstraint baseTableName="group_chat_join_request"
+        constraintName="fk_gcjr_session"/>
+      <dropIndex tableName="group_chat_join_request" indexName="idx_gcjr_session_status"/>
+      <dropColumn tableName="group_chat_join_request" columnName="medium"/>
+      <dropColumn tableName="group_chat_join_request" columnName="invite_link_id"/>
+      <dropColumn tableName="group_chat_join_request" columnName="user_id"/>
+      <dropColumn tableName="group_chat_join_request" columnName="session_id"/>
+      <addNotNullConstraint tableName="group_chat_join_request" columnName="consultant_id"
+        columnDataType="VARCHAR(36)"/>
+      <addNotNullConstraint tableName="group_chat_join_request" columnName="series_id"
+        columnDataType="BIGINT UNSIGNED"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>
