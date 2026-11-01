@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.helper.Helper;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.service.ConsultantService;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -29,6 +30,7 @@ public class ConsultantDataFacade {
   private final @NonNull ConsultantService consultantService;
   private final @NonNull AccountManaging accountManager;
   private final @NonNull UserDtoMapper userDtoMapper;
+  private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
 
   /**
    * Updates a {@link Consultant} with the absence data from a (@Link AbsenceDTO).
@@ -57,8 +59,12 @@ public class ConsultantDataFacade {
               var consultant = session.getConsultant();
               if (nonNull(consultant) && nonNull(consultant.getUsername())) {
                 try {
-                  accountManager
-                      .findConsultantByUsername(consultant.getUsername())
+                  // The owner of a members-only chat may work for another Traeger than the reader.
+                  var chatId = session.getChat() == null ? null : session.getChat().getId();
+                  membersOnlyChatAccess
+                      .readingAcrossTraegerOfChat(
+                          chatId,
+                          () -> accountManager.findConsultantByUsername(consultant.getUsername()))
                       .ifPresent(
                           consultantMap ->
                               consultant.setDisplayName(

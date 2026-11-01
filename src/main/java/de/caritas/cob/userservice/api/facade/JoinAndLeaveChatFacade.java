@@ -57,10 +57,8 @@ public class JoinAndLeaveChatFacade {
     requireMatrixRoom(chat);
     String matrixUserId = retrieveMatrixUserId(authenticatedUser);
     if (!isBlank(matrixUserId)
-        && chat.getConversationType() == ConversationType.SELF_HELP
-        && chat.getCurrentOccurrenceIndex() == 0) {
-      // Assignment does not prove participation. The active first room plus a
-      // current JOIN membership establishes a begun consultation for this caller.
+        && ChatConverter.conversationTypeOf(chat) == ConversationType.SELF_HELP) {
+      // A current JOIN establishes continuation for this caller in every occurrence.
       var joinedMembers =
           matrixSynapseService
               .getRoomMembers(groupChatMembershipService.resolveMatrixRoomId(chat))
@@ -77,9 +75,18 @@ public class JoinAndLeaveChatFacade {
       if (joinedMembers.contains(matrixUserId)) {
         return;
       }
-      groupCounsellingDpaPolicy.requireNewEnrolment(chat);
+      groupCounsellingDpaPolicy.requireAuthorizedEnrolment(chat, matrixUserId);
     }
-    if (isBlank(matrixUserId) || !groupChatMembershipService.addMemberToRoom(chat, matrixUserId)) {
+    if (isBlank(matrixUserId)) {
+      throw new InternalServerErrorException(
+          String.format("User with id %s has no Matrix user ID.", authenticatedUser.getUserId()));
+    }
+    if (!groupChatMembershipService.addMemberToRoom(chat, matrixUserId)) {
+      // Matrix refuses to re-invite a banned member; say so instead of failing with 500.
+      if (groupChatMembershipService.isBannedFromRoom(chat, matrixUserId).orElse(false)) {
+        throw new CustomValidationHttpStatusException(
+            HttpStatusExceptionReason.USER_BANNED_FROM_CHAT, HttpStatus.FORBIDDEN);
+      }
       throw new InternalServerErrorException(
           String.format(
               "User with id %s could not join the Matrix group chat.",
@@ -148,7 +155,11 @@ public class JoinAndLeaveChatFacade {
       }
     } else {
       chatService.deleteChat(chat);
-      matrixChatShutdownService.shutdownRoom(chat);
+      if (!chat.isMembersOnly()) {
+        // A members-only room was purged strictly by deleteChat, in its transaction. A second purge
+        // here could fail after everything is gone and report an error for a stop that worked.
+        matrixChatShutdownService.shutdownRoom(chat);
+      }
     }
   }
 

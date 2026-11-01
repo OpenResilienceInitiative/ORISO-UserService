@@ -142,6 +142,10 @@ abstract class GroupCounsellingDpaHttpFixture {
                         "{\"dpaPublished\":true,\"dpaSigned\":true}", MediaType.APPLICATION_JSON)
                     .createResponse(request);
               }
+              if (path.startsWith("/_synapse/admin/v1/users/")
+                  && path.endsWith("/login")
+                  && !matrixImpersonationAvailable(path))
+                return withStatus(HttpStatus.SERVICE_UNAVAILABLE).createResponse(request);
               if (path.equals("/_matrix/client/r0/login")
                   || (path.startsWith("/_synapse/admin/v1/users/") && path.endsWith("/login"))) {
                 return withSuccess(
@@ -150,6 +154,7 @@ abstract class GroupCounsellingDpaHttpFixture {
               }
               if (path.equals("/_matrix/client/r0/createRoom")) {
                 matrixWrites.incrementAndGet();
+                onGroupRoomCreated();
                 return withSuccess(
                         "{\"room_id\":\"!synthetic-created:synthetic.oriso.test\"}",
                         MediaType.APPLICATION_JSON)
@@ -200,6 +205,8 @@ abstract class GroupCounsellingDpaHttpFixture {
         chats.save(
             Chat.builder()
                 .topic("Synthetic AVV group")
+                .createDate(java.time.LocalDateTime.now())
+                .updateDate(java.time.LocalDateTime.now())
                 .consultingTypeId(1)
                 .chatOwner(consultant)
                 .initialStartDate(start)
@@ -254,9 +261,22 @@ abstract class GroupCounsellingDpaHttpFixture {
     return HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
   }
 
+  protected void onGroupRoomCreated() {}
+
+  protected boolean matrixImpersonationAvailable(String path) {
+    return true;
+  }
+
   /** Extension point for a route's outgoing Matrix/HTTP responses, never an internal mock. */
   protected org.springframework.http.client.ClientHttpResponse additionalExternalResponse(
       org.springframework.http.client.ClientHttpRequest request) throws java.io.IOException {
-    throw new AssertionError("Unexpected external HTTP path: " + request.getURI().getPath());
+    var path = request.getURI().getPath();
+    if (path.matches("/tenantadmin/\\d+/permission-policies")) {
+      // A TenantService that does not know the internal-group-chat recipient scope (#1418).
+      return org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
+              "{\"policies\":{}}", org.springframework.http.MediaType.APPLICATION_JSON)
+          .createResponse(request);
+    }
+    throw new AssertionError("Unexpected external HTTP path: " + path);
   }
 }

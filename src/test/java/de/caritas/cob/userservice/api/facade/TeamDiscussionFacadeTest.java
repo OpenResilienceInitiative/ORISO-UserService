@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -42,13 +43,15 @@ import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClien
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionCreationWriter;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate;
-import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionParticipantWriter;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionRoomCleanupService;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -73,13 +76,15 @@ import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class TeamDiscussionFacadeTest {
-
   private static final Long SESSION_ID = 42L;
   private static final Long AGENCY_ID = 7L;
   private static final String CONSULTANT_ID = "consultant-1";
   private static final String ROOM_ID = "!discussion:oriso";
 
   private TeamDiscussionFacade facade;
+  private final de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnly =
+      org.mockito.Mockito.mock(
+          de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess.class);
 
   @Mock private SessionRepository sessionRepository;
   @Mock private ConsultantRepository consultantRepository;
@@ -97,6 +102,14 @@ class TeamDiscussionFacadeTest {
 
   @BeforeEach
   void setUp() throws Exception {
+    var created = new java.util.HashMap<Long, TeamDiscussion>();
+    org.mockito.Mockito.lenient()
+        .when(teamDiscussionRepository.findById(anyLong()))
+        .thenAnswer(
+            call ->
+                teamDiscussionRepository
+                    .findBySessionId(SESSION_ID)
+                    .or(() -> Optional.ofNullable(created.get(call.getArgument(0)))));
     facade =
         new TeamDiscussionFacade(
             sessionRepository,
@@ -106,9 +119,16 @@ class TeamDiscussionFacadeTest {
             matrixSynapseService,
             matrixCredentialClient,
             featureGate,
-            new TeamDiscussionCreationWriter(teamDiscussionRepository),
-            new TeamDiscussionParticipantWriter(participantRepository),
-            roomCleanupService);
+            new TeamDiscussionCreationWriter(teamDiscussionRepository, sessionRepository),
+            new de.caritas.cob.userservice.api.service.teamdiscussion
+                .TeamDiscussionAccessTransactions(
+                sessionRepository,
+                consultantRepository,
+                consultantAgencyRepository,
+                teamDiscussionRepository,
+                participantRepository),
+            roomCleanupService,
+            membersOnly);
     session = new Session();
     session.setId(SESSION_ID);
     session.setAgencyId(AGENCY_ID);
@@ -122,6 +142,9 @@ class TeamDiscussionFacadeTest {
     consultant.setMatrixUserId("@consultant1:oriso");
 
     when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
+    org.mockito.Mockito.lenient()
+        .when(sessionRepository.findByIdForUpdate(SESSION_ID))
+        .thenAnswer(invocation -> sessionRepository.findById(SESSION_ID));
     when(consultantRepository.findById(CONSULTANT_ID)).thenReturn(Optional.of(consultant));
     when(consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
             CONSULTANT_ID, AGENCY_ID))
@@ -132,6 +155,7 @@ class TeamDiscussionFacadeTest {
             invocation -> {
               TeamDiscussion d = invocation.getArgument(0);
               d.setId(99L);
+              created.put(99L, d);
               return d;
             });
 
@@ -150,6 +174,21 @@ class TeamDiscussionFacadeTest {
     body.setRoomId(ROOM_ID);
     when(matrixSynapseService.createRoom(anyString(), anyString(), eq("agency-token")))
         .thenReturn(ResponseEntity.ok(body));
+  }
+
+  @Test
+  void aMembersOnlyChatsSessionHasNoTeamDiscussion() {
+    org.mockito.Mockito.doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException("no"))
+        .when(membersOnly)
+        .requireOrdinary(session, "The session of a members-only chat has no team discussion.");
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+        () -> facade.getOrCreateDiscussion(SESSION_ID, CONSULTANT_ID));
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+        () -> facade.getDiscussion(SESSION_ID, CONSULTANT_ID));
   }
 
   @Test
@@ -236,6 +275,13 @@ class TeamDiscussionFacadeTest {
   @EnableWebMvc
   @Import({SecurityConfig.class, ApiResponseEntityExceptionHandler.class})
   static class TeamHttpSecurityFixture {
+    @org.springframework.context.annotation.Bean
+    de.caritas.cob.userservice.api.admin.service.admin.ManagedAccountStatusService
+        accountOperationalStatus() {
+      return org.mockito.Mockito.mock(
+          de.caritas.cob.userservice.api.admin.service.admin.ManagedAccountStatusService.class);
+    }
+
     @Bean
     de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
         accountInactivityService() {
@@ -348,10 +394,9 @@ class TeamDiscussionFacadeTest {
                     .matrixRoomId(ROOM_ID)
                     .status(TeamDiscussion.Status.OPEN)
                     .build()));
+    // The session lock makes the other tab's committed participant visible before admission.
     when(participantRepository.existsByTeamDiscussionIdAndConsultantId(99L, CONSULTANT_ID))
-        .thenReturn(false, true);
-    when(participantRepository.saveAndFlush(any()))
-        .thenThrow(new DataIntegrityViolationException("Concurrent participant insert"));
+        .thenReturn(true);
 
     assertThat(controller.getOrCreate(SESSION_ID).getBody().matrixRoomId()).isEqualTo(ROOM_ID);
     assertThat(controller.getOrCreate(SESSION_ID).getBody().matrixRoomId()).isEqualTo(ROOM_ID);
@@ -468,6 +513,48 @@ class TeamDiscussionFacadeTest {
 
     assertThat(view.matrixRoomId()).isEqualTo(ROOM_ID);
     verify(matrixSynapseService, never()).createRoom(anyString(), anyString(), anyString());
+  }
+
+  @Test
+  void openingDiscussion_shouldNotInviteACounsellorWhoIsAlreadyInTheRoom() throws Exception {
+    when(teamDiscussionRepository.findBySessionId(SESSION_ID))
+        .thenReturn(
+            Optional.of(
+                TeamDiscussion.builder()
+                    .id(99L)
+                    .sessionId(SESSION_ID)
+                    .matrixRoomId(ROOM_ID)
+                    .status(TeamDiscussion.Status.OPEN)
+                    .build()));
+    when(matrixSynapseService.getRoomMembers(ROOM_ID))
+        .thenReturn(Optional.of(List.of("@agency7:oriso", "@consultant1:oriso")));
+
+    var view = facade.getOrCreateDiscussion(SESSION_ID, CONSULTANT_ID);
+
+    assertThat(view.matrixRoomId()).isEqualTo(ROOM_ID);
+    verify(matrixSynapseService, never()).inviteUserToRoom(anyString(), anyString(), anyString());
+    verify(matrixSynapseService, never()).loginAsUserAccessToken(anyString());
+    verify(matrixSynapseService, never()).joinRoom(anyString(), anyString());
+    verify(participantRepository).saveAndFlush(any());
+  }
+
+  @Test
+  void openingDiscussion_shouldStillInviteWhenMembershipCannotBeRead() throws Exception {
+    when(teamDiscussionRepository.findBySessionId(SESSION_ID))
+        .thenReturn(
+            Optional.of(
+                TeamDiscussion.builder()
+                    .id(99L)
+                    .sessionId(SESSION_ID)
+                    .matrixRoomId(ROOM_ID)
+                    .status(TeamDiscussion.Status.OPEN)
+                    .build()));
+    when(matrixSynapseService.getRoomMembers(ROOM_ID)).thenReturn(Optional.empty());
+
+    facade.getOrCreateDiscussion(SESSION_ID, CONSULTANT_ID);
+
+    verify(matrixSynapseService).inviteUserToRoom(ROOM_ID, "@consultant1:oriso", "agency-token");
+    verify(matrixSynapseService).joinRoom(ROOM_ID, "consultant-token");
   }
 
   @Test
@@ -637,6 +724,46 @@ class TeamDiscussionFacadeTest {
     facade.archiveDiscussionIfPresent(session);
 
     assertThat(discussion.isReadOnlyApplied()).isTrue();
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = TeamDiscussion.Status.class,
+      names = {"OPEN", "ARCHIVED"})
+  void rejectedPendingDiscussionCannotBeCertifiedByTheLegacyDefaultOnlyWrite(
+      TeamDiscussion.Status initialStatus) {
+    session.setStatus(SessionStatus.REJECTED);
+    var previousArchiveDate =
+        initialStatus == TeamDiscussion.Status.ARCHIVED
+            ? LocalDateTime.of(2026, 10, 20, 9, 0)
+            : null;
+    var discussion =
+        TeamDiscussion.builder()
+            .id(99L)
+            .sessionId(SESSION_ID)
+            .matrixRoomId(ROOM_ID)
+            .status(initialStatus)
+            .archiveDate(previousArchiveDate)
+            .readOnlyApplied(false)
+            .build();
+    when(teamDiscussionRepository.findBySessionId(SESSION_ID)).thenReturn(Optional.of(discussion));
+    when(matrixSynapseService.setRoomEventsDefaultPowerLevel(anyString(), anyInt(), anyString()))
+        .thenReturn(true);
+    when(participantRepository.existsByTeamDiscussionIdAndConsultantId(99L, CONSULTANT_ID))
+        .thenReturn(true);
+    assertThat(facade.getDiscussion(SESSION_ID, CONSULTANT_ID)).isPresent();
+    assertThat(discussion.getStatus()).isEqualTo(TeamDiscussion.Status.ARCHIVED);
+    if (initialStatus == TeamDiscussion.Status.OPEN) {
+      assertThat(discussion.getArchiveDate()).isNotNull();
+      verify(teamDiscussionRepository).save(discussion);
+    } else {
+      assertThat(discussion.getArchiveDate()).isEqualTo(previousArchiveDate);
+      verify(teamDiscussionRepository, never()).save(any());
+    }
+    assertThat(discussion.isReadOnlyApplied()).isFalse();
+    verify(matrixSynapseService, org.mockito.Mockito.never())
+        .setRoomEventsDefaultPowerLevel(anyString(), anyInt(), anyString());
+    verify(matrixSynapseService, never()).joinRoom(anyString(), anyString());
   }
 
   @Test

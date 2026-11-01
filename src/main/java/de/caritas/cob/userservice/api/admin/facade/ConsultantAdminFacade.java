@@ -63,6 +63,9 @@ public class ConsultantAdminFacade {
   private final @NonNull ConsultantChatIdentityService consultantChatIdentityService;
 
   private final @NonNull AdminScope adminScope;
+  private final @NonNull de.caritas.cob.userservice.api.admin.service.admin
+          .AccountLoginStatusService
+      accountStatus;
 
   @Value("${multitenancy.enabled}")
   private boolean multiTenancyEnabled;
@@ -75,7 +78,7 @@ public class ConsultantAdminFacade {
    */
   public ConsultantAdminResponseDTO findConsultant(String consultantId) {
     adminScope.assertMay(Target.counsellor(consultantId));
-    return this.consultantAdminService.findConsultantById(consultantId);
+    return withStatus(this.consultantAdminService.findConsultantById(consultantId));
   }
 
   /**
@@ -94,6 +97,8 @@ public class ConsultantAdminFacade {
         this.consultantAdminFilterService.findFilteredConsultants(
             page, perPage, consultantFilter, sort);
     retrieveAndMergeAgenciesToConsultants(filteredConsultants);
+    if (filteredConsultants != null)
+      accountStatus.appendConsultantStatuses(filteredConsultants.getEmbedded());
 
     return filteredConsultants;
   }
@@ -155,7 +160,8 @@ public class ConsultantAdminFacade {
   public ConsultantAdminResponseDTO updateConsultant(
       String consultantId, UpdateAdminConsultantDTO updateConsultantDTO) {
     adminScope.assertMay(Target.counsellor(consultantId));
-    return this.consultantAdminService.updateConsultant(consultantId, updateConsultantDTO);
+    return withStatus(
+        this.consultantAdminService.updateConsultant(consultantId, updateConsultantDTO));
   }
 
   /**
@@ -168,7 +174,7 @@ public class ConsultantAdminFacade {
   public ConsultantAdminResponseDTO repairConsultantChatIdentity(String consultantId) {
     adminScope.assertMay(Target.counsellor(consultantId));
     this.consultantChatIdentityService.provisionMissingChatIdentity(consultantId);
-    return this.consultantAdminService.findConsultantById(consultantId);
+    return withStatus(this.consultantAdminService.findConsultantById(consultantId));
   }
 
   /**
@@ -300,6 +306,11 @@ public class ConsultantAdminFacade {
     this.consultantAdminService.pauseConsultantDeletion(consultantId, reason, months, pausedBy);
   }
 
+  public void cancelConsultantDeletion(String consultantId) {
+    adminScope.assertMay(Target.counsellor(consultantId));
+    this.consultantAdminService.cancelConsultantDeletion(consultantId);
+  }
+
   /**
    * Retrieves all consultants of the agency with given id.
    *
@@ -309,7 +320,9 @@ public class ConsultantAdminFacade {
   public AgencyConsultantResponseDTO findConsultantsForAgency(String agencyId) {
     var parsedAgencyId = Long.valueOf(agencyId);
     adminScope.assertMay(Target.agencies(List.of(parsedAgencyId)));
-    return this.consultantAgencyAdminService.findConsultantsForAgency(parsedAgencyId);
+    var result = this.consultantAgencyAdminService.findConsultantsForAgency(parsedAgencyId);
+    if (result != null) accountStatus.appendConsultantStatuses(result.getEmbedded());
+    return result;
   }
 
   /**
@@ -438,5 +451,10 @@ public class ConsultantAdminFacade {
       log.warn("Consultant has no tenant assigned ", consultantId);
       throw new BadRequestException("Consultant has no tenant assigned");
     }
+  }
+
+  private ConsultantAdminResponseDTO withStatus(ConsultantAdminResponseDTO response) {
+    if (response != null) accountStatus.appendConsultantStatuses(List.of(response));
+    return response;
   }
 }

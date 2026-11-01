@@ -152,7 +152,7 @@ public class RegisteredEnquiryConversationListProviderIT {
             .findFirst()
             .orElseThrow();
     draft.setEnquiryMessageDate(null);
-    sessionRepository.save(draft);
+    draft = sessionRepository.save(draft);
     PageableListRequest request = PageableListRequest.builder().count(2).offset(0).build();
 
     ConsultantSessionListResponseDTO before =
@@ -196,6 +196,9 @@ public class RegisteredEnquiryConversationListProviderIT {
           session.setConsultant(null);
           session.setUser(user);
           session.setId(null);
+          // A random string would not fit the column; these are no direct-link sessions (#1952).
+          session.setDirectLinkMedium(null);
+          session.setConversationType(null);
           session.setSessionData(null);
           session.setPostcode("12345");
           session.setAgencyId(1L);
@@ -218,6 +221,7 @@ public class RegisteredEnquiryConversationListProviderIT {
     User user = this.userRepository.findAll().iterator().next();
     Session session = new Session(user, 1, "12345", 1L, SessionStatus.NEW, false);
     session.setId(null);
+    session.setConversationType(null);
     session.setLanguageCode(LanguageCode.de);
     session.setEnquiryMessageDate(LocalDateTime.now());
     session.setCreateDate(LocalDateTime.now());

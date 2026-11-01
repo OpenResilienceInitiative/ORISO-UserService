@@ -1,7 +1,6 @@
 package de.caritas.cob.userservice.api.workflow.enquirynotification.service;
 
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
-import static de.caritas.cob.userservice.api.helper.EmailNotificationUtils.deserializeNotificationSettingsOrDefaultIfNull;
 import static de.caritas.cob.userservice.api.service.emailsupplier.EmailSupplier.TEMPLATE_DAILY_ENQUIRY_NOTIFICATION;
 import static java.util.Objects.nonNull;
 import static org.apache.commons.collections4.CollectionUtils.isNotEmpty;
@@ -210,14 +209,14 @@ public class EnquiryNotificationService {
     buildAndSendNotificationEmail(mailDTOs);
   }
 
+  // The profile's "Tagesübersicht" switch saves DAILY_ENQUIRY, i.e. notifyEnquiriesRepeating.
+  // The new-enquiry switch (initialEnquiryNotificationEnabled) is a different mail.
   private boolean wantsToReceiveNotifications(Consultant consultant) {
+    var dailyDigestOn = Boolean.TRUE.equals(consultant.getNotifyEnquiriesRepeating());
     if (releaseToggleService.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS)) {
-      return consultant.isNotificationsEnabled()
-          && deserializeNotificationSettingsOrDefaultIfNull(consultant)
-              .isInitialEnquiryNotificationEnabled();
-    } else {
-      return consultant.getNotifyEnquiriesRepeating();
+      return consultant.isNotificationsEnabled() && dailyDigestOn;
     }
+    return dailyDigestOn;
   }
 
   private MailDTO buildMailTO(

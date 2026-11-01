@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.helper.ChatPermissionVerifier;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.service.ChatService;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService.ResolvedRoomMember;
 import java.util.List;
@@ -28,6 +29,7 @@ public class GetChatMembersFacade {
   private final @NonNull ChatService chatService;
   private final @NonNull ChatPermissionVerifier chatPermissionVerifier;
   private final @NonNull GroupChatMembershipService groupChatMembershipService;
+  private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
 
   /**
    * Get a filtered list of the members of a chat (without technical/system user).
@@ -51,7 +53,8 @@ public class GetChatMembersFacade {
 
     var matrixRoomId = groupChatMembershipService.resolveMatrixRoomId(chat);
     return convertResolvedMembersToChatMemberResponseDTO(
-        groupChatMembershipService.resolveHumanMembers(matrixRoomId));
+        membersOnlyChatAccess.readingAcrossTraeger(
+            chat, () -> groupChatMembershipService.resolveHumanMembers(matrixRoomId)));
   }
 
   private void verifyActiveStatus(Chat chat) {

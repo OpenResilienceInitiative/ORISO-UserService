@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.emailsupplier;
 
+import static de.caritas.cob.userservice.api.helper.EmailNotificationUtils.deserializeNotificationSettingsDTOOrDefaultIfNull;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 import static java.util.Objects.nonNull;
@@ -9,6 +10,8 @@ import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.service.ConsultantService;
+import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggle;
+import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggleService;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
 import jakarta.transaction.Transactional;
@@ -48,6 +51,8 @@ public class AssignEnquiryEmailSupplier implements EmailSupplier {
   @Value("${multitenancy.enabled}")
   private boolean multiTenancyEnabled;
 
+  @Autowired private ReleaseToggleService releaseToggleService;
+
   /**
    * Generates the enquiry notification mail sent to regarding consultant.
    *
@@ -57,6 +62,12 @@ public class AssignEnquiryEmailSupplier implements EmailSupplier {
   @Transactional
   public List<MailDTO> generateEmails() {
     if (isReceiverConsultantValid()) {
+      if (!wantsAssignmentMails()) {
+        log.debug(
+            "Skipping assign enquiry mail: consultant {} switched it off",
+            receiverConsultant.getId());
+        return emptyList();
+      }
       return buildAssignEnquiryMailWithValidReceiver();
     }
     var receiverId = nonNull(receiverConsultant) ? receiverConsultant.getId() : "unknown";
@@ -66,6 +77,18 @@ public class AssignEnquiryEmailSupplier implements EmailSupplier {
         receiverId);
 
     return emptyList();
+  }
+
+  // Missing or null assignmentNotificationEnabled counts as on: the switch arrived after most
+  // counsellors last saved their settings, and they get this mail today.
+  private boolean wantsAssignmentMails() {
+    if (!releaseToggleService.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS)) {
+      return true;
+    }
+    return receiverConsultant.isNotificationsEnabled()
+        && !Boolean.FALSE.equals(
+            deserializeNotificationSettingsDTOOrDefaultIfNull(receiverConsultant)
+                .getAssignmentNotificationEnabled());
   }
 
   private boolean isReceiverConsultantValid() {

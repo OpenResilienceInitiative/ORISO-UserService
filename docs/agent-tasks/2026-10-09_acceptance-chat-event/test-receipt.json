@@ -1,0 +1,58 @@
+{
+  "java": 21,
+  "scope": "reviewed short transaction + terminal success activation only + due fair queue; eight focused classes incl real JPA and Liquibase",
+  "rows": [
+    {
+      "class": "AssignEnquiryFacadeTest",
+      "tests": 33,
+      "failures": 0,
+      "errors": 0
+    },
+    {
+      "class": "SessionOwnershipServiceTest",
+      "tests": 12,
+      "failures": 0,
+      "errors": 0
+    },
+    {
+      "class": "InquiryAcceptanceNoticeStoreTest",
+      "tests": 19,
+      "failures": 0,
+      "errors": 0
+    },
+    {
+      "class": "InquiryAcceptanceNoticeDeliveryTest",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0
+    },
+    {
+      "class": "MatrixSessionSystemMessageServiceTest",
+      "tests": 20,
+      "failures": 0,
+      "errors": 0
+    },
+    {
+      "class": "MatrixSynapseServiceTest",
+      "tests": 66,
+      "failures": 0,
+      "errors": 0
+    },
+    {
+      "class": "InquiryAcceptanceNoticeTransactionIT",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0
+    },
+    {
+      "class": "InquiryAcceptanceNoticeMigrationTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0
+    }
+  ],
+  "red": [
+    "preparation-race-red.log: expected PREPARING but SENT",
+    "pending-fairness-red.log: 101st row expected SENT but PENDING"
+  ]
+}

@@ -34,6 +34,7 @@ import java.util.HashMap;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -41,8 +42,11 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.SimpleTransactionStatus;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 @ExtendWith(MockitoExtension.class)
 class ExistingAccountSetupIssuerTest {
@@ -114,7 +118,7 @@ class ExistingAccountSetupIssuerTest {
 
     issuer.reissue(AccountInviteTargetRole.TENANT_ADMIN, "admin-11");
 
-    verify(adminScope).assertMay(AdminScope.Target.admin("admin-11"));
+    verify(adminScope).assertMay(AdminScope.Target.managedAdmin("admin-11"));
     verify(confirmation, org.mockito.Mockito.times(2))
         .requireSameCurrentIdentity(
             "admin-11",
@@ -155,7 +159,7 @@ class ExistingAccountSetupIssuerTest {
     org.assertj.core.api.Assertions.assertThatThrownBy(
             () -> issuer.reissue(AccountInviteTargetRole.TENANT_ADMIN, "admin-11"))
         .isInstanceOf(ConflictException.class);
-    verify(adminScope).assertMay(AdminScope.Target.admin("admin-11"));
+    verify(adminScope).assertMay(AdminScope.Target.managedAdmin("admin-11"));
     verify(invites, never()).findByActiveSetupIdentityKey(any());
     verify(invites, never()).saveAndFlush(any());
   }
@@ -185,7 +189,30 @@ class ExistingAccountSetupIssuerTest {
     verifyNoInteractions(mail);
   }
 
+  @Test
+  void setupMailFollowsTheLanguageTheActingAdminWorksIn() {
+    var request = new MockHttpServletRequest();
+    request.addHeader("Accept-Language", "en");
+    RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
+    readyToSend(OrisoEmailRenderer.Tone.EN);
+    when(invites.findByActiveSetupIdentityKey("admin-11")).thenReturn(Optional.empty());
+    when(initialPasswords.encode("initial-secret")).thenReturn("salted-verifier");
+
+    issuer.issueAfterCreation(AccountInviteTargetRole.TENANT_ADMIN, "admin-11", "initial-secret");
+
+    verify(renderer).render(eq("konto-einrichten"), eq(OrisoEmailRenderer.Tone.EN), any());
+  }
+
+  @AfterEach
+  void clearRequest() {
+    RequestContextHolder.resetRequestAttributes();
+  }
+
   private void readyToSend() {
+    readyToSend(OrisoEmailRenderer.Tone.DE_FORMAL);
+  }
+
+  private void readyToSend(OrisoEmailRenderer.Tone tone) {
     when(admins.findByIdAndType("admin-11", Admin.AdminType.TENANT))
         .thenReturn(
             Optional.of(
@@ -214,7 +241,7 @@ class ExistingAccountSetupIssuerTest {
     var resolved = new EmailBranding("Product", null, "#124078", null, null);
     when(branding.resolve(42L)).thenReturn(resolved);
     when(brandValues.values(resolved, 42L)).thenReturn(new HashMap<>());
-    when(renderer.render(eq("konto-einrichten"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any()))
+    when(renderer.render(eq("konto-einrichten"), eq(tone), any()))
         .thenReturn(new OrisoEmailRenderer.RenderedEmail("Setup", "<p>Setup</p>", "Setup"));
     when(mail.sendRendered(
             eq("admin@example.org"),

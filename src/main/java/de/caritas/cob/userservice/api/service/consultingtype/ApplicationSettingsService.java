@@ -4,7 +4,8 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.config.CacheManagerConfig;
 import de.caritas.cob.userservice.api.config.apiclient.ApplicationSettingsApiControllerFactory;
-import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
+import de.caritas.cob.userservice.api.config.auth.RoutineTaskAuthentication;
+import de.caritas.cob.userservice.api.config.auth.TaskPurpose;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
@@ -38,6 +39,11 @@ public class ApplicationSettingsService {
 
   @Cacheable(value = CacheManagerConfig.APPLICATION_SETTINGS_CACHE)
   public ApplicationSettingsDTO getApplicationSettings() {
+    return fetchApplicationSettings();
+  }
+
+  /** Fresh platform policy snapshot; ordinary settings consumers keep their cache. */
+  public ApplicationSettingsDTO fetchApplicationSettings() {
     ApplicationsettingsControllerApi controllerApi =
         applicationSettingsApiControllerFactory.createControllerApi();
     addDefaultHeaders(controllerApi.getApiClient());
@@ -111,31 +117,23 @@ public class ApplicationSettingsService {
   }
 
   private String loginTechnicalUser() {
-    TechnicalUserConfig technicalUser = identityClientConfig.getTechnicalUser();
-    if (technicalUser == null
-        || isBlank(technicalUser.getClientId())
-        || isBlank(technicalUser.getClientSecret())) {
-      log.warn(
-          "Global SMTP credentials lookup skipped: no technical user configured"
-              + " (identity.technical-user.client-id / .client-secret)");
-      throw new SmtpSettingsUnavailableException();
+    if (!identityClientConfig.isFiveActorMode()) {
+      var technical = identityClientConfig.getTechnicalUser();
+      if (technical == null
+          || isBlank(technical.getClientId())
+          || isBlank(technical.getClientSecret())) {
+        log.warn("Global SMTP credentials lookup skipped: no technical user configured");
+        throw new SmtpSettingsUnavailableException();
+      }
     }
-    de.caritas.cob.userservice.api.port.out.IdentityLogin login;
     try {
-      login =
-          identityAuthentication.loginService(
-              technicalUser.getClientId(), technicalUser.getClientSecret());
-    } catch (RuntimeException ex) {
+      return RoutineTaskAuthentication.accessToken(
+          TaskPurpose.SMTP_SYNC, identityClientConfig, identityAuthentication);
+    } catch (RuntimeException unavailable) {
       log.warn(
-          "Global SMTP credentials lookup skipped: technical user login failed ({})",
-          ex.getClass().getSimpleName());
+          "Global SMTP credentials lookup failed ({})", unavailable.getClass().getSimpleName());
       throw new SmtpSettingsUnavailableException();
     }
-    if (login == null || isBlank(login.accessToken())) {
-      log.warn("Global SMTP credentials lookup skipped: technical user login returned no token");
-      throw new SmtpSettingsUnavailableException();
-    }
-    return login.accessToken();
   }
 
   private void addDefaultHeaders(ApiClient apiClient) {

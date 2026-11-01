@@ -51,6 +51,18 @@ public class GetChatMembersFacadeTest {
 
   @Mock private GroupChatMembershipService groupChatMembershipService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
+
+  @org.junit.jupiter.api.BeforeEach
+  void readsRunDirectly() {
+    when(membersOnlyChatAccess.readingAcrossTraeger(
+            org.mockito.ArgumentMatchers.any(de.caritas.cob.userservice.api.model.Chat.class),
+            org.mockito.ArgumentMatchers.<java.util.function.Supplier<Object>>any()))
+        .thenAnswer(
+            invocation -> invocation.<java.util.function.Supplier<Object>>getArgument(1).get());
+  }
+
   private Chat matrixChat() {
     var chat = new Chat();
     chat.setId(CHAT_ID);

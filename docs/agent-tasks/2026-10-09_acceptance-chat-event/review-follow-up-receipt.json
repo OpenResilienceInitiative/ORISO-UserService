@@ -1,0 +1,50 @@
+{
+  "baseHead": "8c74db52b",
+  "failure": "ReplicaSafetyInventoryContractTest.java:88 exact id set rejected actual new scheduler inquiry-acceptance-notice-retry.",
+  "correction": "Extend REQUIRED_COMPONENTS with the actual scheduler id; retain exact set equality, uniqueness and actionable metadata assertions.",
+  "reviewDispositions": [
+    {
+      "finding": "Unsupported modality test did not call preparation",
+      "disposition": "FIXED: call actual prepare(session), retain no saved fact assertion for LIVE_CHAT/INTERNAL_GROUP/SELF_HELP."
+    },
+    {
+      "finding": "PREPARING recovery regression only called empty scheduler query",
+      "disposition": "FIXED: direct actual dispatch(231L) exercises non-PENDING guard; PREPARING remains unchanged and later compensation deletes matching fact."
+    },
+    {
+      "finding": "Missing repeat assignment and stale compensation side-effect assertions",
+      "disposition": "FIXED: verify no prepare for repeat IN_PROGRESS and no cancelPreparation for stale ownership operation."
+    },
+    {
+      "finding": "Scheduler-wide shared lease suggestion",
+      "disposition": "NO PRODUCTION CHANGE: correctness already guarded by externally proxied REQUIRES_NEW pessimistic row claim and committed UNCERTAIN before transport. Added real-JPA concurrent delivery regression; both workers read PENDING, actual claim admits one and observes exactly one mocked Matrix send. A lease could reduce duplicate pre-claim token minting; performance follow-up only."
+    }
+  ],
+  "commands": [
+    "JAVA_HOME=$(/usr/libexec/java_home -v 21) ./mvnw -B -Dtest=ReplicaSafetyInventoryContractTest test spotless:check",
+    "JAVA_HOME=$(/usr/libexec/java_home -v 21) ./mvnw -B spotless:apply -Dtest=ReplicaSafetyInventoryContractTest,InquiryAcceptanceNoticeStoreTest,InquiryAcceptanceNoticeDeliveryTest,SessionOwnershipServiceTest,InquiryAcceptanceNoticeTransactionIT test spotless:check",
+    "python3 -m unittest discover -s tests/ci -p 'test_*.py'",
+    "JAVA_HOME=$(/usr/libexec/java_home -v 21) ./mvnw -B test spotless:check",
+    "git diff --check"
+  ],
+  "results": {
+    "focusedTests": 45,
+    "focusedFailures": 0,
+    "focusedErrors": 0,
+    "focusedSkipped": 0,
+    "pythonCiContracts": 114,
+    "pythonFailures": 0,
+    "fullUnitTests": 6365,
+    "fullUnitFailures": 0,
+    "fullUnitErrors": 0,
+    "fullUnitSkipped": 0,
+    "spotless": "PASS",
+    "diffCheck": "PASS"
+  },
+  "boundaries": [
+    "No production behavior changed",
+    "Matrix transport mocked in concurrent JPA test, no actual replica/server/browser acceptance claim",
+    "No commit, push, merge or deployment by worker",
+    "Published-head CI remains required"
+  ]
+}

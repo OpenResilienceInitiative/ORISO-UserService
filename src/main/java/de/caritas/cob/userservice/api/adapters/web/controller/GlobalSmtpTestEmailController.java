@@ -55,6 +55,7 @@ public class GlobalSmtpTestEmailController {
       log.warn("Global SMTP test email failed ({})", ex.getClass().getSimpleName());
       if (ex instanceof SmtpSettingsUnavailableException) {
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+            .cacheControl(CacheControl.noStore())
             .body(
                 Map.of(
                     "message",

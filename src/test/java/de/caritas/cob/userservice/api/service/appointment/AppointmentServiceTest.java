@@ -92,6 +92,7 @@ class AppointmentServiceTest {
     nonSpiedAppointmentService = createAppointmentService();
 
     when(identityAuthentication.loginService(any(), any())).thenReturn(identityLogin);
+    when(identityLogin.accessToken()).thenReturn("synthetic-service-token");
     when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(any())).thenReturn(httpHeaders);
     when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders()).thenReturn(httpHeaders);
     when(consultantDTO.getId()).thenReturn("testId");

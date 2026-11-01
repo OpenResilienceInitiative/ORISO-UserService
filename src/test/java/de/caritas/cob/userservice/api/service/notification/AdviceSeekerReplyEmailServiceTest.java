@@ -62,11 +62,23 @@ class AdviceSeekerReplyEmailServiceTest {
   @Mock private ReplyEmailDeliveryWriter writer;
   @Mock private DoNotDisturbService doNotDisturb;
   @Mock private MatrixCaseReplyActorAuthorizer replyActors;
+  @Mock private de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup identities;
+
+  @Mock private de.caritas.cob.userservice.api.port.out.ConsultantRepository consultants;
+
+  @Mock
+  private de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+      accountLifecycle;
 
   private AdviceSeekerReplyEmailService service;
 
   @BeforeEach
   void setUp() {
+    Mockito.lenient().when(accountLifecycle.snapshot(anyString())).thenReturn(Optional.empty());
+    Mockito.lenient().when(identities.findEnabledById(anyString())).thenReturn(Optional.of(true));
+    Mockito.lenient()
+        .when(consultants.findByMatrixUserIdAndDeleteDateIsNull(anyString()))
+        .thenAnswer(invocation -> Optional.of(consultant()));
     service =
         new AdviceSeekerReplyEmailService(
             sessions,
@@ -79,7 +91,9 @@ class AdviceSeekerReplyEmailServiceTest {
             delivery,
             writer,
             doNotDisturb,
-            replyActors);
+            replyActors,
+            consultants,
+            new NotificationAccountEligibility(accountLifecycle, identities));
     ReflectionTestUtils.setField(service, "multitenancyEnabled", true);
     org.mockito.Mockito.lenient()
         .when(replyActors.isCurrentWriter(any(), anyString(), anyBoolean()))
@@ -90,6 +104,95 @@ class AdviceSeekerReplyEmailServiceTest {
     org.mockito.Mockito.lenient()
         .when(branding.resolveNotification(anyLong(), anyString()))
         .thenReturn(new EmailBranding("Tenant", null, "#a5000a", null, null));
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"asker", "consultant"})
+  void identityDisabledAfterReservationCannotSendOrReceiveTheDelayedReply(String identityId) {
+    Mockito.lenient().when(identities.findEnabledById(anyString())).thenReturn(Optional.of(true));
+    prepareReadyClaim();
+    when(writer.claim(2L)).thenReturn(Optional.of(claim(2L)));
+    service.deliverPending(1L);
+    verify(writer).finish(1L, Status.SENT);
+    Mockito.lenient().when(identities.findEnabledById(identityId)).thenReturn(Optional.of(false));
+
+    service.deliverPending(2L);
+
+    verify(writer).finish(2L, Status.REJECTED);
+    verify(delivery, Mockito.times(1)).sendReply(anyLong(), any(), anyString(), any(), any());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.MethodSource("replyLifecycleStates")
+  void lifecycleChangedAfterReservationSuppressesTheDelayedReply(
+      String identityId,
+      de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService.Status
+          status) {
+    prepareReadyClaim();
+    when(writer.claim(2L)).thenReturn(Optional.of(claim(2L)));
+    service.deliverPending(1L);
+    verify(writer).finish(1L, Status.SENT);
+    var now = java.time.Instant.now();
+    when(accountLifecycle.snapshot(identityId))
+        .thenReturn(
+            Optional.of(
+                new de.caritas.cob.userservice.api.workflow.accountinactivity
+                    .AccountInactivityService.Snapshot(
+                    identityId, 7L, 12, 0, now, now, status, 0, null)));
+    service.deliverPending(2L);
+    boolean active =
+        status
+            == de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+                .Status.ACTIVE;
+    verify(writer).finish(2L, active ? Status.SENT : Status.REJECTED);
+    verify(delivery, Mockito.times(active ? 2 : 1))
+        .sendReply(anyLong(), any(), anyString(), any(), any());
+  }
+
+  static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments>
+      replyLifecycleStates() {
+    return java.util.stream.Stream.of("asker", "consultant")
+        .flatMap(
+            id ->
+                java.util.Arrays.stream(
+                        de.caritas.cob.userservice.api.workflow.accountinactivity
+                            .AccountInactivityService.Status.values())
+                    .map(status -> org.junit.jupiter.params.provider.Arguments.of(id, status)));
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"asker", "consultant"})
+  void identityLookupOutageKeepsTheReplyRetriableUntilRecovery(String identityId) {
+    prepareReadyClaim();
+    when(writer.claim(2L)).thenReturn(Optional.of(claim(2L)));
+    service.deliverPending(1L);
+    when(identities.findEnabledById(identityId))
+        .thenThrow(new IllegalStateException("fixture-secret-not-for-logs"));
+    service.deliverPending(2L);
+    verify(writer).retryLater(2L);
+    verify(writer, never()).finish(eq(2L), any());
+    Mockito.doReturn(Optional.of(true)).when(identities).findEnabledById(identityId);
+    service.deliverPending(2L);
+    verify(writer).finish(2L, Status.SENT);
+    verify(delivery, Mockito.times(2)).sendReply(anyLong(), any(), anyString(), any(), any());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"asker", "consultant"})
+  void inactiveAccountsAlsoSuppressTheAdviceSeekerToCounsellorDirection(String identityId) {
+    var session = prepareReadyClaim();
+    session.setMatrixRoomId("!room:matrix.example");
+    session.setConversationType(ConversationType.AGENCY_COUNSELLING);
+    when(writer.claim(1L)).thenReturn(Optional.of(consultantClaim()));
+    var second = consultantClaim();
+    second.setId(2L);
+    when(writer.claim(2L)).thenReturn(Optional.of(second));
+    service.deliverPending(1L);
+    verify(writer).finish(1L, Status.SENT);
+    when(identities.findEnabledById(identityId)).thenReturn(Optional.of(false));
+    service.deliverPending(2L);
+    verify(writer).finish(2L, Status.REJECTED);
+    verify(delivery, Mockito.times(1)).sendReply(anyLong(), any(), anyString(), any(), any());
   }
 
   @Test
@@ -187,7 +290,9 @@ class AdviceSeekerReplyEmailServiceTest {
             delivery,
             writer,
             doNotDisturb,
-            replyActors);
+            replyActors,
+            consultants,
+            new NotificationAccountEligibility(accountLifecycle, identities));
     ReflectionTestUtils.setField(tested, "multitenancyEnabled", true);
     var smtp =
         new PlatformSmtpSettingsProvider.Settings(
@@ -491,7 +596,9 @@ class AdviceSeekerReplyEmailServiceTest {
             delivery,
             writer,
             doNotDisturb,
-            replyActors);
+            replyActors,
+            consultants,
+            new NotificationAccountEligibility(accountLifecycle, identities));
     ReflectionTestUtils.setField(tested, "multitenancyEnabled", true);
     when(renderer.render(
             eq("neue-nachricht-beratung"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any()))
@@ -606,6 +713,19 @@ class AdviceSeekerReplyEmailServiceTest {
   }
 
   @Test
+  void disabledTenantTerminatesReplyWithoutSetupRetries() {
+    when(sessions.findById(42L)).thenReturn(Optional.of(session(asker(true, "asker@example.net"))));
+    when(writer.claim(1L)).thenReturn(Optional.of(claim(1L)));
+    when(routes.resolve(7L)).thenReturn(Optional.empty());
+
+    service.deliverPending(1L);
+
+    verify(writer).finish(1L, Status.REJECTED);
+    verify(writer, never()).retryLater(1L);
+    verifyNoInteractions(delivery);
+  }
+
+  @Test
   void tenantConfigurationRejectionRetriesAfterRepair() {
     prepareReadyClaim();
     org.mockito.Mockito.doThrow(
@@ -617,6 +737,45 @@ class AdviceSeekerReplyEmailServiceTest {
 
     verify(writer).retryLater(1L);
     verify(writer, never()).finish(1L, Status.UNCERTAIN);
+  }
+
+  @Test
+  void tragerWithNotificationMailsSwitchedOffEndsTheClaimInsteadOfRetryingForever() {
+    // FE#1701: on Dev every Träger but one has featureSystemNotificationEmailsEnabled off. Their
+    // reply mails were retried every five minutes for days, logged as a setup outage.
+    when(sessions.findById(42L)).thenReturn(Optional.of(session(asker(true, "asker@example.net"))));
+    when(writer.claim(1L)).thenReturn(Optional.of(claim(1L)));
+    when(routes.resolve(7L)).thenReturn(Optional.empty());
+
+    service.deliverPending(1L);
+
+    verify(writer).finish(1L, Status.REJECTED);
+    verify(writer, never()).retryLater(1L);
+    verify(delivery, never()).sendReply(anyLong(), any(), anyString(), any(), any());
+  }
+
+  @Test
+  void consultantMailOfTragerWithNotificationMailsSwitchedOffEndsTheClaim() {
+    when(sessions.findById(42L)).thenReturn(Optional.of(consultation()));
+    when(writer.claim(1L)).thenReturn(Optional.of(consultantClaim()));
+    when(routes.resolve(7L)).thenReturn(Optional.empty());
+
+    service.deliverPending(1L);
+
+    verify(writer).finish(1L, Status.REJECTED);
+    verify(writer, never()).retryLater(1L);
+  }
+
+  @Test
+  void unavailableTenantSettingsStillRetryAfterRepair() {
+    when(sessions.findById(42L)).thenReturn(Optional.of(session(asker(true, "asker@example.net"))));
+    when(writer.claim(1L)).thenReturn(Optional.of(claim(1L)));
+    when(routes.resolve(7L)).thenThrow(new IllegalStateException("TenantService unavailable"));
+
+    service.deliverPending(1L);
+
+    verify(writer).retryLater(1L);
+    verify(writer, never()).finish(1L, Status.REJECTED);
   }
 
   @Test
@@ -694,6 +853,7 @@ class AdviceSeekerReplyEmailServiceTest {
   private static Consultant consultant() {
     return Consultant.builder()
         .id("consultant")
+        .status(de.caritas.cob.userservice.api.model.ConsultantStatus.IN_PROGRESS)
         .matrixUserId("@consultant:matrix.example")
         .username("consultant")
         .firstName("Test")
@@ -764,5 +924,28 @@ class AdviceSeekerReplyEmailServiceTest {
             Map.entry("unsubscribeUrl", "https://tenant.example.net/profile/einstellungen/email"),
             Map.entry("privacyUrl", "https://tenant.example.net/datenschutz"),
             Map.entry("imprintUrl", "https://tenant.example.net/impressum")));
+  }
+
+  @Test
+  void freshlyRevokedConversationPolicySuppressesQueuedReplyWithoutSilencingTheOtherChannel() {
+    when(routes.resolve(7L))
+        .thenReturn(
+            Optional.of(
+                new TenantSystemEmailRouteService.Route(
+                    TenantSystemEmailRouteService.Mode.PLATFORM, null)));
+    var user = asker(true, "asker@example.net");
+    when(sessions.findById(42L)).thenReturn(Optional.of(session(user)));
+    when(writer.claim(1L)).thenReturn(Optional.of(claim(1L)));
+    when(tenants.getRestrictedTenantDataFresh(7L))
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(7L)
+                .settings(
+                    new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
+                        .featureAskerEmailAgencyCounsellingEnabled(false)
+                        .featureAskerBrowserAgencyCounsellingEnabled(true)));
+    service.deliverPending(1L);
+    verify(writer).finish(1L, Status.REJECTED);
+    verify(delivery, org.mockito.Mockito.never()).sendReply(anyLong(), any(), any(), any(), any());
   }
 }

@@ -14,6 +14,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
@@ -41,6 +42,7 @@ import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.session.SessionOwnershipService.OwnershipChange;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -82,6 +84,16 @@ class AssignEnquiryFacadeTest {
   @Mock private ConsultantDisplayNameResolver consultantDisplayNameResolver;
   @Mock AnonymousEnquiryDepartmentResolver anonymousEnquiryDepartmentResolver;
 
+  @Mock
+  de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore acceptanceNotices;
+
+  @Mock
+  de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeDelivery acceptanceDelivery;
+
+  @Mock
+  de.caritas.cob.userservice.api.service.furthercounselling.TopicDuplicateService
+      topicDuplicateService;
+
   private static final String USER_MATRIX_ID = "@user:matrix.example.com";
   private static final String CONSULTANT_MATRIX_ID = "@consultant:matrix.example.com";
   private static final String MATRIX_ROOM_ID = "!createdRoom:matrix.example.com";
@@ -89,6 +101,11 @@ class AssignEnquiryFacadeTest {
 
   @BeforeEach
   public void setup() throws MatrixCreateRoomException {
+    lenient()
+        .when(
+            sessionService.updateConsultantAndStatusForSession(
+                any(Session.class), any(Consultant.class), any(SessionStatus.class)))
+        .thenReturn(new OwnershipChange(1L, "assigned", 1L));
     assignEnquiryFacade =
         new AssignEnquiryFacade(
             sessionService,
@@ -107,7 +124,10 @@ class AssignEnquiryFacadeTest {
             eventNotificationService,
             anonymousEnquiryDepartmentResolver,
             sessionSupervisorFacade,
-            teamDiscussionFacade);
+            teamDiscussionFacade,
+            acceptanceNotices,
+            acceptanceDelivery,
+            topicDuplicateService);
     CONSULTANT_WITH_AGENCY.setTenantId(41L);
     // ADR-002 §2: the display name comes from the resolver, never from the real name.
     lenient()
@@ -184,6 +204,28 @@ class AssignEnquiryFacadeTest {
 
     verify(userRepository).save(USER_WITH_MATRIX_ID);
     assertEquals(USER_MATRIX_ID, USER_WITH_MATRIX_ID.getMatrixUserId());
+  }
+
+  @Test
+  void assignRegisteredEnquiry_Should_NoticeSameTopicConversations_OnInitialAcceptance() {
+    TenantContext.setCurrentTenant(CURRENT_TENANT_ID);
+
+    assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+
+    verify(topicDuplicateService).notifyDuplicateStarted(SESSION_WITHOUT_CONSULTANT.getId());
+  }
+
+  @Test
+  void assignRegisteredEnquiry_Should_StillAccept_WhenTheSameTopicNoticeFails() {
+    TenantContext.setCurrentTenant(CURRENT_TENANT_ID);
+    Mockito.doThrow(new IllegalStateException("matrix down"))
+        .when(topicDuplicateService)
+        .notifyDuplicateStarted(any());
+
+    assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+
+    verify(eventNotificationService)
+        .createInquiryAcceptedNotification(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
   }
 
   @Test
@@ -358,7 +400,9 @@ class AssignEnquiryFacadeTest {
         () -> assignEnquiryFacade.assignAnonymousEnquiry(session, CONSULTANT_WITH_AGENCY));
 
     assertThat(session.getAgencyId()).isNull();
-    verify(sessionService).updateConsultantAndStatusForSession(session, null, NEW);
+    verify(sessionService)
+        .compensateConsultantAssignment(
+            eq(session.getId()), any(OwnershipChange.class), isNull(), eq(NEW), eq(true));
   }
 
   @Test
@@ -471,7 +515,9 @@ class AssignEnquiryFacadeTest {
         InternalServerErrorException.class,
         () -> assignEnquiryFacade.assignRegisteredEnquiry(session, consultant));
 
-    verify(sessionService).updateConsultantAndStatusForSession(session, null, NEW);
+    verify(sessionService)
+        .compensateConsultantAssignment(
+            eq(session.getId()), any(OwnershipChange.class), isNull(), eq(NEW), eq(false));
   }
 
   @Test
@@ -489,7 +535,9 @@ class AssignEnquiryFacadeTest {
         InternalServerErrorException.class,
         () -> assignEnquiryFacade.assignRegisteredEnquiry(session, consultant));
 
-    verify(sessionService).updateConsultantAndStatusForSession(session, null, NEW);
+    verify(sessionService)
+        .compensateConsultantAssignment(
+            eq(session.getId()), any(OwnershipChange.class), isNull(), eq(NEW), eq(false));
   }
 
   // ---------------------------------------------------------------------------
@@ -560,7 +608,9 @@ class AssignEnquiryFacadeTest {
         InternalServerErrorException.class,
         () -> assignEnquiryFacade.assignRegisteredEnquiry(session, consultant));
 
-    verify(sessionService).updateConsultantAndStatusForSession(session, null, NEW);
+    verify(sessionService)
+        .compensateConsultantAssignment(
+            eq(session.getId()), any(OwnershipChange.class), isNull(), eq(NEW), eq(false));
   }
 
   // ---------------------------------------------------------------------------
@@ -582,6 +632,30 @@ class AssignEnquiryFacadeTest {
     verify(sessionRoomGateway)
         .inviteUser(
             eq("!existing-room:matrix.example.com"), eq(CONSULTANT_MATRIX_ID), eq("agency-token"));
+  }
+
+  @Test
+  void assignEnquiry_Should_NotInviteAgain_When_ConsultantAlreadyInExistingRoom() throws Exception {
+    Session session = sessionWithUser(USER_MATRIX_ID, "!existing-room:matrix.example.com");
+    Consultant consultant = consultantWithMatrixId(CONSULTANT_MATRIX_ID);
+
+    AgencyMatrixCredentialsDTO creds = agencyCredentials("@agency:matrix.example.com");
+    when(agencyMatrixCredentialClient.fetchMatrixCredentials(any())).thenReturn(Optional.of(creds));
+    when(sessionRoomGateway.loginAsUser("@agency:matrix.example.com")).thenReturn("agency-token");
+    when(sessionRoomGateway.isJoinedMember(
+            "!existing-room:matrix.example.com", CONSULTANT_MATRIX_ID))
+        .thenReturn(true);
+
+    assignEnquiryFacade.assignRegisteredEnquiry(session, consultant);
+
+    verify(sessionRoomGateway, never()).inviteUser(any(), any(), any());
+    verify(sessionRoomGateway, never()).createRoomAsUser(any(), any(), any());
+    verify(sessionRoomGateway)
+        .setUserPowerLevel(
+            eq("!existing-room:matrix.example.com"),
+            eq(CONSULTANT_MATRIX_ID),
+            eq(100),
+            eq("agency-token"));
   }
 
   @Test
@@ -670,5 +744,91 @@ class AssignEnquiryFacadeTest {
     AgencyMatrixCredentialsDTO dto = new AgencyMatrixCredentialsDTO();
     dto.setMatrixUserId(userId);
     return dto;
+  }
+
+  @Test
+  void initialAcceptanceQueuesRealChatEventOnlyAfterRoomProvisioning() {
+    SESSION_WITHOUT_CONSULTANT.setStatus(NEW);
+    assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+    var ordered =
+        org.mockito.Mockito.inOrder(sessionService, sessionRoomGateway, acceptanceNotices);
+    ordered
+        .verify(sessionService)
+        .updateConsultantAndStatusForSession(any(), any(), eq(SessionStatus.IN_PROGRESS));
+    ordered.verify(sessionRoomGateway, times(2)).joinRoom(anyString(), anyString());
+    ordered.verify(acceptanceNotices).recordSuccessfulInitialAcceptance(SESSION_WITHOUT_CONSULTANT);
+  }
+
+  @Test
+  void failedMatrixProvisioningNeverActivatesOrDispatchesInitialAcceptance() throws Exception {
+    SESSION_WITHOUT_CONSULTANT.setStatus(NEW);
+    when(sessionRoomGateway.createRoomAsUser(anyString(), anyString(), anyString()))
+        .thenReturn(null);
+    assertThrows(
+        InternalServerErrorException.class,
+        () ->
+            assignEnquiryFacade.assignRegisteredEnquiry(
+                SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY));
+    org.mockito.Mockito.verifyNoInteractions(acceptanceNotices, acceptanceDelivery);
+  }
+
+  @Test
+  void subsequentAssignmentIsNotAnotherInitialAcceptance() {
+    var old = SESSION_WITHOUT_CONSULTANT.getStatus();
+    try {
+      SESSION_WITHOUT_CONSULTANT.setStatus(SessionStatus.IN_PROGRESS);
+      assignEnquiryFacade.assignRegisteredEnquiry(
+          SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY, true);
+      org.mockito.Mockito.verifyNoInteractions(acceptanceNotices, acceptanceDelivery);
+    } finally {
+      SESSION_WITHOUT_CONSULTANT.setStatus(old);
+    }
+  }
+
+  @Test
+  void transactionRollbackNeverDispatchesPreparedInitialAcceptance() {
+    SESSION_WITHOUT_CONSULTANT.setStatus(NEW);
+    when(acceptanceNotices.recordSuccessfulInitialAcceptance(SESSION_WITHOUT_CONSULTANT))
+        .thenReturn(Optional.of(1L));
+    org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+    try {
+      assignEnquiryFacade.assignRegisteredEnquiry(
+          SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+      org.mockito.Mockito.verifyNoInteractions(acceptanceDelivery);
+      var callbacks =
+          org.springframework.transaction.support.TransactionSynchronizationManager
+              .getSynchronizations();
+      // The acceptance notice and the FE#1876 same-topic notice: both wait for the commit.
+      assertThat(callbacks).hasSize(2);
+      callbacks.forEach(
+          cb ->
+              cb.afterCompletion(
+                  org.springframework.transaction.support.TransactionSynchronization
+                      .STATUS_ROLLED_BACK));
+      org.mockito.Mockito.verifyNoInteractions(acceptanceDelivery, topicDuplicateService);
+    } finally {
+      org.springframework.transaction.support.TransactionSynchronizationManager
+          .clearSynchronization();
+    }
+  }
+
+  @Test
+  void committedInitialAcceptanceDispatchesAfterCommitOnce() {
+    SESSION_WITHOUT_CONSULTANT.setStatus(NEW);
+    when(acceptanceNotices.recordSuccessfulInitialAcceptance(SESSION_WITHOUT_CONSULTANT))
+        .thenReturn(Optional.of(1L));
+    org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+    try {
+      assignEnquiryFacade.assignRegisteredEnquiry(
+          SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+      org.mockito.Mockito.verifyNoInteractions(acceptanceDelivery);
+      org.springframework.transaction.support.TransactionSynchronizationManager
+          .getSynchronizations()
+          .forEach(org.springframework.transaction.support.TransactionSynchronization::afterCommit);
+      verify(acceptanceDelivery, times(1)).dispatchSafely(1L);
+    } finally {
+      org.springframework.transaction.support.TransactionSynchronizationManager
+          .clearSynchronization();
+    }
   }
 }

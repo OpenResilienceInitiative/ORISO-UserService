@@ -101,7 +101,7 @@ class TopicConsultantRoutingServiceTest {
     assertThat(result).isEmpty();
     verify(diagnosticMetrics)
         .recordRouting(RoutingStage.AVAILABILITY, RoutingOutcome.NO_ELIGIBLE_CONSULTANT, 0);
-    verify(consultantActivityRegistry, never()).filterActive(any(), anyLong());
+    verify(consultantActivityRegistry, never()).filterActiveOrThrow(any(), anyLong());
   }
 
   @Test
@@ -109,7 +109,7 @@ class TopicConsultantRoutingServiceTest {
     when(consultantTopicRepository.findConsultantIdsByTopicId(1L)).thenReturn(List.of("c1"));
     when(consultantRepository.findAllByIdIn(List.of("c1")))
         .thenReturn(List.of(consultant("c1", false)));
-    when(consultantActivityRegistry.filterActive(List.of("c1"), 120_000L))
+    when(consultantActivityRegistry.filterActiveOrThrow(List.of("c1"), 120_000L))
         .thenReturn(Collections.emptySet());
 
     List<String> result = service.findAvailableConsultantIds(1L);
@@ -129,7 +129,7 @@ class TopicConsultantRoutingServiceTest {
                 consultant("c1", false),
                 consultant("c2", true), // absent — filtered out
                 consultant("c3", false)));
-    when(consultantActivityRegistry.filterActive(List.of("c1", "c3"), 120_000L))
+    when(consultantActivityRegistry.filterActiveOrThrow(List.of("c1", "c3"), 120_000L))
         .thenReturn(Set.of("c1"));
 
     List<String> result = service.findAvailableConsultantIds(5L);
@@ -155,7 +155,8 @@ class TopicConsultantRoutingServiceTest {
                     .isEqualTo(TenantContext.TECHNICAL_TENANT_ID);
                 return List.of(consultant("tenant-84-consultant", false));
               });
-      when(consultantActivityRegistry.filterActive(List.of("tenant-84-consultant"), 120_000L))
+      when(consultantActivityRegistry.filterActiveOrThrow(
+              List.of("tenant-84-consultant"), 120_000L))
           .thenReturn(Set.of("tenant-84-consultant"));
 
       assertThat(service.findAvailableConsultantIds(9L)).containsExactly("tenant-84-consultant");
@@ -352,7 +353,8 @@ class TopicConsultantRoutingServiceTest {
         .thenReturn(List.of("c1", "c2", "c3"));
     when(consultantRepository.findAllByIdIn(List.of("c1", "c2", "c3")))
         .thenReturn(List.of(consultant("c1", false))); // c2 and c3 missing from DB
-    when(consultantActivityRegistry.filterActive(List.of("c1"), 120_000L)).thenReturn(Set.of("c1"));
+    when(consultantActivityRegistry.filterActiveOrThrow(List.of("c1"), 120_000L))
+        .thenReturn(Set.of("c1"));
 
     List<String> result = service.findAvailableConsultantIds(22L);
 
@@ -381,12 +383,13 @@ class TopicConsultantRoutingServiceTest {
     when(consultantTopicRepository.findConsultantIdsByTopicId(30L)).thenReturn(List.of("c1"));
     when(consultantRepository.findAllByIdIn(List.of("c1")))
         .thenReturn(List.of(consultant("c1", false)));
-    when(consultantActivityRegistry.filterActive(List.of("c1"), 30_000L)).thenReturn(Set.of("c1"));
+    when(consultantActivityRegistry.filterActiveOrThrow(List.of("c1"), 30_000L))
+        .thenReturn(Set.of("c1"));
 
     List<String> result = service.findAvailableConsultantIds(30L);
 
     assertThat(result).containsExactly("c1");
-    verify(consultantActivityRegistry).filterActive(List.of("c1"), 30_000L);
+    verify(consultantActivityRegistry).filterActiveOrThrow(List.of("c1"), 30_000L);
   }
 
   // ── edge cases ─────────────────────────────────────────────────────────────

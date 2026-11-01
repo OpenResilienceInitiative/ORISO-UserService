@@ -2,9 +2,13 @@ package de.caritas.cob.userservice.api.service.archive;
 
 import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
 import de.caritas.cob.userservice.api.actions.user.DeactivateKeycloakUserActionCommand;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
@@ -16,6 +20,7 @@ import java.time.LocalDateTime;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,6 +37,10 @@ public class SessionDeleteService {
 
   private final @NonNull MatrixSessionSystemMessageService matrixSessionSystemMessageService;
 
+  private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
+
+  private final @NonNull AuthenticatedUser authenticatedUser;
+
   @Transactional
   public void deleteSession(Long sessionId) {
     log.info("Deleting session with id {}", sessionId);
@@ -42,8 +51,21 @@ public class SessionDeleteService {
             .orElseThrow(
                 () -> new NotFoundException("A session with an id %s does not exist.", sessionId));
 
+    // Whoever is no participant of a members-only chat gets nothing; a participant ends the case
+    // by stopping the chat, which retires the session with it, never by deleting the session
+    // under a chat that stays open.
+    membersOnlyChatAccess.requireAccess(session, authenticatedUser.getUserId());
+    if (membersOnlyChatAccess.concerns(session)) {
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.MEMBERS_ONLY_CHAT_STOP_REQUIRED, HttpStatus.CONFLICT);
+    }
+
     try {
-      matrixSessionSystemMessageService.postUserLeftChatMessage(session);
+      var endedBy =
+          authenticatedUser.isConsultant()
+              ? MatrixSessionSystemMessageService.EndedBy.CONSULTANT
+              : MatrixSessionSystemMessageService.EndedBy.ADVICE_SEEKER;
+      matrixSessionSystemMessageService.postUserLeftChatMessage(session, endedBy);
     } catch (Exception e) {
       log.warn("Could not post Matrix user-left message before deleting session {}", sessionId, e);
     }

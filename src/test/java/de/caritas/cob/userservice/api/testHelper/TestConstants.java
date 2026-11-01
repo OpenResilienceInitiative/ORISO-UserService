@@ -298,6 +298,7 @@ public class TestConstants {
           null,
           null,
           null,
+          null,
           null);
   public static final UserDTO USER_DTO_KREUZBUND =
       new UserDTO(
@@ -313,6 +314,7 @@ public class TestConstants {
           "",
           true,
           false,
+          null,
           null,
           null,
           null,

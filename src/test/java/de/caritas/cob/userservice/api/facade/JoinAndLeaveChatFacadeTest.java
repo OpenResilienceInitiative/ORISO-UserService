@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.facade;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -10,9 +11,11 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.actions.chat.ChatReCreator;
 import de.caritas.cob.userservice.api.actions.chat.MatrixChatShutdownService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.ChatPermissionVerifier;
 import de.caritas.cob.userservice.api.model.Chat;
@@ -30,6 +33,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 
 @ExtendWith(MockitoExtension.class)
 class JoinAndLeaveChatFacadeTest {
@@ -49,6 +53,14 @@ class JoinAndLeaveChatFacadeTest {
   @Mock private GroupChatMembershipService groupChatMembershipService;
   @Mock private MatrixChatShutdownService matrixChatShutdownService;
   @Mock private GroupChatRoleService groupChatRoleService;
+
+  @org.junit.jupiter.api.BeforeEach
+  void wireRealDeployedGroupPolicy() {
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        facade,
+        "groupCounsellingDpaPolicy",
+        de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.groupPolicy());
+  }
 
   @Test
   void joinChatShouldRejectUnknownChat() {
@@ -120,6 +132,37 @@ class JoinAndLeaveChatFacadeTest {
   }
 
   @Test
+  void joinChatShouldAnswerForbiddenWithReasonWhenCallerIsBanned() {
+    Chat chat = activeMatrixChat();
+    User user = matrixUser();
+    when(userService.getUserViaAuthenticatedUser(authenticatedUser)).thenReturn(Optional.of(user));
+    when(groupChatMembershipService.isBannedFromRoom(chat, MATRIX_USER_ID))
+        .thenReturn(Optional.of(true));
+
+    var refusal =
+        assertThrows(
+            CustomValidationHttpStatusException.class,
+            () -> facade.joinChat(CHAT_ID, authenticatedUser));
+
+    assertEquals(HttpStatus.FORBIDDEN, refusal.getHttpStatus());
+    assertEquals(
+        HttpStatusExceptionReason.USER_BANNED_FROM_CHAT.name(),
+        refusal.getCustomHttpHeaders().getFirst("X-Reason"));
+  }
+
+  @Test
+  void joinChatShouldStayServerErrorWhenBanStateIsUnknown() {
+    Chat chat = activeMatrixChat();
+    User user = matrixUser();
+    when(userService.getUserViaAuthenticatedUser(authenticatedUser)).thenReturn(Optional.of(user));
+    when(groupChatMembershipService.isBannedFromRoom(chat, MATRIX_USER_ID))
+        .thenReturn(Optional.empty());
+
+    assertThrows(
+        InternalServerErrorException.class, () -> facade.joinChat(CHAT_ID, authenticatedUser));
+  }
+
+  @Test
   void leaveChatShouldRequireMatrixIdentity() {
     activeMatrixChat();
 
@@ -167,6 +210,19 @@ class JoinAndLeaveChatFacadeTest {
 
     verify(chatService).deleteChat(chat);
     verify(matrixChatShutdownService).shutdownRoom(chat);
+  }
+
+  @Test
+  void lastMemberLeavingAMembersOnlyChatLeavesThePurgeToDeleteChat() {
+    Chat chat = activeMatrixChat();
+    when(chat.isMembersOnly()).thenReturn(true);
+    User user = matrixUser();
+    when(userService.getUserViaAuthenticatedUser(authenticatedUser)).thenReturn(Optional.of(user));
+
+    facade.leaveChat(CHAT_ID, authenticatedUser);
+
+    verify(chatService).deleteChat(chat);
+    verify(matrixChatShutdownService, never()).shutdownRoom(chat);
   }
 
   @Test

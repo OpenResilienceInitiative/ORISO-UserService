@@ -1,9 +1,11 @@
 package de.caritas.cob.userservice.api.service.chat;
 
+import de.caritas.cob.userservice.api.facade.ChatConverter;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
@@ -21,15 +23,19 @@ import org.springframework.stereotype.Component;
  * Decides whether a counsellor may see a group chat (#1237).
  *
  * <p>A member or moderator of the group always may, whatever their Träger — so a counsellor who is
- * admitted to a group later keeps working. Everyone else must work in the group's Beratungsstelle
- * and belong to the same Träger as the group's owner. The same-Beratungsstelle rule is today's
- * behaviour, kept as is while the product question around it is open.
+ * admitted to a group later keeps working. A members-only chat (the room for a subset of selected
+ * colleagues, #1418) is open to nobody else. For every other chat the Träger's recipient scope
+ * decides who else may: by default the colleagues of the group's own Beratungsstelle (today's
+ * behaviour), on request every colleague of the Träger or of the platform ({@link
+ * InternalGroupChatRecipientScope}).
  */
 @Component
 @RequiredArgsConstructor
 public class GroupChatConsultantAccess {
 
   private final GroupChatParticipantRepository participantRepository;
+  private final InternalGroupChatRecipientScopeResolver recipientScopes;
+  private final MembersOnlyChatAccess membersOnly;
 
   @Value("${multitenancy.enabled:true}")
   private boolean multitenancy;
@@ -39,7 +45,7 @@ public class GroupChatConsultantAccess {
       return false;
     }
     return isParticipant(chat, consultant)
-        || (isSameTenantAsOwner(chat, consultant) && sharesAgency(chat, consultant));
+        || (!membersOnly.concerns(chat) && scopeAdmits(chat, consultant));
   }
 
   /** Applies the same access rule to a list with one membership query for the whole list. */
@@ -62,7 +68,7 @@ public class GroupChatConsultantAccess {
         .filter(
             chat ->
                 memberSeriesIds.contains(chat.getId())
-                    || (isSameTenantAsOwner(chat, consultant) && sharesAgency(chat, consultant)))
+                    || (!membersOnly.concerns(chat) && scopeAdmits(chat, consultant)))
         .toList();
   }
 
@@ -78,7 +84,11 @@ public class GroupChatConsultantAccess {
     // A member's role decides; the colleague fallback is only for non-members.
     return participationOf(chat, consultant)
         .map(participant -> isModeratorRole(participant.getRole()))
-        .orElseGet(() -> isSameTenantAsOwner(chat, consultant) && sharesAgency(chat, consultant));
+        .orElseGet(
+            () ->
+                !membersOnly.concerns(chat)
+                    && isSameTenantAsOwner(chat, consultant)
+                    && sharesAgency(chat, consultant));
   }
 
   /**
@@ -95,7 +105,10 @@ public class GroupChatConsultantAccess {
             ? List.<GroupChatParticipant>of()
             : participantRepository.findBySeriesId(chat.getId());
     if (members.isEmpty()) {
-      return isSameTenantAsOwner(chat, consultant) && sharesAgency(chat, consultant);
+      // A members-only chat has no colleague fallback, not even before its members are saved.
+      return !membersOnly.concerns(chat)
+          && isSameTenantAsOwner(chat, consultant)
+          && sharesAgency(chat, consultant);
     }
     return members.stream()
         .anyMatch(
@@ -106,6 +119,28 @@ public class GroupChatConsultantAccess {
 
   private static boolean isModeratorRole(ParticipantRole role) {
     return role == ParticipantRole.OWNER || role == ParticipantRole.CO_MODERATOR;
+  }
+
+  /** Whether the Träger's recipient scope admits a non-member to this (ordinary) internal chat. */
+  private boolean scopeAdmits(Chat chat, Consultant consultant) {
+    if (chat.getChatOwner() == null) {
+      return false;
+    }
+    // Every wider scope contains the colleagues of the chat's own centre: ask the TenantService
+    // only for a counsellor that rule does not admit.
+    if (isSameTenantAsOwner(chat, consultant) && sharesAgency(chat, consultant)) {
+      return true;
+    }
+    // The setting is about internal group chats among colleagues. A conversation circle (clients
+    // inside) or any other client-facing chat keeps the centre rule whatever the scope.
+    if (ChatConverter.conversationTypeOf(chat) != ConversationType.INTERNAL_GROUP) {
+      return false;
+    }
+    var scope = recipientScopes.resolve(chat.getChatOwner().getTenantId());
+    if (scope == InternalGroupChatRecipientScope.PLATFORM) {
+      return true;
+    }
+    return scope == InternalGroupChatRecipientScope.TENANT && isSameTenantAsOwner(chat, consultant);
   }
 
   private boolean isParticipant(Chat chat, Consultant consultant) {

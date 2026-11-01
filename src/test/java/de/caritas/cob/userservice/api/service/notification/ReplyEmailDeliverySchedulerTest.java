@@ -26,6 +26,7 @@ class ReplyEmailDeliverySchedulerTest {
   @Mock private ReplyEmailDeliveryWriter writer;
   @Mock private AdviceSeekerReplyEmailService service;
   @Mock private FeedbackMessageEmailService feedback;
+  @Mock private InternalChatEmailService internalChat;
   @Mock private ScheduledTaskClaimService claims;
 
   @Test
@@ -46,5 +47,22 @@ class ReplyEmailDeliverySchedulerTest {
     verify(service).deliverPending(2L);
     verify(claims).release(lease);
     assertThat(TenantContext.getCurrentTenant()).isNull();
+  }
+
+  @Test
+  void internalGroupIntentsAndClaimsReachTheInternalChatMailService() {
+    var lease =
+        new ScheduledTaskClaimService.ClaimLease(
+            "reply-email-delivery", LocalDateTime.now().plusMinutes(2));
+    when(claims.tryClaimLease(eq("reply-email-delivery"), any(Duration.class)))
+        .thenReturn(Optional.of(lease));
+    when(writer.pendingIds()).thenReturn(List.of(1L, 2L));
+    when(writer.kindOf(1L)).thenReturn(Optional.of(RecipientKind.INTERNAL_INTENT));
+    when(writer.kindOf(2L)).thenReturn(Optional.of(RecipientKind.INTERNAL));
+
+    scheduler.deliverPending();
+
+    verify(internalChat).resolveIntent(1L);
+    verify(internalChat).deliverPending(2L);
   }
 }

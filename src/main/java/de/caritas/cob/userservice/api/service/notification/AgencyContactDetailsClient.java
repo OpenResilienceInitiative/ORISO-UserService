@@ -1,5 +1,7 @@
 package de.caritas.cob.userservice.api.service.notification;
 
+import de.caritas.cob.userservice.api.config.auth.RoutineTaskAuthentication;
+import de.caritas.cob.userservice.api.config.auth.TaskPurpose;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
@@ -47,12 +49,9 @@ public class AgencyContactDetailsClient {
       throw new IllegalArgumentException("agency and tenant IDs must be positive");
     }
     String baseUrl = requireBaseUrl();
-    var account = identityConfig.getTechnicalUser();
-    if (account == null || account.getClientId() == null || account.getClientSecret() == null) {
-      throw new IllegalStateException("Identity technical account is not configured");
-    }
     String token =
-        authentication.loginService(account.getClientId(), account.getClientSecret()).accessToken();
+        RoutineTaskAuthentication.accessToken(
+            TaskPurpose.NOTIFICATION_DISPATCH, identityConfig, authentication);
     String url =
         baseUrl.replaceAll("/+$", "")
             + "/internal/agencies/"

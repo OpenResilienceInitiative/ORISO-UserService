@@ -19,6 +19,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.SequenceGenerator;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import jakarta.validation.constraints.Size;
 import java.time.LocalDateTime;
 import java.util.Arrays;
@@ -33,6 +34,7 @@ import lombok.NonNull;
 import lombok.Setter;
 import lombok.ToString;
 import lombok.ToString.Exclude;
+import org.hibernate.annotations.DynamicUpdate;
 import org.hibernate.annotations.Fetch;
 import org.hibernate.annotations.FetchMode;
 import org.hibernate.annotations.Filter;
@@ -41,6 +43,7 @@ import org.hibernate.type.SqlTypes;
 import org.springframework.lang.Nullable;
 
 @Entity
+@DynamicUpdate
 @Builder
 @Table(name = "session")
 @AllArgsConstructor
@@ -64,7 +67,8 @@ public class Session implements TenantAware {
     NEW(1),
     IN_PROGRESS(2),
     DONE(3),
-    IN_ARCHIVE(4);
+    IN_ARCHIVE(4),
+    REJECTED(5);
 
     private final int value;
 
@@ -110,6 +114,28 @@ public class Session implements TenantAware {
   @JoinColumn(name = "consultant_id")
   @Fetch(FetchMode.SELECT)
   private Consultant consultant;
+
+  /**
+   * Monotonic identity-change counter used to distinguish separate ownership periods.
+   *
+   * <p>The {@code default 0} is not decoration: changeset 0094 gives the real column one, and the
+   * integration schema Hibernate generates has to match it. Without the default every seeded {@code
+   * INSERT INTO session} in UserServiceDatabase.sql — which names no ownership column — violates
+   * NOT NULL, the application context fails to start, and every context-booting IT errors out for a
+   * reason that has nothing to do with the test.
+   */
+  @Builder.Default
+  @Column(
+      name = "ownership_revision",
+      nullable = false,
+      columnDefinition = "bigint not null default 0")
+  private long ownershipRevision = 0L;
+
+  /** Rejects stale whole-entity saves, including saves that would restore an older owner. */
+  @Version
+  @Builder.Default
+  @Column(name = "row_version", nullable = false, columnDefinition = "bigint not null default 0")
+  private long rowVersion = 0L;
 
   @Column(
       name = "consulting_type",
@@ -206,6 +232,18 @@ public class Session implements TenantAware {
   private Boolean supervisionOptedOut = false;
 
   /**
+   * Future additional access requires individual approval when enabled; never grants access.
+   * Updated only by the dedicated preference writer so stale entity merges cannot revert it.
+   */
+  @Builder.Default
+  @Column(
+      name = "always_ask_before_additional_access",
+      updatable = false,
+      nullable = false,
+      columnDefinition = "bit default false")
+  private boolean alwaysAskBeforeAdditionalAccess = false;
+
+  /**
    * ADR-022 decision 2 — the Gate 2 consent pointer: the id of the legal-text version (owned by
    * ORISO-AgencyService, ADR-021 decision 3) this room is currently cleared for. {@code null} means
    * the gate has not been passed.
@@ -222,6 +260,16 @@ public class Session implements TenantAware {
    */
   @Column(name = "consented_legal_version_id")
   private Long consentedLegalVersionId;
+
+  /**
+   * ORISO-Frontend#1952: the medium ({@code CHAT}, {@code AUDIO}, {@code VIDEO}) of the counsellor
+   * direct link (#1475, ADR-029) this conversation was opened through; null for every other
+   * conversation. A label for the counsellor's list, not a modality: ADR-006 keeps {@link
+   * #conversationType}. Written once, only by {@code SessionRepository#recordDirectLinkOrigin}, so
+   * a stale entity save cannot erase it.
+   */
+  @Column(name = "direct_link_medium", length = 16, updatable = false)
+  private String directLinkMedium;
 
   @OneToMany(
       targetEntity = SessionTopic.class,

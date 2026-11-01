@@ -10,10 +10,12 @@ import de.caritas.cob.userservice.api.facade.ChatConverter;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.service.agency.EffectiveAgencySettingsLookup;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
@@ -42,6 +44,9 @@ public class GroupChatFeatureGate {
   private final @NonNull TenantService tenantService;
   private final @NonNull EffectiveAgencySettingsLookup effectiveAgencySettingsLookup;
 
+  @Value("${multitenancy.enabled:true}")
+  private boolean multitenancy;
+
   /**
    * Refuses the create request unless both the Traeger and the requested Beratungsstelle allow the
    * requested group-chat format.
@@ -56,11 +61,19 @@ public class GroupChatFeatureGate {
   }
 
   private void requireTenantEnabled(Consultant consultant) {
-    if (consultant == null || consultant.getTenantId() == null) {
+    if (consultant == null) {
       throw disabledForTenant();
     }
-
-    var tenant = tenantService.getRestrictedTenantDataFresh(consultant.getTenantId());
+    RestrictedTenantDTO tenant;
+    if (consultant.getTenantId() != null) {
+      tenant = tenantService.getRestrictedTenantDataFresh(consultant.getTenantId());
+    } else if (!multitenancy) {
+      // Without multitenancy nobody has a tenant; the one configured tenant decides (the same
+      // fallback the DPA gate and the chat-recovery policy use).
+      tenant = tenantService.getSingleTenancyTenantDataFresh();
+    } else {
+      throw disabledForTenant();
+    }
     if (tenant == null
         || tenant.getSettings() == null
         || !Boolean.TRUE.equals(tenant.getSettings().getFeatureGroupChatV2Enabled())) {

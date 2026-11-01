@@ -91,7 +91,21 @@ public class SessionMapper {
         .consentedLegalVersionId(session.getConsentedLegalVersionId())
         .consentRequired(
             session.isConsentGateApplicable() && isNull(session.getConsentedLegalVersionId()))
-        .topic(new SessionTopicDTO().id(session.getMainTopicId()));
+        .topic(new SessionTopicDTO().id(session.getMainTopicId()))
+        .directLinkMedium(directLinkMediumOf(session));
+  }
+
+  /** FE#1952: an unknown stored value is left out rather than failing the whole list. */
+  private static SessionDTO.DirectLinkMediumEnum directLinkMediumOf(Session session) {
+    var medium = session.getDirectLinkMedium();
+    if (medium == null) {
+      return null;
+    }
+    try {
+      return SessionDTO.DirectLinkMediumEnum.fromValue(medium);
+    } catch (IllegalArgumentException unknown) {
+      return null;
+    }
   }
 
   /**
@@ -223,7 +237,14 @@ public class SessionMapper {
     sessionUserDto.setAvatarId(session.getUser().getAvatarId());
     sessionUserDto.setUsername(
         new UsernameTranscoder().decodeUsername(session.getUser().getUsername()));
-    sessionUserDto.setDeleted(session.getUser().getDeleteDate() != null);
+    var temporaryAccount =
+        de.caritas.cob.userservice.api.service.temporaryaccount.TemporaryAccountService.toDtoOrNull(
+            session.getUser());
+    sessionUserDto.setTemporaryAccount(temporaryAccount);
+    // A deleted direct-link guest shows as "Gast (gelöscht)" (ADR-029 §5, #1476).
+    sessionUserDto.setDeleted(
+        session.getUser().getDeleteDate() != null
+            || (temporaryAccount != null && Boolean.TRUE.equals(temporaryAccount.getDeleted())));
     if (nonNull(session.getSessionData())) {
       var sessionData = buildSessionDataMapFromSession(session);
       sessionUserDto.setSessionData(sessionData);

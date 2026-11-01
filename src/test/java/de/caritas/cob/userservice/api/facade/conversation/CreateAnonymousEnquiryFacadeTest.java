@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -56,10 +57,34 @@ public class CreateAnonymousEnquiryFacadeTest {
             usernameRegistry,
             userHelper,
             consultingTypeManager,
-            tenantContextProvider);
+            tenantContextProvider,
+            mock(de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class));
   }
 
   EasyRandom easyRandom = new EasyRandom();
+
+  @Test
+  void pausedTenantStopsAnonymousCreationBeforeIdentityRowsUsernameOrConversationWork() {
+    ReflectionTestUtils.setField(
+        createAnonymousEnquiryFacade,
+        "tenantService",
+        de.caritas.cob.userservice.api.testHelper.PausedTenantAuthorityFixture.paused(79L));
+    TenantContext.setCurrentTenant(79L);
+    var refused =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            org.springframework.web.server.ResponseStatusException.class,
+            () ->
+                createAnonymousEnquiryFacade.createAnonymousEnquiry(
+                    new CreateAnonymousEnquiryDTO(1)));
+    org.junit.jupiter.api.Assertions.assertEquals(
+        org.springframework.http.HttpStatus.FORBIDDEN, refused.getStatusCode());
+    org.mockito.Mockito.verifyNoInteractions(
+        anonymousUserCreatorService,
+        anonymousConversationCreatorService,
+        usernameRegistry,
+        userHelper,
+        consultingTypeManager);
+  }
 
   @Test
   void createAnonymousEnquiry_Should_ReturnMatrixOnlyResponse() {

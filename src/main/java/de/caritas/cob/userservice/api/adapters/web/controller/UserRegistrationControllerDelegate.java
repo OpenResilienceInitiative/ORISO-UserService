@@ -202,6 +202,7 @@ class UserRegistrationControllerDelegate {
             null,
             enquiryMessage.getMatrixEventId());
 
+    enquiryData.setUiLocale(ErstantwortRequestLocale.current());
     var response = createEnquiryMessageFacade.createEnquiryMessage(enquiryData);
 
     return new ResponseEntity<>(response, HttpStatus.CREATED);

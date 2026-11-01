@@ -128,4 +128,6 @@ runs:
 
   - name: Package Java application
     shell: bash
-    run: ./mvnw -B package -DskipTests
+    # Surefire's unit execution binds skipTests to skip.unit-tests in pom.xml.
+    # Skip only this second pass; the test and inventory gates above still run.
+    run: ./mvnw -B package -Dskip.unit-tests=true -Dskip.integration-tests=true

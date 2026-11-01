@@ -55,6 +55,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.SessionSupervisionDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -194,14 +195,25 @@ class SessionServiceTest {
           null,
           null,
           null,
+          null,
           null);
 
   @InjectMocks private SessionService sessionService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
+
   @Mock private SessionRepository sessionRepository;
   @Mock private ConsultantTopicRepository consultantTopicRepository;
   @Mock private GroupChatParticipantRepository groupChatParticipantRepository;
   @Mock private SessionSupervisorRepository sessionSupervisorRepository;
   @Mock private SessionSupervisionMarkerService supervisionMarkerService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.enquiry.EnquiryRejectionPendingReadAccess
+      rejectionReadAccess;
+
+  @Mock private SessionOwnershipService sessionOwnershipService;
   @Mock private AgencyService agencyService;
   @Mock private ConsultantService consultantService;
   @Mock private ConsultingTypeManager consultingTypeManager;
@@ -212,6 +224,24 @@ class SessionServiceTest {
   @BeforeEach
   public void setUp() {
     CONSULTANT_AGENCY_SET.add(CONSULTANT_AGENCY_1);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = Session.RegistrationType.class,
+      names = {"ANONYMOUS", "REGISTERED"})
+  void assignmentPreservesConversationTypeFallback(Session.RegistrationType registration) {
+    Session target = new Session();
+    target.setRegistrationType(registration);
+    sessionService.updateConsultantAndStatusForSession(
+        target, null, Session.SessionStatus.IN_PROGRESS);
+    org.assertj.core.api.Assertions.assertThat(target.getConversationType())
+        .isEqualTo(
+            registration == Session.RegistrationType.ANONYMOUS
+                ? de.caritas.cob.userservice.api.model.ConversationType.LIVE_CHAT
+                : de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING);
+    verify(sessionOwnershipService)
+        .updateOwnerAndStatus(target, null, Session.SessionStatus.IN_PROGRESS);
   }
 
   @Test
@@ -274,7 +304,7 @@ class SessionServiceTest {
   void updateConsultantAndStatusForSession_Should_SaveSession() {
 
     sessionService.updateConsultantAndStatusForSession(SESSION, CONSULTANT, SessionStatus.NEW);
-    verify(sessionRepository, times(1)).save(SESSION);
+    verify(sessionOwnershipService).updateOwnerAndStatus(SESSION, CONSULTANT, SessionStatus.NEW);
   }
 
   @Test
@@ -812,6 +842,21 @@ class SessionServiceTest {
     assertThrows(
         ForbiddenException.class,
         () -> sessionService.fetchSessionForConsultant(sessionId, CONSULTANT_WITH_AGENCY));
+  }
+
+  @Test
+  void fetchSessionForConsultant_DoesNotExposeNonTeamMetadataToUnassignedOfferRecipient() {
+    Session session = easyRandom.nextObject(Session.class);
+    session.setConsultant(CONSULTANT_WITH_AGENCY_2);
+    session.setUser(USER_WITH_MATRIX_ID);
+    session.setTeamSession(false);
+    session.setAgencyId(
+        CONSULTANT_WITH_AGENCY.getConsultantAgencies().iterator().next().getAgencyId());
+    when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+
+    assertThrows(
+        ForbiddenException.class,
+        () -> sessionService.fetchSessionForConsultant(session.getId(), CONSULTANT_WITH_AGENCY));
   }
 
   @Test
@@ -1560,5 +1605,88 @@ class SessionServiceTest {
 
     assertThat(session.getConversationType())
         .isEqualTo(de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP);
+  }
+
+  private static Session enquiry(Long tenantId, Consultant consultant) {
+    var user = new User();
+    user.setUserId("asker");
+    var session = new Session();
+    session.setId(7L);
+    session.setTenantId(tenantId);
+    session.setAgencyId(3L);
+    session.setUser(user);
+    session.setMatrixRoomId("!room:example");
+    session.setConsultant(consultant);
+    session.setStatus(SessionStatus.INITIAL);
+    return session;
+  }
+
+  @Test
+  void finalizeEnquiryRefusesASessionThatNoLongerExists() {
+    when(sessionRepository.findByIdForUpdate(7L)).thenReturn(Optional.empty());
+
+    assertThrows(
+        NotFoundException.class,
+        () -> sessionService.finalizeEnquiry(enquiry(1L, null), "de", "!room:example"));
+    verify(sessionRepository, never()).save(any());
+  }
+
+  @Test
+  void finalizeEnquiryRefusesARejectedSession() {
+    var current = enquiry(1L, null);
+    current.setStatus(SessionStatus.REJECTED);
+    when(sessionRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(current));
+
+    assertThrows(
+        ConflictException.class,
+        () -> sessionService.finalizeEnquiry(enquiry(1L, null), "de", "!room:example"));
+    verify(sessionRepository, never()).save(any());
+  }
+
+  @Test
+  void finalizeEnquiryRefusesAnEnquiryThatWasAlreadySent() {
+    var current = enquiry(1L, null);
+    current.setEnquiryMessageDate(java.time.LocalDateTime.now());
+    when(sessionRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(current));
+
+    assertThrows(
+        ConflictException.class,
+        () -> sessionService.finalizeEnquiry(enquiry(1L, null), "de", "!room:example"));
+    verify(sessionRepository, never()).save(any());
+  }
+
+  @Test
+  void finalizeEnquiryRefusesASessionOfAnotherTenant() {
+    when(sessionRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(enquiry(2L, null)));
+
+    assertThrows(
+        ConflictException.class,
+        () -> sessionService.finalizeEnquiry(enquiry(1L, null), "de", "!room:example"));
+    verify(sessionRepository, never()).save(any());
+  }
+
+  @Test
+  void finalizeEnquiryMakesAnUnassignedEnquiryNew() {
+    var current = enquiry(1L, null);
+    when(sessionRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(current));
+    when(sessionRepository.save(current)).thenReturn(current);
+
+    var saved = sessionService.finalizeEnquiry(enquiry(1L, null), "de", "!room:example");
+
+    assertThat(saved.getStatus()).isEqualTo(SessionStatus.NEW);
+    assertThat(saved.getEnquiryMessageDate()).isNotNull();
+  }
+
+  @Test
+  void finalizeEnquiryPutsAnAssignedEnquiryInProgress() {
+    var consultant = new Consultant();
+    var current = enquiry(1L, consultant);
+    when(sessionRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(current));
+    when(sessionRepository.save(current)).thenReturn(current);
+
+    var saved = sessionService.finalizeEnquiry(enquiry(1L, consultant), "de", "!room:example");
+
+    assertThat(saved.getStatus()).isEqualTo(SessionStatus.IN_PROGRESS);
+    assertThat(saved.getEnquiryMessageDate()).isNotNull();
   }
 }

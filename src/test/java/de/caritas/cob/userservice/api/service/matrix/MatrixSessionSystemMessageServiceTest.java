@@ -103,6 +103,54 @@ class MatrixSessionSystemMessageServiceTest {
   }
 
   @Test
+  void postUserLeftChatMessage_shouldOmitEndedBy_whenNoPersonEndedTheChat() {
+    // System ends (inactivity) keep today's body byte-identical.
+    var body = sendUserLeftAndCaptureBody(null);
+
+    assertThat(body)
+        .isEqualTo(
+            "[SYSTEM_NOTIFICATION]{\"type\":\"USER_LEFT_CHAT\",\"username\":\"asker.username\"}");
+  }
+
+  @Test
+  void postUserLeftChatMessage_shouldSayConsultant_whenTheCounsellorEndedTheChat() {
+    var body = sendUserLeftAndCaptureBody(MatrixSessionSystemMessageService.EndedBy.CONSULTANT);
+
+    assertThat(body)
+        .isEqualTo(
+            "[SYSTEM_NOTIFICATION]{\"type\":\"USER_LEFT_CHAT\",\"username\":\"asker.username\","
+                + "\"endedBy\":\"CONSULTANT\"}");
+  }
+
+  @Test
+  void postUserLeftChatMessage_shouldSayAdviceSeeker_whenTheAskerEndedTheChat() {
+    var body = sendUserLeftAndCaptureBody(MatrixSessionSystemMessageService.EndedBy.ADVICE_SEEKER);
+
+    assertThat(body)
+        .isEqualTo(
+            "[SYSTEM_NOTIFICATION]{\"type\":\"USER_LEFT_CHAT\",\"username\":\"asker.username\","
+                + "\"endedBy\":\"ADVICE_SEEKER\"}");
+  }
+
+  private String sendUserLeftAndCaptureBody(MatrixSessionSystemMessageService.EndedBy endedBy) {
+    var session = sessionWithUserMatrixId(USER_MATRIX_ID, "asker.username");
+    when(matrixSynapseService.loginAsUserAccessToken(USER_MATRIX_ID)).thenReturn(ACCESS_TOKEN);
+    when(matrixSynapseService.sendMessage(eq(MATRIX_ROOM_ID), anyString(), eq(ACCESS_TOKEN)))
+        .thenReturn(Map.of("event_id", "$evt"));
+
+    if (endedBy == null) {
+      matrixSessionSystemMessageService.postUserLeftChatMessage(session);
+    } else {
+      matrixSessionSystemMessageService.postUserLeftChatMessage(session, endedBy);
+    }
+
+    var bodyCaptor = ArgumentCaptor.forClass(String.class);
+    verify(matrixSynapseService)
+        .sendMessage(eq(MATRIX_ROOM_ID), bodyCaptor.capture(), eq(ACCESS_TOKEN));
+    return bodyCaptor.getValue();
+  }
+
+  @Test
   void postUserLeftChatMessage_shouldImpersonateAgencyWithFullMatrixId() {
     // The agency's full Matrix identity is used when no human Matrix ID is on the session.
     var session = sessionWithoutHumanMatrixIds();
@@ -363,6 +411,26 @@ class MatrixSessionSystemMessageServiceTest {
   }
 
   @Test
+  void grantedMessage_retainsImmutableRequestModeWithoutInternalExplanation() {
+    var session = sessionWithUserMatrixId(USER_MATRIX_ID, "asker.username");
+    when(matrixSynapseService.loginAsUserAccessToken(USER_MATRIX_ID)).thenReturn(ACCESS_TOKEN);
+    when(matrixSynapseService.sendMessage(anyString(), anyString(), eq(ACCESS_TOKEN)))
+        .thenReturn(Map.of("event_id", "$evt"));
+    var metadata =
+        new MatrixSessionSystemMessageService.GrantedAccessMetadata(
+            42L,
+            de.caritas.cob.userservice.api.model.CaseHandoverConsentMode.NONE,
+            de.caritas.cob.userservice.api.model.CaseHandoverRequest.AccessType.TAKEOVER);
+    matrixSessionSystemMessageService.postCaseHandoverGrantedMessage(
+        session, "New Advisor", "The counsellor has taken over.", metadata);
+    var body = ArgumentCaptor.forClass(String.class);
+    verify(matrixSynapseService).sendMessage(eq(MATRIX_ROOM_ID), body.capture(), eq(ACCESS_TOKEN));
+    assertThat(body.getValue())
+        .contains("\"requestId\":42", "\"clientConsent\":\"NONE\"", "\"accessType\":\"TAKEOVER\"")
+        .doesNotContain("reasonLabel", "explanation", "policyAuthority");
+  }
+
+  @Test
   void postUserLeftChatMessage_shouldNotSendMessage_whenAgencyCredentialsEmpty() {
     var session = sessionWithoutHumanMatrixIds();
     when(agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))
@@ -392,6 +460,69 @@ class MatrixSessionSystemMessageServiceTest {
 
     verify(consultantService).getConsultant(CONSULTANT_ID);
     verify(matrixSynapseService, never()).sendMessage(anyString(), anyString(), anyString());
+  }
+
+  @Test
+  void postSystemMessage_asConsultant_postsWithTheAssignedConsultantsAccount() {
+    var consultant = new Consultant();
+    consultant.setId(CONSULTANT_ID);
+    consultant.setMatrixUserId(CONSULTANT_MATRIX_ID);
+    var session = sessionWithUserMatrixId(USER_MATRIX_ID, "asker");
+    session.setConsultant(consultant);
+    when(consultantService.getConsultant(CONSULTANT_ID)).thenReturn(Optional.of(consultant));
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MATRIX_ID))
+        .thenReturn(ACCESS_TOKEN);
+    when(matrixSynapseService.sendMessage(MATRIX_ROOM_ID, "[SYSTEM_NOTIFICATION]{}", ACCESS_TOKEN))
+        .thenReturn(Map.of("event_id", "$evt"));
+
+    assertThat(
+            matrixSessionSystemMessageService.postSystemMessage(
+                session, "[SYSTEM_NOTIFICATION]{}", true))
+        .isTrue();
+  }
+
+  @Test
+  void postSystemMessage_asConsultant_neverFallsBackToTheAskersAccount() {
+    var consultant = new Consultant();
+    consultant.setId(CONSULTANT_ID);
+    var session = sessionWithUserMatrixId(USER_MATRIX_ID, "asker");
+    session.setConsultant(consultant);
+    when(consultantService.getConsultant(CONSULTANT_ID)).thenReturn(Optional.of(consultant));
+
+    assertThat(
+            matrixSessionSystemMessageService.postSystemMessage(
+                session, "[SYSTEM_NOTIFICATION]{}", true))
+        .isFalse();
+    assertThat(matrixSessionSystemMessageService.hasConsultantMatrixIdentity(session)).isFalse();
+    verify(matrixSynapseService, never()).loginAsUserAccessToken(USER_MATRIX_ID);
+    verify(matrixSynapseService, never()).sendMessage(anyString(), anyString(), anyString());
+  }
+
+  @Test
+  void hasConsultantMatrixIdentity_readsTheStoredConsultant() {
+    var stored = new Consultant();
+    stored.setId(CONSULTANT_ID);
+    stored.setMatrixUserId(CONSULTANT_MATRIX_ID);
+    var reference = new Consultant();
+    reference.setId(CONSULTANT_ID);
+    var session = sessionWithUserMatrixId(USER_MATRIX_ID, "asker");
+    session.setConsultant(reference);
+    when(consultantService.getConsultant(CONSULTANT_ID)).thenReturn(Optional.of(stored));
+
+    assertThat(matrixSessionSystemMessageService.hasConsultantMatrixIdentity(session)).isTrue();
+  }
+
+  @Test
+  void postSystemMessage_reportsAMatrixError() {
+    var session = sessionWithUserMatrixId(USER_MATRIX_ID, "asker");
+    when(matrixSynapseService.loginAsUserAccessToken(USER_MATRIX_ID)).thenReturn(ACCESS_TOKEN);
+    when(matrixSynapseService.sendMessage(MATRIX_ROOM_ID, "[SYSTEM_NOTIFICATION]{}", ACCESS_TOKEN))
+        .thenReturn(Map.of("error", "forbidden"));
+
+    assertThat(
+            matrixSessionSystemMessageService.postSystemMessage(
+                session, "[SYSTEM_NOTIFICATION]{}", false))
+        .isFalse();
   }
 
   private Session baseSession() {

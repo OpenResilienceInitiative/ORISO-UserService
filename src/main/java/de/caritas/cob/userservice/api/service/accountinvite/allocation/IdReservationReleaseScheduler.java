@@ -1,5 +1,7 @@
 package de.caritas.cob.userservice.api.service.accountinvite.allocation;
 
+import de.caritas.cob.userservice.api.config.auth.RoutineTaskAuthentication;
+import de.caritas.cob.userservice.api.config.auth.TaskPurpose;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext;
@@ -48,15 +50,14 @@ public class IdReservationReleaseScheduler {
         // No work, no service session: the technical identity is only used when a release is due.
         return;
       }
-      var technicalUser = identityClientConfig.getTechnicalUser();
-      var login =
-          identityAuthentication.loginService(
-              technicalUser.getClientId(), technicalUser.getClientSecret());
+      String token =
+          RoutineTaskAuthentication.accessToken(
+              TaskPurpose.INVITE_RESERVATIONS, identityClientConfig, identityAuthentication);
       // Ambient (not explicit) because the allocation clients are shared with the admin-triggered
       // invite flow, which must keep sending the admin's own token. Scoped to the releases only.
       for (Long taskId : pendingTaskIds) {
         try {
-          TechnicalAccessTokenContext.runWith(login.accessToken(), () -> processor.process(taskId));
+          TechnicalAccessTokenContext.runWith(token, () -> processor.process(taskId));
         } catch (RuntimeException exception) {
           log.warn("Could not process reservation release task {}", taskId, exception);
         }

@@ -37,6 +37,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityReactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
@@ -127,6 +128,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
         IdentityAccountStatusLookup.class,
         IdentityAuthentication.class,
         IdentityDeactivator.class,
+        IdentityReactivator.class,
         IdentityDummyEmailUpdater.class,
         IdentityEmailAddressUpdater.class,
         IdentityEmailOwnerLookup.class,
@@ -161,6 +163,13 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
 
   @BeforeEach
   public void setUp() {
+    when(tenantService.getRestrictedTenantDataFresh(Mockito.anyLong()))
+        .thenAnswer(
+            call ->
+                new RestrictedTenantDTO()
+                    .id(call.getArgument(0))
+                    .active(true)
+                    .subdomain("synthetic"));
 
     CreatedIdentity keycloakResponse = new CreatedIdentity();
     createdIdentityId = UUID.randomUUID().toString();
@@ -413,6 +422,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
     createAdminDTO.setEmail("platformadmin@email.com");
     createAdminDTO.setTenantId(0);
+    when(authenticatedUser.getAccessToken()).thenReturn("platform-caller-token");
     givenCurrentSetupIdentity(createAdminDTO, AccountInviteTargetRole.TENANT_ADMIN);
     givenTenant();
     givenPlatformAdmin();
@@ -428,6 +438,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
                 .content(objectMapper.writeValueAsString(createAdminDTO)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("_embedded.tenantId", is("0")));
+    assertDefaultInactivityPolicy(createdIdentityId);
     assertIssuedSetup(AccountInviteTargetRole.TENANT_ADMIN, 0L);
   }
 

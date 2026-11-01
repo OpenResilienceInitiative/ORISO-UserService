@@ -15,5 +15,7 @@ public enum CallPolicyDenialReason {
   MATRIX_IDENTITY_NOT_FOUND,
   MATRIX_IDENTITY_AMBIGUOUS,
   INACTIVITY_STATE_UNAVAILABLE,
-  ACCOUNT_NOT_ACTIVE
+  ACCOUNT_NOT_ACTIVE,
+  /** The person knocked through a direct link and the counsellor has not let them in (#1475). */
+  KNOCK_NOT_ADMITTED
 }

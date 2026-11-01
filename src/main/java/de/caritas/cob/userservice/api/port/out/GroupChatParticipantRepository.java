@@ -44,6 +44,33 @@ public interface GroupChatParticipantRepository extends CrudRepository<GroupChat
 
   Optional<GroupChatParticipant> findBySeriesIdAndConsultantId(Long seriesId, String consultantId);
 
+  /**
+   * The chats (series ids) whose participants are exactly {@code consultantIds}: no one missing and
+   * no one else. {@code creatorId} narrows the search to chats the creator takes part in and must
+   * be one of {@code consultantIds}; {@code size} is their number.
+   */
+  @Query(
+      "SELECT p.seriesId FROM GroupChatParticipant p WHERE p.seriesId IN "
+          + "(SELECT m.seriesId FROM GroupChatParticipant m WHERE m.consultantId = :creatorId) "
+          + "GROUP BY p.seriesId "
+          + "HAVING COUNT(p) = :size AND COUNT(DISTINCT p.consultantId) = :size "
+          + "AND SUM(CASE WHEN p.consultantId IN :consultantIds THEN 1 ELSE 0 END) = :size "
+          + "ORDER BY p.seriesId")
+  List<Long> findSeriesIdsWithExactParticipants(
+      @Param("creatorId") String creatorId,
+      @Param("consultantIds") Collection<String> consultantIds,
+      @Param("size") long size);
+
+  /** Whether the consultant takes part in the group chat of this session ({@code chat_id}). */
+  boolean existsByChatIdAndConsultantId(Long chatId, String consultantId);
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "select participant from GroupChatParticipant participant "
+          + "where participant.seriesId = :seriesId and participant.consultantId = :consultantId")
+  Optional<GroupChatParticipant> findBySeriesIdAndConsultantIdForUpdate(
+      @Param("seriesId") Long seriesId, @Param("consultantId") String consultantId);
+
   /** Delete all canonical participant relations before deleting their chat series. */
   void deleteBySeriesId(Long seriesId);
 

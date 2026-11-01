@@ -44,6 +44,10 @@ import org.springframework.web.context.WebApplicationContext;
       "feature.multitenancy.with.single.domain.enabled=false"
     })
 class ConsultantPictureJwtHttpTest {
+  @org.springframework.test.context.bean.override.mockito.MockitoBean
+  de.caritas.cob.userservice.api.admin.service.admin.ManagedAccountStatusService
+      accountOperationalStatus;
+
   @Configuration
   @Import({
     HttpTenantFilter.class,
@@ -115,6 +119,8 @@ class ConsultantPictureJwtHttpTest {
     when(store.read(id)).thenReturn(new ConsultantPicture(id, png, "image/png"));
     when(tenants.getRestrictedTenantData(anyLong()))
         .thenReturn(new RestrictedTenantDTO().subdomain("synthetic"));
+    when(tenants.getRestrictedTenantDataFresh(anyLong()))
+        .thenReturn(new RestrictedTenantDTO().active(true).subdomain("synthetic"));
   }
 
   @AfterEach

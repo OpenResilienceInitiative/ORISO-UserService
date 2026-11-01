@@ -4,12 +4,16 @@ import static de.caritas.cob.userservice.api.model.Session.RegistrationType.ANON
 import static de.caritas.cob.userservice.api.model.Session.RegistrationType.REGISTERED;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.service.LogService;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 /**
@@ -21,9 +25,12 @@ import org.springframework.stereotype.Service;
 public class SessionToConsultantVerifier {
 
   private final @NonNull SessionToConsultantConditionProvider conditionProvider;
+  private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
 
   /** verifies if {@link Session} is not already in progress. */
   public void verifySessionIsNotInProgress(ConsultantSessionDTO consultantSessionDTO) {
+    membersOnlyChatAccess.requireAccess(
+        consultantSessionDTO.getSession(), consultantSessionDTO.getConsultant());
     if (this.conditionProvider.isSessionInProgress(consultantSessionDTO.getSession())) {
       var message =
           String.format(
@@ -38,6 +45,19 @@ public class SessionToConsultantVerifier {
   /** verifies necessary input data of {@link Session} and {@link Consultant}. */
   public void verifyPreconditionsForAssignment(
       ConsultantSessionDTO consultantSessionDTO, boolean skipSameConsultantAssignmentVerification) {
+    if (consultantSessionDTO.getSession().getStatus() == Session.SessionStatus.REJECTED) {
+      throw new ConflictException("Rejected enquiry cannot be assigned");
+    }
+    // A members-only chat is handed to nobody who is not in it: assigning its case would invite
+    // the colleague into the room and take the others out.
+    membersOnlyChatAccess.requireAccess(
+        consultantSessionDTO.getSession(), consultantSessionDTO.getConsultant());
+    // Not even to a participant: the assignment would take every other selected colleague out of
+    // the room. The case follows the chat's own ownership transfer, removal and leave.
+    if (membersOnlyChatAccess.concerns(consultantSessionDTO.getSession())) {
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.MEMBERS_ONLY_CHAT_STOP_REQUIRED, HttpStatus.CONFLICT);
+    }
     verifyIfSessionIsAlreadyAssignedToConsultant(
         consultantSessionDTO, skipSameConsultantAssignmentVerification);
 

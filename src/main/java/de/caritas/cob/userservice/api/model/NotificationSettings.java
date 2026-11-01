@@ -19,5 +19,6 @@ public class NotificationSettings {
   // The notification matrix, ADR-019 in ORISO-Frontend.
   boolean assignmentNotificationEnabled;
   boolean feedbackNotificationEnabled;
+  @Builder.Default boolean internalChatNotificationEnabled = true;
   boolean serviceNoticeNotificationEnabled;
 }

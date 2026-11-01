@@ -27,4 +27,12 @@ public interface AdminAgencyRepository extends CrudRepository<AdminAgency, Long>
       "SELECT a.id AS id, a.agencyId AS agencyId, ad.id AS adminId "
           + "FROM Admin ad, AdminAgency a WHERE a.admin = ad AND ad.id IN :adminIds")
   List<AdminAgencyBase> findByAdminIdIn(@Param("adminIds") Set<String> adminIds);
+
+  // Admin is a query root so the tenant filter applies (see above). AGENCY admins only: tenant and
+  // platform admins are not "the admin of the counselling centre".
+  @Query(
+      "SELECT DISTINCT ad.id FROM Admin ad, AdminAgency a "
+          + "WHERE a.admin = ad AND a.agencyId = :agencyId AND ad.type = "
+          + "de.caritas.cob.userservice.api.model.Admin.AdminType.AGENCY")
+  List<String> findAgencyAdminIdsByAgencyId(@Param("agencyId") Long agencyId);
 }

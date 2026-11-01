@@ -43,6 +43,13 @@ import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 @SpringJUnitWebConfig(GuestIdentityHttpTest.Config.class)
 @TestPropertySource(properties = "multitenancy.enabled=false")
 class GuestIdentityHttpTest {
+  @org.springframework.test.context.bean.override.mockito.MockitoBean
+  de.caritas.cob.userservice.api.admin.service.tenant.TenantService tenantOperationalMetadata;
+
+  @org.springframework.test.context.bean.override.mockito.MockitoBean
+  de.caritas.cob.userservice.api.admin.service.admin.ManagedAccountStatusService
+      accountOperationalStatus;
+
   @Configuration
   @EnableWebMvc
   @Import({
@@ -102,6 +109,10 @@ class GuestIdentityHttpTest {
   @Autowired WebApplicationContext context;
   @MockitoBean JwtDecoder jwtDecoder;
   @MockitoBean de.caritas.cob.userservice.api.admin.service.admin.AdminScope adminScope;
+
+  @MockitoBean
+  de.caritas.cob.userservice.api.service.agencyinvitelink.CallShareLinkService callShareLinks;
+
   @MockitoBean IdentityUsernameAvailability identityProvider;
   @MockitoBean UserRepository users;
   @MockitoBean MatrixUserClient matrix;
@@ -110,6 +121,11 @@ class GuestIdentityHttpTest {
   @MockitoBean TopicService topics;
   @MockitoBean ConsultantRepository consultants;
   @MockitoBean ConsultingTypeService consultingTypes;
+
+  @MockitoBean
+  de.caritas.cob.userservice.api.service.temporaryaccount.TemporaryAccountSettingsService
+      temporaryAccountSettings;
+
   @MockitoBean AgencyService agencies;
   @MockitoBean CreateAnonymousEnquiryFacade provisioning;
 

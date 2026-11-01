@@ -39,6 +39,9 @@ import org.springframework.test.util.ReflectionTestUtils;
 @MockitoSettings(strictness = Strictness.LENIENT)
 class MessengerTest {
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
+
   @Mock private UserRepository userRepository;
   @Mock private ConsultantRepository consultantRepository;
   @Mock private ChatRepository chatRepository;

@@ -47,6 +47,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -248,6 +249,10 @@ public class AccountInviteController {
             invite));
   }
 
+  /**
+   * Kept for client compatibility, but 2FA is mandatory for new accounts: always answers 400 (see
+   * {@link AccountInviteService#waiveTwoFactor(Long, WaiveTwoFactorCommand)}).
+   */
   @PreAuthorize(ADMIN_AUTH)
   @PostMapping("/useradmin/account-invites/{inviteId}/waive-two-factor")
   public ResponseEntity<AccountInviteResponseDTO> waiveTwoFactor(
@@ -353,6 +358,13 @@ public class AccountInviteController {
     InviteEmailTemplate template = templateService.updateTemplate(templateId, toCommand(request));
     return ResponseEntity.ok(
         InviteEmailTemplateResponseDTO.from(template, templateService.mayChange(template)));
+  }
+
+  @PreAuthorize(ADMIN_AUTH)
+  @DeleteMapping("/useradmin/invite-email-templates/{templateId}")
+  public ResponseEntity<Void> deleteTemplate(@PathVariable Long templateId) {
+    templateService.deleteTemplate(templateId);
+    return ResponseEntity.noContent().build();
   }
 
   @PreAuthorize(ADMIN_AUTH)

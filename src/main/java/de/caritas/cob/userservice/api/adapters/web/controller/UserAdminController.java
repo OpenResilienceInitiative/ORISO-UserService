@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyConsultantResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyTypeDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AskerReactivationRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAgencyResponseDTO;
@@ -39,6 +40,7 @@ import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPref
 import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPreferenceService.ListSort;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
@@ -76,6 +78,17 @@ import org.springframework.web.bind.annotation.RestController;
 @Api(tags = "admin-user-controller")
 public class UserAdminController implements UseradminApi {
 
+  @org.springframework.beans.factory.annotation.Autowired
+  private IdentityObservationHttpAdapter identityObservationHttpAdapter;
+
+  @Override
+  public ResponseEntity<
+          de.caritas.cob.userservice.api.adapters.web.dto.IdentityObservationResponseDTO>
+      observeIdentityOccupancy(
+          de.caritas.cob.userservice.api.adapters.web.dto.IdentityObservationRequestDTO request) {
+    return identityObservationHttpAdapter.observeIdentityOccupancy(request);
+  }
+
   private final @NonNull SessionAdminService sessionAdminService;
   private final @NonNull ViolationReportGenerator violationReportGenerator;
   private final @NonNull ConsultantAdminFacade consultantAdminFacade;
@@ -90,6 +103,10 @@ public class UserAdminController implements UseradminApi {
   private final @NonNull de.caritas.cob.userservice.api.service.accountinvite
           .ExistingAccountSetupIssuer
       accountSetupIssuer;
+  private final @NonNull UserHelper userHelper;
+
+  /** Never typed by anyone and valid until the setup link expires, so length costs nothing. */
+  static final int SETUP_ONLY_PASSWORD_LENGTH = 32;
 
   /**
    * Creates the root hal based navigation entity.
@@ -154,6 +171,12 @@ public class UserAdminController implements UseradminApi {
         createConsultantDTO.getUsername(), null);
 
     createConsultantDTO.setEmail(createConsultantDTO.getEmail().toLowerCase(Locale.ROOT));
+    // #1144: the setup e-mail is the way in, so the first password is one nobody knows. It is
+    // generated here, not in the saga, because the setup issuer below needs the same value. An
+    // empty or short password never gets here: the request validation (minLength 8) answers 400.
+    if (createConsultantDTO.getPassword() == null) {
+      createConsultantDTO.setPassword(userHelper.getRandomPassword(SETUP_ONLY_PASSWORD_LENGTH));
+    }
     var consultant = consultantAdminFacade.createNewConsultant(createConsultantDTO);
     accountSetupIssuer.issueAfterCreation(
         de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole.COUNSELLOR,
@@ -304,6 +327,17 @@ public class UserAdminController implements UseradminApi {
     return new ResponseEntity<>(HttpStatus.OK);
   }
 
+  /** Cancels a consultant deletion while it is still within the safeguard window. */
+  @PostMapping(
+      value = {
+        "/useradmin/consultants/{consultantId}/deletion/cancel",
+        "/service/useradmin/consultants/{consultantId}/deletion/cancel"
+      })
+  public ResponseEntity<Void> cancelConsultantDeletion(@PathVariable String consultantId) {
+    this.consultantAdminFacade.cancelConsultantDeletion(consultantId);
+    return new ResponseEntity<>(HttpStatus.OK);
+  }
+
   /**
    * Entry point to update a consultant. Accepts the full {@link UpdateAdminConsultantDTO} including
    * an optional {@code topicIds} list that fully replaces the consultant's current topics (add new
@@ -432,6 +466,18 @@ public class UserAdminController implements UseradminApi {
         deletionPauseRequestDTO.getMonths(),
         authenticatedUser.getUserId());
     return new ResponseEntity<>(HttpStatus.OK);
+  }
+
+  @PostMapping(
+      value = {
+        "/useradmin/askers/deletion/reactivate",
+        "/service/useradmin/askers/deletion/reactivate"
+      },
+      consumes = "application/json")
+  public ResponseEntity<Void> reactivateAsker(
+      @Valid @RequestBody AskerReactivationRequestDTO reactivationRequest) {
+    askerUserAdminFacade.reactivateAsker(reactivationRequest);
+    return ResponseEntity.noContent().build();
   }
 
   @Override

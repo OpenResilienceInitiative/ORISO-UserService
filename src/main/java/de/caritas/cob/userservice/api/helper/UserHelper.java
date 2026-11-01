@@ -45,9 +45,20 @@ public class UserHelper {
   /**
    * Generates a random password which complies with the Keycloak policy.
    *
-   * @return a random generated password
+   * @return a random generated password of 10 characters
    */
   public String getRandomPassword() {
+    return getRandomPassword(10);
+  }
+
+  /**
+   * Generates a random password of the given length with at least one upper-case, lower-case, digit
+   * and special character. Passay's generator draws from {@code SecureRandom}.
+   *
+   * @param length number of characters
+   * @return a random generated password
+   */
+  public String getRandomPassword(int length) {
     List<CharacterRule> rules =
         Arrays.asList(
             // at least one upper-case character
@@ -71,8 +82,7 @@ public class UserHelper {
                 },
                 1));
     var generator = new PasswordGenerator();
-    // Generated password is 8 characters long, which complies with policy
-    return generator.generatePassword(10, rules);
+    return generator.generatePassword(length, rules);
   }
 
   /**

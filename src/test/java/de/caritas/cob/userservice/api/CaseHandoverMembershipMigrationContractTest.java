@@ -32,6 +32,15 @@ class CaseHandoverMembershipMigrationContractTest {
   }
 
   @Test
+  void requestStatusLookupTakesNoLockBecauseItRunsReadOnly() throws NoSuchMethodException {
+    var method =
+        CaseHandoverRequestRepository.class.getMethod(
+            "findWithoutLockByIdAndSessionId", Long.class, Long.class);
+
+    assertThat(method.getAnnotation(Lock.class)).isNull();
+  }
+
+  @Test
   void failedMatrixCompensationHasAnIndependentDurableRetryTable() throws IOException {
     String changelog =
         resource("/db/changelog/changeset/0098_case_handover_matrix_repair/0098_changeSet.xml");

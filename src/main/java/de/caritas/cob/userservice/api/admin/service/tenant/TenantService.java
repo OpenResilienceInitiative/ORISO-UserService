@@ -119,4 +119,26 @@ public class TenantService {
       throw new IllegalArgumentException("Concrete tenant id required");
     }
   }
+
+  /** Independent operational admission; this never changes legal signatures or descendant state. */
+  public void requireOperationalTenant(Long tenantId) {
+    RestrictedTenantDTO tenant;
+    try {
+      if (TenantContext.TECHNICAL_TENANT_ID.equals(tenantId))
+        throw new IllegalArgumentException("Concrete tenant required");
+      tenant =
+          tenantId == null
+              ? getSingleTenancyTenantDataFresh()
+              : getRestrictedTenantDataFresh(tenantId);
+      if (tenant == null) throw new IllegalStateException("Tenant metadata unavailable");
+    } catch (RuntimeException unavailable) {
+      throw new org.springframework.web.server.ResponseStatusException(
+          org.springframework.http.HttpStatus.BAD_GATEWAY,
+          "Tenant operational status unavailable",
+          unavailable);
+    }
+    if (Boolean.FALSE.equals(tenant.getActive()))
+      throw new org.springframework.web.server.ResponseStatusException(
+          org.springframework.http.HttpStatus.FORBIDDEN, "Tenant operationally inactive");
+  }
 }

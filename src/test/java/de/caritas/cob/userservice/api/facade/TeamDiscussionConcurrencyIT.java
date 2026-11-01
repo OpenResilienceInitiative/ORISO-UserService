@@ -45,39 +45,81 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @DataJpaTest
-@Import({TeamDiscussionCreationWriter.class, TeamDiscussionParticipantWriter.class})
+@Import({
+  TeamDiscussionCreationWriter.class,
+  TeamDiscussionParticipantWriter.class,
+  de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionAccessTransactions.class
+})
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class TeamDiscussionConcurrencyIT {
   @Autowired private TeamDiscussionRepository discussions;
+
+  @Autowired private SessionRepository sessions;
+  @Autowired private de.caritas.cob.userservice.api.port.out.UserRepository users;
+
+  @org.springframework.test.context.bean.override.mockito.MockitoBean
+  private ConsultantRepository consultants;
+
+  @org.springframework.test.context.bean.override.mockito.MockitoBean
+  private ConsultantAgencyRepository agencies;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionAccessTransactions
+      accessTransactions;
+
+  private Long ownSessionId;
+  private String ownUserId;
+
   @Autowired private TeamDiscussionParticipantRepository participants;
   @Autowired private TeamDiscussionCreationWriter writer;
   @Autowired private TeamDiscussionParticipantWriter participantWriter;
 
   @AfterEach
   void cleanUp() {
-    participants.deleteAll();
-    discussions.deleteAll();
+    try {
+      participants.deleteAll();
+      discussions.deleteAll();
+    } finally {
+      try {
+        if (ownSessionId != null) sessions.deleteById(ownSessionId);
+      } finally {
+        if (ownUserId != null) users.deleteById(ownUserId);
+      }
+    }
   }
 
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void simultaneousOpeningReachesOneSharedRoom(boolean samePerson) throws Exception {
-    var sessions = mock(SessionRepository.class);
-    var consultants = mock(ConsultantRepository.class);
-    var agencies = mock(ConsultantAgencyRepository.class);
     var matrix = mock(MatrixSynapseService.class);
     var credentials = mock(AgencyMatrixCredentialClient.class);
     var gate = mock(TeamDiscussionFeatureGate.class);
-    var session = new Session();
-    session.setId(42001L);
+    ownUserId = java.util.UUID.randomUUID().toString();
+    var user =
+        users.save(
+            de.caritas.cob.userservice.api.model.User.builder()
+                .userId(ownUserId)
+                .username(ownUserId)
+                .email("synthetic@example.org")
+                .tenantId(3L)
+                .encourage2fa(true)
+                .magicLinkLoginEnabled(false)
+                .languageCode(com.neovisionaries.i18n.LanguageCode.de)
+                .build());
+    var session = new Session(user, 1, "12345", 7L, SessionStatus.NEW, false);
     session.setAgencyId(7L);
     session.setTenantId(3L);
     session.setRegistrationType(RegistrationType.REGISTERED);
     session.setEnquiryMessageDate(java.time.LocalDateTime.now());
     session.setStatus(SessionStatus.NEW);
-    when(sessions.findById(42001L)).thenReturn(Optional.of(session));
+    session.setIsConsultantDirectlySet(false);
+    session.setSupervisionOptedOut(false);
+    session.setLanguageCode(com.neovisionaries.i18n.LanguageCode.de);
+    session.setCreateDate(java.time.LocalDateTime.now());
+    session.setUpdateDate(java.time.LocalDateTime.now());
+    ownSessionId = sessions.save(session).getId();
     var agencyCredentials = new AgencyMatrixCredentialsDTO();
     agencyCredentials.setMatrixUserId("@agency7:oriso");
     when(credentials.fetchMatrixCredentials(7L)).thenReturn(Optional.of(agencyCredentials));
@@ -126,17 +168,18 @@ class TeamDiscussionConcurrencyIT {
             credentials,
             gate,
             writer,
-            participantWriter,
-            mock(TeamDiscussionRoomCleanupService.class));
+            accessTransactions,
+            mock(TeamDiscussionRoomCleanupService.class),
+            mock(de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess.class));
     var alice = controller(facade, "alice");
     var bob = controller(facade, samePerson ? "alice" : "bob");
     try (var executor = Executors.newFixedThreadPool(2)) {
-      var first = executor.submit(() -> alice.getOrCreate(42001L).getBody());
-      var second = executor.submit(() -> bob.getOrCreate(42001L).getBody());
+      var first = executor.submit(() -> alice.getOrCreate(ownSessionId).getBody());
+      var second = executor.submit(() -> bob.getOrCreate(ownSessionId).getBody());
       var aliceRoom = first.get(20, TimeUnit.SECONDS).matrixRoomId();
       var bobRoom = second.get(20, TimeUnit.SECONDS).matrixRoomId();
       assertThat(bobRoom).isEqualTo(aliceRoom);
-      assertThat(alice.get(42001L).getBody().matrixRoomId()).isEqualTo(aliceRoom);
+      assertThat(alice.get(ownSessionId).getBody().matrixRoomId()).isEqualTo(aliceRoom);
       assertThat(rooms.keySet()).containsExactly(aliceRoom);
       assertThat(rooms.get(aliceRoom))
           .containsExactlyInAnyOrderElementsOf(

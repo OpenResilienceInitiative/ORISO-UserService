@@ -222,6 +222,48 @@ class UserRegistrationControllerDelegateTest {
     verify(assignEnquiryFacade).assignRegisteredEnquiry(session, consultant);
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"de", "de@informal", "en", "fr", "ru", "tr", "ti"})
+  void enquiryCreationPreservesUiLocaleSeparatelyFromCounsellingLanguage(String locale) {
+    var request = new org.springframework.mock.web.MockHttpServletRequest();
+    request.setCookies(new jakarta.servlet.http.Cookie("lang", locale));
+    org.springframework.web.context.request.RequestContextHolder.setRequestAttributes(
+        new org.springframework.web.context.request.ServletRequestAttributes(request));
+    try {
+      when(userAccountProvider.retrieveValidatedUser()).thenReturn(newUser());
+      var message = org.mockito.Mockito.mock(EnquiryMessageDTO.class);
+      when(message.getLanguage()).thenReturn(LanguageCode.EN);
+      when(consultantDtoMapper.languageOf(LanguageCode.EN)).thenReturn("en");
+      delegate.createEnquiryMessage(SESSION_ID, message);
+      var captor = ArgumentCaptor.forClass(EnquiryData.class);
+      verify(createEnquiryMessageFacade).createEnquiryMessage(captor.capture());
+      assertThat(captor.getValue().getUiLocale()).isEqualTo(locale);
+      assertThat(captor.getValue().getLanguage()).isEqualTo("en");
+    } finally {
+      org.springframework.web.context.request.RequestContextHolder.resetRequestAttributes();
+    }
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"../emails", "es", "en-US", "<script>", ""})
+  void enquiryCreationIgnoresUnsupportedUiLocale(String locale) {
+    var request = new org.springframework.mock.web.MockHttpServletRequest();
+    request.setCookies(new jakarta.servlet.http.Cookie("lang", locale));
+    org.springframework.web.context.request.RequestContextHolder.setRequestAttributes(
+        new org.springframework.web.context.request.ServletRequestAttributes(request));
+    try {
+      when(userAccountProvider.retrieveValidatedUser()).thenReturn(newUser());
+      delegate.createEnquiryMessage(SESSION_ID, org.mockito.Mockito.mock(EnquiryMessageDTO.class));
+      var captor = ArgumentCaptor.forClass(EnquiryData.class);
+      verify(createEnquiryMessageFacade).createEnquiryMessage(captor.capture());
+      assertThat(captor.getValue().getUiLocale()).isNull();
+    } finally {
+      org.springframework.web.context.request.RequestContextHolder.resetRequestAttributes();
+    }
+  }
+
   @Test
   void createEnquiryMessageShouldBuildEnquiryDataAndReturnCreated() {
     var user = newUser();

@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.service.CaseHandoverReasonCodes;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
@@ -30,6 +31,7 @@ public class MatrixCaseReplyActorAuthorizer {
   private final @NonNull CaseHandoverRequestRepository handovers;
   private final @NonNull SessionSupervisorRepository supervisors;
   private final @NonNull MatrixSynapseService matrix;
+  private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
 
   public boolean isCurrentWriter(
       Session session, String senderMatrixUserId, boolean requireCurrentRoomMembership) {
@@ -49,8 +51,7 @@ public class MatrixCaseReplyActorAuthorizer {
         || Objects.equals(actor.getId(), session.getUser().getUserId())) {
       return false;
     }
-    boolean assigned = session.isAdvisedBy(actor);
-    if (!assigned && !isPermittedTeamWriter(session, actor)) {
+    if (!isCurrentAssignedOrTeamWriter(session, actor)) {
       return false;
     }
     if (!requireCurrentRoomMembership) {
@@ -59,6 +60,13 @@ public class MatrixCaseReplyActorAuthorizer {
       return true;
     }
     return hasCurrentRoomMembers(session, senderMatrixUserId, session.getUser().getMatrixUserId());
+  }
+
+  // Tenant/current-identity validation remains the caller's responsibility. This shared
+  // decision also serves the controller's documented tenant-one legacy ownership boundary.
+  boolean isCurrentAssignedOrTeamWriter(Session session, Consultant actor) {
+    if (membersOnlyChatAccess.excludes(session, actor)) return false;
+    return session.isAdvisedBy(actor) || isPermittedTeamWriter(session, actor);
   }
 
   /** Unknown membership is retriable; a known mismatch is denied before SMTP. */

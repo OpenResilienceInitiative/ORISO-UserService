@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.facade;
 
+import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.GROUP_INVITE_INVALID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.ACTIVE_CHAT;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.MATRIX_ROOM_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER;
@@ -11,7 +12,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Chat;
@@ -24,10 +25,12 @@ import java.util.Optional;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 
 @ExtendWith(MockitoExtension.class)
 class AssignChatFacadeTest {
@@ -48,18 +51,20 @@ class AssignChatFacadeTest {
 
   @org.junit.jupiter.api.BeforeEach
   void wireRealGroupPolicy() {
-    var policy = de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.policy();
-    var realAgencies =
-        (de.caritas.cob.userservice.api.service.agency.AgencyService)
-            org.springframework.test.util.ReflectionTestUtils.getField(policy, "agencyService");
     var groupPolicy =
-        new de.caritas.cob.userservice.api.service.chat.GroupCounsellingDpaPolicy(
-            policy,
-            org.mockito.Mockito.mock(
-                de.caritas.cob.userservice.api.port.out.ChatAgencyRepository.class),
-            realAgencies);
+        de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.groupPolicy();
     assignChatFacade =
-        new AssignChatFacade(chatService, userService, userChats, groupPolicy, appointmentEvents);
+        new AssignChatFacade(
+            chatService,
+            userService,
+            userChats,
+            groupPolicy,
+            appointmentEvents,
+            new de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess(
+                org.mockito.Mockito.mock(
+                    de.caritas.cob.userservice.api.port.out.ChatRepository.class),
+                org.mockito.Mockito.mock(
+                    de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository.class)));
   }
 
   @Test
@@ -94,13 +99,14 @@ class AssignChatFacadeTest {
 
   @Test
   void assignChat_Should_AddUserToChat() {
-    when(chatService.getChatByMatrixRoomId(MATRIX_ROOM_ID)).thenReturn(Optional.of(ACTIVE_CHAT));
+    var legacyChat = legacyGroup().repetitive(true).matrixRoomId(MATRIX_ROOM_ID).build();
+    when(chatService.getChatByMatrixRoomId(MATRIX_ROOM_ID)).thenReturn(Optional.of(legacyChat));
     when(userService.getUserViaAuthenticatedUser(authenticatedUser)).thenReturn(Optional.of(USER));
 
     assignChatFacade.assignChat(MATRIX_ROOM_ID, authenticatedUser);
 
     verify(chatService)
-        .saveUserChatRelation(UserChat.builder().user(USER).chat(ACTIVE_CHAT).build());
+        .saveUserChatRelation(UserChat.builder().user(USER).chat(legacyChat).build());
   }
 
   @Test
@@ -147,11 +153,14 @@ class AssignChatFacadeTest {
   }
 
   private static Chat.ChatBuilder legacyGroup() {
+    var owner = new de.caritas.cob.userservice.api.model.Consultant();
+    owner.setTenantId(41L);
     return Chat.builder()
         .id(ACTIVE_CHAT.getId())
         .topic("group")
         .initialStartDate(ACTIVE_CHAT.getStartDate())
         .startDate(ACTIVE_CHAT.getStartDate())
+        .chatOwner(owner)
         .inviteToken("link-token");
   }
 
@@ -160,8 +169,8 @@ class AssignChatFacadeTest {
     var selfHelpGroup = chatWithToken(ConversationType.SELF_HELP, "valid-token");
     when(chatService.getChat(selfHelpGroup.getId())).thenReturn(Optional.of(selfHelpGroup));
 
-    assertThrows(
-        ForbiddenException.class,
+    assertInvalidInvite(
+        HttpStatus.FORBIDDEN,
         () -> assignChatFacade.assignChat(selfHelpGroup.getId(), "wrong-token", authenticatedUser));
 
     verify(chatService, never()).saveUserChatRelation(any());
@@ -172,8 +181,8 @@ class AssignChatFacadeTest {
     var selfHelpGroup = chatWithToken(ConversationType.SELF_HELP, "valid-token");
     when(chatService.getChat(selfHelpGroup.getId())).thenReturn(Optional.of(selfHelpGroup));
 
-    assertThrows(
-        ForbiddenException.class,
+    assertInvalidInvite(
+        HttpStatus.FORBIDDEN,
         () -> assignChatFacade.assignChat(selfHelpGroup.getId(), null, authenticatedUser));
 
     verify(chatService, never()).saveUserChatRelation(any());
@@ -184,8 +193,8 @@ class AssignChatFacadeTest {
     var selfHelpGroup = chatWithToken(ConversationType.SELF_HELP, null);
     when(chatService.getChat(selfHelpGroup.getId())).thenReturn(Optional.of(selfHelpGroup));
 
-    assertThrows(
-        ForbiddenException.class,
+    assertInvalidInvite(
+        HttpStatus.FORBIDDEN,
         () -> assignChatFacade.assignChat(selfHelpGroup.getId(), "token", authenticatedUser));
 
     verify(chatService, never()).saveUserChatRelation(any());
@@ -196,8 +205,8 @@ class AssignChatFacadeTest {
     var internalGroup = chatWithToken(ConversationType.INTERNAL_GROUP, "link-token");
     when(chatService.getChat(internalGroup.getId())).thenReturn(Optional.of(internalGroup));
 
-    assertThrows(
-        ForbiddenException.class,
+    assertInvalidInvite(
+        HttpStatus.FORBIDDEN,
         () -> assignChatFacade.assignChat(internalGroup.getId(), "link-token", authenticatedUser));
 
     verify(chatService, never()).saveUserChatRelation(any());
@@ -208,8 +217,8 @@ class AssignChatFacadeTest {
   void assignChatBySeriesId_Should_RejectLegacyRepeatingGroupWithWrongToken(Chat legacyGroup) {
     when(chatService.getChat(legacyGroup.getId())).thenReturn(Optional.of(legacyGroup));
 
-    assertThrows(
-        ForbiddenException.class,
+    assertInvalidInvite(
+        HttpStatus.FORBIDDEN,
         () -> assignChatFacade.assignChat(legacyGroup.getId(), "wrong-token", authenticatedUser));
 
     verify(chatService, never()).saveUserChatRelation(any());
@@ -221,8 +230,8 @@ class AssignChatFacadeTest {
     var legacyOneOffGroup = legacyGroup().repeatCount(1).build();
     when(chatService.getChat(legacyOneOffGroup.getId())).thenReturn(Optional.of(legacyOneOffGroup));
 
-    assertThrows(
-        ForbiddenException.class,
+    assertInvalidInvite(
+        HttpStatus.FORBIDDEN,
         () ->
             assignChatFacade.assignChat(
                 legacyOneOffGroup.getId(), "link-token", authenticatedUser));
@@ -234,11 +243,33 @@ class AssignChatFacadeTest {
   void assignChatBySeriesId_Should_ThrowNotFound_When_SeriesDoesNotExist() {
     when(chatService.getChat(ACTIVE_CHAT.getId())).thenReturn(Optional.empty());
 
-    assertThrows(
-        NotFoundException.class,
+    assertInvalidInvite(
+        HttpStatus.NOT_FOUND,
         () -> assignChatFacade.assignChat(ACTIVE_CHAT.getId(), "link-token", authenticatedUser));
 
     verify(chatService, never()).saveUserChatRelation(any());
+  }
+
+  @Test
+  void assignChatBySeriesId_Should_RejectMembersOnlyChatEvenWithMatchingToken() {
+    var membersOnlyChat = chatWithToken(ConversationType.SELF_HELP, "link-token");
+    membersOnlyChat.setMembersOnly(true);
+    when(chatService.getChat(membersOnlyChat.getId())).thenReturn(Optional.of(membersOnlyChat));
+
+    assertInvalidInvite(
+        HttpStatus.FORBIDDEN,
+        () ->
+            assignChatFacade.assignChat(membersOnlyChat.getId(), "link-token", authenticatedUser));
+
+    verify(chatService, never()).saveUserChatRelation(any());
+  }
+
+  /** The invite-link refusals keep their status and name the reason the app reads (#1483). */
+  private static void assertInvalidInvite(HttpStatus status, Executable call) {
+    var refusal = assertThrows(CustomValidationHttpStatusException.class, call);
+    assertThat(refusal.getHttpStatus()).isEqualTo(status);
+    assertThat(refusal.getCustomHttpHeaders().getFirst("X-Reason"))
+        .isEqualTo(GROUP_INVITE_INVALID.name());
   }
 
   private Chat chatWithToken(ConversationType conversationType, String inviteToken) {

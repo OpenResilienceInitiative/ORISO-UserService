@@ -9,5 +9,8 @@ public enum InviteLinkStatus {
   USED,
 
   /** {@code expiresAt} passed before the link was redeemed. */
-  EXPIRED
+  EXPIRED,
+
+  /** Switched off by its owner; can be switched on again (direct links, #1475). */
+  DISABLED
 }

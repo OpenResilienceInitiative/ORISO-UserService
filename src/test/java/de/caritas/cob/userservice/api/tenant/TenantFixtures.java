@@ -73,6 +73,8 @@ public class TenantFixtures {
           var consultant = new Consultant();
           consultant.setId(id);
           consultant.setTenantId(tenantId);
+          consultant.setCreateDate(LocalDateTime.now());
+          consultant.setUpdateDate(LocalDateTime.now());
           consultant.setUsername("synthetic-" + id.substring(0, 8));
           consultant.setFirstName("Synthetic");
           consultant.setLastName("C" + id.substring(0, 8));

@@ -11,6 +11,43 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 class AccountInactivityServiceTest {
   @Test
+  void boundedAudienceLookupPreservesLegacyRowsAndExcludesOnlyRequestedInactiveIdentities() {
+    var service = createService(new Effects());
+    var ids = java.util.stream.IntStream.range(0, 257).mapToObj(i -> "batch-" + i).toList();
+    service.assignAtCreation("batch-0", 1L, 12, 0, Instant.now());
+    service.suspend("batch-0");
+    service.assignAtCreation("outside-audience", 2L, 12, 0, Instant.now());
+    service.suspend("outside-audience");
+    var jdbc =
+        new JdbcTemplate(
+            new DriverManagerDataSource("jdbc:h2:mem:lifecycle;DB_CLOSE_DELAY=-1", "sa", ""));
+    jdbc.execute("SET QUERY_STATISTICS TRUE");
+    try {
+      long before = lifecycleSelectCount(jdbc);
+      assertThat(service.inactiveAmong(ids)).containsExactly("batch-0");
+      assertThat(lifecycleSelectCount(jdbc) - before).isEqualTo(2);
+      before = lifecycleSelectCount(jdbc);
+      assertThat(
+              service.inactiveAmong(java.util.Arrays.asList(null, "", " ", "batch-0", "batch-0")))
+          .containsExactly("batch-0");
+      assertThat(lifecycleSelectCount(jdbc) - before).isEqualTo(1);
+      before = lifecycleSelectCount(jdbc);
+      assertThat(service.inactiveAmong(java.util.List.of())).isEmpty();
+      assertThat(lifecycleSelectCount(jdbc)).isEqualTo(before);
+    } finally {
+      jdbc.execute("SET QUERY_STATISTICS FALSE");
+    }
+  }
+
+  private long lifecycleSelectCount(JdbcTemplate jdbc) {
+    return jdbc.queryForObject(
+        "SELECT COALESCE(SUM(EXECUTION_COUNT),0) FROM INFORMATION_SCHEMA.QUERY_STATISTICS "
+            + "WHERE UPPER(SQL_STATEMENT) LIKE 'SELECT%FROM ACCOUNT_INACTIVITY%' "
+            + "AND UPPER(SQL_STATEMENT) NOT LIKE '%QUERY_STATISTICS%'",
+        Long.class);
+  }
+
+  @Test
   void disappearingCandidateDoesNotAbortOtherTenants() {
     var captured = Instant.parse("2023-01-01T00:00:00Z");
     var owner = new java.util.concurrent.atomic.AtomicReference<AccountInactivityService>();

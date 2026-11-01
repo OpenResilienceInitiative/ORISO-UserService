@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
@@ -70,6 +71,15 @@ public class AssignEnquiryFacade {
   private final @NonNull SessionSupervisorFacade sessionSupervisorFacade;
 
   private final @NonNull TeamDiscussionFacade teamDiscussionFacade;
+  private final @NonNull de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore
+      acceptanceNotices;
+  private final @NonNull de.caritas.cob.userservice.api.service.matrix
+          .InquiryAcceptanceNoticeDelivery
+      acceptanceDelivery;
+
+  private final @NonNull de.caritas.cob.userservice.api.service.furthercounselling
+          .TopicDuplicateService
+      topicDuplicateService;
 
   /**
    * Assigns the given {@link Session} to the given {@link Consultant} and removes consultants who
@@ -91,7 +101,14 @@ public class AssignEnquiryFacade {
       boolean skipConsultantAssignmentAndSessionInProgressCheck) {
     var requestURI = httpServletRequest.getRequestURI();
     var requestReferer = httpServletRequest.getHeader(HttpHeaders.REFERER);
+    boolean initialAcceptance = session.getStatus() == INITIAL || session.getStatus() == NEW;
     assignEnquiry(session, consultant, skipConsultantAssignmentAndSessionInProgressCheck);
+    if (initialAcceptance) {
+      acceptanceNotices
+          .recordSuccessfulInitialAcceptance(session)
+          .ifPresent(this::dispatchAcceptanceAfterCommit);
+      noticeTopicDuplicateAfterCommit(session.getId());
+    }
     // The case is now committed to this counsellor (assignEnquiry rolls back and rethrows on any
     // failure), so it is safe to layer standing supervision on top. This call never throws.
     sessionSupervisorFacade.attachStandingSupervisorIfAssigned(session.getId(), consultant);
@@ -105,6 +122,53 @@ public class AssignEnquiryFacade {
     event.setRequestReferer(requestReferer);
     event.setRequestUserId(consultant.getId());
     statisticsService.fireEvent(event);
+  }
+
+  private void dispatchAcceptanceAfterCommit(Long sessionId) {
+    if (!org.springframework.transaction.support.TransactionSynchronizationManager
+        .isSynchronizationActive()) {
+      acceptanceDelivery.dispatchSafely(sessionId);
+      return;
+    }
+    org.springframework.transaction.support.TransactionSynchronizationManager
+        .registerSynchronization(
+            new org.springframework.transaction.support.TransactionSynchronization() {
+              @Override
+              public void afterCommit() {
+                acceptanceDelivery.dispatchSafely(sessionId);
+              }
+            });
+  }
+
+  /**
+   * FE#1876 S5: once the acceptance is committed, tell the asker's older same-topic conversations.
+   * Best-effort — a failed notice never rolls the acceptance back.
+   */
+  private void noticeTopicDuplicateAfterCommit(Long sessionId) {
+    Runnable notice =
+        () -> {
+          try {
+            topicDuplicateService.notifyDuplicateStarted(sessionId);
+          } catch (RuntimeException exception) {
+            log.warn(
+                "Topic duplicate notice for accepted session {} failed ({})",
+                sessionId,
+                exception.getClass().getSimpleName());
+          }
+        };
+    if (!org.springframework.transaction.support.TransactionSynchronizationManager
+        .isSynchronizationActive()) {
+      notice.run();
+      return;
+    }
+    org.springframework.transaction.support.TransactionSynchronizationManager
+        .registerSynchronization(
+            new org.springframework.transaction.support.TransactionSynchronization() {
+              @Override
+              public void afterCommit() {
+                notice.run();
+              }
+            });
   }
 
   /**
@@ -172,7 +236,10 @@ public class AssignEnquiryFacade {
     if (departmentBound) {
       session.setAgencyId(servingAgencyId);
     }
-    sessionService.updateConsultantAndStatusForSession(session, consultant, IN_PROGRESS);
+    var previousConsultant = session.getConsultant();
+    var previousStatus = session.getStatus();
+    var assignment =
+        sessionService.updateConsultantAndStatusForSession(session, consultant, IN_PROGRESS);
 
     // Create Matrix room and invite user
     try {
@@ -236,18 +303,27 @@ public class AssignEnquiryFacade {
               return;
             }
 
-            // Use agency token to invite consultant to existing room
-            try {
-              sessionRoomGateway.inviteUser(
-                  existingRoomId, consultant.getMatrixUserId(), agencyToken);
+            // Use agency token to invite consultant to existing room. A counsellor of the
+            // department already sits in it as a silent member (ADR-002); inviting them again only
+            // spends their Matrix invite allowance and can stall the accept for minutes (FE#1799).
+            if (sessionRoomGateway.isJoinedMember(existingRoomId, consultant.getMatrixUserId())) {
               log.info(
-                  "Agency invited consultant {} to existing room {}",
+                  "Consultant {} is already a member of room {}, no invite needed",
                   consultant.getUsername(),
                   existingRoomId);
-            } catch (Exception e) {
-              log.warn(
-                  "Failed to invite consultant to room using agency token: {}", e.getMessage());
-              // Continue anyway - might already be invited
+            } else {
+              try {
+                sessionRoomGateway.inviteUser(
+                    existingRoomId, consultant.getMatrixUserId(), agencyToken);
+                log.info(
+                    "Agency invited consultant {} to existing room {}",
+                    consultant.getUsername(),
+                    existingRoomId);
+              } catch (Exception e) {
+                log.warn(
+                    "Failed to invite consultant to room using agency token: {}", e.getMessage());
+                // Continue anyway - might already be invited
+              }
             }
 
             // Use agency token to set consultant as admin (power level 100)
@@ -344,7 +420,8 @@ public class AssignEnquiryFacade {
                 session.getId(), user.getMatrixUserId(), consultant.getMatrixUserId()));
       }
     } catch (Exception e) {
-      rollbackSessionUpdate(session, departmentBound);
+      rollbackSessionUpdate(
+          session, assignment, previousConsultant, previousStatus, departmentBound);
       log.error(
           "Matrix room creation failed for session: {}, rolling back assignment",
           session.getId(),
@@ -357,16 +434,22 @@ public class AssignEnquiryFacade {
     }
 
     emailNotificationFacade.sendInquiryAcceptedNotification(
-        session.getUser(), consultant, TenantContext.getCurrentTenantData());
+        session.getUser(), consultant, TenantContext.getCurrentTenantData(), session);
   }
 
-  private void rollbackSessionUpdate(Session session, boolean departmentBound) {
+  private void rollbackSessionUpdate(
+      Session session,
+      de.caritas.cob.userservice.api.service.session.SessionOwnershipService.OwnershipChange
+          assignment,
+      Consultant previousConsultant,
+      SessionStatus previousStatus,
+      boolean departmentBound) {
     if (nonNull(session)) {
       if (departmentBound) {
-        // The enquiry returns to the queue unaccepted, so it no longer belongs to a department.
         session.setAgencyId(null);
       }
-      sessionService.updateConsultantAndStatusForSession(session, null, NEW);
+      sessionService.compensateConsultantAssignment(
+          session.getId(), assignment, previousConsultant, previousStatus, departmentBound);
     }
   }
 

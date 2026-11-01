@@ -3,6 +3,8 @@ package de.caritas.cob.userservice.api.service.matrix;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.model.Chat;
@@ -11,10 +13,12 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 /**
@@ -55,6 +59,19 @@ public class GroupChatMembershipService {
   public void removeLeavingMemberFromRoom(Chat chat, String leavingMatrixUserId) {
     var matrixRoomId = resolveMatrixRoomId(chat);
     removeMemberFromRoom(matrixRoomId, leavingMatrixUserId);
+  }
+
+  /** Removal is successful only when Matrix confirms that no membership remains. */
+  public boolean removeLeavingMemberFromRoomAndConfirm(Chat chat, String memberId) {
+    var roomId = resolveMatrixRoomId(chat);
+    return removeMemberFromRoomAndConfirm(roomId, memberId);
+  }
+
+  public boolean removeMemberFromRoomAndConfirm(String roomId, String memberId) {
+    var membership = isMemberInRoom(roomId, memberId);
+    if (membership.isPresent() && !membership.get()) return true;
+    removeMemberFromRoom(roomId, memberId);
+    return isMemberInRoom(roomId, memberId).map(present -> !present).orElse(false);
   }
 
   /**
@@ -138,8 +155,51 @@ public class GroupChatMembershipService {
    * @param memberMatrixUserId the full Matrix user ID to remove, may be blank
    */
   public void removeMemberFromRoom(String matrixRoomId, String memberMatrixUserId) {
+    leaveRoomAsMember(matrixRoomId, memberMatrixUserId);
+  }
+
+  /**
+   * Takes a participant out of the chat's Matrix room. For a members-only chat the room is the
+   * access: a participant who stays joined keeps reading an encrypted room whose database record
+   * says they are gone. So there a failed leave is not swallowed but reported as {@code 502 Bad
+   * Gateway}; the caller runs in the transaction that deletes the participation, which therefore
+   * rolls back and can simply be repeated. For any other chat the removal stays best effort.
+   *
+   * @param chat the group chat the participant is removed from
+   * @param memberMatrixUserId the full Matrix user ID of the participant, may be blank
+   */
+  public void removeParticipantFromRoom(Chat chat, String memberMatrixUserId) {
+    var matrixRoomId = resolveMatrixRoomId(chat);
+    var left = leaveRoomAsMember(matrixRoomId, memberMatrixUserId);
+    if (!left && chat != null && chat.isMembersOnly()) {
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.INTERNAL_CHAT_MEMBERSHIP_FAILED, HttpStatus.BAD_GATEWAY);
+    }
+  }
+
+  /**
+   * Takes a member out of a room by room id (a supervision side room has no {@link Chat}) and
+   * reports a failed leave as {@code 502 Bad Gateway}, like {@link #removeParticipantFromRoom} for
+   * a members-only chat. Call inside the transaction that ends the member's access, so a failure
+   * rolls it back and the request can be repeated.
+   */
+  public void removeMemberFromRoomOrFail(String matrixRoomId, String memberMatrixUserId) {
+    if (!leaveRoomAsMember(matrixRoomId, memberMatrixUserId)) {
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.INTERNAL_CHAT_MEMBERSHIP_FAILED, HttpStatus.BAD_GATEWAY);
+    }
+  }
+
+  /**
+   * Leaves with the member's own admin-minted token. Idempotent (already-gone counts as success)
+   * and never throws.
+   *
+   * @return {@code false} only when the member may still be joined; {@code true} when they left,
+   *     were gone already, or there was no room or member to leave
+   */
+  private boolean leaveRoomAsMember(String matrixRoomId, String memberMatrixUserId) {
     if (isBlank(matrixRoomId) || isBlank(memberMatrixUserId)) {
-      return;
+      return true;
     }
 
     try {
@@ -149,18 +209,21 @@ public class GroupChatMembershipService {
             "Could not mint Matrix token for {}; member stays in room {}",
             memberMatrixUserId,
             matrixRoomId);
-        return;
+        return false;
       }
       if (!matrixSynapseService.leaveRoom(matrixRoomId, memberToken)) {
         log.warn(
             "Could not remove member {} from Matrix room {}", memberMatrixUserId, matrixRoomId);
+        return false;
       }
+      return true;
     } catch (Exception e) {
       log.warn(
           "Matrix room leave failed for member {} in room {}: {}",
           memberMatrixUserId,
           matrixRoomId,
           e.getMessage());
+      return false;
     }
   }
 
@@ -193,9 +256,14 @@ public class GroupChatMembershipService {
       return true;
     }
 
-    return members.get().stream()
-        .filter(memberId -> !memberId.equals(leavingMatrixUserId))
-        .anyMatch(this::isHumanAppMember);
+    // The answer decides whether the chat and its room are deleted. A colleague admitted from
+    // another Träger (recipient scope PLATFORM) must count as present, so the accounts are looked
+    // up across Träger; under the leaver's own Träger they would read as unknown accounts.
+    return TenantContext.supplyAcrossTenants(
+        () ->
+            members.get().stream()
+                .filter(memberId -> !memberId.equals(leavingMatrixUserId))
+                .anyMatch(this::isHumanAppMember));
   }
 
   /**
@@ -254,7 +322,23 @@ public class GroupChatMembershipService {
   }
 
   private ResolvedRoomMember resolveMember(String matrixUserId) {
+    // The caller already proved this exact MXID is in this room. Tenant filtering must not
+    // silently drop a legitimately invited external participant during rotation or retention.
+    try {
+      return TenantContext.supplyAcrossTenants(() -> resolveJoinedIdentity(matrixUserId));
+    } catch (RuntimeException ambiguousOrUnavailable) {
+      throw new CustomValidationHttpStatusException(
+          de.caritas.cob.userservice.api.exception.httpresponses.customheader
+              .HttpStatusExceptionReason.DPA_POLICY_UNAVAILABLE,
+          HttpStatus.BAD_GATEWAY);
+    }
+  }
+
+  private ResolvedRoomMember resolveJoinedIdentity(String matrixUserId) {
     var consultant = consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(matrixUserId);
+    var user = userRepository.findByMatrixUserIdAndDeleteDateIsNull(matrixUserId);
+    if (consultant.isPresent() && user.isPresent())
+      throw new IllegalStateException("Ambiguous room-member identity");
     if (consultant.isPresent()) {
       var c = consultant.get();
       return new ResolvedRoomMember(
@@ -267,7 +351,6 @@ public class GroupChatMembershipService {
           c.getAvatarId());
     }
 
-    var user = userRepository.findByMatrixUserIdAndDeleteDateIsNull(matrixUserId);
     if (user.isPresent() && !isGroupChatSystemUser(user.get())) {
       var u = user.get();
       return new ResolvedRoomMember(
@@ -296,6 +379,15 @@ public class GroupChatMembershipService {
 
   private boolean isGroupChatSystemUser(User user) {
     return user.getUserId() != null && user.getUserId().startsWith(GROUP_CHAT_SYSTEM_USER_PREFIX);
+  }
+
+  /** Whether the member is banned from the chat's room; empty when unknown. */
+  public Optional<Boolean> isBannedFromRoom(Chat chat, String memberMatrixUserId) {
+    var matrixRoomId = resolveMatrixRoomId(chat);
+    if (isBlank(matrixRoomId) || isBlank(memberMatrixUserId)) {
+      return Optional.empty();
+    }
+    return matrixSynapseService.isBannedFromRoom(matrixRoomId, memberMatrixUserId);
   }
 
   /**

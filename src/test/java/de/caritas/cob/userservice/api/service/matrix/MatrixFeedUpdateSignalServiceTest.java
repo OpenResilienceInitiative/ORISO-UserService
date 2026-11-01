@@ -220,6 +220,34 @@ class MatrixFeedUpdateSignalServiceTest {
   }
 
   @Test
+  void anUnscopedSignalCannotAbsorbAValidTenantSignalAndWorkerContextIsRestored() {
+    when(consultantRepository.findByIdAndDeleteDateIsNull(RECIPIENT_ID))
+        .thenAnswer(
+            call ->
+                Long.valueOf(7L)
+                        .equals(
+                            de.caritas.cob.userservice.api.tenant.TenantContext.getCurrentTenant())
+                    ? Optional.of(consultantWith(MATRIX_USER_ID))
+                    : Optional.empty());
+    givenSendSucceeds();
+    var signal = service(true);
+    try {
+      de.caritas.cob.userservice.api.tenant.TenantContext.runIn(
+          null, () -> signal.signalFeedUpdated(RECIPIENT_ID));
+      de.caritas.cob.userservice.api.tenant.TenantContext.runIn(
+          7L, () -> signal.signalFeedUpdated(RECIPIENT_ID));
+      de.caritas.cob.userservice.api.tenant.TenantContext.setCurrentTenant(99L);
+      scheduler.fireAll();
+      verify(matrixSynapseService)
+          .sendToDeviceMessage("org.oriso.feed.updated", MATRIX_USER_ID, Map.of());
+      assertThat(de.caritas.cob.userservice.api.tenant.TenantContext.getCurrentTenant())
+          .isEqualTo(99L);
+    } finally {
+      de.caritas.cob.userservice.api.tenant.TenantContext.clear();
+    }
+  }
+
+  @Test
   void differentRecipientsAreNotCoalescedIntoOneSignal() {
     givenConsultantRecipient();
     when(consultantRepository.findByIdAndDeleteDateIsNull(OTHER_RECIPIENT_ID))

@@ -1,8 +1,14 @@
 package de.caritas.cob.userservice.api.service.accountinvite.onboarding;
 
+import static de.caritas.cob.userservice.api.service.accountinvite.onboarding.OnboardingTwoFactorGuard.isResumableAtTwoFactorStep;
+import static de.caritas.cob.userservice.api.service.accountinvite.onboarding.OnboardingTwoFactorGuard.linkDeathException;
+import static de.caritas.cob.userservice.api.service.accountinvite.onboarding.OnboardingTwoFactorGuard.revalidateTwoFactorGate;
+
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.model.AccountInvite;
@@ -25,6 +31,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType;
 import de.caritas.cob.userservice.api.service.accountinvite.TopicPermissionPolicy;
 import de.caritas.cob.userservice.api.service.accountinvite.WizardAccept;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
@@ -34,14 +41,18 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 import lombok.NonNull;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * Public counsellor onboarding behind an invite link (#997, Admin-panel wizard). Clone of the
@@ -61,29 +72,62 @@ import org.springframework.transaction.support.TransactionTemplate;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class CounsellorOnboardingService {
 
   private static final int MIN_PASSWORD_LENGTH = 8;
 
-  private final @NonNull AccountInviteRepository accountInviteRepository;
-  private final @NonNull AccountInviteService accountInviteService;
-  private final @NonNull CounsellorInviteProvisioningService counsellorInviteProvisioningService;
-  private final @NonNull IdentitySecondFactor identitySecondFactor;
-  private final @NonNull IdentityProfileLookup identityProfileLookup;
-  private final @NonNull AgencyService agencyService;
-  private final @NonNull TopicService topicService;
-  private final @NonNull UsernameTranscoder usernameTranscoder;
-  private final @NonNull AgencyCreationClient agencyCreationClient;
-  private final @NonNull AgencyAdminInviteProvisioningService agencyAdminInviteProvisioningService;
-  private final @NonNull ApplicationEventPublisher eventPublisher;
+  private final AccountInviteRepository accountInviteRepository;
+  private final AccountInviteService accountInviteService;
+  private final CounsellorInviteProvisioningService counsellorInviteProvisioningService;
+  private final IdentitySecondFactor identitySecondFactor;
+  private final IdentityProfileLookup identityProfileLookup;
+  private final AgencyService agencyService;
+  private final TopicService topicService;
+  private final ApplicationSettingsService applicationSettingsService;
+  private final UsernameTranscoder usernameTranscoder;
+  private final AgencyCreationClient agencyCreationClient;
+  private final AgencyAdminInviteProvisioningService agencyAdminInviteProvisioningService;
+  private final ApplicationEventPublisher eventPublisher;
 
   /**
    * Drives the SHORT database-only transactions of this flow explicitly instead of annotating the
    * public entry points: the invite row is read under a PESSIMISTIC_WRITE lock, and every remote
    * call of this service (AgencyService, TopicService, Keycloak) has to happen OUTSIDE that lock.
+   *
+   * <p>One reusable instance built in the constructor (#1008 review): a {@link TransactionTemplate}
+   * is thread-safe and stays unmodified after construction, so allocating a fresh one per call
+   * bought nothing.
    */
-  private final @NonNull PlatformTransactionManager transactionManager;
+  private final TransactionTemplate transactionTemplate;
+
+  public CounsellorOnboardingService(
+      @NonNull AccountInviteRepository accountInviteRepository,
+      @NonNull AccountInviteService accountInviteService,
+      @NonNull CounsellorInviteProvisioningService counsellorInviteProvisioningService,
+      @NonNull IdentitySecondFactor identitySecondFactor,
+      @NonNull IdentityProfileLookup identityProfileLookup,
+      @NonNull AgencyService agencyService,
+      @NonNull TopicService topicService,
+      @NonNull ApplicationSettingsService applicationSettingsService,
+      @NonNull UsernameTranscoder usernameTranscoder,
+      @NonNull AgencyCreationClient agencyCreationClient,
+      @NonNull AgencyAdminInviteProvisioningService agencyAdminInviteProvisioningService,
+      @NonNull ApplicationEventPublisher eventPublisher,
+      @NonNull PlatformTransactionManager transactionManager) {
+    this.accountInviteRepository = accountInviteRepository;
+    this.accountInviteService = accountInviteService;
+    this.counsellorInviteProvisioningService = counsellorInviteProvisioningService;
+    this.identitySecondFactor = identitySecondFactor;
+    this.identityProfileLookup = identityProfileLookup;
+    this.agencyService = agencyService;
+    this.topicService = topicService;
+    this.applicationSettingsService = applicationSettingsService;
+    this.usernameTranscoder = usernameTranscoder;
+    this.agencyCreationClient = agencyCreationClient;
+    this.agencyAdminInviteProvisioningService = agencyAdminInviteProvisioningService;
+    this.eventPublisher = eventPublisher;
+    this.transactionTemplate = new TransactionTemplate(transactionManager);
+  }
 
   /**
    * Resolves the invite state for a raw link token. Mirrors the tenant-admin resolve state machine:
@@ -115,7 +159,12 @@ public class CounsellorOnboardingService {
     }
     CoverageResolution coverage = resolveTopicCoverage(invite);
     return new CounsellorOnboardingState(
-        invite, false, coverage.topics(), coverage.availableTopics(), coverage.agencyExists());
+        invite,
+        false,
+        coverage.topics(),
+        coverage.availableTopics(),
+        coverage.agencyExists(),
+        !coverage.agencyExists() && oneTopicPerAgencyEnabled());
   }
 
   /** The database-only part of {@link #resolveOnboardingInvite}: locked load and classification. */
@@ -156,28 +205,29 @@ public class CounsellorOnboardingService {
    * state) and its own external-state compensation. This method only validates the wizard input up
    * front (before the invite is touched) and persists the pending TOTP secret afterwards so the
    * resume path can re-show it (#569 resume contract).
+   *
+   * <p>Both of its own database writes are targeted-field updates on a freshly locked row (#1008
+   * review): the precondition check including the expiry transition is ONE short transaction, and
+   * the pending secret is written into a re-read row after the Keycloak round trip instead of
+   * merging the detached snapshot the provisioning returned.
    */
   public CounsellorRegistrationResult registerCounsellor(
       String rawToken, RegisterCounsellorCommand requestedCommand) {
     RegisterCounsellorCommand command = requestedCommand;
     validateRegistration(command);
-    AccountInvite invite = findCounsellorInvite(rawToken);
-    if (invite.getPurpose() != AccountInvitePurpose.INVITE) {
-      throw new BadRequestException("This link is for existing-account setup");
-    }
-    LocalDateTime now = LocalDateTime.now();
-
-    if (invite.getStatus() != AccountInviteStatus.EMAIL_SENT) {
-      throw linkDeathException(invite);
-    }
-    AccountInviteLinkException expired = expireIfPastExpiry(invite, now);
-    if (expired != null) {
-      throw expired;
+    AccountInvite invite = loadInviteForRegistration(rawToken);
+    // Check before identity creation or reservation consumption. Legacy centres keep their topics.
+    CoverageResolution coverage = resolveTopicCoverage(invite);
+    if (!coverage.agencyExists()
+        && command.topicIds() != null
+        && command.topicIds().stream().distinct().count() > 1
+        && oneTopicPerAgencyEnabled()) {
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.ONE_TOPIC_PER_AGENCY, HttpStatus.CONFLICT);
     }
     // Agency admins run this wizard too; only a counselling invitee gets a consultant and a topic.
     boolean agencyAdmin = invite.getTargetRole() == AccountInviteTargetRole.AGENCY_ADMIN;
     boolean counsels = !agencyAdmin || alsoCounsellor(invite, command);
-    CoverageResolution coverage = resolveTopicCoverage(invite);
     if (counsels) {
       command = withAtLeastOneTopic(command, coverage);
       validateTopicSelection(command.topicIds(), coverage);
@@ -231,9 +281,9 @@ public class CounsellorOnboardingService {
             accepted.getId());
         return new CounsellorRegistrationResult(consultantId, null, null, true);
       }
-      accepted.setTotpPendingSecret(otpInfo.secret());
-      accepted.setUpdateDate(LocalDateTime.now());
-      accountInviteRepository.save(accepted);
+      // Only the pending secret is this write's business — the row is re-read under its lock so a
+      // concurrent change (e.g. an admin revoking the invite) is not merged away (#1008 review).
+      updateLockedInvite(accepted.getId(), row -> row.setTotpPendingSecret(otpInfo.secret()));
       return new CounsellorRegistrationResult(
           consultantId, otpInfo.secret(), otpInfo.secretQrCode(), true);
     }
@@ -252,9 +302,44 @@ public class CounsellorOnboardingService {
       throw new BadRequestException("otp is required");
     }
     AccountInvite invite = loadInviteForTwoFactorActivation(rawToken);
+
+    // Pinned BEFORE the remote verification for the same reason as in #activateTwoFactor: the
+    // gate may only be activated on a row that still carries the state this code was checked
+    // against. An e-mail factor carries no pending secret, so that half is usually null here.
+    String verifiedAcceptorId = invite.getAcceptedByUserId();
+    String verifiedPendingSecret = invite.getTotpPendingSecret();
+
     OnboardingEmailSecondFactor.verify(
         invite, oneTimePassword, identityProfileLookup, identitySecondFactor);
-    consumeTwoFactorGate(rawToken);
+    consumeTwoFactorGate(invite, verifiedAcceptorId, verifiedPendingSecret);
+  }
+
+  /**
+   * The database-only precondition check of {@link #registerCounsellor}: the invite is loaded under
+   * its lock, an overdue link is flipped to {@code EXPIRED} and the link-death answer is RETURNED
+   * so that transition commits before the exception leaves the flow (same structure as {@link
+   * #loadInviteForResolve}).
+   */
+  private AccountInvite loadInviteForRegistration(String rawToken) {
+    ResolvedOnboardingInvite resolved =
+        inTransaction(
+            () -> {
+              AccountInvite invite = findCounsellorInvite(rawToken);
+              if (invite.getPurpose() != AccountInvitePurpose.INVITE) {
+                throw new BadRequestException("This link is for existing-account setup");
+              }
+              if (invite.getStatus() != AccountInviteStatus.EMAIL_SENT) {
+                return ResolvedOnboardingInvite.dead(linkDeathException(invite));
+              }
+              AccountInviteLinkException expired = expireIfPastExpiry(invite, LocalDateTime.now());
+              return expired == null
+                  ? ResolvedOnboardingInvite.open(invite)
+                  : ResolvedOnboardingInvite.dead(expired);
+            });
+    // Thrown only now, i.e. after the transaction committed, so a persisted EXPIRED transition
+    // survives the link-death answer.
+    resolved.rethrowLinkDeath();
+    return resolved.invite();
   }
 
   /**
@@ -281,20 +366,26 @@ public class CounsellorOnboardingService {
       throw new BadRequestException("No pending TOTP setup exists for this invite");
     }
 
+    // Pinned BEFORE the Keycloak round trip: exactly this acceptor and exactly this secret are
+    // what the verification below proves the one-time password against, and the gate may only be
+    // activated on a row that still carries both (see #consumeTwoFactorGate).
+    String verifiedAcceptorId = invite.getAcceptedByUserId();
+    String verifiedPendingSecret = invite.getTotpPendingSecret();
+
     var profile =
         identityProfileLookup
-            .findById(invite.getAcceptedByUserId())
+            .findById(verifiedAcceptorId)
             .orElseThrow(
                 () -> new BadRequestException("No identity profile exists for this invite"));
     OnboardingEmailSecondFactor.requireInactive(profile, identitySecondFactor);
     boolean valid =
         identitySecondFactor.setUpOtpCredential(
-            profile.username(), oneTimePassword.trim(), invite.getTotpPendingSecret());
+            profile.username(), oneTimePassword.trim(), verifiedPendingSecret);
     if (!valid) {
       throw new BadRequestException("Invalid one-time password");
     }
 
-    consumeTwoFactorGate(rawToken);
+    consumeTwoFactorGate(invite, verifiedAcceptorId, verifiedPendingSecret);
   }
 
   /**
@@ -349,25 +440,66 @@ public class CounsellorOnboardingService {
   }
 
   /**
-   * Terminal consumption of the link once Keycloak accepted the one-time password. The pending
-   * token, expiry and pending gate are checked again under the row lock after the remote call.
-   * Clearing the pending secret before marking the gate active preserves the existing transition.
+   * Terminal consumption of the link once Keycloak accepted the one-time password.
+   *
+   * <p>The instance held here was DETACHED across the remote round trip, so the row is re-read
+   * under its PESSIMISTIC_WRITE lock and only the field this write owns — the pending secret — is
+   * touched (#1008 review). Saving the detached snapshot instead would merge every column as it
+   * looked before the round trip and silently revert a concurrent update; {@link AccountInvite}
+   * carries neither {@code @Version} nor {@code @DynamicUpdate} to catch that. The freshly locked
+   * row is re-checked for eligibility, and against the acceptor and pending secret the code was
+   * actually verified for, by {@link OnboardingTwoFactorGuard#revalidateTwoFactorGate} before
+   * anything is written. Clearing the secret stays FIRST so the gate transition, which re-reads the
+   * invite by its acceptor and therefore works on the very same managed row, is not undone by this
+   * write.
    */
-  private void consumeTwoFactorGate(String rawToken) {
+  private void consumeTwoFactorGate(
+      AccountInvite invite, String verifiedAcceptorId, String verifiedPendingSecret) {
     inTransaction(
         () -> {
-          AccountInvite invite = loadInviteForTwoFactorActivation(rawToken);
-          invite.setTotpPendingSecret(null);
-          invite.setUpdateDate(LocalDateTime.now());
-          accountInviteRepository.save(invite);
-          accountInviteService.markTwoFactorActive(invite.getAcceptedByUserId());
+          AccountInvite locked = lockedInvite(invite.getId());
+          revalidateTwoFactorGate(locked, verifiedAcceptorId, verifiedPendingSecret);
+          locked.setTotpPendingSecret(null);
+          locked.setUpdateDate(LocalDateTime.now());
+          accountInviteRepository.save(locked);
+          accountInviteService.markTwoFactorActive(locked.getAcceptedByUserId());
           return null;
         });
   }
 
   /** Runs {@code action} in its own short database transaction (no remote call belongs inside). */
   private <T> T inTransaction(Supplier<T> action) {
-    return new TransactionTemplate(transactionManager).execute(status -> action.get());
+    return transactionTemplate.execute(status -> action.get());
+  }
+
+  /**
+   * Re-reads the invite row under its PESSIMISTIC_WRITE lock — call only from inside one of this
+   * service's short transactions.
+   *
+   * <p>Every write of this flow follows a remote call, so the invite instance the flow carries is a
+   * DETACHED snapshot taken before that call. Saving it back would merge all of its columns and
+   * silently revert whatever another writer changed in the meantime — the entity has neither {@code
+   * &#64;Version} nor {@code &#64;DynamicUpdate} to catch that (#1008 review). Re-reading here and
+   * setting only the fields the write owns keeps the concurrent change intact.
+   */
+  private AccountInvite lockedInvite(Long inviteId) {
+    return accountInviteRepository
+        .findByIdForUpdate(inviteId)
+        .orElseThrow(() -> new NotFoundException("Account invite not found"));
+  }
+
+  /**
+   * Targeted-field update in its own short transaction: re-reads the row under the lock (see {@link
+   * #lockedInvite}), lets {@code update} set the fields this write owns and stamps the update date.
+   */
+  private void updateLockedInvite(Long inviteId, Consumer<AccountInvite> update) {
+    inTransaction(
+        () -> {
+          AccountInvite locked = lockedInvite(inviteId);
+          update.accept(locked);
+          locked.setUpdateDate(LocalDateTime.now());
+          return accountInviteRepository.save(locked);
+        });
   }
 
   /**
@@ -457,9 +589,30 @@ public class CounsellorOnboardingService {
     }
   }
 
-  /**
-   * The tenant's active topics and whether the lookup itself failed (as opposed to being empty).
-   */
+  /** Reads the current platform policy outside the short invite transactions. */
+  private boolean oneTopicPerAgencyEnabled() {
+    try {
+      var settings = applicationSettingsService.fetchApplicationSettings();
+      if (settings == null) {
+        throw new IllegalStateException("Missing platform settings");
+      }
+      var oneTopicPerAgency = settings.getOneTopicPerAgencyEnabled();
+      if (oneTopicPerAgency == null || oneTopicPerAgency.getValue() == null) {
+        throw new IllegalStateException("Missing one-topic-per-agency setting");
+      }
+      return Boolean.TRUE.equals(oneTopicPerAgency.getValue());
+    } catch (RestClientResponseException failure) {
+      log.warn(
+          "Application settings lookup failed with upstream status {}",
+          failure.getStatusCode().value());
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.SETTINGS_UNAVAILABLE, HttpStatus.SERVICE_UNAVAILABLE);
+    } catch (RestClientException | ResponseStatusException | IllegalStateException failure) {
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.SETTINGS_UNAVAILABLE, HttpStatus.SERVICE_UNAVAILABLE);
+    }
+  }
+
   private record TopicLookup(Map<Long, TopicDTO> topicsById, boolean failed) {}
 
   private static TenantData snapshotTenantContext() {
@@ -556,9 +709,10 @@ public class CounsellorOnboardingService {
             invite.getId());
         return;
       }
+      // Targeted-field update on a re-read row (#1008 review); the in-memory instance is updated
+      // as well because the caller answers the resume response from it.
+      updateLockedInvite(invite.getId(), row -> row.setTotpPendingSecret(otpInfo.secret()));
       invite.setTotpPendingSecret(otpInfo.secret());
-      invite.setUpdateDate(LocalDateTime.now());
-      accountInviteRepository.save(invite);
       log.info("Repaired the missing TOTP setup material for invite {}", invite.getId());
     } catch (RuntimeException exception) {
       log.warn(
@@ -617,28 +771,6 @@ public class CounsellorOnboardingService {
       return new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
     }
     return null;
-  }
-
-  private static boolean isResumableAtTwoFactorStep(AccountInvite invite, LocalDateTime now) {
-    boolean twoFactorStillPending =
-        !AccountInviteService.isTwoFactorGateSatisfied(invite.getTwoFactorStatus());
-    boolean withinExpiryWindow =
-        invite.getExpiresAt() == null || !invite.getExpiresAt().isBefore(now);
-    return invite.getStatus() == AccountInviteStatus.ACCEPTED
-        && invite.getPurpose() == AccountInvitePurpose.INVITE
-        && twoFactorStillPending
-        && withinExpiryWindow;
-  }
-
-  private static AccountInviteLinkException linkDeathException(AccountInvite invite) {
-    return switch (invite.getStatus()) {
-      case ACCEPTED -> new AccountInviteLinkException(AccountInviteLinkException.Reason.CONSUMED);
-      case REVOKED -> new AccountInviteLinkException(AccountInviteLinkException.Reason.REVOKED);
-      case SUPERSEDED ->
-          new AccountInviteLinkException(AccountInviteLinkException.Reason.SUPERSEDED);
-      case EXPIRED -> new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
-      default -> new AccountInviteLinkException(AccountInviteLinkException.Reason.NOT_ACTIVE);
-    };
   }
 
   private static void validateRegistration(RegisterCounsellorCommand command) {
@@ -764,12 +896,22 @@ public class CounsellorOnboardingService {
       /** The tenant's active topics the invitee may add on top of the coverage. */
       List<TopicOption> availableTopics,
       /** False when the invite's agency ID is still a reservation (new Beratungsstelle). */
-      boolean agencyExists) {
+      boolean agencyExists,
+      boolean oneTopicPerAgencyEnabled) {
+
+    public CounsellorOnboardingState(
+        AccountInvite invite,
+        boolean pendingTwoFactorResume,
+        List<TopicOption> topics,
+        List<TopicOption> availableTopics,
+        boolean agencyExists) {
+      this(invite, pendingTwoFactorResume, topics, availableTopics, agencyExists, false);
+    }
 
     /** Resume/legacy shape: no selectable extras, agency assumed to exist. */
     public CounsellorOnboardingState(
         AccountInvite invite, boolean pendingTwoFactorResume, List<TopicOption> topics) {
-      this(invite, pendingTwoFactorResume, topics, List.of(), true);
+      this(invite, pendingTwoFactorResume, topics, List.of(), true, false);
     }
   }
 

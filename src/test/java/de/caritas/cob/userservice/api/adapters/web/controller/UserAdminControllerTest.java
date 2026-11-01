@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -13,6 +14,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyConsultantResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyTypeDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AskerReactivationRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAgencyResponseDTO;
@@ -100,7 +102,8 @@ class UserAdminControllerTest {
             grantConsultantIdentityService,
             userIdentitiesService,
             adminListPreferenceService,
-            accountSetupIssuer);
+            accountSetupIssuer,
+            mock(de.caritas.cob.userservice.api.helper.UserHelper.class));
   }
 
   @Test
@@ -431,6 +434,16 @@ class UserAdminControllerTest {
   }
 
   @Test
+  void reactivateAsker_shouldDelegateAndReturnNoContent() {
+    var request = new AskerReactivationRequestDTO();
+
+    var response = controller.reactivateAsker(request);
+
+    assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
+    verify(askerUserAdminFacade).reactivateAsker(request);
+  }
+
+  @Test
   void pauseAskerDeletion_Should_delegateWithAuthenticatedUser() {
     var request = new DeletionPauseRequestDTO();
     request.setReason("hold");
@@ -459,7 +472,7 @@ class UserAdminControllerTest {
     var dto = new CreateAdminDTO();
     dto.setEmail("IDENTITY@EXAMPLE.ORG");
     var expected = new AdminResponseDTO().embedded(new AdminDTO().id("admin-13"));
-    when(adminUserFacade.createNewAgencyAdmin(dto)).thenReturn(expected);
+    when(adminUserFacade.createNewAgencyAdmin(any())).thenReturn(expected);
 
     var response = withTurkishDefaultLocale(() -> controller.createAgencyAdmin(dto));
 
@@ -643,5 +656,13 @@ class UserAdminControllerTest {
     } finally {
       Locale.setDefault(originalLocale);
     }
+  }
+
+  @Test
+  void cancelConsultantDeletion_Should_delegate() {
+    var response = controller.cancelConsultantDeletion("c-1");
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    verify(consultantAdminFacade).cancelConsultantDeletion("c-1");
   }
 }

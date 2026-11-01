@@ -17,6 +17,7 @@ class ReplicaSafetyInventoryContractTest {
           "email-template-cache",
           "matrix-access-token-cache",
           "matrix-feed-signal-coalescer",
+          "internal-group-chat-recipient-scope-cache",
           "matrix-browser-login-locks",
           "matrix-sync-token-cache",
           "matrix-presence-cache",
@@ -42,11 +43,15 @@ class ReplicaSafetyInventoryContractTest {
           "case-handover-policy-cache-refresh",
           "case-handover-co-access-expiry",
           "case-handover-matrix-repair",
+          "enquiry-rejection-repair",
+          "inquiry-acceptance-notice-retry",
+          "call-share-link-sweep",
           "appointment-cleanup-scheduler",
           "enquiry-notification-scheduler",
           "group-chat-deactivation-scheduler",
           "group-chat-admission-retry",
           "group-chat-admission-matrix-repair",
+          "group-chat-matrix-cleanup",
           "anonymous-deactivation-scheduler",
           "group-chat-reminder-scheduler",
           "group-appointment-mail-scheduler",
@@ -64,6 +69,7 @@ class ReplicaSafetyInventoryContractTest {
           "event-notification-retention-scheduler",
           "team-discussion-retention-scheduler",
           "team-discussion-orphan-cleanup-scheduler",
+          "agency-deletion-audit-pull-scheduler",
           "team-discussion-access-repair");
 
   @Test

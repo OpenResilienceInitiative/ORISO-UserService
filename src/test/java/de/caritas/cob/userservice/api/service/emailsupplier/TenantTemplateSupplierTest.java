@@ -41,6 +41,34 @@ class TenantTemplateSupplierTest {
 
   private final EasyRandom easyRandom = new EasyRandom();
 
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void optionalTenantContentOrClaimDoesNotBlockMailAttributes(boolean hasContent) {
+    TenantContext.setCurrentTenantData(new TenantData(7L, "fixture"));
+    ReflectionTestUtils.setField(
+        tenantTemplateSupplier, "applicationBaseUrl", "https://app.synthetic.oriso.test");
+    var tenant = new RestrictedTenantDTO().id(7L).subdomain("fixture").name("Fixture");
+    if (hasContent)
+      tenant.setContent(new de.caritas.cob.userservice.tenantservice.generated.web.model.Content());
+    when(tenantService.getRestrictedTenantData("fixture")).thenReturn(tenant);
+
+    var attributes = tenantTemplateSupplier.getTemplateAttributes();
+
+    org.assertj.core.api.Assertions.assertThat(attributes)
+        .filteredOn(attribute -> "tenant_claim".equals(attribute.getKey()))
+        .singleElement()
+        .satisfies(
+            attribute ->
+                org.assertj.core.api.Assertions.assertThat(attribute.getValue()).isEmpty());
+    org.assertj.core.api.Assertions.assertThat(attributes)
+        .filteredOn(attribute -> "url".equals(attribute.getKey()))
+        .singleElement()
+        .satisfies(
+            attribute ->
+                org.assertj.core.api.Assertions.assertThat(attribute.getValue())
+                    .isEqualTo("https://fixture.app.synthetic.oriso.test"));
+  }
+
   @Test
   void notificationUrlRejectsMissingTenantSubdomainInStandardMultitenancy() {
     RestrictedTenantDTO tenant = new RestrictedTenantDTO().subdomain(null);

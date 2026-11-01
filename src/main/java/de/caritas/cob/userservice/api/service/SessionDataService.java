@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.helper.SessionDataProvider;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.SessionData;
 import de.caritas.cob.userservice.api.port.out.SessionDataRepository;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import java.util.List;
 import lombok.NonNull;
@@ -21,6 +22,7 @@ public class SessionDataService {
   private final @NonNull SessionDataRepository sessionDataRepository;
   private final @NonNull SessionDataProvider sessionDataProvider;
   private final @NonNull SessionService sessionService;
+  private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
 
   /**
    * Saves additional registration information in session data for the given session ID.
@@ -40,6 +42,8 @@ public class SessionDataService {
         sessionService
             .getSession(sessionId)
             .orElseThrow(() -> new NotFoundException("Session with id %s not found.", sessionId));
+    membersOnlyChatAccess.requireOrdinary(
+        session, "The session of a members-only chat has no session data.");
     this.saveSessionData(session, sessionData);
   }
 

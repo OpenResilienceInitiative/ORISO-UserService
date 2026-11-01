@@ -139,13 +139,17 @@ public class ExistingAccountSetupService {
             // A changed account during the remote call must not silently complete the old link.
             requireSameSavedIdentity(target);
             if (target.role() == AccountInviteTargetRole.COUNSELLOR) {
-              consultants
-                  .findByIdAndDeleteDateIsNull(target.identityId())
-                  .ifPresent(
-                      c -> {
-                        c.setPasswordChangeRequired(false);
-                        consultants.save(c);
-                      });
+              // Visible only in its own tenant, not in the public request's (#1058).
+              inTenantOf(
+                  target,
+                  () ->
+                      consultants
+                          .findByIdAndDeleteDateIsNull(target.identityId())
+                          .ifPresent(
+                              c -> {
+                                c.setPasswordChangeRequired(false);
+                                consultants.save(c);
+                              }));
             }
             int completed =
                 invites.completeExistingAccountSetup(
@@ -300,6 +304,39 @@ public class ExistingAccountSetupService {
   }
 
   private void requireSameSavedIdentity(SetupTarget target) {
+    inTenantOf(target, () -> requireSameSavedIdentityInItsTenant(target));
+  }
+
+  private void requireSameSavedIdentityInItsTenant(SetupTarget target) {
+    if (target.role() == AccountInviteTargetRole.COUNSELLOR) {
+      var consultant =
+          consultants
+              .findByIdAndDeleteDateIsNull(target.identityId())
+              .orElseThrow(StaleIdentityException::new);
+      if (!Objects.equals(target.tenantId(), consultant.getTenantId())
+          || !sameEmail(target.email(), consultant.getEmail())
+          || !target.username().equals(consultant.getUsername())) {
+        throw new StaleIdentityException();
+      }
+    } else {
+      Admin.AdminType type =
+          target.role() == AccountInviteTargetRole.TENANT_ADMIN
+              ? Admin.AdminType.TENANT
+              : Admin.AdminType.AGENCY;
+      var admin =
+          admins
+              .findByIdAndType(target.identityId(), type)
+              .orElseThrow(StaleIdentityException::new);
+      if (!Objects.equals(target.tenantId(), admin.getTenantId())
+          || !sameEmail(target.email(), admin.getEmail())
+          || !target.username().equals(admin.getUsername())) {
+        throw new StaleIdentityException();
+      }
+    }
+  }
+
+  /** Runs {@code work} in the setup target's tenant, then restores the caller's tenant. */
+  private void inTenantOf(SetupTarget target, Runnable work) {
     TenantData currentTenant = TenantContext.getCurrentTenantData();
     TenantData oldTenant =
         currentTenant == null
@@ -307,31 +344,7 @@ public class ExistingAccountSetupService {
             : new TenantData(currentTenant.getTenantId(), currentTenant.getSubdomain());
     TenantContext.setCurrentTenant(target.tenantId());
     try {
-      if (target.role() == AccountInviteTargetRole.COUNSELLOR) {
-        var consultant =
-            consultants
-                .findByIdAndDeleteDateIsNull(target.identityId())
-                .orElseThrow(StaleIdentityException::new);
-        if (!Objects.equals(target.tenantId(), consultant.getTenantId())
-            || !sameEmail(target.email(), consultant.getEmail())
-            || !target.username().equals(consultant.getUsername())) {
-          throw new StaleIdentityException();
-        }
-      } else {
-        Admin.AdminType type =
-            target.role() == AccountInviteTargetRole.TENANT_ADMIN
-                ? Admin.AdminType.TENANT
-                : Admin.AdminType.AGENCY;
-        var admin =
-            admins
-                .findByIdAndType(target.identityId(), type)
-                .orElseThrow(StaleIdentityException::new);
-        if (!Objects.equals(target.tenantId(), admin.getTenantId())
-            || !sameEmail(target.email(), admin.getEmail())
-            || !target.username().equals(admin.getUsername())) {
-          throw new StaleIdentityException();
-        }
-      }
+      work.run();
     } finally {
       if (oldTenant == null) {
         TenantContext.clear();

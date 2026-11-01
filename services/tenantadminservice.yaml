@@ -1707,6 +1707,33 @@ components:
     Settings:
       type: object
       properties:
+        featureAskerEmailEnabled:
+          type: boolean
+          default: true
+        featureAskerEmailAgencyCounsellingEnabled:
+          type: boolean
+          default: true
+        featureAskerEmailLiveChatEnabled:
+          type: boolean
+          default: false
+        featureAskerEmailSelfHelpEnabled:
+          type: boolean
+          default: true
+        featureAskerBrowserAgencyCounsellingEnabled:
+          type: boolean
+          default: true
+        featureAskerBrowserLiveChatEnabled:
+          type: boolean
+          default: true
+        featureAskerBrowserSelfHelpEnabled:
+          type: boolean
+          default: true
+        featureConsultantEmailInternalGroupEnabled:
+          type: boolean
+          default: true
+        featureConsultantBrowserInternalGroupEnabled:
+          type: boolean
+          default: true
         featureStatisticsEnabled:
           type: boolean
           example: 'false'
@@ -2256,6 +2283,30 @@ components:
             type: string
         confirmTermsAndConditions:
           type: boolean
+        erstantwortGreeting:
+          type: object
+          additionalProperties:
+            type: string
+        erstantwortWhoReadsAlong:
+          type: object
+          additionalProperties:
+            type: string
+        erstantwortEmergencyAddition:
+          type: object
+          additionalProperties:
+            type: string
+        erstantwortFreeNotice:
+          type: object
+          additionalProperties:
+            type: string
+        erstantwortClosing:
+          type: object
+          additionalProperties:
+            type: string
+        erstantwortResponseDeadlineDays:
+          type: integer
+          minimum: 1
+          maximum: 30
         dataProtectionContactTemplate:
           type: object
           additionalProperties:

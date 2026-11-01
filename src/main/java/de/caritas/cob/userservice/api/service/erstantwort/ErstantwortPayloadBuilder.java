@@ -35,8 +35,9 @@ import org.springframework.stereotype.Component;
  *       Schweigepflicht. The event is posted with the existing credential resolution.
  * </ul>
  *
- * <p>The wording here is the German platform text. It is written <b>gender-neutral by
- * reformulation</b>, not by notation (ADR-018 §7) — "eine passende Ansprechperson", never {@code
+ * <p>The legacy wording here is German platform text. New events with a validated UI locale receive
+ * the localized platform defaults before their wording is frozen. It is written <b>gender-neutral
+ * by reformulation</b>, not by notation (ADR-018 §7) — "eine passende Ansprechperson", never {@code
  * Berater*in} / {@code Berater_innen} / {@code Berater:innen}. The frontend catalogue
  * (ORISO-Frontend {@code erstantwortCatalogue.ts}) carries the same texts for the client-side
  * triggers and for Storybook; both sides are pinned by their own tests.
@@ -170,6 +171,17 @@ public class ErstantwortPayloadBuilder {
                 + " Daten umgehen, steht in der Datenschutzerklärung.");
     addLinks(dataProtection, context);
 
+    /* ADR-018 §6: the Träger's emergency numbers are an addition, never a replacement. They
+    travel as their own Baustein so the client can file them with the other collapsible infos
+    instead of appending them to the always-visible platform bubble. */
+    if (isNotBlank(context.getEmergencyAdditionByTenant())) {
+      add(
+          bausteine,
+          "emergencyAddition",
+          "Weitere Notfallkontakte",
+          context.getEmergencyAdditionByTenant().trim());
+    }
+
     // The single escape hatch, at a fixed position. Absent until a Träger fills it.
     var freeNotice =
         resolve(
@@ -215,6 +227,7 @@ public class ErstantwortPayloadBuilder {
                 ? "Bis bald — wir melden uns bei Dir."
                 : "Bis bald — wir melden uns bei Ihnen."));
 
+    ErstantwortTranslations.localizePlatformDefaults(bausteine, context);
     return bausteine;
   }
 

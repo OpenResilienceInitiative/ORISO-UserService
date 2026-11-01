@@ -31,9 +31,11 @@ import de.caritas.cob.userservice.api.port.out.GroupChatAdmissionMatrixRepairTas
 import de.caritas.cob.userservice.api.port.out.GroupChatJoinRequestRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
+import de.caritas.cob.userservice.api.service.dpa.TenantDpaGateReadClient;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.notification.GroupAppointmentMailQueue;
 import de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.DpaGateStatusDTO;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
@@ -77,13 +79,19 @@ class GroupChatAdmissionCommitIT {
   @MockitoBean private GroupChatPermissionService permissions;
   @MockitoBean private GroupChatMembershipService membership;
   @MockitoBean private GroupAppointmentSeriesEventProducer appointmentEvents;
+  @MockitoBean private TenantDpaGateReadClient dpaOwner;
 
   private Chat series;
+  private Consultant owner;
+  private Long oldOwnerTenantId;
   private Consultant requester;
   private String oldMatrixUserId;
 
   @BeforeEach
   void setUp() {
+    // External owner boundary only; admission and the shared policy remain real.
+    when(dpaOwner.read(any()))
+        .thenReturn(new DpaGateStatusDTO().dpaPublished(true).dpaSigned(true));
     when(membership.isMemberInRoom(any(Chat.class), eq("@admission-test:matrix.test")))
         .thenReturn(Optional.of(false));
     when(membership.resolveMatrixRoomId(any(Chat.class))).thenReturn("!admission-test:matrix.test");
@@ -93,7 +101,10 @@ class GroupChatAdmissionCommitIT {
             .limit(2)
             .toList();
     assertThat(users).hasSize(2);
-    var owner = users.get(0);
+    owner = users.get(0);
+    oldOwnerTenantId = owner.getTenantId();
+    owner.setTenantId(41L);
+    consultants.save(owner);
     requester = users.get(1);
     oldMatrixUserId = requester.getMatrixUserId();
     requester.setMatrixUserId("@admission-test:matrix.test");
@@ -149,6 +160,10 @@ class GroupChatAdmissionCommitIT {
     if (requester != null) {
       requester.setMatrixUserId(oldMatrixUserId);
       consultants.save(requester);
+    }
+    if (owner != null) {
+      owner.setTenantId(oldOwnerTenantId);
+      consultants.save(owner);
     }
   }
 
@@ -315,6 +330,59 @@ class GroupChatAdmissionCommitIT {
       Thread.currentThread().interrupt();
       throw new IllegalStateException(exception);
     }
+  }
+
+  @Test
+  void queuedGraceAdmissionRefusesExpiredOwnerAndResumesAfterCurrentConfirmation() {
+    var request =
+        requests.save(
+            GroupChatJoinRequest.builder()
+                .seriesId(series.getId())
+                .consultantId(requester.getId())
+                .status(Status.PENDING)
+                .requestedAt(CustomLocalDateTime.nowInUtc())
+                .build());
+    var grace =
+        new DpaGateStatusDTO()
+            .dpaPublished(true)
+            .dpaSigned(false)
+            .dpaStatus("OUTDATED")
+            .currentDpaVersion("v2")
+            .signingDeadlineAt("2999-01-01T00:00:00Z")
+            .renewalGraceActive(true)
+            .newCounsellingAllowed(true);
+    var expired =
+        new DpaGateStatusDTO()
+            .dpaPublished(true)
+            .dpaSigned(false)
+            .dpaStatus("OUTDATED")
+            .currentDpaVersion("v2")
+            .signingDeadlineAt("2026-01-01T00:00:00Z")
+            .renewalGraceActive(false)
+            .newCounsellingAllowed(false);
+    when(dpaOwner.read(any())).thenReturn(grace, expired);
+    when(membership.addMemberToRoom(any(Chat.class), eq("@admission-test:matrix.test")))
+        .thenReturn(true);
+
+    service.admit(series.getId(), request.getId(), series.getChatOwner().getId(), null);
+
+    var queued = requests.findById(request.getId()).orElseThrow();
+    assertThat(queued.getStatus()).isEqualTo(Status.ADMITTING);
+    assertThat(queued.getAdmissionAttemptCount()).isEqualTo(1);
+    assertThat(participants.findBySeriesIdAndConsultantId(series.getId(), requester.getId()))
+        .isEmpty();
+    verify(membership, never()).addMemberToRoom(any(Chat.class), any());
+    assertThat(repairTasks.findByRequestId(request.getId())).isEmpty();
+
+    when(dpaOwner.read(any()))
+        .thenReturn(new DpaGateStatusDTO().dpaPublished(true).dpaSigned(true));
+    processor.process(request.getId());
+
+    assertThat(requests.findById(request.getId()).orElseThrow().getStatus())
+        .isEqualTo(Status.ADMITTED);
+    assertThat(participants.findBySeriesIdAndConsultantId(series.getId(), requester.getId()))
+        .isPresent();
+    verify(membership).addMemberToRoom(any(Chat.class), eq("@admission-test:matrix.test"));
   }
 
   @Test

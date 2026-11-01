@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <changeSet id="20261009-inquiry-acceptance-notice" author="codex">
+    <preConditions onFail="MARK_RAN"><not><tableExists tableName="inquiry_acceptance_notice"/></not></preConditions>
+    <createTable tableName="inquiry_acceptance_notice">
+      <column name="session_id" type="BIGINT UNSIGNED"><constraints primaryKey="true" nullable="false"/></column>
+      <column name="owner_id" type="VARCHAR(36)"><constraints nullable="false"/></column>
+      <column name="ownership_revision" type="BIGINT"><constraints nullable="false"/></column>
+      <column name="accepted_at_utc" type="DATETIME(6)"><constraints nullable="false"/></column>
+      <column name="matrix_room_id" type="VARCHAR(255)"/>
+      <column name="sender_matrix_id" type="VARCHAR(255)"/>
+      <column name="public_advisor_name" type="VARCHAR(255)"/>
+      <column name="title" type="VARCHAR(255)"><constraints nullable="false"/></column>
+      <column name="description" type="VARCHAR(1000)"><constraints nullable="false"/></column>
+      <column name="delivery_state" type="VARCHAR(16)"><constraints nullable="false"/></column>
+      <column name="next_attempt_at_utc" type="DATETIME(6)"/>
+      <column name="matrix_event_id" type="VARCHAR(255)"/>
+    </createTable>
+    <addForeignKeyConstraint baseTableName="inquiry_acceptance_notice" baseColumnNames="session_id" referencedTableName="session" referencedColumnNames="id" constraintName="fk_inquiry_acceptance_notice_session" onDelete="CASCADE"/>
+    <createIndex tableName="inquiry_acceptance_notice" indexName="idx_inquiry_acceptance_notice_pending"><column name="delivery_state"/><column name="next_attempt_at_utc"/><column name="session_id"/></createIndex>
+    <rollback><dropTable tableName="inquiry_acceptance_notice"/></rollback>
+  </changeSet>
+</databaseChangeLog>

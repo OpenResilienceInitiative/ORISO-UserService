@@ -11,11 +11,14 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import java.time.LocalDateTime;
+import java.util.UUID;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /** Durable retry record for a Matrix side effect that could not be compensated immediately. */
 @Entity
@@ -55,6 +58,20 @@ public class CaseHandoverMatrixRepairTask {
   /** Matrix user that can remove the member. JOIN actions authenticate as the member itself. */
   @Column(name = "operator_id", length = 255)
   private String operatorId;
+
+  /** Captured only for a rolled-back read-only demotion, never ordinary grant expiry. */
+  @Column(name = "previous_power_level")
+  private Integer previousPowerLevel;
+
+  @Column(name = "ownership_revision")
+  private Long ownershipRevision;
+
+  /**
+   * Correlates a successfully retried consent/grant even when its original creation time is old.
+   */
+  @JdbcTypeCode(SqlTypes.CHAR)
+  @Column(name = "attempt_operation_id", columnDefinition = "char(36)")
+  private UUID attemptOperationId;
 
   @Column(name = "attempt_count", nullable = false)
   @Builder.Default

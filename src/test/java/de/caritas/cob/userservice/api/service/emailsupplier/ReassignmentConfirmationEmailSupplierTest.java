@@ -38,7 +38,7 @@ class ReassignmentConfirmationEmailSupplierTest {
     assertThat(language.toString(), is(receiverConsultant.getLanguageCode().toString()));
     assertThat(mail.getDialect(), is(receiverConsultant.getDialect()));
 
-    assertThat(mail.getTemplateData(), hasSize(3));
+    assertThat(mail.getTemplateData(), hasSize(4));
     assertThat(mail.getTemplateData().get(0).getKey(), is("name_recipient"));
     assertThat(mail.getTemplateData().get(0).getValue(), is(receiverConsultant.getUsername()));
     assertThat(mail.getTemplateData().get(1).getKey(), is("name_from_consultant"));

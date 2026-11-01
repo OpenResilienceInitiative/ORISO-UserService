@@ -28,6 +28,17 @@ public interface SessionRoomGateway {
   void inviteUser(String roomId, String userId, String accessToken)
       throws MatrixInviteUserException;
 
+  /**
+   * One invite attempt that never waits on Synapse's rate limiter: a 429 is thrown as {@link
+   * de.caritas.cob.userservice.api.exception.matrix.MatrixInviteRateLimitedException} carrying the
+   * server's retry delay.
+   */
+  void inviteUserOnce(String roomId, String userId, String accessToken)
+      throws MatrixInviteUserException;
+
+  /** True only when Matrix confirms the user is joined; an unknown state answers false. */
+  boolean isJoinedMember(String roomId, String userId);
+
   boolean joinRoom(String roomId, String accessToken);
 
   boolean ensureAdminInRoom(String roomId, String memberMatrixUserId);

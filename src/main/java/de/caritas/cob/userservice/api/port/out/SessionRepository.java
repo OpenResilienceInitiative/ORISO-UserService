@@ -32,6 +32,39 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
   @Query("SELECT session FROM Session session WHERE session.id = :sessionId")
   Optional<Session> findByIdForUpdate(@Param("sessionId") Long sessionId);
 
+  /** Scalar lock avoids returning an earlier managed Session snapshot after remote call lookup. */
+  @Query(
+      value =
+          "SELECT status FROM session WHERE id=:id AND matrix_room_id=:room AND (tenant_id=:tenant OR (:tenant=1 AND tenant_id IS NULL)) FOR UPDATE",
+      nativeQuery = true)
+  Optional<Integer> lockCallStatus(
+      @Param("id") Long id, @Param("room") String room, @Param("tenant") Long tenant);
+
+  /**
+   * ORISO-Frontend#1952: remember the medium of the direct link a conversation was opened through.
+   * First link wins: a conversation that already has one keeps it. Leaves ownership and the
+   * optimistic version alone, like the preference writer below.
+   *
+   * @return one if written, zero if the conversation is missing or already has an origin
+   */
+  @Transactional
+  @Modifying(flushAutomatically = true)
+  @Query(
+      "UPDATE Session session SET session.directLinkMedium = :medium"
+          + " WHERE session.id = :sessionId AND session.directLinkMedium IS NULL")
+  int recordDirectLinkOrigin(@Param("sessionId") Long sessionId, @Param("medium") String medium);
+
+  /**
+   * Write the independent standing preference without changing ownership or its optimistic version.
+   * Callers must first lock the session and validate its owner, tenant and conversation scope.
+   */
+  @Transactional
+  @Modifying(flushAutomatically = true)
+  @Query(
+      "UPDATE Session session SET session.alwaysAskBeforeAdditionalAccess = :alwaysAsk WHERE session.id = :sessionId")
+  void updateAdditionalAccessPreference(
+      @Param("sessionId") Long sessionId, @Param("alwaysAsk") boolean alwaysAsk);
+
   /**
    * Refresh only the timestamp of a still-waiting enquiry whose heartbeat is due.
    *
@@ -73,6 +106,13 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
    * @return A list of {@link Session}s for the specific consultant id and status
    */
   List<Session> findByConsultantAndStatusIn(Consultant consultant, List<SessionStatus> statuses);
+
+  @Query(
+      "SELECT session.id FROM Session session "
+          + "WHERE session.consultant = :consultant AND session.status IN :statuses "
+          + "ORDER BY session.id")
+  List<Long> findIdsByConsultantAndStatusInOrderById(
+      @Param("consultant") Consultant consultant, @Param("statuses") List<SessionStatus> statuses);
 
   /**
    * Find a {@link Session} list by a consultant and a session status ordered by update date desc.

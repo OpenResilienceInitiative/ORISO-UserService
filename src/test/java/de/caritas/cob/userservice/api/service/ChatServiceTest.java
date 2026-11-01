@@ -28,8 +28,10 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.actions.chat.MatrixChatShutdownService;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
@@ -77,7 +79,30 @@ class ChatServiceTest {
 
   @InjectMocks private ChatService chatService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
+
+  @org.junit.jupiter.api.BeforeEach
+  void readsRunDirectly() {
+    org.mockito.Mockito.lenient()
+        .when(
+            membersOnlyChatAccess.readingAcrossTraeger(
+                org.mockito.ArgumentMatchers.any(Chat.class),
+                org.mockito.ArgumentMatchers.<java.util.function.Supplier<Object>>any()))
+        .thenAnswer(
+            invocation -> invocation.<java.util.function.Supplier<Object>>getArgument(1).get());
+  }
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyRevocation membersOnlyRevocation;
+
   @Mock private ChatRepository chatRepository;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.matrixgroup.GroupMatrixLifecycleCleanup
+      participationHistory;
+
+  @Mock private MatrixChatShutdownService shutdown;
 
   @Mock private ChatAgencyRepository chatAgencyRepository;
 
@@ -190,6 +215,22 @@ class ChatServiceTest {
     when(chatRepository.findByUserId(USER_ID)).thenReturn(List.of(series));
     when(groupChatParticipantRepository.findBySeriesId(series.getId()))
         .thenReturn(List.of(GroupChatParticipant.builder().consultantId("owner").build()));
+
+    List<UserSessionResponseDTO> result = chatService.getChatsForUserId(USER_ID);
+
+    assertThat(result, hasSize(0));
+  }
+
+  @Test
+  void getChatsForUserId_Should_NeverListAMembersOnlyChatToAnAdviceSeeker() {
+    Chat related = activeChatWithAgency();
+    related.setMembersOnly(true);
+    Chat assigned = activeChatWithAgency();
+    assigned.setMembersOnly(true);
+    when(membersOnlyChatAccess.concerns(related)).thenReturn(true);
+    when(membersOnlyChatAccess.concerns(assigned)).thenReturn(true);
+    when(chatRepository.findByUserId(USER_ID)).thenReturn(List.of(related));
+    when(chatRepository.findAssignedByUserId(USER_ID)).thenReturn(List.of(assigned));
 
     List<UserSessionResponseDTO> result = chatService.getChatsForUserId(USER_ID);
 
@@ -414,6 +455,21 @@ class ChatServiceTest {
     when(groupChatParticipantRepository.findBySeriesId(series.getId()))
         .thenReturn(
             List.of(GroupChatParticipant.builder().consultantId("explicit-member").build()));
+
+    List<ConsultantSessionResponseDTO> result = chatService.getChatsForConsultant(consultant);
+
+    assertThat(result, hasSize(0));
+  }
+
+  @Test
+  void getChatsForConsultant_Should_NeverListAMembersOnlyChatBeforeItsParticipantsAreSaved() {
+    Consultant consultant = Mockito.mock(Consultant.class);
+    when(consultant.getId()).thenReturn("colleague-of-the-centre");
+    Chat series = activeChatWithAgency();
+    series.setMembersOnly(true);
+    when(membersOnlyChatAccess.concerns(series)).thenReturn(true);
+    when(chatRepository.findByAgencyIds(Mockito.any())).thenReturn(List.of(series));
+    when(groupChatParticipantRepository.findBySeriesId(series.getId())).thenReturn(List.of());
 
     List<ConsultantSessionResponseDTO> result = chatService.getChatsForConsultant(consultant);
 
@@ -713,6 +769,44 @@ class ChatServiceTest {
   }
 
   @Test
+  void deleteChat_Should_retireTheCaseOfTheChatBeforeItsParticipationsGo() {
+    Chat chat = new Chat();
+    chat.setId(CHAT_ID);
+    chat.setMembersOnly(true);
+
+    chatService.deleteChat(chat);
+
+    var deletionOrder =
+        inOrder(membersOnlyRevocation, groupChatParticipantRepository, chatRepository);
+    deletionOrder.verify(membersOnlyRevocation).retireCaseOf(chat);
+    deletionOrder.verify(groupChatParticipantRepository).deleteBySeriesId(CHAT_ID);
+    deletionOrder.verify(chatRepository).delete(chat);
+  }
+
+  @Test
+  void deleteChat_Should_purgeTheRoomOfAMembersOnlyChatInTheSameTransactionAsTheLastStep() {
+    Chat chat = new Chat();
+    chat.setId(CHAT_ID);
+    chat.setMembersOnly(true);
+
+    chatService.deleteChat(chat);
+
+    var order = inOrder(chatRepository, shutdown);
+    order.verify(chatRepository).delete(chat);
+    order.verify(shutdown).shutdownRoom(chat);
+  }
+
+  @Test
+  void deleteChat_Should_leaveTheRoomOfAnOrdinaryChatToItsCaller() {
+    Chat chat = new Chat();
+    chat.setId(CHAT_ID);
+
+    chatService.deleteChat(chat);
+
+    verifyNoInteractions(shutdown);
+  }
+
+  @Test
   void saveUserChatRelation_Should_ThrowConflictException_WhenUserAlreadyAssigned() {
     UserChat userChat = new UserChat();
     when(chatUserRepository.findByChatAndUser(Mockito.any(), Mockito.any()))
@@ -742,6 +836,15 @@ class ChatServiceTest {
     assertEquals(
         de.caritas.cob.userservice.api.model.ConversationType.INTERNAL_GROUP,
         chat.getConversationType());
+  }
+
+  @Test
+  void savingARepetitiveLegacySeriesDoesNotTurnItIntoAnInternalChat() {
+    var chat = new Chat();
+    chat.setRepetitive(true);
+    chatService.saveChat(chat);
+    org.assertj.core.api.Assertions.assertThat(chat.getConversationType())
+        .isEqualTo(de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP);
   }
 
   @Test

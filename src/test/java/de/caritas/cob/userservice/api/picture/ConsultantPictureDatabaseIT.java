@@ -17,8 +17,10 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.api.service.session.SessionOwnershipService;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteDatabaseConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
+import de.caritas.cob.userservice.api.workflow.delete.service.DeletionAuditService;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
 import jakarta.persistence.EntityManager;
@@ -49,6 +51,9 @@ import org.springframework.transaction.support.TransactionTemplate;
   ConsultantPictureService.class,
   PictureIntake.class,
   ConsultantAdminService.class,
+  SessionOwnershipService.class,
+  de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore.class,
+  de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver.class,
   DeletionLifecycleService.class,
   DeleteDatabaseConsultantAction.class
 })
@@ -84,7 +89,13 @@ class ConsultantPictureDatabaseIT {
   @MockitoBean AccountManager accountManager;
   @MockitoBean AppointmentService appointments;
   @MockitoBean TopicService topics;
+  @MockitoBean de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyAccess;
+
+  @MockitoBean
+  de.caritas.cob.userservice.api.service.chat.MembersOnlyRevocation membersOnlyRevocation;
+
   @MockitoBean CounsellorOnboardingService onboarding;
+  @MockitoBean DeletionAuditService deletionAudit;
   String id;
   byte[] png;
 

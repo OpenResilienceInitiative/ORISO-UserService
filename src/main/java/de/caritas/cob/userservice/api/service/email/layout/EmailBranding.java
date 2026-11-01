@@ -16,9 +16,29 @@ package de.caritas.cob.userservice.api.service.email.layout;
  * @param privacyUrl privacy pointer for the footer, or {@code null}
  */
 public record EmailBranding(
-    String brandName, String logoUrl, String accentColor, String imprintUrl, String privacyUrl) {
+    String brandName,
+    String logoUrl,
+    String accentColor,
+    String imprintUrl,
+    String privacyUrl,
+    Integer logoWidth,
+    Integer logoHeight) {
+
+  public EmailBranding(
+      String brandName, String logoUrl, String accentColor, String imprintUrl, String privacyUrl) {
+    this(brandName, logoUrl, accentColor, imprintUrl, privacyUrl, null, null);
+  }
 
   public EmailBranding {
+    if (logoUrl == null
+        || logoUrl.isBlank()
+        || logoWidth == null
+        || logoHeight == null
+        || logoWidth <= 0
+        || logoHeight <= 0) {
+      logoWidth = null;
+      logoHeight = null;
+    }
     brandName = brandName == null || brandName.isBlank() ? "ORISO" : brandName.trim();
     String normalized = EmailColors.normalize(accentColor);
     if (normalized == null) {

@@ -26,6 +26,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -50,6 +51,7 @@ import org.springframework.lang.Nullable;
 
 /** Represents a consultant */
 @Entity
+@org.hibernate.annotations.DynamicUpdate
 @Table(
     name = "consultant",
     indexes = {
@@ -74,6 +76,11 @@ import org.springframework.lang.Nullable;
 public class Consultant implements TenantAware, NotificationsAware {
 
   protected static final String EMAIL_ANALYZER = "emailAnalyzer";
+
+  /** Explicit management pause; independent identity and lifecycle restrictions stay intact. */
+  @org.hibernate.annotations.ColumnDefault("false")
+  @Column(name = "managed_paused", nullable = false)
+  private boolean managedPaused;
 
   @Id
   @Column(name = "consultant_id", updatable = false, nullable = false)
@@ -387,10 +394,30 @@ public class Consultant implements TenantAware, NotificationsAware {
    */
   @JsonIgnore
   public String getInternalDisplayNameOrFallback() {
-    if (internalDisplayName != null && !internalDisplayName.isBlank()) {
+    return hasInternalDisplayName() ? internalDisplayName : displayName;
+  }
+
+  /**
+   * The same #996 rule for colleague-only lists that show the public name next to it (case handover
+   * candidates, FE#1725): the fallback is the real name, never the public one.
+   *
+   * @return the internal display name, else first + last name, else null
+   */
+  @JsonIgnore
+  public String getInternalDisplayNameOrRealName() {
+    if (hasInternalDisplayName()) {
       return internalDisplayName;
     }
-    return displayName;
+    String realName =
+        Stream.of(firstName, lastName)
+            .filter(part -> part != null && !part.isBlank())
+            .map(String::trim)
+            .collect(Collectors.joining(" "));
+    return realName.isEmpty() ? null : realName;
+  }
+
+  private boolean hasInternalDisplayName() {
+    return internalDisplayName != null && !internalDisplayName.isBlank();
   }
 
   @JsonIgnore

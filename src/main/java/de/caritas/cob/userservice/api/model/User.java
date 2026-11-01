@@ -123,6 +123,12 @@ public class User implements TenantAware, NotificationsAware {
   @Column(name = "deletion_pause_created_at", columnDefinition = "datetime")
   private LocalDateTime deletionPauseCreatedAt;
 
+  @Column(name = "reactivation_operation_id", length = 36)
+  private String reactivationOperationId;
+
+  @Column(name = "reactivation_operation_started_at", columnDefinition = "datetime")
+  private LocalDateTime reactivationOperationStartedAt;
+
   @Column(name = "tenant_id")
   private Long tenantId;
 
@@ -170,6 +176,12 @@ public class User implements TenantAware, NotificationsAware {
    */
   @Column(name = "temporary_account", nullable = false, columnDefinition = "bit default false")
   private boolean temporaryAccount;
+
+  /**
+   * Lifetimes and retention copied at creation for a temporary account from a direct link (ADR-029,
+   * #1476). Null for every other account, including self-help-group guests.
+   */
+  @jakarta.persistence.Embedded private TemporaryAccountSnapshot temporaryAccountSnapshot;
 
   /**
    * The animal the advice seeker chose in their profile (#1240), as its lower-case file stem. Null

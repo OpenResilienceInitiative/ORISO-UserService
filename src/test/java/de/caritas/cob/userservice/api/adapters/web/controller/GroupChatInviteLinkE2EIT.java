@@ -5,6 +5,7 @@ import static org.hamcrest.Matchers.notNullValue;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -178,6 +179,12 @@ class GroupChatInviteLinkE2EIT {
                 return org.springframework.test.web.client.response.MockRestResponseCreators
                     .withNoContent()
                     .createResponse(request);
+              if (path.matches("/tenantadmin/\\d+/permission-policies"))
+                // A TenantService that does not know the internal-group-chat recipient scope.
+                return org.springframework.test.web.client.response.MockRestResponseCreators
+                    .withSuccess(
+                        "{\"policies\":{}}", org.springframework.http.MediaType.APPLICATION_JSON)
+                    .createResponse(request);
               throw new AssertionError("Unexpected identity HTTP path: " + path);
             });
   }
@@ -200,7 +207,8 @@ class GroupChatInviteLinkE2EIT {
 
     mockMvc
         .perform(clientPut("/users/chat/" + selfHelpGroup.getId() + "/assign"))
-        .andExpect(status().isForbidden());
+        .andExpect(status().isForbidden())
+        .andExpect(header().string("X-Reason", "GROUP_INVITE_INVALID"));
   }
 
   @Test
@@ -245,7 +253,8 @@ class GroupChatInviteLinkE2EIT {
         .perform(
             clientPut("/users/chat/" + selfHelpGroup.getId() + "/assign")
                 .queryParam("inviteToken", "not-the-token"))
-        .andExpect(status().isForbidden());
+        .andExpect(status().isForbidden())
+        .andExpect(header().string("X-Reason", "GROUP_INVITE_INVALID"));
   }
 
   @Test
@@ -276,7 +285,33 @@ class GroupChatInviteLinkE2EIT {
         .perform(
             clientPut("/users/chat/" + internalGroup.getId() + "/assign")
                 .queryParam("inviteToken", inviteTokenOf(internalGroup)))
-        .andExpect(status().isForbidden());
+        .andExpect(status().isForbidden())
+        .andExpect(header().string("X-Reason", "GROUP_INVITE_INVALID"));
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void aClientWithALinkToAnUnknownGroupIsToldTheLinkDoesNotWork() throws Exception {
+    actingAsClient();
+
+    mockMvc
+        .perform(clientPut("/users/chat/987654321/assign").queryParam("inviteToken", "any-token"))
+        .andExpect(status().isNotFound())
+        .andExpect(header().string("X-Reason", "GROUP_INVITE_INVALID"));
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void aMemberWhoJoinsAgainGetsAConflictWithoutTheInviteReason() throws Exception {
+    givenTheClientIsAMember();
+    actingAsClient();
+
+    mockMvc
+        .perform(
+            clientPut("/users/chat/" + selfHelpGroup.getId() + "/assign")
+                .queryParam("inviteToken", inviteTokenOf(selfHelpGroup)))
+        .andExpect(status().isConflict())
+        .andExpect(header().doesNotExist("X-Reason"));
   }
 
   @Test

@@ -1,6 +1,8 @@
 package de.caritas.cob.userservice.api.service.accountinvite.onboarding;
 
 import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory;
+import de.caritas.cob.userservice.api.config.auth.RoutineTaskAuthentication;
+import de.caritas.cob.userservice.api.config.auth.TaskPurpose;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
@@ -222,11 +224,10 @@ public class OperatorDpaContentClient {
   }
 
   private void addTechnicalUserHeaders(ApiClient apiClient) {
-    var techUser = identityClientConfig.getTechnicalUser();
-    var identityLogin =
-        identityAuthentication.loginService(techUser.getClientId(), techUser.getClientSecret());
-    HttpHeaders headers =
-        securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(identityLogin.accessToken());
+    String token =
+        RoutineTaskAuthentication.accessToken(
+            TaskPurpose.CONFIG_WIZARD, identityClientConfig, identityAuthentication);
+    HttpHeaders headers = securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(token);
     headers.forEach((key, value) -> apiClient.addDefaultHeader(key, value.iterator().next()));
   }
 

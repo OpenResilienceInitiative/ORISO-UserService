@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller.interceptor;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
@@ -18,16 +19,23 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.exception.httpresponses.NoContentException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
+import de.caritas.cob.userservice.api.exception.identity.IdentityReactivationCompensationException;
+import de.caritas.cob.userservice.api.exception.identity.IdentityReactivationUpstreamException;
+import jakarta.persistence.OptimisticLockException;
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import org.hibernate.exception.ConstraintViolationException;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.InvalidDataAccessApiUsageException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpInputMessage;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.context.request.WebRequest;
 
 class ApiResponseEntityExceptionHandlerTest {
@@ -186,6 +194,33 @@ class ApiResponseEntityExceptionHandlerTest {
   }
 
   @Test
+  void handleCustomConflict_withReason_exposesItInTheReasonHeader() {
+    // Business reason: a client must tell "the case owner changed" from a transient lock conflict.
+    var response =
+        handler.handleCustomConflict(
+            new ConflictException("owner changed", HttpStatusExceptionReason.CASE_OWNER_CHANGED),
+            request);
+
+    assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
+    assertEquals("CASE_OWNER_CHANGED", response.getHeaders().getFirst("X-Reason"));
+    assertNull(response.getBody());
+  }
+
+  @Test
+  void handleCustomConflict_withoutReason_andLockConflicts_carryNoReasonHeader() {
+    assertNull(
+        handler
+            .handleCustomConflict(new ConflictException("c"), request)
+            .getHeaders()
+            .getFirst("X-Reason"));
+    assertNull(
+        handler
+            .handleConflict(new OptimisticLockingFailureException("stale"), request)
+            .getHeaders()
+            .getFirst("X-Reason"));
+  }
+
+  @Test
   void handleDistributedTransactionException_returnsFailedDependencyWithReasonHeader() {
     // Business reason: partial transaction failures need explicit step metadata for support teams.
     var info =
@@ -205,12 +240,45 @@ class ApiResponseEntityExceptionHandlerTest {
   }
 
   @Test
+  void handleIdentityReactivationUpstreamFailure_returnsBadGateway() {
+    var response =
+        handler.handleIdentityReactivationUpstreamFailure(
+            new IdentityReactivationUpstreamException("Keycloak failed", new RuntimeException()),
+            request);
+
+    assertEquals(HttpStatus.BAD_GATEWAY, response.getStatusCode());
+    var body = assertInstanceOf(Map.class, response.getBody());
+    assertEquals("IDENTITY_REACTIVATION_UPSTREAM_FAILED", body.get("reason"));
+  }
+
+  @Test
+  void handleIdentityReactivationCompensationFailure_returnsFailedDependency() {
+    var response =
+        handler.handleIdentityReactivationCompensationFailure(
+            new IdentityReactivationCompensationException(
+                "disable failed", new RuntimeException(), new RuntimeException()),
+            request);
+
+    assertEquals(HttpStatus.FAILED_DEPENDENCY, response.getStatusCode());
+    var body = assertInstanceOf(Map.class, response.getBody());
+    assertEquals("IDENTITY_REACTIVATION_COMPENSATION_FAILED", body.get("reason"));
+  }
+
+  @Test
   void handleCreateEnquiryMessageException_returnsBadRequest() {
     // Business reason: broken enquiry payloads should map to client-fixable 400 responses.
     var response =
         handler.handleCreateEnquiryMessageException(
             new CreateEnquiryMessageException("bad"), request);
     assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+  }
+
+  @Test
+  void handleAccessDenied_returnsForbidden() {
+    var response =
+        handler.handleAccessDenied(new AccessDeniedException("cross-tenant request"), request);
+
+    assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
   }
 
   @Test
@@ -248,7 +316,7 @@ class ApiResponseEntityExceptionHandlerTest {
   }
 
   @Test
-  void mappedExceptionHandlers_returnExpectedHttpStatus() {
+  void mappedExceptionHandlers_returnExpectedHttpStatus() throws Exception {
     var pictureStatuses =
         java.util.Map.of(
             de.caritas.cob.userservice.api.picture.PictureException.tooLarge(),
@@ -273,6 +341,28 @@ class ApiResponseEntityExceptionHandlerTest {
         handler
             .handleConflict(new InvalidDataAccessApiUsageException("c"), request)
             .getStatusCode());
+    assertEquals(
+        HttpStatus.CONFLICT,
+        handler
+            .handleConflict(new OptimisticLockingFailureException("stale"), request)
+            .getStatusCode());
+    assertEquals(
+        HttpStatus.CONFLICT,
+        handler.handleConflict(new OptimisticLockException("stale"), request).getStatusCode());
+    assertTrue(
+        Arrays.asList(
+                ApiResponseEntityExceptionHandler.class
+                    .getDeclaredMethod("handleConflict", RuntimeException.class, WebRequest.class)
+                    .getAnnotation(ExceptionHandler.class)
+                    .value())
+            .contains(OptimisticLockingFailureException.class));
+    assertTrue(
+        Arrays.asList(
+                ApiResponseEntityExceptionHandler.class
+                    .getDeclaredMethod("handleConflict", RuntimeException.class, WebRequest.class)
+                    .getAnnotation(ExceptionHandler.class)
+                    .value())
+            .contains(OptimisticLockException.class));
     assertEquals(
         HttpStatus.CONFLICT,
         handler.handleCustomConflict(new ConflictException("c"), request).getStatusCode());

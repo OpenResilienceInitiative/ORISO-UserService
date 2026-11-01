@@ -39,6 +39,7 @@ import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
 import de.caritas.cob.userservice.api.testHelper.ChatRecoveryPolicyFixtures;
+import de.caritas.cob.userservice.api.workflow.deactivate.scheduler.DeactivateGroupChatScheduler;
 import de.caritas.cob.userservice.api.workflow.delete.service.AnonymousUserDeletionUnit;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.ConsultingTypeControllerApi;
@@ -54,6 +55,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.StreamSupport;
 import lombok.NonNull;
 import lombok.SneakyThrows;
@@ -106,6 +108,7 @@ class DeleteTemporaryAccountsSchedulerIT {
   private static final String MATRIX_USER_ID = "@temporary-participant:matrix.oriso.org";
 
   @Autowired private DeleteTemporaryAccountsScheduler scheduler;
+  @Autowired private DeactivateGroupChatScheduler groupExpiration;
   @Autowired private MockMvc mockMvc;
   @Autowired private ObjectMapper objectMapper;
   @Autowired private UserRepository userRepository;
@@ -320,6 +323,58 @@ class DeleteTemporaryAccountsSchedulerIT {
     verify(matrixSynapseService, never()).purgeRoom("!self-help-group:matrix.oriso.org");
   }
 
+  @Test
+  void anActiveGroupSurvivesAnExpirationTickDuringTemporaryAccountCleanup() throws Exception {
+    var participant = register(true);
+    var group = inviteGroup;
+    ageBy(participant, maxAge.plusMinutes(1));
+
+    var cleanupEntered = new java.util.concurrent.CountDownLatch(1);
+    var releaseCleanup = new java.util.concurrent.CountDownLatch(1);
+    var cleanupTransactionActive = new java.util.concurrent.atomic.AtomicBoolean();
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              cleanupTransactionActive.set(
+                  org.springframework.transaction.support.TransactionSynchronizationManager
+                      .isActualTransactionActive());
+              cleanupEntered.countDown();
+              if (!releaseCleanup.await(10, TimeUnit.SECONDS))
+                throw new IllegalStateException("Fixture cleanup release timed out");
+              return call.callRealMethod();
+            })
+        .when(identityAccounts)
+        .deleteUser(participant.getUserId());
+    var executor = java.util.concurrent.Executors.newSingleThreadExecutor();
+    Long tenant = TenantContext.getCurrentTenant();
+    try {
+      var cleanup =
+          executor.submit(
+              () -> {
+                TenantContext.setCurrentTenant(tenant);
+                try {
+                  scheduler.performDeletionWorkflow();
+                } finally {
+                  TenantContext.clear();
+                }
+              });
+      assertTrue(cleanupEntered.await(10, TimeUnit.SECONDS));
+      assertTrue(cleanupTransactionActive.get());
+      groupExpiration.performDeactivationWorkflow();
+      assertFalse(cleanup.isDone());
+      assertTrue(chatRepository.findById(group.getId()).orElseThrow().isActive());
+      releaseCleanup.countDown();
+      cleanup.get(10, TimeUnit.SECONDS);
+    } finally {
+      releaseCleanup.countDown();
+      executor.shutdownNow();
+      assertTrue(executor.awaitTermination(10, TimeUnit.SECONDS));
+    }
+
+    assertFalse(userService.getUser(participant.getUserId()).isPresent());
+    assertTrue(chatRepository.findById(group.getId()).orElseThrow().isActive());
+    verify(matrixSynapseService, never()).purgeRoom("!self-help-group:matrix.oriso.org");
+  }
+
   private User register(boolean temporary) throws Exception {
     var registration = aRegistration(temporary);
     if (temporary) {
@@ -385,6 +440,8 @@ class DeleteTemporaryAccountsSchedulerIT {
     chat.setChatOwner(consultantRepository.findById(SEEDED_CONSULTANT_ID).orElseThrow());
     chat.setConsultingTypeId(1);
     chat.setDuration(90);
+    // This fixture represents a running group, independent of EasyRandom's historical dates.
+    chat.setStartDate(LocalDateTime.now().minusMinutes(1));
     chat.setMaxParticipants(10);
     chat.setSourceLanguage("de");
     chat.setMatrixRoomId(matrixRoomId);

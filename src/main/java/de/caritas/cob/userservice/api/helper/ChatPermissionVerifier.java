@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.model.UserAgency;
 import de.caritas.cob.userservice.api.model.UserChat;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatConsultantAccess;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -28,6 +29,7 @@ public class ChatPermissionVerifier {
   private final @NonNull UserService userService;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull GroupChatConsultantAccess groupChatConsultantAccess;
+  private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
 
   /**
    * Verifies if the {@link AuthenticatedUser} has access right on given {@link Chat}.
@@ -153,7 +155,10 @@ public class ChatPermissionVerifier {
                     new NotFoundException(
                         "User with id %s not found", authenticatedUser.getUserId()));
 
-    if (!hasChatUserAssignment(chat, user) && !hasSameAgencyAssigned(chat, user)) {
+    // A members-only chat is a room of colleagues: no advice seeker is ever a member, and sharing
+    // the counselling centre must not open it.
+    if (membersOnlyChatAccess.concerns(chat)
+        || (!hasChatUserAssignment(chat, user) && !hasSameAgencyAssigned(chat, user))) {
       throw new ForbiddenException(
           String.format(
               "User with id %s has no permission for chat with id %s",

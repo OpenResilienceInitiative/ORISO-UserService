@@ -195,6 +195,11 @@
   <include file="db/changelog/changeset/0105_service_notice_draft/0105_changeSet.xml" />
   <include file="db/changelog/changeset/0106_existing_account_setup/0106_changeSet.xml" />
 
+  <include file="db/changelog/changeset/0091_group_session_tenant/0091_changeSet.xml" />
+  <include file="db/changelog/changeset/0091_matrix_call_binding/0091_changeSet.xml"/>
+  <include file="db/changelog/changeset/0094_session_ownership_revision/0094_changeSet.xml" />
+  <include file="db/changelog/changeset/0095_case_handover_period_operations/0095_changeSet.xml" />
+
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->
   <include
@@ -220,6 +225,7 @@
   <include file="db/changelog/changeset/20260924_invite_email_template_tenant/changeSet.xml"/>
   <include file="db/changelog/changeset/20260925_account_invite_timeline/changeSet.xml"/>
   <include file="db/changelog/changeset/20260925_id_reservation_lock/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260927_case_handover_extended_at/changeSet.xml"/>
   <include file="db/changelog/changeset/20260923_chat_invite_token_1237/changeSet.xml"/>
   <include file="db/changelog/changeset/20260923_group_chat_join_request_1499/changeSet.xml"/>
   <include file="db/changelog/changeset/20260926_group_chat_admission_1499/changeSet.xml"/>
@@ -233,4 +239,24 @@
   <include file="db/changelog/changeset/20261006_dpa_notice_role/changeSet.xml"/>
   <include file="db/changelog/changeset/20260923_user_temporary_account/changeSet.xml"/>
   <include file="db/changelog/changeset/20261007_user_avatar_1240/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261007_standing_access_preference_1657/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261008_group_matrix_cleanup/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261009_inquiry_acceptance_notice/changeSet.xml" />
+  <include file="db/changelog/changeset/20261013_invite_template_delete_guard/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261013_managed_account_pause/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261014_co_access_power_rollback/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261017_chat_members_only_1418/changeSet.xml"/>
+  <!-- #1082 reactivation saga claim. The include added in 13dc4ae9b was dropped by an earlier
+       pre-dev merge, leaving the 0086_reactivation_saga_claim changeset orphaned; appended here
+       so it stays append-only. Idempotent (ADD COLUMN IF NOT EXISTS). -->
+  <include file="db/changelog/changeset/0086_reactivation_saga_claim/0086_changeSet.xml"/>
+  <include file="db/changelog/changeset/20261023_account_creation_attempt/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261008_enquiry_rejection/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261028_matrix_call_guest_1477/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261028_direct_links_1475/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261028_temporary_accounts_1476/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261028_call_share_link_1487/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261028_chat_matrix_room_lineage/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261029_deletion_audit_log/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261030_session_direct_link_medium_1952/changeSet.xml"/>
 </databaseChangeLog>

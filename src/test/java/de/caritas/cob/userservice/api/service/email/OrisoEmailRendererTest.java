@@ -434,10 +434,52 @@ class OrisoEmailRendererTest {
 
     assertThat(img)
         .contains(" alt=\"\"")
-        .contains("width=\"36\" height=\"36\"")
+        .contains("height=\"48\"")
+        .contains("width:auto;height:48px;max-width:none")
+        .doesNotContain("width=\"")
         .contains("border:0")
         .doesNotContain("Online-Beratung");
     assertThat(html.substring(html.indexOf("<img"))).contains(">Online-Beratung</td>");
+  }
+
+  @Test
+  void scalesKnownLogoShapesTo48PixelsWithoutSquashing() {
+    for (int[] dimensions :
+        List.of(new int[] {1, 2}, new int[] {1, 1}, new int[] {3, 1}, new int[] {6, 1})) {
+      Map<String, String> values = brand();
+      values.put("logoWidth", Integer.toString(dimensions[0]));
+      values.put("logoHeight", Integer.toString(dimensions[1]));
+      String html =
+          renderer.render("anmeldelink", OrisoEmailRenderer.Tone.DE_FORMAL, values).html();
+      int width = 48 * dimensions[0] / dimensions[1];
+      assertThat(html).contains("width=\"" + width + "\" height=\"48\"");
+      assertThat(html).contains("width:" + width + "px;height:48px;");
+      if (dimensions[0] > 3 * dimensions[1]) {
+        assertThat(html)
+            .contains("class=\"logo-cell logo-cell-wide\"")
+            .contains(
+                "class=\"sp logo-header logo-header-wide\"",
+                "class=\"logo-wordmark logo-wordmark-wide\"")
+            .contains(".logo-wordmark-wide{display:none !important}")
+            .contains("alt=\"Online-Beratung\"");
+      } else {
+        assertThat(html).doesNotContain("class=\"logo-cell logo-cell-wide\"");
+      }
+    }
+  }
+
+  @Test
+  void ignoresInvalidLogoDimensionsWithoutHidingTheName() {
+    for (String dimension : java.util.Arrays.asList(null, "0", "-1", "NaN", "Infinity", "broken")) {
+      Map<String, String> values = brand();
+      values.put("logoWidth", dimension);
+      values.put("logoHeight", "1");
+      String html =
+          renderer.render("anmeldelink", OrisoEmailRenderer.Tone.DE_FORMAL, values).html();
+      assertThat(html)
+          .contains("width:auto;height:48px;")
+          .doesNotContain("class=\"logo-cell logo-cell-wide\"");
+    }
   }
 
   @Test

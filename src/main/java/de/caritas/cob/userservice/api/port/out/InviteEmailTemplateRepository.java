@@ -20,14 +20,14 @@ public interface InviteEmailTemplateRepository extends JpaRepository<InviteEmail
       InviteEmailTemplateKind kind);
 
   /**
-   * What one Träger may see: its own templates plus the platform's. A {@code null} {@code kind}
-   * means "every kind".
+   * What one Träger may see: its own templates plus platform system defaults. A {@code null} {@code
+   * kind} means "every kind".
    */
   @Query(
       """
       select t from InviteEmailTemplate t
       where (:kind is null or t.kind = :kind)
-        and (t.tenantId is null or t.tenantId = :tenantId)
+        and ((t.tenantId is null and t.systemDefault = true) or t.tenantId = :tenantId)
       order by t.createDate desc
       """)
   List<InviteEmailTemplate> findVisibleForTenant(

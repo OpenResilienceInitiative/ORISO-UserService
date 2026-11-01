@@ -39,7 +39,10 @@ public class CaseHandoverMailComposer {
     values.put("unsubscribeUrl", baseUrl + "/profile/einstellungen/email");
     String template =
         mail.outcome() == CaseHandoverEmailNotification.Outcome.CONSENT_REQUESTED
-            ? "uebergabe-angefragt"
+            ? (mail.accessType()
+                    == de.caritas.cob.userservice.api.model.CaseHandoverRequest.AccessType.CO_ACCESS
+                ? "einsicht-angefragt"
+                : "uebergabe-angefragt")
             : "uebergabe-bestaetigt";
     var rendered = renderer.render(template, tone(mail), values);
     if (PLACEHOLDER.matcher(rendered.subject()).find()

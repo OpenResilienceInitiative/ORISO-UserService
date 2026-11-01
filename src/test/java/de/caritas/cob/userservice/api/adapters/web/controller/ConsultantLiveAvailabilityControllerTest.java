@@ -10,8 +10,13 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantLiveAvailabilityRequestDTO;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.availability.ConsultantActivityRegistry;
+import de.caritas.cob.userservice.api.service.dpa.NewCounsellingDpaPolicy;
 import java.util.Collections;
+import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -26,6 +31,8 @@ class ConsultantLiveAvailabilityControllerTest {
 
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private ConsultantActivityRegistry consultantActivityRegistry;
+  @Mock private ConsultantService consultantService;
+  @Mock private NewCounsellingDpaPolicy newCounsellingDpaPolicy;
 
   @InjectMocks private ConsultantLiveAvailabilityController controller;
 
@@ -154,5 +161,36 @@ class ConsultantLiveAvailabilityControllerTest {
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals(false, response.getBody().getAvailable());
+  }
+
+  @Test
+  void
+      getLiveChatAvailability_Should_ReportBlockedNewCounselling_When_ProviderAgreementRefusesIt() {
+    // #1704: a live consultant must learn that advice seekers are turned away by the AVV.
+    when(authenticatedUser.isConsultant()).thenReturn(true);
+    when(authenticatedUser.getUserId()).thenReturn("consultant-5");
+    when(consultantActivityRegistry.filterActive(anyCollection(), anyLong()))
+        .thenReturn(Set.of("consultant-5"));
+    var consultant = new Consultant();
+    consultant.setTenantId(7L);
+    when(consultantService.getConsultant("consultant-5")).thenReturn(Optional.of(consultant));
+    when(newCounsellingDpaPolicy.allowsNewCounselling(7L)).thenReturn(false);
+
+    var body = controller.getLiveChatAvailability().getBody();
+
+    assertEquals(true, body.getAvailable());
+    assertEquals(false, body.getNewCounsellingAllowed());
+  }
+
+  @Test
+  void heartbeat_Should_NotReadTheProviderAgreement() {
+    // #1704: the frequent heartbeat stays a pure lease refresh.
+    when(authenticatedUser.isConsultant()).thenReturn(true);
+    when(authenticatedUser.getUserId()).thenReturn("consultant-6");
+    when(consultantActivityRegistry.refreshIfAvailable("consultant-6")).thenReturn(true);
+
+    controller.heartbeatLiveChatAvailability();
+
+    verifyNoInteractions(consultantService, newCounsellingDpaPolicy);
   }
 }

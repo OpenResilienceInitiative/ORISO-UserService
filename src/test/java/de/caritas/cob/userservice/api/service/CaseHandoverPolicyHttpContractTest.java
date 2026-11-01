@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
@@ -11,8 +12,11 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
@@ -68,6 +72,7 @@ class CaseHandoverPolicyHttpContractTest {
       mock(PlatformTransactionManager.class);
   private final Clock clock = Clock.fixed(Instant.parse("2026-09-15T10:00:00Z"), ZoneOffset.UTC);
 
+  private final AdminScope adminScope = mock(AdminScope.class);
   private CaseHandoverService caseHandoverService;
 
   @BeforeEach
@@ -89,6 +94,28 @@ class CaseHandoverPolicyHttpContractTest {
         .when(transactionManager.getTransaction(any()))
         .thenReturn(mock(TransactionStatus.class));
     lenient().when(cacheRepository.findById(any())).thenReturn(Optional.empty());
+    // Wiring stub only: tenant 0 is the platform admin, any other tenant a Träger admin that
+    // reaches only Träger 7. The real AdminScope rules are proven in
+    // CaseHandoverReasonPolicyAuthorizationIT.
+    lenient()
+        .when(adminScope.current())
+        .thenAnswer(
+            call ->
+                Long.valueOf(0L).equals(TenantContext.getCurrentTenant())
+                    ? new AdminScope.Platform()
+                    : new AdminScope.Tenant(TenantContext.getCurrentTenant()));
+    lenient()
+        .doAnswer(
+            call -> {
+              // Träger admins here only ever reach their own Träger 7.
+              if (!(adminScope.current() instanceof AdminScope.Platform)
+                  && !TenantContext.getCurrentTenant().equals(7L)) {
+                throw new ForbiddenException("out of scope");
+              }
+              return null;
+            })
+        .when(adminScope)
+        .assertMay(any());
 
     var policyClient =
         new TenantCaseHandoverPolicyReadClient(factory, identity, identityConfig, headers);
@@ -103,6 +130,7 @@ class CaseHandoverPolicyHttpContractTest {
             mock(de.caritas.cob.userservice.api.port.out.CaseHandoverReasonPolicyRepository.class),
             cacheService,
             mock(de.caritas.cob.userservice.api.port.out.SessionRepository.class),
+            mock(de.caritas.cob.userservice.api.service.session.SessionOwnershipService.class),
             mock(de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository.class),
             mock(de.caritas.cob.userservice.api.service.user.UserAccountService.class),
             mock(
@@ -115,10 +143,15 @@ class CaseHandoverPolicyHttpContractTest {
             mock(
                 de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService
                     .class),
+            mock(de.caritas.cob.userservice.api.service.ConsultantService.class),
+            mock(de.caritas.cob.userservice.api.helper.AuthenticatedUser.class),
             new de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver(),
             claims,
             clock,
-            transactionManager);
+            transactionManager,
+            mock(de.caritas.cob.userservice.api.service.agency.AgencyService.class),
+            adminScope,
+            mock(de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess.class));
 
     TenantContext.setCurrentTenant(7L);
   }
@@ -177,6 +210,7 @@ class CaseHandoverPolicyHttpContractTest {
         .andRespond(withSuccess(storedWithoutDuration, MediaType.APPLICATION_JSON));
 
     caseHandoverService.updateReasonPolicies(
+        null,
         List.of(
             MAPPER.readValue(
                 """
@@ -198,5 +232,132 @@ class CaseHandoverPolicyHttpContractTest {
     assertThat(advice.path("maxAccessDurationMinutes").path("value").asInt())
         .as("the duration the admin chose has to be on the wire, not silently dropped")
         .isEqualTo(90);
+  }
+
+  private static final String STORED_POLICY =
+      """
+      {"tenantId":7,"policies":{},"caseHandoverPolicies":{"reasons":{
+        "COUNSELLOR_ASKED_FOR_ADVICE":{
+          "code":"COUNSELLOR_ASKED_FOR_ADVICE",
+          "labels":{"value":{"de":"Rat benötigt"},"mode":"SUGGESTED"},
+          "enabled":{"value":true,"mode":"SUGGESTED"},
+          "accessAllowed":{"value":true,"mode":"SUGGESTED"},
+          "clientConsent":{"value":"OPT_IN","mode":"SUGGESTED"},
+          "clientConsentRequired":{"value":true,"mode":"SUGGESTED"},
+          "approvalRoles":{"value":["CLIENT"],"mode":"SUGGESTED"},
+          "clientNotificationTemplates":{"value":{"de":"x"},"mode":"SUGGESTED"}
+        }}}}
+      """;
+
+  private static CaseHandoverService.CaseHandoverReason optOutAdvice() {
+    return MAPPER.readValue(
+        """
+        {"code":"COUNSELLOR_ASKED_FOR_ADVICE","label":"Rat benötigt",
+         "clientConsent":{"value":"OPT_OUT","mode":"SUGGESTED"},
+         "clientConsentMode":"SUGGESTED","clientConsentRequired":false,
+         "accessAllowed":true,"enabled":true,"displayOrder":10}
+        """,
+        CaseHandoverService.CaseHandoverReason.class);
+  }
+
+  /** FE#1725 story 30: the platform admin edits a Träger's rules from its centre page. */
+  @Test
+  void aPlatformAdminWritesTheNamedTraegerWithItsOwnToken() {
+    TenantContext.setCurrentTenant(0L);
+    server
+        .expect(ExpectedCount.once(), requestTo(POLICY_URL))
+        .andExpect(method(HttpMethod.GET))
+        .andExpect(header("Authorization", "Bearer synthetic-token"))
+        .andRespond(withSuccess(STORED_POLICY, MediaType.APPLICATION_JSON));
+    server
+        .expect(ExpectedCount.once(), requestTo(POLICY_URL))
+        .andExpect(method(HttpMethod.GET))
+        .andExpect(header("Authorization", "Bearer synthetic-admin-token"))
+        .andRespond(withSuccess(STORED_POLICY, MediaType.APPLICATION_JSON));
+    var sentBody = new java.util.concurrent.atomic.AtomicReference<String>();
+    server
+        .expect(requestTo(POLICY_URL))
+        .andExpect(method(HttpMethod.PUT))
+        .andExpect(header("Authorization", "Bearer synthetic-admin-token"))
+        .andExpect(
+            request ->
+                sentBody.set(
+                    ((org.springframework.mock.http.client.MockClientHttpRequest) request)
+                        .getBodyAsString()))
+        .andRespond(withSuccess(STORED_POLICY, MediaType.APPLICATION_JSON));
+
+    caseHandoverService.updateReasonPolicies(7L, List.of(optOutAdvice()));
+
+    server.verify();
+    assertThat(
+            MAPPER
+                .readTree(sentBody.get())
+                .path("caseHandoverPolicies")
+                .path("reasons")
+                .path("COUNSELLOR_ASKED_FOR_ADVICE")
+                .path("clientConsent")
+                .path("value")
+                .asString())
+        .isEqualTo("OPT_OUT");
+  }
+
+  @Test
+  void aPlatformAdminWithoutANamedTraegerIsToldToNameOneAndNothingIsWritten() {
+    TenantContext.setCurrentTenant(0L);
+
+    var reasons = List.of(optOutAdvice());
+    assertThatThrownBy(() -> caseHandoverService.updateReasonPolicies(null, reasons))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessageContaining("tenantId is required");
+    assertThatThrownBy(() -> caseHandoverService.listReasonPolicies(null))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessageContaining("tenantId is required");
+    server.verify();
+  }
+
+  @Test
+  void aTraegerAdminNamingAnotherTraegerIsRefusedBeforeTenantServiceIsCalled() {
+    TenantContext.setCurrentTenant(8L);
+
+    var reasons = List.of(optOutAdvice());
+    assertThatThrownBy(() -> caseHandoverService.updateReasonPolicies(7L, reasons))
+        .isInstanceOf(ForbiddenException.class);
+    assertThatThrownBy(() -> caseHandoverService.listReasonPolicies(7L))
+        .isInstanceOf(ForbiddenException.class);
+    server.verify();
+  }
+
+  @Test
+  void aTraegerAdminNamingTheirOwnTraegerWritesIt() {
+    // TenantContext is 7, as for the existing token-tenant path.
+    server
+        .expect(ExpectedCount.twice(), requestTo(POLICY_URL))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(withSuccess(STORED_POLICY, MediaType.APPLICATION_JSON));
+    server
+        .expect(requestTo(POLICY_URL))
+        .andExpect(method(HttpMethod.PUT))
+        .andExpect(header("Authorization", "Bearer synthetic-admin-token"))
+        .andRespond(withSuccess(STORED_POLICY, MediaType.APPLICATION_JSON));
+
+    caseHandoverService.updateReasonPolicies(7L, List.of(optOutAdvice()));
+
+    server.verify();
+  }
+
+  @Test
+  void aPlatformAdminReadsTheNamedTraegersRules() {
+    TenantContext.setCurrentTenant(0L);
+    server
+        .expect(ExpectedCount.once(), requestTo(POLICY_URL))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(withSuccess(STORED_POLICY, MediaType.APPLICATION_JSON));
+
+    var reasons = caseHandoverService.listReasonPolicies(7L);
+
+    server.verify();
+    assertThat(reasons)
+        .extracting(CaseHandoverService.CaseHandoverReason::getLabel)
+        .containsExactly("Rat benötigt");
   }
 }

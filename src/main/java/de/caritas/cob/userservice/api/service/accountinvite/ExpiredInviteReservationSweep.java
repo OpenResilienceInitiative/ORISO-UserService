@@ -1,5 +1,7 @@
 package de.caritas.cob.userservice.api.service.accountinvite;
 
+import de.caritas.cob.userservice.api.config.auth.RoutineTaskAuthentication;
+import de.caritas.cob.userservice.api.config.auth.TaskPurpose;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext;
@@ -51,13 +53,12 @@ public class ExpiredInviteReservationSweep {
       if (expiredSetup > 0) {
         log.info("Expired {} elapsed existing-account setup links", expiredSetup);
       }
-      var technicalUser = identityClientConfig.getTechnicalUser();
-      var login =
-          identityAuthentication.loginService(
-              technicalUser.getClientId(), technicalUser.getClientSecret());
+      String token =
+          RoutineTaskAuthentication.accessToken(
+              TaskPurpose.INVITE_RESERVATIONS, identityClientConfig, identityAuthentication);
       int expired =
           TechnicalAccessTokenContext.offerDuring(
-              login.accessToken(), accountInviteService::expireElapsedInvites);
+              token, accountInviteService::expireElapsedInvites);
       if (expired > 0) {
         log.info("Expired {} elapsed invites that held a reserved number", expired);
       }

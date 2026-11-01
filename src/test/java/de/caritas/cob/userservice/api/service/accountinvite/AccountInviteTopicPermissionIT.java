@@ -292,6 +292,7 @@ class AccountInviteTopicPermissionIT {
                 InviteEmailTemplate.builder()
                     .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
                     .name("uncertain-smtp")
+                    .tenantId(OWN_TENANT)
                     .language("de")
                     .subject("Einladung")
                     .body("Hallo")

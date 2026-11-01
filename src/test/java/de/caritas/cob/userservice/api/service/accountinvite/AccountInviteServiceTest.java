@@ -54,6 +54,9 @@ import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.NullSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -324,6 +327,38 @@ class AccountInviteServiceTest {
   }
 
   @Test
+  void resendInvite_Should_NotCarryALegacyWaiverIntoTheReplacement() {
+    AccountInvite oldInvite =
+        AccountInvite.builder()
+            .id(10L)
+            .tenantId(7L)
+            .recipientEmail("counsellor@example.org")
+            .firstName("Grace")
+            .targetRole(AccountInviteTargetRole.COUNSELLOR)
+            .status(AccountInviteStatus.EMAIL_SENT)
+            .twoFactorStatus(TwoFactorGateStatus.WAIVED)
+            .build();
+    InviteEmailTemplate template =
+        InviteEmailTemplate.builder()
+            .id(20L)
+            .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+            .subject("Again")
+            .body("Use {{inviteLink}}")
+            .active(true)
+            .build();
+    when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(oldInvite));
+    when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
+    when(accountInviteRepository.saveAndFlush(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    givenSuccessfulDispatch();
+
+    var result = service.resendInvite(new SendInviteCommand(10L, 20L));
+
+    assertThat(result.invite().getTwoFactorStatus()).isEqualTo(TwoFactorGateStatus.PENDING_SETUP);
+    assertThat(oldInvite.getTwoFactorStatus()).isEqualTo(TwoFactorGateStatus.WAIVED);
+  }
+
+  @Test
   void genericHistoryResendDelegatesOnlyTheScopedSelectedSetupRow() {
     AccountInvite selected =
         AccountInvite.builder()
@@ -370,7 +405,7 @@ class AccountInviteServiceTest {
     lenient().when(templateRepository.findById(21L)).thenReturn(Optional.of(foreign));
     doThrow(new ForbiddenException("foreign template"))
         .when(accessPolicy)
-        .authorizeTemplateUse(8L, InviteEmailTemplateKind.COUNSELLOR_INVITE);
+        .authorizeTemplateUse(8L, InviteEmailTemplateKind.COUNSELLOR_INVITE, false);
     return foreign;
   }
 
@@ -766,7 +801,7 @@ class AccountInviteServiceTest {
   }
 
   @Test
-  void calculateAccessGate_Should_BlockRequiredTwoFactorUntilWaived() {
+  void calculateAccessGate_Should_BlockRequiredTwoFactorUntilActive() {
     AccountInvite invite =
         AccountInvite.builder()
             .id(1L)
@@ -778,13 +813,8 @@ class AccountInviteServiceTest {
     assertThat(service.calculateAccessGate(invite))
         .isEqualTo(AccountAccessGateStatus.BLOCKED_TWO_FACTOR);
 
-    doReturn(Optional.of(invite)).when(accountInviteRepository).findByIdForUpdate(1L);
-    when(authenticatedUser.getUserId()).thenReturn("admin-1");
-    service.waiveTwoFactor(invite, new WaiveTwoFactorCommand("Temporary migration waiver"));
+    invite.setTwoFactorStatus(TwoFactorGateStatus.ACTIVE);
 
-    assertThat(invite.getTwoFactorStatus()).isEqualTo(TwoFactorGateStatus.WAIVED);
-    assertThat(invite.getTwoFactorWaivedBy()).isEqualTo("admin-1");
-    assertThat(invite.getTwoFactorWaiverReason()).isEqualTo("Temporary migration waiver");
     assertThat(service.calculateAccessGate(invite)).isEqualTo(AccountAccessGateStatus.READY);
   }
 
@@ -1974,40 +2004,32 @@ class AccountInviteServiceTest {
     verify(accountInviteRepository, never()).saveAll(any());
   }
 
+  // --- waiveTwoFactor is refused: every new staff account must set up 2FA ---
+
   @Test
-  void waiveTwoFactor_Should_persistWaivedInvite() {
+  void waiveTwoFactor_Should_refuseAndLeaveInviteUntouched_When_adminAsksForWaiver() {
     AccountInvite invite =
-        AccountInvite.builder().id(1L).twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP).build();
+        AccountInvite.builder()
+            .id(1L)
+            .purpose(AccountInvitePurpose.INVITE)
+            .twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP)
+            .build();
     doReturn(Optional.of(invite)).when(accountInviteRepository).findByIdForUpdate(1L);
-    when(authenticatedUser.getUserId()).thenReturn("admin-1");
 
-    service.waiveTwoFactor(invite, new WaiveTwoFactorCommand("four-eyes onboarding"));
+    assertThatThrownBy(
+            () -> service.waiveTwoFactor(invite, new WaiveTwoFactorCommand("four-eyes onboarding")))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessageContaining("cannot be waived");
 
-    verify(accountInviteRepository).save(invite);
+    assertThat(invite.getTwoFactorStatus()).isEqualTo(TwoFactorGateStatus.PENDING_SETUP);
+    assertThat(invite.getTwoFactorWaivedBy()).isNull();
+    verify(accountInviteRepository, never()).save(any());
   }
-
-  // --- waiveTwoFactor guards ---
 
   @Test
   void waiveTwoFactor_Should_throwBadRequest_When_inviteNull() {
     assertThatThrownBy(
             () -> service.waiveTwoFactor((AccountInvite) null, new WaiveTwoFactorCommand("reason")))
-        .isInstanceOf(BadRequestException.class);
-  }
-
-  @Test
-  void waiveTwoFactor_Should_throwBadRequest_When_commandNull() {
-    AccountInvite invite = AccountInvite.builder().build();
-
-    assertThatThrownBy(() -> service.waiveTwoFactor(invite, null))
-        .isInstanceOf(BadRequestException.class);
-  }
-
-  @Test
-  void waiveTwoFactor_Should_throwBadRequest_When_reasonBlank() {
-    AccountInvite invite = AccountInvite.builder().build();
-
-    assertThatThrownBy(() -> service.waiveTwoFactor(invite, new WaiveTwoFactorCommand("  ")))
         .isInstanceOf(BadRequestException.class);
   }
 
@@ -2701,6 +2723,42 @@ class AccountInviteServiceTest {
 
     assertThat(result.invite().getTenantIdReservationToken()).isEqualTo("res-token-21");
     assertThat(result.invite().getTenantId()).isEqualTo(21L);
+  }
+
+  @ParameterizedTest
+  @EnumSource(IdAllocationMode.class)
+  @NullSource
+  void resendInvite_Should_PreserveTheAgencyOriginOnTheReplacementInvite(IdAllocationMode origin) {
+    AccountInvite oldInvite =
+        AccountInvite.builder()
+            .id(11L)
+            .tenantId(21L)
+            .agencyId(7L)
+            .agencyIdAllocationMode(origin)
+            .recipientEmail("agency-admin@example.org")
+            .targetRole(AccountInviteTargetRole.AGENCY_ADMIN)
+            .status(AccountInviteStatus.EMAIL_SENT)
+            .build();
+    InviteEmailTemplate template =
+        InviteEmailTemplate.builder()
+            .id(21L)
+            .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+            .subject("Again")
+            .body("Use {{inviteLink}}")
+            .active(true)
+            .build();
+    when(accountInviteRepository.findById(11L)).thenReturn(Optional.of(oldInvite));
+    when(templateRepository.findById(21L)).thenReturn(Optional.of(template));
+    when(accountInviteRepository.saveAndFlush(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    givenSuccessfulDispatch();
+
+    var replacement = service.resendInvite(new SendInviteCommand(11L, 21L)).invite();
+
+    assertThat(replacement).isNotSameAs(oldInvite);
+    assertThat(oldInvite.getStatus()).isEqualTo(AccountInviteStatus.SUPERSEDED);
+    assertThat(replacement.getAgencyIdAllocationMode()).isEqualTo(origin);
+    assertThat(replacement.getPurpose()).isEqualTo(AccountInvitePurpose.INVITE);
   }
 
   @Test

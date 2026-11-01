@@ -158,7 +158,7 @@ class OpenApiContractGateTest(unittest.TestCase):
             workflow,
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-ConsultingTypeService.*"
-                r"fd06f72beab16a92e2d1f1c2b88acbb054254baf",
+                r"77dab765598676420690ce637c5d95b1c5cd4799",
                 re.DOTALL,
             ),
         )
@@ -166,12 +166,14 @@ class OpenApiContractGateTest(unittest.TestCase):
             workflow,
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-TenantService.*"
-                # Merged TenantPR303 includes the stored confirmation language consumed here.
-                r"6d7e2d1dcc640af1bd027131f1c217899ad2a70e",
+                # TenantService dev after PR309 + PR315: channel fields, active, internal-group flags.
+                r"c0da86b50ee6537facf4af9b90eb799f5e975063",
                 re.DOTALL,
             ),
         )
-        self.assertIn("|| 'pre-dev'", workflow)
+        self.assertIn("|| 'dev'", workflow)
+        self.assertIn("    - dev", workflow)
+        self.assertNotIn("pre-dev", workflow)
 
     def test_contract_gate_tests_are_executed_by_ci(self):
         # A gate assertion that never runs protects nothing. Without a job that

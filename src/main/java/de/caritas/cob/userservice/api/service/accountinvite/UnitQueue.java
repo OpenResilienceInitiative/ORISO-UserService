@@ -254,6 +254,8 @@ public class UnitQueue {
     }
     InviteEmailTemplate template =
         manualTemplate != null ? manualTemplate : queuedTemplateOf(invite);
+    // Queue payload is no longer needed after claim; the delivery stores immutable snapshots.
+    invite.setQueuedTemplateId(null);
     if (template == null) {
       return new Prepared(
           accountInviteRepository.saveAndFlush(invite), null, null, null, null, null, now);

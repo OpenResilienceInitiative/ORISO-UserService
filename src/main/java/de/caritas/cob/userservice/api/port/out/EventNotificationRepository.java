@@ -50,6 +50,15 @@ public interface EventNotificationRepository extends JpaRepository<EventNotifica
   boolean existsByRecipientUserIdAndDeduplicationKey(
       String recipientUserId, String deduplicationKey);
 
+  /** Removes one deduplicated event again, e.g. a marker whose delivery failed (FE#1876). */
+  @Modifying(flushAutomatically = true, clearAutomatically = true)
+  @Query(
+      "delete from EventNotification e where e.recipientUserId = :recipientUserId "
+          + "and e.deduplicationKey = :deduplicationKey")
+  int deleteByRecipientUserIdAndDeduplicationKey(
+      @Param("recipientUserId") String recipientUserId,
+      @Param("deduplicationKey") String deduplicationKey);
+
   /**
    * Removes a recipient's whole notification feed. Used by the user-facing "clear feed" action and
    * by account deletion, which must not leave notification rows behind (KDG epic #1010, task 2b).

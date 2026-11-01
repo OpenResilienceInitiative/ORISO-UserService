@@ -56,8 +56,10 @@ class AppointmentControllerTest {
 
   @InjectMocks private AppointmentController controller;
 
-  @Test
-  void createEnquiryAppointment_happyPath_returnsCreatedAndDelegatesToFacades() {
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"de", "de@informal", "en", "fr", "ru", "tr", "ti"})
+  void createEnquiryAppointment_happyPath_returnsCreatedAndDelegatesToFacades(String locale) {
     // Business reason: enquiry appointments must create a message and assign a consultant
     // atomically.
     var dto = org.mockito.Mockito.mock(EnquiryAppointmentDTO.class);
@@ -74,7 +76,19 @@ class AppointmentControllerTest {
         .thenReturn(Optional.of(consultant));
     when(sessionService.getSession(44L)).thenReturn(Optional.of(session));
 
-    var response = controller.createEnquiryAppointment(44L, dto);
+    var request = new org.springframework.mock.web.MockHttpServletRequest();
+    request.setCookies(new jakarta.servlet.http.Cookie("lang", locale));
+    org.springframework.web.context.request.RequestContextHolder.setRequestAttributes(
+        new org.springframework.web.context.request.ServletRequestAttributes(request));
+    org.springframework.http.ResponseEntity<CreateEnquiryMessageResponseDTO> response;
+    try {
+      response = controller.createEnquiryAppointment(44L, dto);
+    } finally {
+      org.springframework.web.context.request.RequestContextHolder.resetRequestAttributes();
+    }
+    var enquiry = org.mockito.ArgumentCaptor.forClass(EnquiryData.class);
+    verify(createEnquiryMessageFacade).createEnquiryMessage(enquiry.capture());
+    assertEquals(locale, enquiry.getValue().getUiLocale());
 
     assertEquals(HttpStatus.CREATED, response.getStatusCode());
     assertEquals(responseDto, response.getBody());

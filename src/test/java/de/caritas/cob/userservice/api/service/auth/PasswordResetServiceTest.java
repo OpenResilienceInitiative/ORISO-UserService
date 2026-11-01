@@ -284,6 +284,7 @@ class PasswordResetServiceTest {
   void confirmPasswordReset_Should_ReturnFalse_When_TokenNotFound() {
     assertThat(passwordResetService.confirmPasswordReset("non-existent-token", "NewPassw0rd!"))
         .isFalse();
+    verify(consultantService, never()).clearPasswordChangeRequirement(any());
   }
 
   @Test
@@ -296,6 +297,28 @@ class PasswordResetServiceTest {
     assertThat(result).isTrue();
     verify(identityPasswordUpdater).updatePassword("user-keycloak-id", "NewPassw0rd!");
     verify(oneTimeTokenStore).claim("password-reset", "valid-token");
+  }
+
+  @Test
+  void confirmPasswordReset_Should_StopAskingForAnotherPassword_When_ResetSucceeds() {
+    // #1699: after a reset the password is the owner's own; the app must not ask again.
+    when(oneTimeTokenStore.claim("password-reset", "valid-token"))
+        .thenReturn(Optional.of(validClaim()));
+
+    passwordResetService.confirmPasswordReset("valid-token", "NewPassw0rd!");
+
+    verify(consultantService).clearPasswordChangeRequirement("user-keycloak-id");
+  }
+
+  @Test
+  void confirmPasswordReset_Should_StillSucceed_When_ClearingTheRequirementFails() {
+    when(oneTimeTokenStore.claim("password-reset", "valid-token"))
+        .thenReturn(Optional.of(validClaim()));
+    doThrow(new IllegalStateException("db down"))
+        .when(consultantService)
+        .clearPasswordChangeRequirement("user-keycloak-id");
+
+    assertThat(passwordResetService.confirmPasswordReset("valid-token", "NewPassw0rd!")).isTrue();
   }
 
   @Test
@@ -314,6 +337,7 @@ class PasswordResetServiceTest {
         .isInstanceOf(CustomValidationHttpStatusException.class);
 
     verify(oneTimeTokenStore).restore("password-reset", "retry-token", claim, true);
+    verify(consultantService, never()).clearPasswordChangeRequirement(any());
   }
 
   @Test
@@ -334,6 +358,7 @@ class PasswordResetServiceTest {
 
     verify(oneTimeTokenStore, never())
         .restore("password-reset", "indeterminate-token", claim, true);
+    verify(consultantService, never()).clearPasswordChangeRequirement(any());
   }
 
   @Test
@@ -344,6 +369,7 @@ class PasswordResetServiceTest {
 
     assertThat(result).isFalse();
     verify(identityPasswordUpdater, never()).updatePassword(anyString(), anyString());
+    verify(consultantService, never()).clearPasswordChangeRequirement(any());
   }
 
   @Test

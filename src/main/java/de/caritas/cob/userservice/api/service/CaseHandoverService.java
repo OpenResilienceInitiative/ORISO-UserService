@@ -3,26 +3,34 @@ package de.caritas.cob.userservice.api.service;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionUserDTO;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
+import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.CaseHandoverConsentMode;
 import de.caritas.cob.userservice.api.model.CaseHandoverReasonPolicy;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest.AccessType;
+import de.caritas.cob.userservice.api.model.CaseHandoverRequest.Direction;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest.Status;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConsultantTopic;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.SessionTopic;
@@ -31,10 +39,14 @@ import de.caritas.cob.userservice.api.port.out.CaseHandoverReasonPolicyRepositor
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
+import de.caritas.cob.userservice.api.service.notification.AskerNotificationChannelPolicy;
 import de.caritas.cob.userservice.api.service.notification.CaseHandoverEmailNotification;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionMapper;
+import de.caritas.cob.userservice.api.service.session.SessionOwnershipService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
@@ -44,12 +56,14 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
@@ -83,6 +97,9 @@ public class CaseHandoverService {
   private static final String OUTCOME_ACCESS_GRANTED = "ACCESS_GRANTED";
   private static final String OUTCOME_ACCESS_DENIED = "ACCESS_DENIED";
   private static final String OUTCOME_PENDING_CLIENT_CONSENT = "PENDING_CLIENT_CONSENT";
+  private static final String OUTCOME_PENDING_RECIPIENT_ACCEPTANCE = "PENDING_RECIPIENT_ACCEPTANCE";
+  private static final String OUTCOME_RECIPIENT_DECLINED = "RECIPIENT_DECLINED";
+  private static final String OUTCOME_OFFER_WITHDRAWN = "OFFER_WITHDRAWN";
   private static final String OUTCOME_ACCESS_GRANTED_PENDING_CLIENT_OPTOUT =
       "ACCESS_GRANTED_PENDING_CLIENT_OPTOUT";
   private static final String OUTCOME_CLIENT_OPTOUT_CONFIRMED = "CLIENT_OPTOUT_CONFIRMED";
@@ -92,6 +109,12 @@ public class CaseHandoverService {
   private static final String OUTCOME_ACCESS_EXPIRED = "ACCESS_EXPIRED";
   private static final String OUTCOME_ALREADY_ANSWERED = "ALREADY_ANSWERED";
   private static final String OUTCOME_NOT_REQUESTED = "NOT_REQUESTED";
+  private static final String OUTCOME_RECLAIMED = "RECLAIMED";
+
+  /** ADR-002: "counsellor left" has no reclaim. ASSIGNMENT_ENDED is its successor (#1245). */
+  private static final Set<String> PERMANENT_HANDOVER_REASONS =
+      Set.of("COUNSELLOR_LEFT", "ASSIGNMENT_ENDED");
+
   private static final String CO_ACCESS_EXPIRY_TASK = "case-handover-co-access-expiry";
 
   /**
@@ -318,6 +341,7 @@ public class CaseHandoverService {
   private final @NonNull CaseHandoverReasonPolicyRepository caseHandoverReasonPolicyRepository;
   private final @NonNull CaseHandoverPolicyCacheService caseHandoverPolicyCacheService;
   private final @NonNull SessionRepository sessionRepository;
+  private final @NonNull SessionOwnershipService sessionOwnershipService;
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
   private final @NonNull UserAccountService userAccountService;
   private final @NonNull EventNotificationService eventNotificationService;
@@ -325,10 +349,15 @@ public class CaseHandoverService {
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull CaseHandoverMatrixRepairService matrixRepairService;
   private final @NonNull MatrixSessionSystemMessageService matrixSessionSystemMessageService;
+  private final @NonNull ConsultantService consultantService;
+  private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
   private final @NonNull ScheduledTaskClaimService scheduledTaskClaimService;
   private final @NonNull Clock clock;
   private final @NonNull PlatformTransactionManager transactionManager;
+  private final @NonNull AgencyService agencyService;
+  private final @NonNull AdminScope adminScope;
+  private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
 
   /**
    * When topics are off, a department degenerates to the agency. When they are on, an empty topic
@@ -408,17 +437,22 @@ public class CaseHandoverService {
         : legacy;
   }
 
+  /** Reads the rules of {@code tenantId} (the Träger), checked against the caller (FE#1725). */
   @Transactional(readOnly = true)
-  public List<CaseHandoverReason> listReasonPolicies() {
-    return listReasons(TenantContext.getCurrentTenant(), "de", true, true);
+  public List<CaseHandoverReason> listReasonPolicies(Long tenantId) {
+    return listReasons(resolvePolicyTenant(tenantId, false), "de", true, true);
   }
 
-  /** Compatibility bridge until ORISO-Admin writes tenant-owned policy settings directly. */
-  public List<CaseHandoverReason> updateReasonPolicies(List<CaseHandoverReason> requestedReasons) {
+  /**
+   * Compatibility bridge until ORISO-Admin writes tenant-owned policy settings directly. Writes the
+   * rules of {@code requestedTenantId} (the Träger), checked against the caller (FE#1725).
+   */
+  public List<CaseHandoverReason> updateReasonPolicies(
+      Long requestedTenantId, List<CaseHandoverReason> requestedReasons) {
+    Long tenantId = resolvePolicyTenant(requestedTenantId, true);
     if (requestedReasons == null || requestedReasons.isEmpty()) {
       throw new BadRequestException("At least one handover reason policy is required");
     }
-    Long tenantId = TenantContext.getCurrentTenant();
     if (tenantId == null || tenantId <= 0) {
       throw new BadRequestException("A tenant is required to update handover policies");
     }
@@ -458,6 +492,45 @@ public class CaseHandoverService {
                     java.util.Comparator.nullsLast(Integer::compareTo))
                 .thenComparing(CaseHandoverReason::getCode))
         .toList();
+  }
+
+  /**
+   * The Träger whose rules are meant, within the caller's {@link AdminScope}. Platform reach: the
+   * Träger must be named (tenant 0 has no rules of its own). Träger admins: their own only; omitted
+   * means it. Agency (BST) admins: read their own Träger, never write. The technical user gets no
+   * access although AdminScope gives it platform reach: these rules are for humans
+   * (ORISO-Helm#367).
+   */
+  private Long resolvePolicyTenant(Long requestedTenantId, boolean write) {
+    AdminScope.Reach reach = adminScope.current();
+    if (reach instanceof AdminScope.Platform && isTechnicalWithoutPlatformAdmin()) {
+      throw new ForbiddenException("The technical user may not access handover rules");
+    }
+    if (reach instanceof AdminScope.Platform) {
+      if (requestedTenantId != null && requestedTenantId > 0) {
+        return requestedTenantId;
+      }
+      if (requestedTenantId != null || TenantContext.isTechnicalOrSuperAdminContext()) {
+        throw new BadRequestException(
+            "tenantId is required: name the Träger whose handover rules are meant");
+      }
+      // Single-tenant deployment: no Träger to name.
+      return TenantContext.getCurrentTenant();
+    }
+    Long tenantId = requestedTenantId != null ? requestedTenantId : reach.tenantId();
+    if (write) {
+      adminScope.assertMay(AdminScope.Target.tenant(tenantId));
+    } else if (!Objects.equals(tenantId, reach.tenantId())) {
+      throw new ForbiddenException("Handover rules of another Träger are not accessible");
+    }
+    return tenantId;
+  }
+
+  private boolean isTechnicalWithoutPlatformAdmin() {
+    var roles = authenticatedUser.getRoles();
+    return roles != null
+        && roles.contains(UserRole.TECHNICAL.getValue())
+        && !authenticatedUser.isPlatformAdmin();
   }
 
   private void applyPolicyUpdate(
@@ -548,23 +621,163 @@ public class CaseHandoverService {
           .canViewContent(true)
           .clientConsent(CaseHandoverConsentMode.NONE)
           .clientConsentRequired(false)
+          .ownershipRevision(session.getOwnershipRevision())
           .policyAuthority(POLICY_AUTHORITY)
           .auditOutcome(OUTCOME_ACTIVE_OWNER)
+          .openOffer(openOfferOf(sessionId, requester).map(this::toStatus).orElse(null))
           .build();
     }
 
-    return latestFor(sessionId, requester)
-        .map(this::toStatus)
-        .orElse(
-            CaseHandoverStatus.builder()
-                .sessionId(sessionId)
-                .status(OUTCOME_NOT_REQUESTED)
-                .canViewContent(false)
-                .clientConsent(CaseHandoverConsentMode.NONE)
-                .clientConsentRequired(false)
-                .policyAuthority(POLICY_AUTHORITY)
-                .auditOutcome(OUTCOME_NOT_REQUESTED)
-                .build());
+    CaseHandoverStatus status =
+        latestFor(sessionId, requester)
+            .map(this::toStatus)
+            .orElse(
+                CaseHandoverStatus.builder()
+                    .sessionId(sessionId)
+                    .status(OUTCOME_NOT_REQUESTED)
+                    .canViewContent(false)
+                    .clientConsent(CaseHandoverConsentMode.NONE)
+                    .clientConsentRequired(false)
+                    .ownershipRevision(session.getOwnershipRevision())
+                    .policyAuthority(POLICY_AUTHORITY)
+                    .auditOutcome(OUTCOME_NOT_REQUESTED)
+                    .build());
+    status.setCanReclaim(
+        takeoverFrom(session, requester)
+            .filter(takeover -> isReclaimable(session, takeover))
+            .isPresent());
+    return status;
+  }
+
+  /**
+   * #200: the colleague holding an advice co-access extends it once while it is still open, so an
+   * OPT_IN consent cannot be stretched indefinitely; more time needs a new request and its consent.
+   * The advice seeker is not asked again; a consent step for OPT_IN would wrap {@link
+   * #applyCoAccessExtension}.
+   */
+  @Transactional
+  public CaseHandoverStatus extendCoAccess(Long sessionId) {
+    Consultant requester = retrieveCurrentConsultant();
+    Session session = getSession(sessionId);
+    verifyEligibleForSession(session, requester);
+
+    // Locked read: an expiry sweep that already holds this grant finishes first and wins.
+    CaseHandoverRequest grant =
+        List.of(Status.GRANTED, Status.GRANTED_PENDING_CLIENT_OPTOUT).stream()
+            .flatMap(
+                status ->
+                    caseHandoverRequestRepository
+                        .findBySessionIdAndStatusAndAccessType(
+                            sessionId, status, AccessType.CO_ACCESS)
+                        .stream())
+            .filter(request -> requester.getId().equals(request.getRequesterConsultant().getId()))
+            .filter(this::isExtendable)
+            .findFirst()
+            .orElseThrow(() -> new ConflictException("No active co-access to extend"));
+    return toStatus(applyCoAccessExtension(grant));
+  }
+
+  /**
+   * Adds the granted duration to the current end, so an early click does not waste the single
+   * extension; the total stays within two durations. Audited on the same row, like expiry: once the
+   * access expires, the log no longer shows that it was extended.
+   */
+  private CaseHandoverRequest applyCoAccessExtension(CaseHandoverRequest grant) {
+    grant.setExpiresAt(
+        grant
+            .getExpiresAt()
+            .plusMinutes(
+                validateMaxAccessDuration(ADVICE_NEEDED, grant.getMaxAccessDurationMinutes())));
+    // Its own column: the grant's outcome and time stay, and the expiry sweep, which overwrites the
+    // outcome, cannot erase that the access was extended.
+    grant.setExtendedAt(LocalDateTime.now(clock));
+    return caseHandoverRequestRepository.save(grant);
+  }
+
+  private boolean isExtendable(CaseHandoverRequest request) {
+    return hasGrantedAccess(request.getStatus())
+        && effectiveAccessType(request) == AccessType.CO_ACCESS
+        && request.getExpiresAt() != null
+        && request.getExpiresAt().isAfter(LocalDateTime.now(clock))
+        && request.getExtendedAt() == null;
+  }
+
+  @Transactional(readOnly = true)
+  public CaseHandoverStatus getRequestStatus(Long sessionId, Long requestId) {
+    Session session = getSession(sessionId);
+    CaseHandoverRequest request =
+        caseHandoverRequestRepository
+            .findWithoutLockByIdAndSessionId(requestId, sessionId)
+            .orElseThrow(() -> new NotFoundException("Case handover request not found"));
+
+    if (authenticatedUser.isConsultant()) {
+      Consultant caller = retrieveCurrentConsultant();
+      verifyConsultantTenant(caller, session);
+      if (!isRequestParty(request, caller)) {
+        throw new NotFoundException("Case handover request not found");
+      }
+      verifyRequestTenant(request, session);
+      CaseHandoverStatus status = toStatus(request);
+      status.setCanViewContent(
+          status.isCanViewContent()
+              && request.getRequesterConsultant() != null
+              && Objects.equals(caller.getId(), request.getRequesterConsultant().getId()));
+      return status;
+    }
+    if (authenticatedUser.isAdviceSeeker()) {
+      User user = userAccountService.retrieveValidatedUser();
+      verifyUserTenant(user, session);
+      if (session.getUser() == null
+          || !Objects.equals(session.getUser().getUserId(), user.getUserId())
+          || !isReadableBySessionAsker(request)) {
+        throw new NotFoundException("Case handover request not found");
+      }
+      verifyRequestTenant(request, session);
+      return toClientStatus(request);
+    }
+    throw new ForbiddenException("Current user is not allowed to read this request");
+  }
+
+  /**
+   * Whether the session's own advice seeker may read this request (#1705). A consent card that went
+   * stale must be able to settle on the request's real final status, so closed requests are
+   * readable too, but only those the advice seeker was actually asked about. The stored consent
+   * mode is no proof of that (a request denied at once stores it as well), so it is read from how
+   * the request got where it is:
+   *
+   * <ul>
+   *   <li>colleague offers (PENDING_RECIPIENT_ACCEPTANCE, RECIPIENT_DECLINED) are never shown;
+   *   <li>WITHDRAWN is shown only once the colleague had accepted, i.e. after the consent prompt;
+   *   <li>DENIED is never shown: it arises either before the advice seeker is asked or from their
+   *       own just-returned decision, which the decision response already carries;
+   *   <li>GRANTED, CLIENT_CONSENT_DECLINED and EXPIRED are reached only through the consent prompt
+   *       (opt-in decision, or opt-out notice), unless no consent applies at all.
+   * </ul>
+   */
+  private boolean isReadableBySessionAsker(CaseHandoverRequest request) {
+    Status status = request.getStatus();
+    if (status == Status.PENDING
+        || status == Status.PENDING_CLIENT_CONSENT
+        || status == Status.GRANTED_PENDING_CLIENT_OPTOUT) {
+      return true;
+    }
+    if (status == Status.WITHDRAWN) {
+      // Withdrawn after the colleague accepted: the advice seeker was already asked and must be
+      // able to settle that prompt. Withdrawn before that, the offer stays staff-only.
+      return request.getRecipientDecisionAt() != null;
+    }
+    if (status != Status.GRANTED
+        && status != Status.CLIENT_CONSENT_DECLINED
+        && status != Status.EXPIRED) {
+      return false;
+    }
+    CaseHandoverConsentMode consent =
+        request.getClientConsent() != null
+            ? request.getClientConsent()
+            : (Boolean.TRUE.equals(request.getClientConsentRequired())
+                ? CaseHandoverConsentMode.OPT_IN
+                : CaseHandoverConsentMode.NONE);
+    return consent != CaseHandoverConsentMode.NONE;
   }
 
   @Transactional(readOnly = true)
@@ -587,16 +800,19 @@ public class CaseHandoverService {
         sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
             agencyIds, requester, statuses);
 
+    var membersOnlyCases = membersOnlyChatAccess.membersOnlySessionIds(candidates);
     List<Session> matchingCandidates =
         candidates.stream()
+            .filter(session -> !membersOnlyCases.contains(session.getId()))
             .filter(session -> isInRequesterDepartment(session, requester))
             .filter(session -> matchesCandidateQuery(session, query))
             .collect(Collectors.toList());
+    List<Session> pageSessions =
+        matchingCandidates.stream().skip(safeOffset).limit(safeCount).toList();
+    Map<Long, String> agencyNames = candidateAgencyNames(pageSessions);
     List<ConsultantSessionResponseDTO> page =
-        matchingCandidates.stream()
-            .skip(safeOffset)
-            .limit(safeCount)
-            .map(this::toCandidateDto)
+        pageSessions.stream()
+            .map(candidate -> toCandidateDto(candidate, agencyNames))
             .collect(Collectors.toList());
 
     return new ConsultantSessionListResponseDTO()
@@ -606,11 +822,113 @@ public class CaseHandoverService {
         .total(matchingCandidates.size());
   }
 
+  @Value("${multitenancy.enabled:true}")
+  private boolean preferenceMultitenancyEnabled = true;
+
+  public record ConsentPreference(Long sessionId, boolean alwaysAskBeforeAdditionalAccess) {}
+
+  @Transactional(readOnly = true)
+  public ConsentPreference getConsentPreference(Long sessionId) {
+    Session session = getSession(sessionId);
+    verifyPreferenceOwner(session);
+    return new ConsentPreference(session.getId(), session.isAlwaysAskBeforeAdditionalAccess());
+  }
+
+  @Transactional
+  public ConsentPreference updateConsentPreference(Long sessionId, boolean alwaysAsk) {
+    Session session = getSessionForMutation(sessionId);
+    verifyPreferenceOwner(session);
+    sessionRepository.updateAdditionalAccessPreference(sessionId, alwaysAsk);
+    // Bulk writes bypass managed state. Keep reads in this transaction consistent with the
+    // database.
+    session.setAlwaysAskBeforeAdditionalAccess(alwaysAsk);
+    return new ConsentPreference(session.getId(), session.isAlwaysAskBeforeAdditionalAccess());
+  }
+
+  private void verifyPreferenceOwner(Session session) {
+    User user = userAccountService.retrieveValidatedUser();
+    Long tenantId = TenantContext.getCurrentTenant();
+    boolean sessionTenantMatches =
+        Objects.equals(tenantId, session.getTenantId())
+            || (Long.valueOf(1L).equals(tenantId) && session.getTenantId() == null);
+    if (user == null
+        || user.getUserId() == null
+        || session.getUser() == null
+        || !user.getUserId().equals(session.getUser().getUserId())
+        || (preferenceMultitenancyEnabled
+            && (tenantId == null
+                || tenantId <= 0
+                || !sessionTenantMatches
+                || !tenantId.equals(user.getTenantId())))) {
+      throw new ForbiddenException(
+          "Current user is not allowed to change this conversation preference");
+    }
+    if (AskerNotificationChannelPolicy.conversationType(session)
+        != ConversationType.AGENCY_COUNSELLING) {
+      throw new ForbiddenException(
+          "Additional access preference is only available for agency counselling");
+    }
+  }
+
+  private Session getSessionForUpdate(Long sessionId) {
+    return requireHandable(
+        sessionRepository
+            .findByIdForUpdate(sessionId)
+            .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId)));
+  }
+
+  /**
+   * The case of a members-only chat belongs to the participants of the chat. It is never handed
+   * over, never offered and never open to a request for access, whoever asks.
+   */
+  private Session requireHandable(Session session) {
+    if (membersOnlyChatAccess.concerns(session)) {
+      throw new NotFoundException("Session not found: " + session.getId());
+    }
+    return session;
+  }
+
   @Transactional
   public CaseHandoverStatus requestAccess(Long sessionId, String reasonCode, String explanation) {
+    return requestAccess(sessionId, reasonCode, explanation, null, null);
+  }
+
+  @Transactional
+  public CaseHandoverStatus requestAccess(
+      Long sessionId,
+      String reasonCode,
+      String explanation,
+      Long expectedOwnershipRevision,
+      UUID operationId) {
+    // Order preference saves and creation so every new request freezes one committed choice.
+    Session session = getSessionForMutation(sessionId);
     Consultant requester = retrieveCurrentConsultant();
-    Session session = getSession(sessionId);
-    verifyEligibleForSession(session, requester);
+
+    boolean guarded = expectedOwnershipRevision != null || operationId != null;
+    if (guarded && (expectedOwnershipRevision == null || operationId == null)) {
+      throw new BadRequestException(
+          "Ownership revision and operation identity must be supplied together");
+    }
+    Optional<CaseHandoverRequest> replay =
+        guarded ? findOperation(requester, operationId) : Optional.empty();
+    if (replay.isPresent()) {
+      verifyConsultantTenant(requester, session);
+      verifyReplay(
+          replay.get(),
+          session,
+          Direction.PULL,
+          requester,
+          requester,
+          reasonCode,
+          explanation,
+          expectedOwnershipRevision);
+      return toStatus(replay.get());
+    }
+
+    verifyFreshPullEligibility(session, requester);
+    if (guarded) {
+      verifyOwnershipRevision(session, expectedOwnershipRevision);
+    }
 
     if (isActiveOwner(session, requester)) {
       return getStatus(sessionId);
@@ -619,22 +937,40 @@ public class CaseHandoverService {
     String normalizedExplanation = normalizeExplanation(explanation);
     CaseHandoverReason reason = findReason(session, reasonCode);
 
-    Optional<CaseHandoverRequest> existing = latestFor(sessionId, requester);
+    Optional<CaseHandoverRequest> existing =
+        guarded ? latestForCurrentPeriod(session, requester) : latestFor(sessionId, requester);
     if (existing.filter(this::isOpenOrGranted).isPresent()) {
       return toStatus(existing.get());
     }
 
     LocalDateTime now = LocalDateTime.now(clock);
-    if (latestGrantedForOtherRequester(sessionId, requester).isPresent()) {
+    if ((guarded
+            ? latestGrantedForOtherRequester(sessionId, requester, expectedOwnershipRevision)
+            : latestGrantedForOtherRequester(sessionId, requester))
+        .isPresent()) {
       return denyRequest(
-          session, requester, reason, normalizedExplanation, OUTCOME_ALREADY_ANSWERED, now);
+          session,
+          requester,
+          reason,
+          normalizedExplanation,
+          OUTCOME_ALREADY_ANSWERED,
+          now,
+          expectedOwnershipRevision,
+          operationId);
     }
     if (!isAccessAllowed(reason)) {
       return denyRequest(
-          session, requester, reason, normalizedExplanation, OUTCOME_ACCESS_DENIED, now);
+          session,
+          requester,
+          reason,
+          normalizedExplanation,
+          OUTCOME_ACCESS_DENIED,
+          now,
+          expectedOwnershipRevision,
+          operationId);
     }
 
-    CaseHandoverConsentMode clientConsent = effectiveClientConsent(reason);
+    CaseHandoverConsentMode clientConsent = effectiveClientConsent(session, reason);
     boolean clientConsentRequired = clientConsent == CaseHandoverConsentMode.OPT_IN;
     Status status =
         switch (clientConsent) {
@@ -653,7 +989,11 @@ public class CaseHandoverService {
         CaseHandoverRequest.builder()
             .session(session)
             .requesterConsultant(requester)
+            .initiatorConsultant(requester)
             .previousConsultant(session.getConsultant())
+            .direction(Direction.PULL)
+            .expectedOwnershipRevision(expectedOwnershipRevision)
+            .operationId(operationId)
             .reasonCode(reason.getCode())
             .reasonLabel(reason.getLabel())
             .explanation(normalizedExplanation)
@@ -674,11 +1014,13 @@ public class CaseHandoverService {
     if (hasGrantedAccess(status)) {
       request.setMatrixMembershipAdded(
           ensureRequesterJoinedMatrixRoom(
-              session, requester, session.getConsultant(), request.getAccessType()));
+              session,
+              requester,
+              session.getConsultant(),
+              request.getAccessType(),
+              request.getOperationId()));
       if (request.getAccessType() == AccessType.TAKEOVER) {
-        session.setConsultant(requester);
-        session.setUpdateDate(now);
-        sessionRepository.save(session);
+        sessionOwnershipService.updateOwner(session, requester, session.getStatus(), now);
         attachStandingSupervisorAfterCommit(session.getId(), requester);
       }
       saved = caseHandoverRequestRepository.save(request);
@@ -694,14 +1036,335 @@ public class CaseHandoverService {
     return toStatus(saved);
   }
 
+  /**
+   * The colleagues this session may actually be offered to.
+   *
+   * <p>It applies exactly the rule {@link #createOffer} enforces — same tenant, present, inside the
+   * session's department (its agency AND an overlapping topic), neither the current owner nor a
+   * previous one — so the picker can no longer show a name whose offer the very next request
+   * rejects with a 403. Only the active owner may ask; a colleague browsing someone else's case
+   * learns nothing about who could take it.
+   */
+  @Transactional(readOnly = true)
+  public List<CaseHandoverRecipient> listEligibleRecipients(Long sessionId) {
+    Session session = getSession(sessionId);
+    Consultant initiator = retrieveCurrentConsultant();
+    verifyConsultantTenant(initiator, session);
+    if (!isActiveOwner(session, initiator)) {
+      throw new ForbiddenException("Only the current owner may list case handover recipients");
+    }
+    if (session.getAgencyId() == null) {
+      return List.of();
+    }
+
+    // One query for the whole session instead of wasPreviousOwner() per candidate.
+    Set<String> previousOwnerIds = grantedPreviousOwnerIds(sessionId);
+
+    Map<String, Consultant> byId = new LinkedHashMap<>();
+    consultantAgencyRepository
+        .findByAgencyIdAndDeleteDateIsNullOrderByConsultantFirstNameAsc(session.getAgencyId())
+        .stream()
+        .map(ConsultantAgency::getConsultant)
+        .filter(Objects::nonNull)
+        .filter(candidate -> candidate.getId() != null)
+        .forEach(candidate -> byId.putIfAbsent(candidate.getId(), candidate));
+
+    return byId.values().stream()
+        .filter(candidate -> !Objects.equals(initiator.getId(), candidate.getId()))
+        .filter(candidate -> Objects.equals(session.getTenantId(), candidate.getTenantId()))
+        .filter(candidate -> !candidate.isAbsent())
+        .filter(candidate -> isInRequesterDepartment(session, candidate))
+        .filter(candidate -> !previousOwnerIds.contains(candidate.getId()))
+        .map(
+            candidate ->
+                CaseHandoverRecipient.builder()
+                    .consultantId(candidate.getId())
+                    .displayName(colleagueName(candidate))
+                    .build())
+        .collect(Collectors.toList());
+  }
+
+  /** An offer still waiting for the recipient or the advice seeker blocks a second one. */
+  private boolean hasOpenOffer(Long sessionId) {
+    return openOffers(sessionId).findAny().isPresent();
+  }
+
+  /** The open colleague offer this counsellor made, if any (the owner's view of it). */
+  private Optional<CaseHandoverRequest> openOfferOf(Long sessionId, Consultant initiator) {
+    return openOffers(sessionId)
+        .filter(
+            request ->
+                request.getInitiatorConsultant() != null
+                    && Objects.equals(request.getInitiatorConsultant().getId(), initiator.getId()))
+        .findFirst();
+  }
+
+  private java.util.stream.Stream<CaseHandoverRequest> openOffers(Long sessionId) {
+    return List.of(Status.PENDING_RECIPIENT_ACCEPTANCE, Status.PENDING_CLIENT_CONSENT).stream()
+        .flatMap(
+            status ->
+                caseHandoverRequestRepository
+                    .findBySessionIdAndStatusOrderByCreatedAtDesc(sessionId, status)
+                    .stream())
+        .filter(request -> request.getDirection() == Direction.PUSH);
+  }
+
+  /**
+   * Internal name rule (#996), then the legacy full-name fallback, then the username — the picker
+   * otherwise shows a bare consultant id for colleagues who never set a display name.
+   */
+  private String colleagueName(Consultant consultant) {
+    String name = consultant.getInternalDisplayNameOrFallback();
+    if (isBlank(name)) {
+      name =
+          (Objects.toString(consultant.getFirstName(), "")
+                  + " "
+                  + Objects.toString(consultant.getLastName(), ""))
+              .trim();
+    }
+    return decodeUsername(isBlank(name) ? consultant.getUsername() : name);
+  }
+
+  private Set<String> grantedPreviousOwnerIds(Long sessionId) {
+    List<CaseHandoverRequest> requests = caseHandoverRequestRepository.findBySessionId(sessionId);
+    if (requests == null) {
+      return Set.of();
+    }
+    return requests.stream()
+        .filter(request -> hasGrantedAccess(request.getStatus()))
+        .filter(request -> effectiveAccessType(request) == AccessType.TAKEOVER)
+        .map(CaseHandoverRequest::getPreviousConsultant)
+        .filter(Objects::nonNull)
+        .map(Consultant::getId)
+        .filter(Objects::nonNull)
+        .collect(Collectors.toSet());
+  }
+
+  @Transactional
+  public CaseHandoverStatus createOffer(
+      Long sessionId,
+      String targetConsultantId,
+      String reasonCode,
+      String explanation,
+      Long expectedOwnershipRevision,
+      UUID operationId) {
+    Session session = getSessionForUpdate(sessionId);
+    Consultant initiator = retrieveCurrentConsultant();
+    verifyConsultantTenant(initiator, session);
+
+    Optional<CaseHandoverRequest> replay = findOperation(initiator, operationId);
+    if (replay.isPresent()) {
+      Consultant storedRecipient = replay.get().getRequesterConsultant();
+      verifyReplay(
+          replay.get(),
+          session,
+          Direction.PUSH,
+          initiator,
+          storedRecipient,
+          reasonCode,
+          explanation,
+          expectedOwnershipRevision);
+      if (storedRecipient == null || !Objects.equals(storedRecipient.getId(), targetConsultantId)) {
+        throw new ConflictException("Operation identity was already used with another payload");
+      }
+      return toStatus(replay.get());
+    }
+
+    if (!isActiveOwner(session, initiator)) {
+      throw new ForbiddenException("Only the current owner may offer a case handover");
+    }
+    verifyOwnershipRevision(session, expectedOwnershipRevision);
+    if (hasOpenOffer(sessionId)) {
+      throw new ConflictException("This session already has an open case handover offer");
+    }
+    Consultant recipient =
+        consultantService
+            .getConsultant(targetConsultantId)
+            .orElseThrow(() -> new NotFoundException("Target consultant not found"));
+    if (Objects.equals(initiator.getId(), recipient.getId())) {
+      throw new BadRequestException("A case handover offer requires another consultant");
+    }
+    if (!Objects.equals(session.getTenantId(), recipient.getTenantId())
+        || recipient.isAbsent()
+        || !isInRequesterDepartment(session, recipient)) {
+      throw new ForbiddenException("Target consultant is not eligible for this case");
+    }
+    CaseHandoverReason reason = findReason(session, reasonCode);
+    if (wasPreviousOwner(sessionId, recipient)) {
+      throw new ConflictException("Previous-owner reclaim is not supported for case handover");
+    }
+    if (accessType(reason.getCode()) == AccessType.CO_ACCESS || !isAccessAllowed(reason)) {
+      throw new ForbiddenException("Selected handover reason does not allow access");
+    }
+
+    LocalDateTime now = LocalDateTime.now(clock);
+    CaseHandoverRequest saved =
+        caseHandoverRequestRepository.save(
+            CaseHandoverRequest.builder()
+                .session(session)
+                .requesterConsultant(recipient)
+                .initiatorConsultant(initiator)
+                .previousConsultant(initiator)
+                .direction(Direction.PUSH)
+                .expectedOwnershipRevision(expectedOwnershipRevision)
+                .operationId(operationId)
+                .reasonCode(reason.getCode())
+                .reasonLabel(reason.getLabel())
+                .explanation(normalizeOptionalExplanation(explanation))
+                .status(Status.PENDING_RECIPIENT_ACCEPTANCE)
+                .clientConsent(effectiveClientConsent(session, reason))
+                .clientConsentRequired(
+                    effectiveClientConsent(session, reason) == CaseHandoverConsentMode.OPT_IN)
+                .accessType(AccessType.TAKEOVER)
+                .policyAuthority(reason.getPolicyAuthority())
+                .auditOutcome(OUTCOME_PENDING_RECIPIENT_ACCEPTANCE)
+                .createdAt(now)
+                .tenantId(session.getTenantId())
+                .build());
+    notifyRecipientOffer(saved);
+    notifyOfferSent(saved);
+    return toStatus(saved);
+  }
+
+  @Transactional
+  public CaseHandoverStatus resolveRecipientDecision(
+      Long sessionId, Long requestId, boolean approved) {
+    Session session = getSessionForUpdate(sessionId);
+    Consultant recipient = retrieveCurrentConsultant();
+    verifyConsultantTenant(recipient, session);
+    CaseHandoverRequest request =
+        caseHandoverRequestRepository
+            .findByIdAndSessionIdForUpdate(requestId, sessionId)
+            .orElseThrow(() -> new NotFoundException("Case handover request not found"));
+    verifyRequestTenant(request, session);
+    if (request.getDirection() != Direction.PUSH
+        || request.getRequesterConsultant() == null
+        || !Objects.equals(request.getRequesterConsultant().getId(), recipient.getId())) {
+      throw new ForbiddenException("Only the selected recipient may decide this offer");
+    }
+    if (request.getStatus() != Status.PENDING_RECIPIENT_ACCEPTANCE) {
+      return toStatus(request);
+    }
+    verifyOwnershipRevision(session, request.getExpectedOwnershipRevision());
+    if (request.getInitiatorConsultant() == null
+        || !isActiveOwner(session, request.getInitiatorConsultant())) {
+      throw new ConflictException(
+          "The case owner changed after this offer was created",
+          HttpStatusExceptionReason.CASE_OWNER_CHANGED);
+    }
+    if (recipient.isAbsent() || !isInRequesterDepartment(session, recipient)) {
+      throw new ForbiddenException("Recipient is no longer eligible for this case");
+    }
+
+    LocalDateTime now = LocalDateTime.now(clock);
+    request.setRecipientDecisionAt(now);
+    if (!approved) {
+      request.setStatus(Status.RECIPIENT_DECLINED);
+      request.setAuditOutcome(OUTCOME_RECIPIENT_DECLINED);
+      request.setResolvedAt(now);
+      CaseHandoverRequest declined = caseHandoverRequestRepository.save(request);
+      notifyOfferDeclined(declined);
+      return toStatus(declined);
+    }
+
+    CaseHandoverReason reason = findReason(session, request.getReasonCode());
+    if (accessType(reason.getCode()) == AccessType.CO_ACCESS || !isAccessAllowed(reason)) {
+      request.setStatus(Status.DENIED);
+      request.setAuditOutcome(OUTCOME_ACCESS_DENIED);
+      request.setResolvedAt(now);
+      return toStatus(caseHandoverRequestRepository.save(request));
+    }
+    // New offers freeze consent when created; historical null-policy offers retain their fallback.
+    CaseHandoverConsentMode consent =
+        request.getClientConsent() != null
+            ? request.getClientConsent()
+            : effectiveClientConsent(reason);
+    request.setClientConsent(consent);
+    request.setClientConsentRequired(consent == CaseHandoverConsentMode.OPT_IN);
+    request.setAccessType(AccessType.TAKEOVER);
+    request.setPolicyAuthority(reason.getPolicyAuthority());
+    if (consent == CaseHandoverConsentMode.OPT_IN) {
+      request.setStatus(Status.PENDING_CLIENT_CONSENT);
+      request.setAuditOutcome(OUTCOME_PENDING_CLIENT_CONSENT);
+      CaseHandoverRequest saved = caseHandoverRequestRepository.save(request);
+      notifyPendingConsent(saved);
+      return toStatus(saved);
+    }
+
+    Consultant liveRecipient = resolveEligibleRecipientForGrant(session, request);
+    request.setRequesterConsultant(liveRecipient);
+    request.setStatus(
+        consent == CaseHandoverConsentMode.OPT_OUT
+            ? Status.GRANTED_PENDING_CLIENT_OPTOUT
+            : Status.GRANTED);
+    request.setAuditOutcome(
+        consent == CaseHandoverConsentMode.OPT_OUT
+            ? OUTCOME_ACCESS_GRANTED_PENDING_CLIENT_OPTOUT
+            : OUTCOME_ACCESS_GRANTED);
+    request.setResolvedAt(now);
+    request.setMatrixMembershipAdded(
+        ensureRequesterJoinedMatrixRoom(
+            session,
+            liveRecipient,
+            request.getPreviousConsultant(),
+            AccessType.TAKEOVER,
+            request.getOperationId()));
+    sessionOwnershipService.updateOwner(session, liveRecipient, session.getStatus(), now);
+    attachStandingSupervisorAfterCommit(session.getId(), liveRecipient);
+    CaseHandoverRequest saved = caseHandoverRequestRepository.save(request);
+    notifyGranted(saved);
+    if (consent == CaseHandoverConsentMode.OPT_OUT) {
+      notifyPendingConsent(saved);
+    }
+    return toStatus(saved);
+  }
+
+  /**
+   * The offering counsellor takes a colleague offer back while it is still open. Idempotent: a
+   * repeated call answers with the withdrawn offer and notifies nobody again. An offer the
+   * recipient (or the advice seeker) already settled can no longer be withdrawn and answers 409.
+   * The room is deliberately left alone: a colleague offer is staff-only and never shown to the
+   * advice seeker, so both sides are told through their activity timeline instead.
+   */
+  @Transactional
+  public CaseHandoverStatus withdrawOffer(Long sessionId, Long requestId) {
+    Session session = getSessionForUpdate(sessionId);
+    Consultant caller = retrieveCurrentConsultant();
+    verifyConsultantTenant(caller, session);
+    CaseHandoverRequest request =
+        caseHandoverRequestRepository
+            .findByIdAndSessionIdForUpdate(requestId, sessionId)
+            .orElseThrow(() -> new NotFoundException("Case handover request not found"));
+    verifyRequestTenant(request, session);
+    if (request.getDirection() != Direction.PUSH
+        || request.getInitiatorConsultant() == null
+        || !Objects.equals(request.getInitiatorConsultant().getId(), caller.getId())) {
+      throw new ForbiddenException("Only the offering counsellor may withdraw this offer");
+    }
+    if (request.getStatus() == Status.WITHDRAWN) {
+      return toStatus(request);
+    }
+    if (request.getStatus() != Status.PENDING_RECIPIENT_ACCEPTANCE
+        && request.getStatus() != Status.PENDING_CLIENT_CONSENT) {
+      throw new ConflictException("This case handover offer was already decided");
+    }
+    request.setStatus(Status.WITHDRAWN);
+    request.setAuditOutcome(OUTCOME_OFFER_WITHDRAWN);
+    request.setResolvedAt(LocalDateTime.now(clock));
+    CaseHandoverRequest saved = caseHandoverRequestRepository.save(request);
+    notifyOfferWithdrawn(saved);
+    return toStatus(saved);
+  }
+
   @Transactional
   public CaseHandoverStatus resolveClientConsent(Long sessionId, Long requestId, boolean approved) {
+    Session session = getSessionForMutation(sessionId);
     User user = userAccountService.retrieveValidatedUser();
+    verifyUserTenant(user, session);
     CaseHandoverRequest request =
         caseHandoverRequestRepository
             .findByIdAndSessionId(requestId, sessionId)
             .orElseThrow(() -> new NotFoundException("Case handover request not found"));
-    Session session = request.getSession();
 
     if (session.getUser() == null || !user.getUserId().equals(session.getUser().getUserId())) {
       throw new ForbiddenException("Current user is not allowed to decide this request");
@@ -713,6 +1376,19 @@ public class CaseHandoverService {
             || request.getStatus() == Status.PENDING;
     if (!optInDecision && !optOutDecision) {
       return toClientStatus(request);
+    }
+
+    verifyRequestTenant(request, session);
+    if (!optOutDecision && request.getExpectedOwnershipRevision() != null) {
+      verifyOwnershipRevision(session, request.getExpectedOwnershipRevision());
+    }
+    if (!optOutDecision
+        && request.getDirection() == Direction.PUSH
+        && (request.getInitiatorConsultant() == null
+            || !isActiveOwner(session, request.getInitiatorConsultant()))) {
+      throw new ConflictException(
+          "The case owner changed after this request was created",
+          HttpStatusExceptionReason.CASE_OWNER_CHANGED);
     }
 
     LocalDateTime now = LocalDateTime.now(clock);
@@ -730,6 +1406,8 @@ public class CaseHandoverService {
         return toClientStatus(saved);
       }
 
+      Consultant liveRecipient = resolveEligibleRecipientForGrant(session, request);
+      request.setRequesterConsultant(liveRecipient);
       request.setStatus(Status.GRANTED);
       request.setAuditOutcome(OUTCOME_ACCESS_GRANTED);
       request.setAccessType(accessType(request.getReasonCode()));
@@ -751,11 +1429,11 @@ public class CaseHandoverService {
               session,
               request.getRequesterConsultant(),
               request.getPreviousConsultant(),
-              request.getAccessType()));
+              request.getAccessType(),
+              request.getOperationId()));
       if (request.getAccessType() == AccessType.TAKEOVER) {
-        session.setConsultant(request.getRequesterConsultant());
-        session.setUpdateDate(now);
-        sessionRepository.save(session);
+        sessionOwnershipService.updateOwner(
+            session, request.getRequesterConsultant(), session.getStatus(), now);
         attachStandingSupervisorAfterCommit(session.getId(), request.getRequesterConsultant());
       }
       CaseHandoverRequest saved = caseHandoverRequestRepository.save(request);
@@ -780,6 +1458,96 @@ public class CaseHandoverService {
     CaseHandoverRequest saved = caseHandoverRequestRepository.save(request);
     notifyConsentDeclined(saved);
     return toClientStatus(saved);
+  }
+
+  /**
+   * ADR-002 reveal lifecycle: the counsellor a takeover moved the case away from takes it back on
+   * return. The cover counsellor keeps their Matrix membership (under Megolm a removed member could
+   * never be given the history back) and the curtain re-hides them, the mirror image of the
+   * takeover. A permanent reason has no reclaim.
+   */
+  @Transactional
+  public CaseHandoverStatus reclaim(Long sessionId) {
+    Consultant original = retrieveCurrentConsultant();
+    Session session = getSession(sessionId);
+    // Same gate as getStatus(): a counsellor moved out of the case's department after the takeover
+    // must not pull the case back out of it with a direct POST.
+    verifyEligibleForSession(session, original);
+    CaseHandoverRequest takeover =
+        takeoverFrom(session, original)
+            .orElseThrow(
+                () ->
+                    new ForbiddenException(
+                        "Only the counsellor a takeover moved the case away from can reclaim it"));
+    if (!isReclaimable(session, takeover)) {
+      throw new ConflictException("This takeover cannot be reclaimed");
+    }
+
+    LocalDateTime now = LocalDateTime.now(clock);
+    session.setConsultant(original);
+    session.setUpdateDate(now);
+    sessionRepository.save(session);
+    takeover.setStatus(Status.RECLAIMED);
+    takeover.setAuditOutcome(OUTCOME_RECLAIMED);
+    takeover.setResolvedAt(now);
+    caseHandoverRequestRepository.save(takeover);
+    demoteCoverCounsellor(session, takeover.getRequesterConsultant());
+    attachStandingSupervisorAfterCommit(sessionId, original);
+    return getStatus(sessionId);
+  }
+
+  /**
+   * The takeover gave the cover counsellor the owner's level with the original counsellor's token,
+   * so both sit at the same level now, and Matrix refuses to lower another member whose level is
+   * not below your own. Lowering your own entry is always allowed, so the cover counsellor does it.
+   * Best effort like the takeover side: the reclaim never fails over room rights.
+   */
+  private void demoteCoverCounsellor(Session session, Consultant cover) {
+    String roomId = session.getMatrixRoomId();
+    if (isBlank(roomId) || cover == null || isBlank(cover.getMatrixUserId())) {
+      return;
+    }
+    try {
+      String coverToken = matrixSynapseService.loginAsUserAccessToken(cover.getMatrixUserId());
+      if (isBlank(coverToken)
+          || !matrixSynapseService.setUserPowerLevel(
+              roomId, cover.getMatrixUserId(), MEMBER_POWER_LEVEL, coverToken)) {
+        log.warn(
+            "Could not return the cover counsellor of session {} to member level in room {}",
+            session.getId(),
+            roomId);
+      }
+    } catch (RuntimeException exception) {
+      log.warn(
+          "Could not return the cover counsellor of session {} to member level ({})",
+          session.getId(),
+          exception.getClass().getSimpleName());
+    }
+  }
+
+  private Optional<CaseHandoverRequest> takeoverFrom(Session session, Consultant consultant) {
+    return java.util.stream.Stream.of(Status.GRANTED, Status.GRANTED_PENDING_CLIENT_OPTOUT)
+        .flatMap(
+            status ->
+                caseHandoverRequestRepository
+                    .findBySessionIdAndStatusOrderByCreatedAtDesc(session.getId(), status)
+                    .stream())
+        .filter(request -> effectiveAccessType(request) == AccessType.TAKEOVER)
+        .max(
+            java.util.Comparator.comparing(
+                CaseHandoverRequest::getCreatedAt,
+                java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder())))
+        .filter(
+            takeover ->
+                takeover.getPreviousConsultant() != null
+                    && takeover.getPreviousConsultant().getId().equals(consultant.getId()));
+  }
+
+  /** Not for a permanent reason, and the cover counsellor still owns the case. */
+  private boolean isReclaimable(Session session, CaseHandoverRequest takeover) {
+    return !PERMANENT_HANDOVER_REASONS.contains(
+            CaseHandoverReasonCodes.canonical(takeover.getReasonCode()))
+        && isActiveOwner(session, takeover.getRequesterConsultant());
   }
 
   /**
@@ -840,10 +1608,22 @@ public class CaseHandoverService {
     return consultant;
   }
 
+  private Session getSessionForMutation(Long sessionId) {
+    var current =
+        sessionRepository
+            .findByIdForUpdate(sessionId)
+            .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId));
+    if (current.getStatus() == Session.SessionStatus.REJECTED) {
+      throw new ConflictException("Rejected enquiry cannot grant case access");
+    }
+    return requireHandable(current);
+  }
+
   private Session getSession(Long sessionId) {
-    return sessionRepository
-        .findById(sessionId)
-        .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId));
+    return requireHandable(
+        sessionRepository
+            .findById(sessionId)
+            .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId)));
   }
 
   private ConsultantSessionListResponseDTO emptyCandidateResponse(int offset) {
@@ -879,9 +1659,7 @@ public class CaseHandoverService {
                 session.getConsultant() != null
                     ? decodeUsername(session.getConsultant().getDisplayName())
                     : null),
-            // The candidate list renders the internal name with fallback (#996), so the search
-            // must cover it too — otherwise an internal-name-only query filters the session out
-            // before it is rendered. The public display name above stays a valid search term.
+            // Colleagues search by internal name too (#996, #1725); public name stays searchable.
             nullable(
                 session.getConsultant() != null
                     ? decodeUsername(session.getConsultant().getInternalDisplayNameOrFallback())
@@ -889,7 +1667,11 @@ public class CaseHandoverService {
             nullable(
                 session.getConsultant() != null ? session.getConsultant().getFirstName() : null),
             nullable(
-                session.getConsultant() != null ? session.getConsultant().getLastName() : null));
+                session.getConsultant() != null ? session.getConsultant().getLastName() : null),
+            nullable(
+                session.getConsultant() != null
+                    ? decodeUsername(session.getConsultant().getInternalDisplayNameOrRealName())
+                    : null));
 
     return haystack.stream()
         .map(this::normalizeSearchText)
@@ -958,10 +1740,41 @@ public class CaseHandoverService {
     return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
   }
 
-  private ConsultantSessionResponseDTO toCandidateDto(Session session) {
+  /** Agency names for one candidate page; a failing lookup degrades to id-only agencies. */
+  private Map<Long, String> candidateAgencyNames(List<Session> sessions) {
+    List<Long> agencyIds =
+        sessions.stream().map(Session::getAgencyId).filter(Objects::nonNull).distinct().toList();
+    if (agencyIds.isEmpty()) {
+      return Map.of();
+    }
+    try {
+      List<AgencyDTO> agencies = agencyService.getAgencies(agencyIds);
+      return agencies == null
+          ? Map.of()
+          : agencies.stream()
+              .filter(
+                  agency -> agency != null && agency.getId() != null && agency.getName() != null)
+              .collect(
+                  Collectors.toMap(AgencyDTO::getId, AgencyDTO::getName, (first, second) -> first));
+    } catch (RuntimeException e) {
+      log.warn(
+          "Case-handover candidates: agency lookup failed for {} ({})",
+          agencyIds,
+          e.getClass().getSimpleName());
+      return Map.of();
+    }
+  }
+
+  private ConsultantSessionResponseDTO toCandidateDto(
+      Session session, Map<Long, String> agencyNames) {
     ConsultantSessionResponseDTO dto =
         new ConsultantSessionResponseDTO()
             .session(new SessionMapper().convertToSessionDTO(session));
+    if (session.getAgencyId() != null) {
+      // id + name only: candidates are metadata, not the full agency record
+      dto.agency(
+          new AgencyDTO().id(session.getAgencyId()).name(agencyNames.get(session.getAgencyId())));
+    }
 
     User user = session.getUser();
     if (user != null) {
@@ -981,8 +1794,9 @@ public class CaseHandoverService {
               .firstName(consultant.getFirstName())
               .lastName(consultant.getLastName())
               .username(decodeUsername(consultant.getUsername()))
-              // Handover candidates are shown to colleagues (internal surface, #996).
-              .displayName(decodeUsername(consultant.getInternalDisplayNameOrFallback()))
+              // #1725: public profile name; colleagues read internalName (#996)
+              .displayName(decodeUsername(consultant.getDisplayName()))
+              .internalName(decodeUsername(consultant.getInternalDisplayNameOrRealName()))
               .avatarKind(
                   consultant.getAvatarKind() == null ? null : consultant.getAvatarKind().name())
               .avatarId(consultant.getAvatarId()));
@@ -1004,6 +1818,17 @@ public class CaseHandoverService {
     }
   }
 
+  private void verifyFreshPullEligibility(Session session, Consultant requester) {
+    Long tenantId = session.getTenantId();
+    if (tenantId != null && tenantId > 0) {
+      verifyConsultantTenant(requester, session);
+    }
+    if (requester.isAbsent()) {
+      throw new ForbiddenException("Consultant is not eligible for this case");
+    }
+    verifyEligibleForSession(session, requester);
+  }
+
   private Set<Long> consultantAgencyIds(Consultant consultant) {
     Set<ConsultantAgency> loadedAgencies = consultant.getConsultantAgencies();
     if (loadedAgencies != null && !loadedAgencies.isEmpty()) {
@@ -1022,6 +1847,104 @@ public class CaseHandoverService {
         && session.getConsultant().getId().equals(consultant.getId());
   }
 
+  private boolean isRequestParty(CaseHandoverRequest request, Consultant consultant) {
+    if (consultant == null || consultant.getId() == null) {
+      return false;
+    }
+    return request.getInitiatorConsultant() != null
+            && consultant.getId().equals(request.getInitiatorConsultant().getId())
+        || request.getRequesterConsultant() != null
+            && consultant.getId().equals(request.getRequesterConsultant().getId());
+  }
+
+  private void verifyRequestTenant(CaseHandoverRequest request, Session session) {
+    if (!Objects.equals(request.getTenantId(), session.getTenantId())) {
+      throw new NotFoundException("Case handover request not found");
+    }
+  }
+
+  private void verifyConsultantTenant(Consultant consultant, Session session) {
+    if (consultant == null || !Objects.equals(consultant.getTenantId(), session.getTenantId())) {
+      throw new NotFoundException("Case handover request not found");
+    }
+  }
+
+  private void verifyUserTenant(User user, Session session) {
+    if (user == null || !Objects.equals(user.getTenantId(), session.getTenantId())) {
+      throw new NotFoundException("Case handover request not found");
+    }
+  }
+
+  private Consultant resolveEligibleRecipientForGrant(
+      Session session, CaseHandoverRequest request) {
+    Consultant storedRecipient = request.getRequesterConsultant();
+    if (storedRecipient == null || storedRecipient.getId() == null) {
+      throw new ForbiddenException("Recipient is no longer eligible for this case");
+    }
+    Consultant currentRecipient =
+        consultantService
+            .getConsultant(storedRecipient.getId())
+            .orElseThrow(
+                () -> new ForbiddenException("Recipient is no longer eligible for this case"));
+    verifyConsultantTenant(currentRecipient, session);
+    if (currentRecipient.isAbsent() || !isInRequesterDepartment(session, currentRecipient)) {
+      throw new ForbiddenException("Recipient is no longer eligible for this case");
+    }
+    if (request.getDirection() == Direction.PUSH
+        && wasPreviousOwner(session.getId(), currentRecipient)) {
+      throw new ConflictException("Previous-owner reclaim is not supported for case handover");
+    }
+    return currentRecipient;
+  }
+
+  private void verifyOwnershipRevision(Session session, Long expectedOwnershipRevision) {
+    if (expectedOwnershipRevision == null
+        || expectedOwnershipRevision < 0
+        || session.getOwnershipRevision() != expectedOwnershipRevision) {
+      throw new ConflictException(
+          "Case ownership changed; refresh before handover",
+          HttpStatusExceptionReason.CASE_OWNER_CHANGED);
+    }
+  }
+
+  private Optional<CaseHandoverRequest> findOperation(Consultant initiator, UUID operationId) {
+    if (operationId == null) {
+      throw new BadRequestException("Operation identity is required");
+    }
+    return caseHandoverRequestRepository.findByInitiatorConsultantIdAndOperationId(
+        initiator.getId(), operationId);
+  }
+
+  private void verifyReplay(
+      CaseHandoverRequest stored,
+      Session session,
+      Direction direction,
+      Consultant initiator,
+      Consultant recipient,
+      String reasonCode,
+      String explanation,
+      Long expectedOwnershipRevision) {
+    String expectedExplanation =
+        direction == Direction.PULL
+            ? normalizeExplanation(explanation)
+            : normalizeOptionalExplanation(explanation);
+    if (stored.getSession() == null
+        || !Objects.equals(stored.getSession().getId(), session.getId())
+        || !Objects.equals(stored.getTenantId(), session.getTenantId())
+        || stored.getDirection() != direction
+        || stored.getInitiatorConsultant() == null
+        || !Objects.equals(stored.getInitiatorConsultant().getId(), initiator.getId())
+        || stored.getRequesterConsultant() == null
+        || !Objects.equals(stored.getRequesterConsultant().getId(), recipient.getId())
+        || !Objects.equals(
+            CaseHandoverReasonCodes.canonical(stored.getReasonCode()),
+            CaseHandoverReasonCodes.canonical(reasonCode))
+        || !Objects.equals(stored.getExplanation(), expectedExplanation)
+        || !Objects.equals(stored.getExpectedOwnershipRevision(), expectedOwnershipRevision)) {
+      throw new ConflictException("Operation identity was already used with another payload");
+    }
+  }
+
   private Optional<CaseHandoverRequest> latestFor(Long sessionId, Consultant requester) {
     return caseHandoverRequestRepository
         .findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(sessionId, requester.getId())
@@ -1029,9 +1952,23 @@ public class CaseHandoverService {
         .findFirst();
   }
 
+  private Optional<CaseHandoverRequest> latestForCurrentPeriod(
+      Session session, Consultant requester) {
+    return caseHandoverRequestRepository
+        .findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(
+            session.getId(), requester.getId())
+        .stream()
+        .filter(
+            request ->
+                Objects.equals(
+                    request.getExpectedOwnershipRevision(), session.getOwnershipRevision()))
+        .findFirst();
+  }
+
   private boolean isOpenOrGranted(CaseHandoverRequest request) {
     return List.of(
                 Status.PENDING,
+                Status.PENDING_RECIPIENT_ACCEPTANCE,
                 Status.PENDING_CLIENT_CONSENT,
                 Status.GRANTED_PENDING_CLIENT_OPTOUT,
                 Status.GRANTED)
@@ -1059,8 +1996,46 @@ public class CaseHandoverService {
         .findFirst();
   }
 
+  private Optional<CaseHandoverRequest> latestGrantedForOtherRequester(
+      Long sessionId, Consultant requester, Long revision) {
+    return java.util.stream.Stream.concat(
+            caseHandoverRequestRepository
+                .findBySessionIdAndStatusOrderByCreatedAtDesc(sessionId, Status.GRANTED)
+                .stream(),
+            caseHandoverRequestRepository
+                .findBySessionIdAndStatusOrderByCreatedAtDesc(
+                    sessionId, Status.GRANTED_PENDING_CLIENT_OPTOUT)
+                .stream())
+        .filter(request -> !isExpired(request))
+        .filter(request -> Objects.equals(request.getExpectedOwnershipRevision(), revision))
+        .filter(
+            request ->
+                request.getRequesterConsultant() != null
+                    && requester != null
+                    && !Objects.equals(requester.getId(), request.getRequesterConsultant().getId()))
+        .findFirst();
+  }
+
+  private boolean wasPreviousOwner(Long sessionId, Consultant requester) {
+    List<CaseHandoverRequest> previous =
+        caseHandoverRequestRepository.findByPreviousConsultantId(requester.getId());
+    return previous != null
+        && previous.stream()
+            .anyMatch(
+                request ->
+                    request.getSession() != null
+                        && Objects.equals(request.getSession().getId(), sessionId)
+                        && hasGrantedAccess(request.getStatus())
+                        && effectiveAccessType(request) == AccessType.TAKEOVER);
+  }
+
   private boolean hasAlreadyGrantedOrTakenOver(Session session, CaseHandoverRequest request) {
-    return latestGrantedForOtherRequester(session.getId(), request.getRequesterConsultant())
+    return (request.getExpectedOwnershipRevision() == null
+                ? latestGrantedForOtherRequester(session.getId(), request.getRequesterConsultant())
+                : latestGrantedForOtherRequester(
+                    session.getId(),
+                    request.getRequesterConsultant(),
+                    request.getExpectedOwnershipRevision()))
             .isPresent()
         || isTakenOverByAnotherCounsellor(session, request);
   }
@@ -1236,8 +2211,21 @@ public class CaseHandoverService {
     return normalized;
   }
 
+  private String normalizeOptionalExplanation(String explanation) {
+    return explanation == null ? "" : explanation.trim();
+  }
+
   private boolean isAccessAllowed(CaseHandoverReason reason) {
     return !Boolean.FALSE.equals(reason.getAccessAllowed());
+  }
+
+  private CaseHandoverConsentMode effectiveClientConsent(
+      Session session, CaseHandoverReason reason) {
+    return session.isAlwaysAskBeforeAdditionalAccess()
+            && AskerNotificationChannelPolicy.conversationType(session)
+                == ConversationType.AGENCY_COUNSELLING
+        ? CaseHandoverConsentMode.OPT_IN
+        : effectiveClientConsent(reason);
   }
 
   private CaseHandoverConsentMode effectiveClientConsent(CaseHandoverReason reason) {
@@ -1381,12 +2369,18 @@ public class CaseHandoverService {
       CaseHandoverReason reason,
       String explanation,
       String auditOutcome,
-      LocalDateTime now) {
+      LocalDateTime now,
+      Long expectedOwnershipRevision,
+      UUID operationId) {
     CaseHandoverRequest request =
         CaseHandoverRequest.builder()
             .session(session)
             .requesterConsultant(requester)
+            .initiatorConsultant(requester)
             .previousConsultant(session.getConsultant())
+            .direction(Direction.PULL)
+            .expectedOwnershipRevision(expectedOwnershipRevision)
+            .operationId(operationId)
             .reasonCode(reason.getCode())
             .reasonLabel(reason.getLabel())
             .explanation(explanation)
@@ -1410,7 +2404,20 @@ public class CaseHandoverService {
         .requestId(request.getId())
         .sessionId(request.getSession().getId())
         .status(expired ? Status.EXPIRED.name() : request.getStatus().name())
-        .canViewContent(hasGrantedAccess(request.getStatus()) && !expired)
+        .canViewContent(canViewContent(request))
+        .direction(request.getDirection() == null ? null : request.getDirection().name())
+        .initiatorConsultantId(
+            request.getInitiatorConsultant() == null
+                ? null
+                : request.getInitiatorConsultant().getId())
+        .recipientConsultantId(
+            request.getRequesterConsultant() == null
+                ? null
+                : request.getRequesterConsultant().getId())
+        .recipientDecisionAt(request.getRecipientDecisionAt())
+        .expectedOwnershipRevision(request.getExpectedOwnershipRevision())
+        .ownershipRevision(request.getSession().getOwnershipRevision())
+        .operationId(request.getOperationId())
         .reasonCode(request.getReasonCode())
         .reasonLabel(reasonLabelOf(request))
         .clientConsent(
@@ -1426,6 +2433,7 @@ public class CaseHandoverService {
         .resolvedAt(request.getResolvedAt())
         .accessType(accessType.name())
         .expiresAt(request.getExpiresAt())
+        .canExtend(isExtendable(request))
         .build();
   }
 
@@ -1440,13 +2448,14 @@ public class CaseHandoverService {
         .requestId(request.getId())
         .sessionId(request.getSession().getId())
         .status(expired ? Status.EXPIRED.name() : request.getStatus().name())
-        .canViewContent(request.getStatus() == Status.GRANTED && !expired)
+        .canViewContent(request.getStatus() == Status.GRANTED && canViewContent(request))
         .clientConsent(
             request.getClientConsent() != null
                 ? request.getClientConsent()
                 : (Boolean.TRUE.equals(request.getClientConsentRequired())
                     ? CaseHandoverConsentMode.OPT_IN
                     : CaseHandoverConsentMode.NONE))
+        .ownershipRevision(request.getSession().getOwnershipRevision())
         .clientConsentRequired(Boolean.TRUE.equals(request.getClientConsentRequired()))
         .auditOutcome(request.getAuditOutcome())
         .createdAt(request.getCreatedAt())
@@ -1454,6 +2463,150 @@ public class CaseHandoverService {
         .accessType(accessType.name())
         .expiresAt(request.getExpiresAt())
         .build();
+  }
+
+  private boolean canViewContent(CaseHandoverRequest request) {
+    return hasGrantedAccess(request.getStatus())
+        && !isExpired(request)
+        && (effectiveAccessType(request) == AccessType.CO_ACCESS
+            || (request.getSession().getConsultant() != null
+                && request.getRequesterConsultant() != null
+                && Objects.equals(
+                    request.getSession().getConsultant().getId(),
+                    request.getRequesterConsultant().getId())));
+  }
+
+  private void notifyRecipientOffer(CaseHandoverRequest request) {
+    Consultant recipient = request.getRequesterConsultant();
+    Session session = request.getSession();
+    if (recipient == null || recipient.getId() == null) {
+      return;
+    }
+    Runnable notification =
+        () ->
+            eventNotificationService.createEventOnce(
+                "case-handover-offer:" + request.getId(),
+                recipient.getId(),
+                "case.handover.offer.received",
+                EventNotificationService.CATEGORY_SYSTEM,
+                "Case handover offer",
+                String.format("A colleague offered you case #%s", session.getId()),
+                eventNotificationService.buildCaseHandoverOfferParams(
+                    session,
+                    resolveConsultantName(request.getInitiatorConsultant()),
+                    request.getId()),
+                "/sessions/consultant/sessionView/session/"
+                    + session.getId()
+                    + "?caseHandoverRequestId="
+                    + request.getId(),
+                session.getId(),
+                session.getTenantId());
+    runAfterCommit(notification);
+  }
+
+  /** The offering counsellor's own record that the offer went out. */
+  private void notifyOfferSent(CaseHandoverRequest request) {
+    publishOfferTimelineEvent(
+        "case-handover-offer-sent:" + request.getId(),
+        request.getInitiatorConsultant(),
+        "case.handover.offer.sent",
+        "Case handover offer sent",
+        String.format(
+            "You offered case #%s to %s",
+            request.getSession().getId(), resolveConsultantName(request.getRequesterConsultant())),
+        request);
+  }
+
+  private void notifyOfferDeclined(CaseHandoverRequest request) {
+    publishOfferTimelineEvent(
+        "case-handover-offer-declined:" + request.getId(),
+        request.getInitiatorConsultant(),
+        "case.handover.offer.declined",
+        "Case handover offer declined",
+        String.format(
+            "%s declined your offer for case #%s",
+            resolveConsultantName(request.getRequesterConsultant()), request.getSession().getId()),
+        request);
+  }
+
+  /** Both counsellors learn that the offer is off; the recipient's open offer card goes stale. */
+  private void notifyOfferWithdrawn(CaseHandoverRequest request) {
+    Session session = request.getSession();
+    publishOfferTimelineEvent(
+        "case-handover-offer-withdrawn:" + request.getId() + ":recipient",
+        request.getRequesterConsultant(),
+        "case.handover.offer.withdrawn",
+        "Case handover offer withdrawn",
+        String.format(
+            "%s withdrew the offer for case #%s",
+            resolveConsultantName(request.getInitiatorConsultant()), session.getId()),
+        request);
+    publishOfferTimelineEvent(
+        "case-handover-offer-withdrawn:" + request.getId() + ":requester",
+        request.getInitiatorConsultant(),
+        "case.handover.offer.withdrawn",
+        "Case handover offer withdrawn",
+        String.format("You withdrew your offer for case #%s", session.getId()),
+        request);
+  }
+
+  private void publishOfferTimelineEvent(
+      String deduplicationKey,
+      Consultant recipient,
+      String eventType,
+      String title,
+      String text,
+      CaseHandoverRequest request) {
+    if (recipient == null || recipient.getId() == null) {
+      return;
+    }
+    Session session = request.getSession();
+    runAfterCommit(
+        () ->
+            eventNotificationService.createEventOnce(
+                deduplicationKey,
+                recipient.getId(),
+                eventType,
+                EventNotificationService.CATEGORY_SYSTEM,
+                title,
+                text,
+                eventNotificationService.buildCaseHandoverOfferParams(
+                    session,
+                    resolveConsultantName(request.getInitiatorConsultant()),
+                    request.getId()),
+                "/sessions/consultant/sessionView/session/"
+                    + session.getId()
+                    + "?caseHandoverRequestId="
+                    + request.getId(),
+                session.getId(),
+                session.getTenantId()));
+  }
+
+  /**
+   * Runs a notification after the caller's commit. Each action is isolated: one failing
+   * notification must not stop the ones registered after it, since a retry of the already settled
+   * request notifies nobody again.
+   */
+  private void runAfterCommit(Runnable action) {
+    Runnable isolated =
+        () -> {
+          try {
+            action.run();
+          } catch (RuntimeException notificationFailure) {
+            log.warn("Case handover after-commit notification failed", notificationFailure);
+          }
+        };
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      isolated.run();
+      return;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            isolated.run();
+          }
+        });
   }
 
   private void notifyGranted(CaseHandoverRequest request) {
@@ -1481,7 +2634,7 @@ public class CaseHandoverService {
                                     request.getMaxAccessDurationMinutes(),
                                     resolveSessionLanguage(session)))
                         : renderClientCopy(clientCopy.grantedDescription(), requesterName));
-    postGrantedChatSystemMessage(session, requesterName, clientDescription);
+    postGrantedChatSystemMessage(session, requesterName, clientDescription, request);
     // #1010 task 1a: the explanation is counsellor-written free text that can reference case
     // content. It is no longer copied into the notification, which kept it in plaintext for good;
     // the handover-request API serves it on demand instead.
@@ -1501,6 +2654,20 @@ public class CaseHandoverService {
           clientDescription,
           clientParams,
           buildAskerSessionActionPath(session),
+          session.getId(),
+          session.getTenantId());
+    }
+
+    if (requester != null && requester.getId() != null) {
+      eventNotificationService.createEvent(
+          requester.getId(),
+          "case.handover.granted",
+          EventNotificationService.CATEGORY_SYSTEM,
+          "Case handover completed",
+          String.format(
+              "You took over case #%s. Reason: %s", session.getId(), request.getReasonLabel()),
+          params,
+          buildConsultantSessionActionPath(session),
           session.getId(),
           session.getTenantId());
     }
@@ -1534,10 +2701,14 @@ public class CaseHandoverService {
    * session's Matrix room. Emission failures must never fail the handover itself.
    */
   private void postGrantedChatSystemMessage(
-      Session session, String requesterName, String description) {
+      Session session, String requesterName, String description, CaseHandoverRequest request) {
     try {
       matrixSessionSystemMessageService.postCaseHandoverGrantedMessage(
-          session, requesterName, description);
+          session,
+          requesterName,
+          description,
+          new MatrixSessionSystemMessageService.GrantedAccessMetadata(
+              request.getId(), request.getClientConsent(), effectiveAccessType(request)));
     } catch (RuntimeException exception) {
       log.warn(
           "Case-handover system message for session {} could not be posted: {}",
@@ -1882,7 +3053,11 @@ public class CaseHandoverService {
   }
 
   private boolean ensureRequesterJoinedMatrixRoom(
-      Session session, Consultant requester, Consultant previousConsultant, AccessType accessType) {
+      Session session,
+      Consultant requester,
+      Consultant previousConsultant,
+      AccessType accessType,
+      UUID operationId) {
     if (session == null || isBlank(session.getMatrixRoomId())) {
       return false;
     }
@@ -1947,10 +3122,29 @@ public class CaseHandoverService {
         wasMemberBefore);
 
     // Fail closed: a co-access that could write to the advice seeker must not be granted at all.
-    if (accessType == AccessType.CO_ACCESS
-        && !matrixSynapseService.setUserPowerLevel(
-            roomId, requester.getMatrixUserId(), CO_ACCESS_POWER_LEVEL, previousConsultantToken)) {
-      throw new InternalServerErrorException("Case handover co-access could not be made read-only");
+    if (accessType == AccessType.CO_ACCESS) {
+      var originalPower =
+          matrixSynapseService.makeUserReadOnly(
+              roomId,
+              requester.getMatrixUserId(),
+              CO_ACCESS_POWER_LEVEL,
+              previousConsultant.getMatrixUserId(),
+              previousConsultantToken,
+              requesterToken);
+      if (originalPower.isEmpty()) {
+        throw new InternalServerErrorException(
+            "Case handover co-access could not be made read-only");
+      }
+      if (wasMemberBefore) {
+        matrixRepairService.registerPowerRollback(
+            roomId,
+            requester.getMatrixUserId(),
+            session.getId(),
+            requester.getId(),
+            originalPower.get(),
+            session.getOwnershipRevision(),
+            operationId);
+      }
     }
     // The new owner needs the owner's room rights: later co-access grants on this case lower and
     // restore levels and remove members with the owner's token. Never block an absence cover over
@@ -2126,11 +3320,25 @@ public class CaseHandoverService {
 
   @Data
   @Builder
+  public static class CaseHandoverRecipient {
+    private String consultantId;
+    private String displayName;
+  }
+
+  @Data
+  @Builder
   public static class CaseHandoverStatus {
     private Long requestId;
     private Long sessionId;
     private String status;
     private boolean canViewContent;
+    private String direction;
+    private String initiatorConsultantId;
+    private String recipientConsultantId;
+    private LocalDateTime recipientDecisionAt;
+    private Long expectedOwnershipRevision;
+    private long ownershipRevision;
+    private UUID operationId;
     private String reasonCode;
     private String reasonLabel;
     private CaseHandoverConsentMode clientConsent;
@@ -2141,5 +3349,13 @@ public class CaseHandoverService {
     private LocalDateTime resolvedAt;
     private String accessType;
     private LocalDateTime expiresAt;
+    private boolean canExtend;
+    private boolean canReclaim;
+
+    /**
+     * Only on the owner's own status: the colleague offer they made that is still open, so the
+     * offer can be found again (and withdrawn) after a reload.
+     */
+    private CaseHandoverStatus openOffer;
   }
 }

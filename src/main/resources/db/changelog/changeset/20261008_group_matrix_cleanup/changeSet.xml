@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+ xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <changeSet id="20261008-group-matrix-cleanup" author="oriso">
+    <!-- No foreign keys: intents commit independently while owner/chat rows are locked. -->
+    <createTable tableName="group_chat_matrix_cleanup_task">
+      <column name="id" type="bigint" autoIncrement="true"><constraints nullable="false" primaryKey="true"/></column>
+      <column name="action" type="varchar(16)"><constraints nullable="false"/></column>
+      <column name="owner_id" type="varchar(36)"><constraints nullable="false"/></column>
+      <column name="tenant_id" type="bigint"><constraints nullable="false"/></column>
+      <column name="series_id" type="bigint"><constraints nullable="false"/></column>
+      <column name="consultant_id" type="varchar(36)"><constraints nullable="true"/></column>
+      <column name="room_id" type="varchar(255)"><constraints nullable="false"/></column>
+      <column name="member_id" type="varchar(255)"><constraints nullable="true"/></column>
+      <column name="created_at" type="datetime(6)"><constraints nullable="false"/></column>
+      <column name="last_attempt_at" type="datetime(6)"><constraints nullable="true"/></column>
+      <column name="attempt_count" type="int" defaultValueNumeric="0"><constraints nullable="false"/></column>
+    </createTable>
+    <createIndex tableName="group_chat_matrix_cleanup_task" indexName="idx_group_matrix_cleanup_retry"><column name="last_attempt_at"/><column name="created_at"/></createIndex>
+    <!-- Operational rollback requires draining pending cleanup first; dropping intents loses retry work. -->
+    <rollback><dropTable tableName="group_chat_matrix_cleanup_task"/></rollback>
+  </changeSet>
+</databaseChangeLog>
