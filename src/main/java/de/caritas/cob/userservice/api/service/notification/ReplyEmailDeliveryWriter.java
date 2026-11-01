@@ -6,13 +6,18 @@ import de.caritas.cob.userservice.api.port.out.ReplyEmailDeliveryRepository;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Limit;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,6 +36,9 @@ public class ReplyEmailDeliveryWriter {
   private static final int BATCH_SIZE = 100;
 
   private final @NonNull ReplyEmailDeliveryRepository repository;
+
+  /** Rotation point when more tenants are due than fit one batch; per instance, best effort. */
+  private final AtomicReference<Long> resumeAfterTenant = new AtomicReference<>();
 
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public long reserve(
@@ -161,27 +169,70 @@ public class ReplyEmailDeliveryWriter {
   }
 
   /**
-   * Due rows, interleaved round-robin across tenants (longest-waiting tenant and row first), so one
-   * tenant's backlog cannot fill the batch and hold back mail for every other tenant (#1449).
+   * Due row ids, interleaved round-robin across tenants (oldest row of each tenant first), so one
+   * tenant's backlog cannot fill the batch and hold back mail for every other tenant (#1449). Each
+   * tenant is first asked only for its fair share; unused slots are then topped up from tenants
+   * with more due rows. With more due tenants than slots, the next batch resumes after the last
+   * tenant served, so no tenant waits behind the same hundred others forever.
    */
   @Transactional(readOnly = true)
   public List<Long> pendingIds() {
     var now = LocalDateTime.now();
-    var perTenant = new ArrayList<Iterator<ReplyEmailDelivery>>();
-    for (Long tenantId : repository.findDueTenantIds(ReplyEmailDelivery.Status.PENDING, now)) {
-      perTenant.add(
-          repository
-              .findTop100ByStatusAndTenantIdAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAscCreatedAtAscIdAsc(
-                  ReplyEmailDelivery.Status.PENDING, tenantId, now)
-              .iterator());
+    var due = repository.findDueTenantIds(ReplyEmailDelivery.Status.PENDING, now);
+    if (due.isEmpty()) {
+      return List.of();
     }
-    var batch = new ArrayList<Long>();
-    while (batch.size() < BATCH_SIZE && !perTenant.isEmpty()) {
-      var tenants = perTenant.iterator();
+    var round = rotate(due);
+    int quota = (BATCH_SIZE + round.size() - 1) / round.size();
+    var perTenant = new LinkedHashMap<Long, List<Long>>();
+    for (Long tenantId : round) {
+      perTenant.put(tenantId, dueIds(tenantId, now, quota));
+    }
+    var batch = interleave(perTenant.values());
+    for (var entry : perTenant.entrySet()) {
+      if (batch.size() >= BATCH_SIZE) {
+        break;
+      }
+      if (entry.getValue().size() == quota) {
+        var more = dueIds(entry.getKey(), now, quota + BATCH_SIZE - batch.size());
+        // Rows may have been claimed meanwhile; the set skips ids already in the batch.
+        more.stream().skip(quota).limit(BATCH_SIZE - batch.size()).forEach(batch::add);
+      }
+    }
+    return List.copyOf(batch);
+  }
+
+  private List<Long> rotate(List<Long> dueTenants) {
+    Long resumeAfter = resumeAfterTenant.get();
+    int start = 0;
+    if (resumeAfter != null) {
+      while (start < dueTenants.size() && dueTenants.get(start) <= resumeAfter) {
+        start++;
+      }
+      start = start % dueTenants.size();
+    }
+    var round = new ArrayList<Long>(Math.min(BATCH_SIZE, dueTenants.size()));
+    for (int i = 0; i < dueTenants.size() && round.size() < BATCH_SIZE; i++) {
+      round.add(dueTenants.get((start + i) % dueTenants.size()));
+    }
+    resumeAfterTenant.set(dueTenants.size() > BATCH_SIZE ? round.get(round.size() - 1) : null);
+    return round;
+  }
+
+  private List<Long> dueIds(Long tenantId, LocalDateTime now, int max) {
+    return repository.findDueIds(ReplyEmailDelivery.Status.PENDING, tenantId, now, Limit.of(max));
+  }
+
+  private static LinkedHashSet<Long> interleave(Collection<List<Long>> perTenant) {
+    var batch = new LinkedHashSet<Long>();
+    var cursors = new ArrayList<Iterator<Long>>();
+    perTenant.forEach(ids -> cursors.add(ids.iterator()));
+    while (batch.size() < BATCH_SIZE && !cursors.isEmpty()) {
+      var tenants = cursors.iterator();
       while (tenants.hasNext() && batch.size() < BATCH_SIZE) {
-        var rows = tenants.next();
-        if (rows.hasNext()) {
-          batch.add(rows.next().getId());
+        var ids = tenants.next();
+        if (ids.hasNext()) {
+          batch.add(ids.next());
         } else {
           tenants.remove();
         }

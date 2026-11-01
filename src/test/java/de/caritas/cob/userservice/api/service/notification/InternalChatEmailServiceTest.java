@@ -111,9 +111,7 @@ class InternalChatEmailServiceTest {
                     .map(ReplyEmailDelivery::getTenantId)
                     .distinct()
                     .toList());
-    when(repository
-            .findTop100ByStatusAndTenantIdAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAscCreatedAtAscIdAsc(
-                any(), any(), any()))
+    when(repository.findDueIds(any(), anyLong(), any(), any()))
         .thenAnswer(
             i ->
                 stored.values().stream()
@@ -122,6 +120,8 @@ class InternalChatEmailServiceTest {
                             row.getStatus() == i.getArgument(0)
                                 && row.getTenantId().equals(i.getArgument(1))
                                 && !row.getNextAttemptAt().isAfter(i.getArgument(2)))
+                    .map(ReplyEmailDelivery::getId)
+                    .limit(((org.springframework.data.domain.Limit) i.getArgument(3)).max())
                     .toList());
     when(identities.findEnabledById(anyString())).thenReturn(Optional.of(true));
     actor = consultant("actor", 7L);

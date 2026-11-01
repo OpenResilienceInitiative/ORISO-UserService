@@ -82,6 +82,39 @@ class ReplyEmailDeliveryQueueIT {
       var batch = writer.pendingIds();
 
       assertThat(batch).hasSize(100).contains(healthy);
+      assertThat(batch.get(1)).isEqualTo(healthy);
+    } finally {
+      repository.deleteAllByIdInBatch(ids);
+    }
+  }
+
+  @Test
+  void aTenantBeyondTheFirstHundredIsReachedByTheNextBatch() {
+    var ids = new java.util.ArrayList<Long>();
+    var jdbc = new JdbcTemplate(dataSource);
+    var now = LocalDateTime.now();
+    try {
+      for (long tenant = 1000; tenant < 1100; tenant++) {
+        for (int i = 0; i < 2; i++) {
+          long id = reserve("busy-" + tenant + "-" + i, tenant);
+          ids.add(id);
+          jdbc.update(
+              "UPDATE reply_email_delivery SET created_at=?,next_attempt_at=? WHERE id=?",
+              now.minusHours(1),
+              now.minusMinutes(30),
+              id);
+        }
+      }
+      long late = reserve("tenant-101", 1100L);
+      ids.add(late);
+
+      var first = writer.pendingIds();
+      var second = writer.pendingIds();
+
+      assertThat(first).hasSize(100);
+      assertThat(second).hasSize(100);
+      assertThat(new java.util.HashSet<>(first)).hasSize(100);
+      assertThat(java.util.stream.Stream.concat(first.stream(), second.stream())).contains(late);
     } finally {
       repository.deleteAllByIdInBatch(ids);
     }

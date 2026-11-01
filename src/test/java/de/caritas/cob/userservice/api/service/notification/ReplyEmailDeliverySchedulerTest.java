@@ -20,10 +20,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-@ExtendWith({
-  MockitoExtension.class,
-  org.springframework.boot.test.system.OutputCaptureExtension.class
-})
+@ExtendWith(MockitoExtension.class)
 class ReplyEmailDeliverySchedulerTest {
   @InjectMocks private ReplyEmailDeliveryScheduler scheduler;
   @Mock private ReplyEmailDeliveryWriter writer;
@@ -70,18 +67,34 @@ class ReplyEmailDeliverySchedulerTest {
   }
 
   @Test
-  void quarantinedMailsRaiseAnOperatorAlert(
-      org.springframework.boot.test.system.CapturedOutput output) {
-    var lease =
-        new ScheduledTaskClaimService.ClaimLease(
-            "reply-email-delivery", LocalDateTime.now().plusMinutes(2));
-    when(claims.tryClaimLease(eq("reply-email-delivery"), any(Duration.class)))
-        .thenReturn(Optional.of(lease));
-    when(writer.quarantinedCount()).thenReturn(3L);
-    when(writer.pendingIds()).thenReturn(List.of());
+  void quarantinedMailsRaiseAnOperatorAlert() {
+    var logger =
+        (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(ReplyEmailDeliveryScheduler.class);
+    var appender =
+        new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      var lease =
+          new ScheduledTaskClaimService.ClaimLease(
+              "reply-email-delivery", LocalDateTime.now().plusMinutes(2));
+      when(claims.tryClaimLease(eq("reply-email-delivery"), any(Duration.class)))
+          .thenReturn(Optional.of(lease));
+      when(writer.quarantinedCount()).thenReturn(3L);
+      when(writer.pendingIds()).thenReturn(List.of());
 
-    scheduler.deliverPending();
+      scheduler.deliverPending();
 
-    assertThat(output).contains("3 reply-email deliveries are QUARANTINED");
+      assertThat(appender.list)
+          .anySatisfy(
+              event -> {
+                assertThat(event.getLevel()).isEqualTo(ch.qos.logback.classic.Level.ERROR);
+                assertThat(event.getFormattedMessage())
+                    .contains("3 reply-email deliveries are QUARANTINED");
+              });
+    } finally {
+      logger.detachAppender(appender);
+    }
   }
 }

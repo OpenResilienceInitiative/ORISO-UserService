@@ -40,6 +40,43 @@ class ReplyEmailDeliveryWriterRetryTest {
     assertThat(delivery.getStatus()).isEqualTo(Status.QUARANTINED);
   }
 
+  @Test
+  void selectionLoadsOnlyIdsAndNoMoreThanTheBatchNeedsPerTenant() {
+    var tenants = java.util.stream.LongStream.rangeClosed(1, 50).boxed().toList();
+    when(repository.findDueTenantIds(
+            org.mockito.ArgumentMatchers.eq(Status.PENDING), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(tenants);
+    when(repository.findDueIds(
+            org.mockito.ArgumentMatchers.eq(Status.PENDING),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            i -> {
+              long tenant = i.getArgument(1);
+              int max = ((org.springframework.data.domain.Limit) i.getArgument(3)).max();
+              return java.util.stream.LongStream.range(0, max)
+                  .mapToObj(n -> tenant * 1000 + n)
+                  .toList();
+            });
+
+    var batch = writer.pendingIds();
+
+    assertThat(batch).hasSize(100).doesNotHaveDuplicates();
+    var limits = org.mockito.ArgumentCaptor.forClass(org.springframework.data.domain.Limit.class);
+    org.mockito.Mockito.verify(repository, org.mockito.Mockito.atMost(100))
+        .findDueIds(
+            org.mockito.ArgumentMatchers.eq(Status.PENDING),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.any(),
+            limits.capture());
+    assertThat(
+            limits.getAllValues().stream()
+                .mapToInt(org.springframework.data.domain.Limit::max)
+                .sum())
+        .isLessThanOrEqualTo(200);
+  }
+
   private ReplyEmailDelivery sending(Duration age, int attemptCount) {
     var delivery = new ReplyEmailDelivery();
     delivery.setCreatedAt(LocalDateTime.now().minus(age));
