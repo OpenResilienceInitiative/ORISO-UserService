@@ -11,12 +11,18 @@ import java.util.Optional;
  * <p>The small-cell thresholds start at 2: a single counsellor behind a number would identify them
  * directly. They only apply to aggregated views (agency, tenant, platform) - never to a
  * counsellor's own statistics.
+ *
+ * <p>The two time windows of the admin dashboard ("requests per week" chart and "most frequent
+ * topics") default to what the dashboard always showed: this week plus four before, this month plus
+ * three before. The upper bounds keep the number of queries per dashboard request small.
  */
 public enum StatisticsSetting {
   AGENCY_MINIMUM_COUNSELLORS("agencyMinimumCounsellors", "5", Options.THRESHOLDS),
   TENANT_MINIMUM_COUNSELLORS("tenantMinimumCounsellors", "5", Options.THRESHOLDS),
   PLATFORM_MINIMUM_COUNSELLORS("platformMinimumCounsellors", "5", Options.THRESHOLDS),
-  MESSAGE_COUNT_TRACKING("messageCountTracking", "ENABLED", Options.SWITCH);
+  MESSAGE_COUNT_TRACKING("messageCountTracking", "ENABLED", Options.SWITCH),
+  REQUEST_CHART_WEEKS("requestChartWeeks", "5", Options.CHART_WEEKS),
+  TOPIC_MONTHS("topicMonths", "4", Options.TOPIC_MONTHS);
 
   public static final String ENABLED = "ENABLED";
 
@@ -50,5 +56,7 @@ public enum StatisticsSetting {
     private static final List<String> THRESHOLDS =
         List.of("2", "3", "4", "5", "6", "7", "8", "9", "10");
     private static final List<String> SWITCH = List.of("ENABLED", "DISABLED");
+    private static final List<String> CHART_WEEKS = List.of("5", "8", "12", "16", "20", "26");
+    private static final List<String> TOPIC_MONTHS = List.of("3", "4", "6", "12");
   }
 }

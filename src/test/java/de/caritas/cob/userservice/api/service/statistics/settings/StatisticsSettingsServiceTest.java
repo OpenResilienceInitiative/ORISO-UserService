@@ -92,13 +92,20 @@ class StatisticsSettingsServiceTest {
             "agencyMinimumCounsellors",
             "tenantMinimumCounsellors",
             "platformMinimumCounsellors",
-            "messageCountTracking");
+            "messageCountTracking",
+            "requestChartWeeks",
+            "topicMonths");
     var agency = settings.settings().get(0);
     assertThat(agency.value()).isEqualTo("5");
     assertThat(agency.options()).containsExactly("2", "3", "4", "5", "6", "7", "8", "9", "10");
     assertThat(agency.effectiveFrom()).isNull();
     assertThat(settings.settings().get(3).value()).isEqualTo("ENABLED");
     assertThat(settings.settings().get(3).options()).containsExactly("ENABLED", "DISABLED");
+    assertThat(settings.settings().get(4).value()).isEqualTo("5");
+    assertThat(settings.settings().get(4).options())
+        .containsExactly("5", "8", "12", "16", "20", "26");
+    assertThat(settings.settings().get(5).value()).isEqualTo("4");
+    assertThat(settings.settings().get(5).options()).containsExactly("3", "4", "6", "12");
     assertThat(settings.revision()).isZero();
   }
 
@@ -233,5 +240,59 @@ class StatisticsSettingsServiceTest {
     assertThatThrownBy(() -> service.updateSettings(Map.of("agencyMinimumCounsellors", "2"), null))
         .isInstanceOf(BadRequestException.class);
     verify(repository, never()).save(any());
+  }
+
+  @Test
+  void updateSettings_Should_RejectTimeWindowsOutsideTheBounds() {
+    for (var invalid :
+        List.of(
+            Map.of("requestChartWeeks", "4"),
+            Map.of("requestChartWeeks", "27"),
+            Map.of("requestChartWeeks", "abc"),
+            Map.of("topicMonths", "2"),
+            Map.of("topicMonths", "13"),
+            Map.of("topicMonths", "-1"))) {
+      assertThatThrownBy(() -> service.updateSettings(invalid, 0L))
+          .as("%s", invalid)
+          .isInstanceOf(BadRequestException.class);
+    }
+    verify(repository, never()).save(any());
+  }
+
+  @Test
+  void updateSettings_Should_RecordATimeWindowChangeInTheProtocol() {
+    service.updateSettings(Map.of("requestChartWeeks", "12", "topicMonths", "4"), 0L);
+
+    var captor = ArgumentCaptor.forClass(StatisticsSettingChange.class);
+    // the topic window is unchanged (default 4) and must not produce a protocol line
+    verify(repository).save(captor.capture());
+    var saved = captor.getValue();
+    assertThat(saved.getSettingKey()).isEqualTo("requestChartWeeks");
+    assertThat(saved.getOldValue()).isEqualTo("5");
+    assertThat(saved.getNewValue()).isEqualTo("12");
+    assertThat(saved.getChangedByName()).isEqualTo("platform.admin");
+    assertThat(saved.getEffectiveFrom()).isEqualTo(NOW);
+  }
+
+  @Test
+  void timeWindows_Should_ReadTheConfiguredValues() {
+    when(repository.findFirstBySettingKeyOrderByIdDesc("requestChartWeeks"))
+        .thenReturn(Optional.of(change(10L, "requestChartWeeks", "5", "26", NOW)));
+    when(repository.findFirstBySettingKeyOrderByIdDesc("topicMonths"))
+        .thenReturn(Optional.of(change(11L, "topicMonths", "4", "12", NOW)));
+
+    assertThat(service.chartWeeks()).isEqualTo(26);
+    assertThat(service.topicMonths()).isEqualTo(12);
+  }
+
+  @Test
+  void timeWindows_Should_FallBackToTodaysWindows_When_TheStoreFailsOrHoldsAnUnknownValue() {
+    when(repository.findFirstBySettingKeyOrderByIdDesc("requestChartWeeks"))
+        .thenReturn(Optional.of(change(10L, "requestChartWeeks", "5", "999", NOW)));
+    when(repository.findFirstBySettingKeyOrderByIdDesc("topicMonths"))
+        .thenThrow(new RuntimeException("db down"));
+
+    assertThat(service.chartWeeks()).isEqualTo(5);
+    assertThat(service.topicMonths()).isEqualTo(4);
   }
 }
