@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.PublicSlugFormat;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
@@ -28,7 +29,7 @@ public class MultitenancyWithSingleDomainTenantResolver implements TenantResolve
 
   private static final String USERS_CONSULTANTS = "/users/consultants/";
   private static final String USERS_CONSULTANTS_BY_ID_URL_REGEX =
-      ".*" + USERS_CONSULTANTS + "([0-9a-fA-F-]{36}|[a-z]+(-[a-z]+)*)$";
+      ".*" + USERS_CONSULTANTS + "([0-9a-fA-F-]{36}|" + PublicSlugFormat.REGEX + ")$";
 
   @Value("${feature.multitenancy.with.single.domain.enabled}")
   private boolean multitenancyWithSingleDomain;
