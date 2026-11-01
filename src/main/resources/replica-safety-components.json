@@ -323,12 +323,17 @@
       "components": [
         "deleteObsoleteAppointments"
       ],
-      "decision": "Prove database-level idempotency under concurrent execution or add a lease.",
+      "decision": "One set-based native DELETE over a fixed clock cutoff with no external side effects: running it twice at once removes each row at most once (idempotent statement), so no lease is needed. OrganizerMariaDbReplicaIT proves two concurrent runs on MariaDB; see documentation/APPOINTMENT_CLEANUP_REPLICA_SAFETY.md.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
       ],
-      "status": "blocker"
+      "status": "bounded",
+      "claim": {
+        "mechanism": "idempotent-statement",
+        "source": "src/main/java/de/caritas/cob/userservice/api/port/out/AppointmentRepository.java",
+        "reference": "DELETE FROM appointment WHERE"
+      }
     },
     {
       "id": "account-invite-reservation-release-scheduler",
@@ -344,7 +349,10 @@
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
       ],
-      "status": "safe"
+      "status": "safe",
+      "claim": {
+        "mechanism": "scheduled-task-claim"
+      }
     },
     {
       "id": "account-invite-expiry-number-release-scheduler",
@@ -360,7 +368,10 @@
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
       ],
-      "status": "safe"
+      "status": "safe",
+      "claim": {
+        "mechanism": "scheduled-task-claim"
+      }
     },
     {
       "id": "enquiry-notification-scheduler",
@@ -371,12 +382,16 @@
       "components": [
         "sendEmailNotificationsForOpenEnquiries"
       ],
-      "decision": "Lease execution and keep notification delivery idempotent.",
+      "decision": "The scheduler delegates to EnquiryNotificationService, which takes a ScheduledTaskClaimService claim (task enquiry-notification, default PT30M) before building and sending the open-enquiry mails, so a second instance skips the run. The claim is not released early; keep the claim duration above the worst-case run so a slow run is not repeated.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
       ],
-      "status": "blocker"
+      "status": "bounded",
+      "claim": {
+        "mechanism": "scheduled-task-claim",
+        "source": "src/main/java/de/caritas/cob/userservice/api/workflow/enquirynotification/service/EnquiryNotificationService.java"
+      }
     },
     {
       "id": "group-chat-deactivation-scheduler",
@@ -387,12 +402,17 @@
       "components": [
         "performDeactivationWorkflow"
       ],
-      "decision": "Prove Matrix and notification effects idempotent or add a lease.",
+      "decision": "ChatRepository.findAllByActiveIsTrue() takes a pessimistic row lock (PESSIMISTIC_WRITE), so concurrent instances serialize each active chat while its database transition and Matrix purge run; the second instance then reads the committed state. No coarse claim by design, proven by DeactivateGroupChatSchedulerMariaDbReplicaIT (documentation/GROUP_CHAT_DEACTIVATION_REPLICA_SAFETY.md). Not crash-safe exactly-once: a stop between the Matrix purge and the commit can replay the purge.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
       ],
-      "status": "blocker"
+      "status": "bounded",
+      "claim": {
+        "mechanism": "row-lock",
+        "source": "src/main/java/de/caritas/cob/userservice/api/port/out/ChatRepository.java",
+        "reference": "PESSIMISTIC_WRITE"
+      }
     },
     {
       "id": "anonymous-deactivation-scheduler",
@@ -403,12 +423,15 @@
       "components": [
         "performDeactivationWorkflow"
       ],
-      "decision": "Lease execution and make every external side effect idempotent.",
+      "decision": "Takes a ScheduledTaskClaimService claim (task anonymous-user-deactivation, default PT30M) before deactivating, so a second instance skips the run. The claim is not released early; keep the claim duration above the worst-case run.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
       ],
-      "status": "blocker"
+      "status": "bounded",
+      "claim": {
+        "mechanism": "scheduled-task-claim"
+      }
     },
     {
       "id": "group-chat-reminder-scheduler",
@@ -419,12 +442,15 @@
       "components": [
         "publishUpcomingReminders"
       ],
-      "decision": "Deduplicate by reminder identity and prove concurrent execution.",
+      "decision": "Runs under a ScheduledTaskClaimService lease (task group-chat-reminder, released after each run), so overlapping instances do not both scan. Delivery is additionally deduplicated per recipient and occurrence by the unique key uk_event_notification_recipient_deduplication (createEventOnce), so a replay after the lease cannot create a second reminder.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
       ],
-      "status": "blocker"
+      "status": "bounded",
+      "claim": {
+        "mechanism": "scheduled-task-claim"
+      }
     },
     {
       "id": "inactive-account-notification-scheduler",
@@ -435,12 +461,17 @@
       "components": [
         "notifyInactiveAccounts"
       ],
-      "decision": "Claim each dispatch durably and deduplicate replay.",
+      "decision": "Before any e-mail the service inserts a uniquely keyed claim row (fingerprint of role, account, recipient, last activity and threshold; unique key uk_inactive_account_notification_fingerprint) through InactiveAccountNotificationClaimWriter; a concurrent or repeated scan hits the duplicate key and skips. See documentation/INACTIVE_ACCOUNT_NOTIFICATION_REPLICA_SAFETY.md.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
       ],
-      "status": "blocker"
+      "status": "bounded",
+      "claim": {
+        "mechanism": "unique-claim-row",
+        "source": "src/main/java/de/caritas/cob/userservice/api/workflow/inactiveaccountnotification/service/InactiveAccountNotificationService.java",
+        "reference": "InactiveAccountNotificationClaimWriter"
+      }
     },
     {
       "id": "account-deletion-scheduler",
@@ -451,12 +482,15 @@
       "components": [
         "performDeletionWorkflow"
       ],
-      "decision": "Lease execution and make provider cleanup idempotent.",
+      "decision": "Takes a ScheduledTaskClaimService claim (task account-deletion, default PT12H) before the run, and UserHardDeleteClaimService claims each user before provider cleanup, so a second instance skips the run and cannot delete the same user twice.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
       ],
-      "status": "blocker"
+      "status": "bounded",
+      "claim": {
+        "mechanism": "scheduled-task-claim"
+      }
     },
     {
       "id": "anonymous-deletion-scheduler",
@@ -467,12 +501,15 @@
       "components": [
         "performDeletionWorkflow"
       ],
-      "decision": "Lease execution and make provider cleanup idempotent.",
+      "decision": "Takes a ScheduledTaskClaimService claim (task anonymous-user-deletion, default PT30M) before deleting, so a second instance skips the run. The claim is not released early; keep the claim duration above the worst-case run.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
       ],
-      "status": "blocker"
+      "status": "bounded",
+      "claim": {
+        "mechanism": "scheduled-task-claim"
+      }
     },
     {
       "id": "registered-only-deletion-scheduler",
@@ -483,12 +520,15 @@
       "components": [
         "performDeletionWorkflow"
       ],
-      "decision": "Lease execution and make provider cleanup idempotent.",
+      "decision": "Takes a ScheduledTaskClaimService claim (task registered-only-user-deletion, default PT12H) before the time-sensitive and time-insensitive passes, so a second instance skips the run. DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT proves one run on MariaDB.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
       ],
-      "status": "blocker"
+      "status": "bounded",
+      "claim": {
+        "mechanism": "scheduled-task-claim"
+      }
     },
     {
       "id": "temporary-account-deletion-scheduler",
@@ -505,7 +545,10 @@
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
       ],
-      "status": "bounded"
+      "status": "bounded",
+      "claim": {
+        "mechanism": "scheduled-task-claim"
+      }
     },
     {
       "id": "handshake-expiry-scheduler",
@@ -517,12 +560,15 @@
         "sweepExpired",
         "purgeOldAuditEvents"
       ],
-      "decision": "Prove expiry/purge updates are idempotent under concurrent execution or add a lease.",
+      "decision": "sweepExpired and purgeOldAuditEvents run under ScheduledTaskClaimService leases (handshake-expiry-sweep PT2M, handshake-audit-purge PT10M, released after each run) and commit inside the lease transaction. Without it two sweeps race on the handshake_session optimistic lock and double-audit; ReplicaSweepClaimMariaDbIT proves one expiry and one audit entry per session.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
       ],
-      "status": "blocker"
+      "status": "bounded",
+      "claim": {
+        "mechanism": "scheduled-task-claim"
+      }
     },
     {
       "id": "support-room-expiry-scheduler",
@@ -533,12 +579,15 @@
       "components": [
         "sweepExpired"
       ],
-      "decision": "Prove room close/leave effects are idempotent under concurrent execution or add a lease.",
+      "decision": "sweepExpired runs under a ScheduledTaskClaimService lease (support-room-expiry-sweep, default PT5M, released after each run) and commits inside the lease transaction, so only one instance leaves the Matrix room and audits each close. ReplicaSweepClaimMariaDbIT proves one close and one audit entry per expired room.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
       ],
-      "status": "blocker"
+      "status": "bounded",
+      "claim": {
+        "mechanism": "scheduled-task-claim"
+      }
     },
     {
       "id": "email-template-cache",
@@ -584,7 +633,10 @@
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
       ],
-      "status": "bounded"
+      "status": "bounded",
+      "claim": {
+        "mechanism": "scheduled-task-claim"
+      }
     },
     {
       "id": "case-handover-co-access-expiry",
@@ -600,7 +652,10 @@
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
       ],
-      "status": "bounded"
+      "status": "bounded",
+      "claim": {
+        "mechanism": "scheduled-task-claim"
+      }
     },
     {
       "id": "case-handover-matrix-repair",
@@ -616,7 +671,10 @@
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
       ],
-      "status": "bounded"
+      "status": "bounded",
+      "claim": {
+        "mechanism": "scheduled-task-claim"
+      }
     },
     {
       "id": "enquiry-rejection-repair",
@@ -648,7 +706,10 @@
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
       ],
-      "status": "bounded"
+      "status": "bounded",
+      "claim": {
+        "mechanism": "scheduled-task-claim"
+      }
     },
     {
       "id": "event-notification-retention-scheduler",
@@ -664,7 +725,10 @@
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
       ],
-      "status": "bounded"
+      "status": "bounded",
+      "claim": {
+        "mechanism": "scheduled-task-claim"
+      }
     },
     {
       "id": "team-discussion-orphan-cleanup-scheduler",
@@ -680,7 +744,10 @@
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
       ],
-      "status": "bounded"
+      "status": "bounded",
+      "claim": {
+        "mechanism": "scheduled-task-claim"
+      }
     },
     {
       "id": "agency-deletion-audit-pull-scheduler",
@@ -712,7 +779,10 @@
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
       ],
-      "status": "bounded"
+      "status": "bounded",
+      "claim": {
+        "mechanism": "scheduled-task-claim"
+      }
     },
     {
       "id": "account-inactivity-expiry",
@@ -760,7 +830,10 @@
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
       ],
-      "status": "bounded"
+      "status": "bounded",
+      "claim": {
+        "mechanism": "scheduled-task-claim"
+      }
     },
     {
       "id": "group-appointment-mail-scheduler",
@@ -808,7 +881,10 @@
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
       ],
-      "status": "bounded"
+      "status": "bounded",
+      "claim": {
+        "mechanism": "scheduled-task-claim"
+      }
     },
     {
       "id": "group-chat-admission-retry",
@@ -824,7 +900,10 @@
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
       ],
-      "status": "bounded"
+      "status": "bounded",
+      "claim": {
+        "mechanism": "scheduled-task-claim"
+      }
     },
     {
       "id": "group-chat-matrix-cleanup",
@@ -840,7 +919,10 @@
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
       ],
-      "status": "bounded"
+      "status": "bounded",
+      "claim": {
+        "mechanism": "scheduled-task-claim"
+      }
     },
     {
       "id": "inquiry-acceptance-notice-retry",

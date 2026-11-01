@@ -51,15 +51,45 @@ These signals prove inventory presence and execution behavior; they do not
 prove leader safety. Multiple replicas remain unsupported while any
 correctness or duplicate-side-effect entry is marked `blocker`.
 
+## Scheduled workflows
+
+Every scheduled workflow must stay correct when two instances overlap (a
+rolling update or restart overlap). That does not mean every run is exclusive.
+Entries with a `claim` object name their mechanism, and the CI contract checks
+that the named source really contains it. The first three mechanisms below make
+a run exclusive; `idempotent-statement` deliberately allows concurrent runs
+because running the statement twice has the same effect as running it once:
+
+- `scheduled-task-claim`: the class calls `ScheduledTaskClaimService`
+  (`tryClaim`, `tryClaimLease` or `runIfClaimed`). A second instance sees the
+  active claim and skips the run. Sweeps that run every minute use
+  `runIfClaimed`: lease, work inside the lease transaction, release after
+  commit. This covers the enquiry notification, anonymous and registered-only
+  deactivation and deletion, account deletion, group-chat reminder, handshake
+  expiry and audit purge and support-room expiry jobs, among others.
+- `unique-claim-row`: a uniquely keyed row is inserted before the side effect
+  (inactive-account notification fingerprint).
+- `row-lock`: a pessimistic row lock serializes the work (group-chat
+  deactivation, see `GROUP_CHAT_DEACTIVATION_REPLICA_SAFETY.md`).
+- `idempotent-statement`: one set-based statement that is safe to run twice
+  (appointment cleanup, see `APPOINTMENT_CLEANUP_REPLICA_SAFETY.md`).
+
+A claim prevents overlap, not a later re-run, so the guarded work stays
+idempotent. Group-chat reminders are additionally deduplicated per recipient
+and occurrence by a unique key. Claims that are not released early (for example
+`enquiry-notification`) need a duration above the worst-case run.
+
+Entries without `claim` (for example the enquiry-rejection repair or the
+group-appointment mail queue) rely on per-row claims described in their
+`decision` text; those are not machine-checked.
+
 ## Current blocker groups
 
 1. Coordinate the Matrix sync leader and cursor across replicas and deduplicate
    durable event side effects.
 2. Externalize browser-login locks, notification active-view state and
    correctness-relevant reference caches, or prove a bounded alternative.
-3. Lease or prove idempotency for every scheduled workflow under simultaneous
-   execution.
-4. Run deterministic two-instance Redis, MariaDB, integration and product E2E
+3. Run deterministic two-instance Redis, MariaDB, integration and product E2E
    scenarios without sticky sessions.
-5. Query the deployed metrics and traces in SigNoz before changing the Helm
+4. Query the deployed metrics and traces in SigNoz before changing the Helm
    replica ceiling.

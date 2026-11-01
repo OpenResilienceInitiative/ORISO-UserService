@@ -7,7 +7,9 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
@@ -24,10 +26,14 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.HandshakeAuditEventRepository;
 import de.caritas.cob.userservice.api.port.out.SupportRoomRepository;
 import de.caritas.cob.userservice.api.service.handshake.HandshakePurpose;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -46,6 +52,11 @@ class SupportRoomServiceTest {
   private static final String CONSULTANT_MXID = "@tina.consultant:caritas.local";
   private static final String ROOM_ID = "!room:caritas.local";
 
+  @org.mockito.Spy
+  private de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService claims =
+      de.caritas.cob.userservice.api.workflow.scheduling.InMemoryScheduledTaskClaimWriter
+          .newClaimService();
+
   @InjectMocks private SupportRoomService supportRoomService;
 
   @Mock private SupportRoomRepository supportRoomRepository;
@@ -59,6 +70,7 @@ class SupportRoomServiceTest {
   void setUp() {
     ReflectionTestUtils.setField(supportRoomService, "roomTtlHours", 4L);
     ReflectionTestUtils.setField(supportRoomService, "sweepBatchSize", 200);
+    ReflectionTestUtils.setField(supportRoomService, "sweepClaimDuration", Duration.ofMinutes(5));
     lenient().when(matrixConfig.getServerName()).thenReturn("caritas.local");
   }
 
@@ -233,6 +245,58 @@ class SupportRoomServiceTest {
     supportRoomService.sweepExpired();
 
     assertThat(room.getStatus()).isEqualTo(SupportRoom.SupportRoomStatus.CLOSED);
+  }
+
+  @Test
+  void sweepExpired_Should_Skip_When_AnotherReplicaHoldsTheSweepClaim() {
+    assertThat(claims.tryClaim(SupportRoomService.SWEEP_TASK_NAME, Duration.ofMinutes(5))).isTrue();
+
+    supportRoomService.sweepExpired();
+
+    verifyNoInteractions(
+        supportRoomRepository, matrixSynapseService, handshakeAuditEventRepository);
+  }
+
+  @Test
+  void sweepExpired_Should_CloseAndAuditEachRoomOnce_When_TwoReplicasOverlap() throws Exception {
+    var room = activeRoom();
+    room.setExpiryDate(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1));
+    var firstReplicaReading = new CountDownLatch(1);
+    var releaseFirstReplica = new CountDownLatch(1);
+    when(supportRoomRepository.findAllByStatusAndExpiryDateBefore(
+            eq(SupportRoom.SupportRoomStatus.ACTIVE),
+            any(LocalDateTime.class),
+            any(org.springframework.data.domain.Pageable.class)))
+        .thenAnswer(
+            invocation -> {
+              firstReplicaReading.countDown();
+              assertThat(releaseFirstReplica.await(5, TimeUnit.SECONDS)).isTrue();
+              return List.of(room);
+            });
+    when(matrixSynapseService.loginAsUserAccessToken(GSA_MXID)).thenReturn("gsa-token");
+    when(matrixSynapseService.leaveRoom(ROOM_ID, "gsa-token")).thenReturn(true);
+    when(supportRoomRepository.save(any(SupportRoom.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    var executor = Executors.newSingleThreadExecutor();
+    try {
+      var first = executor.submit(supportRoomService::sweepExpired);
+      assertThat(firstReplicaReading.await(5, TimeUnit.SECONDS)).isTrue();
+
+      supportRoomService.sweepExpired();
+
+      releaseFirstReplica.countDown();
+      first.get(5, TimeUnit.SECONDS);
+    } finally {
+      releaseFirstReplica.countDown();
+      executor.shutdownNow();
+    }
+
+    verify(matrixSynapseService, times(1)).leaveRoom(ROOM_ID, "gsa-token");
+    verify(handshakeAuditEventRepository, times(1)).save(any());
+    assertThat(room.getStatus()).isEqualTo(SupportRoom.SupportRoomStatus.CLOSED);
+    assertThat(claims.tryClaim(SupportRoomService.SWEEP_TASK_NAME, Duration.ofMinutes(5)))
+        .as("the claim is released after the sweep so the next tick can run")
+        .isTrue();
   }
 
   // --- listing ---
