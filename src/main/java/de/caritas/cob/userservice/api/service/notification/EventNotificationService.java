@@ -35,6 +35,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Slf4j
@@ -86,6 +87,64 @@ public class EventNotificationService {
         buildSessionActionPath(session),
         session.getId(),
         session.getTenantId());
+  }
+
+  /** FE#1876: bell type for the existing counsellor when a same-topic conversation starts. */
+  public static final String TOPIC_DUPLICATE_STARTED_EVENT = "topic_duplicate.started";
+
+  /**
+   * FE#1876: bell entry for the existing conversation's counsellor, at most once per (existing,
+   * new) pair. The params carry ids only; the new centre is not named.
+   *
+   * @return true only when this call persisted the entry; false when it already existed or there is
+   *     no counsellor to notify
+   */
+  public boolean createTopicDuplicateStartedNotification(Session existing, Long newSessionId) {
+    if (existing == null
+        || existing.getId() == null
+        || newSessionId == null
+        || existing.getConsultant() == null
+        || existing.getConsultant().getId() == null
+        || existing.getConsultant().getId().isBlank()) {
+      return false;
+    }
+    String recipientId = existing.getConsultant().getId();
+    String key = topicDuplicateStartedKey(existing, newSessionId);
+    Map<String, Object> params = baseParams(existing);
+    params.put("topicId", existing.getMainTopicId());
+    return persistOnce(
+        key,
+        recipientId,
+        TOPIC_DUPLICATE_STARTED_EVENT,
+        CATEGORY_SYSTEM,
+        "Another counselling on the same topic",
+        String.format(
+            "Another counselling on the topic of chat #%s has started.", existing.getId()),
+        serializeParams(params),
+        buildSessionActionPath(existing),
+        existing.getId(),
+        existing.getTenantId());
+  }
+
+  /**
+   * FE#1876: releases the once-per-pair marker when the room notice was not delivered, so a later
+   * acceptance run can deliver it. Commits on its own, like the write.
+   */
+  public void removeTopicDuplicateStartedNotification(Session existing, Long newSessionId) {
+    if (existing == null
+        || existing.getId() == null
+        || newSessionId == null
+        || existing.getConsultant() == null
+        || existing.getConsultant().getId() == null
+        || existing.getConsultant().getId().isBlank()) {
+      return;
+    }
+    deduplicationWriter.deleteInNewTransaction(
+        existing.getConsultant().getId(), topicDuplicateStartedKey(existing, newSessionId));
+  }
+
+  private static String topicDuplicateStartedKey(Session existing, Long newSessionId) {
+    return TOPIC_DUPLICATE_STARTED_EVENT + ":" + existing.getId() + ":" + newSessionId;
   }
 
   @Transactional
@@ -368,6 +427,58 @@ public class EventNotificationService {
                     ex);
               }
             });
+  }
+
+  /** ORISO-Frontend#1952: bell type for a knock on a direct-link call. */
+  public static final String CALL_KNOCK_REQUESTED_EVENT = "call.knock.requested";
+
+  /**
+   * ORISO-Frontend#1952: someone opened the counsellor's audio or video direct link and knocks on
+   * the call in their conversation. Without this the counsellor heard nothing: the knock only sat
+   * in a list read inside a running call. The entry goes to the counsellor of the conversation (the
+   * link owner, ADR-029 §2), plays the calls-family tone, and one click starts (or rejoins) the
+   * call in that conversation, where the counsellor lets the person in. The roomRef param names
+   * that conversation's room; the action path is the fallback that opens it.
+   *
+   * <p>Once per knock (the knock id is the deduplication key), written in its own transaction like
+   * every once-only entry, so it is in the feed when the feed-update signal reaches the client. The
+   * params carry the medium and the conversation, never who knocks. Best-effort: a failed entry
+   * never fails the knock. REQUIRES_NEW: the caller runs this in afterCommit, where the knock's
+   * finished transaction is still bound and a joined transaction would never commit.
+   */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public void createCallKnockRequestedNotification(
+      Session session, de.caritas.cob.userservice.api.model.GroupChatJoinRequest knock) {
+    if (session == null
+        || session.getId() == null
+        || knock == null
+        || knock.getId() == null
+        || session.getConsultant() == null
+        || session.getConsultant().getId() == null
+        || session.getConsultant().getId().isBlank()) {
+      return;
+    }
+    Map<String, Object> params = baseParams(session);
+    putIfPresent(params, "medium", knock.getMedium());
+    try {
+      createEventOnce(
+          CALL_KNOCK_REQUESTED_EVENT + ":" + knock.getId(),
+          session.getConsultant().getId(),
+          CALL_KNOCK_REQUESTED_EVENT,
+          CATEGORY_SYSTEM,
+          "Someone is knocking",
+          "Someone wants to join your call.",
+          serializeParams(params),
+          buildSessionActionPath(session, null, true),
+          session.getId(),
+          session.getTenantId());
+    } catch (RuntimeException ex) {
+      log.warn(
+          "Could not persist call.knock.requested notification for knock {} (session {})",
+          knock.getId(),
+          session.getId(),
+          ex);
+    }
   }
 
   private String buildNewClientRequestParams(Session session) {
@@ -1075,13 +1186,38 @@ public class EventNotificationService {
       String actionPath,
       Long sourceSessionId,
       Long tenantId) {
+    persistOnce(
+        deduplicationKey,
+        recipientUserId,
+        eventType,
+        category,
+        title,
+        text,
+        params,
+        actionPath,
+        sourceSessionId,
+        tenantId);
+  }
+
+  /** Same as {@link #createEventOnce}; true only when this call persisted the event. */
+  private boolean persistOnce(
+      String deduplicationKey,
+      String recipientUserId,
+      String eventType,
+      String category,
+      String title,
+      String text,
+      String params,
+      String actionPath,
+      Long sourceSessionId,
+      Long tenantId) {
     if (recipientUserId == null
         || recipientUserId.isBlank()
         || deduplicationKey == null
         || deduplicationKey.isBlank()
         || eventNotificationRepository.existsByRecipientUserIdAndDeduplicationKey(
             recipientUserId, deduplicationKey)) {
-      return;
+      return false;
     }
 
     try {
@@ -1099,10 +1235,12 @@ public class EventNotificationService {
               deduplicationKey));
       // Only nudge on a genuine first persist — a duplicate-key race (below) already delivered.
       signalFeedUpdatedSafely(recipientUserId);
+      return true;
     } catch (DataIntegrityViolationException duplicate) {
       // Another scheduler replica won the unique-key race. The desired event already exists.
       log.debug(
           "Notification {} already persisted for recipient {}", deduplicationKey, recipientUserId);
+      return false;
     }
   }
 

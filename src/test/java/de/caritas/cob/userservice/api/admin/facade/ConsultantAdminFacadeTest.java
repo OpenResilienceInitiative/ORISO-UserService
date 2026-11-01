@@ -656,4 +656,26 @@ class ConsultantAdminFacadeTest {
     return org.mockito.ArgumentMatchers.argThat(
         dto -> dto != null && expectedAgencyId.equals(dto.getAgencyId()));
   }
+
+  @Test
+  void cancelConsultantDeletion_Should_delegateAfterTheScopeCheck() {
+    consultantAdminFacade.cancelConsultantDeletion("consultantId");
+
+    var order = Mockito.inOrder(adminScope, consultantAdminService);
+    order.verify(adminScope).assertMay(AdminScope.Target.counsellor("consultantId"));
+    order.verify(consultantAdminService).cancelConsultantDeletion("consultantId");
+  }
+
+  @Test
+  void cancelConsultantDeletion_Should_throwForbidden_When_counsellorIsOutOfReach() {
+    Mockito.doThrow(new ForbiddenException("out of reach"))
+        .when(this.adminScope)
+        .assertMay(AdminScope.Target.counsellor("consultant-1"));
+
+    assertThrows(
+        ForbiddenException.class,
+        () -> this.consultantAdminFacade.cancelConsultantDeletion("consultant-1"));
+
+    verify(this.consultantAdminService, never()).cancelConsultantDeletion(any());
+  }
 }

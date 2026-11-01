@@ -142,6 +142,10 @@ abstract class GroupCounsellingDpaHttpFixture {
                         "{\"dpaPublished\":true,\"dpaSigned\":true}", MediaType.APPLICATION_JSON)
                     .createResponse(request);
               }
+              if (path.startsWith("/_synapse/admin/v1/users/")
+                  && path.endsWith("/login")
+                  && !matrixImpersonationAvailable(path))
+                return withStatus(HttpStatus.SERVICE_UNAVAILABLE).createResponse(request);
               if (path.equals("/_matrix/client/r0/login")
                   || (path.startsWith("/_synapse/admin/v1/users/") && path.endsWith("/login"))) {
                 return withSuccess(
@@ -150,6 +154,7 @@ abstract class GroupCounsellingDpaHttpFixture {
               }
               if (path.equals("/_matrix/client/r0/createRoom")) {
                 matrixWrites.incrementAndGet();
+                onGroupRoomCreated();
                 return withSuccess(
                         "{\"room_id\":\"!synthetic-created:synthetic.oriso.test\"}",
                         MediaType.APPLICATION_JSON)
@@ -254,6 +259,12 @@ abstract class GroupCounsellingDpaHttpFixture {
             .method(method, HttpRequest.BodyPublishers.ofString(body))
             .build();
     return HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+  }
+
+  protected void onGroupRoomCreated() {}
+
+  protected boolean matrixImpersonationAvailable(String path) {
+    return true;
   }
 
   /** Extension point for a route's outgoing Matrix/HTTP responses, never an internal mock. */

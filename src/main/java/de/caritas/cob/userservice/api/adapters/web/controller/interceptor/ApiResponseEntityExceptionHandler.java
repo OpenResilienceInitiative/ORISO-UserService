@@ -22,6 +22,8 @@ import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.picture.PictureDiagnostics;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
+import de.caritas.cob.userservice.api.service.agencyinvitelink.CallShareLinkEndedException;
+import de.caritas.cob.userservice.api.service.agencyinvitelink.DirectLinkInactiveException;
 import jakarta.persistence.OptimisticLockException;
 import jakarta.validation.ConstraintViolationException;
 import java.net.UnknownHostException;
@@ -334,6 +336,34 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
 
     return handleExceptionInternal(
         ex, reasonBody(ex.getReason().name()), new HttpHeaders(), HttpStatus.GONE, request);
+  }
+
+  /**
+   * 410 - Gone: the owner switched the direct link off (#1475).
+   *
+   * @param request the invoking request
+   * @param ex the thrown exception
+   */
+  @ExceptionHandler({DirectLinkInactiveException.class})
+  public ResponseEntity<Object> handleDirectLinkInactive(
+      final DirectLinkInactiveException ex, final WebRequest request) {
+    return handleExceptionInternal(
+        ex,
+        reasonBody(DirectLinkInactiveException.REASON),
+        new HttpHeaders(),
+        HttpStatus.GONE,
+        request);
+  }
+
+  @ExceptionHandler({CallShareLinkEndedException.class})
+  public ResponseEntity<Object> handleCallShareLinkEnded(
+      final CallShareLinkEndedException ex, final WebRequest request) {
+    return handleExceptionInternal(
+        ex,
+        reasonBody(CallShareLinkEndedException.REASON),
+        new HttpHeaders(),
+        HttpStatus.GONE,
+        request);
   }
 
   /**

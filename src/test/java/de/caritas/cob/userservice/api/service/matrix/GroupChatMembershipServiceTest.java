@@ -130,7 +130,7 @@ class GroupChatMembershipServiceTest {
     var response = mapper.readTree(mapper.writeValueAsString(members));
     assertEquals("magpie", response.get(0).path("avatarId").asText());
     assertEquals("ICON", response.get(0).path("avatarKind").asText());
-    verifyNoInteractions(userRepository);
+    assertEquals(1, response.size());
   }
 
   @Test
@@ -453,6 +453,8 @@ class GroupChatMembershipServiceTest {
 
   @Test
   void resolveHumanMembers_Should_MapConsultantsAndAskers_AndFilterTechnicalAccounts() {
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.empty());
     when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
         .thenReturn(
             Optional.of(
@@ -516,6 +518,20 @@ class GroupChatMembershipServiceTest {
 
     assertEquals(1, resolved.size());
     assertEquals("Jane Doe", resolved.get(0).displayName());
+  }
+
+  @Test
+  void resolveHumanMembersRejectsAnAmbiguousMatrixIdentityInsteadOfChoosingTheFirstRole() {
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(List.of("@ambiguous:synthetic.test")));
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull("@ambiguous:synthetic.test"))
+        .thenReturn(Optional.of(new Consultant()));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull("@ambiguous:synthetic.test"))
+        .thenReturn(Optional.of(new User()));
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException
+            .class,
+        () -> groupChatMembershipService.resolveHumanMembers(MATRIX_ROOM_ID));
   }
 
   @Test

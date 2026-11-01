@@ -71,6 +71,17 @@ class SessionMapperTest {
   }
 
   @Test
+  void convertToSessionDTOShouldCarryTheEnquiryMessageDateAsMessageDate() {
+    Session session = new EasyRandom().nextObject(Session.class);
+    session.setEnquiryMessageDate(LocalDateTime.of(2026, 10, 27, 8, 15, 0));
+
+    SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
+
+    // 2026-10-27T08:15:00Z, not the time the list was loaded (FE#1800)
+    assertEquals(1793088900L, sessionDTO.getMessageDate());
+  }
+
+  @Test
   void convertToSessionDTOShouldProjectConversationType() {
     Session session = new EasyRandom().nextObject(Session.class);
     session.setConversationType(ConversationType.LIVE_CHAT);
@@ -93,6 +104,49 @@ class SessionMapperTest {
             new AppConfig().objectMapper().writeValueAsString(sessionDTO))
         .contains("\"conversationType\":\"LIVE_CHAT\"")
         .doesNotContain("\"conversationType\":{\"present\":true}");
+  }
+
+  /** FE#1952: the list labels a direct-link conversation by its medium instead of "Mail". */
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"CHAT", "AUDIO", "VIDEO"})
+  void convertToSessionDTO_Should_projectTheDirectLinkMedium(String medium) throws Exception {
+    Session session = new EasyRandom().nextObject(Session.class);
+    session.setConversationType(ConversationType.AGENCY_COUNSELLING);
+    session.setDirectLinkMedium(medium);
+
+    SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
+
+    org.assertj.core.api.Assertions.assertThat(
+            new AppConfig().objectMapper().writeValueAsString(sessionDTO))
+        .contains("\"directLinkMedium\":\"" + medium + "\"")
+        // The modality stays ADR-006's: a direct-link conversation is still agency counselling.
+        .contains("\"conversationType\":\"AGENCY_COUNSELLING\"");
+  }
+
+  /** An unknown stored value is left out; it never fails the whole session list. */
+  @Test
+  void convertToSessionDTO_Should_leaveAnUnknownDirectLinkMediumOut() throws Exception {
+    Session session = new EasyRandom().nextObject(Session.class);
+    session.setDirectLinkMedium("FAX");
+
+    SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
+
+    org.assertj.core.api.Assertions.assertThat(
+            new AppConfig().objectMapper().writeValueAsString(sessionDTO))
+        .doesNotContain("\"directLinkMedium\":\"");
+  }
+
+  @Test
+  void convertToSessionDTO_Should_leaveTheDirectLinkMediumEmpty_ForOtherConversations()
+      throws Exception {
+    Session session = new EasyRandom().nextObject(Session.class);
+    session.setDirectLinkMedium(null);
+
+    SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
+
+    org.assertj.core.api.Assertions.assertThat(
+            new AppConfig().objectMapper().writeValueAsString(sessionDTO))
+        .doesNotContain("\"directLinkMedium\":\"");
   }
 
   @Test

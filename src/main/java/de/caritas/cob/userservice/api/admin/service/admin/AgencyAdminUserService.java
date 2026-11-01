@@ -67,13 +67,13 @@ public class AgencyAdminUserService {
 
   public AdminResponseDTO updateAgencyAdmin(
       final String adminId, final UpdateAgencyAdminDTO updateAgencyAdminDTO) {
-    adminScope.assertMay(Target.admin(adminId));
+    adminScope.assertMay(Target.managedAdmin(adminId));
     final Admin updatedAdmin = updateAdminService.updateAgencyAdmin(adminId, updateAgencyAdminDTO);
     return AdminResponseDTOBuilder.getInstance(updatedAdmin).buildAgencyAdminResponseDTO();
   }
 
   public void deleteAgencyAdmin(final String adminId) {
-    adminScope.assertMay(Target.admin(adminId));
+    adminScope.assertMay(Target.managedAdmin(adminId));
     this.deleteAdminService.deleteAgencyAdmin(adminId);
   }
 

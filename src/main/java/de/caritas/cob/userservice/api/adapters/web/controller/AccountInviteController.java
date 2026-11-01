@@ -249,6 +249,10 @@ public class AccountInviteController {
             invite));
   }
 
+  /**
+   * Kept for client compatibility, but 2FA is mandatory for new accounts: always answers 400 (see
+   * {@link AccountInviteService#waiveTwoFactor(Long, WaiveTwoFactorCommand)}).
+   */
   @PreAuthorize(ADMIN_AUTH)
   @PostMapping("/useradmin/account-invites/{inviteId}/waive-two-factor")
   public ResponseEntity<AccountInviteResponseDTO> waiveTwoFactor(

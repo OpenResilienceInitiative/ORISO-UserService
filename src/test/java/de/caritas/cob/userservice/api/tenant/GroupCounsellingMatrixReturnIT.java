@@ -3,68 +3,21 @@ package de.caritas.cob.userservice.api.tenant;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.*;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.model.*;
-import de.caritas.cob.userservice.api.port.out.UserChatRepository;
-import de.caritas.cob.userservice.api.port.out.UserRepository;
-import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
-import org.springframework.http.client.ClientHttpRequest;
-import org.springframework.http.client.ClientHttpResponse;
-import org.springframework.test.context.TestPropertySource;
 
-/** Public authenticated return paths; Synapse and owner HTTP are the only outgoing fixtures. */
-@TestPropertySource(
-    properties = {
-      "matrix.group.policy.enabled=true",
-      "matrix.group.policy.token=synthetic-dedicated-membership-policy-credential",
-      "matrix.group.participation-history.url=http://synapse.synthetic/oriso-internal/group-participation-history"
-    })
-class GroupCounsellingMatrixReturnIT extends GroupCounsellingDpaHttpFixture {
-  @Autowired UserChatRepository userChats;
-  @Autowired UserRepository users;
+/** Public authenticated first-room return; actual identity and outgoing HTTP are boundaries. */
+class GroupCounsellingMatrixReturnIT extends GroupCounsellingMatrixHistoryHttpFixture {
   @Autowired de.caritas.cob.userservice.api.service.chat.GroupChatAdmissionProcessor processor;
-
-  @Autowired
-  @org.springframework.beans.factory.annotation.Qualifier("matrixGroupHistoryRestTemplate")
-  private org.springframework.web.client.RestTemplate historyTransport;
-
-  private org.springframework.test.web.client.MockRestServiceServer historyDownstream;
-
-  @BeforeEach
-  void authenticatedHistoryHttpFixture() {
-    historyDownstream =
-        org.springframework.test.web.client.MockRestServiceServer.bindTo(historyTransport).build();
-    historyDownstream
-        .expect(
-            org.springframework.test.web.client.ExpectedCount.between(0, Integer.MAX_VALUE),
-            org.springframework.test.web.client.match.MockRestRequestMatchers.anything())
-        .andRespond(this::additionalExternalResponse);
-  }
-
-  private final ObjectMapper json = new ObjectMapper();
-  private final AtomicInteger historyReads = new AtomicInteger();
-  private final AtomicInteger memberReads = new AtomicInteger();
-  private int historyUnavailableAtRead;
-  private String historyBodyOverride;
-  private boolean historyNon200;
-  private boolean matrixInviteDenied;
-  private Chat foreignChat;
-  private MediaType historyContentType = MediaType.APPLICATION_JSON;
-  private final java.util.Set<String> notCommencedActors = new java.util.HashSet<>();
   @Autowired de.caritas.cob.userservice.api.port.out.ConsultantRepository consultants;
-  private final AtomicInteger historyBytesRead = new AtomicInteger();
-  private String participation = "COMMENCED";
-  private String members = "{\"members\":[]}";
+  private Chat foreignChat;
 
   @Test
   void authorizedFormerParticipantReturnsToTheSameFirstRoomAfterExpiry() throws Exception {
@@ -130,7 +83,6 @@ class GroupCounsellingMatrixReturnIT extends GroupCounsellingDpaHttpFixture {
 
   @AfterEach
   void removeJoinRequestRows() {
-    historyDownstream.verify();
     if (foreignChat != null) Tenants.acrossAll(() -> chats.deleteById(foreignChat.getId()));
     if (requestedGroup != null) {
       for (String table :
@@ -608,8 +560,8 @@ class GroupCounsellingMatrixReturnIT extends GroupCounsellingDpaHttpFixture {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = {"UNKNOWN", "INTERNAL", "LATER"})
-  void nativePolicyDoesNotApplyToOrdinaryInternalOrLaterRooms(String kind) throws Exception {
+  @ValueSource(strings = {"UNKNOWN", "INTERNAL"})
+  void nativePolicyDoesNotApplyToOrdinaryInternalRooms(String kind) throws Exception {
     String room = "!ordinary-support-room:synthetic.oriso.test";
     if (!kind.equals("UNKNOWN")) {
       Chat chat =
@@ -684,17 +636,6 @@ class GroupCounsellingMatrixReturnIT extends GroupCounsellingDpaHttpFixture {
     assertEquals(0, matrixWrites.get());
   }
 
-  private HttpResponse<String> nativeRequest(String method, String path, String token, String body)
-      throws Exception {
-    var builder =
-        java.net.http.HttpRequest.newBuilder(java.net.URI.create("http://localhost:" + port + path))
-            .header("Content-Type", "application/json")
-            .method(method, java.net.http.HttpRequest.BodyPublishers.ofString(body));
-    if (token != null) builder.header("X-Oriso-Group-Policy-Token", token);
-    return java.net.http.HttpClient.newHttpClient()
-        .send(builder.build(), HttpResponse.BodyHandlers.ofString());
-  }
-
   @Test
   void nativeAmbiguousRoomOwnerCannotSelectTheRecipientsSignedTenant() throws Exception {
     Chat chat = activeChat();
@@ -751,7 +692,18 @@ class GroupCounsellingMatrixReturnIT extends GroupCounsellingDpaHttpFixture {
   }
 
   @Test
-  void laterOccurrenceModeratorBatchRetainsOnePureOwnerDecisionWithoutHistory() throws Exception {
+  void aBannedMemberIsRefusedWithAReasonInsteadOfAServerError() throws Exception {
+    Chat chat = activeChat();
+    matrixInviteDenied = true;
+    matrixMemberBanned = true;
+    var result = join(chat, assignedUser(chat));
+    assertEquals(403, result.statusCode(), result.body());
+    assertEquals("USER_BANNED_FROM_CHAT", result.headers().firstValue("X-Reason").orElse(""));
+    assertEquals(1, matrixWrites.get());
+  }
+
+  @Test
+  void laterOccurrenceModeratorBatchFailsSafelyDuringHistoryOutage() throws Exception {
     Chat chat = storedChat(ConversationType.SELF_HELP);
     chat.setCurrentOccurrenceIndex(1);
     chats.save(chat);
@@ -760,138 +712,9 @@ class GroupCounsellingMatrixReturnIT extends GroupCounsellingDpaHttpFixture {
     gate = "{\"dpaPublished\":true,\"dpaSigned\":true}";
     historyNon200 = true;
     var result = update(chat, java.util.List.of(first.getId(), second.getId()));
-    assertEquals(200, result.statusCode(), result.body());
-    assertEquals(1, ownerReads.get());
-    assertEquals(0, historyReads.get());
-    assertEquals(4, matrixWrites.get());
-  }
-
-  private HttpResponse<String> nativePolicy(String token, String body) throws Exception {
-    var builder =
-        java.net.http.HttpRequest.newBuilder(
-                java.net.URI.create(
-                    "http://localhost:" + port + "/internal/matrix/group-join-policy"))
-            .header("Content-Type", "application/json")
-            .POST(java.net.http.HttpRequest.BodyPublishers.ofString(body));
-    if (token != null) builder.header("X-Oriso-Group-Policy-Token", token);
-    return java.net.http.HttpClient.newHttpClient()
-        .send(builder.build(), HttpResponse.BodyHandlers.ofString());
-  }
-
-  private Chat activeChat() {
-    var chat = storedChat(ConversationType.SELF_HELP);
-    chat.setActive(true);
-    return chats.save(chat);
-  }
-
-  private User assignedUser(Chat chat) {
-    var user = fixtures.adviceSeeker(42L);
-    user.setMatrixUserId("@synthetic-former:synthetic.oriso.test");
-    Tenants.in(42L, () -> users.save(user));
-    userChats.save(UserChat.builder().user(user).chat(chat).build());
-    return user;
-  }
-
-  private HttpResponse<String> join(Chat chat, User user) throws Exception {
-    return request(
-        "PUT",
-        "/users/chat/" + chat.getId() + "/join",
-        user.getUserId(),
-        user.getUsername(),
-        "user",
-        user.getTenantId(),
-        "");
-  }
-
-  @Override
-  protected ClientHttpResponse additionalExternalResponse(ClientHttpRequest request)
-      throws IOException {
-    String path = request.getURI().getPath();
-    if (path.equals("/oriso-internal/group-participation-history")) {
-      historyReads.incrementAndGet();
-      assertEquals(
-          "synthetic-dedicated-membership-policy-credential",
-          request.getHeaders().getFirst("X-Oriso-Group-Policy-Token"));
-      if (historyNon200) {
-        var raw =
-            withStatus(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE)
-                .body("synthetic-private-history-detail".repeat(500))
-                .createResponse(request);
-        return new ClientHttpResponse() {
-          public org.springframework.http.HttpStatusCode getStatusCode() throws IOException {
-            return raw.getStatusCode();
-          }
-
-          public String getStatusText() throws IOException {
-            return raw.getStatusText();
-          }
-
-          public org.springframework.http.HttpHeaders getHeaders() {
-            return raw.getHeaders();
-          }
-
-          public java.io.InputStream getBody() throws IOException {
-            return new java.io.FilterInputStream(raw.getBody()) {
-              public int read(byte[] bytes, int offset, int length) throws IOException {
-                int count = super.read(bytes, offset, length);
-                if (count > 0) historyBytesRead.addAndGet(count);
-                return count;
-              }
-            };
-          }
-
-          public void close() {
-            raw.close();
-          }
-        };
-      }
-      if (historyBodyOverride != null)
-        return withSuccess(historyBodyOverride, historyContentType).createResponse(request);
-      assertNull(request.getHeaders().getFirst("Authorization"));
-      var asked =
-          json.readTree(
-              ((org.springframework.mock.http.client.MockClientHttpRequest) request)
-                  .getBodyAsString());
-      assertEquals(1, asked.path("contractVersion").intValue());
-      assertEquals("synapse-1.158.0-applied-membership-v1", asked.path("schemaVersion").asText());
-      return withSuccess(
-              json.writeValueAsString(
-                  Map.of(
-                      "contractVersion",
-                      1,
-                      "schemaVersion",
-                      "synapse-1.158.0-applied-membership-v1",
-                      "roomId",
-                      asked.get("roomId").asText(),
-                      "matrixUserId",
-                      asked.get("matrixUserId").asText(),
-                      "participation",
-                      historyReads.get() == historyUnavailableAtRead
-                          ? "UNAVAILABLE"
-                          : notCommencedActors.contains(asked.get("matrixUserId").asText())
-                              ? "NOT_COMMENCED"
-                              : participation)),
-              MediaType.APPLICATION_JSON)
-          .createResponse(request);
-    }
-    if (path.startsWith("/_synapse/admin/v1/rooms/") && path.endsWith("/members")) {
-      memberReads.incrementAndGet();
-      return withSuccess(members, MediaType.APPLICATION_JSON).createResponse(request);
-    }
-    if (path.endsWith("/invite")
-        || path.endsWith("/join")
-        || path.contains("/join/")
-        || path.endsWith("/leave")) {
-      matrixWrites.incrementAndGet();
-      if (matrixInviteDenied && path.endsWith("/invite"))
-        return withStatus(org.springframework.http.HttpStatus.FORBIDDEN)
-            .body("{\"errcode\":\"M_FORBIDDEN\",\"error\":\"User is banned\"}")
-            .createResponse(request);
-      return withSuccess(
-              "{\"room_id\":\"!synthetic-stored:synthetic.oriso.test\"}",
-              MediaType.APPLICATION_JSON)
-          .createResponse(request);
-    }
-    return super.additionalExternalResponse(request);
+    assertEquals(502, result.statusCode(), result.body());
+    assertEquals(0, ownerReads.get());
+    assertEquals(1, historyReads.get());
+    assertEquals(0, matrixWrites.get());
   }
 }

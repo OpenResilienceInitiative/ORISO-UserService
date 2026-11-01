@@ -57,6 +57,332 @@ paths:
           description: Inactive or expired invitation
         '404':
           description: Invitation not found
+        '410':
+          description: The direct link was switched off; body {"reason":"DIRECT_LINK_INACTIVE"}
+  /users/invitelinks/{token}/conversations:
+    post:
+      tags: [direct-link-controller]
+      operationId: startDirectLinkConversation
+      summary: 'Open (or reopen) the caller''s own 1:1 conversation through a counsellor direct link [Authorization: Role: user]'
+      description: >-
+        Every person gets their own conversation with the link owner. It is assigned to the
+        counsellor directly (like the contact link) and never enters the enquiry inbox. A second
+        call by the same person returns the existing conversation. Audio and video links answer
+        admission KNOCK: the person waits until the counsellor admits them (ADR-029 §2). Let in
+        once: after an admission every later visit returns it (callAdmitted true) and opens no new
+        knock; after a decline the next visit knocks again.
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: The caller already had a conversation through this counsellor and topic
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DirectLinkConversationDTO'}
+        '201':
+          description: A new conversation was created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DirectLinkConversationDTO'}
+        '400': {description: 'Expired link, or not a counsellor direct link'}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '403': {description: 'Direct invitations are not allowed here, or the caller belongs to another Träger'}
+        '404': {description: Unknown link}
+        '410': {description: 'The link was switched off; body {"reason":"DIRECT_LINK_INACTIVE"}'}
+  /users/call-knocks:
+    get:
+      tags: [direct-link-controller]
+      operationId: getPendingCallKnocks
+      summary: 'People waiting to be let into a call in one of the caller''s conversations, oldest first [Authorization: Role: consultant]'
+      description: >-
+        With sessionId or matrixRoomId only the knocks of that call; without either all of the
+        caller's waiting knocks (unchanged behaviour). Knocks through a call share link (#1487)
+        count as knocks of the call whose conversation room is matrixRoomId; a room without a 1:1
+        conversation (a group call) is accepted when a call ran in it and lists only those.
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: sessionId
+          in: query
+          required: false
+          description: The conversation of the current call.
+          schema: {type: integer, format: int64}
+        - name: matrixRoomId
+          in: query
+          required: false
+          description: The Matrix room of the current call (the conversation's room).
+          schema: {type: string}
+      responses:
+        '200':
+          description: Pending knocks of the last two hours
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/CallKnockDTO'}
+        '400': {description: sessionId and matrixRoomId name different conversations}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '403': {description: Caller is not a consultant}
+  /users/call-knocks/admit-all:
+    post:
+      tags: [direct-link-controller]
+      operationId: admitAllCallKnocks
+      summary: 'Let everybody in who is waiting for the caller''s current call [Authorization: Role: consultant]'
+      description: >-
+        Scoped to one call: sessionId or matrixRoomId is required, otherwise 400. Knocks in the
+        caller's other conversations stay waiting.
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: sessionId
+          in: query
+          required: false
+          description: The conversation of the current call.
+          schema: {type: integer, format: int64}
+        - name: matrixRoomId
+          in: query
+          required: false
+          description: The Matrix room of the current call (the conversation's room).
+          schema: {type: string}
+      responses:
+        '200':
+          description: The knocks that were admitted
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/CallKnockDTO'}
+        '400': {description: 'Neither sessionId nor matrixRoomId, or both naming different conversations'}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '403': {description: Caller is not a consultant}
+  /users/call-knocks/{knockId}/admit:
+    post:
+      tags: [direct-link-controller]
+      operationId: admitCallKnock
+      summary: 'Let one person into the call (idempotent) [Authorization: Role: consultant]'
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: knockId
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        '200':
+          description: The admitted knock
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CallKnockDTO'}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '404': {description: No knock on one of the caller's conversations with this id}
+        '409': {description: The knock was already declined or cancelled}
+  /users/call-knocks/{knockId}/decline:
+    post:
+      tags: [direct-link-controller]
+      operationId: declineCallKnock
+      summary: 'Do not let the person in (idempotent) [Authorization: Role: consultant]'
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: knockId
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        '200':
+          description: The declined knock
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CallKnockDTO'}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '404': {description: No knock on one of the caller's conversations with this id}
+        '409': {description: The knock was already admitted or cancelled}
+  /users/call-knocks/mine:
+    get:
+      tags: [direct-link-controller]
+      operationId: getOwnCallKnockForSession
+      summary: 'The caller''s call admission in one of their conversations, on any device [Authorization: Role: user]'
+      description: >-
+        Let in once: returns the caller's ADMITTED knock in this conversation if there is one,
+        otherwise their latest knock there. ADMITTED means the person joins every later call in
+        this conversation directly, without knocking.
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: sessionId
+          in: query
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        '200':
+          description: The admission, or the latest knock
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CallKnockDTO'}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '403': {description: Caller is not a user}
+        '404': {description: The caller never knocked in this conversation}
+  /users/call-knocks/mine/{knockId}:
+    get:
+      tags: [direct-link-controller]
+      operationId: getOwnCallKnock
+      summary: 'The state of the caller''s own knock, for the waiting room [Authorization: Role: user]'
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: knockId
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        '200':
+          description: The knock
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CallKnockDTO'}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '404': {description: No own knock with this id}
+    delete:
+      tags: [direct-link-controller]
+      operationId: cancelOwnCallKnock
+      summary: 'Stop waiting (idempotent) [Authorization: Role: user]'
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: knockId
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        '200':
+          description: The knock after cancelling
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CallKnockDTO'}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '404': {description: No own knock with this id}
+  /users/temporary-account:
+    get:
+      tags: [direct-link-controller]
+      operationId: getOwnTemporaryAccount
+      summary: 'The caller''s own temporary account from a direct link: retention mode and answer (ADR-029 §5) [Authorization: Role: user]'
+      security:
+        - Bearer: [ ]
+      responses:
+        '200':
+          description: The temporary account
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TemporaryAccountDTO'}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '404': {description: The caller has no direct-link temporary account}
+  /users/temporary-account/message-retention:
+    put:
+      tags: [direct-link-controller]
+      operationId: decideTemporaryAccountMessageRetention
+      summary: 'The guest''s once-per-conversation answer under GUEST_DECIDES: keep the messages or delete them with the account [Authorization: Role: user]'
+      security:
+        - Bearer: [ ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TemporaryAccountRetentionDecisionDTO'}
+      responses:
+        '200':
+          description: The temporary account with the answer
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TemporaryAccountDTO'}
+        '400': {description: keepMessages missing}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '404': {description: The caller has no direct-link temporary account}
+        '409': {description: 'The platform mode does not ask the guest, or the guest already answered'}
+  /users/directlinks:
+    get:
+      tags: [direct-link-controller]
+      operationId: getOwnDirectLinks
+      summary: 'List the caller''s own direct links, newest first [Authorization: Role: consultant]'
+      security:
+        - Bearer: [ ]
+      responses:
+        '200':
+          description: The caller's direct links (switched-off ones included)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/DirectLinkDTO'}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '403': {description: Caller is not a consultant}
+    post:
+      tags: [direct-link-controller]
+      operationId: createDirectLink
+      summary: 'Create a direct link for chat, audio or video [Authorization: Role: consultant]'
+      security:
+        - Bearer: [ ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateDirectLinkDTO'}
+      responses:
+        '201':
+          description: The new link
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DirectLinkDTO'}
+        '400': {description: 'Missing or invalid field, or agencyId needed because the caller works for several Beratungsstellen'}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '403': {description: 'Caller is not a consultant, not in the agency, or direct invitations are not allowed here'}
+        '404': {description: Unknown topic}
+  /users/directlinks/{linkId}:
+    patch:
+      tags: [direct-link-controller]
+      operationId: updateDirectLink
+      summary: 'Change name, topic, temporary flag or on/off of an own direct link; the medium is fixed [Authorization: Role: consultant]'
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: linkId
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateDirectLinkDTO'}
+      responses:
+        '200':
+          description: The changed link
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DirectLinkDTO'}
+        '400': {description: Invalid field}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '403': {description: Switching on is not allowed here}
+        '404': {description: No own direct link with this id}
+    delete:
+      tags: [direct-link-controller]
+      operationId: deleteDirectLink
+      summary: 'Delete an own direct link; conversations started through it stay [Authorization: Role: consultant]'
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: linkId
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        '204': {description: Deleted}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '404': {description: No own direct link with this id}
   /users/{username}:
     get:
       tags:
@@ -91,9 +417,19 @@ paths:
         201:
           description: CREATED - user was created successfully
         400:
-          description: BAD REQUEST - invalid/incomplete request or body object
+          description: BAD REQUEST - invalid/incomplete request or body object, or X-Reason GROUP_INVITE_INVALID when a group invite link names an unknown group, a group of another agency or not a self-help group, or is combined with a consultant link
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: GROUP_INVITE_INVALID
         403:
-          description: FORBIDDEN - no/invalid CSRF token
+          description: FORBIDDEN - no/invalid CSRF token, or X-Reason GROUP_INVITE_INVALID when the group invite token is missing or wrong
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: GROUP_INVITE_INVALID
         409:
           description: CONFLICT - invalid/unavailable username
         500:
@@ -319,6 +655,78 @@ paths:
           description: SERVICE UNAVAILABLE - rejection saved, protocol closure remains pending
         500:
           description: INTERNAL SERVER ERROR - unexpected failure
+      security:
+        - Bearer: [ ]
+  /users/sessions/{sessionId}/further-counselling-recommendation:
+    post:
+      tags:
+        - user-controller
+      summary: 'Recommend further counselling on a topic (FE#1876) [Authorization: Role:
+        consultant]'
+      description: >-
+        Posts a FURTHER_COUNSELLING_RECOMMENDED system notice into the room. Only the assigned
+        counsellor of an accepted 1:1 conversation may call it. The notice carries no postcode
+        and no asker data.
+      operationId: recommendFurtherCounselling
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FurtherCounsellingRecommendationDTO'
+        required: true
+      responses:
+        204:
+          description: NO CONTENT - notice posted
+        400:
+          description: BAD REQUEST - topic missing or unknown, or note longer than 1000 characters
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - caller is not the assigned counsellor
+        404:
+          description: NOT FOUND - session not found
+        409:
+          description: CONFLICT - session is no accepted 1:1 conversation (enquiry, group, archived)
+        500:
+          description: INTERNAL SERVER ERROR - the notice could not be posted
+      security:
+        - Bearer: [ ]
+  /users/askers/sessions/{sessionId}/end-duplicate:
+    put:
+      tags:
+        - user-controller
+      summary: 'End the newer of two accepted same-topic conversations (FE#1876) [Authorization:
+        Role: user]'
+      description: >-
+        Archives the session like the counsellor archive does and posts TOPIC_DUPLICATE_ENDED
+        into every older accepted conversation of the asker on the same topic.
+      operationId: endTopicDuplicate
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        204:
+          description: NO CONTENT - session archived
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - caller does not own the session
+        404:
+          description: NOT FOUND - session not found
+        409:
+          description: CONFLICT - session is not accepted, or there is no older accepted
+            conversation on the same topic
       security:
         - Bearer: [ ]
   /users/sessions/new/{sessionId}:
@@ -1368,6 +1776,41 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
+  /users/agencies/{agencyId}/admin-contacts:
+    get:
+      tags:
+        - user-controller
+      summary: 'The agency admins of one of the caller''s own counselling centres that can be invited into an internal chat [Authorization: Role: consultant]'
+      description: >-
+        Returns, for a counselling centre the caller belongs to, the agency admins who are also active counsellors of that centre with a
+        chat identity, i.e. exactly the people POST /users/chat/internal-subset can invite. Only the id and the internal display name are
+        returned (no e-mail, user name or other personal data). The caller is never listed. An empty list means nobody can be contacted.
+        A centre the caller does not belong to answers 403, whether or not it exists.
+      operationId: getAgencyAdminContacts
+      parameters:
+        - name: agencyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        200:
+          description: OK - possibly empty
+          content:
+            'application/json':
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AgencyAdminContactDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - the caller is not a counsellor of this counselling centre
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
   /users/chat/internal-subset:
     post:
       tags:
@@ -1676,7 +2119,7 @@ paths:
         401:
           description: UNAUTHORIZED - no/invalid Keycloak token
         403:
-          description: FORBIDDEN - invalid CSRF/authority or group permission, or AVV does not permit new external counselling
+          description: FORBIDDEN - invalid CSRF/authority or group permission, or AVV does not permit new external counselling (X-Reason DPA_NEW_COUNSELLING_NOT_ALLOWED), or X-Reason GROUP_INVITE_INVALID when an invite link (numeric series ID) has a missing or wrong token or points to a group that cannot be joined by link
           headers:
             X-Reason:
               schema:
@@ -1687,7 +2130,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/DpaPolicyErrorDTO'
         404:
-          description: NOT FOUND - Chat not found
+          description: NOT FOUND - Chat not found; X-Reason GROUP_INVITE_INVALID when an invite link names an unknown series ID
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: GROUP_INVITE_INVALID
         409:
           description: CONFLICT - user is already enrolled in the group
         502:
@@ -1728,7 +2176,7 @@ paths:
         401:
           description: UNAUTHORIZED - no/invalid Keycloak token
         403:
-          description: FORBIDDEN - no chat permission, or AVV does not permit new external counselling
+          description: FORBIDDEN - no chat permission, AVV does not permit new external counselling, or a moderator banned the caller (X-Reason USER_BANNED_FROM_CHAT)
           headers:
             X-Reason:
               schema:
@@ -2072,7 +2520,7 @@ paths:
         including a final one (GRANTED, CLIENT_CONSENT_DECLINED, EXPIRED), so a consent prompt that
         is no longer open can be settled instead of showing an error. Everything else answers 404:
         a request of another session or advice seeker or tenant, a colleague-to-colleague offer
-        (PENDING_RECIPIENT_ACCEPTANCE, RECIPIENT_DECLINED), a DENIED request (denied before the
+        (PENDING_RECIPIENT_ACCEPTANCE, RECIPIENT_DECLINED, and WITHDRAWN before the colleague accepted), a DENIED request (denied before the
         advice seeker was asked, or their own decision, which the decision response carries) and a
         request without consent involvement. A request whose case owner changed after it was
         created keeps its stored status here; deciding it answers 409 with X-Reason
@@ -2104,8 +2552,8 @@ paths:
                     description: >-
                       Existing CaseHandoverRequest status, or EXPIRED once the access window has
                       passed. An advice seeker never receives PENDING_RECIPIENT_ACCEPTANCE,
-                      RECIPIENT_DECLINED or DENIED.
-                    enum:
+                      RECIPIENT_DECLINED or DENIED, and WITHDRAWN only once it had been asked for consent.
+                    x-extensible-enum:
                       - PENDING
                       - PENDING_RECIPIENT_ACCEPTANCE
                       - RECIPIENT_DECLINED
@@ -2115,6 +2563,8 @@ paths:
                       - DENIED
                       - CLIENT_CONSENT_DECLINED
                       - EXPIRED
+                      - RECLAIMED
+                      - WITHDRAWN
                   canViewContent: {type: boolean}
                   clientConsent: {type: string, enum: [NONE, OPT_IN, OPT_OUT]}
                   clientConsentRequired: {type: boolean}
@@ -2139,6 +2589,47 @@ paths:
           description: Role is neither consultant nor registered advice seeker
         '404':
           description: Request or session does not exist, or the caller may not read it (see description)
+      security:
+        - Bearer: []
+  /users/sessions/{sessionId}/case-handover/{requestId}/withdraw:
+    post:
+      tags: [case-handover-controller]
+      summary: The offering counsellor withdraws a colleague handover offer that is still open
+      description: >-
+        Also available with /service prefix. Only the counsellor who made the offer
+        (initiator of a PUSH request) may withdraw it, and only while it is
+        PENDING_RECIPIENT_ACCEPTANCE or PENDING_CLIENT_CONSENT. The request ends as WITHDRAWN
+        (audit outcome OFFER_WITHDRAWN); ownership does not change. Idempotent: withdrawing a
+        withdrawn offer answers 200 with the same status and notifies nobody again. Both
+        counsellors get a case.handover.offer.withdrawn activity-timeline entry. Nothing is posted
+        into the chat room, because a colleague offer is never shown to the advice seeker.
+      operationId: withdrawCaseHandoverOffer
+      # Dedicated handwritten controller owns both prefixes; prevent a duplicate UsersApi mapping.
+      x-internal: true
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+        - name: requestId
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        '200':
+          description: The offer is withdrawn; body is the case-handover status of the request
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          description: Authentication required
+        '403':
+          description: The caller is not the counsellor who made this offer, or the request is not an offer
+        '404':
+          description: Session or request does not exist
+        '409':
+          description: The offer was already settled (accepted, declined, granted), so it cannot be withdrawn
       security:
         - Bearer: []
   /users/sessions/{sessionId}/case-handover/{requestId}/client-consent:
@@ -2906,6 +3397,109 @@ components:
         consultingTypeId: {type: integer, format: int32}
         topicId: {type: integer, format: int64, nullable: true}
         chatType: {type: string}
+        temporaryAccount:
+          type: boolean
+          nullable: true
+          description: Direct links only. New people get a temporary account (ADR-029 §3).
+        admission:
+          type: string
+          nullable: true
+          enum: [DIRECT, KNOCK]
+          description: Direct links only. KNOCK for audio and video, DIRECT for chat (ADR-029 §2).
+        hidePasswordField:
+          type: boolean
+          nullable: true
+          description: >-
+            Links with temporaryAccount only. The platform hides the password field; the app then
+            sends a suggested password silently. The account always has one (ADR-029 §3).
+        messageRetention:
+          type: string
+          nullable: true
+          enum: [ALWAYS_TEMPORARY, GUEST_DECIDES, ALWAYS_PERSISTENT]
+          description: Links with temporaryAccount only. The mode a person joining now gets (§5).
+    DirectLinkMedium:
+      type: string
+      enum: [CHAT, AUDIO, VIDEO]
+    DirectLinkDTO:
+      type: object
+      required: [id, token, url, medium, topicId, temporary, active, admission]
+      properties:
+        id: {type: integer, format: int64}
+        token: {type: string}
+        url:
+          type: string
+          description: Shareable entry URL (APP_BASE_URL + /invite/{token}; relative when the base is unset)
+        name: {type: string, maxLength: 100}
+        topicId: {type: integer, format: int64}
+        topicName: {type: string}
+        agencyId: {type: integer, format: int64}
+        medium: {$ref: '#/components/schemas/DirectLinkMedium'}
+        temporary: {type: boolean}
+        active: {type: boolean}
+        admission: {type: string, enum: [DIRECT, KNOCK]}
+        createDate: {type: string, format: date-time}
+    CreateDirectLinkDTO:
+      type: object
+      required: [medium, topicId]
+      properties:
+        medium: {$ref: '#/components/schemas/DirectLinkMedium'}
+        topicId: {type: integer, format: int64}
+        name: {type: string, maxLength: 100}
+        temporary:
+          type: boolean
+          description: Defaults to false for chat and true for calls
+        agencyId:
+          type: integer
+          format: int64
+          description: Required only when the caller works for more than one Beratungsstelle
+    UpdateDirectLinkDTO:
+      type: object
+      description: Every field is optional; absent fields stay unchanged
+      properties:
+        name: {type: string, maxLength: 100}
+        topicId: {type: integer, format: int64}
+        temporary: {type: boolean}
+        active: {type: boolean}
+    DirectLinkConversationDTO:
+      type: object
+      required: [sessionId, medium, admission, created]
+      properties:
+        sessionId: {type: integer, format: int64}
+        matrixRoomId: {type: string}
+        medium: {$ref: '#/components/schemas/DirectLinkMedium'}
+        admission: {type: string, enum: [DIRECT, KNOCK]}
+        created: {type: boolean}
+        knockId:
+          type: integer
+          format: int64
+          description: 'Audio and video only. The person''s admission, else their open knock; poll GET /users/call-knocks/mine/{knockId}.'
+        knockStatus: {$ref: '#/components/schemas/CallKnockStatus'}
+        callAdmitted:
+          type: boolean
+          description: 'Audio and video only. True once the counsellor let the person in: the admission holds for the whole conversation, so later calls are joined directly and no new knock is opened.'
+    CallKnockStatus:
+      type: string
+      enum: [PENDING, ADMITTED, DECLINED, CANCELLED]
+    CallKnockDTO:
+      type: object
+      required: [id, status, medium, requestedAt]
+      properties:
+        id: {type: integer, format: int64}
+        sessionId:
+          type: integer
+          format: int64
+          description: 'The conversation whose call is knocked on; empty for a call share link knock of a call without a 1:1 conversation (#1487).'
+        callShareLinkId:
+          type: integer
+          format: int64
+          description: 'Set when the guest knocked through the share link of a running call (#1487); the id returned by POST /matrix/calls/share-links.'
+        displayName:
+          type: string
+          description: 'The knocking person''s username (pseudonym), decoded; never the e-mail address or a real name.'
+        status: {$ref: '#/components/schemas/CallKnockStatus'}
+        medium: {$ref: '#/components/schemas/DirectLinkMedium'}
+        requestedAt: {type: string, format: date-time}
+        decidedAt: {type: string, format: date-time}
     OccurrenceOverrideRequest:
       type: object
       required: [originalStartUtc]
@@ -3049,6 +3643,13 @@ components:
             The secret part of that group's invite link. Required with `groupChatId`; a missing
             or wrong token answers 403 before any account is created, the same check as joining
             by invite link.
+        directLinkToken:
+          type: string
+          description: >-
+            Token of the counsellor direct link that creates this temporary account (ADR-029 §3).
+            Requires `temporary: true` and a link with `temporaryAccount`. The account copies the
+            platform lifetimes and retention mode (`/users/admin/temporary-account-settings`) and
+            opens no enquiry; the conversation starts with `POST /users/invitelinks/{token}/conversations`.
 
 
     SessionDataDTO:
@@ -3245,6 +3846,12 @@ components:
         isTeamSession:
           type: boolean
           example: false
+        isTopicDuplicate:
+          type: boolean
+          description: >-
+            FE#1876, asker session list only: this accepted conversation is the newer of two on
+            the same topic, so the asker may end it (PUT /users/askers/sessions/{id}/end-duplicate).
+          example: false
         registrationType:
           type: string
           example: ANONYMOUS
@@ -3272,6 +3879,15 @@ components:
             true when Gate 2 applies to this session and no consent pointer is recorded, i.e. the
             client must show the consent gate instead of the composer. Internal rooms (no
             help-seeker) always report false. Additive - older clients can ignore it.
+        directLinkMedium:
+          type: string
+          enum: [CHAT, AUDIO, VIDEO]
+          example: VIDEO
+          description: >-
+            ORISO-Frontend#1952 - the medium of the counsellor direct link (#1475) this
+            conversation was opened through; absent for every other conversation. A label for the
+            list ("Videoanruf", "Audioanruf", "Direktlink" instead of "Mail"), not a modality:
+            conversationType stays the ADR-006 value. Additive - older clients can ignore it.
         supervision:
           $ref: '#/components/schemas/SessionSupervisionDTO'
 
@@ -3716,6 +4332,38 @@ components:
           type: string
           description: Stored animal or motif id. Absent kind and id select the derived default; INITIALS has no motif id.
 
+    TemporaryAccountDTO:
+      type: object
+      description: >-
+        A temporary account created through a counsellor direct link (ADR-029 §3–§5). The
+        lifetimes and the retention mode were copied when the account was created.
+      required: [medium, messageRetention, keepsMessages, deleted]
+      properties:
+        medium:
+          type: string
+          enum: [CHAT, AUDIO, VIDEO]
+        messageRetention:
+          $ref: '#/components/schemas/MessageRetentionMode'
+        keepMessages:
+          type: boolean
+          description: The guest's own answer under GUEST_DECIDES; absent while undecided.
+        keepsMessages:
+          type: boolean
+          description: >-
+            What happens at deletion: true keeps the messages (sender then shows as
+            "Gast (gelöscht)"), false deletes them. Undecided under GUEST_DECIDES counts as false.
+        deleted:
+          type: boolean
+          description: The Keycloak and Matrix identities are gone.
+    TemporaryAccountRetentionDecisionDTO:
+      type: object
+      required: [keepMessages]
+      properties:
+        keepMessages:
+          type: boolean
+    MessageRetentionMode:
+      type: string
+      enum: [ALWAYS_TEMPORARY, GUEST_DECIDES, ALWAYS_PERSISTENT]
     SessionUserDTO:
       type: object
       properties:
@@ -3730,6 +4378,8 @@ components:
           example: Behutsames Pferd Jules
         isDeleted:
           type: boolean
+        temporaryAccount:
+          $ref: '#/components/schemas/TemporaryAccountDTO'
         sessionData:
           type: string
           description: LinkedHashMap<String, Object>
@@ -3775,6 +4425,21 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/UserSessionResponseDTO'
+
+    FurtherCounsellingRecommendationDTO:
+      type: object
+      required:
+        - topicId
+      properties:
+        topicId:
+          type: integer
+          format: int64
+          example: 3
+        note:
+          type: string
+          description: >-
+            Optional counsellor note. Trimmed first; blank means none; more than 1000 characters
+            after trimming is a 400.
 
     UserSessionResponseDTO:
       type: object
@@ -4360,6 +5025,19 @@ components:
           maxLength: 50
           description: Name of the room. Defaults to the members' names.
           example: Case talk
+    AgencyAdminContactDTO:
+      type: object
+      required:
+        - consultantId
+        - displayName
+      properties:
+        consultantId:
+          type: string
+          description: Id to pass in consultantIds of POST /users/chat/internal-subset.
+          example: "consultant-id-1"
+        displayName:
+          type: string
+          example: "Maria Muster"
     InternalSubsetChatResponseDTO:
       type: object
       required:

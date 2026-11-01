@@ -24,7 +24,8 @@ interface ConsultantCreationInput {
 
   /**
    * Whether the created counsellor must establish a second factor before using the account.
-   * Defaults to false so a creation path has to opt in; the bulk import keeps that default.
+   * Defaults to false so a creation path has to opt in; the DTO creation and the bulk import both
+   * do.
    */
   default boolean isTwoFactorRequired() {
     return false;
@@ -32,7 +33,7 @@ interface ConsultantCreationInput {
 
   /**
    * Whether the created counsellor must replace their password before using the account. Defaults
-   * to false so a creation path has to opt in; the bulk import keeps that default.
+   * to false so a creation path has to opt in; the DTO creation and the bulk import both do.
    */
   default boolean isPasswordChangeRequired() {
     return false;
