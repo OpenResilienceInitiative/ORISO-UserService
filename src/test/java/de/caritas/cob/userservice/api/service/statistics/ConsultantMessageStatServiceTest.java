@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.statistics;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -11,6 +12,7 @@ import de.caritas.cob.userservice.api.model.ConsultantMessageStat;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.ConsultantMessageStatRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.service.statistics.settings.StatisticsSettingsService;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -29,6 +31,7 @@ class ConsultantMessageStatServiceTest {
   @Mock private ConsultantMessageStatRepository consultantMessageStatRepository;
   @Mock private SessionRepository sessionRepository;
   @Mock private ConsultantIdentityHasher consultantIdentityHasher;
+  @Mock private StatisticsSettingsService statisticsSettingsService;
 
   private ConsultantMessageStatService service;
 
@@ -36,7 +39,11 @@ class ConsultantMessageStatServiceTest {
   void setUp() {
     service =
         new ConsultantMessageStatService(
-            consultantMessageStatRepository, sessionRepository, consultantIdentityHasher);
+            consultantMessageStatRepository,
+            sessionRepository,
+            consultantIdentityHasher,
+            statisticsSettingsService);
+    lenient().when(statisticsSettingsService.isMessageCountTrackingEnabled()).thenReturn(true);
   }
 
   @Test
@@ -81,5 +88,14 @@ class ConsultantMessageStatServiceTest {
 
     assertThat(count).isEqualTo(4L);
     verifyNoInteractions(sessionRepository);
+  }
+
+  @Test
+  void recordMessageSentShouldRecordNothing_When_MessageCountTrackingIsSwitchedOff() {
+    when(statisticsSettingsService.isMessageCountTrackingEnabled()).thenReturn(false);
+
+    service.recordMessageSent(CONSULTANT_ID, 100L);
+
+    verifyNoInteractions(consultantMessageStatRepository, sessionRepository);
   }
 }

@@ -668,6 +668,14 @@ public class SecurityConfig {
                     "/useradmin/statistics/tutorials",
                     "/service/useradmin/statistics/tutorials")
                 .hasAnyAuthority(TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+                // Global statistics settings and their protocol (OBP #93): platform admins only.
+                // Must precede the generic /useradmin/** rule, which a Träger admin also passes.
+                .requestMatchers(
+                    "/useradmin/statistics/settings",
+                    "/useradmin/statistics/settings/**",
+                    "/service/useradmin/statistics/settings",
+                    "/service/useradmin/statistics/settings/**")
+                .access(this::isPlatformAdmin)
                 // An admin's own list sorts (#1263): every admin role that sees a user list keeps
                 // its own; the data is always the caller's, so no other access widens.
                 // Platform default Erstantwort texts for the Träger editor (Admin#601); read-only.
