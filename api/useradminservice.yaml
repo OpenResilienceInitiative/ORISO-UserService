@@ -3056,6 +3056,18 @@ components:
           description: AGENCY_ADMIN only (400 otherwise); omitted = true.
         topicPermission:
           $ref: '#/components/schemas/TopicPermissionInput'
+        avatarKind:
+          type: string
+          enum: [ICON, INITIALS, PICTURE]
+          description: Optional suggestion for the invitee (ORISO-Admin#1274); 400 for any other value. The invitee may change it.
+        avatarId:
+          type: string
+          maxLength: 64
+          description: Motif id for avatarKind ICON; dropped for the other kinds.
+        displayName:
+          type: string
+          maxLength: 100
+          description: Suggested public display name.
     SendAccountInviteRequest:
       type: object
       x-internal: true
@@ -3102,6 +3114,18 @@ components:
         alsoCounsellor:
           type: boolean
           description: AGENCY_ADMIN invites only; null for every other role.
+        avatarKind:
+          type: string
+          enum: [ICON, INITIALS, PICTURE]
+          description: The inviter's suggestion; null when none was made.
+        avatarId:
+          type: string
+          maxLength: 64
+          description: Motif id for avatarKind ICON; dropped for the other kinds.
+        displayName:
+          type: string
+          maxLength: 100
+          description: Suggested public display name.
         waitingForUnit:
           type: string
           enum: [AGENCY, TENANT]

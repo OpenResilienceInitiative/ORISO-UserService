@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <!-- ORISO-Admin#1274: the inviting admin may suggest an avatar and a public display name. All
+       three columns are nullable, so every invite created before this change still resolves. -->
+  <changeSet id="20261031-invite-avatar-name-1274" author="oriso">
+    <sqlFile path="migrate.sql" relativeToChangelogFile="true"/>
+    <rollback>
+      <sqlFile path="rollback.sql" relativeToChangelogFile="true"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

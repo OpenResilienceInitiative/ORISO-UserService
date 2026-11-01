@@ -121,6 +121,21 @@ public class AccountInvite {
   @Column(name = "agency_id_allocation_mode", length = 16)
   private IdAllocationMode agencyIdAllocationMode;
 
+  /**
+   * The inviter's optional suggestion for the invitee's avatar and public display name
+   * (ORISO-Admin#1274). The invitee sees them prefilled and may change both; null on invites
+   * created without a suggestion and on older rows.
+   */
+  @Enumerated(EnumType.STRING)
+  @Column(name = "avatar_kind", length = 16)
+  private ConsultantAvatarKind suggestedAvatarKind;
+
+  @Column(name = "avatar_id", length = 64)
+  private String suggestedAvatarId;
+
+  @Column(name = "display_name")
+  private String suggestedDisplayName;
+
   /** AGENCY_ADMIN only: the inviter's proposal, the invitee may change it; null for other roles. */
   @Column(name = "also_counsellor")
   private Boolean alsoCounsellor;
