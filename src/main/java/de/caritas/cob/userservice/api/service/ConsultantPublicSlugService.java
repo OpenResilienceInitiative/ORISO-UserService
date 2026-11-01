@@ -87,6 +87,10 @@ public class ConsultantPublicSlugService {
 
   private String validateAvailableSlug(String rawSlug, String consultantId) {
     var slug = normalize(rawSlug);
+    if (slug.length() > PublicSlugFormat.MAX_LENGTH) {
+      throw new BadRequestException(
+          "Public slug must be at most " + PublicSlugFormat.MAX_LENGTH + " characters long");
+    }
     if (!SLUG_PATTERN.matcher(slug).matches()) {
       throw new BadRequestException(
           "Public slug may only contain lowercase letters and digits separated by single hyphens");

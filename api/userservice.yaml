@@ -4775,7 +4775,7 @@ components:
           example: nikunj-rohit
           description: >-
             Optional public slug request. Lowercase letters and digits in segments joined by
-            single hyphens (e.g. team-2).
+            single hyphens (e.g. team-2), at most 50 characters.
         languages:
           type: array
           description: >-

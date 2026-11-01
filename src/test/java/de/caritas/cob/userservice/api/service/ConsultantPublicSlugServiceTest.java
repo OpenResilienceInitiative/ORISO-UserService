@@ -113,6 +113,41 @@ class ConsultantPublicSlugServiceTest {
         () -> consultantPublicSlugService.applyAdminSlug(consultant, slug));
   }
 
+  // ORISO-UserService#1543: 50 characters at most, refused with 400 instead of failing in the
+  // 128-character database column.
+  @Test
+  void requestSlug_ShouldAcceptSlugOfMaximumLength() {
+    var consultant = consultantBuilder().build();
+    var slug = "a".repeat(48) + "-2";
+
+    consultantPublicSlugService.requestSlug(consultant, slug);
+
+    assertThat(consultant.getPendingPublicSlug(), is(slug));
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {51, 128, 129, 500})
+  void requestSlug_ShouldRejectSlugLongerThanMaximum(int length) {
+    var consultant = consultantBuilder().build();
+    var slug = "a".repeat(length);
+
+    var error =
+        assertThrows(
+            BadRequestException.class,
+            () -> consultantPublicSlugService.requestSlug(consultant, slug));
+    assertThat(error.getMessage(), is("Public slug must be at most 50 characters long"));
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {51, 129})
+  void applyAdminSlug_ShouldRejectSlugLongerThanMaximum(int length) {
+    var consultant = consultantBuilder().build();
+
+    assertThrows(
+        BadRequestException.class,
+        () -> consultantPublicSlugService.applyAdminSlug(consultant, "a".repeat(length)));
+  }
+
   /*
    * A name that parses as a UUID would be looked up as a consultant id first and never reach the
    * slug lookup, so the link could never open. Digits make such names possible.

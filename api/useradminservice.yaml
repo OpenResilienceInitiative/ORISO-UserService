@@ -2182,7 +2182,7 @@ components:
         publicSlug:
           type: string
           example: nikunj-rohit
-          description: Optional public slug (lowercase letters and digits joined by single hyphens). Admin-created values go live immediately.
+          description: Optional public slug (lowercase letters and digits joined by single hyphens, at most 50 characters). Admin-created values go live immediately.
         displayName:
           type: string
           maxLength: 255
@@ -2332,7 +2332,7 @@ components:
         publicSlug:
           type: string
           example: nikunj-rohit
-          description: Optional public slug (lowercase letters and digits joined by single hyphens). Admin edits go live immediately; empty clears it.
+          description: Optional public slug (lowercase letters and digits joined by single hyphens, at most 50 characters). Admin edits go live immediately; empty clears it.
         rejectPendingPublicSlug:
           type: boolean
           example: false
