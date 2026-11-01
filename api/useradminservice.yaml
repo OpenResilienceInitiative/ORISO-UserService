@@ -2073,7 +2073,7 @@ components:
           format: password
           example: "SecurePass123!"
           description: "Optional. Left out, the consultant chooses their own password through the setup e-mail."
-          minLength: 8
+          minLength: 16
           maxLength: 255
         firstname:
           type: string
@@ -2528,7 +2528,7 @@ components:
         password:
           type: string
           format: password
-          minLength: 8
+          minLength: 16
           maxLength: 255
         firstname:
           type: string

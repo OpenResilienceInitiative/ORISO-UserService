@@ -45,10 +45,10 @@ public class UserHelper {
   /**
    * Generates a random password which complies with the Keycloak policy.
    *
-   * @return a random generated password of 10 characters
+   * @return a random generated password of {@link PasswordPolicy#MIN_LENGTH} characters
    */
   public String getRandomPassword() {
-    return getRandomPassword(10);
+    return getRandomPassword(PasswordPolicy.MIN_LENGTH);
   }
 
   /**
