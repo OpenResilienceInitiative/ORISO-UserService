@@ -1420,6 +1420,33 @@ components:
           $ref: '#/components/schemas/Content'
         settings:
           $ref: '#/components/schemas/Settings'
+        permissionPolicies:
+          type: object
+          readOnly: true
+          description: Resolved boolean policies for downstream services. Suggestions are not applied to settings.
+          additionalProperties:
+            $ref: '#/components/schemas/BooleanPermissionPolicy'
+    PermissionPolicyMode:
+      type: string
+      enum:
+        - ENFORCED
+        - SUGGESTED
+
+    BooleanPermissionPolicy:
+      type: object
+      required:
+        - value
+        - mode
+      properties:
+        value:
+          type: boolean
+        mode:
+          $ref: '#/components/schemas/PermissionPolicyMode'
+        inherited:
+          type: boolean
+          readOnly: true
+          description: True when the resolved tenant value comes from the platform policy.
+
     Licensing:
       type: object
       required:
