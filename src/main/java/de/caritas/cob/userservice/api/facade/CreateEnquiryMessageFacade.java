@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRout
 import de.caritas.cob.userservice.api.service.erstantwort.ErstantwortContext;
 import de.caritas.cob.userservice.api.service.erstantwort.ErstantwortModality;
 import de.caritas.cob.userservice.api.service.erstantwort.ErstantwortPayloadBuilder;
+import de.caritas.cob.userservice.api.service.erstantwort.ErstantwortTenantTextResolver;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.AgencyPreAssignmentRoomService;
@@ -51,6 +52,7 @@ public class CreateEnquiryMessageFacade {
   private final @NonNull AgencyPreAssignmentRoomService agencyPreAssignmentRoomService;
   private final @NonNull ErstantwortPayloadBuilder erstantwortPayloadBuilder;
   private final @NonNull MatrixSessionSystemMessageService matrixSessionSystemMessageService;
+  private final @NonNull ErstantwortTenantTextResolver erstantwortTenantTextResolver;
 
   public CreateEnquiryMessageResponseDTO createEnquiryMessage(EnquiryData enquiryData) {
     try {
@@ -209,9 +211,19 @@ public class CreateEnquiryMessageFacade {
 
   private void postErstantwort(Session session, String uiLocale) {
     try {
+      var informal = !isFormalLanguage(session);
+      var tenantId =
+          session.getTenantId() != null ? session.getTenantId() : TenantContext.getCurrentTenant();
+      var tenantTexts = erstantwortTenantTextResolver.resolve(tenantId, uiLocale, informal);
       var body =
           erstantwortPayloadBuilder.buildFirstResponseBody(
               ErstantwortContext.builder()
+                  .greetingByTenant(tenantTexts.getGreeting())
+                  .whoReadsAlongByTenant(tenantTexts.getWhoReadsAlong())
+                  .emergencyAdditionByTenant(tenantTexts.getEmergencyAddition())
+                  .freeNoticeByTenant(tenantTexts.getFreeNotice())
+                  .closingByTenant(tenantTexts.getClosing())
+                  .responseDeadlineDays(tenantTexts.getResponseDeadlineDays())
                   /* This facade only ever handles enquiries, and an enquiry exists
                   only in Agency Counselling — checkIfNotAnonymousEnquiry rejects
                   the anonymous Live Chat path before we get here, and Self-Help
@@ -223,7 +235,7 @@ public class CreateEnquiryMessageFacade {
                   with "Sie" throughout their own Erstantwort. `languageFormal` on
                   the User is the same flag AskerDataProvider already uses to pick
                   the German variant everywhere else. */
-                  .informal(!isFormalLanguage(session))
+                  .informal(informal)
                   .locale(uiLocale)
                   .build());
       if (body == null) {
