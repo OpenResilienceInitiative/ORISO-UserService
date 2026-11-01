@@ -47,6 +47,18 @@ class UserServiceMapperTest {
   @Mock private UsernameTranscoder usernameTranscoder;
 
   @Test
+  void legacyAskerDisplayNamePatchLeavesImmutableLoginAndSessionsUntouched() {
+    var asker = new de.caritas.cob.userservice.api.model.User();
+    asker.setUsername("existing_login_1234");
+    var result =
+        userServiceMapper.adviceSeekerOf(
+            asker, java.util.Map.of("displayName", "legacy ignored alias"));
+    org.assertj.core.api.Assertions.assertThat(result).isSameAs(asker);
+    org.assertj.core.api.Assertions.assertThat(result.getUsername())
+        .isEqualTo("existing_login_1234");
+  }
+
+  @Test
   void saveWalkThroughEnabled() {
     Map<String, Object> requestData = new HashMap<>();
     requestData.put("walkThroughEnabled", true);

@@ -55,6 +55,7 @@ public class UserAccountServiceTest {
 
   @InjectMocks private UserAccountService accountProvider;
   @Mock private UserService userService;
+  @Mock private de.caritas.cob.userservice.api.admin.service.tenant.TenantService tenantService;
   @Mock private ConsultantService consultantService;
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private IdentityClient identityClient;
@@ -70,6 +71,62 @@ public class UserAccountServiceTest {
   @Mock private SupervisorAddedEmailNotificationService supervisorAddedEmailNotificationService;
 
   @Mock private DeletionLifecycleService deletionLifecycleService;
+
+  @org.junit.jupiter.api.BeforeEach
+  void currentTenantAllowsEmailByDefault() {
+    org.mockito.Mockito.lenient()
+        .when(tenantService.getRestrictedTenantDataFresh(org.mockito.ArgumentMatchers.anyLong()))
+        .thenAnswer(
+            invocation ->
+                new de.caritas.cob.userservice.tenantservice.generated.web.model
+                        .RestrictedTenantDTO()
+                    .id(invocation.getArgument(0))
+                    .settings(
+                        new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
+                            .featureAskerEmailEnabled(true)));
+  }
+
+  @Test
+  void disabledAskerEmailCollectionRejectsChangeBeforeAnyIdentityWrite() {
+    var user = EASY_RANDOM.nextObject(User.class);
+    user.setTenantId(42L);
+    user.setEmail("old@example.org");
+    when(authenticatedUser.getUserId()).thenReturn("user");
+    when(userService.getUser("user")).thenReturn(Optional.of(user));
+    org.mockito.Mockito.lenient()
+        .when(tenantService.getRestrictedTenantDataFresh(42L))
+        .thenReturn(
+            new de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO()
+                .id(42L)
+                .settings(
+                    new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
+                        .featureAskerEmailEnabled(false)));
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> accountProvider.changeUserAccountEmailAddress(Optional.of("new@example.org")))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    verifyNoInteractions(identityEmailAddressUpdater, appointmentService);
+  }
+
+  @Test
+  void legacySingleTenantEmailChangeStillEnforcesConfiguredCollectionProhibition() {
+    var user = EASY_RANDOM.nextObject(User.class);
+    user.setTenantId(null);
+    user.setEmail("old@example.org");
+    when(authenticatedUser.getUserId()).thenReturn("user");
+    when(userService.getUser("user")).thenReturn(Optional.of(user));
+    when(tenantService.getSingleTenancyTenantDataFresh())
+        .thenReturn(
+            new de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO()
+                .id(42L)
+                .settings(
+                    new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
+                        .featureAskerEmailEnabled(false)));
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> accountProvider.changeUserAccountEmailAddress(Optional.of("new@example.org")))
+        .isInstanceOf(ForbiddenException.class);
+    verifyNoInteractions(identityEmailAddressUpdater, appointmentService);
+  }
 
   @Test
   public void findUserByEmail_Should_CallUserService() {
@@ -212,6 +269,7 @@ public class UserAccountServiceTest {
   public void
       changeUserAccountEmailAddress_Should_changeNonEmptyAddressInKeycloakAndUserRepository_When_authenticatedUserIsUser() {
     User user = EASY_RANDOM.nextObject(User.class);
+    user.setTenantId(42L);
     when(this.authenticatedUser.getUserId()).thenReturn("user");
     when(this.userService.getUser("user")).thenReturn(Optional.of(user));
 
@@ -232,6 +290,7 @@ public class UserAccountServiceTest {
   @Test
   public void changeUserAccountEmailAddress_Should_UseGermanNotice_WhenUserLanguageIsMissing() {
     User user = EASY_RANDOM.nextObject(User.class);
+    user.setTenantId(42L);
     user.setLanguageCode(null);
     when(authenticatedUser.getUserId()).thenReturn("user");
     when(userService.getUser("user")).thenReturn(Optional.of(user));
@@ -248,6 +307,7 @@ public class UserAccountServiceTest {
   public void
       changeUserAccountEmailAddress_Should_changeNonEmptyAddressInKeycloakAndUserRepository_When_authenticatedUserHasNoLegacyChatId() {
     User user = EASY_RANDOM.nextObject(User.class);
+    user.setTenantId(42L);
     user.setMatrixUserId(null);
     when(this.authenticatedUser.getUserId()).thenReturn("user");
     when(this.userService.getUser("user")).thenReturn(Optional.of(user));

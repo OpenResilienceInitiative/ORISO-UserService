@@ -8,12 +8,16 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.UserServiceApplication;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionDataDTO;
+import de.caritas.cob.userservice.api.config.auth.UserRole;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.SessionData;
 import de.caritas.cob.userservice.api.port.out.SessionDataRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.SessionDataInitializingDTO;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -42,10 +46,17 @@ class SessionDataServiceIT {
 
   @Autowired private SessionDataRepository sessionDataRepository;
 
+  @Autowired private SessionRepository sessionRepository;
+
+  @MockitoBean private AuthenticatedUser authenticatedUser;
+
   @MockitoBean private ConsultingTypeManager consultingTypeManager;
 
   @BeforeEach
   void setUp() {
+    var owner = sessionRepository.findById(SESSION_ID).orElseThrow().getUser();
+    when(authenticatedUser.getUserId()).thenReturn(owner.getUserId());
+    when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.USER.getValue()));
     when(consultingTypeManager.getConsultingTypeSettings(anyInt()))
         .thenReturn(
             new ExtendedConsultingTypeResponseDTO()
