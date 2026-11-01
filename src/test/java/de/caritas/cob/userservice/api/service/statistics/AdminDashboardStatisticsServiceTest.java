@@ -587,7 +587,10 @@ class AdminDashboardStatisticsServiceTest {
 
     var dashboard = service.buildDashboard();
 
-    assertThat(topicMonthsQueried()).hasSize(12).startsWith("2026-07").endsWith("2025-08");
+    assertThat(topicMonthsQueried())
+        .containsExactly(
+            "2026-07", "2026-06", "2026-05", "2026-04", "2026-03", "2026-02", "2026-01", "2025-12",
+            "2025-11", "2025-10", "2025-09", "2025-08");
     assertThat(dashboard.targets().get(0).monthlyTopTopics())
         .extracting(AdminDashboardStatisticsService.MonthlyTopic::month)
         .containsExactly("2025-08");
@@ -610,9 +613,6 @@ class AdminDashboardStatisticsServiceTest {
     var from = ArgumentCaptor.forClass(LocalDateTime.class);
     verify(adminStatisticsRepository, atLeast(0))
         .countSessionTopicsByAgency(any(), from.capture(), any(LocalDateTime.class));
-    return from.getAllValues().stream()
-        .map(value -> YearMonth.from(value).toString())
-        .distinct()
-        .toList();
+    return from.getAllValues().stream().map(value -> YearMonth.from(value).toString()).toList();
   }
 }
