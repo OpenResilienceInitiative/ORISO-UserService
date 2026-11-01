@@ -261,6 +261,16 @@ public class Session implements TenantAware {
   @Column(name = "consented_legal_version_id")
   private Long consentedLegalVersionId;
 
+  /**
+   * ORISO-Frontend#1952: the medium ({@code CHAT}, {@code AUDIO}, {@code VIDEO}) of the counsellor
+   * direct link (#1475, ADR-029) this conversation was opened through; null for every other
+   * conversation. A label for the counsellor's list, not a modality: ADR-006 keeps {@link
+   * #conversationType}. Written once, only by {@code SessionRepository#recordDirectLinkOrigin}, so
+   * a stale entity save cannot erase it.
+   */
+  @Column(name = "direct_link_medium", length = 16, updatable = false)
+  private String directLinkMedium;
+
   @OneToMany(
       targetEntity = SessionTopic.class,
       mappedBy = "session",

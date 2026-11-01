@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.agencyinvitelink;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -33,6 +34,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -53,9 +56,14 @@ class DirectCallKnockServiceTest {
   @Mock private de.caritas.cob.userservice.api.port.out.UserRepository users;
   @Mock private de.caritas.cob.userservice.api.port.out.ConsultantRepository consultants;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.notification.EventNotificationService
+      eventNotifications;
+
   private DirectCallKnockService service;
   private Consultant counsellor;
   private User asker;
+  private Session session;
 
   @BeforeEach
   void setUp() {
@@ -67,12 +75,13 @@ class DirectCallKnockServiceTest {
             callBindings,
             callGuests,
             users,
-            consultants);
+            consultants,
+            eventNotifications);
     counsellor = consultant("counsellor-1");
     when(callBindings.findById(3L)).thenReturn(Optional.of(binding()));
     asker = new User();
     asker.setUserId("asker-1");
-    var session = new Session();
+    session = new Session();
     session.setId(SESSION_ID);
     session.setConsultant(counsellor);
     when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
@@ -94,6 +103,91 @@ class DirectCallKnockServiceTest {
     // Never part of the Matrix admission path of the self-help groups.
     assertThat(knock.getSeriesId()).isNull();
     assertThat(knock.getAdmissionRequestedAt()).isNull();
+  }
+
+  /** FE#1952: a knock nobody hears is a knock nobody answers. */
+  @Test
+  void knock_Should_TellTheCounsellor_When_ANewKnockOpens() {
+    var knock = service.knock(SESSION_ID, asker, 9L, InviteLinkChatType.VIDEO);
+
+    verify(eventNotifications).createCallKnockRequestedNotification(session, knock);
+  }
+
+  /**
+   * The entry is written in its own transaction. Written before the knock commits, a rolled-back
+   * knock would still ring the counsellor for a person who is not waiting.
+   */
+  @Test
+  void knock_Should_TellTheCounsellorOnlyAfterTheKnockCommits() {
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      var knock = service.knock(SESSION_ID, asker, 9L, InviteLinkChatType.VIDEO);
+
+      verify(eventNotifications, never()).createCallKnockRequestedNotification(any(), any());
+      TransactionSynchronizationManager.getSynchronizations()
+          .forEach(TransactionSynchronization::afterCommit);
+      verify(eventNotifications).createCallKnockRequestedNotification(session, knock);
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+  }
+
+  @Test
+  void knock_Should_NotTellTheCounsellor_When_TheKnockRollsBack() {
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      service.knock(SESSION_ID, asker, 9L, InviteLinkChatType.VIDEO);
+
+      TransactionSynchronizationManager.getSynchronizations()
+          .forEach(sync -> sync.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+      verify(eventNotifications, never()).createCallKnockRequestedNotification(any(), any());
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+  }
+
+  @Test
+  void knock_Should_KeepTheKnock_When_TheNotificationFails() {
+    org.mockito.Mockito.doThrow(new IllegalStateException("feed down"))
+        .when(eventNotifications)
+        .createCallKnockRequestedNotification(any(), any());
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      var knock = service.knock(SESSION_ID, asker, 9L, InviteLinkChatType.VIDEO);
+
+      assertThatCode(
+              () ->
+                  TransactionSynchronizationManager.getSynchronizations()
+                      .forEach(TransactionSynchronization::afterCommit))
+          .doesNotThrowAnyException();
+      verify(eventNotifications).createCallKnockRequestedNotification(session, knock);
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+  }
+
+  @Test
+  void knock_Should_NotTellTheCounsellorAgain_When_ThePersonKnocksAgain() {
+    var open = pending(1L, LocalDateTime.now().minusMinutes(5));
+    when(repository.findPendingCallKnocksForUpdate(SESSION_ID, "asker-1", Via.DIRECT_LINK))
+        .thenReturn(List.of(open));
+
+    service.knock(SESSION_ID, asker, 9L, InviteLinkChatType.AUDIO);
+
+    verify(eventNotifications, never()).createCallKnockRequestedNotification(any(), any());
+  }
+
+  @Test
+  void knock_Should_NotTellTheCounsellor_When_ThePersonWasLetInBefore() {
+    var admitted = pending(1L, LocalDateTime.now().minusDays(3));
+    admitted.setStatus(Status.ADMITTED);
+    when(repository.findFirstBySessionIdAndUserIdAndViaAndStatusOrderByIdDesc(
+            SESSION_ID, "asker-1", Via.DIRECT_LINK, Status.ADMITTED))
+        .thenReturn(Optional.of(admitted));
+
+    service.knock(SESSION_ID, asker, 9L, InviteLinkChatType.VIDEO);
+
+    verify(eventNotifications, never()).createCallKnockRequestedNotification(any(), any());
   }
 
   @Test
@@ -128,6 +222,8 @@ class DirectCallKnockServiceTest {
     // conversation endpoints always judge the same, latest knock.
     assertThat(stale.getStatus()).isEqualTo(Status.CANCELLED);
     verify(repository, org.mockito.Mockito.times(2)).save(any());
+    // The fresh knock is a new knock: the counsellor hears it.
+    verify(eventNotifications).createCallKnockRequestedNotification(session, knock);
   }
 
   @Test

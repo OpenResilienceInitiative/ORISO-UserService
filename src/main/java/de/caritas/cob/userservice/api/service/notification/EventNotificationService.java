@@ -35,6 +35,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Slf4j
@@ -389,6 +390,58 @@ public class EventNotificationService {
                     ex);
               }
             });
+  }
+
+  /** ORISO-Frontend#1952: bell type for a knock on a direct-link call. */
+  public static final String CALL_KNOCK_REQUESTED_EVENT = "call.knock.requested";
+
+  /**
+   * ORISO-Frontend#1952: someone opened the counsellor's audio or video direct link and knocks on
+   * the call in their conversation. Without this the counsellor heard nothing: the knock only sat
+   * in a list read inside a running call. The entry goes to the counsellor of the conversation (the
+   * link owner, ADR-029 §2), plays the calls-family tone, and one click starts (or rejoins) the
+   * call in that conversation, where the counsellor lets the person in. The roomRef param names
+   * that conversation's room; the action path is the fallback that opens it.
+   *
+   * <p>Once per knock (the knock id is the deduplication key), written in its own transaction like
+   * every once-only entry, so it is in the feed when the feed-update signal reaches the client. The
+   * params carry the medium and the conversation, never who knocks. Best-effort: a failed entry
+   * never fails the knock. REQUIRES_NEW: the caller runs this in afterCommit, where the knock's
+   * finished transaction is still bound and a joined transaction would never commit.
+   */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public void createCallKnockRequestedNotification(
+      Session session, de.caritas.cob.userservice.api.model.GroupChatJoinRequest knock) {
+    if (session == null
+        || session.getId() == null
+        || knock == null
+        || knock.getId() == null
+        || session.getConsultant() == null
+        || session.getConsultant().getId() == null
+        || session.getConsultant().getId().isBlank()) {
+      return;
+    }
+    Map<String, Object> params = baseParams(session);
+    putIfPresent(params, "medium", knock.getMedium());
+    try {
+      createEventOnce(
+          CALL_KNOCK_REQUESTED_EVENT + ":" + knock.getId(),
+          session.getConsultant().getId(),
+          CALL_KNOCK_REQUESTED_EVENT,
+          CATEGORY_SYSTEM,
+          "Someone is knocking",
+          "Someone wants to join your call.",
+          serializeParams(params),
+          buildSessionActionPath(session, null, true),
+          session.getId(),
+          session.getTenantId());
+    } catch (RuntimeException ex) {
+      log.warn(
+          "Could not persist call.knock.requested notification for knock {} (session {})",
+          knock.getId(),
+          session.getId(),
+          ex);
+    }
   }
 
   private String buildNewClientRequestParams(Session session) {
