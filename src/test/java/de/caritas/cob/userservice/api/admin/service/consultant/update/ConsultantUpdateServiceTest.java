@@ -29,6 +29,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
+import de.caritas.cob.userservice.api.service.matrix.ConsultantRenameSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import java.util.HashSet;
 import java.util.List;
@@ -63,6 +64,8 @@ public class ConsultantUpdateServiceTest {
   @Mock private SessionRepository sessionRepository;
 
   @Mock private EventNotificationService eventNotificationService;
+
+  @Mock private ConsultantRenameSystemMessageService consultantRenameSystemMessageService;
 
   @Mock
   private ConsultantTopicAgencyCompatibilityValidator consultantTopicAgencyCompatibilityValidator;
@@ -591,6 +594,39 @@ public class ConsultantUpdateServiceTest {
         .createCounselorRenamedNotification(any(Session.class), eq("asker-1"));
     verify(this.keycloakService, Mockito.never())
         .updateProfile(anyString(), any(IdentityProfileUpdate.class));
+  }
+
+  // ---------------------------------------------------------------------------
+  // OBP 2.1 #119 / ORISO-UserService#1533: the rename is also announced IN the chats, with the
+  // published names (old and new) the advice seeker sees -- never the real name.
+  // ---------------------------------------------------------------------------
+
+  @Test
+  public void updateConsultant_Should_postTheRenameNoticeIntoTheChats_When_ThePseudonymChanges() {
+    Consultant consultant = matrixEnabledConsultant("Frau Alt.");
+    when(this.consultantService.getConsultant("counsellor-1")).thenReturn(Optional.of(consultant));
+    when(this.consultantService.saveConsultant(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    UpdateAdminConsultantDTO pseudonymOnly = renameTo("Old", "Name");
+    pseudonymOnly.setDisplayName("Frau Neu.");
+    pseudonymOnly.setAbsent(consultant.isAbsent());
+
+    this.consultantUpdateService.updateConsultant("counsellor-1", pseudonymOnly);
+
+    verify(this.consultantRenameSystemMessageService)
+        .postRenameMessagesAfterCommit(consultant, "Frau Alt.", "Frau Neu.");
+  }
+
+  @Test
+  public void updateConsultant_Should_notPostARenameNotice_When_OnlyTheRealNameChanges() {
+    Consultant consultant = matrixEnabledConsultant("Frau M.");
+    when(this.consultantService.getConsultant("counsellor-1")).thenReturn(Optional.of(consultant));
+    when(this.consultantService.saveConsultant(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    this.consultantUpdateService.updateConsultant("counsellor-1", renameTo("Angela", "Musterfrau"));
+
+    Mockito.verifyNoInteractions(this.consultantRenameSystemMessageService);
   }
 
   /**

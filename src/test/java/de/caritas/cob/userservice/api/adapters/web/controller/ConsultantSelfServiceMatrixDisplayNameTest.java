@@ -37,6 +37,7 @@ import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.DecryptionService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
+import de.caritas.cob.userservice.api.service.matrix.ConsultantRenameSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import java.util.Optional;
@@ -79,7 +80,8 @@ class ConsultantSelfServiceMatrixDisplayNameTest {
             mock(SessionRepository.class),
             mock(EventNotificationService.class),
             mock(ConsultantTopicAgencyCompatibilityValidator.class),
-            new ConsultantDisplayNameResolver());
+            new ConsultantDisplayNameResolver(),
+            mock(ConsultantRenameSystemMessageService.class));
 
     delegate =
         new UserAccountControllerDelegate(
