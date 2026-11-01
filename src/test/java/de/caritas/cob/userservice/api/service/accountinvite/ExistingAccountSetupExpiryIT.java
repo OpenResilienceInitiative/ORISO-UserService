@@ -147,7 +147,7 @@ class ExistingAccountSetupExpiryIT {
             passwordUpdater,
             transactions);
     ReflectionTestUtils.setField(confirmation, "multitenancyEnabled", true);
-    assertThatThrownBy(() -> confirmation.confirm(OLD_TOKEN, "new-secret"))
+    assertThatThrownBy(() -> confirmation.confirm(OLD_TOKEN, "new-secret-phrase"))
         .isInstanceOfSatisfying(
             AccountInviteLinkException.class,
             error ->
@@ -208,15 +208,15 @@ class ExistingAccountSetupExpiryIT {
     assertThat(fresh.getTokenHash()).isEqualTo(AccountInviteService.hash(newToken.get()));
     verify(scope).assertMay(AdminScope.Target.managedAdmin(ACCOUNT_ID));
 
-    assertThatThrownBy(() -> confirmation.confirm(OLD_TOKEN, "new-secret"))
+    assertThatThrownBy(() -> confirmation.confirm(OLD_TOKEN, "new-secret-phrase"))
         .isInstanceOfSatisfying(
             AccountInviteLinkException.class,
             error ->
                 assertThat(error.getReason())
                     .isEqualTo(AccountInviteLinkException.Reason.SUPERSEDED));
-    confirmation.confirm(newToken.get(), "new-secret");
-    verify(passwordUpdater, times(1)).updatePassword(ACCOUNT_ID, "new-secret");
-    assertThatThrownBy(() -> confirmation.confirm(newToken.get(), "new-secret"))
+    confirmation.confirm(newToken.get(), "new-secret-phrase");
+    verify(passwordUpdater, times(1)).updatePassword(ACCOUNT_ID, "new-secret-phrase");
+    assertThatThrownBy(() -> confirmation.confirm(newToken.get(), "new-secret-phrase"))
         .isInstanceOfSatisfying(
             AccountInviteLinkException.class,
             error ->

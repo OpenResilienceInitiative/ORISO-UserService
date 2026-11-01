@@ -53,6 +53,7 @@ import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.PasswordPolicy;
 import de.caritas.cob.userservice.api.helper.UserVerifier;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Chat;
@@ -2715,6 +2716,7 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
 
   private void givenAPasswordDto() {
     passwordDto = easyRandom.nextObject(PasswordDTO.class);
+    passwordDto.setNewPassword(RandomStringUtils.randomAlphanumeric(PasswordPolicy.MIN_LENGTH));
   }
 
   private void givenADeleteUserAccountDto() {
