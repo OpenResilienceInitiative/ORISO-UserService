@@ -2240,8 +2240,8 @@ paths:
     get:
       tags:
         - user-controller
-      summary: 'Returns the members of provided chat (Id) [Authorization: Role: consultant
-        or user]'
+      summary: 'Returns the members of provided chat (Id) with their role [Authorization: Role:
+        consultant with access to the chat, or user who is a member of the chat room]'
       operationId: getChatMembers
       parameters:
         - name: chatId
@@ -5119,6 +5119,10 @@ components:
         avatarId:
           type: string
           description: Stored animal or motif id. Absent kind and id select the derived default; INITIALS has no motif id.
+        role:
+          type: string
+          enum: [ CONSULTANT, ADVICE_SEEKER ]
+          description: What the member is on the platform, shown to everyone in the chat (OBP 2.1 #107). Supervision inside a room is read from the room's Matrix power levels, not from here.
 
     UpdateChatResponseDTO:
       type: object
