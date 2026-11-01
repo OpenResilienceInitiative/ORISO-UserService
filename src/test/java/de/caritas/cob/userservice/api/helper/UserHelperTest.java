@@ -142,7 +142,8 @@ class UserHelperTest {
   }
 
   @Test
-  void getRandomPassword_Should_KeepTenCharacters_ForTheExistingCallers() {
-    org.assertj.core.api.Assertions.assertThat(userHelper.getRandomPassword()).hasSize(10);
+  void getRandomPassword_Should_ReturnTheMinimumPolicyLength() {
+    org.assertj.core.api.Assertions.assertThat(userHelper.getRandomPassword())
+        .hasSize(PasswordPolicy.MIN_LENGTH);
   }
 }

@@ -39,7 +39,9 @@ import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsu
 import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPreferenceService;
 import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPreferenceService.ListSort;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.PasswordPolicy;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.SearchFilter;
@@ -173,7 +175,8 @@ public class UserAdminController implements UseradminApi {
     createConsultantDTO.setEmail(createConsultantDTO.getEmail().toLowerCase(Locale.ROOT));
     // #1144: the setup e-mail is the way in, so the first password is one nobody knows. It is
     // generated here, not in the saga, because the setup issuer below needs the same value. An
-    // empty or short password never gets here: the request validation (minLength 8) answers 400.
+    // empty password never gets here: the request validation answers 400.
+    requireMinimumPasswordLength(createConsultantDTO.getPassword());
     if (createConsultantDTO.getPassword() == null) {
       createConsultantDTO.setPassword(userHelper.getRandomPassword(SETUP_ONLY_PASSWORD_LENGTH));
     }
@@ -488,6 +491,7 @@ public class UserAdminController implements UseradminApi {
 
   @Override
   public ResponseEntity<AdminResponseDTO> createTenantAdmin(CreateAdminDTO createAgencyAdminDTO) {
+    requireMinimumPasswordLength(createAgencyAdminDTO.getPassword());
     createAgencyAdminDTO.setEmail(createAgencyAdminDTO.getEmail().toLowerCase(Locale.ROOT));
     var admin = adminUserFacade.createNewTenantAdmin(createAgencyAdminDTO);
 
@@ -499,6 +503,7 @@ public class UserAdminController implements UseradminApi {
     // Same normalisation as every sibling here. Without it this was the one account path
     // that stored the address as typed, so the same person could end up with two
     // differently-cased identities depending on which screen created them.
+    requireMinimumPasswordLength(createAdminDTO.getPassword());
     createAdminDTO.setEmail(createAdminDTO.getEmail().toLowerCase(Locale.ROOT));
     var admin = this.adminUserFacade.createNewAgencyAdmin(createAdminDTO);
     return ResponseEntity.ok(admin);
@@ -624,6 +629,17 @@ public class UserAdminController implements UseradminApi {
         adminDtoMapper.adminSearchResultOf(
             resultMap, query, page, perPage, field, order, filter, Admin.AdminType.TENANT);
     return ResponseEntity.ok(result);
+  }
+
+  /**
+   * The published contract still says minLength 8, because raising it is a breaking change for
+   * every generated client. The server enforces the one rule (16) here instead.
+   */
+  private static void requireMinimumPasswordLength(String password) {
+    if (password != null && !PasswordPolicy.isLongEnough(password)) {
+      throw new BadRequestException(
+          "The password must be at least " + PasswordPolicy.MIN_LENGTH + " characters long");
+    }
   }
 
   private String determineDecodedInfix(String query) {

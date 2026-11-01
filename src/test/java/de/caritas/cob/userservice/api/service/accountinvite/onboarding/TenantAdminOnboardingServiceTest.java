@@ -158,7 +158,7 @@ class TenantAdminOnboardingServiceTest {
         "CEO",
         "tenant.admin@example.org",
         "Beispiel gGmbH",
-        "s3cretPassword",
+        "s3cretPassword-16ch",
         RESERVED_TENANT_ID,
         RESERVATION_TOKEN);
   }
@@ -458,7 +458,7 @@ class TenantAdminOnboardingServiceTest {
     verify(createAdminService).createNewTenantAdminForReservedTenant(adminCaptor.capture());
     assertEquals("tenant.admin@example.org", adminCaptor.getValue().getUsername());
     assertEquals("tenant.admin@example.org", adminCaptor.getValue().getEmail());
-    assertEquals("s3cretPassword", adminCaptor.getValue().getPassword());
+    assertEquals("s3cretPassword-16ch", adminCaptor.getValue().getPassword());
     assertEquals(21, adminCaptor.getValue().getTenantId());
 
     ArgumentCaptor<MultilingualTenantDTO> tenantCaptor =
@@ -597,7 +597,7 @@ class TenantAdminOnboardingServiceTest {
             null,
             null,
             null,
-            "s3cretPassword",
+            "s3cretPassword-16ch",
             RESERVED_TENANT_ID,
             RESERVATION_TOKEN);
 
@@ -630,7 +630,7 @@ class TenantAdminOnboardingServiceTest {
         null,
         null,
         null,
-        "s3cretPassword",
+        "s3cretPassword-16ch",
         RESERVED_TENANT_ID,
         RESERVATION_TOKEN);
   }
@@ -1215,7 +1215,7 @@ class TenantAdminOnboardingServiceTest {
         "CEO",
         "tenant.admin@example.org",
         "Beispiel gGmbH",
-        "s3cretPassword",
+        "s3cretPassword-16ch",
         RESERVED_TENANT_ID,
         RESERVATION_TOKEN,
         legalName,
@@ -1289,6 +1289,25 @@ class TenantAdminOnboardingServiceTest {
   }
 
   @Test
+  void registerTenantAdmin_fifteenCharacterPassword_throwsBadRequest() {
+    var command =
+        new RegisterTenantAdminCommand(
+            "Beispiel gGmbH",
+            "beispiel",
+            null,
+            true,
+            null,
+            null,
+            null,
+            null,
+            "123456789012345",
+            RESERVED_TENANT_ID,
+            RESERVATION_TOKEN);
+
+    assertThrows(BadRequestException.class, () -> service.registerTenantAdmin(RAW_TOKEN, command));
+  }
+
+  @Test
   void registerTenantAdmin_shortPassword_throwsBadRequest() {
     var command =
         new RegisterTenantAdminCommand(
@@ -1321,7 +1340,7 @@ class TenantAdminOnboardingServiceTest {
             null,
             null,
             null,
-            "s3cretPassword",
+            "s3cretPassword-16ch",
             RESERVED_TENANT_ID,
             "some-other-token");
 
