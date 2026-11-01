@@ -106,6 +106,55 @@ class MatrixChatShutdownServiceTest {
     assertThatCode(() -> matrixChatShutdownService.shutdownRoom(chat)).doesNotThrowAnyException();
   }
 
+  @Test
+  void shutdownRoomStrictlyShouldRefuseAnOrdinaryRoomThatCannotBePurged() {
+    var chat = chatWithMatrixRoomId(MATRIX_ROOM_ID);
+    when(matrixSynapseService.purgeRoomOrConfirmGone(MATRIX_ROOM_ID))
+        .thenReturn(MatrixSynapseService.RoomPurgeOutcome.FAILED);
+
+    var refused =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class,
+            () -> matrixChatShutdownService.shutdownRoomStrictly(chat));
+
+    org.junit.jupiter.api.Assertions.assertEquals(
+        org.springframework.http.HttpStatus.BAD_GATEWAY, refused.getHttpStatus());
+  }
+
+  @Test
+  void shutdownRoomStrictlyShouldRefuseAnOrdinaryRoomWhenSynapseCannotBeReached() {
+    var chat = chatWithMatrixRoomId(MATRIX_ROOM_ID);
+    when(matrixSynapseService.purgeRoomOrConfirmGone(MATRIX_ROOM_ID))
+        .thenThrow(new RestClientException("Synapse unavailable"));
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException
+            .class,
+        () -> matrixChatShutdownService.shutdownRoomStrictly(chat));
+  }
+
+  @Test
+  void shutdownRoomStrictlyShouldAcceptPurgedAndAlreadyGoneRooms() {
+    var chat = chatWithMatrixRoomId(MATRIX_ROOM_ID);
+    when(matrixSynapseService.purgeRoomOrConfirmGone(MATRIX_ROOM_ID))
+        .thenReturn(
+            MatrixSynapseService.RoomPurgeOutcome.PURGED,
+            MatrixSynapseService.RoomPurgeOutcome.ALREADY_GONE);
+
+    assertThatCode(() -> matrixChatShutdownService.shutdownRoomStrictly(chat))
+        .doesNotThrowAnyException();
+    assertThatCode(() -> matrixChatShutdownService.shutdownRoomStrictly(chat))
+        .doesNotThrowAnyException();
+  }
+
+  @Test
+  void shutdownRoomStrictlyShouldSkipAChatWithoutMatrixRoomId() {
+    matrixChatShutdownService.shutdownRoomStrictly(chatWithMatrixRoomId(null));
+
+    verifyNoInteractions(matrixSynapseService);
+  }
+
   private Chat chatWithMatrixRoomId(String matrixRoomId) {
     var chat = new Chat();
     chat.setId(1L);

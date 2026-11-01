@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.workflow.deactivate.service;
 
 import static java.util.Collections.emptyList;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -175,6 +176,30 @@ class DeactivateGroupChatServiceTest {
     this.deactivateGroupChatService.deactivateStaleGroupChats();
 
     verify(this.commandMockProvider.getActionMock(StopChatActionCommand.class)).execute(legacyChat);
+  }
+
+  @Test
+  void deactivateStaleGroupChats_Should_goOnWithTheOtherChats_When_oneRoomCannotBeShutDown() {
+    var stuck = overdueChat(1L);
+    var other = overdueChat(2L);
+    when(this.chatRepository.findAllByActiveIsTrue()).thenReturn(List.of(stuck, other));
+    when(this.actionsRegistry.buildContainerForType(Chat.class))
+        .thenReturn(commandMockProvider.getActionContainer(Chat.class));
+    var stop = this.commandMockProvider.getActionMock(StopChatActionCommand.class);
+    doThrow(new IllegalStateException("Matrix unavailable")).when(stop).execute(stuck);
+
+    this.deactivateGroupChatService.deactivateStaleGroupChats();
+
+    verify(stop).execute(other);
+  }
+
+  private static Chat overdueChat(Long id) {
+    var chat = new Chat();
+    chat.setId(id);
+    chat.setDuration(60);
+    chat.setActive(true);
+    chat.setUpdateDate(LocalDateTime.now().minusDays(30));
+    return chat;
   }
 
   private static List<LocalDateTime> createOverdueUpdateDates() {

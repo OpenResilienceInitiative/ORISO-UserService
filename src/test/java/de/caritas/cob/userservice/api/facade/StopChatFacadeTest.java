@@ -23,6 +23,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.transaction.annotation.Transactional;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -62,5 +63,15 @@ class StopChatFacadeTest {
 
     verify(this.mockProvider.getActionMock(StopChatActionCommand.class), times(1))
         .execute(ACTIVE_CHAT);
+  }
+
+  @Test
+  void stopChatShouldRunInOneTransactionSoAFailedRoomShutdownRollsTheDeletionBack()
+      throws Exception {
+    var stopChat =
+        StopChatFacade.class.getMethod(
+            "stopChat", Chat.class, de.caritas.cob.userservice.api.model.Consultant.class);
+
+    assertTrue(stopChat.isAnnotationPresent(Transactional.class));
   }
 }
