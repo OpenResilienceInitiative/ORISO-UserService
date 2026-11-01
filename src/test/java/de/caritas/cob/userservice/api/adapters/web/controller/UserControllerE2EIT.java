@@ -2302,6 +2302,13 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     when(applicationSettingsService.getApplicationSettings())
         .thenReturn(new ApplicationSettingsDTO().releaseToggles(Maps.newHashMap()));
     var session = givenAExistingSession();
+    // Frontend#1979: the reassignment mail follows the Träger's advice-seeker e-mail
+    // policy. Pin what EasyRandom would otherwise pick at random: a counselling session
+    // of a known tenant whose settings leave e-mail on.
+    session.setConversationType(ConversationType.AGENCY_COUNSELLING);
+    session.getUser().setTenantId(1L);
+    userRepository.save(session.getUser());
+    sessionRepository.save(session);
     var assignemtNotification =
         new ReassignmentNotificationDTO()
             .toConsultantId(UUID.randomUUID())
