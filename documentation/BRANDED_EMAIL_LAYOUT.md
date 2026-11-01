@@ -42,6 +42,13 @@ Only absolute `http(s)` URLs are accepted as a logo. Tenant theming may store an
 image, and `data:` URIs are blocked by Gmail and Outlook — such a logo deliberately degrades to
 the wordmark rather than rendering a broken image.
 
+**Logo and name together (OBP 2.1 #135).** Whenever a logo resolves, the header shows the logo
+*and* the Träger name; without a logo, the name alone. A logo wider than 3:1 does not hide the name
+on phones (below 620px): the name stacks under the logo. A logo from another host is dropped by the
+resolver (first-party rule, unchanged), so such a mail correctly shows the name only. The CSS lives
+in the Frontend e-mail kit (`src/emails/kit/emailDocument.ts`); sync with
+`scripts/sync-email-templates.sh`, never edit `src/main/resources/emails` by hand.
+
 Every remote lookup is best-effort: a tenant-admin invite is sent *before* the tenant exists, so a
 404 from TenantService is normal and simply yields platform branding.
 

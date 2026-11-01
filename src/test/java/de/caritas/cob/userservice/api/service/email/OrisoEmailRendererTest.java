@@ -460,7 +460,12 @@ class OrisoEmailRendererTest {
             .contains(
                 "class=\"sp logo-header logo-header-wide\"",
                 "class=\"logo-wordmark logo-wordmark-wide\"")
-            .contains(".logo-wordmark-wide{display:none !important}")
+            .contains(
+                ".logo-cell-wide{display:block !important;padding-right:0 !important;"
+                    + "padding-bottom:8px !important}",
+                ".logo-wordmark-wide{display:block !important}")
+            .doesNotContainPattern("\\.logo-wordmark[^{]*\\{[^}]*display:none")
+            .contains(">Online-Beratung</td>")
             .contains("alt=\"Online-Beratung\"");
       } else {
         assertThat(html).doesNotContain("class=\"logo-cell logo-cell-wide\"");
