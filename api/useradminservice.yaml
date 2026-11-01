@@ -1325,8 +1325,8 @@ paths:
         - name: tab
           in: query
           description: >-
-            The Admin's tab. TENANT = Träger admins who found a new Träger; UNIT = everyone joining
-            a unit. The list and phaseCounts both cover only this tab.
+            The Admin's tab. TENANT = all Träger admins, including existing Träger; UNIT = counsellors
+            and agency admins. The list and phaseCounts both cover only this tab.
           schema:
             type: string
             enum: [TENANT, UNIT]
@@ -1340,9 +1340,30 @@ paths:
             $ref: '#/components/schemas/AccountInviteStatus'
         - name: progress_phase
           in: query
-          description: One status tile; phaseCounts in the answer ignore this and status.
+          description: A single progress phase. Legacy CSV values are still accepted; new multiselect callers use progress_phases. Supplying both phase parameters returns 400. phaseCounts ignore these and status.
           schema:
             $ref: '#/components/schemas/AccountInviteProgressPhase'
+        - name: progress_phases
+          in: query
+          description: Optional comma-separated progress phases for multiselect. Cannot be combined with progress_phase. phaseCounts ignore these and status.
+          style: form
+          explode: false
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/AccountInviteProgressPhase'
+          example: [NEEDS_ACTION, CLOSED]
+        - name: sort
+          in: query
+          description: Sort all matching invitations before pagination; absent keeps newest first.
+          schema:
+            type: string
+            enum: [recipient, invitedAt]
+        - name: sort_direction
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
         - name: tenant_id
           in: query
           schema:
@@ -1350,6 +1371,7 @@ paths:
             format: int64
         - name: query
           in: query
+          description: All whitespace-separated words must match email, first name, last name or exact tenant ID; case and accents are ignored, wildcards are literal.
           schema:
             type: string
         - name: page

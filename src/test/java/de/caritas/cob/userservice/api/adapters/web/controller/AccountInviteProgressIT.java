@@ -207,22 +207,22 @@ class AccountInviteProgressIT {
     for (int page = 0; page < 2; page++) {
       mvc.perform(get("/useradmin/account-invites?tab=UNIT&size=20&page=" + page).with(admin()))
           .andExpect(status().isOk())
-          .andExpect(jsonPath("$.totalElements").value(27))
-          .andExpect(jsonPath("$.content.length()").value(page == 0 ? 20 : 7))
-          .andExpect(jsonPath("$.phaseCounts.PREPARED").value(24))
+          .andExpect(jsonPath("$.totalElements").value(26))
+          .andExpect(jsonPath("$.content.length()").value(page == 0 ? 20 : 6))
+          .andExpect(jsonPath("$.phaseCounts.PREPARED").value(23))
           .andExpect(jsonPath("$.phaseCounts.NEEDS_ACTION").value(1))
           .andExpect(jsonPath("$.phaseCounts.CLOSED").value(2))
           .andExpect(jsonPath("$.phaseCounts.INVITED").value(0))
-          .andExpect(jsonPath("$.phaseDetailCounts.PREPARED.DRAFT").value(24))
+          .andExpect(jsonPath("$.phaseDetailCounts.PREPARED.DRAFT").value(23))
           .andExpect(jsonPath("$.phaseDetailCounts.NEEDS_ACTION.EXPIRED").value(1))
           .andExpect(jsonPath("$.phaseDetailCounts.CLOSED.REVOKED").value(1))
           .andExpect(jsonPath("$.phaseDetailCounts.CLOSED.SUPERSEDED").value(1));
     }
     mvc.perform(get("/useradmin/account-invites?tab=TENANT&size=20").with(admin()))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.totalElements").value(4))
+        .andExpect(jsonPath("$.totalElements").value(5))
         .andExpect(jsonPath("$.content[*].targetRole", everyItemIs("TENANT_ADMIN")))
-        .andExpect(jsonPath("$.phaseCounts.PREPARED").value(3))
+        .andExpect(jsonPath("$.phaseCounts.PREPARED").value(4))
         .andExpect(jsonPath("$.phaseCounts.CLOSED").value(1))
         .andExpect(jsonPath("$.phaseDetailCounts.CLOSED.REVOKED").value(1));
   }
@@ -246,6 +246,78 @@ class AccountInviteProgressIT {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.totalElements").value(21))
         .andExpect(jsonPath("$.phaseCounts.PREPARED").value(21));
+  }
+
+  @Test
+  void queryMultiplePhasesAndRecipientSortAreAppliedBeforePagingWithInvariantCounts()
+      throws Exception {
+    for (int i = 22; i >= 0; i--)
+      seed(
+          base(AccountInviteTargetRole.COUNSELLOR)
+              .firstName("Max")
+              .lastName(String.format("Mustermann %02d", i))
+              .status(i % 2 == 0 ? AccountInviteStatus.EXPIRED : AccountInviteStatus.REVOKED)
+              .build());
+    seed(
+        base(AccountInviteTargetRole.COUNSELLOR)
+            .firstName("Max")
+            .lastName("Mustermann draft")
+            .build());
+    seed(base(AccountInviteTargetRole.COUNSELLOR).firstName("Other").lastName("Person").build());
+    for (int page = 0; page < 2; page++) {
+      mvc.perform(
+              get("/useradmin/account-invites")
+                  .with(admin())
+                  .param("tab", "UNIT")
+                  .param("query", "MAX Mustermann")
+                  .param("progress_phase", "NEEDS_ACTION,CLOSED")
+                  .param("sort", "recipient")
+                  .param("sort_direction", "asc")
+                  .param("size", "2")
+                  .param("page", String.valueOf(page)))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.totalElements").value(23))
+          .andExpect(
+              jsonPath("$.content[0].lastName").value(String.format("Mustermann %02d", page * 2)))
+          .andExpect(jsonPath("$.phaseCounts.NEEDS_ACTION").value(12))
+          .andExpect(jsonPath("$.phaseCounts.CLOSED").value(11))
+          .andExpect(jsonPath("$.phaseCounts.PREPARED").value(1));
+    }
+  }
+
+  @Test
+  void pluralPhaseFilterMatchesLegacyCsvAndAmbiguousParametersAreRejected() throws Exception {
+    seed(base(AccountInviteTargetRole.COUNSELLOR).status(AccountInviteStatus.EXPIRED).build());
+    seed(base(AccountInviteTargetRole.COUNSELLOR).status(AccountInviteStatus.REVOKED).build());
+    seed(base(AccountInviteTargetRole.COUNSELLOR).build());
+    for (String parameter : List.of("progress_phase", "progress_phases"))
+      mvc.perform(
+              get("/useradmin/account-invites")
+                  .with(admin())
+                  .param(parameter, "NEEDS_ACTION,CLOSED"))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.totalElements").value(2))
+          .andExpect(jsonPath("$.phaseCounts.PREPARED").value(1));
+    mvc.perform(
+            get("/useradmin/account-invites")
+                .with(admin())
+                .param("progress_phase", "CLOSED")
+                .param("progress_phases", "NEEDS_ACTION"))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void optionalListSortAndPhaseFiltersRejectUnknownValues() throws Exception {
+    for (String filter :
+        List.of(
+            "sort=unknown",
+            "sort_direction=up",
+            "progress_phase=CLOSED,unknown",
+            "progress_phase=CLOSED,",
+            "progress_phases=CLOSED,unknown",
+            "progress_phases=CLOSED,"))
+      mvc.perform(get("/useradmin/account-invites?" + filter).with(admin()))
+          .andExpect(status().isBadRequest());
   }
 
   private static org.hamcrest.Matcher<Iterable<? extends String>> everyItemIs(String value) {

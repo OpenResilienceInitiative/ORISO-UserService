@@ -501,6 +501,26 @@ class AccountInviteControllerTest {
   }
 
   @Test
+  void listInvites_Should_keepEveryScalarPhaseAndRejectAmbiguousParameters() {
+    when(accountInviteService.listAllInvites(null, null, null)).thenReturn(List.of());
+    for (var phase :
+        de.caritas.cob.userservice.api.service.accountinvite.InviteProgress.Phase.values())
+      assertEquals(
+          HttpStatus.OK,
+          controller
+              .listInvites(null, null, null, phase.name(), null, null, null, null)
+              .getStatusCode());
+    assertThrows(
+        BadRequestException.class,
+        () ->
+            controller.listInvites(
+                null, null, null, "CLOSED", null, null, null, null, null, null, "NEEDS_ACTION"));
+    assertThrows(
+        BadRequestException.class,
+        () -> controller.listInvites(null, null, null, "", null, null, null, null, null, null, ""));
+  }
+
+  @Test
   void listInvites_Should_throwBadRequest_When_unknownEnum() {
     assertThrows(
         BadRequestException.class,
@@ -773,6 +793,31 @@ class AccountInviteControllerTest {
         String.class,
         Integer.class,
         Integer.class);
+    assertHasPreAuthorize(
+        "listInvites",
+        String.class,
+        String.class,
+        String.class,
+        String.class,
+        Long.class,
+        String.class,
+        Integer.class,
+        Integer.class,
+        String.class,
+        String.class);
+    assertHasPreAuthorize(
+        "listInvites",
+        String.class,
+        String.class,
+        String.class,
+        String.class,
+        Long.class,
+        String.class,
+        Integer.class,
+        Integer.class,
+        String.class,
+        String.class,
+        String.class);
     assertHasPreAuthorize(
         "sendInvite", Long.class, AccountInviteController.SendInviteRequestDTO.class);
     assertHasPreAuthorize(
