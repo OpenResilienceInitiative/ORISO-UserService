@@ -1,8 +1,11 @@
 package de.caritas.cob.userservice.api.workflow.deactivate.service;
 
 import static java.util.Collections.emptyList;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -17,6 +20,8 @@ import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -26,6 +31,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.PlatformTransactionManager;
 
 @ExtendWith(MockitoExtension.class)
 class DeactivateGroupChatServiceTest {
@@ -37,6 +43,10 @@ class DeactivateGroupChatServiceTest {
   @Mock private ChatRepository chatRepository;
 
   @Mock private ActionsRegistry actionsRegistry;
+
+  @Mock private PlatformTransactionManager transactionManager;
+
+  private final AtomicLong nextId = new AtomicLong(100);
 
   private final ActionCommandMockProvider commandMockProvider = new ActionCommandMockProvider();
 
@@ -70,7 +80,7 @@ class DeactivateGroupChatServiceTest {
     chat.setDuration(120);
     chat.setActive(true);
     chat.setUpdateDate(updateDate);
-    when(this.chatRepository.findAllByActiveIsTrue()).thenReturn(List.of(chat));
+    givenActiveChats(chat);
 
     this.deactivateGroupChatService.deactivateStaleGroupChats();
 
@@ -95,7 +105,7 @@ class DeactivateGroupChatServiceTest {
     chat.setDuration(120);
     chat.setActive(true);
     chat.setUpdateDate(overdueUpdateDate);
-    when(this.chatRepository.findAllByActiveIsTrue()).thenReturn(List.of(chat));
+    givenActiveChats(chat);
     when(this.actionsRegistry.buildContainerForType(Chat.class))
         .thenReturn(commandMockProvider.getActionContainer(Chat.class));
 
@@ -114,7 +124,7 @@ class DeactivateGroupChatServiceTest {
     chat.setActive(true);
     chat.setStartDate(LocalDateTime.now().minusMinutes(61));
     chat.setUpdateDate(LocalDateTime.now());
-    when(this.chatRepository.findAllByActiveIsTrue()).thenReturn(List.of(chat));
+    givenActiveChats(chat);
     when(this.actionsRegistry.buildContainerForType(Chat.class))
         .thenReturn(commandMockProvider.getActionContainer(Chat.class));
 
@@ -130,7 +140,7 @@ class DeactivateGroupChatServiceTest {
     internalChat.setActive(true);
     internalChat.setUpdateDate(LocalDateTime.now().minusDays(30));
     internalChat.setConversationType(ConversationType.INTERNAL_GROUP);
-    when(this.chatRepository.findAllByActiveIsTrue()).thenReturn(List.of(internalChat));
+    givenActiveChats(internalChat);
 
     this.deactivateGroupChatService.deactivateStaleGroupChats();
 
@@ -150,7 +160,7 @@ class DeactivateGroupChatServiceTest {
     chat.setActive(true);
     chat.setUpdateDate(LocalDateTime.now().minusDays(30));
     chat.setConversationType(conversationType);
-    when(this.chatRepository.findAllByActiveIsTrue()).thenReturn(List.of(chat));
+    givenActiveChats(chat);
     when(this.actionsRegistry.buildContainerForType(Chat.class))
         .thenReturn(commandMockProvider.getActionContainer(Chat.class));
 
@@ -169,7 +179,7 @@ class DeactivateGroupChatServiceTest {
     legacyChat.setDuration(60);
     legacyChat.setActive(true);
     legacyChat.setUpdateDate(LocalDateTime.now().minusDays(30));
-    when(this.chatRepository.findAllByActiveIsTrue()).thenReturn(List.of(legacyChat));
+    givenActiveChats(legacyChat);
     when(this.actionsRegistry.buildContainerForType(Chat.class))
         .thenReturn(commandMockProvider.getActionContainer(Chat.class));
 
@@ -182,7 +192,7 @@ class DeactivateGroupChatServiceTest {
   void deactivateStaleGroupChats_Should_goOnWithTheOtherChats_When_oneRoomCannotBeShutDown() {
     var stuck = overdueChat(1L);
     var other = overdueChat(2L);
-    when(this.chatRepository.findAllByActiveIsTrue()).thenReturn(List.of(stuck, other));
+    givenActiveChats(stuck, other);
     when(this.actionsRegistry.buildContainerForType(Chat.class))
         .thenReturn(commandMockProvider.getActionContainer(Chat.class));
     var stop = this.commandMockProvider.getActionMock(StopChatActionCommand.class);
@@ -191,6 +201,63 @@ class DeactivateGroupChatServiceTest {
     this.deactivateGroupChatService.deactivateStaleGroupChats();
 
     verify(stop).execute(other);
+  }
+
+  /** Stubs the candidate read and the per-chat re-lock with the same rows. */
+  private void givenActiveChats(Chat... chats) {
+    for (var chat : chats) {
+      if (chat.getId() == null) {
+        chat.setId(nextId.incrementAndGet());
+      }
+      lenient()
+          .when(this.chatRepository.findByIdForUpdate(chat.getId()))
+          .thenReturn(Optional.of(chat));
+    }
+    when(this.chatRepository.findAllByActiveIsTrue()).thenReturn(List.of(chats));
+  }
+
+  @Test
+  void deactivateStaleGroupChats_Should_rollBackOnlyTheStuckChat_And_CommitTheOthers() {
+    var stuck = overdueChat(1L);
+    var other = overdueChat(2L);
+    givenActiveChats(stuck, other);
+    when(this.actionsRegistry.buildContainerForType(Chat.class))
+        .thenReturn(commandMockProvider.getActionContainer(Chat.class));
+    var stop = this.commandMockProvider.getActionMock(StopChatActionCommand.class);
+    doThrow(new IllegalStateException("Matrix unavailable")).when(stop).execute(stuck);
+
+    this.deactivateGroupChatService.deactivateStaleGroupChats();
+
+    // One rollback for the stuck chat; commits for the candidate read and the other chat.
+    verify(this.transactionManager, times(1)).rollback(any());
+    verify(this.transactionManager, times(2)).commit(any());
+    verify(stop).execute(other);
+  }
+
+  @Test
+  void deactivateStaleGroupChats_Should_skipAChat_When_anotherReplicaStoppedItMeanwhile() {
+    var chat = overdueChat(3L);
+    givenActiveChats(chat);
+    var stoppedMeanwhile = overdueChat(3L);
+    stoppedMeanwhile.setActive(false);
+    when(this.chatRepository.findByIdForUpdate(3L)).thenReturn(Optional.of(stoppedMeanwhile));
+
+    this.deactivateGroupChatService.deactivateStaleGroupChats();
+
+    verify(this.commandMockProvider.getActionMock(StopChatActionCommand.class), never())
+        .execute(any());
+    verifyNoMoreInteractions(this.actionsRegistry);
+  }
+
+  @Test
+  void deactivateStaleGroupChats_Should_skipAChat_When_itWasDeletedMeanwhile() {
+    var chat = overdueChat(4L);
+    givenActiveChats(chat);
+    when(this.chatRepository.findByIdForUpdate(4L)).thenReturn(Optional.empty());
+
+    this.deactivateGroupChatService.deactivateStaleGroupChats();
+
+    verifyNoMoreInteractions(this.actionsRegistry);
   }
 
   private static Chat overdueChat(Long id) {
