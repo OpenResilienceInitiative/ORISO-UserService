@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.PublicSlugFormat;
 import de.caritas.cob.userservice.api.model.PublicSlugStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.ReservedPublicSlugRepository;
@@ -19,7 +20,7 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class ConsultantPublicSlugService {
 
-  private static final Pattern SLUG_PATTERN = Pattern.compile("^[a-z]+(-[a-z]+)*$");
+  private static final Pattern SLUG_PATTERN = Pattern.compile(PublicSlugFormat.REGEX);
 
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull ReservedPublicSlugRepository reservedPublicSlugRepository;
@@ -88,7 +89,11 @@ public class ConsultantPublicSlugService {
     var slug = normalize(rawSlug);
     if (!SLUG_PATTERN.matcher(slug).matches()) {
       throw new BadRequestException(
-          "Public slug may only contain lowercase letters separated by single hyphens");
+          "Public slug may only contain lowercase letters and digits separated by single hyphens");
+    }
+    if (isUuid(slug)) {
+      // resolveActiveConsultant tries UUIDs first, so such a name could never be opened.
+      throw new BadRequestException("Public slug must not look like a consultant id");
     }
     if (reservedPublicSlugRepository.existsBySlugAndActiveTrue(slug)) {
       throw new BadRequestException("Public slug is reserved");

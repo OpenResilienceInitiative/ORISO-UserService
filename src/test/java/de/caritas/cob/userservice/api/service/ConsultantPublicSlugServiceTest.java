@@ -14,6 +14,8 @@ import de.caritas.cob.userservice.api.port.out.ReservedPublicSlugRepository;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -77,7 +79,52 @@ class ConsultantPublicSlugServiceTest {
 
     assertThrows(
         BadRequestException.class,
-        () -> consultantPublicSlugService.requestSlug(consultant, "nikunj123"));
+        () -> consultantPublicSlugService.requestSlug(consultant, "nikunj_123"));
+  }
+
+  // ORISO-UserService#1534: digits are allowed inside and as whole segments.
+  @ParameterizedTest
+  @ValueSource(strings = {"team-2", "beratung-24", "qa-shazia-2810", "2810", "a1-b2"})
+  void requestSlug_ShouldAcceptLowercaseLettersAndDigits(String slug) {
+    var consultant = consultantBuilder().build();
+
+    consultantPublicSlugService.requestSlug(consultant, slug);
+
+    assertThat(consultant.getPendingPublicSlug(), is(slug));
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {"-a", "a-", "a--b", "qa shazia", "qa_shazia", "qa.2810", "beratung-ü", "-", "2-"})
+  void requestSlug_ShouldRejectMalformedSlug(String slug) {
+    var consultant = consultantBuilder().build();
+
+    assertThrows(
+        BadRequestException.class, () -> consultantPublicSlugService.requestSlug(consultant, slug));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"-a", "a-", "a--b", "qa shazia", "qa_shazia"})
+  void applyAdminSlug_ShouldRejectMalformedSlug(String slug) {
+    var consultant = consultantBuilder().build();
+
+    assertThrows(
+        BadRequestException.class,
+        () -> consultantPublicSlugService.applyAdminSlug(consultant, slug));
+  }
+
+  /*
+   * A name that parses as a UUID would be looked up as a consultant id first and never reach the
+   * slug lookup, so the link could never open. Digits make such names possible.
+   */
+  @ParameterizedTest
+  @ValueSource(strings = {"1-2-3-4-5", "12345678-1234-1234-1234-123456789012"})
+  void applyAdminSlug_ShouldRejectSlugThatParsesAsUuid(String slug) {
+    var consultant = consultantBuilder().build();
+
+    assertThrows(
+        BadRequestException.class,
+        () -> consultantPublicSlugService.applyAdminSlug(consultant, slug));
   }
 
   @Test
