@@ -1,4 +1,8 @@
-package de.caritas.cob.userservice.api.config.auth;
+package securityroutetest;
+
+// Outside de.caritas.cob.userservice on purpose (like cachetest): AppConfig component-scans that
+// whole package, so the nested stub controller and config would otherwise be registered in every
+// other test's application context and break them with an ambiguous mapping.
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
@@ -7,6 +11,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import de.caritas.cob.userservice.api.config.CsrfSecurityProperties;
+import de.caritas.cob.userservice.api.config.auth.RoleAuthorizationAuthorityMapper;
+import de.caritas.cob.userservice.api.config.auth.SecurityConfig;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
