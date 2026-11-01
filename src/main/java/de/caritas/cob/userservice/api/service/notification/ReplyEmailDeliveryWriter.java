@@ -5,11 +5,14 @@ import de.caritas.cob.userservice.api.model.ReplyEmailDelivery.RecipientKind;
 import de.caritas.cob.userservice.api.port.out.ReplyEmailDeliveryRepository;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,7 +20,16 @@ import org.springframework.transaction.annotation.Transactional;
 /** Keeps the unique claim transaction separate from Matrix event processing. */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class ReplyEmailDeliveryWriter {
+  /**
+   * How long a failing preflight is retried before the row is quarantined. Long enough that a
+   * platform outage recovers on its own, short enough that a broken tenant setup stops cycling.
+   */
+  static final Duration MAX_RETRY_AGE = Duration.ofHours(24);
+
+  private static final int BATCH_SIZE = 100;
+
   private final @NonNull ReplyEmailDeliveryRepository repository;
 
   @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -148,14 +160,34 @@ public class ReplyEmailDeliveryWriter {
     return repository.findById(id).map(ReplyEmailDelivery::getRecipientKind);
   }
 
+  /**
+   * Due rows, interleaved round-robin across tenants (longest-waiting tenant and row first), so one
+   * tenant's backlog cannot fill the batch and hold back mail for every other tenant (#1449).
+   */
   @Transactional(readOnly = true)
   public List<Long> pendingIds() {
-    return repository
-        .findTop100ByStatusAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAscCreatedAtAscIdAsc(
-            ReplyEmailDelivery.Status.PENDING, LocalDateTime.now())
-        .stream()
-        .map(ReplyEmailDelivery::getId)
-        .toList();
+    var now = LocalDateTime.now();
+    var perTenant = new ArrayList<Iterator<ReplyEmailDelivery>>();
+    for (Long tenantId : repository.findDueTenantIds(ReplyEmailDelivery.Status.PENDING, now)) {
+      perTenant.add(
+          repository
+              .findTop100ByStatusAndTenantIdAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAscCreatedAtAscIdAsc(
+                  ReplyEmailDelivery.Status.PENDING, tenantId, now)
+              .iterator());
+    }
+    var batch = new ArrayList<Long>();
+    while (batch.size() < BATCH_SIZE && !perTenant.isEmpty()) {
+      var tenants = perTenant.iterator();
+      while (tenants.hasNext() && batch.size() < BATCH_SIZE) {
+        var rows = tenants.next();
+        if (rows.hasNext()) {
+          batch.add(rows.next().getId());
+        } else {
+          tenants.remove();
+        }
+      }
+    }
+    return batch;
   }
 
   @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -177,6 +209,18 @@ public class ReplyEmailDeliveryWriter {
   public void retryLater(long id) {
     var delivery = repository.findById(id).orElseThrow();
     if (delivery.getStatus() != ReplyEmailDelivery.Status.SENDING) {
+      return;
+    }
+    if (delivery.getCreatedAt().isBefore(LocalDateTime.now().minus(MAX_RETRY_AGE))) {
+      // Bounded retries: a tenant whose mail setup stays broken must not cycle forever (#1449).
+      delivery.setStatus(ReplyEmailDelivery.Status.QUARANTINED);
+      log.error(
+          "Reply-email delivery {} of tenant {} QUARANTINED after {} attempts in {}; fix the"
+              + " tenant's notification setup, then requeue (docs/reply-email-quarantine.md)",
+          id,
+          delivery.getTenantId(),
+          delivery.getAttemptCount(),
+          MAX_RETRY_AGE);
       return;
     }
     delivery.setStatus(ReplyEmailDelivery.Status.PENDING);
@@ -202,6 +246,11 @@ public class ReplyEmailDeliveryWriter {
       }
     }
     return uncertain;
+  }
+
+  @Transactional(readOnly = true)
+  public long quarantinedCount() {
+    return repository.countByStatus(ReplyEmailDelivery.Status.QUARANTINED);
   }
 
   @Transactional(readOnly = true)

@@ -20,8 +20,15 @@ public interface ReplyEmailDeliveryRepository extends JpaRepository<ReplyEmailDe
       ReplyEmailDelivery.RecipientKind recipientKind, String recipientUserId, String eventKey);
 
   List<ReplyEmailDelivery>
-      findTop100ByStatusAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAscCreatedAtAscIdAsc(
-          ReplyEmailDelivery.Status status, LocalDateTime now);
+      findTop100ByStatusAndTenantIdAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAscCreatedAtAscIdAsc(
+          ReplyEmailDelivery.Status status, Long tenantId, LocalDateTime now);
+
+  /** Tenants with due rows, the one waiting longest first. */
+  @Query(
+      "select d.tenantId from ReplyEmailDelivery d where d.status = :status"
+          + " and d.nextAttemptAt <= :now group by d.tenantId order by min(d.nextAttemptAt)")
+  List<Long> findDueTenantIds(
+      @Param("status") ReplyEmailDelivery.Status status, @Param("now") LocalDateTime now);
 
   List<ReplyEmailDelivery> findByStatusAndAttemptedAtBefore(
       ReplyEmailDelivery.Status status, LocalDateTime cutoff);

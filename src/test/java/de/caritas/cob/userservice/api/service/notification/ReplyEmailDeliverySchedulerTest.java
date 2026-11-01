@@ -20,7 +20,10 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-@ExtendWith(MockitoExtension.class)
+@ExtendWith({
+  MockitoExtension.class,
+  org.springframework.boot.test.system.OutputCaptureExtension.class
+})
 class ReplyEmailDeliverySchedulerTest {
   @InjectMocks private ReplyEmailDeliveryScheduler scheduler;
   @Mock private ReplyEmailDeliveryWriter writer;
@@ -64,5 +67,21 @@ class ReplyEmailDeliverySchedulerTest {
 
     verify(internalChat).resolveIntent(1L);
     verify(internalChat).deliverPending(2L);
+  }
+
+  @Test
+  void quarantinedMailsRaiseAnOperatorAlert(
+      org.springframework.boot.test.system.CapturedOutput output) {
+    var lease =
+        new ScheduledTaskClaimService.ClaimLease(
+            "reply-email-delivery", LocalDateTime.now().plusMinutes(2));
+    when(claims.tryClaimLease(eq("reply-email-delivery"), any(Duration.class)))
+        .thenReturn(Optional.of(lease));
+    when(writer.quarantinedCount()).thenReturn(3L);
+    when(writer.pendingIds()).thenReturn(List.of());
+
+    scheduler.deliverPending();
+
+    assertThat(output).contains("3 reply-email deliveries are QUARANTINED");
   }
 }

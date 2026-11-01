@@ -61,14 +61,44 @@ class ReplyEmailDeliveryQueueIT {
     }
   }
 
+  @Test
+  void oneTenantsBacklogOfDueMailsCannotStarveAnotherTenant() {
+    var ids = new java.util.ArrayList<Long>();
+    var jdbc = new JdbcTemplate(dataSource);
+    var now = LocalDateTime.now();
+    try {
+      for (int i = 0; i < 150; i++) {
+        long id = reserve("stuck-" + i, 7L);
+        ids.add(id);
+        jdbc.update(
+            "UPDATE reply_email_delivery SET created_at=?,next_attempt_at=? WHERE id=?",
+            now.minusDays(1),
+            now.minusMinutes(30),
+            id);
+      }
+      long healthy = reserve("healthy-tenant", 8L);
+      ids.add(healthy);
+
+      var batch = writer.pendingIds();
+
+      assertThat(batch).hasSize(100).contains(healthy);
+    } finally {
+      repository.deleteAllByIdInBatch(ids);
+    }
+  }
+
   private long reserve(String key) {
+    return reserve(key, 7L);
+  }
+
+  private long reserve(String key, long tenantId) {
     return writer.reserve(
         ReplyEmailDelivery.RecipientKind.ASKER,
         "queue-test",
         "@sender:synthetic.oriso.test",
         "!queue:synthetic.oriso.test",
         key,
-        7L,
+        tenantId,
         42L);
   }
 }
