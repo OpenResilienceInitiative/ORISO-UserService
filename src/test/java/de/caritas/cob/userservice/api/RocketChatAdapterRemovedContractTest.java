@@ -180,6 +180,14 @@ class RocketChatAdapterRemovedContractTest {
     assertThat(Files.readString(Path.of("pom.xml")))
         .doesNotContain("liveservice-client-model", "services/liveservice.yaml");
     assertThat(Files.readString(USER_SERVICE_API)).doesNotContain("/liveproxy/send:");
+    try (var sourceFiles = Files.walk(MAIN_JAVA)) {
+      for (var sourceFile :
+          sourceFiles.filter(path -> path.getFileName().toString().endsWith(".java")).toList()) {
+        assertThat(Files.readString(sourceFile))
+            .as("no production class may restore the retired liveproxy route: %s", sourceFile)
+            .doesNotContain("/liveproxy");
+      }
+    }
     assertThat(
             Files.readString(
                 Path.of(
