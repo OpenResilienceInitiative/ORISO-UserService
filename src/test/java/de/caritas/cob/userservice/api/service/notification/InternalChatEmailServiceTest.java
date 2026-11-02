@@ -673,6 +673,7 @@ class InternalChatEmailServiceTest {
         new de.caritas.cob.userservice.api.adapters.web.controller.EventNotificationController(
             mock(EventNotificationService.class),
             mock(TeamDiscussionNotificationService.class),
+            mock(MessageMentionNotificationService.class),
             mock(FeedbackMessageEmailService.class),
             service,
             caller,
