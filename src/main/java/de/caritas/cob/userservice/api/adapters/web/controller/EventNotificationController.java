@@ -154,8 +154,9 @@ public class EventNotificationController {
     boolean active = request == null || request.getActive() == null || request.getActive();
     String roomId = request != null ? request.getRoomId() : null;
     String threadRootId = request != null ? request.getThreadRootId() : null;
+    boolean mainChatHidden = request != null && Boolean.TRUE.equals(request.getMainChatHidden());
     eventNotificationService.updateActiveView(
-        authenticatedUser.getUserId(), roomId, threadRootId, active);
+        authenticatedUser.getUserId(), roomId, threadRootId, active, mainChatHidden);
     return new ResponseEntity<>(HttpStatus.NO_CONTENT);
   }
 
@@ -471,6 +472,7 @@ public class EventNotificationController {
     private String roomId;
     private String threadRootId;
     private Boolean active;
+    private Boolean mainChatHidden;
 
     public String getRoomId() {
       return roomId;
@@ -494,6 +496,14 @@ public class EventNotificationController {
 
     public void setActive(Boolean active) {
       this.active = active;
+    }
+
+    public Boolean getMainChatHidden() {
+      return mainChatHidden;
+    }
+
+    public void setMainChatHidden(Boolean mainChatHidden) {
+      this.mainChatHidden = mainChatHidden;
     }
   }
 }

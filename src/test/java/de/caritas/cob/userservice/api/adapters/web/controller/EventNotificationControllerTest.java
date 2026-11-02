@@ -382,7 +382,20 @@ class EventNotificationControllerTest {
     var response = controllerWithMirror.updateActiveView(request);
 
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
-    verify(eventNotificationService).updateActiveView("u-1", "room-1", "thread-1", false);
+    verify(eventNotificationService).updateActiveView("u-1", "room-1", "thread-1", false, false);
+  }
+
+  @Test
+  void updateActiveView_mainChatHidden_isPassedOn() {
+    when(authenticatedUser.getUserId()).thenReturn("u-1");
+    var request = new EventNotificationController.ActiveViewRequestDTO();
+    request.setRoomId("room-1");
+    request.setThreadRootId("thread-1");
+    request.setMainChatHidden(true);
+
+    controllerWithMirror.updateActiveView(request);
+
+    verify(eventNotificationService).updateActiveView("u-1", "room-1", "thread-1", true, true);
   }
 
   @Test
@@ -394,7 +407,7 @@ class EventNotificationControllerTest {
     var response = controllerWithMirror.updateActiveView(request);
 
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
-    verify(eventNotificationService).updateActiveView("u-1", null, null, true);
+    verify(eventNotificationService).updateActiveView("u-1", null, null, true, false);
   }
 
   @Test

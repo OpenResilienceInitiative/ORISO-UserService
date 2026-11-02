@@ -809,7 +809,7 @@ public class EventNotificationService {
             ? buildThreadReplyNotificationText(senderLabel, envelope)
             : buildMessageNotificationText(senderLabel, envelope);
     for (String recipientUserId : recipientUserIds) {
-      if (shouldSuppressNotification(recipientUserId, roomId, threadRootId)) {
+      if (shouldSuppressMention(recipientUserId, roomId, threadRootId)) {
         continue;
       }
       boolean written =
@@ -954,6 +954,15 @@ public class EventNotificationService {
   }
 
   public void updateActiveView(String userId, String roomId, String threadRootId, boolean active) {
+    updateActiveView(userId, roomId, threadRootId, active, false);
+  }
+
+  /**
+   * @param mainChatHidden a side panel fills the screen instead of the room's main chat (phone
+   *     layout), so a mention in that chat is not seen
+   */
+  public void updateActiveView(
+      String userId, String roomId, String threadRootId, boolean active, boolean mainChatHidden) {
     if (userId == null || userId.isBlank()) {
       return;
     }
@@ -966,7 +975,8 @@ public class EventNotificationService {
       return;
     }
     activeViewByUserId.put(
-        userId, new ActiveViewState(roomId, threadRootId, monotonicNanos.getAsLong()));
+        userId,
+        new ActiveViewState(roomId, threadRootId, mainChatHidden, monotonicNanos.getAsLong()));
   }
 
   void setMonotonicNanosForTesting(LongSupplier monotonicNanos) {
@@ -1465,6 +1475,20 @@ public class EventNotificationService {
     return shouldSuppressNotification(recipientUserId, roomId, null);
   }
 
+  /** Only a mention breaks through a hidden main chat; plain messages stay as quiet as before. */
+  private boolean shouldSuppressMention(
+      String recipientUserId, String roomId, String threadRootId) {
+    ActiveViewState activeView = activeViewByUserId.get(recipientUserId);
+    boolean mainChatMention = threadRootId == null || threadRootId.isBlank();
+    if (mainChatMention
+        && activeView != null
+        && activeView.mainChatHidden
+        && roomId.equals(activeView.roomId)) {
+      return false;
+    }
+    return shouldSuppressNotification(recipientUserId, roomId, threadRootId);
+  }
+
   private boolean shouldSuppressNotification(
       String recipientUserId, String roomId, String threadRootId) {
     while (true) {
@@ -1615,11 +1639,14 @@ public class EventNotificationService {
   private static class ActiveViewState {
     private final String roomId;
     private final String threadRootId;
+    private final boolean mainChatHidden;
     private final long lastHeartbeatNanos;
 
-    private ActiveViewState(String roomId, String threadRootId, long lastHeartbeatNanos) {
+    private ActiveViewState(
+        String roomId, String threadRootId, boolean mainChatHidden, long lastHeartbeatNanos) {
       this.roomId = roomId;
       this.threadRootId = threadRootId;
+      this.mainChatHidden = mainChatHidden;
       this.lastHeartbeatNanos = lastHeartbeatNanos;
     }
   }

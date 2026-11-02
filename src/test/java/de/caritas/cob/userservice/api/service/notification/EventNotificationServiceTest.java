@@ -128,6 +128,58 @@ class EventNotificationServiceTest {
   }
 
   @Test
+  void createMentionNotifications_writesNothingWhileTheRecipientSeesTheMainChat() {
+    Session session = sessionMock();
+    when(sessionRepository.findByMatrixRoomId(MENTION_ROOM)).thenReturn(Optional.of(session));
+    eventNotificationService.updateActiveView("colleague", MENTION_ROOM, null, true, false);
+
+    eventNotificationService.createMentionNotifications(
+        MENTION_ROOM, "sender", null, mentionEnvelope(), Set.of("colleague"));
+
+    verify(deduplicationWriter, never()).persistInNewTransaction(any());
+  }
+
+  @Test
+  void createMentionNotifications_writesTheRowWhileASidePanelHidesTheMainChat() {
+    Session session = sessionMock();
+    when(sessionRepository.findByMatrixRoomId(MENTION_ROOM)).thenReturn(Optional.of(session));
+    eventNotificationService.updateActiveView("colleague", MENTION_ROOM, "$thread", true, true);
+
+    eventNotificationService.createMentionNotifications(
+        MENTION_ROOM, "sender", null, mentionEnvelope(), Set.of("colleague"));
+
+    verify(deduplicationWriter).persistInNewTransaction(eventCaptor.capture());
+    assertEquals("colleague", eventCaptor.getValue().getRecipientUserId());
+  }
+
+  @Test
+  void createMentionNotifications_writesNothingWhileTheMentionedThreadFillsTheScreen() {
+    Session session = sessionMock();
+    when(sessionRepository.findByMatrixRoomId(MENTION_ROOM)).thenReturn(Optional.of(session));
+    eventNotificationService.updateActiveView("colleague", MENTION_ROOM, "$thread", true, true);
+
+    eventNotificationService.createMentionNotifications(
+        MENTION_ROOM, "sender", "$thread", mentionEnvelope(), Set.of("colleague"));
+
+    verify(deduplicationWriter, never()).persistInNewTransaction(any());
+  }
+
+  @Test
+  void createMessageNotification_staysSuppressedWhileASidePanelHidesTheMainChat() {
+    Session session = sessionMock();
+    when(sessionRepository.findByMatrixRoomId(MENTION_ROOM)).thenReturn(Optional.of(session));
+    Consultant consultant = mock(Consultant.class);
+    when(consultant.getId()).thenReturn("colleague");
+    when(session.getConsultant()).thenReturn(consultant);
+    eventNotificationService.updateActiveView("colleague", MENTION_ROOM, "$thread", true, true);
+
+    eventNotificationService.createMessageNotificationFromRoom(
+        MENTION_ROOM, "sender", mentionEnvelope());
+
+    verify(deduplicationWriter, never()).persistInNewTransaction(any());
+  }
+
+  @Test
   void createMentionNotifications_marksTheThreadReplyRowInAThread() {
     Session session = sessionMock();
     when(sessionRepository.findByMatrixRoomId(MENTION_ROOM)).thenReturn(Optional.of(session));
