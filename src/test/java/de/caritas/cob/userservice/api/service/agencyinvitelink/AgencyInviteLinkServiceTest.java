@@ -405,9 +405,9 @@ class AgencyInviteLinkServiceTest {
     assertThat(ctx.getConsultingTypeId()).isEqualTo(2);
   }
 
-  /** The 410 DIRECT_LINK_INACTIVE contract belongs to direct links; admin links keep 400. */
+  /** A live-chat link an admin switched off answers like a switched-off direct link (#1554). */
   @Test
-  void disabledAdminLink_Should_KeepTheBadRequestContract() {
+  void disabledAdminLink_Should_SayNoLongerActive() {
     AgencyInviteLink link =
         AgencyInviteLink.builder()
             .token("admin")
@@ -418,8 +418,10 @@ class AgencyInviteLinkServiceTest {
     when(repository.findByTokenAndStatus("admin", InviteLinkStatus.ACTIVE.name()))
         .thenReturn(Optional.empty());
 
-    assertThatThrownBy(() -> service.getContext("admin")).isInstanceOf(BadRequestException.class);
-    assertThatThrownBy(() -> service.redeem("admin")).isInstanceOf(BadRequestException.class);
+    assertThatThrownBy(() -> service.getContext("admin"))
+        .isInstanceOf(DirectLinkInactiveException.class);
+    assertThatThrownBy(() -> service.redeem("admin"))
+        .isInstanceOf(DirectLinkInactiveException.class);
   }
 
   @Test

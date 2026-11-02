@@ -248,8 +248,9 @@ public class AgencyInviteLinkService {
   }
 
   private InvitationContext contextOf(AgencyInviteLink link) {
-    if (InviteLinkStatus.DISABLED.name().equals(link.getStatus())
-        && InviteLinkChatType.isDirectMedium(link.getChatType())) {
+    // Every switched-off link says so (#1554): a counsellor's direct link and an admin's
+    // live-chat link alike, so the entry page shows "no longer active" instead of an error.
+    if (InviteLinkStatus.DISABLED.name().equals(link.getStatus())) {
       throw new DirectLinkInactiveException();
     }
     if (!InviteLinkStatus.ACTIVE.name().equals(link.getStatus())) {
@@ -362,8 +363,7 @@ public class AgencyInviteLinkService {
       if (InviteLinkStatus.USED.name().equals(existing.getStatus())) {
         throw new BadRequestException("Invite link already used");
       }
-      if (InviteLinkStatus.DISABLED.name().equals(existing.getStatus())
-          && InviteLinkChatType.isDirectMedium(existing.getChatType())) {
+      if (InviteLinkStatus.DISABLED.name().equals(existing.getStatus())) {
         throw new DirectLinkInactiveException();
       }
       throw new BadRequestException("Invite link is not active");

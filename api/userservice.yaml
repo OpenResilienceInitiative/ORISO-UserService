@@ -58,7 +58,7 @@ paths:
         '404':
           description: Invitation not found
         '410':
-          description: The direct link was switched off; body {"reason":"DIRECT_LINK_INACTIVE"}
+          description: The link was switched off; body {"reason":"DIRECT_LINK_INACTIVE"}
   /users/invitelinks/{token}/conversations:
     post:
       tags: [direct-link-controller]
