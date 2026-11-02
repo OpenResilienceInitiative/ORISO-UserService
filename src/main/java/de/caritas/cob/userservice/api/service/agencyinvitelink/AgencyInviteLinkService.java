@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.conversation.facade.CreateAnonymousEnquiryFacade;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -189,6 +190,33 @@ public class AgencyInviteLinkService {
       result.getContent().forEach(this::autoExpireIfNeeded);
     }
     return result;
+  }
+
+  /**
+   * Switch an active link off (status {@code DISABLED}); the public context and redeem routes
+   * already refuse such a link. A link of another tenant, or a call share link, reads as not found;
+   * an agency admin is held to the agencies they manage, as when creating.
+   */
+  @Transactional
+  public AgencyInviteLink deactivate(Long linkId) {
+    Long callerTenantId = resolveCallerTenantId();
+    AgencyInviteLink link =
+        repository
+            .findById(linkId)
+            .filter(l -> Objects.equals(l.getTenantId(), callerTenantId))
+            .filter(l -> !InviteLinkKind.CALL.name().equals(l.getLinkKind()))
+            .orElseThrow(() -> new NotFoundException("Invite link %s not found", linkId));
+    adminScope.assertMay(Target.placedIn(link.getTenantId(), link.getAgencyId()));
+
+    if (InviteLinkStatus.DISABLED.name().equals(link.getStatus())) {
+      return link;
+    }
+    if (!InviteLinkStatus.ACTIVE.name().equals(link.getStatus())) {
+      throw new ConflictException("Only an active invite link can be deactivated");
+    }
+    link.setStatus(InviteLinkStatus.DISABLED.name());
+    link.setUpdateDate(LocalDateTime.now());
+    return repository.save(link);
   }
 
   /**
