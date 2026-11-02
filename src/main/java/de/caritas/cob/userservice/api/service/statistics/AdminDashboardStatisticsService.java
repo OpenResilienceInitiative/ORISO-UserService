@@ -23,8 +23,11 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -47,7 +50,16 @@ import org.springframework.stereotype.Service;
  * (platform, tenant or agency) are only returned when they aggregate over at least the minimum
  * number of counsellor accounts configured for that level in the global statistics settings ({@link
  * StatisticsSettingsService}). Otherwise the target is marked {@code suppressed} and all
- * counselling metrics are omitted. A counsellor's own statistics never pass through here.
+ * counselling metrics are omitted, the counsellor count included. The minimum counts active
+ * counsellors, not registered accounts ({@link AdminStatisticsRepository#ACTIVE_CONSULTANT}). A
+ * counsellor's own statistics never pass through here.
+ *
+ * <p>Subtraction protection (UserService#1560): a shown total that includes a hidden row would give
+ * it away as "total minus the shown rows". So when a row is hidden, what the total leaves over
+ * after the shown rows must be at least the row minimum in counsellors; if it is not, the smallest
+ * shown rows are hidden too until it is. The total stays the true total, so no number is
+ * misleading. A stored stand goes through the same rule on every read ({@link
+ * #withCurrentThresholds}), so it cannot show what the live path hides.
  *
  * <p>Differencing protection: a number that changes between two page loads can point at one case
  * even above the threshold. So each admin role reads a fixed stand ({@link
@@ -224,12 +236,17 @@ public class AdminDashboardStatisticsService {
             ? buildLiveRanges(windows)
             : buildStandRanges(windows, interval.referenceDay(now));
     var suppression = resolveSuppression();
-    var dashboard =
+    var calculated =
         switch (scope) {
           case PLATFORM -> buildPlatformDashboard(ranges, windows, interval, suppression);
           case TENANT -> buildTenantDashboard(ranges, windows, interval, tenantId, suppression);
           case AGENCY -> buildAgencyDashboard(ranges, windows, interval, tenantId, suppression);
         };
+    var dashboard =
+        withTargets(
+            calculated,
+            calculated.suppressionDisabled(),
+            withoutDerivableRows(scope, calculated.targets(), suppression));
     return interval == StatisticsSnapshotInterval.LIVE ? dashboard : asFixedStand(dashboard, now);
   }
 
@@ -319,20 +336,74 @@ public class AdminDashboardStatisticsService {
    */
   private DashboardStatistics withCurrentThresholds(DashboardStatistics stand) {
     var suppression = resolveSuppression();
-    return withTargets(
-        stand,
-        !suppression.active(),
+    var targets =
         stand.targets().stream()
             .map(
                 target ->
-                    !target.suppressed() && isBelowThreshold(target, suppression)
+                    target.suppressed() || isBelowThreshold(target, suppression)
+                        // also scrubs the exact count a stand of an earlier release still holds
                         ? suppressedTarget(
-                            target.targetType(),
-                            target.tenantId(),
-                            target.agencyId(),
-                            target.counselorCount())
+                            target.targetType(), target.tenantId(), target.agencyId())
                         : target)
-            .toList());
+            .toList();
+    return withTargets(
+        stand, !suppression.active(), withoutDerivableRows(stand.scope(), targets, suppression));
+  }
+
+  /**
+   * A shown total must not let anyone work out a hidden row as "total minus the shown rows". What
+   * the total leaves over, in counsellors, has to reach the row minimum; if it does not, the
+   * smallest shown rows are hidden as well, one by one, until it does or no shown row is left (the
+   * total alone is then judged by its own threshold). The agency scope has no total.
+   *
+   * <p>The left-over is read from the counts of the shown rows only, so it works on a stored stand,
+   * which no longer holds the count of a hidden row. A counsellor in two shown agencies is counted
+   * twice, which makes the left-over smaller and hides more, never less.
+   */
+  private static List<TargetStatistics> withoutDerivableRows(
+      DashboardScope scope, List<TargetStatistics> targets, Suppression suppression) {
+    if (!suppression.active() || scope == DashboardScope.AGENCY) {
+      return targets;
+    }
+    var totalType = scope == DashboardScope.PLATFORM ? TargetType.PLATFORM : TargetType.TENANT;
+    var rowType = scope == DashboardScope.PLATFORM ? TargetType.TENANT : TargetType.AGENCY;
+    var total = targets.stream().filter(target -> target.targetType() == totalType).findFirst();
+    var rows = targets.stream().filter(target -> target.targetType() == rowType).toList();
+    if (total.isEmpty()
+        || total.get().suppressed()
+        || rows.stream().noneMatch(TargetStatistics::suppressed)) {
+      return targets;
+    }
+
+    var minimum = suppression.minimumCounsellors(rowType);
+    var shown = rows.stream().filter(row -> !row.suppressed()).toList();
+    var leftOver =
+        total.get().counselorCount()
+            - shown.stream().mapToLong(TargetStatistics::counselorCount).sum();
+    var additionallyHidden =
+        Collections.newSetFromMap(new IdentityHashMap<TargetStatistics, Boolean>());
+    var smallestFirst =
+        shown.stream()
+            .sorted(
+                Comparator.comparingLong(TargetStatistics::counselorCount)
+                    .thenComparing(
+                        row -> rowType == TargetType.AGENCY ? row.agencyId() : row.tenantId(),
+                        Comparator.nullsLast(Comparator.naturalOrder())))
+            .toList();
+    for (var row : smallestFirst) {
+      if (leftOver >= minimum) {
+        break;
+      }
+      additionallyHidden.add(row);
+      leftOver += row.counselorCount();
+    }
+    return targets.stream()
+        .map(
+            target ->
+                additionallyHidden.contains(target)
+                    ? suppressedTarget(target.targetType(), target.tenantId(), target.agencyId())
+                    : target)
+        .toList();
   }
 
   private static boolean isBelowThreshold(TargetStatistics target, Suppression suppression) {
@@ -789,7 +860,7 @@ public class AdminDashboardStatisticsService {
         suppression.active() && data.counselorCount() < suppression.minimumCounsellors(targetType);
 
     if (suppressed) {
-      return suppressedTarget(targetType, tenantId, agencyId, data.counselorCount());
+      return suppressedTarget(targetType, tenantId, agencyId);
     }
 
     var metrics =
@@ -819,20 +890,11 @@ public class AdminDashboardStatisticsService {
         data.groupChatCountsByPeriod());
   }
 
+  /** A hidden row says nothing about its people, so its counsellor count is 0, not the real one. */
   private static TargetStatistics suppressedTarget(
-      TargetType targetType, Long tenantId, Long agencyId, long counselorCount) {
+      TargetType targetType, Long tenantId, Long agencyId) {
     return new TargetStatistics(
-        targetType,
-        tenantId,
-        agencyId,
-        counselorCount,
-        true,
-        null,
-        List.of(),
-        List.of(),
-        List.of(),
-        null,
-        null);
+        targetType, tenantId, agencyId, 0, true, null, List.of(), List.of(), List.of(), null, null);
   }
 
   private List<MonthlyTopic> buildMonthlyTopTopics(

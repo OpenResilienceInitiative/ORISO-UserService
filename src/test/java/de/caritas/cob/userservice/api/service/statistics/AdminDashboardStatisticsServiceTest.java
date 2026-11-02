@@ -18,6 +18,9 @@ import de.caritas.cob.userservice.api.port.out.AdminStatisticsRepository;
 import de.caritas.cob.userservice.api.port.out.AdminStatisticsRepository.GroupCountProjection;
 import de.caritas.cob.userservice.api.port.out.AdminStatisticsRepository.TopicCountProjection;
 import de.caritas.cob.userservice.api.service.statistics.AdminDashboardStatisticsService.DashboardScope;
+import de.caritas.cob.userservice.api.service.statistics.AdminDashboardStatisticsService.DashboardStatistics;
+import de.caritas.cob.userservice.api.service.statistics.AdminDashboardStatisticsService.Metrics;
+import de.caritas.cob.userservice.api.service.statistics.AdminDashboardStatisticsService.PeriodCounts;
 import de.caritas.cob.userservice.api.service.statistics.AdminDashboardStatisticsService.TargetStatistics;
 import de.caritas.cob.userservice.api.service.statistics.AdminDashboardStatisticsService.TargetType;
 import de.caritas.cob.userservice.api.service.statistics.settings.StatisticsSetting;
@@ -51,6 +54,8 @@ class AdminDashboardStatisticsServiceTest {
   private static final long TENANT_ID = 5L;
   private static final long AGENCY_WITH_TEAM = 11L;
   private static final long AGENCY_WITH_FEW_COUNSELORS = 12L;
+  private static final long AGENCY_WITH_BIG_TEAM = 13L;
+  private static final long AGENCY_WITH_TWO_COUNSELORS = 14L;
   private static final String ADMIN_USER_ID = "admin-user-id";
 
   // Fixed clock: Saturday, 2026-07-11 in Europe/Berlin
@@ -178,6 +183,84 @@ class AdminDashboardStatisticsServiceTest {
         .thenReturn(0L);
   }
 
+  private static TargetStatistics agency(DashboardStatistics dashboard, long agencyId) {
+    return dashboard.targets().stream()
+        .filter(target -> Long.valueOf(agencyId).equals(target.agencyId()))
+        .findFirst()
+        .orElseThrow();
+  }
+
+  private static TargetStatistics tenant(DashboardStatistics dashboard, long tenantId) {
+    return dashboard.targets().stream()
+        .filter(target -> target.targetType() == TargetType.TENANT)
+        .filter(target -> Long.valueOf(tenantId).equals(target.tenantId()))
+        .findFirst()
+        .orElseThrow();
+  }
+
+  /**
+   * What a viewer gets by subtracting the shown rows from the shown total, in counsellors: the
+   * fewer there are, the closer the left-over comes to a single person.
+   */
+  private static long leftOverCounsellors(DashboardStatistics dashboard) {
+    var total = dashboard.targets().get(0);
+    return total.counselorCount()
+        - dashboard.targets().stream()
+            .skip(1)
+            .filter(target -> !target.suppressed())
+            .mapToLong(TargetStatistics::counselorCount)
+            .sum();
+  }
+
+  private static TargetStatistics visible(TargetType type, Long agencyId, long counsellors) {
+    var periods = new PeriodCounts(null, null, 1, 2, 3, 4);
+    return new TargetStatistics(
+        type,
+        TENANT_ID,
+        agencyId,
+        counsellors,
+        false,
+        new Metrics(1, 1, 1, null, 1),
+        List.of(),
+        List.of(),
+        List.of(),
+        periods,
+        periods);
+  }
+
+  /** A hidden row as releases before UserService#1560 stored it: with its exact count. */
+  private static TargetStatistics suppressedLegacy(long agencyId, long counsellors) {
+    return new TargetStatistics(
+        TargetType.AGENCY,
+        TENANT_ID,
+        agencyId,
+        counsellors,
+        true,
+        null,
+        List.of(),
+        List.of(),
+        List.of(),
+        null,
+        null);
+  }
+
+  private void givenStand(List<TargetStatistics> targets) {
+    givenTenantAdmin();
+    when(statisticsSettingsService.snapshotInterval(any()))
+        .thenReturn(StatisticsSnapshotInterval.DAILY);
+    when(dashboardStands.currentStand(any(), any(), any(), any()))
+        .thenReturn(
+            new DashboardStatistics(
+                "2026-07-11T05:00:00Z",
+                DashboardScope.TENANT,
+                false,
+                5,
+                4,
+                StatisticsSnapshotInterval.DAILY,
+                "2026-07-10",
+                targets));
+  }
+
   private void givenTenantAdmin() {
     authenticatedUser.setRoles(Set.of(UserRole.TENANT_ADMIN.getValue()));
     TenantContext.setCurrentTenant(TENANT_ID);
@@ -231,33 +314,155 @@ class AdminDashboardStatisticsServiceTest {
     givenEmptyTenantScopedQueries();
     when(adminStatisticsRepository.countConsultantsByAgency(TENANT_ID))
         .thenReturn(
-            List.of(groupCount(AGENCY_WITH_TEAM, 5), groupCount(AGENCY_WITH_FEW_COUNSELORS, 4)));
+            List.of(
+                groupCount(AGENCY_WITH_TEAM, 6),
+                groupCount(AGENCY_WITH_FEW_COUNSELORS, 4),
+                groupCount(AGENCY_WITH_TWO_COUNSELORS, 3)));
     when(adminStatisticsRepository.countActiveCasesByAgency(TENANT_ID))
         .thenReturn(
-            List.of(groupCount(AGENCY_WITH_TEAM, 7), groupCount(AGENCY_WITH_FEW_COUNSELORS, 2)));
-    when(adminStatisticsRepository.countConsultantsForTenant(TENANT_ID)).thenReturn(9L);
+            List.of(
+                groupCount(AGENCY_WITH_TEAM, 7),
+                groupCount(AGENCY_WITH_FEW_COUNSELORS, 2),
+                groupCount(AGENCY_WITH_TWO_COUNSELORS, 1)));
+    when(adminStatisticsRepository.countConsultantsForTenant(TENANT_ID)).thenReturn(13L);
 
     var dashboard = service.buildDashboard();
 
-    var teamAgency =
-        dashboard.targets().stream()
-            .filter(target -> Long.valueOf(AGENCY_WITH_TEAM).equals(target.agencyId()))
-            .findFirst()
-            .orElseThrow();
+    var teamAgency = agency(dashboard, AGENCY_WITH_TEAM);
     assertThat(teamAgency.suppressed()).isFalse();
     assertThat(teamAgency.metrics().activeCases()).isEqualTo(7);
 
     // 4 counselors is one below the threshold of 5 and must still be suppressed
-    var belowThresholdAgency =
-        dashboard.targets().stream()
-            .filter(target -> Long.valueOf(AGENCY_WITH_FEW_COUNSELORS).equals(target.agencyId()))
-            .findFirst()
-            .orElseThrow();
+    var belowThresholdAgency = agency(dashboard, AGENCY_WITH_FEW_COUNSELORS);
     assertThat(belowThresholdAgency.suppressed()).isTrue();
     assertThat(belowThresholdAgency.metrics()).isNull();
     assertThat(belowThresholdAgency.sessionCountsByPeriod()).isNull();
     assertThat(belowThresholdAgency.dailyNewSessions()).isEmpty();
     assertThat(belowThresholdAgency.monthlyTopTopics()).isEmpty();
+  }
+
+  /* ---------- UserService#1560: no subtraction, no exact count ---------- */
+
+  @Test
+  void buildDashboard_Should_NotReturnTheCounsellorCount_OfASuppressedRow() {
+    givenTenantAdmin();
+    givenEmptyTenantScopedQueries();
+    when(adminStatisticsRepository.countConsultantsByAgency(TENANT_ID))
+        .thenReturn(
+            List.of(groupCount(AGENCY_WITH_TEAM, 6), groupCount(AGENCY_WITH_TWO_COUNSELORS, 2)));
+    when(adminStatisticsRepository.countConsultantsForTenant(TENANT_ID)).thenReturn(8L);
+
+    var dashboard = service.buildDashboard();
+
+    assertThat(agency(dashboard, AGENCY_WITH_TWO_COUNSELORS).suppressed()).isTrue();
+    assertThat(agency(dashboard, AGENCY_WITH_TWO_COUNSELORS).counselorCount()).isZero();
+  }
+
+  @Test
+  void buildDashboard_Should_HideASecondAgency_When_OnlyOneIsHiddenAndTheTotalIsShown() {
+    // total 15, visible 5 + 6, hidden 4: total minus visible would be exactly the hidden agency
+    givenTenantAdmin();
+    givenEmptyTenantScopedQueries();
+    when(adminStatisticsRepository.countConsultantsByAgency(TENANT_ID))
+        .thenReturn(
+            List.of(
+                groupCount(AGENCY_WITH_TEAM, 5),
+                groupCount(AGENCY_WITH_FEW_COUNSELORS, 4),
+                groupCount(AGENCY_WITH_BIG_TEAM, 6)));
+    when(adminStatisticsRepository.countActiveCasesByAgency(TENANT_ID))
+        .thenReturn(
+            List.of(
+                groupCount(AGENCY_WITH_TEAM, 7),
+                groupCount(AGENCY_WITH_FEW_COUNSELORS, 2),
+                groupCount(AGENCY_WITH_BIG_TEAM, 9)));
+    when(adminStatisticsRepository.countConsultantsForTenant(TENANT_ID)).thenReturn(15L);
+
+    var dashboard = service.buildDashboard();
+
+    var total = dashboard.targets().get(0);
+    assertThat(total.targetType()).isEqualTo(TargetType.TENANT);
+    assertThat(total.suppressed()).isFalse();
+    assertThat(total.metrics().activeCases()).isEqualTo(18);
+    // the smallest visible agency goes too, so what the total leaves over is 4 + 5 counsellors
+    assertThat(agency(dashboard, AGENCY_WITH_FEW_COUNSELORS).suppressed()).isTrue();
+    assertThat(agency(dashboard, AGENCY_WITH_TEAM).suppressed()).isTrue();
+    assertThat(agency(dashboard, AGENCY_WITH_TEAM).counselorCount()).isZero();
+    assertThat(agency(dashboard, AGENCY_WITH_BIG_TEAM).suppressed()).isFalse();
+    assertThat(leftOverCounsellors(dashboard)).isGreaterThanOrEqualTo(5);
+  }
+
+  @Test
+  void buildDashboard_Should_KeepEveryVisibleAgency_When_TheHiddenOnesPoolEnoughCounsellors() {
+    givenTenantAdmin();
+    givenEmptyTenantScopedQueries();
+    when(adminStatisticsRepository.countConsultantsByAgency(TENANT_ID))
+        .thenReturn(
+            List.of(
+                groupCount(AGENCY_WITH_BIG_TEAM, 6),
+                groupCount(AGENCY_WITH_FEW_COUNSELORS, 4),
+                groupCount(AGENCY_WITH_TWO_COUNSELORS, 3)));
+    when(adminStatisticsRepository.countConsultantsForTenant(TENANT_ID)).thenReturn(13L);
+
+    var dashboard = service.buildDashboard();
+
+    assertThat(agency(dashboard, AGENCY_WITH_BIG_TEAM).suppressed()).isFalse();
+    assertThat(leftOverCounsellors(dashboard)).isGreaterThanOrEqualTo(5);
+  }
+
+  @Test
+  void buildDashboard_Should_HideASecondTenant_When_OnlyOneIsHiddenAndThePlatformTotalIsShown() {
+    givenPlatformAdminWithTenants(List.of(groupCount(1L, 6), groupCount(2L, 1), groupCount(3L, 8)));
+
+    var dashboard = service.buildDashboard();
+
+    var platform = dashboard.targets().get(0);
+    assertThat(platform.targetType()).isEqualTo(TargetType.PLATFORM);
+    assertThat(platform.suppressed()).isFalse();
+    assertThat(tenant(dashboard, 2L).suppressed()).isTrue();
+    assertThat(tenant(dashboard, 2L).counselorCount()).isZero();
+    assertThat(tenant(dashboard, 1L).suppressed()).as("smallest visible tenant").isTrue();
+    assertThat(tenant(dashboard, 3L).suppressed()).isFalse();
+    assertThat(leftOverCounsellors(dashboard)).isGreaterThanOrEqualTo(5);
+  }
+
+  @Test
+  void aStoredStand_Should_HideASecondRow_AndScrubTheCountOfAHiddenRow() {
+    // a stand from before the fix: one hidden row that still carries its exact count
+    givenStand(
+        List.of(
+            visible(TargetType.TENANT, null, 15),
+            visible(TargetType.AGENCY, AGENCY_WITH_TEAM, 5),
+            suppressedLegacy(AGENCY_WITH_FEW_COUNSELORS, 4),
+            visible(TargetType.AGENCY, AGENCY_WITH_BIG_TEAM, 6)));
+
+    var dashboard = service.buildDashboard();
+
+    assertThat(agency(dashboard, AGENCY_WITH_FEW_COUNSELORS).counselorCount()).isZero();
+    assertThat(agency(dashboard, AGENCY_WITH_TEAM).suppressed()).isTrue();
+    assertThat(agency(dashboard, AGENCY_WITH_BIG_TEAM).suppressed()).isFalse();
+    assertThat(dashboard.targets().get(0).suppressed()).isFalse();
+  }
+
+  @Test
+  void aStoredStand_Should_ProtectTheTotal_When_ARaisedThresholdHidesOneRow() {
+    // stored with every row shown; the agency minimum is raised to 7 afterwards
+    when(statisticsSettingsService.minimumCounsellors(StatisticsSetting.AGENCY_MINIMUM_COUNSELLORS))
+        .thenReturn(7);
+    givenStand(
+        List.of(
+            visible(TargetType.TENANT, null, 23),
+            visible(TargetType.AGENCY, AGENCY_WITH_TEAM, 6),
+            visible(TargetType.AGENCY, AGENCY_WITH_BIG_TEAM, 9),
+            visible(TargetType.AGENCY, AGENCY_WITH_TWO_COUNSELORS, 8)));
+
+    var dashboard = service.buildDashboard();
+
+    assertThat(agency(dashboard, AGENCY_WITH_TEAM).suppressed()).as("below 7").isTrue();
+    assertThat(agency(dashboard, AGENCY_WITH_TWO_COUNSELORS).suppressed())
+        .as("the smallest one left, hidden with it")
+        .isTrue();
+    assertThat(agency(dashboard, AGENCY_WITH_BIG_TEAM).suppressed()).isFalse();
+    assertThat(dashboard.targets().get(0).suppressed()).isFalse();
   }
 
   @Test
@@ -394,7 +599,7 @@ class AdminDashboardStatisticsServiceTest {
 
     lenient()
         .when(adminStatisticsRepository.countConsultantsByTenant())
-        .thenReturn(List.of(groupCount(1L, 5), groupCount(2L, 1)));
+        .thenReturn(List.of(groupCount(1L, 5), groupCount(2L, 1), groupCount(3L, 4)));
     lenient()
         .when(adminStatisticsRepository.countNewSessionsByTenant(any(), any()))
         .thenReturn(List.of());
@@ -417,7 +622,7 @@ class AdminDashboardStatisticsServiceTest {
     var dashboard = service.buildDashboard();
 
     assertThat(dashboard.scope()).isEqualTo(DashboardScope.PLATFORM);
-    assertThat(dashboard.targets()).hasSize(3);
+    assertThat(dashboard.targets()).hasSize(4);
 
     var tenantOne =
         dashboard.targets().stream()

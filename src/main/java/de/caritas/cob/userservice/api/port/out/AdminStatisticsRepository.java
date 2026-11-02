@@ -17,6 +17,17 @@ import org.springframework.data.repository.query.Param;
  */
 public interface AdminStatisticsRepository extends Repository<Session, Long> {
 
+  /**
+   * The one definition of an active counsellor behind the small-cell minimum (UserService#1560):
+   * the minimum protects the people who can be behind a figure, so a registered account counts only
+   * while it is usable - fully created, not deleted or in a deletion process, not paused by
+   * management and not absent. Table alias {@code c} is the {@code consultant} table.
+   */
+  String ACTIVE_CONSULTANT =
+      "c.delete_date IS NULL AND c.status = 'CREATED' "
+          + "AND c.is_absent = 0 AND c.managed_paused = FALSE "
+          + "AND (c.deletion_lifecycle_state IS NULL OR c.deletion_lifecycle_state = 'ACTIVE')";
+
   interface GroupCountProjection {
     Long getGroupId();
 
@@ -141,15 +152,17 @@ public interface AdminStatisticsRepository extends Repository<Session, Long> {
               + "FROM consultant_agency ca "
               + "JOIN consultant c ON c.consultant_id = ca.consultant_id "
               + "WHERE ca.tenant_id = :tenantId "
-              + "AND ca.delete_date IS NULL AND c.delete_date IS NULL "
-              + "GROUP BY ca.agency_id")
+              + "AND ca.delete_date IS NULL AND ca.status = 'CREATED' AND "
+              + ACTIVE_CONSULTANT
+              + " GROUP BY ca.agency_id")
   List<GroupCountProjection> countConsultantsByAgency(@Param("tenantId") Long tenantId);
 
   @Query(
       nativeQuery = true,
       value =
           "SELECT COUNT(*) FROM consultant c "
-              + "WHERE c.tenant_id = :tenantId AND c.delete_date IS NULL")
+              + "WHERE c.tenant_id = :tenantId AND "
+              + ACTIVE_CONSULTANT)
   long countConsultantsForTenant(@Param("tenantId") Long tenantId);
 
   @Query(
@@ -248,8 +261,9 @@ public interface AdminStatisticsRepository extends Repository<Session, Long> {
       nativeQuery = true,
       value =
           "SELECT c.tenant_id AS groupId, COUNT(*) AS total FROM consultant c "
-              + "WHERE c.tenant_id IS NOT NULL AND c.delete_date IS NULL "
-              + "GROUP BY c.tenant_id")
+              + "WHERE c.tenant_id IS NOT NULL AND "
+              + ACTIVE_CONSULTANT
+              + " GROUP BY c.tenant_id")
   List<GroupCountProjection> countConsultantsByTenant();
 
   @Query(
