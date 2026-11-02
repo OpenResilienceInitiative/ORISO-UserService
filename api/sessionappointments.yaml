@@ -1,0 +1,216 @@
+openapi: 3.0.1
+info:
+  title: will be replaced
+  description: This information will be replaced by the SpringFox config information
+  version: 0.0.1
+paths:
+  /users/sessions/{sessionId}/appointments:
+    get:
+      tags:
+        - session-appointment-controller
+      summary: 'The newest appointments of one conversation, cancelled ones included, at most 100,
+        latest start first. [Authorization: the assigned counsellor or the asker of the session]'
+      operationId: getSessionAppointments
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SessionAppointmentDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+        404:
+          description: NOT FOUND - no such session, or the caller is no participant of it
+      security:
+        - Bearer: [ ]
+    post:
+      tags:
+        - session-appointment-controller
+      summary: 'Schedules an appointment. [Authorization: the assigned counsellor of the session]'
+      operationId: createSessionAppointment
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionAppointmentTimeDTO'
+      responses:
+        201:
+          description: CREATED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionAppointmentDTO'
+        400:
+          description: BAD REQUEST - start not in the future, or end not after start
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - the asker of the session, or no/invalid role or CSRF token
+        404:
+          description: NOT FOUND - no such session, or the caller is no participant of it
+      security:
+        - Bearer: [ ]
+  /users/sessions/{sessionId}/appointments/{appointmentId}:
+    put:
+      tags:
+        - session-appointment-controller
+      summary: 'Moves an appointment to a new time. [Authorization: the assigned counsellor of the
+        session]'
+      operationId: rescheduleSessionAppointment
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/AppointmentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionAppointmentTimeDTO'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionAppointmentDTO'
+        400:
+          description: BAD REQUEST - start not in the future, or end not after start
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - the asker of the session, or no/invalid role or CSRF token
+        404:
+          description: NOT FOUND - no such session or appointment, or the caller is no participant
+        409:
+          description: CONFLICT - the appointment is cancelled
+      security:
+        - Bearer: [ ]
+  /users/sessions/{sessionId}/appointments/{appointmentId}/cancel:
+    post:
+      tags:
+        - session-appointment-controller
+      summary: 'Cancels an appointment; cancelling a cancelled one changes nothing. [Authorization:
+        the assigned counsellor or the asker of the session]'
+      operationId: cancelSessionAppointment
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/AppointmentId'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionAppointmentDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+        404:
+          description: NOT FOUND - no such session or appointment, or the caller is no participant
+      security:
+        - Bearer: [ ]
+  /users/appointments/upcoming:
+    get:
+      tags:
+        - session-appointment-controller
+      summary: 'The caller''s next scheduled 1:1 appointments across their sessions, not yet ended,
+        at most 50, earliest first. [Authorization: counsellor or asker]'
+      operationId: getMyUpcomingSessionAppointments
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SessionAppointmentDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization
+      security:
+        - Bearer: [ ]
+components:
+  parameters:
+    SessionId:
+      name: sessionId
+      in: path
+      description: Session id
+      required: true
+      schema:
+        type: integer
+        format: int64
+    AppointmentId:
+      name: appointmentId
+      in: path
+      description: Appointment id
+      required: true
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    SessionAppointmentTimeDTO:
+      type: object
+      required:
+        - startTime
+        - endTime
+      properties:
+        startTime:
+          type: string
+          format: date-time
+        endTime:
+          type: string
+          format: date-time
+    SessionAppointmentDTO:
+      type: object
+      required:
+        - id
+        - sessionId
+        - startTime
+        - endTime
+        - status
+      properties:
+        id:
+          type: string
+          format: uuid
+        sessionId:
+          type: integer
+          format: int64
+        startTime:
+          type: string
+          format: date-time
+        endTime:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum:
+            - SCHEDULED
+            - CANCELLED
+        counterpart:
+          $ref: '#/components/schemas/SessionAppointmentCounterpartDTO'
+    SessionAppointmentCounterpartDTO:
+      description: The other participant as seen by the caller; absent while a session has no counsellor.
+      type: object
+      properties:
+        username:
+          type: string
+        displayName:
+          type: string
+  securitySchemes:
+    Bearer:
+      type: apiKey
+      name: Authorization
+      in: header

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- ORISO-Frontend#1960 (ADR-020): a 1:1 appointment of one conversation. A table of its own,
+       not the existing `appointment`: that table is emptied by the appointment delete job, its
+       rows can be changed through /appointments/{id} by any counsellor, it has no end time and
+       its status column cannot hold a cancellation. Times and references only, no free text. -->
+  <changeSet id="20261102-session-appointment-1960" author="oriso">
+    <preConditions onFail="MARK_RAN"><not><tableExists tableName="session_appointment"/></not></preConditions>
+    <createTable tableName="session_appointment">
+      <column name="id" type="CHAR(36)"><constraints primaryKey="true" nullable="false"/></column>
+      <column name="session_id" type="BIGINT UNSIGNED"><constraints nullable="false"/></column>
+      <column name="start_time" type="DATETIME(6)"><constraints nullable="false"/></column>
+      <column name="end_time" type="DATETIME(6)"><constraints nullable="false"/></column>
+      <column name="status" type="VARCHAR(16)"><constraints nullable="false"/></column>
+    </createTable>
+    <addForeignKeyConstraint baseTableName="session_appointment" baseColumnNames="session_id"
+      referencedTableName="session" referencedColumnNames="id"
+      constraintName="fk_session_appointment_session" onDelete="CASCADE"/>
+    <createIndex tableName="session_appointment" indexName="idx_session_appointment_session_start">
+      <column name="session_id"/>
+      <column name="start_time"/>
+    </createIndex>
+    <createIndex tableName="session_appointment" indexName="idx_session_appointment_end_time">
+      <column name="end_time"/>
+    </createIndex>
+    <rollback><dropTable tableName="session_appointment"/></rollback>
+  </changeSet>
+</databaseChangeLog>
