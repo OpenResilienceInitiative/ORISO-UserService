@@ -10,10 +10,12 @@ import java.time.LocalDateTime;
 import java.util.function.Predicate;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /** Service to trigger stopping of group chats. */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class DeactivateGroupChatService {
@@ -56,9 +58,18 @@ public class DeactivateGroupChatService {
   }
 
   private void deactivateStaleActiveChat(Chat staleChat) {
-    this.actionsRegistry
-        .buildContainerForType(Chat.class)
-        .addActionToExecute(StopChatActionCommand.class)
-        .executeActions(staleChat);
+    try {
+      this.actionsRegistry
+          .buildContainerForType(Chat.class)
+          .addActionToExecute(StopChatActionCommand.class)
+          .executeActions(staleChat);
+    } catch (RuntimeException e) {
+      // One stuck chat must not stop the sweep for all others. The final occurrence of a series
+      // stays active and is retried next run; for a one-off chat this is the old best-effort end.
+      log.warn(
+          "Could not shut down the Matrix room of stale group chat {} ({})",
+          staleChat.getId(),
+          e.getClass().getSimpleName());
+    }
   }
 }

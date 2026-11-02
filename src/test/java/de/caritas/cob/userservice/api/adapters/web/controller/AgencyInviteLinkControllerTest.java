@@ -151,6 +151,32 @@ class AgencyInviteLinkControllerTest {
         "list", String.class, Long.class, String.class, String.class, Integer.class, Integer.class);
   }
 
+  @Test
+  void deactivate_returnsTheDisabledLink() {
+    // Business reason: the admin list must be able to switch a live-chat link off.
+    var link = sampleLink();
+    link.setStatus("DISABLED");
+    when(agencyInviteLinkService.deactivate(5L)).thenReturn(link);
+    when(topicService.getAllTopicsMap()).thenReturn(Map.of());
+
+    var response = controller.deactivate(5L);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertEquals("DISABLED", response.getBody().getStatus());
+  }
+
+  @Test
+  void deactivate_hasTheSamePreAuthorizeAsCreate() throws Exception {
+    var deactivate = AgencyInviteLinkController.class.getMethod("deactivate", Long.class);
+    var create =
+        AgencyInviteLinkController.class.getMethod(
+            "create", AgencyInviteLinkController.CreateInviteLinkRequestDTO.class);
+    assertNotNull(deactivate.getAnnotation(PreAuthorize.class));
+    assertEquals(
+        create.getAnnotation(PreAuthorize.class).value(),
+        deactivate.getAnnotation(PreAuthorize.class).value());
+  }
+
   private void assertHasPreAuthorize(String methodName, Class<?>... paramTypes) throws Exception {
     Method method = AgencyInviteLinkController.class.getMethod(methodName, paramTypes);
     assertNotNull(method.getAnnotation(PreAuthorize.class));

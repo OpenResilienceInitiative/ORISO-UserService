@@ -59,8 +59,20 @@ public class MatrixSynapseService implements MatrixUserClient {
   private static final String ENDPOINT_SYNC = "/_matrix/client/r0/sync";
   private static final String ENDPOINT_UPDATE_USER_ADMIN = "/_synapse/admin/v2/users/{userId}";
   private static final String ENDPOINT_DEACTIVATE_USER = "/_synapse/admin/v1/deactivate/{userId}";
+  private static final String ENDPOINT_REDACT_USER_EVENTS =
+      "/_synapse/admin/v1/user/{userId}/redact";
+  private static final String ENDPOINT_REDACT_STATUS =
+      "/_synapse/admin/v1/user/redact_status/{redactId}";
+  private static final String ENDPOINT_ADMIN_ROOM_MESSAGES =
+      "/_synapse/admin/v1/rooms/{roomId}/messages";
+  private static final int REDACT_EVENT_LIMIT = 100_000;
+  private static final java.util.List<String> MESSAGE_EVENT_TYPES =
+      java.util.List.of("m.room.message", "m.room.encrypted", "m.sticker");
+  private static final String MESSAGE_EVENT_FILTER =
+      "{\"types\":[\"m.room.message\",\"m.room.encrypted\",\"m.sticker\"]}";
   private static final String ENDPOINT_PURGE_ROOM = "/_synapse/admin/v2/rooms/{roomId}";
   private static final String ENDPOINT_ROOM_MEMBERS = "/_synapse/admin/v1/rooms/{roomId}/members";
+  private static final String ENDPOINT_ROOM_STATE = "/_synapse/admin/v1/rooms/{roomId}/state";
   private static final String ENDPOINT_JOINED_ROOMS = "/_matrix/client/r0/joined_rooms";
   private static final String ENDPOINT_PRESENCE = "/_matrix/client/r0/presence/{userId}/status";
   private static final String ENDPOINT_SEND_MESSAGE =
@@ -911,6 +923,14 @@ public class MatrixSynapseService implements MatrixUserClient {
    * @return true if successful, false otherwise
    */
   public boolean deactivateUser(String matrixUserId) {
+    return deactivateUser(matrixUserId, true);
+  }
+
+  /**
+   * Deactivates a Matrix user. {@code erase = false} keeps the user's events and profile for the
+   * people still in the room, used when a temporary account's messages are kept (ADR-029 §5).
+   */
+  public boolean deactivateUser(String matrixUserId, boolean erase) {
     try {
       String adminToken = getAdminToken();
       if (adminToken == null) {
@@ -927,7 +947,7 @@ public class MatrixSynapseService implements MatrixUserClient {
       headers.setBearerAuth(adminToken);
 
       var body = new java.util.HashMap<String, Object>();
-      body.put("erase", true);
+      body.put("erase", erase);
 
       var request = new HttpEntity<>(body, headers);
 
@@ -944,6 +964,141 @@ public class MatrixSynapseService implements MatrixUserClient {
           redactor.pseudonym(matrixUserId),
           redactor.scrub(ex.getMessage()));
       return false;
+    }
+  }
+
+  /**
+   * Redacts every event the user sent in the given rooms through the Synapse admin API (Synapse
+   * 1.116+), used when a temporary account's messages are deleted with it (ADR-029 §5). Synapse
+   * runs it as a background task: the returned id is polled with {@link #redactionStatus}.
+   */
+  public java.util.Optional<String> submitRedaction(
+      String matrixUserId, java.util.List<String> roomIds) {
+    try {
+      String adminToken = getAdminToken();
+      if (adminToken == null) {
+        log.warn("Could not get admin token for Matrix event redaction");
+        return java.util.Optional.empty();
+      }
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_REDACT_USER_EVENTS, java.util.Map.of("userId", matrixUserId));
+      var headers = new HttpHeaders();
+      headers.setContentType(MediaType.APPLICATION_JSON);
+      headers.setBearerAuth(adminToken);
+      var body = new java.util.HashMap<String, Object>();
+      body.put("rooms", roomIds);
+      body.put("reason", "Temporary account deleted");
+      // Synapse's default is 1000 events per room; a guest's whole history must go.
+      body.put("limit", REDACT_EVENT_LIMIT);
+      var response =
+          restTemplate
+              .exchange(
+                  url,
+                  org.springframework.http.HttpMethod.POST,
+                  new HttpEntity<>(body, headers),
+                  java.util.Map.class)
+              .getBody();
+      return response != null && response.get("redact_id") instanceof String id && !id.isBlank()
+          ? java.util.Optional.of(id)
+          : java.util.Optional.empty();
+    } catch (Exception ex) {
+      log.warn(
+          "Failed to redact Matrix events of user {}: {}",
+          redactor.pseudonym(matrixUserId),
+          redactor.scrub(ex.getMessage()));
+      return java.util.Optional.empty();
+    }
+  }
+
+  /** State of an asynchronous Synapse redaction task. */
+  public enum RedactionStatus {
+    RUNNING,
+    COMPLETE,
+    FAILED
+  }
+
+  /**
+   * COMPLETE only once the task finished without failed redactions; FAILED when it failed or is
+   * unknown to Synapse (submit again); RUNNING while it runs or cannot be read (ask again later).
+   */
+  public RedactionStatus redactionStatus(String redactId) {
+    try {
+      String adminToken = getAdminToken();
+      if (adminToken == null) return RedactionStatus.RUNNING;
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_REDACT_STATUS, java.util.Map.of("redactId", redactId));
+      var headers = new HttpHeaders();
+      headers.setBearerAuth(adminToken);
+      var status =
+          restTemplate
+              .exchange(
+                  url,
+                  org.springframework.http.HttpMethod.GET,
+                  new HttpEntity<>(headers),
+                  java.util.Map.class)
+              .getBody();
+      var state = status == null ? null : status.get("status");
+      if ("complete".equals(state)) {
+        return status.get("failed_redactions") instanceof java.util.Map<?, ?> failed
+                && !failed.isEmpty()
+            ? RedactionStatus.FAILED
+            : RedactionStatus.COMPLETE;
+      }
+      return "failed".equals(state) ? RedactionStatus.FAILED : RedactionStatus.RUNNING;
+    } catch (org.springframework.web.client.HttpClientErrorException ex) {
+      if (ex.getStatusCode().value() == 404) return RedactionStatus.FAILED;
+      log.warn("Could not read a Matrix redaction status: {}", ex.getStatusCode().value());
+      return RedactionStatus.RUNNING;
+    } catch (Exception ex) {
+      log.warn("Could not read a Matrix redaction status: {}", ex.getClass().getSimpleName());
+      return RedactionStatus.RUNNING;
+    }
+  }
+
+  /**
+   * Epoch millis of the newest message-bearing event in a room (plain, encrypted or sticker), 0
+   * when the room has none. Filtered on the server and read with the admin API, so the admin need
+   * not be a member.
+   *
+   * @throws RoomEventUnavailableException when Matrix cannot tell, including events that carry no
+   *     message time: unknown is never "inactive"
+   */
+  public long latestMessageTimestamp(String roomId) {
+    try {
+      String adminToken = getAdminToken();
+      if (adminToken == null) throw new IllegalStateException("no admin token");
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig,
+              ENDPOINT_ADMIN_ROOM_MESSAGES,
+              java.util.Map.of("roomId", roomId),
+              java.util.Map.of("dir", "b", "limit", 10, "filter", MESSAGE_EVENT_FILTER));
+      var headers = new HttpHeaders();
+      headers.setBearerAuth(adminToken);
+      var body =
+          restTemplate
+              .exchange(
+                  url,
+                  org.springframework.http.HttpMethod.GET,
+                  new HttpEntity<>(headers),
+                  java.util.Map.class)
+              .getBody();
+      if (body == null || !(body.get("chunk") instanceof java.util.List<?> chunk))
+        throw new IllegalStateException("no chunk");
+      if (chunk.isEmpty()) return 0L;
+      return chunk.stream()
+          .filter(java.util.Map.class::isInstance)
+          .map(java.util.Map.class::cast)
+          .filter(event -> MESSAGE_EVENT_TYPES.contains(event.get("type")))
+          .map(event -> event.get("origin_server_ts"))
+          .filter(Number.class::isInstance)
+          .mapToLong(ts -> ((Number) ts).longValue())
+          .max()
+          .orElseThrow(() -> new IllegalStateException("no message time"));
+    } catch (RuntimeException ex) {
+      throw new RoomEventUnavailableException(ex);
     }
   }
 
@@ -1290,6 +1445,13 @@ public class MatrixSynapseService implements MatrixUserClient {
     return matrixRoomClient.inviteUserToRoom(roomId, userId, accessToken);
   }
 
+  /** Single invite attempt; a 429 surfaces with the server's retry delay instead of a sleep. */
+  public ResponseEntity<MatrixInviteUserResponseDTO> inviteUserToRoomOnce(
+      String roomId, String userId, String accessToken) throws MatrixInviteUserException {
+
+    return matrixRoomClient.inviteUserToRoomOnce(roomId, userId, accessToken);
+  }
+
   /**
    * Accepts a room invitation (joins the room) on behalf of a user.
    *
@@ -1496,6 +1658,48 @@ public class MatrixSynapseService implements MatrixUserClient {
           && ex instanceof org.springframework.web.client.RestClientException) {
         throw new CallLookupUnavailableException("call membership lookup unavailable", ex);
       }
+      return java.util.Optional.empty();
+    }
+  }
+
+  /**
+   * Whether a moderator banned the user from the room, read from the room state via the Synapse
+   * admin API. Empty when the state cannot be read; callers must treat that as "unknown".
+   */
+  public java.util.Optional<Boolean> isBannedFromRoom(String matrixRoomId, String matrixUserId) {
+    String adminToken = getAdminAccessToken();
+    if (adminToken == null) {
+      return java.util.Optional.empty();
+    }
+    try {
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_ROOM_STATE, java.util.Map.of("roomId", matrixRoomId));
+      ResponseEntity<java.util.Map> response =
+          restTemplate.exchange(
+              url,
+              org.springframework.http.HttpMethod.GET,
+              new HttpEntity<>(getClientHttpHeaders(adminToken)),
+              java.util.Map.class);
+      var body = response.getBody();
+      if (body == null || !(body.get("state") instanceof java.util.List<?> events)) {
+        return java.util.Optional.empty();
+      }
+      return java.util.Optional.of(
+          events.stream()
+              .filter(java.util.Map.class::isInstance)
+              .map(java.util.Map.class::cast)
+              .filter(event -> "m.room.member".equals(event.get("type")))
+              .filter(event -> matrixUserId.equals(event.get("state_key")))
+              .map(event -> event.get("content"))
+              .filter(java.util.Map.class::isInstance)
+              .map(java.util.Map.class::cast)
+              .anyMatch(content -> "ban".equals(content.get("membership"))));
+    } catch (Exception ex) {
+      log.warn(
+          "Matrix Error: Could not read state of room {}: {}",
+          matrixRoomId,
+          redactor.scrub(ex.getMessage()));
       return java.util.Optional.empty();
     }
   }
@@ -2203,6 +2407,22 @@ public class MatrixSynapseService implements MatrixUserClient {
    */
   public boolean removeUserFromRoom(String roomId, String userId, String accessToken) {
     return matrixRoomClient.removeUserFromRoom(roomId, userId, accessToken);
+  }
+
+  /** Kicks a user from a room; also retracts a pending invite. Never throws. */
+  public boolean kickUserFromRoom(String roomId, String userId, String accessToken) {
+    return matrixRoomClient.kickUserFromRoom(roomId, userId, accessToken);
+  }
+
+  /** The user's m.room.member membership in the room, or empty when unreadable. Never throws. */
+  public java.util.Optional<String> getRoomMembership(
+      String roomId, String userId, String accessToken) {
+    return matrixRoomClient.getRoomMembership(roomId, userId, accessToken);
+  }
+
+  /** Drops a user's explicit power-level entry in a room; true when none remains. */
+  public boolean clearUserPowerLevel(String roomId, String userId, String accessToken) {
+    return matrixRoomClient.clearUserPowerLevel(roomId, userId, accessToken);
   }
 
   /**

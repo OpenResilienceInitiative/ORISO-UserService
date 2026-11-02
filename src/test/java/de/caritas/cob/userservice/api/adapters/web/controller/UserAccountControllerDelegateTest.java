@@ -11,6 +11,7 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AbsenceDTO;
@@ -281,9 +282,22 @@ class UserAccountControllerDelegateTest {
   }
 
   @Test
+  void updatePasswordShouldRejectAFifteenCharacterNewPasswordBeforeAnyIdentityCall() {
+    var passwordDTO = new PasswordDTO();
+    passwordDTO.setOldPassword("old");
+    passwordDTO.setNewPassword("123456789012345");
+
+    assertThatThrownBy(() -> delegate.updatePassword(passwordDTO))
+        .isInstanceOf(BadRequestException.class);
+
+    verifyNoInteractions(identityManager);
+  }
+
+  @Test
   void updatePasswordShouldThrowBadRequestWhenOldPasswordIsInvalid() {
     var passwordDTO = new PasswordDTO();
     passwordDTO.setOldPassword("old");
+    passwordDTO.setNewPassword("new-password-16-chars");
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
     when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(USERNAME);
     when(identityManager.validatePasswordIgnoring2fa(USERNAME, "old")).thenReturn(false);
@@ -299,8 +313,8 @@ class UserAccountControllerDelegateTest {
   @Test
   void updatePasswordShouldRefuseTheOldPasswordAsTheNewOneAndKeepTheRequirement() {
     var passwordDTO = new PasswordDTO();
-    passwordDTO.setOldPassword("old");
-    passwordDTO.setNewPassword("old");
+    passwordDTO.setOldPassword("same-password-16-chars");
+    passwordDTO.setNewPassword("same-password-16-chars");
 
     assertThatThrownBy(() -> delegate.updatePassword(passwordDTO))
         .isInstanceOf(ConflictException.class);
@@ -315,17 +329,17 @@ class UserAccountControllerDelegateTest {
   void updatePasswordShouldChangePasswordAndReturnOk() {
     var passwordDTO = new PasswordDTO();
     passwordDTO.setOldPassword("old");
-    passwordDTO.setNewPassword("new");
+    passwordDTO.setNewPassword("new-password-16-chars");
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
     when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(USERNAME);
     when(identityManager.validatePasswordIgnoring2fa(USERNAME, "old")).thenReturn(true);
-    when(identityManager.changePassword(USER_ID, "new")).thenReturn(true);
+    when(identityManager.changePassword(USER_ID, "new-password-16-chars")).thenReturn(true);
 
     var response = delegate.updatePassword(passwordDTO);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-    verify(identityManager).changePassword(USER_ID, "new");
+    verify(identityManager).changePassword(USER_ID, "new-password-16-chars");
   }
 
   @Test
@@ -370,7 +384,7 @@ class UserAccountControllerDelegateTest {
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
     when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(USERNAME);
     when(identityManager.validatePasswordIgnoring2fa(USERNAME, "old")).thenReturn(true);
-    when(identityManager.changePassword(USER_ID, "new")).thenReturn(false);
+    when(identityManager.changePassword(USER_ID, "new-password-16-chars")).thenReturn(false);
 
     assertThatThrownBy(() -> delegate.updatePassword(passwordDTO))
         .isInstanceOf(InternalServerErrorException.class);
@@ -392,7 +406,7 @@ class UserAccountControllerDelegateTest {
   private PasswordDTO passwordChange() {
     var passwordDTO = new PasswordDTO();
     passwordDTO.setOldPassword("old");
-    passwordDTO.setNewPassword("new");
+    passwordDTO.setNewPassword("new-password-16-chars");
     return passwordDTO;
   }
 
@@ -401,7 +415,7 @@ class UserAccountControllerDelegateTest {
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
     when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(USERNAME);
     when(identityManager.validatePasswordIgnoring2fa(USERNAME, "old")).thenReturn(true);
-    when(identityManager.changePassword(USER_ID, "new")).thenReturn(true);
+    when(identityManager.changePassword(USER_ID, "new-password-16-chars")).thenReturn(true);
     when(consultantService.getConsultant(USER_ID)).thenReturn(Optional.ofNullable(consultant));
   }
 
@@ -823,12 +837,12 @@ class UserAccountControllerDelegateTest {
     // Identity provider failures during password change surface as server errors.
     var passwordDTO = new PasswordDTO();
     passwordDTO.setOldPassword("old");
-    passwordDTO.setNewPassword("new");
+    passwordDTO.setNewPassword("new-password-16-chars");
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
     when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(USERNAME);
     when(identityManager.validatePasswordIgnoring2fa(USERNAME, "old")).thenReturn(true);
-    when(identityManager.changePassword(USER_ID, "new")).thenReturn(false);
+    when(identityManager.changePassword(USER_ID, "new-password-16-chars")).thenReturn(false);
 
     assertThatThrownBy(() -> delegate.updatePassword(passwordDTO))
         .isInstanceOf(InternalServerErrorException.class);

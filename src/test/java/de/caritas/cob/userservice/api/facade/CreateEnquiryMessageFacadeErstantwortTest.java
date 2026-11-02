@@ -21,10 +21,13 @@ import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRout
 import de.caritas.cob.userservice.api.service.erstantwort.ErstantwortContext;
 import de.caritas.cob.userservice.api.service.erstantwort.ErstantwortModality;
 import de.caritas.cob.userservice.api.service.erstantwort.ErstantwortPayloadBuilder;
+import de.caritas.cob.userservice.api.service.erstantwort.ErstantwortTenantTextResolver;
+import de.caritas.cob.userservice.api.service.erstantwort.TenantErstantwortContentClient;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.AgencyPreAssignmentRoomService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
+import de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualContent;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -63,6 +66,7 @@ class CreateEnquiryMessageFacadeErstantwortTest {
   @Mock private AgencyPreAssignmentRoomService agencyPreAssignmentRoomService;
   @Mock private ErstantwortPayloadBuilder erstantwortPayloadBuilder;
   @Mock private MatrixSessionSystemMessageService matrixSessionSystemMessageService;
+  @Mock private TenantErstantwortContentClient tenantContentClient;
 
   private CreateEnquiryMessageFacade facade;
 
@@ -82,7 +86,8 @@ class CreateEnquiryMessageFacadeErstantwortTest {
             eventNotificationService,
             agencyPreAssignmentRoomService,
             erstantwortPayloadBuilder,
-            matrixSessionSystemMessageService);
+            matrixSessionSystemMessageService,
+            new ErstantwortTenantTextResolver(tenantContentClient));
     user = new User();
     user.setUserId("asker-1");
     user.setMatrixUserId("@asker:matrix.test");
@@ -152,6 +157,33 @@ class CreateEnquiryMessageFacadeErstantwortTest {
     assertThat(parsed.path("bausteine").size()).isGreaterThan(0);
     assertThat(body.getValue()).doesNotContain("{{", "erstantwort.");
     verify(eventNotificationService).createFirstResponseNotification(session);
+  }
+
+  @Test
+  void tenantAuthoredTextsReachThePostedPayload() {
+    session.setTenantId(77L);
+    when(tenantContentClient.readContent(77L))
+        .thenReturn(
+            new MultilingualContent()
+                .erstantwortGreeting(Map.of("de", "<p>Willkommen beim Träger Sonnenblume</p>"))
+                .erstantwortEmergencyAddition(Map.of("de", "<p>Notruf Sonnenblume 0800</p>"))
+                .erstantwortResponseDeadlineDays(4));
+    when(erstantwortPayloadBuilder.buildFirstResponseBody(any()))
+        .thenAnswer(
+            call -> new ErstantwortPayloadBuilder().buildFirstResponseBody(call.getArgument(0)));
+    var data = enquiryData();
+    data.setUiLocale("de");
+
+    facade.createEnquiryMessage(data);
+
+    verify(tenantContentClient).readContent(77L);
+    var body = ArgumentCaptor.forClass(String.class);
+    verify(matrixSessionSystemMessageService).postFirstResponseMessage(eq(session), body.capture());
+    assertThat(body.getValue())
+        .contains("Willkommen beim Träger Sonnenblume")
+        .contains("emergencyAddition")
+        .contains("Notruf Sonnenblume 0800")
+        .doesNotContain("<p>", "</p>");
   }
 
   @Test

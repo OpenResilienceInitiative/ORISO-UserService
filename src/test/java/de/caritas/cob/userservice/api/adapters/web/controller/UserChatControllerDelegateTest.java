@@ -8,6 +8,8 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatInfoResponseDTO;
@@ -16,6 +18,8 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateChatResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.InternalSubsetChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateChatResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.config.JsonNullableJacksonConfig;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -34,17 +38,34 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.service.ChatService;
+import de.caritas.cob.userservice.api.service.agency.EffectiveAgencySettingsLookup;
 import de.caritas.cob.userservice.api.service.chat.GroupChatFeatureGate;
 import de.caritas.cob.userservice.api.service.chat.GroupChatPermissionService;
+import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
+import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.jackson.autoconfigure.JacksonAutoConfiguration;
+import org.springframework.boot.restclient.RestTemplateBuilder;
+import org.springframework.boot.restclient.autoconfigure.RestTemplateAutoConfiguration;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.cache.CacheManager;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.test.web.client.ExpectedCount;
+import org.springframework.test.web.client.MockRestServiceServer;
 
 @ExtendWith(MockitoExtension.class)
 class UserChatControllerDelegateTest {
@@ -78,6 +99,7 @@ class UserChatControllerDelegateTest {
 
     var response = delegate.createChatV1(chatDTO);
 
+    verify(groupChatFeatureGate).requireEnabled(consultant, chatDTO);
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
     assertThat(response.getBody()).isSameAs(createChatResponseDTO);
   }
@@ -307,6 +329,134 @@ class UserChatControllerDelegateTest {
 
     assertThatThrownBy(() -> delegate.banFromChat("chat-user-id", 1L))
         .isInstanceOf(NotFoundException.class);
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "2,false,SUGGESTED,true,false,42,7,true,valid",
+    "2,false,ENFORCED,true,true,42,7,false,valid",
+    "2,true,ENFORCED,false,false,42,7,true,valid",
+    "2,true,SUGGESTED,false,true,42,7,false,valid",
+    "2,true,SUGGESTED,true,false,42,7,true,valid",
+    "2,false,SUGGESTED,false,false,42,7,false,valid",
+    "2,false,SUGGESTED,true,false,99,7,false,valid",
+    "2,false,SUGGESTED,true,false,42,8,false,valid",
+    "1,false,ENFORCED,true,true,42,7,false,valid",
+    "1,false,SUGGESTED,true,false,42,7,true,valid",
+    "1,true,SUGGESTED,false,true,42,7,false,valid",
+    "2,true,SUGGESTED,true,true,42,7,false,invalidJson",
+    "2,true,SUGGESTED,true,true,42,7,false,invalidBoolean",
+    "1,true,SUGGESTED,true,true,42,7,false,wrongContentType"
+  })
+  void createChatUsesFreshGeneratedPublicClientsAndRejectsForeignProjections(
+      int version,
+      boolean parentValue,
+      String mode,
+      boolean agencyValue,
+      boolean oldMaster,
+      long projectionId,
+      long projectionTenant,
+      boolean allowed,
+      String responseKind) {
+    new ApplicationContextRunner()
+        .withConfiguration(
+            AutoConfigurations.of(
+                JacksonAutoConfiguration.class,
+                org.springframework.boot.http.converter.autoconfigure
+                    .HttpMessageConvertersAutoConfiguration.class,
+                RestTemplateAutoConfiguration.class))
+        .withUserConfiguration(JsonNullableJacksonConfig.class)
+        .run(
+            ctx -> {
+              var rest = ctx.getBean(RestTemplateBuilder.class).build();
+              var http = MockRestServiceServer.bindTo(rest).build();
+              http.expect(requestTo("http://tenant/tenant/public/id/7"))
+                  .andRespond(
+                      org.springframework.test.web.client.response.MockRestResponseCreators
+                          .withSuccess(
+                              "{\"id\":7,\"name\":\"Tenant\",\"settings\":{\"featureGroupChatV2Enabled\":"
+                                  + oldMaster
+                                  + "},\"permissionPolicies\":{\"featureSelfHelpGroupsEnabled\":{\"value\":"
+                                  + parentValue
+                                  + ",\"mode\":\""
+                                  + mode
+                                  + "\",\"inherited\":true}}}",
+                              MediaType.APPLICATION_JSON));
+              String agencyBody =
+                  "[{\"id\":"
+                      + projectionId
+                      + ",\"tenantId\":"
+                      + projectionTenant
+                      + ",\"settings\":{\"featureGroupChatV2Enabled\":false,\"featureSelfHelpGroupsEnabled\":"
+                      + agencyValue
+                      + "}}]";
+              if (responseKind.equals("invalidJson")) agencyBody = "{invalid-json";
+              if (responseKind.equals("invalidBoolean"))
+                agencyBody =
+                    "[{\"id\":42,\"tenantId\":7,\"settings\":{\"featureSelfHelpGroupsEnabled\":\"not-a-boolean\"}}]";
+              http.expect(ExpectedCount.between(0, 1), requestTo("http://agency/agencies/42"))
+                  .andRespond(
+                      withSuccess(
+                          agencyBody,
+                          responseKind.equals("wrongContentType")
+                              ? MediaType.TEXT_PLAIN
+                              : MediaType.APPLICATION_JSON));
+              var tenantFactory =
+                  new de.caritas.cob.userservice.api.config.apiclient
+                      .TenantServiceApiControllerFactory();
+              ReflectionTestUtils.setField(tenantFactory, "restTemplate", rest);
+              ReflectionTestUtils.setField(tenantFactory, "tenantServiceApiUrl", "http://tenant");
+              var tenantService =
+                  new TenantService(tenantFactory, Mockito.mock(CacheManager.class));
+              var agencyFactory =
+                  new de.caritas.cob.userservice.api.config.apiclient
+                      .AgencyServiceApiControllerFactory();
+              ReflectionTestUtils.setField(agencyFactory, "restTemplate", rest);
+              ReflectionTestUtils.setField(agencyFactory, "agencyServiceApiUrl", "http://agency");
+              var security = Mockito.mock(SecurityHeaderSupplier.class);
+              if (parentValue || !"ENFORCED".equals(mode)) {
+                when(security.getOptionalKeycloakAndCsrfHttpHeaders())
+                    .thenReturn(new HttpHeaders());
+              }
+              var lookup =
+                  new EffectiveAgencySettingsLookup(
+                      agencyFactory, security, Mockito.mock(TenantHeaderSupplier.class));
+              var realGate = new GroupChatFeatureGate(tenantService, lookup);
+              ReflectionTestUtils.setField(delegate, "groupChatFeatureGate", realGate);
+              var actor = consultant();
+              actor.setTenantId(7L);
+              when(userAccountProvider.retrieveValidatedConsultant()).thenReturn(actor);
+              var request =
+                  ChatDTO.builder().topic("Circle").agencyId(42L).repetitive(true).build();
+              if (allowed) {
+                if (version == 1)
+                  when(createChatFacade.createChatV1(request, actor))
+                      .thenReturn(new CreateChatResponseDTO());
+                else
+                  when(createChatFacade.createChatV2(request, actor))
+                      .thenReturn(new CreateChatResponseDTO());
+                var response =
+                    version == 1 ? delegate.createChatV1(request) : delegate.createChatV2(request);
+                assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+              } else {
+                var refusal =
+                    assertThatThrownBy(
+                        () -> {
+                          if (version == 1) delegate.createChatV1(request);
+                          else delegate.createChatV2(request);
+                        });
+                if (responseKind.equals("valid")) refusal.isInstanceOf(ForbiddenException.class);
+                else
+                  refusal
+                      .isInstanceOf(
+                          de.caritas.cob.userservice.api.exception.httpresponses
+                              .ServiceUnavailableException.class)
+                      .hasMessage("Agency policy projection is unreadable");
+                verify(createChatFacade, never()).createChatV1(any(), any());
+                verify(createChatFacade, never()).createChatV2(any(), any());
+              }
+              http.verify();
+            });
   }
 
   private Chat chat() {

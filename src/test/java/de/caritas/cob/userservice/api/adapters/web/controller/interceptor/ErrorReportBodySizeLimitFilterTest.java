@@ -78,4 +78,62 @@ class ErrorReportBodySizeLimitFilterTest {
 
     filter.doFilter(request, new MockHttpServletResponse(), capturingChain);
   }
+
+  @Test
+  void getInputStream_Should_letJacksonReadSmallReport_When_itAsksForAFullBuffer()
+      throws Exception {
+    // Spring's Jackson 3 converter reads in 8000-byte chunks and checks for trailing tokens; dev
+    // answered 400 to every 372-byte report (28.10.2026).
+    var body = "{\"message\":\"" + "m".repeat(300) + "\",\"url\":\"https://dev.oriso.org/x\"}";
+    var request = new MockHttpServletRequest("POST", "/service/error-reports");
+    request.setContent(body.getBytes(StandardCharsets.UTF_8));
+    var parsed = new java.util.concurrent.atomic.AtomicReference<Object>();
+
+    filter.doFilter(
+        request,
+        new MockHttpServletResponse(),
+        (req, res) ->
+            parsed.set(
+                new org.springframework.http.converter.json.JacksonJsonHttpMessageConverter()
+                    .read(
+                        java.util.Map.class,
+                        new org.springframework.http.server.ServletServerHttpRequest(
+                            (jakarta.servlet.http.HttpServletRequest) req))));
+
+    assertThat(parsed.get()).isInstanceOf(java.util.Map.class);
+  }
+
+  @Test
+  void getInputStream_Should_throwIOException_When_chunkedBodyExceedsLimit() throws Exception {
+    var request = new MockHttpServletRequest("POST", "/error-reports");
+    request.setContent(
+        "x"
+            .repeat((int) ErrorReportBodySizeLimitFilter.MAX_BODY_BYTES + 1)
+            .getBytes(StandardCharsets.UTF_8));
+    var thrown = new java.util.concurrent.atomic.AtomicReference<Throwable>();
+
+    filter.doFilter(
+        new org.springframework.mock.web.MockHttpServletRequest() {
+          {
+            setMethod("POST");
+            setRequestURI("/error-reports");
+            setContent(request.getContentAsByteArray());
+          }
+
+          @Override
+          public long getContentLengthLong() {
+            return -1;
+          }
+        },
+        new MockHttpServletResponse(),
+        (req, res) -> {
+          try {
+            ((jakarta.servlet.http.HttpServletRequest) req).getInputStream().readAllBytes();
+          } catch (java.io.IOException e) {
+            thrown.set(e);
+          }
+        });
+
+    assertThat(thrown.get()).isInstanceOf(java.io.IOException.class);
+  }
 }

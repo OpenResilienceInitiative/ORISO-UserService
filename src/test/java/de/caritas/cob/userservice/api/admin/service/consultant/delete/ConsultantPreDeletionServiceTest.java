@@ -98,4 +98,22 @@ public class ConsultantPreDeletionServiceTest {
 
     verify(this.identityDeactivator, times(1)).deactivateUser(consultant.getId());
   }
+
+  @Test
+  public void activateIdentity_Should_enableTheKeycloakLogin() {
+    Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+
+    this.consultantPreDeletionService.activateIdentity(consultant);
+
+    verify(this.identityDeactivator).activateUser(consultant.getId());
+  }
+
+  @Test
+  public void restoreAgencyRelations_Should_delegateToTheValidationService() {
+    Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+
+    this.consultantPreDeletionService.restoreAgencyRelations(consultant, DELETED_AT);
+
+    verify(this.validationService).restoreRelationsMarkedWith(consultant, DELETED_AT);
+  }
 }

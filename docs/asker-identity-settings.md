@@ -39,8 +39,10 @@ External session-data updates retain their authenticated owner check.
 
 Self-help signup joins a shared group and creates no personal Session. Its legacy
 `displayName` input stays ignored; it never renames a shared room or stores an
-account-wide/member alias. Existing live-room alias selection uses the session
-update contract.
+account-wide/member alias. Direct-link registration likewise opens no Session
+until the link starts the conversation, so it ignores a signup alias instead of
+creating a global pending name. Existing live-room alias selection uses the
+session update contract.
 
 ## Conversation email collection
 

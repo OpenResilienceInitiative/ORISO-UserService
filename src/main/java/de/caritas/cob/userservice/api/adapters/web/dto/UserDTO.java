@@ -19,6 +19,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.serialization.EncodeUsern
 import de.caritas.cob.userservice.api.adapters.web.dto.serialization.UrlDecodePasswordJsonDeserializer;
 import de.caritas.cob.userservice.api.adapters.web.dto.validation.ValidAge;
 import de.caritas.cob.userservice.api.adapters.web.dto.validation.ValidState;
+import de.caritas.cob.userservice.api.helper.PasswordPolicy;
 import io.swagger.annotations.ApiModel;
 import io.swagger.annotations.ApiModelProperty;
 import jakarta.validation.constraints.Email;
@@ -27,6 +28,7 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import java.util.Collection;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -69,6 +71,7 @@ public class UserDTO implements UserRegistrationDTO {
   private Long agencyId;
 
   @NotBlank(message = "{user.password.notBlank}")
+  @Size(min = PasswordPolicy.MIN_LENGTH, message = "{user.password.tooShort}")
   @ApiModelProperty(required = true, example = "pass@w0rd", position = 3)
   @JsonDeserialize(using = UrlDecodePasswordJsonDeserializer.class)
   @JsonProperty("password")
@@ -160,6 +163,14 @@ public class UserDTO implements UserRegistrationDTO {
   @ApiModelProperty(required = false)
   @JsonProperty("groupChatInviteToken")
   private String groupChatInviteToken;
+
+  /**
+   * Token of the counsellor direct link that creates this temporary account (ADR-029 §3, #1476).
+   * Requires {@code temporary}; the account copies the platform lifetimes and opens no enquiry.
+   */
+  @ApiModelProperty(required = false, example = "\"a1b2c3\"")
+  @JsonProperty("directLinkToken")
+  private String directLinkToken;
 
   public Integer getUserAge() {
     return StringUtils.isNumeric(age) ? Integer.valueOf(age) : null;

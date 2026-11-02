@@ -322,7 +322,23 @@ public class GroupChatMembershipService {
   }
 
   private ResolvedRoomMember resolveMember(String matrixUserId) {
+    // The caller already proved this exact MXID is in this room. Tenant filtering must not
+    // silently drop a legitimately invited external participant during rotation or retention.
+    try {
+      return TenantContext.supplyAcrossTenants(() -> resolveJoinedIdentity(matrixUserId));
+    } catch (RuntimeException ambiguousOrUnavailable) {
+      throw new CustomValidationHttpStatusException(
+          de.caritas.cob.userservice.api.exception.httpresponses.customheader
+              .HttpStatusExceptionReason.DPA_POLICY_UNAVAILABLE,
+          HttpStatus.BAD_GATEWAY);
+    }
+  }
+
+  private ResolvedRoomMember resolveJoinedIdentity(String matrixUserId) {
     var consultant = consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(matrixUserId);
+    var user = userRepository.findByMatrixUserIdAndDeleteDateIsNull(matrixUserId);
+    if (consultant.isPresent() && user.isPresent())
+      throw new IllegalStateException("Ambiguous room-member identity");
     if (consultant.isPresent()) {
       var c = consultant.get();
       return new ResolvedRoomMember(
@@ -335,7 +351,6 @@ public class GroupChatMembershipService {
           c.getAvatarId());
     }
 
-    var user = userRepository.findByMatrixUserIdAndDeleteDateIsNull(matrixUserId);
     if (user.isPresent() && !isGroupChatSystemUser(user.get())) {
       var u = user.get();
       return new ResolvedRoomMember(
@@ -364,6 +379,15 @@ public class GroupChatMembershipService {
 
   private boolean isGroupChatSystemUser(User user) {
     return user.getUserId() != null && user.getUserId().startsWith(GROUP_CHAT_SYSTEM_USER_PREFIX);
+  }
+
+  /** Whether the member is banned from the chat's room; empty when unknown. */
+  public Optional<Boolean> isBannedFromRoom(Chat chat, String memberMatrixUserId) {
+    var matrixRoomId = resolveMatrixRoomId(chat);
+    if (isBlank(matrixRoomId) || isBlank(memberMatrixUserId)) {
+      return Optional.empty();
+    }
+    return matrixSynapseService.isBannedFromRoom(matrixRoomId, memberMatrixUserId);
   }
 
   /**

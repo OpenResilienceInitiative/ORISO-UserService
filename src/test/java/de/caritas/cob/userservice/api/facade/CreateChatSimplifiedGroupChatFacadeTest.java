@@ -101,7 +101,8 @@ class CreateChatSimplifiedGroupChatFacadeTest {
             userRepository,
             consultantMembership,
             groupPolicy,
-            matrixCleanup);
+            matrixCleanup,
+            mock(org.springframework.transaction.PlatformTransactionManager.class));
     consultant = mock(Consultant.class);
     when(consultant.getId()).thenReturn("creator-consultant-id");
     when(consultant.getMatrixUserId()).thenReturn("@creator:matrix.org");

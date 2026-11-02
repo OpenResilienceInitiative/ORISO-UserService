@@ -105,12 +105,12 @@ class DeactivateGroupChatSchedulerMariaDbReplicaIT {
             })
         .when(tenantContextProvider)
         .setTechnicalContextIfMultiTenancyIsEnabled();
-    when(matrixSynapseService.purgeRoom(ROOM_ID))
+    when(matrixSynapseService.purgeRoomOrConfirmGone(ROOM_ID))
         .thenAnswer(
             ignored -> {
               firstMatrixShutdownEntered.countDown();
               await(releaseFirstMatrixShutdown);
-              return true;
+              return MatrixSynapseService.RoomPurgeOutcome.PURGED;
             });
     var first = new DeactivateGroupChatScheduler(deactivationService, tenantContextProvider);
     var second = new DeactivateGroupChatScheduler(deactivationService, tenantContextProvider);
@@ -137,7 +137,7 @@ class DeactivateGroupChatSchedulerMariaDbReplicaIT {
     }
 
     assertThat(chatRepository.findById(persistedChat.getId())).isEmpty();
-    verify(matrixSynapseService, times(1)).purgeRoom(ROOM_ID);
+    verify(matrixSynapseService, times(1)).purgeRoomOrConfirmGone(ROOM_ID);
     verify(tenantContextProvider, times(2)).setTechnicalContextIfMultiTenancyIsEnabled();
   }
 

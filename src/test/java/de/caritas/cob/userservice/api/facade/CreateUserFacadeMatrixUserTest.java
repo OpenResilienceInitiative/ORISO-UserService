@@ -62,6 +62,14 @@ class CreateUserFacadeMatrixUserTest {
 
   @org.mockito.Mock private ChatRecoveryEnrollmentPolicyService chatRecoveryEnrollmentPolicyService;
 
+  @org.mockito.Mock
+  private de.caritas.cob.userservice.api.service.agencyinvitelink.TemporaryAccountLinkResolver
+      temporaryAccountLinkResolver;
+
+  @org.mockito.Mock
+  private de.caritas.cob.userservice.api.service.temporaryaccount.TemporaryAccountSettingsService
+      temporaryAccountSettings;
+
   @org.junit.jupiter.api.BeforeEach
   void recoveryPolicyFixture() {
     TenantContext.setCurrentTenant(1L);
@@ -103,7 +111,10 @@ class CreateUserFacadeMatrixUserTest {
             org.mockito.Mockito.mock(
                 de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy.class),
             org.mockito.Mockito.mock(
-                de.caritas.cob.userservice.api.service.SessionDataService.class));
+                de.caritas.cob.userservice.api.service.SessionDataService.class),
+            temporaryAccountLinkResolver,
+            temporaryAccountSettings);
+
     org.mockito.Mockito.lenient()
         .when(consultingTypeManager.getConsultingTypeSettings(org.mockito.ArgumentMatchers.any()))
         .thenReturn(new ExtendedConsultingTypeResponseDTO());
