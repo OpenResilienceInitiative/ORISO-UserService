@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.port.out.AdminStatisticsRepository.GroupCo
 import de.caritas.cob.userservice.api.port.out.AdminStatisticsRepository.TopicCountProjection;
 import de.caritas.cob.userservice.api.service.statistics.settings.StatisticsSetting;
 import de.caritas.cob.userservice.api.service.statistics.settings.StatisticsSettingsService;
+import de.caritas.cob.userservice.api.service.statistics.settings.StatisticsSnapshotInterval;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.Clock;
 import java.time.DayOfWeek;
@@ -42,11 +43,20 @@ import org.springframework.stereotype.Service;
  * number of counsellor accounts configured for that level in the global statistics settings ({@link
  * StatisticsSettingsService}). Otherwise the target is marked {@code suppressed} and all
  * counselling metrics are omitted. A counsellor's own statistics never pass through here.
+ *
+ * <p>Differencing protection: a number that changes between two page loads can point at one case
+ * even above the threshold. So each admin role reads a fixed stand ({@link
+ * AdminDashboardStandService}) unless the global statistics settings set its interval to live. The
+ * current thresholds also apply to a stored stand: raising one takes effect at once, lowering one
+ * reveals nothing before the next stand.
  */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class AdminDashboardStatisticsService {
+
+  /** The platform-wide stand has no tenant of its own; platform admins carry this technical id. */
+  public static final Long PLATFORM_TENANT_ID = 0L;
 
   private static final LocalDateTime EPOCH = LocalDateTime.of(1970, 1, 1, 0, 0);
 
@@ -56,6 +66,7 @@ public class AdminDashboardStatisticsService {
   private final @NonNull Clock clock;
   private final @NonNull Environment environment;
   private final @NonNull StatisticsSettingsService statisticsSettingsService;
+  private final @NonNull AdminDashboardStandService dashboardStands;
 
   /**
    * Dev-only escape hatch for end-to-end testing with small test datasets. Fail-closed: when the
@@ -71,14 +82,25 @@ public class AdminDashboardStatisticsService {
   }
 
   public enum DashboardScope {
-    PLATFORM,
-    TENANT,
-    AGENCY
+    PLATFORM(StatisticsSetting.PLATFORM_SNAPSHOT_INTERVAL),
+    TENANT(StatisticsSetting.TENANT_SNAPSHOT_INTERVAL),
+    AGENCY(StatisticsSetting.AGENCY_SNAPSHOT_INTERVAL);
+
+    private final StatisticsSetting snapshotSetting;
+
+    DashboardScope(StatisticsSetting snapshotSetting) {
+      this.snapshotSetting = snapshotSetting;
+    }
+
+    public StatisticsSetting snapshotSetting() {
+      return snapshotSetting;
+    }
   }
 
   /**
    * @param chartWeeks weeks covered by {@code dailyNewSessions}, the current week included
    * @param topicMonths months covered by {@code monthlyTopTopics}, the current month included
+   * @param snapshotInterval how often this role gets a new stand; LIVE means every request
    */
   public record DashboardStatistics(
       String generatedAt,
@@ -86,6 +108,7 @@ public class AdminDashboardStatisticsService {
       boolean suppressionDisabled,
       int chartWeeks,
       int topicMonths,
+      StatisticsSnapshotInterval snapshotInterval,
       List<TargetStatistics> targets) {}
 
   public record TargetStatistics(
@@ -140,22 +163,101 @@ public class AdminDashboardStatisticsService {
       PeriodCounts groupChatCountsByPeriod) {}
 
   public DashboardStatistics buildDashboard() {
-    var windows = resolveTimeWindows();
-    var ranges = buildDateRanges(windows);
-    var suppression = resolveSuppression();
-
     if (authenticatedUser.isPlatformAdmin()) {
-      return buildPlatformDashboard(ranges, windows, suppression);
+      return currentDashboard(DashboardScope.PLATFORM, PLATFORM_TENANT_ID);
     }
     if (authenticatedUser.isTenantSuperAdmin() || authenticatedUser.isSingleTenantAdmin()) {
-      return buildTenantDashboard(ranges, windows, resolveTenantId(), suppression);
+      return currentDashboard(DashboardScope.TENANT, resolveTenantId());
     }
     if (authenticatedUser.isRestrictedAgencyAdmin() || authenticatedUser.isAgencySuperAdmin()) {
-      return buildAgencyDashboard(ranges, windows, resolveTenantId(), suppression);
+      return onlyOwnAgencies(currentDashboard(DashboardScope.AGENCY, resolveTenantId()));
     }
     throw new ForbiddenException(
         "User %s is not authorized to access admin statistics"
             .formatted(authenticatedUser.getUserId()));
+  }
+
+  private DashboardStatistics currentDashboard(DashboardScope scope, Long tenantId) {
+    requireTenant(tenantId);
+    var interval = statisticsSettingsService.snapshotInterval(scope.snapshotSetting());
+    if (interval == StatisticsSnapshotInterval.LIVE) {
+      return calculateDashboard(scope, tenantId, interval);
+    }
+    var stand =
+        dashboardStands.currentStand(
+            scope, tenantId, interval, () -> calculateDashboard(scope, tenantId, interval));
+    return withCurrentThresholds(stand);
+  }
+
+  /**
+   * Calculates one dashboard from the live data, with no reference to the caller: a stand is shared
+   * by every admin of its scope and tenant. The agency scope therefore holds all agencies of the
+   * tenant; {@link #onlyOwnAgencies} narrows it per request.
+   */
+  public DashboardStatistics calculateDashboard(
+      DashboardScope scope, Long tenantId, StatisticsSnapshotInterval interval) {
+    var windows = resolveTimeWindows();
+    var ranges = buildDateRanges(windows);
+    var suppression = resolveSuppression();
+    return switch (scope) {
+      case PLATFORM -> buildPlatformDashboard(ranges, windows, interval, suppression);
+      case TENANT -> buildTenantDashboard(ranges, windows, interval, tenantId, suppression);
+      case AGENCY -> buildAgencyDashboard(ranges, windows, interval, tenantId, suppression);
+    };
+  }
+
+  /** Read per request, so a removed assignment applies at once, also to a stored stand. */
+  private DashboardStatistics onlyOwnAgencies(DashboardStatistics dashboard) {
+    var allowedAgencyIds =
+        adminAgencyRepository.findByAdminId(authenticatedUser.getUserId()).stream()
+            .map(adminAgency -> adminAgency.getAgencyId())
+            .filter(Objects::nonNull)
+            .collect(Collectors.toSet());
+    return withTargets(
+        dashboard,
+        dashboard.suppressionDisabled(),
+        dashboard.targets().stream()
+            .filter(target -> allowedAgencyIds.contains(target.agencyId()))
+            .toList());
+  }
+
+  /**
+   * A stored stand went through the thresholds of its time; this applies today's on top. A raised
+   * threshold hides a row at once. A lowered one cannot bring back what was never stored.
+   */
+  private DashboardStatistics withCurrentThresholds(DashboardStatistics stand) {
+    var suppression = resolveSuppression();
+    return withTargets(
+        stand,
+        !suppression.active(),
+        stand.targets().stream()
+            .map(
+                target ->
+                    !target.suppressed() && isBelowThreshold(target, suppression)
+                        ? suppressedTarget(
+                            target.targetType(),
+                            target.tenantId(),
+                            target.agencyId(),
+                            target.counselorCount())
+                        : target)
+            .toList());
+  }
+
+  private static boolean isBelowThreshold(TargetStatistics target, Suppression suppression) {
+    return suppression.active()
+        && target.counselorCount() < suppression.minimumCounsellors(target.targetType());
+  }
+
+  private static DashboardStatistics withTargets(
+      DashboardStatistics dashboard, boolean suppressionDisabled, List<TargetStatistics> targets) {
+    return new DashboardStatistics(
+        dashboard.generatedAt(),
+        dashboard.scope(),
+        suppressionDisabled,
+        dashboard.chartWeeks(),
+        dashboard.topicMonths(),
+        dashboard.snapshotInterval(),
+        targets);
   }
 
   /**
@@ -223,7 +325,10 @@ public class AdminDashboardStatisticsService {
   /* ---------- platform scope ---------- */
 
   private DashboardStatistics buildPlatformDashboard(
-      DateRanges ranges, TimeWindows windows, Suppression suppression) {
+      DateRanges ranges,
+      TimeWindows windows,
+      StatisticsSnapshotInterval interval,
+      Suppression suppression) {
     var groups =
         collectGroups(
             ranges,
@@ -251,6 +356,7 @@ public class AdminDashboardStatisticsService {
         !suppression.active(),
         windows.chartWeeks(),
         windows.topicMonths(),
+        interval,
         targets);
   }
 
@@ -284,8 +390,11 @@ public class AdminDashboardStatisticsService {
   /* ---------- tenant scope ---------- */
 
   private DashboardStatistics buildTenantDashboard(
-      DateRanges ranges, TimeWindows windows, Long tenantId, Suppression suppression) {
-    requireTenant(tenantId);
+      DateRanges ranges,
+      TimeWindows windows,
+      StatisticsSnapshotInterval interval,
+      Long tenantId,
+      Suppression suppression) {
     var groups = collectAgencyGroups(ranges, tenantId);
     var targets = new ArrayList<TargetStatistics>();
 
@@ -308,24 +417,22 @@ public class AdminDashboardStatisticsService {
         !suppression.active(),
         windows.chartWeeks(),
         windows.topicMonths(),
+        interval,
         targets);
   }
 
   /* ---------- agency scope ---------- */
 
   private DashboardStatistics buildAgencyDashboard(
-      DateRanges ranges, TimeWindows windows, Long tenantId, Suppression suppression) {
-    requireTenant(tenantId);
-    var allowedAgencyIds =
-        adminAgencyRepository.findByAdminId(authenticatedUser.getUserId()).stream()
-            .map(adminAgency -> adminAgency.getAgencyId())
-            .filter(Objects::nonNull)
-            .collect(Collectors.toSet());
-
+      DateRanges ranges,
+      TimeWindows windows,
+      StatisticsSnapshotInterval interval,
+      Long tenantId,
+      Suppression suppression) {
     var groups = collectAgencyGroups(ranges, tenantId);
     var targets =
         groups.entrySet().stream()
-            .filter(entry -> entry.getKey() != null && allowedAgencyIds.contains(entry.getKey()))
+            .filter(entry -> entry.getKey() != null)
             .map(
                 entry ->
                     toTargetStatistics(
@@ -338,6 +445,7 @@ public class AdminDashboardStatisticsService {
         !suppression.active(),
         windows.chartWeeks(),
         windows.topicMonths(),
+        interval,
         targets);
   }
 
@@ -576,17 +684,7 @@ public class AdminDashboardStatisticsService {
         suppression.active() && data.counselorCount() < suppression.minimumCounsellors(targetType);
 
     if (suppressed) {
-      return new TargetStatistics(
-          targetType,
-          tenantId,
-          agencyId,
-          data.counselorCount(),
-          true,
-          null,
-          List.of(),
-          List.of(),
-          null,
-          null);
+      return suppressedTarget(targetType, tenantId, agencyId, data.counselorCount());
     }
 
     var metrics =
@@ -613,6 +711,21 @@ public class AdminDashboardStatisticsService {
         buildMonthlyTopTopics(data.topicCountsByMonth()),
         data.sessionCountsByPeriod(),
         data.groupChatCountsByPeriod());
+  }
+
+  private static TargetStatistics suppressedTarget(
+      TargetType targetType, Long tenantId, Long agencyId, long counselorCount) {
+    return new TargetStatistics(
+        targetType,
+        tenantId,
+        agencyId,
+        counselorCount,
+        true,
+        null,
+        List.of(),
+        List.of(),
+        null,
+        null);
   }
 
   private List<MonthlyTopic> buildMonthlyTopTopics(

@@ -22,6 +22,7 @@ import de.caritas.cob.userservice.api.service.statistics.AdminDashboardStatistic
 import de.caritas.cob.userservice.api.service.statistics.AdminDashboardStatisticsService.TargetType;
 import de.caritas.cob.userservice.api.service.statistics.settings.StatisticsSetting;
 import de.caritas.cob.userservice.api.service.statistics.settings.StatisticsSettingsService;
+import de.caritas.cob.userservice.api.service.statistics.settings.StatisticsSnapshotInterval;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.Clock;
 import java.time.Instant;
@@ -59,6 +60,7 @@ class AdminDashboardStatisticsServiceTest {
   @Mock private AdminStatisticsRepository adminStatisticsRepository;
   @Mock private AdminAgencyRepository adminAgencyRepository;
   @Mock private StatisticsSettingsService statisticsSettingsService;
+  @Mock private AdminDashboardStandService dashboardStands;
 
   private AuthenticatedUser authenticatedUser;
   private MockEnvironment mockEnvironment;
@@ -79,7 +81,11 @@ class AdminDashboardStatisticsServiceTest {
             authenticatedUser,
             clock,
             mockEnvironment,
-            statisticsSettingsService);
+            statisticsSettingsService,
+            dashboardStands);
+    lenient()
+        .when(statisticsSettingsService.snapshotInterval(any()))
+        .thenReturn(StatisticsSnapshotInterval.LIVE);
     lenient().when(statisticsSettingsService.minimumCounsellors(any())).thenReturn(5);
     lenient().when(statisticsSettingsService.chartWeeks()).thenReturn(5);
     lenient().when(statisticsSettingsService.topicMonths()).thenReturn(4);
