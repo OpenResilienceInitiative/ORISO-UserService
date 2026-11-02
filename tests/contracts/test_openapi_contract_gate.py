@@ -166,8 +166,8 @@ class OpenApiContractGateTest(unittest.TestCase):
             workflow,
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-TenantService.*"
-                # TenantService dev after PR309 + PR315: channel fields, active, internal-group flags.
-                r"c0da86b50ee6537facf4af9b90eb799f5e975063",
+                # QA74 provider: current dev plus Tenant-owned collection controls (issue336).
+                r"6ec67135d6f3e77433b35887667e433917ddb218",
                 re.DOTALL,
             ),
         )
