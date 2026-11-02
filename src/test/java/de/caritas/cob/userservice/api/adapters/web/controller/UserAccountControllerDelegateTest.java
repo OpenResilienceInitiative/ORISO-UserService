@@ -86,7 +86,31 @@ class UserAccountControllerDelegateTest {
   @Mock private AgencyAdminDataProvider agencyAdminDataProvider;
   @Mock private UsernameTranscoder usernameTranscoder;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy emailCollectionPolicy;
+
   @InjectMocks private UserAccountControllerDelegate delegate;
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+  void askerUserDataProjectsServerDerivedCollectionCapability(boolean allowed) {
+    var user =
+        new de.caritas.cob.userservice.api.model.User(
+            USER_ID, null, USERNAME, "asker@example.org", false);
+    var partial = new UserDataResponseDTO();
+    var roles = Set.of(UserRole.USER.getValue());
+    when(authenticatedUser.getRoles()).thenReturn(roles);
+    when(userAccountProvider.retrieveValidatedUser()).thenReturn(user);
+    when(askerDataProvider.retrieveData(user)).thenReturn(partial);
+    when(emailCollectionPolicy.capabilityForAccount(user)).thenReturn(allowed);
+    when(userDtoMapper.userDataOf(eq(partial), isNull(), anyBoolean(), anyBoolean()))
+        .thenReturn(partial);
+
+    var response = delegate.getUserData();
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThat(response.getBody().getIsAskerEmailCollectionAllowed()).isEqualTo(allowed);
+  }
 
   @Test
   void legacyNameAndLanguageAccountPatchStillUpdatesLanguage() {

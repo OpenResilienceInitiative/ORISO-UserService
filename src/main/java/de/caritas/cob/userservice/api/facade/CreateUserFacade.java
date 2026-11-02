@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.helper.UserVerifier;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Chat;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
@@ -31,9 +32,11 @@ import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
+import de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy;
 import de.caritas.cob.userservice.api.service.AskerIdentityPolicy;
 import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService;
 import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService.RecoveryPolicySnapshot;
+import de.caritas.cob.userservice.api.service.SessionDataService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
@@ -94,6 +97,8 @@ public class CreateUserFacade {
   private final @NonNull ApplicationSettingsService applicationSettingsService;
 
   private final @NonNull GroupInviteRegistration groupInviteRegistration;
+  private final @NonNull AskerEmailCollectionPolicy emailCollectionPolicy;
+  private final @NonNull SessionDataService sessionDataService;
 
   @Value("${feature.multitenancy.with.single.domain.enabled:false}")
   private boolean multitenancyWithSingleDomain;
@@ -134,6 +139,21 @@ public class CreateUserFacade {
         dpaPolicy.requireForAgency(userDTO.getAgencyId());
       }
       Optional<Chat> invitedGroup = groupInviteRegistration.resolveInvitedGroup(userDTO);
+      if (userDTO.getEmail() != null && !userDTO.getEmail().isBlank()) {
+        emailCollectionPolicy.requireForRegistration(
+            TenantContext.getCurrentTenant(),
+            invitedGroup.isPresent()
+                ? ConversationType.SELF_HELP
+                : ConversationType.AGENCY_COUNSELLING);
+      }
+      if (invitedGroup.isEmpty()) {
+        userDTO.setDisplayName(
+            sessionDataService.validateInitialAlias(
+                userDTO.getDisplayName(), TenantContext.getCurrentTenant()));
+      } else {
+        // Legacy group signup never promised a member-scoped alias; no shared/global rename.
+        userDTO.setDisplayName(null);
+      }
       if (userDTO.isTemporary() && invitedGroup.isEmpty()) {
         // The deletion job removes temporary accounts; only a valid group invite may ask for one.
         throw new BadRequestException("A temporary account requires a group invite.");

@@ -100,7 +100,8 @@ class ConsultantSelfServiceMatrixDisplayNameTest {
             mock(VideoChatConfig.class),
             mock(KeycloakUserDataProvider.class),
             mock(AgencyAdminDataProvider.class),
-            new UsernameTranscoder());
+            new UsernameTranscoder(),
+            mock(de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy.class));
   }
 
   @Test

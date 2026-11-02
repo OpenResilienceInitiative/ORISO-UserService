@@ -155,7 +155,7 @@ class CreateSessionFacadeTest {
               .thenThrow(new InternalServerErrorException(MESSAGE));
           doThrow(INTERNAL_SERVER_ERROR_EXCEPTION)
               .when(sessionDataService)
-              .saveSessionData(any(Session.class), any());
+              .saveInitialSessionData(any(Session.class), any(), any());
 
           createSessionFacade.createUserSession(
               USER_DTO_SUCHT, USER, CONSULTING_TYPE_SETTINGS_SUCHT, validationConstraints);
@@ -179,7 +179,7 @@ class CreateSessionFacadeTest {
               .thenReturn(SESSION_WITHOUT_CONSULTANT);
           doThrow(INTERNAL_SERVER_ERROR_EXCEPTION)
               .when(sessionDataService)
-              .saveSessionData(any(Session.class), any());
+              .saveInitialSessionData(any(Session.class), any(), any());
 
           createSessionFacade.createUserSession(
               USER_DTO_SUCHT, USER, CONSULTING_TYPE_SETTINGS_SUCHT, validationConstraints);
@@ -233,7 +233,7 @@ class CreateSessionFacadeTest {
             USER_DTO_SUCHT, USER, CONSULTING_TYPE_SETTINGS_SUCHT, validationConstraints);
 
     assertEquals(SESSION_WITHOUT_CONSULTANT.getId(), result);
-    verify(sessionDataService, times(1)).saveSessionData(any(Session.class), any());
+    verify(sessionDataService, times(1)).saveInitialSessionData(any(Session.class), any(), any());
   }
 
   @Test

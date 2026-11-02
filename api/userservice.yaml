@@ -2975,6 +2975,10 @@ components:
           enum: [PARTICIPANT, CO_MODERATOR]
           default: PARTICIPANT
     UserDTO:
+      description: >-
+        Registration data. An optional displayName is attached only to the new ordinary personal
+        session; omitted or blank keeps the existing login Username fallback. A self-help invite
+        creates no personal session and retains the legacy ignored-alias behavior.
       allOf:
         - $ref: '#/components/schemas/SessionDataDTO'
       type: object
@@ -3886,6 +3890,14 @@ components:
         userName:
           type: string
           example: max.muster
+        isAskerEmailCollectionAllowed:
+          type: boolean
+          readOnly: true
+          description: >-
+            Current account email collection capability for the authenticated asker. The account
+            master must allow collection; restrictive conversation-type permissions additionally
+            require an actually owned allowed session or joined self-help group. False while
+            current policy/context availability cannot be established. Absent for consultants.
         displayName:
           type: string
           example: Max M.

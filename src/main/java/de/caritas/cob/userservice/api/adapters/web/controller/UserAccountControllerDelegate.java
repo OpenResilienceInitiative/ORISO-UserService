@@ -31,6 +31,7 @@ import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityPolicy;
 import de.caritas.cob.userservice.api.port.in.Messaging;
+import de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.DecryptionService;
 import de.caritas.cob.userservice.api.service.LogService;
@@ -69,6 +70,7 @@ class UserAccountControllerDelegate {
   private final @NonNull KeycloakUserDataProvider keycloakUserDataProvider;
   private final @NonNull AgencyAdminDataProvider agencyAdminDataProvider;
   private final @NonNull UsernameTranscoder usernameTranscoder;
+  private final @NonNull AskerEmailCollectionPolicy emailCollectionPolicy;
 
   ResponseEntity<Void> updateAbsence(AbsenceDTO absence) {
     var consultant = userAccountProvider.retrieveValidatedConsultant();
@@ -127,6 +129,8 @@ class UserAccountControllerDelegate {
     } else {
       var user = userAccountProvider.retrieveValidatedUser();
       partialUserData = askerDataProvider.retrieveData(user);
+      partialUserData.setIsAskerEmailCollectionAllowed(
+          emailCollectionPolicy.capabilityForAccount(user));
     }
     var otpInfoDTO = retrieveOtpCredentialIfAllowed();
 

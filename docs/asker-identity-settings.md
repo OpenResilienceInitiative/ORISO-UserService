@@ -18,12 +18,62 @@ permission to collect an address.
   and settings. Multi-tenant missing IDs, technical/negative IDs, a missing
   projection, upstream failure or a mismatched explicit tenant fail closed with
   503. An omitted individual legacy flag keeps its enabled opt-out default. Policy
-  refusal is 403; nonempty whitespace-only or overlong aliases are 400. Null and
-  empty aliases retain the existing no-change behavior. Legacy asker account PATCH display-name
+  refusal is 403. Session updates reject nonempty whitespace-only or overlong
+  aliases with 400; null and empty aliases retain the existing no-change behavior. Legacy asker account PATCH display-name
   fields remain ignored so a combined language update keeps working during a
   backend-first rollout. New callers use the session-data endpoint for aliases.
 - The existing alias storage bound is 255 characters. The explicit server check
   improves the previous storage failure; the OpenAPI request shape is unchanged.
+
+## Optional signup alias
+
+Ordinary registration accepts optional `displayName`. The server strips surrounding
+Unicode whitespace and treats a blank value as omitted, so the UI falls back to
+the immutable Username. Nonblank values use the same generated-name membership,
+custom-typing permission and 255-character storage bound as session updates.
+Validation runs before identity provisioning. The trusted creator writes onto its
+actual first Session before registration completes, with a fresh owner/tenant
+recheck inside the data transaction; it does not require the new user to be
+logged in. Existing registration compensation handles an incomplete operation.
+External session-data updates retain their authenticated owner check.
+
+Self-help signup joins a shared group and creates no personal Session. Its legacy
+`displayName` input stays ignored; it never renames a shared room or stores an
+account-wide/member alias. Existing live-room alias selection uses the session
+update contract.
+
+## Conversation email collection
+
+The three default-true collection controls are distinct from delivery channels:
+
+- `featureAskerEmailCollectionAgencyCounsellingEnabled`
+- `featureAskerEmailCollectionLiveChatEnabled`
+- `featureAskerEmailCollectionSelfHelpEnabled`
+
+The existing account master caps every type. Registration checks the verified
+invite purpose (`SELF_HELP`) or its actual ordinary first Session purpose
+(`AGENCY_COUNSELLING`) before effects; a client-provided type never grants access.
+The secondary global check remains before first-session creation.
+
+Account/profile and email-OTP writes keep one global account address. With all
+three collection flags absent/true they preserve the legacy master-only rule.
+When any type is disabled, a new/different address requires at least one allowed
+actual owned personal Session or joined self-help UserChat. Persisted modality
+wins; legacy ordinary/anonymous registration discriminators resolve only their
+existing Agency/Live meaning. Archived owned contexts count. Unknown/internal
+contexts, shared-room Session rows, other users and explicit foreign/invalid
+personal Session tenant IDs do not grant permission. No discoverable-group list,
+request-header tenant or caller-supplied type provides authority. Fresh settings
+are fetched before the short read-only context transaction.
+
+Existing GET userData exposes read-only optional Boolean
+`isAskerEmailCollectionAllowed` for askers. Expected policy/context unavailability
+projects false without breaking the rest of that GET; mutations still refuse
+with 503. Consultant responses omit the capability. Existing-address reuse is
+trimmed and case-insensitive; deletion and second-factor removal remain possible.
+OTP completion rechecks both fresh policy and current ownership before activation
+or identity email effects. When permission is closed/unavailable, only verified
+provider metadata proving the same stored address permits completion.
 
 ## Generated names
 

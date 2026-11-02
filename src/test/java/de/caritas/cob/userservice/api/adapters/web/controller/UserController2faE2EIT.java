@@ -491,6 +491,68 @@ class UserController2faE2EIT {
         .postForEntity(anyString(), any(HttpEntity.class), eq(SuccessWithEmail.class));
   }
 
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void closedConversationCollectionRejectsOtpStartEvenWithGlobalMasterOn() throws Exception {
+    givenAValidUser();
+    givenTenantAllConversationCollection(false);
+    givenAValidEmailDTO();
+    givenKeycloakFoundNoEmailInUse();
+    mockMvc
+        .perform(
+            put("/users/2fa/email")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(emailDTO)))
+        .andExpect(status().isForbidden());
+    verify(keycloakRestTemplate, never())
+        .exchange(anyString(), eq(HttpMethod.PUT), any(HttpEntity.class), eq(Success.class));
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void closingConversationCollectionBeforeFinishRejectsNewPendingAddressWithoutActivation()
+      throws Exception {
+    givenAValidUser();
+    givenTenantAllConversationCollection(false);
+    givenACorrectlyFormattedTan();
+    var credential = new CredentialRepresentation();
+    credential.setType("MAIL_OTP_CM");
+    credential.setCredentialData("{\"email\":\"new-qa74@example.org\"}");
+    var users = mock(UsersResource.class);
+    var resource = mock(UserResource.class);
+    var realm = mock(RealmResource.class);
+    when(keycloak.realm(anyString())).thenReturn(realm);
+    when(realm.users()).thenReturn(users);
+    when(users.get(user.getUserId())).thenReturn(resource);
+    when(resource.credentials()).thenReturn(List.of(credential));
+    var previous = user.getEmail();
+    mockMvc
+        .perform(
+            post("/users/2fa/email/validate/{tan}", tan)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE))
+        .andExpect(status().isForbidden());
+    verify(keycloakRestTemplate, never())
+        .postForEntity(anyString(), any(HttpEntity.class), eq(SuccessWithEmail.class));
+    assertEquals(previous, userRepository.findById(user.getUserId()).orElseThrow().getEmail());
+    verify(resource, never()).update(any(UserRepresentation.class));
+  }
+
+  private void givenTenantAllConversationCollection(boolean enabled) {
+    when(tenantService.getRestrictedTenantDataFresh(user.getTenantId()))
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(user.getTenantId())
+                .settings(
+                    new Settings()
+                        .featureAskerEmailEnabled(true)
+                        .featureAskerEmailCollectionAgencyCounsellingEnabled(enabled)
+                        .featureAskerEmailCollectionLiveChatEnabled(enabled)
+                        .featureAskerEmailCollectionSelfHelpEnabled(enabled)));
+  }
+
   private void givenTenantEmailCollection(boolean enabled) {
     when(tenantService.getRestrictedTenantDataFresh(user.getTenantId()))
         .thenReturn(

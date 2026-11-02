@@ -99,7 +99,11 @@ class CreateUserFacadeMatrixUserTest {
             tenantService,
             agencyService,
             applicationSettingsService,
-            groupInviteRegistration);
+            groupInviteRegistration,
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy.class),
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.service.SessionDataService.class));
     org.mockito.Mockito.lenient()
         .when(consultingTypeManager.getConsultingTypeSettings(org.mockito.ArgumentMatchers.any()))
         .thenReturn(new ExtendedConsultingTypeResponseDTO());

@@ -74,6 +74,11 @@ public class UserDTO implements UserRegistrationDTO {
   @JsonProperty("password")
   private String password;
 
+  /** Optional first ordinary-session alias, separate from the immutable login username. */
+  @JsonInclude(value = Include.NON_NULL)
+  @JsonProperty("displayName")
+  private String displayName;
+
   @JsonInclude(value = Include.NON_NULL)
   @Email(message = "{user.email.invalid}")
   @ApiModelProperty(example = "max@mustermann.de", position = 4)

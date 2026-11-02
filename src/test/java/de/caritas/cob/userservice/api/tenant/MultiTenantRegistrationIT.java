@@ -124,6 +124,9 @@ class MultiTenantRegistrationIT {
   @Autowired private SessionRepository sessionRepository;
 
   @Autowired
+  private de.caritas.cob.userservice.api.port.out.SessionDataRepository sessionDataRepository;
+
+  @Autowired
   private de.caritas.cob.userservice.api.config.apiclient.TenantServiceApiControllerFactory
       ownerFactory;
 
@@ -173,6 +176,10 @@ class MultiTenantRegistrationIT {
   @Autowired private AgencyInviteLinkRepository agencyInviteLinkRepository;
   @Autowired private AccountInviteRepository accountInviteRepository;
   @Autowired private ChatRepository chatRepository;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.port.out.ChatAgencyRepository chatAgencyRepository;
+
   @Autowired private UserChatRepository userChatRepository;
   @Autowired private TenantFixtures fixtures;
 
@@ -255,7 +262,14 @@ class MultiTenantRegistrationIT {
     try {
       cleanups.forEach(Runnable::run);
       for (var userId : createdUserIds) {
-        sessionRepository.findByUserUserId(userId).forEach(sessionRepository::delete);
+        sessionRepository
+            .findByUserUserId(userId)
+            .forEach(
+                session -> {
+                  sessionDataRepository.deleteAll(
+                      sessionDataRepository.findBySessionId(session.getId()));
+                  sessionRepository.delete(session);
+                });
         userRepository.findById(userId).ifPresent(userRepository::delete);
       }
       fixtures.removeAll();
@@ -281,6 +295,71 @@ class MultiTenantRegistrationIT {
             de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group.ASKER);
     org.mockito.Mockito.verify(inactivityEnrollment)
         .enroll(createdUserIds.getFirst(), TENANT, inactivityPolicy);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "'  Éloïse 🌻  ',true,'Éloïse 🌻'",
+    "loewe_mika_1234,false,loewe_mika_1234",
+    "'   ',false,''"
+  })
+  void registrationStoresOptionalAliasOnItsOwnFirstSessionWithoutChangingLogin(
+      String input, boolean editable, String expected) throws Exception {
+    var tenant = ChatRecoveryPolicyFixtures.tenant().id(TENANT);
+    tenant.getSettings().setFeatureDisplayNameEditable(editable);
+    when(tenantService.getRestrictedTenantDataFresh(TENANT)).thenReturn(tenant);
+    var result = mockMvc.perform(register(Map.of("displayName", input))).andReturn();
+    assertStatus(result, 201);
+    TenantContext.setCurrentTenant(TENANT);
+    try {
+      var owner = userRepository.findById(createdUserIds.getFirst()).orElseThrow();
+      assertThat(
+              new de.caritas.cob.userservice.api.helper.UsernameTranscoder()
+                  .decodeUsername(owner.getUsername()))
+          .startsWith("reg")
+          .isNotEqualTo(input);
+      var owned = sessionRepository.findByUserUserId(owner.getUserId());
+      assertThat(owned).hasSize(1);
+      var aliases =
+          sessionDataRepository.findBySessionId(owned.getFirst().getId()).stream()
+              .filter(data -> "displayName".equals(data.getKey()))
+              .toList();
+      if (expected == null || expected.isEmpty()) assertThat(aliases).isEmpty();
+      else {
+        assertThat(aliases).hasSize(1);
+        assertThat(aliases.getFirst().getValue()).isEqualTo(expected);
+      }
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Test
+  void registrationRefusesCustomAliasBeforeIdentityOrAccountCreation() throws Exception {
+    var tenant = ChatRecoveryPolicyFixtures.tenant().id(TENANT);
+    tenant.getSettings().setFeatureDisplayNameEditable(false);
+    when(tenantService.getRestrictedTenantDataFresh(TENANT)).thenReturn(tenant);
+    var result =
+        mockMvc.perform(register(Map.of("displayName", "arbitrary typed alias"))).andReturn();
+    assertStatus(result, 403);
+    assertThat(createdUserIds).isEmpty();
+    verify(identityClient, never()).createUser(any());
+    verify(matrixSynapseService, never()).createUser(anyString(), anyString(), anyString());
+  }
+
+  @Test
+  void registrationUsesActualAgencyPurposeRatherThanAnUntrustedLiveChatField() throws Exception {
+    var tenant = ChatRecoveryPolicyFixtures.tenant().id(TENANT);
+    tenant
+        .getSettings()
+        .featureAskerEmailEnabled(true)
+        .featureAskerEmailCollectionAgencyCounsellingEnabled(false)
+        .featureAskerEmailCollectionLiveChatEnabled(true);
+    when(tenantService.getRestrictedTenantDataFresh(TENANT)).thenReturn(tenant);
+    var result = mockMvc.perform(register(Map.of("conversationType", "LIVE_CHAT"))).andReturn();
+    assertStatus(result, 403);
+    assertThat(createdUserIds).isEmpty();
+    verify(identityClient, never()).createUser(any());
   }
 
   @Test
@@ -404,6 +483,55 @@ class MultiTenantRegistrationIT {
               relation ->
                   relation.getChat().getId().equals(chat.getId())
                       && relation.getUser().getUserId().equals(createdUserIds.get(0)));
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void signedGroupSignupChecksSelfHelpCollectionAndNeverCreatesASharedOrGlobalAlias(boolean enabled)
+      throws Exception {
+    var group = persistChat();
+    chatAgencyRepository.save(new de.caritas.cob.userservice.api.model.ChatAgency(group, AGENCY));
+    var tenant = ChatRecoveryPolicyFixtures.tenant().id(TENANT);
+    tenant
+        .getSettings()
+        .featureAskerEmailEnabled(true)
+        .featureAskerEmailCollectionAgencyCounsellingEnabled(false)
+        .featureAskerEmailCollectionSelfHelpEnabled(enabled)
+        .featureDisplayNameEditable(false);
+    when(tenantService.getRestrictedTenantDataFresh(TENANT)).thenReturn(tenant);
+    var result =
+        mockMvc
+            .perform(
+                register(
+                    Map.of(
+                        "groupChatId",
+                        group.getId(),
+                        "groupChatInviteToken",
+                        group.getInviteToken(),
+                        "displayName",
+                        "legacy ignored group alias")))
+            .andReturn();
+    assertStatus(result, enabled ? 201 : 403);
+    if (!enabled) {
+      assertThat(createdUserIds).isEmpty();
+      verify(identityClient, never()).createUser(any());
+      return;
+    }
+    TenantContext.setCurrentTenant(TENANT);
+    try {
+      var owner = userRepository.findById(createdUserIds.getFirst()).orElseThrow();
+      assertThat(sessionRepository.findByUserUserId(owner.getUserId())).isEmpty();
+      assertThat(userChatRepository.findByChatAndUser(group, owner)).isPresent();
+      assertThat(chatRepository.findById(group.getId()).orElseThrow().getTopic())
+          .isEqualTo("Synthetic group");
+      assertThat(
+              new de.caritas.cob.userservice.api.helper.UsernameTranscoder()
+                  .decodeUsername(owner.getUsername()))
+          .startsWith("reg")
+          .isNotEqualTo("legacy ignored group alias");
     } finally {
       TenantContext.clear();
     }
@@ -614,6 +742,7 @@ class MultiTenantRegistrationIT {
             java.util.stream.StreamSupport.stream(userChatRepository.findAll().spliterator(), false)
                 .filter(relation -> relation.getChat().getId().equals(chat.getId()))
                 .forEach(userChatRepository::delete);
+            chatAgencyRepository.deleteAll(chatAgencyRepository.findByChat_Id(chat.getId()));
             chatRepository.deleteById(chat.getId());
           });
       return chat;

@@ -24,6 +24,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 public class SessionDataServiceTest {
 
+  @Mock private org.springframework.transaction.PlatformTransactionManager transactionManager;
   @InjectMocks private SessionDataService sessionDataService;
   @Mock private SessionDataRepository sessionDataRepository;
   @Mock private SessionDataProvider sessionDataProvider;
@@ -249,6 +250,63 @@ public class SessionDataServiceTest {
     verify(tenantService).getSingleTenancyTenantDataFresh();
     org.mockito.Mockito.verify(tenantService, org.mockito.Mockito.never())
         .getRestrictedTenantDataFresh(any());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"", "   ", "\u2003"})
+  void blankInitialAliasIsOmittedWithoutARequiredPolicyLookup(String alias) {
+    org.assertj.core.api.Assertions.assertThat(sessionDataService.validateInitialAlias(alias, 42L))
+        .isNull();
+    org.mockito.Mockito.verifyNoInteractions(tenantService, sessionDataRepository);
+  }
+
+  @Test
+  void initialAliasRejectsTooLongValueBeforeAnyPolicyOrPersistenceEffect() {
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> sessionDataService.validateInitialAlias("Ж".repeat(256), 42L))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException.class);
+    org.mockito.Mockito.verifyNoInteractions(tenantService, sessionDataRepository);
+  }
+
+  @Test
+  void trustedInitialWriteRechecksPersistedOwnerBeforeSaving() {
+    var supplied = aliasSession();
+    supplied.setId(11L);
+    var stored = aliasSession();
+    stored.setId(11L);
+    stored.getUser().setUserId("another-person");
+    when(transactionManager.getTransaction(any()))
+        .thenReturn(
+            org.mockito.Mockito.mock(org.springframework.transaction.TransactionStatus.class));
+    when(sessionService.getSession(11L)).thenReturn(Optional.of(stored));
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () ->
+                sessionDataService.saveInitialSessionData(
+                    supplied, supplied.getUser(), new SessionDataDTO().displayName("chosen name")))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    org.mockito.Mockito.verifyNoInteractions(sessionDataRepository);
+  }
+
+  @Test
+  void trustedInitialWriteRechecksPersistedTenantBeforeSaving() {
+    var supplied = aliasSession();
+    supplied.setId(11L);
+    var stored = aliasSession();
+    stored.setId(11L);
+    stored.setTenantId(99L);
+    when(transactionManager.getTransaction(any()))
+        .thenReturn(
+            org.mockito.Mockito.mock(org.springframework.transaction.TransactionStatus.class));
+    when(sessionService.getSession(11L)).thenReturn(Optional.of(stored));
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () ->
+                sessionDataService.saveInitialSessionData(
+                    supplied, supplied.getUser(), new SessionDataDTO().displayName("chosen name")))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    org.mockito.Mockito.verifyNoInteractions(sessionDataRepository);
   }
 
   private Session aliasSession() {

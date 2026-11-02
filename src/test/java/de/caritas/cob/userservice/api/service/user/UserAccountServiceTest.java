@@ -53,6 +53,9 @@ public class UserAccountServiceTest {
 
   private static final EasyRandom EASY_RANDOM = new EasyRandom();
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy emailCollectionPolicy;
+
   @InjectMocks private UserAccountService accountProvider;
   @Mock private UserService userService;
   @Mock private de.caritas.cob.userservice.api.admin.service.tenant.TenantService tenantService;
@@ -74,6 +77,14 @@ public class UserAccountServiceTest {
 
   @org.junit.jupiter.api.BeforeEach
   void currentTenantAllowsEmailByDefault() {
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        accountProvider,
+        "emailCollectionPolicy",
+        new de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy(
+            tenantService,
+            mock(de.caritas.cob.userservice.api.port.out.SessionRepository.class),
+            mock(de.caritas.cob.userservice.api.port.out.UserChatRepository.class),
+            mock(org.springframework.transaction.PlatformTransactionManager.class)));
     org.mockito.Mockito.lenient()
         .when(tenantService.getRestrictedTenantDataFresh(org.mockito.ArgumentMatchers.anyLong()))
         .thenAnswer(
@@ -106,6 +117,38 @@ public class UserAccountServiceTest {
         .isInstanceOf(
             de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
     verifyNoInteractions(identityEmailAddressUpdater, appointmentService);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {
+        "featureAskerEmailCollectionAgencyCounsellingEnabled",
+        "featureAskerEmailCollectionLiveChatEnabled",
+        "featureAskerEmailCollectionSelfHelpEnabled"
+      })
+  void restrictedCollectionCannotBeBypassedByTheGlobalProfileWithoutAnOwnedContext(String key) {
+    var user = EASY_RANDOM.nextObject(User.class);
+    user.setTenantId(42L);
+    user.setEmail("old@example.org");
+    when(authenticatedUser.getUserId()).thenReturn("user");
+    when(userService.getUser("user")).thenReturn(Optional.of(user));
+    var settings =
+        new com.fasterxml.jackson.databind.ObjectMapper()
+            .convertValue(
+                java.util.Map.of("featureAskerEmailEnabled", true, key, false),
+                de.caritas.cob.userservice.tenantservice.generated.web.model.Settings.class);
+    when(tenantService.getRestrictedTenantDataFresh(42L))
+        .thenReturn(
+            new de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO()
+                .id(42L)
+                .settings(settings));
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> accountProvider.changeUserAccountEmailAddress(Optional.of("new@example.org")))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    verifyNoInteractions(
+        identityEmailAddressUpdater, appointmentService, supervisorAddedEmailNotificationService);
+    org.assertj.core.api.Assertions.assertThat(user.getEmail()).isEqualTo("old@example.org");
   }
 
   @Test
