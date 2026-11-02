@@ -147,7 +147,7 @@ class EventNotificationServiceTest {
     when(eventNotificationRepository.existsByRecipientUserIdAndDeduplicationKey(
             "colleague", MENTION_KEY))
         .thenReturn(true);
-    when(deduplicationWriter.markMentionedInNewTransaction("colleague", MENTION_KEY))
+    when(deduplicationWriter.markMentionedInNewTransaction("colleague", MENTION_KEY, 100L))
         .thenReturn(true);
 
     eventNotificationService.createMentionNotifications(

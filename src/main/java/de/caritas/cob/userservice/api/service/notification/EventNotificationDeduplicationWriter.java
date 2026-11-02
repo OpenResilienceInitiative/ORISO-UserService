@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import de.caritas.cob.userservice.api.model.EventNotification;
 import de.caritas.cob.userservice.api.port.out.EventNotificationRepository;
+import java.util.Objects;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,17 +30,19 @@ public class EventNotificationDeduplicationWriter {
   /**
    * Marks an already written message row as a mention (ORISO-UserService#1510). The Matrix listener
    * often writes the row first and knows nothing of mentions: {@code m.mentions} sits inside the
-   * encrypted content. Its own transaction, so a row committed moments ago is visible here.
+   * encrypted content. Its own transaction, so a row committed moments ago is visible here. The
+   * event id in the key is the client's claim, so only a row of this conversation is touched.
    *
    * @return true when the row changed, so the recipient's client needs to hear about it
    */
   @Transactional(propagation = Propagation.REQUIRES_NEW)
-  public boolean markMentionedInNewTransaction(String recipientUserId, String deduplicationKey) {
+  public boolean markMentionedInNewTransaction(
+      String recipientUserId, String deduplicationKey, Long sessionId) {
     var event =
         eventNotificationRepository
             .findByRecipientUserIdAndDeduplicationKey(recipientUserId, deduplicationKey)
             .orElse(null);
-    if (event == null) {
+    if (event == null || !Objects.equals(event.getSourceSessionId(), sessionId)) {
       return false;
     }
     ObjectNode params = readParams(event.getParams());

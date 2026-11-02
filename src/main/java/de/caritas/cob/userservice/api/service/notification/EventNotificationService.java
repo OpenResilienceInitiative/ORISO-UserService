@@ -826,7 +826,8 @@ public class EventNotificationService {
               session.getId(),
               session.getTenantId());
       if (!written
-          && deduplicationWriter.markMentionedInNewTransaction(recipientUserId, deduplicationKey)) {
+          && deduplicationWriter.markMentionedInNewTransaction(
+              recipientUserId, deduplicationKey, session.getId())) {
         signalFeedUpdatedSafely(recipientUserId);
       }
     }
