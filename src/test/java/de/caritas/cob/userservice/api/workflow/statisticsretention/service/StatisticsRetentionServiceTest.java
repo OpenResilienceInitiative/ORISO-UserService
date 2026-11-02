@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.workflow.statisticsretention.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -14,13 +15,17 @@ import de.caritas.cob.userservice.api.port.out.ConsultantMessageStatRepository;
 import de.caritas.cob.userservice.api.port.out.StatisticsSettingChangeRepository;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
+import java.util.Properties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.core.io.ClassPathResource;
 
 @ExtendWith(MockitoExtension.class)
 class StatisticsRetentionServiceTest {
@@ -37,14 +42,14 @@ class StatisticsRetentionServiceTest {
     service =
         new StatisticsRetentionService(
             messageStatRepository, settingChangeRepository, Clock.fixed(NOW, ZoneOffset.UTC));
-    setField(service, "messageCountRetentionDays", 366);
+    setField(service, "messageCountRetentionDays", 731);
     setField(service, "settingChangeActorRetentionDays", 366);
     setField(service, "batchSize", 1000);
   }
 
   @Test
   void purge_deletesMessageRowsOlderThanTheRetentionPeriod_inBatchesUntilNoneAreLeft() {
-    var cutoff = LocalDateTime.of(2025, 11, 2, 3, 30);
+    var cutoff = LocalDateTime.of(2024, 11, 2, 3, 30);
     when(messageStatRepository.deleteBatchSentBefore(cutoff, 1000)).thenReturn(1000, 1000, 17);
 
     service.purgeExpiredStatistics();
@@ -54,7 +59,7 @@ class StatisticsRetentionServiceTest {
 
   @Test
   void purge_stopsAfterOneCall_when_fewerRowsThanTheBatchAreLeft() {
-    var cutoff = LocalDateTime.of(2025, 11, 2, 3, 30);
+    var cutoff = LocalDateTime.of(2024, 11, 2, 3, 30);
     when(messageStatRepository.deleteBatchSentBefore(cutoff, 1000)).thenReturn(0);
 
     service.purgeExpiredStatistics();
@@ -110,5 +115,32 @@ class StatisticsRetentionServiceTest {
     assertThatCode(() -> service.purgeExpiredStatistics()).doesNotThrowAnyException();
 
     verify(messageStatRepository).deleteBatchSentBefore(any(), anyInt());
+  }
+
+  /**
+   * The only reader of the message counts is the consultant's own statistics tab, whose longest
+   * choice is "Last year": 1 January to 31 December of the previous year. Asked on 31 December,
+   * that reaches back at most 731 days, so the configured default must not be shorter.
+   */
+  @Test
+  void defaultMessageCountRetention_coversTheLongestWindowTheStatisticsTabCanAsk()
+      throws Exception {
+    long longestLookBack = 0;
+    for (int year = 2020; year <= 2040; year++) {
+      longestLookBack =
+          Math.max(
+              longestLookBack,
+              ChronoUnit.DAYS.between(LocalDate.of(year - 1, 1, 1), LocalDate.of(year, 12, 31)));
+    }
+    assertThat(longestLookBack).isEqualTo(730);
+
+    var properties = new Properties();
+    try (var input = new ClassPathResource("application.properties").getInputStream()) {
+      properties.load(input);
+    }
+    assertThat(properties.getProperty("statistics.message-count.retention.days"))
+        .isEqualTo("${STATISTICS_MESSAGE_COUNT_RETENTION_DAYS:731}");
+    // 731 = the longest look-back plus the day on which the oldest row is still inside the period
+    assertThat(731).isGreaterThan((int) longestLookBack);
   }
 }

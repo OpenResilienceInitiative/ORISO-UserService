@@ -16,14 +16,16 @@ import org.springframework.stereotype.Service;
  * Retention for the two statistics tables that had none.
  *
  * <p>{@link ConsultantMessageStat} rows are deleted once they are older than the retention period.
- * The only place that reads them is the consultant's own statistics tab. The default of 366 days is
- * the longest window the admin dashboard can show (12 months of "most frequent topics", the current
- * month included), so no view loses a number it could have shown. Both defaults need legal
- * confirmation.
+ * The only place that reads them is the consultant's own statistics tab; the admin dashboard never
+ * does. That tab's longest choice is "Last year" (1 January to 31 December of the previous year, up
+ * to 730 days back), so the default is 731 days and no number it can ask for is cut off. Both
+ * defaults need legal confirmation.
  *
  * <p>{@link StatisticsSettingChange} lines are not deleted: the latest line per setting is its
  * current value, the line count is the revision the settings screen saves against, and the lines
- * show which rule applied when. Only the admin id and name are blanked after the period.
+ * show which rule applied when. Only the admin id and name are blanked after the period (366 days,
+ * the longest dashboard window: the admin only records who changed a rule). A NULL admin on an old
+ * line can therefore also mean "removed by retention", not only "recorded by the system".
  *
  * <p>A non-positive period switches that part off instead of deleting everything.
  */
@@ -36,7 +38,7 @@ public class StatisticsRetentionService {
   private final @NonNull StatisticsSettingChangeRepository statisticsSettingChangeRepository;
   private final @NonNull Clock clock;
 
-  @Value("${statistics.message-count.retention.days:366}")
+  @Value("${statistics.message-count.retention.days:731}")
   private int messageCountRetentionDays;
 
   @Value("${statistics.setting-change.actor-retention.days:366}")
