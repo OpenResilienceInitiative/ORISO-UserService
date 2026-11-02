@@ -57,12 +57,8 @@ public class JoinAndLeaveChatFacade {
     requireMatrixRoom(chat);
     String matrixUserId = retrieveMatrixUserId(authenticatedUser);
     if (!isBlank(matrixUserId)
-        && (chat.getConversationType() == ConversationType.SELF_HELP
-            || (groupCounsellingDpaPolicy.historicalReturnEnabled()
-                && ChatConverter.conversationTypeOf(chat) == ConversationType.SELF_HELP))
-        && chat.getCurrentOccurrenceIndex() == 0) {
-      // Assignment does not prove participation. The active first room plus a
-      // current JOIN membership establishes a begun consultation for this caller.
+        && ChatConverter.conversationTypeOf(chat) == ConversationType.SELF_HELP) {
+      // A current JOIN establishes continuation for this caller in every occurrence.
       var joinedMembers =
           matrixSynapseService
               .getRoomMembers(groupChatMembershipService.resolveMatrixRoomId(chat))
@@ -81,7 +77,16 @@ public class JoinAndLeaveChatFacade {
       }
       groupCounsellingDpaPolicy.requireAuthorizedEnrolment(chat, matrixUserId);
     }
-    if (isBlank(matrixUserId) || !groupChatMembershipService.addMemberToRoom(chat, matrixUserId)) {
+    if (isBlank(matrixUserId)) {
+      throw new InternalServerErrorException(
+          String.format("User with id %s has no Matrix user ID.", authenticatedUser.getUserId()));
+    }
+    if (!groupChatMembershipService.addMemberToRoom(chat, matrixUserId)) {
+      // Matrix refuses to re-invite a banned member; say so instead of failing with 500.
+      if (groupChatMembershipService.isBannedFromRoom(chat, matrixUserId).orElse(false)) {
+        throw new CustomValidationHttpStatusException(
+            HttpStatusExceptionReason.USER_BANNED_FROM_CHAT, HttpStatus.FORBIDDEN);
+      }
       throw new InternalServerErrorException(
           String.format(
               "User with id %s could not join the Matrix group chat.",

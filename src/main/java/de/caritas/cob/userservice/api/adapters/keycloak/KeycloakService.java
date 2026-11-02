@@ -1187,6 +1187,15 @@ public class KeycloakService
   }
 
   @Override
+  public void activateUser(String userId) {
+    var userResource = keycloakClient.getUsersResource().get(userId);
+    var userRepresentation = userResource.toRepresentation();
+    // Only the enabled flag: no password reset, no credential change, no required action removed.
+    userRepresentation.setEnabled(true);
+    userResource.update(userRepresentation);
+  }
+
+  @Override
   public void reactivateUser(
       String userId,
       String expectedUsername,

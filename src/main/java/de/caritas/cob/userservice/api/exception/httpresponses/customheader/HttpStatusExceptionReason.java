@@ -59,5 +59,12 @@ public enum HttpStatusExceptionReason {
   /** The session of a members-only chat ends with its chat; stop the chat instead. */
   MEMBERS_ONLY_CHAT_STOP_REQUIRED,
   /** The case owner changed after the case handover request or offer was created. */
-  CASE_OWNER_CHANGED
+  CASE_OWNER_CHANGED,
+  /** A moderator banned the caller from this group chat; joining again is refused. */
+  USER_BANNED_FROM_CHAT,
+  /**
+   * A self-help group invite link was refused: unknown or foreign group, not a self-help group, or
+   * a wrong token. Says only that the link does not work, never whether the group exists (#1483).
+   */
+  GROUP_INVITE_INVALID
 }

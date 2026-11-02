@@ -223,6 +223,8 @@ public class UserAccountServiceTest {
     user.setEmail(newMail);
     verify(this.userService, times(1)).saveUser(user);
     verify(this.consultantService, times(2)).getConsultant(any());
+    // the writability check also looks for a consultant in the safeguard window
+    verify(this.consultantService).findConsultantIncludingDeleted(any());
     verifyNoMoreInteractions(this.consultantService);
     verifyNoInteractions(userHelper);
   }
@@ -258,6 +260,8 @@ public class UserAccountServiceTest {
     user.setEmail(newMail);
     verify(this.userService, times(1)).saveUser(user);
     verify(this.consultantService, times(2)).getConsultant(any());
+    // the writability check also looks for a consultant in the safeguard window
+    verify(this.consultantService).findConsultantIncludingDeleted(any());
     verifyNoMoreInteractions(this.consultantService);
     verifyNoInteractions(userHelper);
   }
@@ -304,6 +308,8 @@ public class UserAccountServiceTest {
     verify(userService).saveUser(user);
     assertAllAdviceSeekerNotificationsAreEnabled(user);
     verify(consultantService, times(2)).getConsultant(any());
+    // the writability check also looks for a consultant in the safeguard window
+    verify(this.consultantService).findConsultantIncludingDeleted(any());
     verifyNoMoreInteractions(consultantService);
   }
 
@@ -400,19 +406,43 @@ public class UserAccountServiceTest {
     accountProvider.updateUserMobileToken("token");
   }
 
-  @Test
-  public void
-      ensureCurrentAccountIsWritable_Should_ThrowForbiddenException_When_ConsultantIsInReadOnlySafeguard() {
+  @ParameterizedTest
+  @EnumSource(
+      value = DeletionLifecycleState.class,
+      names = {
+        "READ_ONLY_SAFEGUARD",
+        "REACTIVATION_IN_PROGRESS",
+        "REACTIVATION_REPAIR_REQUIRED",
+        "HARD_DELETE_IN_PROGRESS",
+        "HARD_DELETE_PARTIAL_FAILURE"
+      })
+  void ensureCurrentAccountIsWritable_Should_ThrowForbiddenException_When_ConsultantIsFrozen(
+      DeletionLifecycleState frozenState) {
     when(userService.getUser(USER_ID)).thenReturn(Optional.empty());
     Consultant consultant = new Consultant();
     consultant.setDeleteDate(java.time.LocalDateTime.now());
-    consultant.setDeletionLifecycleState(
-        de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState
-            .READ_ONLY_SAFEGUARD);
+    consultant.setDeletionLifecycleState(frozenState);
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
-    when(consultantService.getConsultant(USER_ID)).thenReturn(Optional.of(consultant));
+    // getConsultant is findByIdAndDeleteDateIsNull: it can never return a soft-deleted account,
+    // so the safeguard has to look the consultant up including deleted ones.
+    when(consultantService.getConsultant(USER_ID)).thenReturn(Optional.empty());
+    when(consultantService.findConsultantIncludingDeleted(USER_ID))
+        .thenReturn(Optional.of(consultant));
 
     assertThrows(ForbiddenException.class, () -> accountProvider.addMobileAppToken("token"));
+    verify(consultantService, never()).addMobileAppToken(any(), any());
+  }
+
+  @Test
+  public void ensureCurrentAccountIsWritable_Should_NotThrow_When_ConsultantIsActive() {
+    when(userService.getUser(USER_ID)).thenReturn(Optional.empty());
+    when(userService.findDeletedById(USER_ID)).thenReturn(Optional.empty());
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(consultantService.getConsultant(USER_ID)).thenReturn(Optional.of(new Consultant()));
+
+    accountProvider.addMobileAppToken("token");
+
+    verify(consultantService).addMobileAppToken(USER_ID, "token");
   }
 
   @Test

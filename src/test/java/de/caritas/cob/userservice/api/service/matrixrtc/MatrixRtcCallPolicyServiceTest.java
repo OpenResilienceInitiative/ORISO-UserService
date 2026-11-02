@@ -30,6 +30,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -82,6 +84,10 @@ class MatrixRtcCallPolicyServiceTest {
     jdbc.execute("CREATE TABLE user(user_id VARCHAR(36),matrix_user_id VARCHAR(255))");
     jdbc.execute("CREATE TABLE consultant(consultant_id VARCHAR(36),matrix_user_id VARCHAR(255))");
     jdbc.execute("CREATE TABLE account_inactivity(identity_id VARCHAR(36),status VARCHAR(20))");
+    jdbc.execute("CREATE TABLE session(id BIGINT,matrix_room_id VARCHAR(255))");
+    jdbc.execute(
+        "CREATE TABLE group_chat_join_request(id BIGINT AUTO_INCREMENT,session_id BIGINT,"
+            + "user_id VARCHAR(36),via VARCHAR(32),status VARCHAR(16))");
     jdbc.update("INSERT INTO user VALUES ('person',?)", MATRIX_USER_ID);
     jdbc.update("INSERT INTO account_inactivity VALUES ('person','ACTIVE')");
     return jdbc;
@@ -90,6 +96,70 @@ class MatrixRtcCallPolicyServiceTest {
   @AfterEach
   void clearTenantContext() {
     TenantContext.clear();
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"PENDING", "DECLINED", "CANCELLED"})
+  void latestKnockNotAdmittedKeepsTheCallClosed_EvenAfterAnEarlierAdmission(String latest) {
+    jdbc.update("INSERT INTO session VALUES (500, ?)", ROOM_ID);
+    jdbc.update(
+        "INSERT INTO group_chat_join_request(session_id,user_id,via,status)"
+            + " VALUES (500,'person','DIRECT_LINK','ADMITTED')");
+    jdbc.update(
+        "INSERT INTO group_chat_join_request(session_id,user_id,via,status)"
+            + " VALUES (500,'person','DIRECT_LINK',?)",
+        latest);
+
+    try (var logs = LogbackCaptor.forClass(MatrixRtcCallPolicyService.class)) {
+      assertThat(service.resolve(ROOM_ID, MATRIX_USER_ID)).isEqualTo(CallMediaPolicy.denied());
+      assertThat(logs.messages(Level.INFO))
+          .anySatisfy(message -> assertThat(message).contains("KNOCK_NOT_ADMITTED"));
+    }
+  }
+
+  @Test
+  void admittedDirectLinkKnockPassesTheKnockGate() {
+    jdbc.update("INSERT INTO session VALUES (500, ?)", ROOM_ID);
+    jdbc.update(
+        "INSERT INTO group_chat_join_request(session_id,user_id,via,status)"
+            + " VALUES (500,'person','DIRECT_LINK','PENDING')");
+    jdbc.update(
+        "INSERT INTO group_chat_join_request(session_id,user_id,via,status)"
+            + " VALUES (500,'person','DIRECT_LINK','ADMITTED')");
+
+    var session = session(ConversationType.AGENCY_COUNSELLING);
+    when(sessionRepository.findByMatrixRoomId(ROOM_ID)).thenReturn(Optional.of(session));
+    when(tenantService.getRestrictedTenantDataFresh(TENANT_ID)).thenReturn(tenant(new Settings()));
+
+    try (var logs = LogbackCaptor.forClass(MatrixRtcCallPolicyService.class)) {
+      assertThat(service.resolve(ROOM_ID, MATRIX_USER_ID))
+          .isEqualTo(new CallMediaPolicy(true, true));
+      assertThat(logs.messages(Level.INFO))
+          .noneSatisfy(message -> assertThat(message).contains("KNOCK_NOT_ADMITTED"));
+    }
+  }
+
+  /** Only the person's own direct-link knock on this conversation closes the call. */
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "500,'someone-else','DIRECT_LINK'",
+        "500,'person','INVITE_LINK'",
+        "501,'person','DIRECT_LINK'"
+      })
+  void pendingKnockOutsideTheGateScopeLeavesTheCallOpen(String sessionUserVia) {
+    jdbc.update("INSERT INTO session VALUES (500, ?)", ROOM_ID);
+    jdbc.update("INSERT INTO session VALUES (501, '!other:example')");
+    jdbc.update(
+        "INSERT INTO group_chat_join_request(session_id,user_id,via,status) VALUES ("
+            + sessionUserVia
+            + ",'PENDING')");
+
+    var session = session(ConversationType.AGENCY_COUNSELLING);
+    when(sessionRepository.findByMatrixRoomId(ROOM_ID)).thenReturn(Optional.of(session));
+    when(tenantService.getRestrictedTenantDataFresh(TENANT_ID)).thenReturn(tenant(new Settings()));
+
+    assertThat(service.resolve(ROOM_ID, MATRIX_USER_ID)).isEqualTo(new CallMediaPolicy(true, true));
   }
 
   @Test

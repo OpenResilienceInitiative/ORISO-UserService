@@ -101,11 +101,24 @@ public class AgencyInviteLinkController {
     return ResponseEntity.ok(body);
   }
 
+  // ---------------------------------------------------------------------------------------------
+  // POST /useradmin/invitelinks/{linkId}/deactivate — switch a link off (status DISABLED).
+  // ---------------------------------------------------------------------------------------------
+  @PreAuthorize(
+      "hasAnyAuthority('AUTHORIZATION_TENANT_ADMIN', 'AUTHORIZATION_USER_ADMIN',"
+          + " 'AUTHORIZATION_RESTRICTED_AGENCY_ADMIN')")
+  @PostMapping("/useradmin/invitelinks/{linkId}/deactivate")
+  public ResponseEntity<AgencyInviteLinkResponseDTO> deactivate(@PathVariable Long linkId) {
+    AgencyInviteLink link = agencyInviteLinkService.deactivate(linkId);
+    return ResponseEntity.ok(
+        AgencyInviteLinkResponseDTO.from(link, topicService.getAllTopicsMap()));
+  }
+
   /** Public, read-only invitation metadata for selecting an identity before joining. */
   @GetMapping("/users/invitelinks/{token}/context")
-  public ResponseEntity<AgencyInviteLinkService.InvitationContext> context(
-      @PathVariable String token) {
-    return ResponseEntity.ok(agencyInviteLinkService.getContext(token));
+  public ResponseEntity<Object> context(@PathVariable String token) {
+    // InvitationContext, or CallShareContext for a call share link (#1487).
+    return ResponseEntity.ok(agencyInviteLinkService.getPublicContext(token));
   }
 
   // ---------------------------------------------------------------------------------------------

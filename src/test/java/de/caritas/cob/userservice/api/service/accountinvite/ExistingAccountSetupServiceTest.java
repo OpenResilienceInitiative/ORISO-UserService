@@ -8,8 +8,10 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.AccountInvite;
@@ -66,10 +68,10 @@ class ExistingAccountSetupServiceTest {
             eq(11L), any(), any(), any(), any(), any(), any(), eq("admin-11"), any()))
         .thenReturn(1);
 
-    service.confirm("mailed-token", "new-secret");
+    service.confirm("mailed-token", "new-secret-16chars!");
 
-    verify(passwords).updatePassword("admin-11", "new-secret");
-    verify(initialPasswords).matches("new-secret", "salted-verifier");
+    verify(passwords).updatePassword("admin-11", "new-secret-16chars!");
+    verify(initialPasswords).matches("new-secret-16chars!", "salted-verifier");
     verify(invites)
         .completeExistingAccountSetup(
             eq(11L),
@@ -182,7 +184,7 @@ class ExistingAccountSetupServiceTest {
     when(invites.claimExistingAccountSetup(eq(11L), any(), any(), any(), any(), any()))
         .thenReturn(0);
 
-    assertThatThrownBy(() -> service.confirm("mailed-token", "new-secret"))
+    assertThatThrownBy(() -> service.confirm("mailed-token", "new-secret-16chars!"))
         .isInstanceOf(ConflictException.class);
     verify(passwords, never()).updatePassword(any(), any());
   }
@@ -192,7 +194,7 @@ class ExistingAccountSetupServiceTest {
     var invite = setupInvite();
     invite.setExpiresAt(LocalDateTime.now().minusSeconds(1));
 
-    assertThatThrownBy(() -> service.confirm("mailed-token", "new-secret"))
+    assertThatThrownBy(() -> service.confirm("mailed-token", "new-secret-16chars!"))
         .isInstanceOfSatisfying(
             AccountInviteLinkException.class,
             failure ->
@@ -213,7 +215,7 @@ class ExistingAccountSetupServiceTest {
     expected.forEach(
         (status, reason) -> {
           invite.setStatus(status);
-          assertThatThrownBy(() -> service.confirm("mailed-token", "new-secret"))
+          assertThatThrownBy(() -> service.confirm("mailed-token", "new-secret-16chars!"))
               .isInstanceOfSatisfying(
                   AccountInviteLinkException.class,
                   failure -> assertThat(failure.getReason()).isEqualTo(reason));
@@ -230,7 +232,7 @@ class ExistingAccountSetupServiceTest {
     when(admins.findByIdAndType("admin-11", Admin.AdminType.TENANT))
         .thenReturn(Optional.of(admin("different@example.org")));
 
-    assertThatThrownBy(() -> service.confirm("mailed-token", "new-secret"))
+    assertThatThrownBy(() -> service.confirm("mailed-token", "new-secret-16chars!"))
         .isInstanceOf(AccountInviteLinkException.class);
     verify(invites)
         .revokeStaleExistingAccountSetup(
@@ -245,7 +247,7 @@ class ExistingAccountSetupServiceTest {
     when(invites.claimExistingAccountSetup(eq(11L), any(), any(), any(), any(), any()))
         .thenReturn(1);
 
-    assertThatThrownBy(() -> service.confirm("mailed-token", "new-secret"))
+    assertThatThrownBy(() -> service.confirm("mailed-token", "new-secret-16chars!"))
         .isInstanceOf(AccountInviteLinkException.class);
     verify(invites)
         .revokeStaleExistingAccountSetup(
@@ -261,7 +263,7 @@ class ExistingAccountSetupServiceTest {
     when(invites.claimExistingAccountSetup(eq(11L), any(), any(), any(), any(), any()))
         .thenReturn(1);
 
-    assertThatThrownBy(() -> service.confirm("mailed-token", "new-secret"))
+    assertThatThrownBy(() -> service.confirm("mailed-token", "new-secret-16chars!"))
         .isInstanceOfSatisfying(
             AccountInviteLinkException.class,
             failure ->
@@ -281,9 +283,9 @@ class ExistingAccountSetupServiceTest {
         .thenReturn(1);
     doThrow(new IllegalStateException("provider detail"))
         .when(passwords)
-        .updatePassword("admin-11", "new-secret");
+        .updatePassword("admin-11", "new-secret-16chars!");
 
-    assertThatThrownBy(() -> service.confirm("mailed-token", "new-secret"))
+    assertThatThrownBy(() -> service.confirm("mailed-token", "new-secret-16chars!"))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageNotContaining("provider detail");
     verify(invites)
@@ -306,10 +308,10 @@ class ExistingAccountSetupServiceTest {
             eq(11L), any(), any(), any(), any(), any(), any(), eq("admin-11"), any()))
         .thenReturn(0);
 
-    assertThatThrownBy(() -> service.confirm("mailed-token", "new-secret"))
+    assertThatThrownBy(() -> service.confirm("mailed-token", "new-secret-16chars!"))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("operator review");
-    verify(passwords).updatePassword("admin-11", "new-secret");
+    verify(passwords).updatePassword("admin-11", "new-secret-16chars!");
     verify(invites)
         .recordIndeterminateExistingAccountSetup(
             eq(11L), any(), any(), any(), eq("SETUP_OUTCOME_INDETERMINATE"), any());
@@ -323,9 +325,9 @@ class ExistingAccountSetupServiceTest {
     givenLiveAdmin();
     when(invites.claimExistingAccountSetup(eq(11L), any(), any(), any(), any(), any()))
         .thenReturn(1);
-    when(initialPasswords.matches("same-secret", "salted-verifier")).thenReturn(true);
+    when(initialPasswords.matches("same-secret-16chars", "salted-verifier")).thenReturn(true);
 
-    assertThatThrownBy(() -> service.confirm("mailed-token", "same-secret"))
+    assertThatThrownBy(() -> service.confirm("mailed-token", "same-secret-16chars"))
         .hasMessageContaining("different from the initial password");
     verify(invites)
         .releaseExistingAccountSetup(
@@ -334,12 +336,21 @@ class ExistingAccountSetupServiceTest {
   }
 
   @Test
+  void fifteenCharacterPasswordIsRejectedBeforeTheLinkIsClaimed() {
+    assertThatThrownBy(() -> service.confirm("mailed-token", "123456789012345"))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessageContaining("16 characters");
+    verify(passwords, never()).updatePassword(any(), any());
+    verifyNoInteractions(invites);
+  }
+
+  @Test
   void indeterminateClaimRejectsReplayWithANamedRecoveryReason() {
     var invite = setupInvite();
     invite.setProvisioningStatus(AccountInviteProvisioningStatus.IN_PROGRESS);
     invite.setProvisioningFailureReason("SETUP_OUTCOME_INDETERMINATE");
 
-    assertThatThrownBy(() -> service.confirm("mailed-token", "another-secret"))
+    assertThatThrownBy(() -> service.confirm("mailed-token", "another-secret-16chars"))
         .isInstanceOfSatisfying(
             AccountInviteLinkException.class,
             failure ->

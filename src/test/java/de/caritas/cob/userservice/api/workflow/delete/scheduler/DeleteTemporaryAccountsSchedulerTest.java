@@ -49,6 +49,10 @@ class DeleteTemporaryAccountsSchedulerTest {
   @Mock private TenantContextProvider tenantContextProvider;
   @Mock private ScheduledTaskClaimService taskClaimService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.workflow.delete.service.DirectLinkTemporaryAccountCleanup
+      directLinkCleanup;
+
   @BeforeEach
   void setUp() {
     setField(scheduler, "enabled", true);
@@ -144,7 +148,13 @@ class DeleteTemporaryAccountsSchedulerTest {
     when(deletionUnit.deleteUser("a")).thenThrow(new IllegalStateException("boom"));
     when(deletionUnit.deleteUser("b")).thenReturn(List.of());
     var realScheduler =
-        new DeleteTemporaryAccountsScheduler(realService, tenantContextProvider, taskClaimService);
+        new DeleteTemporaryAccountsScheduler(
+            realService,
+            tenantContextProvider,
+            taskClaimService,
+            mock(
+                de.caritas.cob.userservice.api.workflow.delete.service
+                    .DirectLinkTemporaryAccountCleanup.class));
     setField(realScheduler, "enabled", true);
     setField(realScheduler, "claimDuration", Duration.ofMinutes(30));
 
@@ -175,5 +185,75 @@ class DeleteTemporaryAccountsSchedulerTest {
     scheduler.performDeletionWorkflow();
 
     verifyNoInteractions(taskClaimService, deleteTemporaryAccountsService);
+  }
+
+  // --- direct-link temporary accounts (#1476) ---
+
+  @Test
+  void directLinkWorkflow_doesNothing_When_Disabled() {
+    setField(scheduler, "enabled", false);
+
+    scheduler.performDirectLinkDeletionWorkflow();
+
+    verifyNoInteractions(taskClaimService, directLinkCleanup);
+  }
+
+  @Test
+  void directLinkWorkflow_skipsTheRun_When_AnotherReplicaHoldsTheLease() {
+    when(taskClaimService.tryClaimLease(anyString(), any())).thenReturn(Optional.empty());
+
+    scheduler.performDirectLinkDeletionWorkflow();
+
+    verifyNoInteractions(directLinkCleanup);
+    verify(taskClaimService, never()).release(any());
+  }
+
+  @Test
+  void directLinkWorkflow_stopsTheBatch_When_TheLeaseIsLost() {
+    givenTheLeaseIsHeld();
+    when(directLinkCleanup.dueAccountIds(any())).thenReturn(List.of("a", "b"));
+    when(taskClaimService.runIfHeld(eq(LEASE), any())).thenReturn(false);
+
+    scheduler.performDirectLinkDeletionWorkflow();
+
+    verify(directLinkCleanup, never()).delete(anyString(), any());
+    verify(taskClaimService).runIfHeld(eq(LEASE), any());
+    verify(taskClaimService).release(LEASE);
+  }
+
+  /** One account that throws must not cost the others their deletion or the error mail. */
+  @Test
+  @SuppressWarnings("unchecked")
+  void directLinkWorkflow_continuesAndReports_When_OneDeletionThrows() {
+    givenTheLeaseIsHeld();
+    when(directLinkCleanup.dueAccountIds(any())).thenReturn(List.of("a", "b"));
+    when(directLinkCleanup.delete(eq("a"), any())).thenThrow(new IllegalStateException("boom"));
+    var reported = DeletionWorkflowError.builder().identifier("b").build();
+    when(directLinkCleanup.delete(eq("b"), any())).thenReturn(List.of(reported));
+
+    scheduler.performDirectLinkDeletionWorkflow();
+
+    verify(directLinkCleanup).delete(eq("b"), any());
+    var errors = ArgumentCaptor.forClass(List.class);
+    verify(deleteTemporaryAccountsService).notifyAbout(errors.capture());
+    assertThat((List<DeletionWorkflowError>) errors.getValue())
+        .extracting(DeletionWorkflowError::getIdentifier)
+        .containsExactly("a", "b");
+    verify(taskClaimService).release(LEASE);
+    assertThat(TenantContext.contextIsSet()).isFalse();
+  }
+
+  /** Session timestamps are written in UTC; the expiry comparison must use the same clock. */
+  @Test
+  void directLinkWorkflow_judgesExpiryInUtc() {
+    givenTheLeaseIsHeld();
+    var now = ArgumentCaptor.forClass(LocalDateTime.class);
+    when(directLinkCleanup.dueAccountIds(now.capture())).thenReturn(List.of());
+
+    scheduler.performDirectLinkDeletionWorkflow();
+
+    var utc = LocalDateTime.now(java.time.ZoneOffset.UTC);
+    assertThat(java.time.Duration.between(now.getValue(), utc).abs())
+        .isLessThan(java.time.Duration.ofMinutes(1));
   }
 }

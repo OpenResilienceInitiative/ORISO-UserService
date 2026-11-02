@@ -497,9 +497,10 @@
       "owner": "identity-profile",
       "risk": "duplicate-side-effect",
       "components": [
-        "performDeletionWorkflow"
+        "performDeletionWorkflow",
+        "performDirectLinkDeletionWorkflow"
       ],
-      "decision": "A shared lease is claimed per run and each account is deleted under the locked lease row (runIfHeld), so a second replica skips the run; the lease is released in finally. Each deletion runs in its own transaction and treats an already deleted user as done.",
+      "decision": "A shared lease is claimed per run and each account is deleted under the locked lease row (runIfHeld), so a second replica skips the run; the lease is released in finally. Each deletion runs in its own transaction and treats an already deleted user as done. The direct-link run (ADR-029) claims its own lease (direct-link-temporary-account-deletion) under the same rules, so it never blocks or overlaps the inactivity run.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
@@ -682,6 +683,22 @@
       "status": "bounded"
     },
     {
+      "id": "agency-deletion-audit-pull-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/delete/scheduler/AgencyDeletionAuditPullScheduler.java",
+      "kind": "scheduler",
+      "owner": "deletion",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "pull"
+      ],
+      "decision": "Leases each run through ScheduledTaskClaimService. A pulled entry is recorded before it is acknowledged, and recording deduplicates on target type, id and outcome, so a replayed batch after a lost acknowledgement adds no second log row.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
       "id": "team-discussion-retention-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/workflow/teamdiscussionretention/scheduler/TeamDiscussionRetentionScheduler.java",
       "kind": "scheduler",
@@ -840,6 +857,22 @@
         "userservice.scheduler.duration"
       ],
       "status": "bounded"
+    },
+    {
+      "id": "call-share-link-sweep",
+      "kind": "scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/agencyinvitelink/CallShareLinkSweep.java",
+      "components": [
+        "sweep"
+      ],
+      "owner": "sessions-matrix",
+      "risk": "correctness",
+      "decision": "Database-only expiry of call share links whose call is over. Each link is closed in its own transaction under a pessimistic row lock and only from ACTIVE, so competing replicas close it once and a second run is a no-op; no Matrix call is made.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "safe"
     },
     {
       "id": "matrix-feed-signal-coalescer",

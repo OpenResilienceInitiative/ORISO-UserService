@@ -231,4 +231,29 @@ public class StatelessCsrfFilterTest {
     verify(this.accessDeniedHandler, times(1)).handle(any(), any(), any());
     verifyNoMoreInteractions(this.filterChain);
   }
+
+  @Test
+  public void doFilterInternal_Should_requireCsrf_ForDirectLinkConversation_WithRealWhitelist()
+      throws IOException, ServletException {
+    var properties = new java.util.Properties();
+    try (var in = getClass().getResourceAsStream("/application.properties")) {
+      properties.load(in);
+    }
+    csrfSecurityProperties
+        .getWhitelist()
+        .setConfigUris(properties.getProperty("csrf.whitelist.configUris").split(","));
+    when(request.getMethod()).thenReturn("POST");
+
+    for (var prefix : new String[] {"", "/service"}) {
+      when(request.getRequestURI()).thenReturn(prefix + "/users/invitelinks/abc123/conversations");
+      this.csrfFilter.doFilterInternal(request, response, filterChain);
+    }
+    verify(this.accessDeniedHandler, times(2)).handle(any(), any(), any());
+    verifyNoMoreInteractions(this.filterChain);
+
+    // The public bootstrap routes stay open.
+    when(request.getRequestURI()).thenReturn("/users/invitelinks/abc123/redeem");
+    this.csrfFilter.doFilterInternal(request, response, filterChain);
+    verify(this.filterChain, times(1)).doFilter(request, response);
+  }
 }

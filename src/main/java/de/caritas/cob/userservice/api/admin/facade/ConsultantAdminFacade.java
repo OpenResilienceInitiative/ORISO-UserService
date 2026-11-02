@@ -306,6 +306,11 @@ public class ConsultantAdminFacade {
     this.consultantAdminService.pauseConsultantDeletion(consultantId, reason, months, pausedBy);
   }
 
+  public void cancelConsultantDeletion(String consultantId) {
+    adminScope.assertMay(Target.counsellor(consultantId));
+    this.consultantAdminService.cancelConsultantDeletion(consultantId);
+  }
+
   /**
    * Retrieves all consultants of the agency with given id.
    *

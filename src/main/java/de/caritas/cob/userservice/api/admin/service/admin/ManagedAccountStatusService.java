@@ -134,7 +134,7 @@ public class ManagedAccountStatusService {
             case AGENCY -> authorities.contains(USER_ADMIN);
             default -> false;
           };
-      scope.assertMay(AdminScope.Target.admin(id));
+      scope.assertMay(write ? AdminScope.Target.managedAdmin(id) : AdminScope.Target.admin(id));
     } else {
       permitted =
           write ? authorities.contains(CONSULTANT_UPDATE) : authorities.contains(USER_ADMIN);

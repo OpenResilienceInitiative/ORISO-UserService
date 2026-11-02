@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.service.chat.GroupChatPermissionService;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /*
  * Facade to encapsulate the steps to stop a running chat session.
@@ -25,6 +26,9 @@ public class StopChatFacade {
    * @param chat {@link Chat}
    * @param consultant {@link Consultant}
    */
+  // One transaction: if the Matrix room cannot be shut down, the chat's deletion rolls back and
+  // the counsellor gets an error instead of a stopped chat whose room is still open (#1513).
+  @Transactional
   public void stopChat(Chat chat, Consultant consultant) {
     groupChatPermissionService.requireCanModerate(chat, consultant);
 

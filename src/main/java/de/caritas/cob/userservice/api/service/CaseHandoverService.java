@@ -101,6 +101,7 @@ public class CaseHandoverService {
   private static final String OUTCOME_PENDING_CLIENT_CONSENT = "PENDING_CLIENT_CONSENT";
   private static final String OUTCOME_PENDING_RECIPIENT_ACCEPTANCE = "PENDING_RECIPIENT_ACCEPTANCE";
   private static final String OUTCOME_RECIPIENT_DECLINED = "RECIPIENT_DECLINED";
+  private static final String OUTCOME_OFFER_WITHDRAWN = "OFFER_WITHDRAWN";
   private static final String OUTCOME_ACCESS_GRANTED_PENDING_CLIENT_OPTOUT =
       "ACCESS_GRANTED_PENDING_CLIENT_OPTOUT";
   private static final String OUTCOME_CLIENT_OPTOUT_CONFIRMED = "CLIENT_OPTOUT_CONFIRMED";
@@ -638,6 +639,7 @@ public class CaseHandoverService {
           .ownershipRevision(session.getOwnershipRevision())
           .policyAuthority(POLICY_AUTHORITY)
           .auditOutcome(OUTCOME_ACTIVE_OWNER)
+          .openOffer(openOfferOf(sessionId, requester).map(this::toStatus).orElse(null))
           .build();
     }
 
@@ -776,6 +778,7 @@ public class CaseHandoverService {
    *
    * <ul>
    *   <li>colleague offers (PENDING_RECIPIENT_ACCEPTANCE, RECIPIENT_DECLINED) are never shown;
+   *   <li>WITHDRAWN is shown only once the colleague had accepted, i.e. after the consent prompt;
    *   <li>DENIED is never shown: it arises either before the advice seeker is asked or from their
    *       own just-returned decision, which the decision response already carries;
    *   <li>GRANTED, CLIENT_CONSENT_DECLINED and EXPIRED are reached only through the consent prompt
@@ -788,6 +791,11 @@ public class CaseHandoverService {
         || status == Status.PENDING_CLIENT_CONSENT
         || status == Status.GRANTED_PENDING_CLIENT_OPTOUT) {
       return true;
+    }
+    if (status == Status.WITHDRAWN) {
+      // Withdrawn after the colleague accepted: the advice seeker was already asked and must be
+      // able to settle that prompt. Withdrawn before that, the offer stays staff-only.
+      return request.getRecipientDecisionAt() != null;
     }
     if (status != Status.GRANTED
         && status != Status.CLIENT_CONSENT_DECLINED
@@ -1128,13 +1136,27 @@ public class CaseHandoverService {
 
   /** An offer still waiting for the recipient or the advice seeker blocks a second one. */
   private boolean hasOpenOffer(Long sessionId) {
+    return openOffers(sessionId).findAny().isPresent();
+  }
+
+  /** The open colleague offer this counsellor made, if any (the owner's view of it). */
+  private Optional<CaseHandoverRequest> openOfferOf(Long sessionId, Consultant initiator) {
+    return openOffers(sessionId)
+        .filter(
+            request ->
+                request.getInitiatorConsultant() != null
+                    && Objects.equals(request.getInitiatorConsultant().getId(), initiator.getId()))
+        .findFirst();
+  }
+
+  private java.util.stream.Stream<CaseHandoverRequest> openOffers(Long sessionId) {
     return List.of(Status.PENDING_RECIPIENT_ACCEPTANCE, Status.PENDING_CLIENT_CONSENT).stream()
         .flatMap(
             status ->
                 caseHandoverRequestRepository
                     .findBySessionIdAndStatusOrderByCreatedAtDesc(sessionId, status)
                     .stream())
-        .anyMatch(request -> request.getDirection() == Direction.PUSH);
+        .filter(request -> request.getDirection() == Direction.PUSH);
   }
 
   /**
@@ -1277,6 +1299,7 @@ public class CaseHandoverService {
                       .tenantId(session.getTenantId())
                       .build());
           notifyRecipientOffer(saved);
+          notifyOfferSent(saved);
           return toStatus(saved);
         });
   }
@@ -1332,7 +1355,9 @@ public class CaseHandoverService {
             request.setStatus(Status.RECIPIENT_DECLINED);
             request.setAuditOutcome(OUTCOME_RECIPIENT_DECLINED);
             request.setResolvedAt(now);
-            return toStatus(caseHandoverRequestRepository.save(request));
+            CaseHandoverRequest declined = caseHandoverRequestRepository.save(request);
+            notifyOfferDeclined(declined);
+            return toStatus(declined);
           }
 
           if (accessType(reason.getCode()) == AccessType.CO_ACCESS || !isAccessAllowed(reason)) {
@@ -1386,6 +1411,43 @@ public class CaseHandoverService {
           }
           return toStatus(saved);
         });
+  }
+
+  /**
+   * The offering counsellor takes a colleague offer back while it is still open. Idempotent: a
+   * repeated call answers with the withdrawn offer and notifies nobody again. An offer the
+   * recipient (or the advice seeker) already settled can no longer be withdrawn and answers 409.
+   * The room is deliberately left alone: a colleague offer is staff-only and never shown to the
+   * advice seeker, so both sides are told through their activity timeline instead.
+   */
+  @Transactional
+  public CaseHandoverStatus withdrawOffer(Long sessionId, Long requestId) {
+    Session session = sessionForAction(sessionId, true, false);
+    Consultant caller = retrieveCurrentConsultant();
+    verifyConsultantTenant(caller, session);
+    CaseHandoverRequest request =
+        caseHandoverRequestRepository
+            .findByIdAndSessionIdForUpdate(requestId, sessionId)
+            .orElseThrow(() -> new NotFoundException("Case handover request not found"));
+    verifyRequestTenant(request, session);
+    if (request.getDirection() != Direction.PUSH
+        || request.getInitiatorConsultant() == null
+        || !Objects.equals(request.getInitiatorConsultant().getId(), caller.getId())) {
+      throw new ForbiddenException("Only the offering counsellor may withdraw this offer");
+    }
+    if (request.getStatus() == Status.WITHDRAWN) {
+      return toStatus(request);
+    }
+    if (request.getStatus() != Status.PENDING_RECIPIENT_ACCEPTANCE
+        && request.getStatus() != Status.PENDING_CLIENT_CONSENT) {
+      throw new ConflictException("This case handover offer was already decided");
+    }
+    request.setStatus(Status.WITHDRAWN);
+    request.setAuditOutcome(OUTCOME_OFFER_WITHDRAWN);
+    request.setResolvedAt(LocalDateTime.now(clock));
+    CaseHandoverRequest saved = caseHandoverRequestRepository.save(request);
+    notifyOfferWithdrawn(saved);
+    return toStatus(saved);
   }
 
   @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -2681,16 +2743,107 @@ public class CaseHandoverService {
     runAfterCommit(notification);
   }
 
+  /** The offering counsellor's own record that the offer went out. */
+  private void notifyOfferSent(CaseHandoverRequest request) {
+    publishOfferTimelineEvent(
+        "case-handover-offer-sent:" + request.getId(),
+        request.getInitiatorConsultant(),
+        "case.handover.offer.sent",
+        "Case handover offer sent",
+        String.format(
+            "You offered case #%s to %s",
+            request.getSession().getId(), resolveConsultantName(request.getRequesterConsultant())),
+        request);
+  }
+
+  private void notifyOfferDeclined(CaseHandoverRequest request) {
+    publishOfferTimelineEvent(
+        "case-handover-offer-declined:" + request.getId(),
+        request.getInitiatorConsultant(),
+        "case.handover.offer.declined",
+        "Case handover offer declined",
+        String.format(
+            "%s declined your offer for case #%s",
+            resolveConsultantName(request.getRequesterConsultant()), request.getSession().getId()),
+        request);
+  }
+
+  /** Both counsellors learn that the offer is off; the recipient's open offer card goes stale. */
+  private void notifyOfferWithdrawn(CaseHandoverRequest request) {
+    Session session = request.getSession();
+    publishOfferTimelineEvent(
+        "case-handover-offer-withdrawn:" + request.getId() + ":recipient",
+        request.getRequesterConsultant(),
+        "case.handover.offer.withdrawn",
+        "Case handover offer withdrawn",
+        String.format(
+            "%s withdrew the offer for case #%s",
+            resolveConsultantName(request.getInitiatorConsultant()), session.getId()),
+        request);
+    publishOfferTimelineEvent(
+        "case-handover-offer-withdrawn:" + request.getId() + ":requester",
+        request.getInitiatorConsultant(),
+        "case.handover.offer.withdrawn",
+        "Case handover offer withdrawn",
+        String.format("You withdrew your offer for case #%s", session.getId()),
+        request);
+  }
+
+  private void publishOfferTimelineEvent(
+      String deduplicationKey,
+      Consultant recipient,
+      String eventType,
+      String title,
+      String text,
+      CaseHandoverRequest request) {
+    if (recipient == null || recipient.getId() == null) {
+      return;
+    }
+    Session session = request.getSession();
+    runAfterCommit(
+        () ->
+            eventNotificationService.createEventOnce(
+                deduplicationKey,
+                recipient.getId(),
+                eventType,
+                EventNotificationService.CATEGORY_SYSTEM,
+                title,
+                text,
+                eventNotificationService.buildCaseHandoverOfferParams(
+                    session,
+                    resolveConsultantName(request.getInitiatorConsultant()),
+                    request.getId()),
+                "/sessions/consultant/sessionView/session/"
+                    + session.getId()
+                    + "?caseHandoverRequestId="
+                    + request.getId(),
+                session.getId(),
+                session.getTenantId()));
+  }
+
+  /**
+   * Runs a notification after the caller's commit. Each action is isolated: one failing
+   * notification must not stop the ones registered after it, since a retry of the already settled
+   * request notifies nobody again.
+   */
   private void runAfterCommit(Runnable action) {
+    Runnable isolated =
+        () -> {
+          try {
+            action.run();
+          } catch (RuntimeException notificationFailure) {
+            log.warn("Case handover after-commit notification failed", notificationFailure);
+          }
+        };
     if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-      action.run();
+      isolated.run();
       return;
     }
     TransactionSynchronizationManager.registerSynchronization(
         new TransactionSynchronization() {
           @Override
           public void afterCommit() {
-            action.run();
+            isolated.run();
           }
         });
   }
@@ -3437,5 +3590,11 @@ public class CaseHandoverService {
     private LocalDateTime expiresAt;
     private boolean canExtend;
     private boolean canReclaim;
+
+    /**
+     * Only on the owner's own status: the colleague offer they made that is still open, so the
+     * offer can be found again (and withdrawn) after a reload.
+     */
+    private CaseHandoverStatus openOffer;
   }
 }

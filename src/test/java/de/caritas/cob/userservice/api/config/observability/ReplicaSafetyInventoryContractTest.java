@@ -45,6 +45,7 @@ class ReplicaSafetyInventoryContractTest {
           "case-handover-matrix-repair",
           "enquiry-rejection-repair",
           "inquiry-acceptance-notice-retry",
+          "call-share-link-sweep",
           "appointment-cleanup-scheduler",
           "enquiry-notification-scheduler",
           "group-chat-deactivation-scheduler",
@@ -68,6 +69,7 @@ class ReplicaSafetyInventoryContractTest {
           "event-notification-retention-scheduler",
           "team-discussion-retention-scheduler",
           "team-discussion-orphan-cleanup-scheduler",
+          "agency-deletion-audit-pull-scheduler",
           "team-discussion-access-repair");
 
   @Test
