@@ -116,6 +116,7 @@ public class AssignEnquiryFacade {
     // accepted. Best-effort by the same contract — never blocks the acceptance.
     teamDiscussionFacade.archiveDiscussionIfPresent(session);
     eventNotificationService.createInquiryAcceptedNotification(session, consultant);
+    retireOpenEnquiryNotificationsAfterCommit(session, consultant.getId());
     var event =
         new AssignSessionStatisticsEvent(consultant.getId(), UserRole.CONSULTANT, session.getId());
     event.setRequestUri(requestURI);
@@ -136,6 +137,36 @@ public class AssignEnquiryFacade {
               @Override
               public void afterCommit() {
                 acceptanceDelivery.dispatchSafely(sessionId);
+              }
+            });
+  }
+
+  /**
+   * ORISO-Frontend#1472: removes the other consultants' "New client request" entries only once the
+   * acceptance has committed, in its own transaction. Running it inside the acceptance transaction
+   * would let a failed cleanup mark that transaction rollback-only and undo the acceptance.
+   */
+  private void retireOpenEnquiryNotificationsAfterCommit(Session session, String consultantId) {
+    Runnable retire =
+        () -> {
+          try {
+            eventNotificationService.retireOpenEnquiryNotifications(session, consultantId);
+          } catch (RuntimeException ex) {
+            log.warn(
+                "Could not retire open enquiry notifications for session {}", session.getId(), ex);
+          }
+        };
+    if (!org.springframework.transaction.support.TransactionSynchronizationManager
+        .isSynchronizationActive()) {
+      retire.run();
+      return;
+    }
+    org.springframework.transaction.support.TransactionSynchronizationManager
+        .registerSynchronization(
+            new org.springframework.transaction.support.TransactionSynchronization() {
+              @Override
+              public void afterCommit() {
+                retire.run();
               }
             });
   }
@@ -187,6 +218,7 @@ public class AssignEnquiryFacade {
     assignment lock. */
     assignEnquiry(session, consultant, false, true);
     eventNotificationService.createInquiryAcceptedNotification(session, consultant);
+    retireOpenEnquiryNotificationsAfterCommit(session, consultant.getId());
   }
 
   private void assignEnquiry(Session session, Consultant consultant) {

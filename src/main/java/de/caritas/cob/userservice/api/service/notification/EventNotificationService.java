@@ -349,6 +349,43 @@ public class EventNotificationService {
             });
   }
 
+  /** Enquiry events that announce an open request to every eligible consultant. */
+  static final Set<String> OPEN_ENQUIRY_EVENT_TYPES =
+      Set.of("request.new", "waiting_room.client.joined");
+
+  /**
+   * ORISO-Frontend#1472: once a consultant has accepted an enquiry, the "New client request" and
+   * "Client joined the waiting room" entries of the other consultants are stale — opening them only
+   * tells the colleague that someone else took the case. Remove them and nudge those clients to
+   * refresh their feed. The accepting consultant keeps their own entry; it leads into their case.
+   *
+   * <p>Best-effort: cleaning up the timeline must never fail the acceptance. Callers run it after
+   * the acceptance has committed; it always opens its own transaction so it never joins (and can
+   * never mark rollback-only) the caller's.
+   */
+  @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+  public void retireOpenEnquiryNotifications(Session session, String acceptingConsultantId) {
+    if (session == null
+        || session.getId() == null
+        || acceptingConsultantId == null
+        || acceptingConsultantId.isBlank()) {
+      return;
+    }
+    try {
+      List<String> otherRecipients =
+          eventNotificationRepository.findOtherRecipientsOfSessionEvents(
+              session.getId(), OPEN_ENQUIRY_EVENT_TYPES, acceptingConsultantId);
+      if (otherRecipients.isEmpty()) {
+        return;
+      }
+      eventNotificationRepository.deleteOpenEnquiryEvents(
+          session.getId(), OPEN_ENQUIRY_EVENT_TYPES, acceptingConsultantId);
+      otherRecipients.forEach(this::signalFeedUpdatedSafely);
+    } catch (RuntimeException ex) {
+      log.warn("Could not retire open enquiry notifications for session {}", session.getId(), ex);
+    }
+  }
+
   /**
    * WP-06 Slice 3 (Tier 3): persist a {@code waiting_room.client.joined} timeline event for each
    * eligible consultant when a client enters the anonymous live-chat waiting room (a new anonymous
