@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.port.out;
 import de.caritas.cob.userservice.api.model.SessionAppointment;
 import jakarta.persistence.LockModeType;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -27,10 +28,14 @@ public interface SessionAppointmentRepository extends CrudRepository<SessionAppo
 
   @Query(
       "SELECT a FROM SessionAppointment a JOIN FETCH a.session s "
-          + "WHERE s.consultant.id = :consultantId AND a.status = 'SCHEDULED' AND a.endTime > :now "
+          + "WHERE (s.consultant.id = :consultantId OR s.id IN :coAccessSessionIds) "
+          + "AND a.status = 'SCHEDULED' AND a.endTime > :now "
           + "ORDER BY a.startTime")
   List<SessionAppointment> findUpcomingOfConsultant(
-      @Param("consultantId") String consultantId, @Param("now") Instant now, Pageable pageable);
+      @Param("consultantId") String consultantId,
+      @Param("coAccessSessionIds") Collection<Long> coAccessSessionIds,
+      @Param("now") Instant now,
+      Pageable pageable);
 
   @Query(
       "SELECT a FROM SessionAppointment a JOIN FETCH a.session s "

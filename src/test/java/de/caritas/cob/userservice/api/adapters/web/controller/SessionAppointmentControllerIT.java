@@ -16,9 +16,15 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.model.CaseHandoverConsentMode;
+import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
+import de.caritas.cob.userservice.api.model.CaseHandoverRequest.AccessType;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.tenant.TenantFixtures;
@@ -28,7 +34,9 @@ import de.caritas.cob.userservice.api.tenant.WithTenant;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import jakarta.servlet.http.Cookie;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -36,6 +44,8 @@ import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.Answers;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -71,6 +81,8 @@ class SessionAppointmentControllerIT {
 
   @Autowired private TenantFixtures fixtures;
   @Autowired private MockMvc mockMvc;
+  @Autowired private CaseHandoverRequestRepository handovers;
+  @Autowired private SessionRepository sessions;
 
   @MockitoBean TenantService tenantService;
   @MockitoBean TenantResolverService tenantResolverService;
@@ -87,6 +99,7 @@ class SessionAppointmentControllerIT {
   private User asker;
   private User otherAsker;
   private Session session;
+  private final List<CaseHandoverRequest> seededHandovers = new ArrayList<>();
 
   @BeforeEach
   void seed() {
@@ -102,6 +115,7 @@ class SessionAppointmentControllerIT {
 
   @AfterEach
   void removeSeededRowsAndWithThemTheAppointmentsOfTheirSessions() {
+    Tenants.in(TENANT, () -> handovers.deleteAll(seededHandovers));
     fixtures.removeAll();
   }
 
@@ -259,6 +273,101 @@ class SessionAppointmentControllerIT {
     assertThat(body(get("/users/appointments/upcoming"))).hasSize(50);
   }
 
+  @Test
+  void coAccessCounsellor_Should_HaveTheSameRightsAsTheSessionsCounsellor() throws Exception {
+    grant(otherCounsellor, CaseHandoverRequest.Status.GRANTED, AccessType.CO_ACCESS, tomorrow());
+    actAsCounsellor(otherCounsellor);
+
+    var id = createdAppointment();
+    mockMvc.perform(reschedule(session.getId(), id, in(3), in(4))).andExpect(status().isOk());
+    mockMvc
+        .perform(list(session.getId()))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].id").value(id));
+    assertThat(body(get("/users/appointments/upcoming")))
+        .extracting(row -> row.get("id"))
+        .containsExactly(id);
+    mockMvc
+        .perform(cancel(session.getId(), id))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("CANCELLED"));
+  }
+
+  @Test
+  void coAccess_Should_AlsoCount_When_TheClientMayStillOptOut() throws Exception {
+    grant(
+        otherCounsellor,
+        CaseHandoverRequest.Status.GRANTED_PENDING_CLIENT_OPTOUT,
+        AccessType.CO_ACCESS,
+        tomorrow());
+    actAsCounsellor(otherCounsellor);
+
+    mockMvc.perform(list(session.getId())).andExpect(status().isOk());
+  }
+
+  @Test
+  void handoverWithoutLiveCoAccess_Should_LeaveTheColleagueAStranger() throws Exception {
+    actAsCounsellor(counsellor);
+    var id = createdAppointment();
+    grant(otherCounsellor, CaseHandoverRequest.Status.GRANTED, AccessType.CO_ACCESS, yesterday());
+    grant(
+        otherCounsellor,
+        CaseHandoverRequest.Status.PENDING_CLIENT_CONSENT,
+        AccessType.CO_ACCESS,
+        tomorrow());
+    grant(otherCounsellor, CaseHandoverRequest.Status.EXPIRED, AccessType.CO_ACCESS, tomorrow());
+    // A takeover whose holder is not the session's counsellor any more.
+    grant(otherCounsellor, CaseHandoverRequest.Status.GRANTED, AccessType.TAKEOVER, null);
+
+    actAsCounsellor(otherCounsellor);
+    assertEveryRouteAnswersNotFound(session.getId(), id);
+    assertThat(body(get("/users/appointments/upcoming"))).isEmpty();
+  }
+
+  @Test
+  void coAccessOnAnotherSession_Should_NotOpenThisOne() throws Exception {
+    actAsCounsellor(counsellor);
+    var id = createdAppointment();
+    var thisSession = session;
+    session = fixtures.session(otherAsker, AGENCY, counsellor);
+    grant(otherCounsellor, CaseHandoverRequest.Status.GRANTED, AccessType.CO_ACCESS, tomorrow());
+
+    actAsCounsellor(otherCounsellor);
+    assertEveryRouteAnswersNotFound(thisSession.getId(), id);
+    assertThat(body(get("/users/appointments/upcoming"))).isEmpty();
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = SessionStatus.class,
+      names = {"DONE", "IN_ARCHIVE"})
+  void finishedSession_Should_RefuseCreateAndMove_But_AllowReadAndCancel(SessionStatus finished)
+      throws Exception {
+    actAsCounsellor(counsellor);
+    var id = createdAppointment();
+    finish(finished);
+
+    mockMvc.perform(create(session.getId(), in(1), in(2))).andExpect(status().isConflict());
+    mockMvc.perform(reschedule(session.getId(), id, in(3), in(4))).andExpect(status().isConflict());
+    mockMvc.perform(list(session.getId())).andExpect(status().isOk());
+    mockMvc
+        .perform(cancel(session.getId(), id))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("CANCELLED"));
+  }
+
+  @Test
+  void finishedSession_Should_NotChangeTheAnswerForThoseWithoutTheRight() throws Exception {
+    actAsCounsellor(counsellor);
+    var id = createdAppointment();
+    finish(SessionStatus.DONE);
+
+    actAsAsker(asker);
+    mockMvc.perform(create(session.getId(), in(1), in(2))).andExpect(status().isForbidden());
+    actAsCounsellor(otherCounsellor);
+    assertEveryRouteAnswersNotFound(session.getId(), id);
+  }
+
   private void assertEveryRouteAnswersNotFound(long sessionId, String id) throws Exception {
     assertEveryRouteAnswersNotFoundForAsker(sessionId, id);
     mockMvc.perform(create(sessionId, in(1), in(2))).andExpect(status().isNotFound());
@@ -326,6 +435,44 @@ class SessionAppointmentControllerIT {
   private String times(Instant start, Instant end) throws Exception {
     return JSON.writeValueAsString(
         Map.of("startTime", start.toString(), "endTime", end.toString()));
+  }
+
+  private void finish(SessionStatus finished) {
+    session.setStatus(finished);
+    session = Tenants.in(TENANT, () -> sessions.save(session));
+  }
+
+  private LocalDateTime tomorrow() {
+    return LocalDateTime.now().plusDays(1);
+  }
+
+  private LocalDateTime yesterday() {
+    return LocalDateTime.now().minusDays(1);
+  }
+
+  private void grant(
+      Consultant requester,
+      CaseHandoverRequest.Status status,
+      AccessType accessType,
+      LocalDateTime expiresAt) {
+    var request =
+        CaseHandoverRequest.builder()
+            .session(session)
+            .requesterConsultant(requester)
+            .reasonCode("ADVICE_NEEDED")
+            .reasonLabel("Advice needed")
+            .explanation("synthetic")
+            .status(status)
+            .clientConsentRequired(false)
+            .clientConsent(CaseHandoverConsentMode.NONE)
+            .policyAuthority("synthetic")
+            .auditOutcome("synthetic")
+            .createdAt(LocalDateTime.now())
+            .accessType(accessType)
+            .expiresAt(expiresAt)
+            .tenantId(TENANT)
+            .build();
+    seededHandovers.add(Tenants.in(TENANT, () -> handovers.save(request)));
   }
 
   private Instant in(int hours) {

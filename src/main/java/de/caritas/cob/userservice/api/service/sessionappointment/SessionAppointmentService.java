@@ -10,14 +10,17 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.SessionAppointment;
 import de.caritas.cob.userservice.api.model.SessionAppointment.Status;
 import de.caritas.cob.userservice.api.port.out.SessionAppointmentRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.service.CaseHandoverService;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
@@ -29,9 +32,11 @@ import org.springframework.transaction.annotation.Transactional;
  * this service's own table alone: no cal.com, no AppointmentService, independent of {@code
  * feature.appointment.enabled}.
  *
- * <p>Only the counsellor assigned to the session creates and moves; that counsellor and the asker
- * read and cancel. Anybody else gets the same 404 as for a session that does not exist. No Matrix
- * notice is posted here: the backend holds no Megolm keys and cannot post into an encrypted room.
+ * <p>The responsible counsellors are the session's counsellor and whoever holds a live co-access
+ * grant through a case handover. They create and move; they and the asker read and cancel. Anybody
+ * else gets the same 404 as for a session that does not exist. A finished or archived session
+ * refuses create and move with 409; cancel stays allowed. No Matrix notice is posted here: the
+ * backend holds no Megolm keys and cannot post into an encrypted room.
  */
 @Service
 @RequiredArgsConstructor
@@ -41,10 +46,13 @@ public class SessionAppointmentService {
   static final int UPCOMING_LIMIT = 50;
   private static final String NOT_FOUND = "Session appointment not found.";
   private static final long LEGACY_TENANT = 1L;
+  private static final Set<SessionStatus> FINISHED =
+      Set.of(SessionStatus.DONE, SessionStatus.IN_ARCHIVE);
 
   private final SessionAppointmentRepository appointments;
   private final SessionRepository sessions;
   private final AuthenticatedUser caller;
+  private final CaseHandoverService caseHandovers;
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
   @Transactional(readOnly = true)
@@ -60,7 +68,8 @@ public class SessionAppointmentService {
   @Transactional
   public SessionAppointmentDTO create(Long sessionId, SessionAppointmentTimeDTO time) {
     var session = sessionOfParticipant(sessionId);
-    requireAssignedCounsellor(session);
+    requireResponsibleCounsellor(session);
+    requireNotFinished(session);
     var appointment = new SessionAppointment();
     appointment.setSession(session);
     appointment.setStatus(Status.SCHEDULED);
@@ -72,7 +81,8 @@ public class SessionAppointmentService {
   public SessionAppointmentDTO reschedule(
       Long sessionId, UUID appointmentId, SessionAppointmentTimeDTO time) {
     var session = sessionOfParticipant(sessionId);
-    requireAssignedCounsellor(session);
+    requireResponsibleCounsellor(session);
+    requireNotFinished(session);
     var appointment = appointmentOf(session, appointmentId);
     if (appointment.getStatus() == Status.CANCELLED) {
       throw new ConflictException("A cancelled appointment cannot be moved.");
@@ -95,7 +105,11 @@ public class SessionAppointmentService {
     var now = Instant.now();
     var rows =
         caller.isConsultant()
-            ? appointments.findUpcomingOfConsultant(caller.getUserId(), now, page)
+            ? appointments.findUpcomingOfConsultant(
+                caller.getUserId(),
+                caseHandovers.sessionIdsWithActiveCoAccess(caller.getUserId()),
+                now,
+                page)
             : appointments.findUpcomingOfAsker(caller.getUserId(), now, page);
     return rows.stream().map(this::toDto).toList();
   }
@@ -104,7 +118,7 @@ public class SessionAppointmentService {
     return sessions
         .findById(sessionId)
         .filter(this::isInCallersTenant)
-        .filter(found -> isAssignedCounsellor(found) || isAsker(found))
+        .filter(found -> isResponsibleCounsellor(found) || isAsker(found))
         .orElseThrow(() -> new NotFoundException(NOT_FOUND));
   }
 
@@ -117,10 +131,13 @@ public class SessionAppointmentService {
     return callerTenant.equals(sessionTenant);
   }
 
-  private boolean isAssignedCounsellor(Session session) {
-    return caller.isConsultant()
-        && session.getConsultant() != null
-        && Objects.equals(session.getConsultant().getId(), caller.getUserId());
+  private boolean isResponsibleCounsellor(Session session) {
+    if (!caller.isConsultant()) {
+      return false;
+    }
+    return (session.getConsultant() != null
+            && Objects.equals(session.getConsultant().getId(), caller.getUserId()))
+        || caseHandovers.hasActiveCoAccess(session.getId(), caller.getUserId());
   }
 
   private boolean isAsker(Session session) {
@@ -128,9 +145,15 @@ public class SessionAppointmentService {
         && Objects.equals(session.getUser().getUserId(), caller.getUserId());
   }
 
-  private void requireAssignedCounsellor(Session session) {
-    if (!isAssignedCounsellor(session)) {
-      throw new ForbiddenException("Only the assigned counsellor schedules appointments.");
+  private void requireResponsibleCounsellor(Session session) {
+    if (!isResponsibleCounsellor(session)) {
+      throw new ForbiddenException("Only a responsible counsellor schedules appointments.");
+    }
+  }
+
+  private void requireNotFinished(Session session) {
+    if (FINISHED.contains(session.getStatus())) {
+      throw new ConflictException("A finished conversation takes no new or moved appointments.");
     }
   }
 
