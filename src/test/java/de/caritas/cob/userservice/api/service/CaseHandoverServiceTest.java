@@ -1960,6 +1960,8 @@ class CaseHandoverServiceTest {
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(recipient);
     when(consultantService.getConsultant("recipient")).thenReturn(Optional.of(recipient));
     when(authenticatedUser.getUserId()).thenReturn(recipient.getId());
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(501L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionIdForUpdate(501L, 123L))
         .thenReturn(Optional.of(request));
 
@@ -2034,6 +2036,8 @@ class CaseHandoverServiceTest {
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(recipient);
     when(consultantService.getConsultant("recipient")).thenReturn(Optional.of(recipient));
     when(authenticatedUser.getUserId()).thenReturn(recipient.getId());
+    when(caseHandoverRequestRepository.findWithoutLockByIdAndSessionId(501L, 123L))
+        .thenReturn(Optional.of(request));
     when(caseHandoverRequestRepository.findByIdAndSessionIdForUpdate(501L, 123L))
         .thenReturn(Optional.of(request));
 
