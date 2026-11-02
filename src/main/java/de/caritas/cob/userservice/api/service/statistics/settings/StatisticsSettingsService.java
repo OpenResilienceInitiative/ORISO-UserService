@@ -214,17 +214,21 @@ public class StatisticsSettingsService {
 
   /**
    * Queues this save behind any other one. Without the row (a database that never ran the
-   * changeset) it is created; losing that race means another save is ahead, so this one is refused.
+   * changeset) it is created. Losing that race, a lock wait that times out, or a deadlock the
+   * database resolves all mean another save is ahead, so this one is refused.
    */
   private void lockSettings() {
-    if (locks.findLockedById(StatisticsSettingsLock.ID).isPresent()) {
-      return;
-    }
     try {
+      if (locks.findLockedById(StatisticsSettingsLock.ID).isPresent()) {
+        return;
+      }
       locks.saveAndFlush(new StatisticsSettingsLock(StatisticsSettingsLock.ID));
     } catch (DataIntegrityViolationException
         | PessimisticLockingFailureException lostToAnotherSave) {
-      throw new ConflictException("Statistics settings were changed in the meantime");
+      log.debug("Statistics settings lock not acquired", lostToAnotherSave);
+      var conflict = new ConflictException("Statistics settings were changed in the meantime");
+      conflict.initCause(lostToAnotherSave);
+      throw conflict;
     }
   }
 

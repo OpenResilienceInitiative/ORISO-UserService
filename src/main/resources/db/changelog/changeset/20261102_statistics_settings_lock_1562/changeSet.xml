@@ -4,18 +4,34 @@
   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
   <!-- One row that a save of the statistics settings locks (UserService#1562): the revision check
        counts protocol lines, so two saves at the same moment could both pass it. The row holds no
-       data. -->
+       data. Table and row are separate changesets, each guarded, so a table made by hand still
+       gets its row. -->
   <changeSet id="20261102-statistics-settings-lock" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <tableExists tableName="statistics_settings_lock"/>
+      </not>
+    </preConditions>
     <createTable tableName="statistics_settings_lock">
       <column name="id" type="BIGINT">
         <constraints primaryKey="true" nullable="false"/>
       </column>
     </createTable>
+    <rollback>
+      <dropTable tableName="statistics_settings_lock"/>
+    </rollback>
+  </changeSet>
+  <changeSet id="20261102-statistics-settings-lock-row" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <sqlCheck expectedResult="0">SELECT COUNT(*) FROM statistics_settings_lock WHERE id = 1</sqlCheck>
+    </preConditions>
     <insert tableName="statistics_settings_lock">
       <column name="id" valueNumeric="1"/>
     </insert>
     <rollback>
-      <dropTable tableName="statistics_settings_lock"/>
+      <delete tableName="statistics_settings_lock">
+        <where>id = 1</where>
+      </delete>
     </rollback>
   </changeSet>
 </databaseChangeLog>

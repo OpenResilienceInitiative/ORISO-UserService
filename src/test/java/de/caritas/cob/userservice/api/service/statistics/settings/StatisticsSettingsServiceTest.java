@@ -376,6 +376,17 @@ class StatisticsSettingsServiceTest {
   }
 
   @Test
+  void updateSettings_Should_Conflict_When_WaitingForAnExistingLockRowTimesOut() {
+    var timeout = new CannotAcquireLockException("lock wait timeout");
+    when(locks.findLockedById(any())).thenThrow(timeout);
+
+    assertThatThrownBy(() -> service.updateSettings(Map.of("agencyMinimumCounsellors", "2"), 0L))
+        .isInstanceOf(ConflictException.class)
+        .hasCause(timeout);
+    verify(repository, never()).save(any());
+  }
+
+  @Test
   void updateSettings_Should_Conflict_When_TheDatabaseResolvesTwoFirstSavesAsADeadlock() {
     when(locks.saveAndFlush(any())).thenThrow(new CannotAcquireLockException("deadlock found"));
 

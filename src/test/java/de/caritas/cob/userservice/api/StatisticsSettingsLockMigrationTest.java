@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.nio.charset.StandardCharsets;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.UUID;
 import liquibase.Contexts;
@@ -34,28 +35,18 @@ class StatisticsSettingsLockMigrationTest {
 
   @Test
   void update_Should_CreateExactlyOneLockRow_And_RollbackRemovesTheTable() throws Exception {
-    var url = "jdbc:h2:mem:stats-lock-mig-" + UUID.randomUUID() + ";MODE=MariaDB;DB_CLOSE_DELAY=-1";
-    var database =
-        DatabaseFactory.getInstance()
-            .findCorrectDatabaseImplementation(
-                new JdbcConnection(DriverManager.getConnection(url, "sa", "")));
+    var url = newDatabaseUrl();
 
-    try (var liquibase = new Liquibase(CHANGELOG, new ClassLoaderResourceAccessor(), database);
+    try (var liquibase = liquibase(url);
         var c = DriverManager.getConnection(url, "sa", "");
         var st = c.createStatement()) {
       liquibase.update(new Contexts(), new LabelExpression());
 
-      var ids = new ArrayList<Long>();
-      try (var rs = st.executeQuery("SELECT id FROM statistics_settings_lock")) {
-        while (rs.next()) {
-          ids.add(rs.getLong(1));
-        }
-      }
-      assertThat(ids).containsExactly(1L);
+      assertThat(lockRows(st)).containsExactly(1L);
       assertThatThrownBy(() -> st.executeUpdate("INSERT INTO statistics_settings_lock VALUES (1)"))
           .isInstanceOf(SQLException.class);
 
-      liquibase.rollback(1, (String) null);
+      liquibase.rollback(2, (String) null);
       try (var rs =
           st.executeQuery(
               "SELECT table_name FROM information_schema.tables"
@@ -63,5 +54,58 @@ class StatisticsSettingsLockMigrationTest {
         assertThat(rs.next()).isFalse();
       }
     }
+  }
+
+  @Test
+  void update_Should_AddOnlyTheRow_When_TheTableWasCreatedByHand() throws Exception {
+    var url = newDatabaseUrl();
+
+    try (var liquibase = liquibase(url);
+        var c = DriverManager.getConnection(url, "sa", "");
+        var st = c.createStatement()) {
+      st.executeUpdate("CREATE TABLE statistics_settings_lock (id BIGINT NOT NULL PRIMARY KEY)");
+
+      liquibase.update(new Contexts(), new LabelExpression());
+
+      assertThat(lockRows(st)).containsExactly(1L);
+    }
+  }
+
+  @Test
+  void update_Should_ChangeNothing_When_TableAndRowWereCreatedByHand() throws Exception {
+    var url = newDatabaseUrl();
+
+    try (var liquibase = liquibase(url);
+        var c = DriverManager.getConnection(url, "sa", "");
+        var st = c.createStatement()) {
+      st.executeUpdate("CREATE TABLE statistics_settings_lock (id BIGINT NOT NULL PRIMARY KEY)");
+      st.executeUpdate("INSERT INTO statistics_settings_lock VALUES (1)");
+
+      liquibase.update(new Contexts(), new LabelExpression());
+
+      assertThat(lockRows(st)).containsExactly(1L);
+    }
+  }
+
+  private static String newDatabaseUrl() {
+    return "jdbc:h2:mem:stats-lock-mig-" + UUID.randomUUID() + ";MODE=MariaDB;DB_CLOSE_DELAY=-1";
+  }
+
+  private static Liquibase liquibase(String url) throws Exception {
+    var database =
+        DatabaseFactory.getInstance()
+            .findCorrectDatabaseImplementation(
+                new JdbcConnection(DriverManager.getConnection(url, "sa", "")));
+    return new Liquibase(CHANGELOG, new ClassLoaderResourceAccessor(), database);
+  }
+
+  private static ArrayList<Long> lockRows(Statement st) throws SQLException {
+    var ids = new ArrayList<Long>();
+    try (var rs = st.executeQuery("SELECT id FROM statistics_settings_lock")) {
+      while (rs.next()) {
+        ids.add(rs.getLong(1));
+      }
+    }
+    return ids;
   }
 }

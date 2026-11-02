@@ -399,6 +399,12 @@ class AdminDashboardStatisticsServiceTest {
   }
 
   @Test
+  void buildDashboard_Should_EnforceSuppression_When_DisabledButProdRunsAlongsideALocalProfile() {
+    assertSuppressionStaysOn("prod", "local");
+    assertSuppressionStaysOn("testing", "prod");
+  }
+
+  @Test
   void buildDashboard_Should_SkipSuppression_When_DisabledOnTheLocalProfile() {
     givenSingleCounsellorAgency();
     ReflectionTestUtils.setField(service, "smallCellSuppressionEnabled", false);
@@ -417,6 +423,7 @@ class AdminDashboardStatisticsServiceTest {
     assertThat(dashboard.suppressionDisabled()).as("profiles %s", List.of(profiles)).isFalse();
     assertThat(dashboard.targets())
         .filteredOn(target -> Long.valueOf(AGENCY_WITH_FEW_COUNSELORS).equals(target.agencyId()))
+        .hasSize(1)
         .allSatisfy(target -> assertThat(target.suppressed()).isTrue());
   }
 

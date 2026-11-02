@@ -29,6 +29,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
 import lombok.NonNull;
@@ -36,7 +37,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.env.Environment;
-import org.springframework.core.env.Profiles;
 import org.springframework.stereotype.Service;
 
 /**
@@ -77,10 +77,11 @@ public class AdminDashboardStatisticsService {
   private final @NonNull AdminDashboardStandService dashboardStands;
 
   /**
-   * Only the profiles for a developer's machine and the automated tests may switch suppression off.
-   * Everything else - prod, staging, dev, a missing or a new profile - keeps it on.
+   * Only the profiles for a developer's machine and the automated tests may switch suppression off,
+   * and only when no other profile is active next to them. Everything else - prod, staging, dev, a
+   * missing or a new profile - keeps it on.
    */
-  private static final Profiles SUPPRESSION_MAY_BE_DISABLED = Profiles.of("local", "testing");
+  private static final Set<String> SUPPRESSION_MAY_BE_DISABLED_ON = Set.of("local", "testing");
 
   /**
    * Escape hatch for end-to-end testing with small test datasets. Fail-closed: it only takes effect
@@ -361,17 +362,20 @@ public class AdminDashboardStatisticsService {
   }
 
   /**
-   * Small-cell suppression may only be switched off on a local or test profile. On every other
-   * profile, or none, the property is ignored and suppression stays enforced (fail-closed).
+   * Small-cell suppression may only be switched off when every active profile is local or testing.
+   * With any other profile active, or none, the property is ignored and suppression stays enforced
+   * (fail-closed).
    */
   private boolean resolveSuppressionActive() {
     if (smallCellSuppressionEnabled) {
       return true;
     }
-    if (!environment.acceptsProfiles(SUPPRESSION_MAY_BE_DISABLED)) {
+    var activeProfiles = Set.of(environment.getActiveProfiles());
+    if (activeProfiles.isEmpty() || !SUPPRESSION_MAY_BE_DISABLED_ON.containsAll(activeProfiles)) {
       log.warn(
-          "statistics.small-cell-suppression.enabled=false was requested, but no local or testing "
-              + "profile is active - small-cell suppression stays enforced (fail-closed)");
+          "statistics.small-cell-suppression.enabled=false was requested, but the active profiles "
+              + "are not only local or testing - small-cell suppression stays enforced "
+              + "(fail-closed)");
       return true;
     }
     log.info("Small-cell suppression is DISABLED for admin statistics (local or testing profile)");

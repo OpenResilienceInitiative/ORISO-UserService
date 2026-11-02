@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.port.out.AdminStatisticsRepository;
+import de.caritas.cob.userservice.api.port.out.AdminStatisticsRepository.GroupCountProjection;
 import de.caritas.cob.userservice.api.service.statistics.AdminDashboardStatisticsService.DashboardScope;
 import de.caritas.cob.userservice.api.service.statistics.settings.StatisticsSettingsService;
 import de.caritas.cob.userservice.api.service.statistics.settings.StatisticsSnapshotInterval;
@@ -16,7 +17,6 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
 
 class AdminDashboardStandRefreshTest {
 
@@ -43,15 +43,27 @@ class AdminDashboardStandRefreshTest {
     }
     when(settings.snapshotInterval(DashboardScope.PLATFORM.snapshotSetting()))
         .thenThrow(new IllegalStateException("unreadable"));
-    when(statistics.countConsultantsByTenant()).thenReturn(List.of());
+    var tenant = tenant(7L);
+    when(statistics.countConsultantsByTenant()).thenReturn(List.of(tenant));
 
     refresh.refreshAll();
 
     // the platform stand is skipped, the other scopes were still looked at, retention still ran
     verify(settings).snapshotInterval(DashboardScope.TENANT.snapshotSetting());
     verify(settings).snapshotInterval(DashboardScope.AGENCY.snapshotSetting());
-    verify(statistics, Mockito.times(2)).countConsultantsByTenant();
+    verify(stands)
+        .currentStand(
+            eq(DashboardScope.TENANT), eq(7L), eq(StatisticsSnapshotInterval.DAILY), any());
+    verify(stands)
+        .currentStand(
+            eq(DashboardScope.AGENCY), eq(7L), eq(StatisticsSnapshotInterval.DAILY), any());
     verify(stands, never()).currentStand(eq(DashboardScope.PLATFORM), any(), any(), any());
     verify(writer).deleteComputedBefore(any());
+  }
+
+  private static GroupCountProjection tenant(long id) {
+    var group = mock(GroupCountProjection.class);
+    when(group.getGroupId()).thenReturn(id);
+    return group;
   }
 }
