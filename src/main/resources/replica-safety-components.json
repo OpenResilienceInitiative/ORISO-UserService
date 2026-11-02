@@ -667,6 +667,22 @@
       "status": "bounded"
     },
     {
+      "id": "statistics-retention-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/statisticsretention/scheduler/StatisticsRetentionScheduler.java",
+      "kind": "scheduler",
+      "owner": "statistics",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "purgeExpiredStatistics"
+      ],
+      "decision": "Leases the run through ScheduledTaskClaimService; the purge is an idempotent batched delete of expired message-count rows plus an idempotent blanking of the admin on old settings change lines, so a replayed run changes nothing.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
       "id": "team-discussion-orphan-cleanup-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/workflow/delete/scheduler/TeamDiscussionOrphanCleanupScheduler.java",
       "kind": "scheduler",

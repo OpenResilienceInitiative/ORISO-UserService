@@ -67,6 +67,7 @@ class ReplicaSafetyInventoryContractTest {
           "support-room-expiry-scheduler",
           "reply-email-delivery-scheduler",
           "event-notification-retention-scheduler",
+          "statistics-retention-scheduler",
           "team-discussion-retention-scheduler",
           "team-discussion-orphan-cleanup-scheduler",
           "agency-deletion-audit-pull-scheduler",
