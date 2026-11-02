@@ -79,6 +79,10 @@ public class DeletionAuditLogsController {
             request.getActorRole());
       }
     } else {
+      // A partly failed purge is a finding of the deletion job, never something a person reports.
+      if (request.getOutcome() == DeletionAuditOutcome.PARTIAL_FAILURE) {
+        return ResponseEntity.badRequest().build();
+      }
       // A Beratungsstelle is purged by the nightly job, which reports EXECUTED through the
       // AgencyService outbox. A person's EXECUTED row would make that pull skip the real one.
       if (request.getTargetType() == DeletionAuditTargetType.AGENCY

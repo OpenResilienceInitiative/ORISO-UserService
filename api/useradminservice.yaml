@@ -1914,9 +1914,14 @@ components:
           format: int64
         outcome:
           type: string
+          description: >-
+            PARTIAL_FAILURE means the record is gone but an earlier step failed, so a login or chat
+            account may remain. Only the technical account may report it. Clients must accept
+            outcome values they do not know yet.
           enum:
             - SCHEDULED
             - EXECUTED
+            - PARTIAL_FAILURE
             - CANCELLED
         actorId:
           type: string

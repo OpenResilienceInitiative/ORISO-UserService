@@ -112,7 +112,18 @@ public class DeleteDatabaseConsultantAction
         DeletionAuditTargetType.CONSULTANT,
         actionTarget.getConsultant().getId(),
         actionTarget.getConsultant().getTenantId(),
-        DeletionAuditOutcome.EXECUTED);
+        outcomeOf(actionTarget));
+  }
+
+  /**
+   * EXECUTED promises that the account is gone. When an earlier step (Keycloak, Matrix, ...)
+   * failed, the row is deleted all the same and cannot be purged again, so the log keeps the entry
+   * but says PARTIAL_FAILURE: the login or chat account may still exist (#1525).
+   */
+  private static DeletionAuditOutcome outcomeOf(ConsultantDeletionWorkflowDTO actionTarget) {
+    return actionTarget.getDeletionWorkflowErrors().isEmpty()
+        ? DeletionAuditOutcome.EXECUTED
+        : DeletionAuditOutcome.PARTIAL_FAILURE;
   }
 
   private static boolean wentThroughDeletionLifecycle(Consultant consultant) {
