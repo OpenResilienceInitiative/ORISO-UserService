@@ -298,4 +298,22 @@ class StatisticsSettingsServiceTest {
     assertThat(service.chartWeeks()).isEqualTo(5);
     assertThat(service.topicMonths()).isEqualTo(4);
   }
+
+  @Test
+  void snapshotInterval_Should_FallBackToDaily_When_TheStoreFails() {
+    when(repository.findFirstBySettingKeyOrderByIdDesc("tenantSnapshotInterval"))
+        .thenThrow(new RuntimeException("db down"));
+
+    assertThat(service.snapshotInterval(StatisticsSetting.TENANT_SNAPSHOT_INTERVAL))
+        .isEqualTo(StatisticsSnapshotInterval.DAILY);
+  }
+
+  @Test
+  void snapshotInterval_Should_FallBackToDaily_When_TheStoredValueIsUnknown() {
+    when(repository.findFirstBySettingKeyOrderByIdDesc("agencySnapshotInterval"))
+        .thenReturn(Optional.of(change(12L, "agencySnapshotInterval", "WEEKLY", "HOURLY", NOW)));
+
+    assertThat(service.snapshotInterval(StatisticsSetting.AGENCY_SNAPSHOT_INTERVAL))
+        .isEqualTo(StatisticsSnapshotInterval.DAILY);
+  }
 }
