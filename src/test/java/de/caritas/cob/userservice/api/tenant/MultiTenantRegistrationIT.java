@@ -308,7 +308,11 @@ class MultiTenantRegistrationIT {
     var tenant = ChatRecoveryPolicyFixtures.tenant().id(TENANT);
     tenant.getSettings().setFeatureDisplayNameEditable(editable);
     when(tenantService.getRestrictedTenantDataFresh(TENANT)).thenReturn(tenant);
-    var result = mockMvc.perform(register(Map.of("displayName", input))).andReturn();
+    String submittedLogin = "reg" + RandomStringUtils.randomAlphabetic(8);
+    var result =
+        mockMvc
+            .perform(register(Map.of("displayName", input, "username", submittedLogin)))
+            .andReturn();
     assertStatus(result, 201);
     TenantContext.setCurrentTenant(TENANT);
     try {
@@ -316,8 +320,7 @@ class MultiTenantRegistrationIT {
       assertThat(
               new de.caritas.cob.userservice.api.helper.UsernameTranscoder()
                   .decodeUsername(owner.getUsername()))
-          .startsWith("reg")
-          .isNotEqualTo(input);
+          .isEqualTo(submittedLogin);
       var owned = sessionRepository.findByUserUserId(owner.getUserId());
       assertThat(owned).hasSize(1);
       var aliases =
@@ -492,6 +495,7 @@ class MultiTenantRegistrationIT {
   @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
   void signedGroupSignupChecksSelfHelpCollectionAndNeverCreatesASharedOrGlobalAlias(boolean enabled)
       throws Exception {
+    String submittedLogin = "reg" + RandomStringUtils.randomAlphabetic(8);
     var group = persistChat();
     chatAgencyRepository.save(new de.caritas.cob.userservice.api.model.ChatAgency(group, AGENCY));
     var tenant = ChatRecoveryPolicyFixtures.tenant().id(TENANT);
@@ -512,7 +516,9 @@ class MultiTenantRegistrationIT {
                         "groupChatInviteToken",
                         group.getInviteToken(),
                         "displayName",
-                        "legacy ignored group alias")))
+                        "legacy ignored group alias",
+                        "username",
+                        submittedLogin)))
             .andReturn();
     assertStatus(result, enabled ? 201 : 403);
     if (!enabled) {
@@ -530,8 +536,7 @@ class MultiTenantRegistrationIT {
       assertThat(
               new de.caritas.cob.userservice.api.helper.UsernameTranscoder()
                   .decodeUsername(owner.getUsername()))
-          .startsWith("reg")
-          .isNotEqualTo("legacy ignored group alias");
+          .isEqualTo(submittedLogin);
     } finally {
       TenantContext.clear();
     }

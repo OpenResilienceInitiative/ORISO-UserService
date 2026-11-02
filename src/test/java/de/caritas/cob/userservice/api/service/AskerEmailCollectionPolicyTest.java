@@ -270,6 +270,61 @@ class AskerEmailCollectionPolicyTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+  void contextFailuresHaveClassOnlyDiagnosticsWithoutPrivateData(boolean databaseFailure) {
+    allowOnly(ConversationType.SELF_HELP);
+    RuntimeException cause = new IllegalStateException("private-cause select confidential_table");
+    RuntimeException failure =
+        databaseFailure
+            ? new org.springframework.dao.DataAccessResourceFailureException(
+                "private-db-body private@example.test", cause)
+            : new org.springframework.transaction.CannotCreateTransactionException(
+                "private-transaction-body private@example.test", cause);
+    if (databaseFailure) when(sessions.findByUser(user)).thenThrow(failure);
+    else when(transactions.getTransaction(any())).thenThrow(failure);
+    var logger =
+        (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(AskerEmailCollectionPolicy.class);
+    var previousLevel = logger.getLevel();
+    var appender =
+        new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+    logger.setLevel(ch.qos.logback.classic.Level.WARN);
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      assertThatThrownBy(() -> policy.requireForAccount(user))
+          .isInstanceOf(ServiceUnavailableException.class)
+          .hasMessage("Current asker collection contexts are unavailable")
+          .hasNoCause();
+      assertThat(policy.capabilityForAccount(user)).isFalse();
+      assertThat(appender.list)
+          .hasSize(2)
+          .allSatisfy(
+              event -> {
+                assertThat(event.getLevel()).isEqualTo(ch.qos.logback.classic.Level.WARN);
+                assertThat(event.getFormattedMessage())
+                    .isEqualTo(
+                        "Asker collection contexts unavailable: "
+                            + failure.getClass().getSimpleName());
+                assertThat(event.getFormattedMessage())
+                    .doesNotContain(
+                        "private-db-body",
+                        "private-transaction-body",
+                        "private@example.test",
+                        "private-cause",
+                        "select confidential_table");
+                assertThat(event.getArgumentArray())
+                    .containsExactly(failure.getClass().getSimpleName());
+                assertThat(event.getThrowableProxy()).isNull();
+              });
+    } finally {
+      logger.detachAppender(appender);
+      appender.stop();
+      logger.setLevel(previousLevel);
+    }
+  }
+
   private void allowOnly(ConversationType type) {
     settings
         .featureAskerEmailCollectionAgencyCounsellingEnabled(

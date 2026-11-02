@@ -13,6 +13,7 @@ import java.util.EnumSet;
 import java.util.Objects;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -22,6 +23,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 /** One account address; restrictive collection requires a real, owned seeker context. */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class AskerEmailCollectionPolicy {
   private final @NonNull TenantService tenants;
   private final @NonNull SessionRepository sessions;
@@ -65,6 +67,7 @@ public class AskerEmailCollectionPolicy {
               ownedTypes(user, authority.getId()).stream()
                   .anyMatch(type -> typeAllowed(settings, type)));
     } catch (DataAccessException | TransactionException unavailable) {
+      log.warn("Asker collection contexts unavailable: {}", unavailable.getClass().getSimpleName());
       throw new ServiceUnavailableException("Current asker collection contexts are unavailable");
     }
   }
