@@ -14,6 +14,17 @@ class StatisticsSnapshotIntervalTest {
   }
 
   @Test
+  void referenceDay_Should_BeTheDayBeforeTheLatestCutoff() {
+    assertThat(StatisticsSnapshotInterval.DAILY.referenceDay(at("2026-11-04T05:00:00Z")))
+        .isEqualTo("2026-11-03");
+    assertThat(StatisticsSnapshotInterval.DAILY.referenceDay(at("2026-11-04T04:59:59Z")))
+        .isEqualTo("2026-11-02");
+    assertThat(StatisticsSnapshotInterval.WEEKLY.referenceDay(at("2026-11-04T10:00:00Z")))
+        .as("the Sunday before the Monday cutoff")
+        .isEqualTo("2026-11-01");
+  }
+
+  @Test
   void daily_Should_UseTodaysCutoff_FromSixOClockBerlinTimeOn() {
     assertThat(StatisticsSnapshotInterval.DAILY.latestCutoff(at("2026-11-04T05:00:00Z")))
         .isEqualTo(at("2026-11-04T05:00:00Z"));

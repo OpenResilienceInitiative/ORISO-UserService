@@ -10,6 +10,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -27,6 +28,7 @@ import de.caritas.cob.userservice.api.model.StatisticsSettingChange;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminStatisticsRepository;
 import de.caritas.cob.userservice.api.port.out.AdminStatisticsRepository.GroupCountProjection;
+import de.caritas.cob.userservice.api.port.out.AdminStatisticsRepository.HourlyCountProjection;
 import de.caritas.cob.userservice.api.port.out.ConsultantStatisticsRepository;
 import de.caritas.cob.userservice.api.port.out.StatisticsDashboardSnapshotRepository;
 import de.caritas.cob.userservice.api.port.out.StatisticsSettingChangeRepository;
@@ -42,6 +44,7 @@ import jakarta.servlet.http.Cookie;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
@@ -50,6 +53,7 @@ import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -296,6 +300,113 @@ class AdminDashboardStandIT {
     mvc.perform(
             get(DASHBOARD).with(jwt().authorities(new SimpleGrantedAuthority(CONSULTANT_DEFAULT))))
         .andExpect(status().isForbidden());
+  }
+
+  /* ---------- full German days ---------- */
+
+  @Test
+  void aDailyStand_Should_EndWithYesterdayInGermany() throws Exception {
+    var body = dashboard(tenantAdmin());
+
+    assertThat(JsonPath.<String>read(body, "$.dataUntil")).isEqualTo("2026-11-03");
+    var to = ArgumentCaptor.forClass(LocalDateTime.class);
+    verify(statistics, atLeastOnce()).countNewSessionsByAgency(eq(TENANT), any(), to.capture());
+    // Midnight in Berlin (CET) is 23:00 UTC, an hour before the UTC day ends.
+    assertThat(to.getAllValues())
+        .isNotEmpty()
+        .allSatisfy(end -> assertThat(end).isBeforeOrEqualTo("2026-11-03T23:00:00"));
+    verify(statistics).countHourlyNewSessionsByAgency(eq(TENANT), any(), to.capture());
+    assertThat(to.getValue()).isEqualTo("2026-11-03T23:00:00");
+  }
+
+  @Test
+  void aCaseLateAtNight_Should_CountForItsGermanDay() throws Exception {
+    when(statistics.countHourlyNewSessionsByAgency(anyLong(), any(), any()))
+        .thenReturn(
+            List.of(hourly(AGENCY, "2026-11-02", 22, 2), hourly(AGENCY, "2026-11-02", 23, 5)));
+
+    var body = dashboard(tenantAdmin());
+
+    assertThat(JsonPath.<List<Map<String, Object>>>read(body, "$.targets[0].dailyNewSessions"))
+        .containsExactly(
+            Map.of("date", "2026-11-02", "count", 2), Map.of("date", "2026-11-03", "count", 5));
+  }
+
+  @Test
+  void theDayTheClocksGoBack_Should_StayOneGermanDay() throws Exception {
+    clock.moveTo(Instant.parse("2026-10-26T10:00:00Z"));
+    when(statistics.countHourlyNewSessionsByAgency(anyLong(), any(), any()))
+        .thenReturn(
+            List.of(hourly(AGENCY, "2026-10-24", 22, 1), hourly(AGENCY, "2026-10-25", 22, 1)));
+
+    var body = dashboard(tenantAdmin());
+
+    assertThat(JsonPath.<List<Map<String, Object>>>read(body, "$.targets[0].dailyNewSessions"))
+        .containsExactly(Map.of("date", "2026-10-25", "count", 2));
+  }
+
+  @Test
+  void aFixedStand_Should_HoldNoTodayValues_ButKeepWhoIsInCounselling() throws Exception {
+    when(statistics.countActiveCasesByAgency(anyLong())).thenReturn(group(AGENCY, 6));
+    when(statistics.countActiveSessionsSinceByAgency(anyLong(), any()))
+        .thenReturn(group(AGENCY, 3));
+
+    var body = dashboard(tenantAdmin());
+
+    assertThat((Object) JsonPath.read(body, "$.targets[0].sessionCountsByPeriod.today")).isNull();
+    assertThat((Object) JsonPath.read(body, "$.targets[0].metrics.activeConversationsToday"))
+        .isNull();
+    assertThat(JsonPath.<Integer>read(body, "$.targets[0].sessionCountsByPeriod.yesterday"))
+        .isEqualTo(23);
+    assertThat(JsonPath.<Integer>read(body, "$.targets[0].metrics.activeCases")).isEqualTo(6);
+  }
+
+  @Test
+  void aWeeklyStand_Should_SendWeeks_AndNoSingleDays() throws Exception {
+    setInterval("tenantSnapshotInterval", "WEEKLY");
+    when(statistics.countHourlyNewSessionsByAgency(anyLong(), any(), any()))
+        .thenReturn(
+            List.of(
+                hourly(AGENCY, "2026-10-19", 9, 1),
+                hourly(AGENCY, "2026-10-26", 9, 2),
+                hourly(AGENCY, "2026-11-01", 9, 3)));
+
+    var body = dashboard(tenantAdmin());
+
+    assertThat(JsonPath.<String>read(body, "$.dataUntil")).isEqualTo("2026-11-01");
+    assertThat(JsonPath.<List<Object>>read(body, "$.targets[0].dailyNewSessions")).isEmpty();
+    assertThat(JsonPath.<List<Map<String, Object>>>read(body, "$.targets[0].weeklyNewSessions"))
+        .containsExactly(
+            Map.of("weekStart", "2026-10-19", "count", 1),
+            Map.of("weekStart", "2026-10-26", "count", 5));
+    assertThat((Object) JsonPath.read(body, "$.targets[0].sessionCountsByPeriod.yesterday"))
+        .isNull();
+  }
+
+  @Test
+  void onTheFirstOfAMonth_TheStand_Should_ReadTheMonthBefore() throws Exception {
+    clock.moveTo(Instant.parse("2026-11-01T10:00:00Z"));
+
+    var body = dashboard(tenantAdmin());
+
+    assertThat(JsonPath.<String>read(body, "$.dataUntil")).isEqualTo("2026-10-31");
+    verify(statistics)
+        .countNewSessionsByAgency(
+            TENANT,
+            LocalDateTime.parse("2026-09-30T22:00:00"),
+            LocalDateTime.parse("2026-10-31T23:00:00"));
+  }
+
+  @Test
+  void live_Should_KeepToday_AndNoEndDay() throws Exception {
+    setInterval("tenantSnapshotInterval", "LIVE");
+
+    var body = dashboard(tenantAdmin());
+
+    assertThat((Object) JsonPath.read(body, "$.dataUntil")).isNull();
+    assertThat(JsonPath.<Integer>read(body, "$.targets[0].sessionCountsByPeriod.today"))
+        .isEqualTo(23);
+    verify(statistics, never()).countHourlyNewSessionsByAgency(anyLong(), any(), any());
   }
 
   /* ---------- the value "live" ---------- */
@@ -547,7 +658,7 @@ class AdminDashboardStandIT {
                       .payload(stored.getPayload())
                       .build());
               return new DashboardStatistics(
-                  "loser", DashboardScope.TENANT, false, 5, 4, null, List.of());
+                  "loser", DashboardScope.TENANT, false, 5, 4, null, null, List.of());
             });
 
     assertThat(served.generatedAt()).isEqualTo(JsonPath.read(winner, "$.generatedAt"));
@@ -615,7 +726,7 @@ class AdminDashboardStandIT {
         () -> {
           clock.moveTo(thursday.plusSeconds(60));
           return new DashboardStatistics(
-              WEDNESDAY.toString(), DashboardScope.TENANT, false, 5, 4, null, List.of());
+              WEDNESDAY.toString(), DashboardScope.TENANT, false, 5, 4, null, null, List.of());
         });
     cases = 31;
     return newer;
@@ -706,6 +817,30 @@ class AdminDashboardStandIT {
                 token
                     .claim("realm_access", Map.of("roles", List.of(roles)))
                     .claim("tenantId", tenantId));
+  }
+
+  private static HourlyCountProjection hourly(long id, String utcDay, int utcHour, long total) {
+    return new HourlyCountProjection() {
+      @Override
+      public Long getGroupId() {
+        return id;
+      }
+
+      @Override
+      public LocalDate getDay() {
+        return LocalDate.parse(utcDay);
+      }
+
+      @Override
+      public Number getHourOfDay() {
+        return utcHour;
+      }
+
+      @Override
+      public Long getTotal() {
+        return total;
+      }
+    };
   }
 
   private static List<GroupCountProjection> group(long id, long total) {

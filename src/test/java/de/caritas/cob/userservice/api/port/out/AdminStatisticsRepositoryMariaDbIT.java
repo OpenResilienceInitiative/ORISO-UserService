@@ -84,6 +84,28 @@ class AdminStatisticsRepositoryMariaDbIT {
     assertThat(row.getDay()).isEqualTo(today);
   }
 
+  @Test
+  void countHourlyNewSessionsByTenantShouldProjectDayAndHour() {
+    var today = LocalDate.now();
+    seedSingleSession(today);
+
+    var rows =
+        underTest.countHourlyNewSessionsByTenant(
+            today.atStartOfDay(), today.plusDays(1).atStartOfDay());
+
+    assertThat(rows).hasSize(1);
+    var row = rows.get(0);
+    assertThat(row.getGroupId()).isEqualTo(TENANT_ID);
+    assertThat(row.getDay()).isEqualTo(today);
+    assertThat(row.getHourOfDay().intValue()).isEqualTo(9);
+    assertThat(row.getTotal()).isEqualTo(1L);
+    assertThat(
+            underTest.countHourlyNewSessionsByTenant(
+                today.minusDays(2).atStartOfDay(), today.atStartOfDay()))
+        .as("the end of the range is exclusive")
+        .isEmpty();
+  }
+
   private void seedSingleSession(LocalDate day) {
     var userId = "stats-it-user-" + TENANT_ID;
     entityManager
