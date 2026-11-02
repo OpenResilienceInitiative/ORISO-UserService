@@ -48,8 +48,6 @@ import org.springframework.stereotype.Service;
 @Slf4j
 public class AdminDashboardStatisticsService {
 
-  private static final int CHART_WEEKS = 5;
-  private static final int TOPIC_MONTHS = 4;
   private static final LocalDateTime EPOCH = LocalDateTime.of(1970, 1, 1, 0, 0);
 
   private final @NonNull AdminStatisticsRepository adminStatisticsRepository;
@@ -78,10 +76,16 @@ public class AdminDashboardStatisticsService {
     AGENCY
   }
 
+  /**
+   * @param chartWeeks weeks covered by {@code dailyNewSessions}, the current week included
+   * @param topicMonths months covered by {@code monthlyTopTopics}, the current month included
+   */
   public record DashboardStatistics(
       String generatedAt,
       DashboardScope scope,
       boolean suppressionDisabled,
+      int chartWeeks,
+      int topicMonths,
       List<TargetStatistics> targets) {}
 
   public record TargetStatistics(
@@ -136,17 +140,18 @@ public class AdminDashboardStatisticsService {
       PeriodCounts groupChatCountsByPeriod) {}
 
   public DashboardStatistics buildDashboard() {
-    var ranges = buildDateRanges();
+    var windows = resolveTimeWindows();
+    var ranges = buildDateRanges(windows);
     var suppression = resolveSuppression();
 
     if (authenticatedUser.isPlatformAdmin()) {
-      return buildPlatformDashboard(ranges, suppression);
+      return buildPlatformDashboard(ranges, windows, suppression);
     }
     if (authenticatedUser.isTenantSuperAdmin() || authenticatedUser.isSingleTenantAdmin()) {
-      return buildTenantDashboard(ranges, resolveTenantId(), suppression);
+      return buildTenantDashboard(ranges, windows, resolveTenantId(), suppression);
     }
     if (authenticatedUser.isRestrictedAgencyAdmin() || authenticatedUser.isAgencySuperAdmin()) {
-      return buildAgencyDashboard(ranges, resolveTenantId(), suppression);
+      return buildAgencyDashboard(ranges, windows, resolveTenantId(), suppression);
     }
     throw new ForbiddenException(
         "User %s is not authorized to access admin statistics"
@@ -195,6 +200,18 @@ public class AdminDashboardStatisticsService {
     }
   }
 
+  /**
+   * The chart and topic time windows from the global statistics settings, read once per dashboard
+   * so every row of one response covers the same period.
+   */
+  private TimeWindows resolveTimeWindows() {
+    return new TimeWindows(
+        statisticsSettingsService.chartWeeks(), statisticsSettingsService.topicMonths());
+  }
+
+  /** Weeks of the requests chart and months of the topic ranking, the current one included. */
+  private record TimeWindows(int chartWeeks, int topicMonths) {}
+
   private Long resolveTenantId() {
     var contextTenant = TenantContext.getCurrentTenant();
     if (contextTenant != null && !TenantContext.TECHNICAL_TENANT_ID.equals(contextTenant)) {
@@ -205,7 +222,8 @@ public class AdminDashboardStatisticsService {
 
   /* ---------- platform scope ---------- */
 
-  private DashboardStatistics buildPlatformDashboard(DateRanges ranges, Suppression suppression) {
+  private DashboardStatistics buildPlatformDashboard(
+      DateRanges ranges, TimeWindows windows, Suppression suppression) {
     var groups =
         collectGroups(
             ranges,
@@ -231,6 +249,8 @@ public class AdminDashboardStatisticsService {
         OffsetDateTime.now(clock).toString(),
         DashboardScope.PLATFORM,
         !suppression.active(),
+        windows.chartWeeks(),
+        windows.topicMonths(),
         targets);
   }
 
@@ -264,7 +284,7 @@ public class AdminDashboardStatisticsService {
   /* ---------- tenant scope ---------- */
 
   private DashboardStatistics buildTenantDashboard(
-      DateRanges ranges, Long tenantId, Suppression suppression) {
+      DateRanges ranges, TimeWindows windows, Long tenantId, Suppression suppression) {
     requireTenant(tenantId);
     var groups = collectAgencyGroups(ranges, tenantId);
     var targets = new ArrayList<TargetStatistics>();
@@ -286,13 +306,15 @@ public class AdminDashboardStatisticsService {
         OffsetDateTime.now(clock).toString(),
         DashboardScope.TENANT,
         !suppression.active(),
+        windows.chartWeeks(),
+        windows.topicMonths(),
         targets);
   }
 
   /* ---------- agency scope ---------- */
 
   private DashboardStatistics buildAgencyDashboard(
-      DateRanges ranges, Long tenantId, Suppression suppression) {
+      DateRanges ranges, TimeWindows windows, Long tenantId, Suppression suppression) {
     requireTenant(tenantId);
     var allowedAgencyIds =
         adminAgencyRepository.findByAdminId(authenticatedUser.getUserId()).stream()
@@ -314,6 +336,8 @@ public class AdminDashboardStatisticsService {
         OffsetDateTime.now(clock).toString(),
         DashboardScope.AGENCY,
         !suppression.active(),
+        windows.chartWeeks(),
+        windows.topicMonths(),
         targets);
   }
 
@@ -615,12 +639,12 @@ public class AdminDashboardStatisticsService {
 
   /* ---------- helpers ---------- */
 
-  private DateRanges buildDateRanges() {
+  private DateRanges buildDateRanges(TimeWindows windows) {
     var today = LocalDate.now(clock);
     var weekStart = today.with(DayOfWeek.MONDAY);
     var currentMonth = YearMonth.from(today);
     var topicMonths = new ArrayList<YearMonth>();
-    for (int i = 0; i < TOPIC_MONTHS; i++) {
+    for (int i = 0; i < windows.topicMonths(); i++) {
       topicMonths.add(currentMonth.minusMonths(i));
     }
 
@@ -629,7 +653,7 @@ public class AdminDashboardStatisticsService {
         today.plusDays(1).atStartOfDay(),
         today.minusDays(1).atStartOfDay(),
         weekStart.atStartOfDay(),
-        weekStart.minusWeeks(CHART_WEEKS - 1L).atStartOfDay(),
+        weekStart.minusWeeks(windows.chartWeeks() - 1L).atStartOfDay(),
         currentMonth.atDay(1).atStartOfDay(),
         currentMonth.plusMonths(1).atDay(1).atStartOfDay(),
         currentMonth.minusMonths(1).atDay(1).atStartOfDay(),
