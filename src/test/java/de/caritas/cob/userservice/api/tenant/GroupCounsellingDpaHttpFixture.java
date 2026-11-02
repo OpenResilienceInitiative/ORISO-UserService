@@ -81,6 +81,8 @@ abstract class GroupCounsellingDpaHttpFixture {
   protected String gate = EXPIRED;
   protected int ownerStatus = 200;
   protected long agencyTenant = OWNER;
+  protected boolean firstAgencyProjectionIsScopedPolicy;
+  protected final AtomicInteger agencyProjectionReads = new AtomicInteger();
   protected final AtomicInteger recipientOwnerReads = new AtomicInteger();
   protected boolean systemUserExisted;
   protected final AtomicInteger ownerReads = new AtomicInteger();
@@ -117,9 +119,16 @@ abstract class GroupCounsellingDpaHttpFixture {
                     .createResponse(request);
               }
               if (path.endsWith("/agencies/410")) {
+                // The feature gate reads first. Tests may then supply contradictory owner facts
+                // to exercise the separate DPA boundary without bypassing the feature guard.
+                long projectedTenant =
+                    agencyProjectionReads.getAndIncrement() == 0
+                            && firstAgencyProjectionIsScopedPolicy
+                        ? OWNER
+                        : agencyTenant;
                 return withSuccess(
                         "[{\"id\":410,\"tenantId\":"
-                            + agencyTenant
+                            + projectedTenant
                             + ",\"consultingType\":1,\"teamAgency\":false,\"topicIds\":[],\"settings\":{\"featureGroupChatV2Enabled\":true,\"featureSelfHelpGroupsEnabled\":true,\"featureInternalGroupChatEnabled\":true}}]",
                         MediaType.APPLICATION_JSON)
                     .createResponse(request);
