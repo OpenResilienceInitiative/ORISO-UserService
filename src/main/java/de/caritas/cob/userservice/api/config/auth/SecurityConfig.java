@@ -722,6 +722,7 @@ public class SecurityConfig {
                 .access(this::canAccessPlatformAuditLogs)
                 .requestMatchers(
                     "/users/consultants/sessions/{sessionId:[0-9]+}",
+                    "/users/consultants/sessions/{sessionId:[0-9]+}/enquiry/opened",
                     "/users/sessions/{sessionId:[0-9]+}/archive",
                     "/users/sessions/{sessionId:[0-9]+}")
                 .hasAnyAuthority(CONSULTANT_DEFAULT)

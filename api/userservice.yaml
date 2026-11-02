@@ -1674,6 +1674,35 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
+  /users/consultants/sessions/{sessionId}/enquiry/opened:
+    put:
+      tags:
+        - user-controller
+      summary: 'Remember that the calling counsellor has opened this waiting enquiry. Idempotent; affects only the caller, never what another counsellor sees. Works for registered and anonymous enquiries. [Authorization: Role: consultant]'
+      operationId: markEnquiryOpened
+      parameters:
+        - name: sessionId
+          in: path
+          description: Session id of the waiting enquiry
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        204:
+          description: NO CONTENT - the enquiry is marked as opened for the caller (also when it already was)
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization, CSRF token or the counsellor may not see this enquiry in their pool
+        404:
+          description: NOT FOUND - Session not found
+        409:
+          description: CONFLICT - the session is not a waiting enquiry (already accepted, or in another state)
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
   /users/chat/new:
     post:
       tags:
