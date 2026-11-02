@@ -12,9 +12,11 @@ import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.StatisticsSettingChange;
 import de.caritas.cob.userservice.api.port.out.StatisticsSettingChangeRepository;
+import de.caritas.cob.userservice.api.port.out.StatisticsSettingsLockRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -41,6 +43,7 @@ class StatisticsSettingsServiceTest {
   private static final LocalDateTime NOW = LocalDateTime.of(2026, 11, 1, 9, 30);
 
   @Mock private StatisticsSettingChangeRepository repository;
+  @Mock private StatisticsSettingsLockRepository locks;
 
   private AuthenticatedUser authenticatedUser;
   private StatisticsSettingsService service;
@@ -54,7 +57,7 @@ class StatisticsSettingsServiceTest {
     givenPlatformAdmin();
     when(repository.findFirstBySettingKeyOrderByIdDesc(anyString())).thenReturn(Optional.empty());
     when(repository.count()).thenReturn(0L);
-    service = new StatisticsSettingsService(repository, authenticatedUser, CLOCK);
+    service = new StatisticsSettingsService(repository, locks, authenticatedUser, CLOCK);
   }
 
   private void givenPlatformAdmin() {
@@ -221,13 +224,40 @@ class StatisticsSettingsServiceTest {
   }
 
   @Test
-  void minimumCounsellors_Should_FallBackToTheDefault_When_TheStoreFails() {
+  void minimumCounsellors_Should_FailClearly_When_TheStoreFails() {
     when(repository.findFirstBySettingKeyOrderByIdDesc(anyString()))
         .thenThrow(new RuntimeException("db down"));
 
-    assertThat(service.minimumCounsellors(StatisticsSetting.PLATFORM_MINIMUM_COUNSELLORS))
-        .isEqualTo(5);
-    assertThat(service.isMessageCountTrackingEnabled()).isTrue();
+    // never a default: a stricter minimum would otherwise drop to the weaker default
+    assertThatThrownBy(
+            () -> service.minimumCounsellors(StatisticsSetting.PLATFORM_MINIMUM_COUNSELLORS))
+        .isInstanceOf(ServiceUnavailableException.class);
+  }
+
+  @Test
+  void minimumCounsellors_Should_FailClearly_When_TheStoredValueIsUnknown() {
+    when(repository.findFirstBySettingKeyOrderByIdDesc("agencyMinimumCounsellors"))
+        .thenReturn(Optional.of(change(13L, "agencyMinimumCounsellors", "10", "1", NOW)));
+
+    assertThatThrownBy(
+            () -> service.minimumCounsellors(StatisticsSetting.AGENCY_MINIMUM_COUNSELLORS))
+        .isInstanceOf(ServiceUnavailableException.class);
+  }
+
+  @Test
+  void isMessageCountTrackingEnabled_Should_StayOff_When_TheStoreFails() {
+    when(repository.findFirstBySettingKeyOrderByIdDesc(anyString()))
+        .thenThrow(new RuntimeException("db down"));
+
+    assertThat(service.isMessageCountTrackingEnabled()).isFalse();
+  }
+
+  @Test
+  void isMessageCountTrackingEnabled_Should_StayOff_When_TheStoredValueIsUnknown() {
+    when(repository.findFirstBySettingKeyOrderByIdDesc("messageCountTracking"))
+        .thenReturn(Optional.of(change(4L, "messageCountTracking", "DISABLED", "MAYBE", NOW)));
+
+    assertThat(service.isMessageCountTrackingEnabled()).isFalse();
   }
 
   @Test
@@ -289,33 +319,55 @@ class StatisticsSettingsServiceTest {
   }
 
   @Test
-  void timeWindows_Should_FallBackToTodaysWindows_When_TheStoreFailsOrHoldsAnUnknownValue() {
+  void timeWindows_Should_FailClearly_When_TheStoreFailsOrHoldsAnUnknownValue() {
     when(repository.findFirstBySettingKeyOrderByIdDesc("requestChartWeeks"))
         .thenReturn(Optional.of(change(10L, "requestChartWeeks", "5", "999", NOW)));
     when(repository.findFirstBySettingKeyOrderByIdDesc("topicMonths"))
         .thenThrow(new RuntimeException("db down"));
 
-    assertThat(service.chartWeeks()).isEqualTo(5);
-    assertThat(service.topicMonths()).isEqualTo(4);
+    assertThatThrownBy(() -> service.chartWeeks()).isInstanceOf(ServiceUnavailableException.class);
+    assertThatThrownBy(() -> service.topicMonths()).isInstanceOf(ServiceUnavailableException.class);
   }
 
   @Test
-  void snapshotInterval_Should_FallBackToDaily_When_TheStoreFails() {
+  void snapshotInterval_Should_FailClearly_When_TheStoreFails() {
     when(repository.findFirstBySettingKeyOrderByIdDesc("tenantSnapshotInterval"))
         .thenThrow(new RuntimeException("db down"));
 
-    assertThat(service.snapshotInterval(StatisticsSetting.TENANT_SNAPSHOT_INTERVAL))
-        .isEqualTo(StatisticsSnapshotInterval.DAILY);
-    verify(repository).findFirstBySettingKeyOrderByIdDesc("tenantSnapshotInterval");
+    assertThatThrownBy(() -> service.snapshotInterval(StatisticsSetting.TENANT_SNAPSHOT_INTERVAL))
+        .isInstanceOf(ServiceUnavailableException.class);
   }
 
   @Test
-  void snapshotInterval_Should_FallBackToDaily_When_TheStoredValueIsUnknown() {
+  void snapshotInterval_Should_FailClearly_When_TheStoredValueIsUnknown() {
     when(repository.findFirstBySettingKeyOrderByIdDesc("agencySnapshotInterval"))
         .thenReturn(Optional.of(change(12L, "agencySnapshotInterval", "WEEKLY", "HOURLY", NOW)));
 
-    assertThat(service.snapshotInterval(StatisticsSetting.AGENCY_SNAPSHOT_INTERVAL))
-        .isEqualTo(StatisticsSnapshotInterval.DAILY);
-    verify(repository).findFirstBySettingKeyOrderByIdDesc("agencySnapshotInterval");
+    assertThatThrownBy(() -> service.snapshotInterval(StatisticsSetting.AGENCY_SNAPSHOT_INTERVAL))
+        .isInstanceOf(ServiceUnavailableException.class);
+  }
+
+  @Test
+  void updateSettings_Should_RepairAnUnknownStoredValue_AndProtocolTheRawOldValue() {
+    when(repository.findFirstBySettingKeyOrderByIdDesc("agencyMinimumCounsellors"))
+        .thenReturn(Optional.of(change(13L, "agencyMinimumCounsellors", "10", "1", NOW)));
+    when(repository.count()).thenReturn(1L);
+
+    service.updateSettings(Map.of("agencyMinimumCounsellors", "10"), 1L);
+
+    var captor = ArgumentCaptor.forClass(StatisticsSettingChange.class);
+    verify(repository).save(captor.capture());
+    assertThat(captor.getValue().getOldValue()).isEqualTo("1");
+    assertThat(captor.getValue().getNewValue()).isEqualTo("10");
+  }
+
+  @Test
+  void updateSettings_Should_Fail_And_WriteNothing_When_TheStoreCannotBeRead() {
+    when(repository.findFirstBySettingKeyOrderByIdDesc(anyString()))
+        .thenThrow(new RuntimeException("db down"));
+
+    assertThatThrownBy(() -> service.updateSettings(Map.of("agencyMinimumCounsellors", "2"), 0L))
+        .hasMessage("db down");
+    verify(repository, never()).save(any());
   }
 }

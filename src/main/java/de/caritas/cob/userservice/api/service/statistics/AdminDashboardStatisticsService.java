@@ -77,8 +77,15 @@ public class AdminDashboardStatisticsService {
   private final @NonNull AdminDashboardStandService dashboardStands;
 
   /**
-   * Dev-only escape hatch for end-to-end testing with small test datasets. Fail-closed: when the
-   * prod profile is active, suppression stays enforced regardless of this property.
+   * Only the profiles for a developer's machine and the automated tests may switch suppression off.
+   * Everything else - prod, staging, dev, a missing or a new profile - keeps it on.
+   */
+  private static final Profiles SUPPRESSION_MAY_BE_DISABLED = Profiles.of("local", "testing");
+
+  /**
+   * Escape hatch for end-to-end testing with small test datasets. Fail-closed: it only takes effect
+   * on the {@code local} and {@code testing} profiles; on any other profile, or none, suppression
+   * stays enforced regardless of this property.
    */
   @Value("${statistics.small-cell-suppression.enabled:true}")
   private boolean smallCellSuppressionEnabled = true;
@@ -354,20 +361,20 @@ public class AdminDashboardStatisticsService {
   }
 
   /**
-   * Small-cell suppression may only be switched off outside production. If the prod profile is
-   * active, the property is ignored and suppression stays enforced (fail-closed).
+   * Small-cell suppression may only be switched off on a local or test profile. On every other
+   * profile, or none, the property is ignored and suppression stays enforced (fail-closed).
    */
   private boolean resolveSuppressionActive() {
     if (smallCellSuppressionEnabled) {
       return true;
     }
-    if (environment.acceptsProfiles(Profiles.of("prod"))) {
+    if (!environment.acceptsProfiles(SUPPRESSION_MAY_BE_DISABLED)) {
       log.warn(
-          "statistics.small-cell-suppression.enabled=false was requested, but the prod profile "
-              + "is active - small-cell suppression stays enforced (fail-closed)");
+          "statistics.small-cell-suppression.enabled=false was requested, but no local or testing "
+              + "profile is active - small-cell suppression stays enforced (fail-closed)");
       return true;
     }
-    log.info("Small-cell suppression is DISABLED for admin statistics (non-production profile)");
+    log.info("Small-cell suppression is DISABLED for admin statistics (local or testing profile)");
     return false;
   }
 

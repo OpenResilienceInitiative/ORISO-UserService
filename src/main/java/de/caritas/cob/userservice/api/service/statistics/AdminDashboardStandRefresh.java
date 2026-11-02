@@ -39,7 +39,8 @@ public class AdminDashboardStandRefresh {
     for (var scope : DashboardScope.values()) {
       var interval = settings.snapshotInterval(scope.snapshotSetting());
       if (interval == StatisticsSnapshotInterval.LIVE) {
-        writer.deleteScope(scope.name());
+        // The stands stay while the role is live (retention removes them): switching back within
+        // the same cutoff must serve the stand it had, not a fresh one (UserService#1562).
         continue;
       }
       tenantsOf(scope).forEach(tenantId -> refresh(scope, tenantId, interval));

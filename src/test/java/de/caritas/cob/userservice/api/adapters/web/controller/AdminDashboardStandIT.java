@@ -624,15 +624,41 @@ class AdminDashboardStandIT {
   }
 
   @Test
-  void theScheduler_Should_SkipLiveRoles_AndRemoveTheirOldStands() throws Exception {
+  void theScheduler_Should_SkipLiveRoles_AndKeepTheirStands() throws Exception {
     scheduler().refreshStands();
 
     setInterval("tenantSnapshotInterval", "LIVE");
     scheduler().refreshStands();
 
-    assertThat(stands.findAll())
-        .extracting(stand -> stand.getScope())
-        .containsExactlyInAnyOrder("PLATFORM", "AGENCY");
+    // a stand is not thrown away while its role is live: switching back must not refresh it
+    assertThat(stands.findAll()).hasSize(3);
+  }
+
+  @Test
+  void switchingToLiveAndBack_Should_NotRefreshTheStandOfThatCutoff() throws Exception {
+    assertThat(enquiries(dashboard(tenantAdmin()))).isEqualTo(23);
+
+    cases = 30;
+    setInterval("tenantSnapshotInterval", "LIVE");
+    scheduler().refreshStands();
+    assertThat(enquiries(dashboard(tenantAdmin()))).as("live").isEqualTo(30);
+
+    setInterval("tenantSnapshotInterval", "DAILY");
+    scheduler().refreshStands();
+    assertThat(enquiries(dashboard(tenantAdmin()))).as("back on the stand").isEqualTo(23);
+  }
+
+  @Test
+  void switchingToLiveAndBack_Should_GiveANewStand_AfterTheNextCutoff() throws Exception {
+    dashboard(tenantAdmin());
+    cases = 30;
+    setInterval("tenantSnapshotInterval", "LIVE");
+    scheduler().refreshStands();
+    setInterval("tenantSnapshotInterval", "DAILY");
+
+    clock.moveTo(Instant.parse("2026-11-05T05:00:00Z"));
+
+    assertThat(enquiries(dashboard(tenantAdmin()))).isEqualTo(30);
   }
 
   @Test
