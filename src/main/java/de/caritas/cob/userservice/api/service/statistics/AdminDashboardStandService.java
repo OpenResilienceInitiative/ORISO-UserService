@@ -15,7 +15,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Optional;
-import java.util.function.Supplier;
+import java.util.function.Function;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -46,8 +46,9 @@ public class AdminDashboardStandService {
       DashboardScope scope,
       Long tenantId,
       StatisticsSnapshotInterval interval,
-      Supplier<DashboardStatistics> calculation) {
-    var cutoff = utc(interval.latestCutoff(clock.instant()));
+      Function<Instant, DashboardStatistics> calculation) {
+    var now = clock.instant();
+    var cutoff = utc(interval.latestCutoff(now));
     var stored = read(scope, tenantId, interval, cutoff);
     if (stored.isPresent()) {
       return stored.get();
@@ -55,17 +56,17 @@ public class AdminDashboardStandService {
 
     var lease = claims.tryClaimLease(LEASE_PREFIX + scope + ":" + tenantId, CALCULATION_LEASE);
     if (lease.isEmpty()) {
-      return lastStand(scope, tenantId)
+      return lastStand(scope, tenantId, interval)
           .orElseThrow(
               () -> new ServiceUnavailableException("The statistics stand is being calculated"));
     }
     try {
       return read(scope, tenantId, interval, cutoff)
-          .orElseGet(() -> store(scope, tenantId, interval, cutoff, calculation.get()));
+          .orElseGet(() -> store(scope, tenantId, interval, cutoff, calculation.apply(now)));
     } catch (RuntimeException failure) {
       log.error(
           "Could not calculate the {} statistics stand of tenant {}", scope, tenantId, failure);
-      return lastStand(scope, tenantId).orElseThrow(() -> failure);
+      return lastStand(scope, tenantId, interval).orElseThrow(() -> failure);
     } finally {
       release(lease.get());
     }
@@ -106,9 +107,11 @@ public class AdminDashboardStandService {
         .flatMap(this::parse);
   }
 
-  private Optional<DashboardStatistics> lastStand(DashboardScope scope, Long tenantId) {
+  private Optional<DashboardStatistics> lastStand(
+      DashboardScope scope, Long tenantId, StatisticsSnapshotInterval interval) {
     return repository
-        .findFirstByScopeAndTenantIdOrderByCutoffAtDesc(scope.name(), tenantId)
+        .findFirstByScopeAndTenantIdAndSnapshotIntervalOrderByCutoffAtDesc(
+            scope.name(), tenantId, interval.name())
         .flatMap(this::parse);
   }
 

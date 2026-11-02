@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.service.statistics.settings.StatisticsSnap
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.Clock;
 import java.time.DayOfWeek;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -200,11 +201,11 @@ public class AdminDashboardStatisticsService {
     requireTenant(tenantId);
     var interval = statisticsSettingsService.snapshotInterval(scope.snapshotSetting());
     if (interval == StatisticsSnapshotInterval.LIVE) {
-      return calculateDashboard(scope, tenantId, interval);
+      return calculateDashboard(scope, tenantId, interval, clock.instant());
     }
     var stand =
         dashboardStands.currentStand(
-            scope, tenantId, interval, () -> calculateDashboard(scope, tenantId, interval));
+            scope, tenantId, interval, now -> calculateDashboard(scope, tenantId, interval, now));
     return withCurrentThresholds(stand);
   }
 
@@ -212,14 +213,16 @@ public class AdminDashboardStatisticsService {
    * Calculates one dashboard from the live data, with no reference to the caller: a stand is shared
    * by every admin of its scope and tenant. The agency scope therefore holds all agencies of the
    * tenant; {@link #onlyOwnAgencies} narrows it per request.
+   *
+   * @param now the moment the stand's cutoff was taken from, so its days always match that cutoff
    */
   public DashboardStatistics calculateDashboard(
-      DashboardScope scope, Long tenantId, StatisticsSnapshotInterval interval) {
+      DashboardScope scope, Long tenantId, StatisticsSnapshotInterval interval, Instant now) {
     var windows = resolveTimeWindows();
     var ranges =
         interval == StatisticsSnapshotInterval.LIVE
             ? buildLiveRanges(windows)
-            : buildStandRanges(windows, interval.referenceDay(clock.instant()));
+            : buildStandRanges(windows, interval.referenceDay(now));
     var suppression = resolveSuppression();
     var dashboard =
         switch (scope) {
@@ -227,11 +230,11 @@ public class AdminDashboardStatisticsService {
           case TENANT -> buildTenantDashboard(ranges, windows, interval, tenantId, suppression);
           case AGENCY -> buildAgencyDashboard(ranges, windows, interval, tenantId, suppression);
         };
-    return interval == StatisticsSnapshotInterval.LIVE ? dashboard : asFixedStand(dashboard);
+    return interval == StatisticsSnapshotInterval.LIVE ? dashboard : asFixedStand(dashboard, now);
   }
 
   /** Takes out what a fixed stand must not hold, so no client can read it, shown or not. */
-  private DashboardStatistics asFixedStand(DashboardStatistics dashboard) {
+  private static DashboardStatistics asFixedStand(DashboardStatistics dashboard, Instant now) {
     var interval = dashboard.snapshotInterval();
     return new DashboardStatistics(
         dashboard.generatedAt(),
@@ -240,7 +243,7 @@ public class AdminDashboardStatisticsService {
         dashboard.chartWeeks(),
         dashboard.topicMonths(),
         interval,
-        interval.referenceDay(clock.instant()).toString(),
+        interval.referenceDay(now).toString(),
         dashboard.targets().stream().map(target -> asFixedStand(target, interval)).toList());
   }
 

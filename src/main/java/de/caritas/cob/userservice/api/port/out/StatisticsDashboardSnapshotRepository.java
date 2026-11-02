@@ -14,8 +14,9 @@ public interface StatisticsDashboardSnapshotRepository
   Optional<StatisticsDashboardSnapshot> findByScopeAndTenantIdAndSnapshotIntervalAndCutoffAt(
       String scope, Long tenantId, String snapshotInterval, LocalDateTime cutoffAt);
 
-  Optional<StatisticsDashboardSnapshot> findFirstByScopeAndTenantIdOrderByCutoffAtDesc(
-      String scope, Long tenantId);
+  Optional<StatisticsDashboardSnapshot>
+      findFirstByScopeAndTenantIdAndSnapshotIntervalOrderByCutoffAtDesc(
+          String scope, Long tenantId, String snapshotInterval);
 
   @Modifying
   @Query(

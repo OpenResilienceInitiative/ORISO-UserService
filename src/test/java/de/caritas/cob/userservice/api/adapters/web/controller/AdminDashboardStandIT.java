@@ -246,6 +246,34 @@ class AdminDashboardStandIT {
   }
 
   @Test
+  void aFailedCalculation_AfterASwitch_Should_NotServeTheStandOfTheOldInterval() throws Exception {
+    setInterval("tenantSnapshotInterval", "WEEKLY");
+    dashboard(tenantAdmin());
+
+    setInterval("tenantSnapshotInterval", "DAILY");
+    when(statistics.countConsultantsForTenant(anyLong())).thenThrow(new IllegalStateException());
+
+    mvc.perform(get(DASHBOARD).with(tenantAdmin())).andExpect(status().is5xxServerError());
+  }
+
+  @Test
+  void aCalculationAcrossTheCutoff_Should_MatchTheCutoffItIsStoredUnder() throws Exception {
+    clock.moveTo(Instant.parse("2026-11-05T04:59:59Z"));
+    when(statistics.countConsultantsForTenant(anyLong()))
+        .thenAnswer(
+            call -> {
+              clock.moveTo(Instant.parse("2026-11-05T05:00:00Z"));
+              return counsellors;
+            });
+
+    var body = dashboard(tenantAdmin());
+
+    assertThat(JsonPath.<String>read(body, "$.dataUntil")).isEqualTo("2026-11-03");
+    assertThat(stands.findAll().getFirst().getCutoffAt())
+        .isEqualTo(LocalDateTime.of(2026, 11, 4, 5, 0));
+  }
+
+  @Test
   void aFailedFirstCalculation_Should_FailTheRequest_NeverAnswerEmpty() throws Exception {
     when(statistics.countConsultantsForTenant(anyLong())).thenThrow(new IllegalStateException());
 
@@ -647,7 +675,7 @@ class AdminDashboardStandIT {
             DashboardScope.TENANT,
             TENANT,
             StatisticsSnapshotInterval.DAILY,
-            () -> {
+            now -> {
               stands.saveAndFlush(
                   StatisticsDashboardSnapshot.builder()
                       .scope(stored.getScope())
@@ -723,7 +751,7 @@ class AdminDashboardStandIT {
         DashboardScope.TENANT,
         TENANT,
         StatisticsSnapshotInterval.DAILY,
-        () -> {
+        now -> {
           clock.moveTo(thursday.plusSeconds(60));
           return new DashboardStatistics(
               WEDNESDAY.toString(), DashboardScope.TENANT, false, 5, 4, null, null, List.of());

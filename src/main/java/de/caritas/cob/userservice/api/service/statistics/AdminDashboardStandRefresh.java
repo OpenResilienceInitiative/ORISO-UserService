@@ -53,7 +53,7 @@ public class AdminDashboardStandRefresh {
           scope,
           tenantId,
           interval,
-          () -> dashboards.calculateDashboard(scope, tenantId, interval));
+          now -> dashboards.calculateDashboard(scope, tenantId, interval, now));
     } catch (RuntimeException failure) {
       log.warn(
           "No {} statistics stand for tenant {} in this run ({})",
