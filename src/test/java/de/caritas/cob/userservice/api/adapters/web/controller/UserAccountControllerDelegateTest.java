@@ -90,6 +90,22 @@ class UserAccountControllerDelegateTest {
   @InjectMocks private UserAccountControllerDelegate delegate;
 
   @Test
+  void legacyNameAndLanguageAccountPatchStillUpdatesLanguage() {
+    var patch =
+        new PatchUserDTO()
+            .displayName("legacy ignored alias")
+            .preferredLanguage(de.caritas.cob.userservice.api.adapters.web.dto.LanguageCode.EN);
+    var values = Map.<String, Object>of("id", USER_ID, "displayName", "legacy ignored alias");
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(userDtoMapper.mapOf(patch, authenticatedUser)).thenReturn(Optional.of(values));
+    when(userDtoMapper.preferredLanguageOf(patch)).thenReturn(Optional.of("en"));
+    when(userDtoMapper.availableOf(patch)).thenReturn(Optional.empty());
+    when(accountManager.patchUser(values)).thenReturn(Optional.of(values));
+    assertThat(delegate.patchUser(patch).getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+    verify(identityManager).changeLanguage(USER_ID, "en");
+  }
+
+  @Test
   void getUserDataShouldResolveAssignedAgenciesForRestrictedAgencyAdmin() {
     var roles = Set.of(UserRole.RESTRICTED_AGENCY_ADMIN.getValue(), UserRole.USER_ADMIN.getValue());
     var partialUserData = new UserDataResponseDTO();

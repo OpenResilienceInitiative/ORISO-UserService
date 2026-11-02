@@ -164,6 +164,22 @@ public class KeycloakServiceTest {
   }
 
   @Test
+  void pendingEmailMetadataReadsOnlyTheMailCredentialAddresses() {
+    var userResource = mock(org.keycloak.admin.client.resource.UserResource.class);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    when(usersResource.get(USER_ID)).thenReturn(userResource);
+    var mail = new CredentialRepresentation();
+    mail.setType("MAIL_OTP_CM");
+    mail.setCredentialData("{\"email\":\"existing@example.org\",\"active\":false}");
+    var unrelated = new CredentialRepresentation();
+    unrelated.setType("otp");
+    unrelated.setCredentialData("not read");
+    when(userResource.credentials()).thenReturn(java.util.List.of(mail, unrelated));
+    org.assertj.core.api.Assertions.assertThat(keycloakService.emailVerificationAddresses(USER_ID))
+        .containsExactly("existing@example.org");
+  }
+
+  @Test
   void findEnabledById_Should_RefreshUnauthorizedSessionAndRetryOnce() {
     var resource = mock(UserResource.class);
     var representation = new UserRepresentation();

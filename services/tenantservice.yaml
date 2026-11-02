@@ -1512,6 +1512,9 @@ components:
     Settings:
       type: object
       properties:
+        featureDisplayNameEditable:
+          type: boolean
+          description: Whether askers may type a custom session alias; generated pseudonyms remain allowed. Opt-out defaults to true.
         featureAskerEmailEnabled:
           type: boolean
           default: true

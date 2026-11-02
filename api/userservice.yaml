@@ -3658,7 +3658,7 @@ components:
         displayName:
           type: string
           example: Behutsames Pferd Jules
-          description: Session-scoped pseudonym shown to consultants for anonymous live chat
+          description: Session-scoped alias (up to the existing 255-character storage limit), separate from immutable login username. When custom names are disabled, only approved generated pseudonyms are accepted. Only its asker may change it.
         age:
           type: string
           example: 17
