@@ -553,6 +553,36 @@ class AdminDashboardStandIT {
   }
 
   @Test
+  void aLateInstance_Should_NotRemoveANewerStand() throws Exception {
+    var newer = storeThursdayStandThenFinishWednesdayLate();
+
+    assertThat(enquiries(dashboard(tenantAdmin()))).isEqualTo(30);
+    assertThat(generatedAt(dashboard(tenantAdmin()))).isEqualTo(newer);
+  }
+
+  @Test
+  void aFailedCalculation_Should_ServeTheNewestCutoff_NotTheLastWrite() throws Exception {
+    storeThursdayStandThenFinishWednesdayLate();
+    clock.moveTo(Instant.parse("2026-11-06T05:00:00Z"));
+    when(statistics.countConsultantsForTenant(anyLong())).thenThrow(new IllegalStateException());
+
+    assertThat(enquiries(dashboard(tenantAdmin()))).isEqualTo(30);
+  }
+
+  @Test
+  void switchingBackAndForth_Should_NotRefreshTheStandOfThatCutoff() throws Exception {
+    setInterval("tenantSnapshotInterval", "WEEKLY");
+    assertThat(enquiries(dashboard(tenantAdmin()))).isEqualTo(23);
+
+    cases = 30;
+    setInterval("tenantSnapshotInterval", "DAILY");
+    assertThat(enquiries(dashboard(tenantAdmin()))).isEqualTo(30);
+
+    setInterval("tenantSnapshotInterval", "WEEKLY");
+    assertThat(enquiries(dashboard(tenantAdmin()))).isEqualTo(23);
+  }
+
+  @Test
   void anUnreadableStand_Should_BeReplaced() throws Exception {
     dashboard(tenantAdmin());
     var stand = stands.findAll().getFirst();
@@ -565,6 +595,29 @@ class AdminDashboardStandIT {
   }
 
   /* ---------- helpers ---------- */
+
+  /**
+   * An instance starts on Wednesday's stand and only writes it after another one stored Thursday's.
+   */
+  private Instant storeThursdayStandThenFinishWednesdayLate() throws Exception {
+    var thursday = Instant.parse("2026-11-05T05:00:00Z");
+    clock.moveTo(thursday);
+    cases = 30;
+    var newer = generatedAt(dashboard(tenantAdmin()));
+
+    clock.moveTo(WEDNESDAY);
+    standService.currentStand(
+        DashboardScope.TENANT,
+        TENANT,
+        StatisticsSnapshotInterval.DAILY,
+        () -> {
+          clock.moveTo(thursday.plusSeconds(60));
+          return new DashboardStatistics(
+              WEDNESDAY.toString(), DashboardScope.TENANT, false, 5, 4, null, List.of());
+        });
+    cases = 31;
+    return newer;
+  }
 
   private AdminDashboardSnapshotScheduler scheduler() {
     return new AdminDashboardSnapshotScheduler(refresh, claims);

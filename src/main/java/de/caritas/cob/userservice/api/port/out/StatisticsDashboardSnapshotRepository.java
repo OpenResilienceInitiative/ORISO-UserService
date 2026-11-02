@@ -14,15 +14,19 @@ public interface StatisticsDashboardSnapshotRepository
   Optional<StatisticsDashboardSnapshot> findByScopeAndTenantIdAndSnapshotIntervalAndCutoffAt(
       String scope, Long tenantId, String snapshotInterval, LocalDateTime cutoffAt);
 
-  Optional<StatisticsDashboardSnapshot> findFirstByScopeAndTenantIdOrderByComputedAtDesc(
+  Optional<StatisticsDashboardSnapshot> findFirstByScopeAndTenantIdOrderByCutoffAtDesc(
       String scope, Long tenantId);
 
   @Modifying
   @Query(
       "DELETE FROM StatisticsDashboardSnapshot s "
-          + "WHERE s.scope = :scope AND s.tenantId = :tenantId AND s.id <> :keepId")
-  int deleteOtherStands(
-      @Param("scope") String scope, @Param("tenantId") Long tenantId, @Param("keepId") Long keepId);
+          + "WHERE s.scope = :scope AND s.tenantId = :tenantId "
+          + "AND s.snapshotInterval = :snapshotInterval AND s.cutoffAt < :cutoffAt")
+  int deleteOlderStands(
+      @Param("scope") String scope,
+      @Param("tenantId") Long tenantId,
+      @Param("snapshotInterval") String snapshotInterval,
+      @Param("cutoffAt") LocalDateTime cutoffAt);
 
   @Modifying
   @Query("DELETE FROM StatisticsDashboardSnapshot s WHERE s.scope = :scope")

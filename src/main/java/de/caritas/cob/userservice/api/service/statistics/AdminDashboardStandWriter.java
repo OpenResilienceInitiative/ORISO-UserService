@@ -19,11 +19,16 @@ public class AdminDashboardStandWriter {
 
   private final @NonNull StatisticsDashboardSnapshotRepository repository;
 
-  /** Stores the new stand and removes the older ones of this scope and tenant in one step. */
+  /**
+   * Stores the new stand and removes older ones of the same interval in one step. A newer stand
+   * stays, so an instance writing late cannot change the numbers of a cutoff. A stand of the other
+   * interval stays too, so switching back and forth cannot refresh it; retention removes it.
+   */
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public void replace(StatisticsDashboardSnapshot stand) {
-    var saved = repository.saveAndFlush(stand);
-    repository.deleteOtherStands(saved.getScope(), saved.getTenantId(), saved.getId());
+    repository.saveAndFlush(stand);
+    repository.deleteOlderStands(
+        stand.getScope(), stand.getTenantId(), stand.getSnapshotInterval(), stand.getCutoffAt());
   }
 
   @Transactional(propagation = Propagation.REQUIRES_NEW)

@@ -108,7 +108,7 @@ public class AdminDashboardStandService {
 
   private Optional<DashboardStatistics> lastStand(DashboardScope scope, Long tenantId) {
     return repository
-        .findFirstByScopeAndTenantIdOrderByComputedAtDesc(scope.name(), tenantId)
+        .findFirstByScopeAndTenantIdOrderByCutoffAtDesc(scope.name(), tenantId)
         .flatMap(this::parse);
   }
 
