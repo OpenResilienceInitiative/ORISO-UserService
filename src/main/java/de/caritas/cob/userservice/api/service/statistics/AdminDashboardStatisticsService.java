@@ -7,6 +7,8 @@ import de.caritas.cob.userservice.api.port.out.AdminStatisticsRepository;
 import de.caritas.cob.userservice.api.port.out.AdminStatisticsRepository.DailyCountProjection;
 import de.caritas.cob.userservice.api.port.out.AdminStatisticsRepository.GroupCountProjection;
 import de.caritas.cob.userservice.api.port.out.AdminStatisticsRepository.TopicCountProjection;
+import de.caritas.cob.userservice.api.service.statistics.settings.StatisticsSetting;
+import de.caritas.cob.userservice.api.service.statistics.settings.StatisticsSettingsService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.Clock;
 import java.time.DayOfWeek;
@@ -36,16 +38,15 @@ import org.springframework.stereotype.Service;
  * no monitoring data, no message content, no per-client drill-down).
  *
  * <p>Re-identification protection (small-cell suppression): counselling statistics of a target
- * (tenant or agency) are only returned when they aggregate over at least {@link
- * #SMALL_CELL_MINIMUM_COUNSELORS} counsellor accounts. Otherwise the target is marked {@code
- * suppressed} and all counselling metrics are omitted.
+ * (platform, tenant or agency) are only returned when they aggregate over at least the minimum
+ * number of counsellor accounts configured for that level in the global statistics settings ({@link
+ * StatisticsSettingsService}). Otherwise the target is marked {@code suppressed} and all
+ * counselling metrics are omitted. A counsellor's own statistics never pass through here.
  */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class AdminDashboardStatisticsService {
-
-  public static final int SMALL_CELL_MINIMUM_COUNSELORS = 5;
 
   private static final int CHART_WEEKS = 5;
   private static final int TOPIC_MONTHS = 4;
@@ -56,6 +57,7 @@ public class AdminDashboardStatisticsService {
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull Clock clock;
   private final @NonNull Environment environment;
+  private final @NonNull StatisticsSettingsService statisticsSettingsService;
 
   /**
    * Dev-only escape hatch for end-to-end testing with small test datasets. Fail-closed: when the
@@ -65,6 +67,7 @@ public class AdminDashboardStatisticsService {
   private boolean smallCellSuppressionEnabled = true;
 
   public enum TargetType {
+    PLATFORM,
     TENANT,
     AGENCY
   }
@@ -134,16 +137,16 @@ public class AdminDashboardStatisticsService {
 
   public DashboardStatistics buildDashboard() {
     var ranges = buildDateRanges();
-    var suppressionActive = resolveSuppressionActive();
+    var suppression = resolveSuppression();
 
     if (authenticatedUser.isPlatformAdmin()) {
-      return buildPlatformDashboard(ranges, suppressionActive);
+      return buildPlatformDashboard(ranges, suppression);
     }
     if (authenticatedUser.isTenantSuperAdmin() || authenticatedUser.isSingleTenantAdmin()) {
-      return buildTenantDashboard(ranges, resolveTenantId(), suppressionActive);
+      return buildTenantDashboard(ranges, resolveTenantId(), suppression);
     }
     if (authenticatedUser.isRestrictedAgencyAdmin() || authenticatedUser.isAgencySuperAdmin()) {
-      return buildAgencyDashboard(ranges, resolveTenantId(), suppressionActive);
+      return buildAgencyDashboard(ranges, resolveTenantId(), suppression);
     }
     throw new ForbiddenException(
         "User %s is not authorized to access admin statistics"
@@ -168,6 +171,30 @@ public class AdminDashboardStatisticsService {
     return false;
   }
 
+  /**
+   * Whether small-cell suppression applies, and the threshold of each aggregated view from the
+   * global statistics settings - read once per dashboard, so every row of one response uses the
+   * same rule.
+   */
+  private Suppression resolveSuppression() {
+    return new Suppression(
+        resolveSuppressionActive(),
+        statisticsSettingsService.minimumCounsellors(
+            StatisticsSetting.PLATFORM_MINIMUM_COUNSELLORS),
+        statisticsSettingsService.minimumCounsellors(StatisticsSetting.TENANT_MINIMUM_COUNSELLORS),
+        statisticsSettingsService.minimumCounsellors(StatisticsSetting.AGENCY_MINIMUM_COUNSELLORS));
+  }
+
+  private record Suppression(boolean active, int platform, int tenant, int agency) {
+    int minimumCounsellors(TargetType targetType) {
+      return switch (targetType) {
+        case PLATFORM -> platform;
+        case TENANT -> tenant;
+        case AGENCY -> agency;
+      };
+    }
+  }
+
   private Long resolveTenantId() {
     var contextTenant = TenantContext.getCurrentTenant();
     if (contextTenant != null && !TenantContext.TECHNICAL_TENANT_ID.equals(contextTenant)) {
@@ -178,7 +205,7 @@ public class AdminDashboardStatisticsService {
 
   /* ---------- platform scope ---------- */
 
-  private DashboardStatistics buildPlatformDashboard(DateRanges ranges, boolean suppressionActive) {
+  private DashboardStatistics buildPlatformDashboard(DateRanges ranges, Suppression suppression) {
     var groups =
         collectGroups(
             ranges,
@@ -190,32 +217,59 @@ public class AdminDashboardStatisticsService {
             adminStatisticsRepository::countSessionTopicsByTenant,
             adminStatisticsRepository::countGroupChatsByTenant);
 
-    var targets =
-        groups.entrySet().stream()
-            .filter(entry -> entry.getKey() != null)
-            .map(
-                entry ->
-                    toTargetStatistics(
-                        TargetType.TENANT,
-                        entry.getKey(),
-                        null,
-                        entry.getValue(),
-                        suppressionActive))
-            .toList();
+    var tenantGroups = groups.entrySet().stream().filter(entry -> entry.getKey() != null).toList();
+
+    var targets = new ArrayList<TargetStatistics>();
+    targets.add(buildPlatformTotalTarget(tenantGroups, suppression));
+    tenantGroups.forEach(
+        entry ->
+            targets.add(
+                toTargetStatistics(
+                    TargetType.TENANT, entry.getKey(), null, entry.getValue(), suppression)));
 
     return new DashboardStatistics(
-        OffsetDateTime.now(clock).toString(), DashboardScope.PLATFORM, !suppressionActive, targets);
+        OffsetDateTime.now(clock).toString(),
+        DashboardScope.PLATFORM,
+        !suppression.active(),
+        targets);
+  }
+
+  /**
+   * The whole platform as one row (OBP #93). Every consultant and every group chat belongs to
+   * exactly one tenant, so the sum over the tenant rows is the platform total. It is suppressed
+   * only when the platform itself is below its threshold, not when each single tenant is.
+   */
+  private TargetStatistics buildPlatformTotalTarget(
+      List<Map.Entry<Long, GroupData>> tenantGroups, Suppression suppression) {
+    var groups = tenantGroups.stream().map(Map.Entry::getValue).toList();
+    var counselorCount = groups.stream().mapToLong(GroupData::counselorCount).sum();
+    var chatPeriods = zeroPeriods();
+    for (var group : groups) {
+      chatPeriods = addPeriods(chatPeriods, group.groupChatCountsByPeriod());
+    }
+    var total = sumGroups(groups, counselorCount, chatPeriods);
+    return toTargetStatistics(TargetType.PLATFORM, null, null, total, suppression);
+  }
+
+  private static PeriodCounts addPeriods(PeriodCounts first, PeriodCounts second) {
+    return new PeriodCounts(
+        first.today() + second.today(),
+        first.yesterday() + second.yesterday(),
+        first.thisWeek() + second.thisWeek(),
+        first.total() + second.total(),
+        first.thisYear() + second.thisYear(),
+        first.lastYear() + second.lastYear());
   }
 
   /* ---------- tenant scope ---------- */
 
   private DashboardStatistics buildTenantDashboard(
-      DateRanges ranges, Long tenantId, boolean suppressionActive) {
+      DateRanges ranges, Long tenantId, Suppression suppression) {
     requireTenant(tenantId);
     var groups = collectAgencyGroups(ranges, tenantId);
     var targets = new ArrayList<TargetStatistics>();
 
-    targets.add(buildTenantTotalTarget(ranges, tenantId, groups, suppressionActive));
+    targets.add(buildTenantTotalTarget(ranges, tenantId, groups, suppression));
     groups.entrySet().stream()
         .filter(entry -> entry.getKey() != null)
         .forEach(
@@ -226,16 +280,19 @@ public class AdminDashboardStatisticsService {
                         tenantId,
                         entry.getKey(),
                         entry.getValue(),
-                        suppressionActive)));
+                        suppression)));
 
     return new DashboardStatistics(
-        OffsetDateTime.now(clock).toString(), DashboardScope.TENANT, !suppressionActive, targets);
+        OffsetDateTime.now(clock).toString(),
+        DashboardScope.TENANT,
+        !suppression.active(),
+        targets);
   }
 
   /* ---------- agency scope ---------- */
 
   private DashboardStatistics buildAgencyDashboard(
-      DateRanges ranges, Long tenantId, boolean suppressionActive) {
+      DateRanges ranges, Long tenantId, Suppression suppression) {
     requireTenant(tenantId);
     var allowedAgencyIds =
         adminAgencyRepository.findByAdminId(authenticatedUser.getUserId()).stream()
@@ -250,15 +307,14 @@ public class AdminDashboardStatisticsService {
             .map(
                 entry ->
                     toTargetStatistics(
-                        TargetType.AGENCY,
-                        tenantId,
-                        entry.getKey(),
-                        entry.getValue(),
-                        suppressionActive))
+                        TargetType.AGENCY, tenantId, entry.getKey(), entry.getValue(), suppression))
             .toList();
 
     return new DashboardStatistics(
-        OffsetDateTime.now(clock).toString(), DashboardScope.AGENCY, !suppressionActive, targets);
+        OffsetDateTime.now(clock).toString(),
+        DashboardScope.AGENCY,
+        !suppression.active(),
+        targets);
   }
 
   private static void requireTenant(Long tenantId) {
@@ -409,7 +465,7 @@ public class AdminDashboardStatisticsService {
       DateRanges ranges,
       Long tenantId,
       Map<Long, GroupData> agencyGroups,
-      boolean suppressionActive) {
+      Suppression suppression) {
     var counselorCount = adminStatisticsRepository.countConsultantsForTenant(tenantId);
     var chatPeriods =
         new PeriodCounts(
@@ -427,7 +483,7 @@ public class AdminDashboardStatisticsService {
                 tenantId, ranges.lastYearStart(), ranges.yearStart()));
 
     var total = sumGroups(agencyGroups.values(), counselorCount, chatPeriods);
-    return toTargetStatistics(TargetType.TENANT, tenantId, null, total, suppressionActive);
+    return toTargetStatistics(TargetType.TENANT, tenantId, null, total, suppression);
   }
 
   private GroupData sumGroups(
@@ -491,8 +547,9 @@ public class AdminDashboardStatisticsService {
       Long tenantId,
       Long agencyId,
       GroupData data,
-      boolean suppressionActive) {
-    var suppressed = suppressionActive && data.counselorCount() < SMALL_CELL_MINIMUM_COUNSELORS;
+      Suppression suppression) {
+    var suppressed =
+        suppression.active() && data.counselorCount() < suppression.minimumCounsellors(targetType);
 
     if (suppressed) {
       return new TargetStatistics(
