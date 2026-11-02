@@ -27,7 +27,7 @@ public interface SessionAppointmentRepository extends CrudRepository<SessionAppo
       @Param("id") UUID id, @Param("sessionId") Long sessionId);
 
   @Query(
-      "SELECT a FROM SessionAppointment a JOIN FETCH a.session s "
+      "SELECT a FROM SessionAppointment a JOIN FETCH a.session s JOIN FETCH s.user "
           + "WHERE (s.consultant.id = :consultantId OR s.id IN :coAccessSessionIds) "
           + "AND a.status = 'SCHEDULED' AND a.endTime > :now "
           + "ORDER BY a.startTime")
@@ -38,7 +38,7 @@ public interface SessionAppointmentRepository extends CrudRepository<SessionAppo
       Pageable pageable);
 
   @Query(
-      "SELECT a FROM SessionAppointment a JOIN FETCH a.session s "
+      "SELECT a FROM SessionAppointment a JOIN FETCH a.session s LEFT JOIN FETCH s.consultant "
           + "WHERE s.user.userId = :userId AND a.status = 'SCHEDULED' AND a.endTime > :now "
           + "ORDER BY a.startTime")
   List<SessionAppointment> findUpcomingOfAsker(

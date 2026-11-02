@@ -7,7 +7,6 @@
        rows can be changed through /appointments/{id} by any counsellor, it has no end time and
        its status column cannot hold a cancellation. Times and references only, no free text. -->
   <changeSet id="20261102-session-appointment-1960" author="oriso">
-    <preConditions onFail="MARK_RAN"><not><tableExists tableName="session_appointment"/></not></preConditions>
     <createTable tableName="session_appointment">
       <column name="id" type="CHAR(36)"><constraints primaryKey="true" nullable="false"/></column>
       <column name="session_id" type="BIGINT UNSIGNED"><constraints nullable="false"/></column>

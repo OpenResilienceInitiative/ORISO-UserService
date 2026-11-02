@@ -53,6 +53,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.security.test.context.support.WithAnonymousUser;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
@@ -368,6 +369,21 @@ class SessionAppointmentControllerIT {
     assertEveryRouteAnswersNotFound(session.getId(), id);
   }
 
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_ADMIN)
+  void callerWithoutAnAppointmentAuthority_Should_BeForbidden() throws Exception {
+    mockMvc.perform(create(session.getId(), in(1), in(2))).andExpect(status().isForbidden());
+    mockMvc.perform(get("/users/appointments/upcoming")).andExpect(status().isForbidden());
+    mockMvc.perform(get("/service/users/appointments/upcoming")).andExpect(status().isForbidden());
+  }
+
+  @Test
+  @WithAnonymousUser
+  void unauthenticatedCaller_Should_BeUnauthorized() throws Exception {
+    mockMvc.perform(create(session.getId(), in(1), in(2))).andExpect(status().isUnauthorized());
+    mockMvc.perform(get("/users/appointments/upcoming")).andExpect(status().isUnauthorized());
+  }
+
   private void assertEveryRouteAnswersNotFound(long sessionId, String id) throws Exception {
     assertEveryRouteAnswersNotFoundForAsker(sessionId, id);
     mockMvc.perform(create(sessionId, in(1), in(2))).andExpect(status().isNotFound());
@@ -484,7 +500,8 @@ class SessionAppointmentControllerIT {
   }
 
   private void actAsAsker(User user) {
-    actAs(user.getUserId(), TENANT, UserRole.USER);
+    Tenants.actAs(caller, user.getUserId(), TENANT, UserRole.USER);
+    caller.setGrantedAuthorities(Set.of(AuthorityValue.USER_DEFAULT));
   }
 
   private void actAs(String userId, long tenant, UserRole role) {
