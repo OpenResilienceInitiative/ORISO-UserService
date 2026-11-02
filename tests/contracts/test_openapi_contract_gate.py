@@ -167,7 +167,7 @@ class OpenApiContractGateTest(unittest.TestCase):
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-TenantService.*"
                 # QA74 provider: current dev plus Tenant-owned collection controls (issue336).
-                r"6ec67135d6f3e77433b35887667e433917ddb218",
+                r"966956bdc4f2c315b848ecf371c55c8fbea2a247",
                 re.DOTALL,
             ),
         )
