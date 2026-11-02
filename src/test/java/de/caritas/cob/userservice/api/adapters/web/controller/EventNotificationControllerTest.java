@@ -58,6 +58,10 @@ class EventNotificationControllerTest {
   @Mock private TeamDiscussionNotificationService teamDiscussionNotificationService;
 
   @Mock
+  private de.caritas.cob.userservice.api.service.notification.MessageMentionNotificationService
+      messageMentionNotificationService;
+
+  @Mock
   private de.caritas.cob.userservice.api.service.notification.FeedbackMessageEmailService
       feedbackMessageEmailService;
 
@@ -77,6 +81,7 @@ class EventNotificationControllerTest {
         new EventNotificationController(
             eventNotificationService,
             teamDiscussionNotificationService,
+            messageMentionNotificationService,
             feedbackMessageEmailService,
             internalChatEmailService,
             authenticatedUser,
@@ -88,6 +93,7 @@ class EventNotificationControllerTest {
         new EventNotificationController(
             eventNotificationService,
             teamDiscussionNotificationService,
+            messageMentionNotificationService,
             feedbackMessageEmailService,
             internalChatEmailService,
             authenticatedUser,
@@ -95,6 +101,54 @@ class EventNotificationControllerTest {
                 de.caritas.cob.userservice.api.service.notification.MessageEventCurrentAccessService
                     .class),
             Optional.empty());
+  }
+
+  /** ORISO-UserService#1510: first the marked row, then the fan-out that finds it written. */
+  @Test
+  void aCounsellorsMentionIsMarkedBeforeTheFanOut() {
+    when(authenticatedUser.getUserId()).thenReturn("u-1");
+    when(authenticatedUser.getRoles()).thenReturn(Set.of("consultant"));
+    when(authenticatedUser.isConsultant()).thenReturn(true);
+    var request = new EventNotificationController.MessageEventRequestDTO();
+    request.setRoomId("room-2");
+    request.setMatrixEventId("$event-1");
+    request.setMentionedUserIds(List.of("@colleague:oriso"));
+
+    controllerWithMirror.createMessageEventNotification(request);
+
+    var order = Mockito.inOrder(messageMentionNotificationService, eventNotificationService);
+    order
+        .verify(messageMentionNotificationService)
+        .notifyMentioned(
+            Mockito.eq("room-2"),
+            Mockito.eq("u-1"),
+            Mockito.eq(List.of("@colleague:oriso")),
+            Mockito.isNull(),
+            Mockito.any(PrivacyEnvelope.class));
+    order
+        .verify(eventNotificationService)
+        .createMessageNotificationFromRoom(
+            Mockito.eq("room-2"),
+            Mockito.eq("u-1"),
+            Mockito.any(),
+            Mockito.eq(false),
+            Mockito.any(PrivacyEnvelope.class));
+  }
+
+  /** The endpoint is open to advice seekers too; a mention is not theirs to send. */
+  @Test
+  void anAdviceSeekerCannotMentionAnyone() {
+    when(authenticatedUser.getUserId()).thenReturn("asker-1");
+    when(authenticatedUser.getRoles()).thenReturn(Set.of("user"));
+    when(authenticatedUser.isConsultant()).thenReturn(false);
+    var request = new EventNotificationController.MessageEventRequestDTO();
+    request.setRoomId("room-2");
+    request.setMatrixEventId("$event-1");
+    request.setMentionedUserIds(List.of("@colleague:oriso"));
+
+    controllerWithMirror.createMessageEventNotification(request);
+
+    Mockito.verifyNoInteractions(messageMentionNotificationService);
   }
 
   @ParameterizedTest
@@ -108,6 +162,7 @@ class EventNotificationControllerTest {
         new EventNotificationController(
             eventNotificationService,
             teamDiscussionNotificationService,
+            messageMentionNotificationService,
             feedbackMessageEmailService,
             internalChatEmailService,
             authenticatedUser,
@@ -214,6 +269,7 @@ class EventNotificationControllerTest {
         new EventNotificationController(
             realService,
             teamDiscussionNotificationService,
+            messageMentionNotificationService,
             feedbackMessageEmailService,
             internalChatEmailService,
             authenticatedUser,
@@ -326,7 +382,20 @@ class EventNotificationControllerTest {
     var response = controllerWithMirror.updateActiveView(request);
 
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
-    verify(eventNotificationService).updateActiveView("u-1", "room-1", "thread-1", false);
+    verify(eventNotificationService).updateActiveView("u-1", "room-1", "thread-1", false, false);
+  }
+
+  @Test
+  void updateActiveView_mainChatHidden_isPassedOn() {
+    when(authenticatedUser.getUserId()).thenReturn("u-1");
+    var request = new EventNotificationController.ActiveViewRequestDTO();
+    request.setRoomId("room-1");
+    request.setThreadRootId("thread-1");
+    request.setMainChatHidden(true);
+
+    controllerWithMirror.updateActiveView(request);
+
+    verify(eventNotificationService).updateActiveView("u-1", "room-1", "thread-1", true, true);
   }
 
   @Test
@@ -338,7 +407,7 @@ class EventNotificationControllerTest {
     var response = controllerWithMirror.updateActiveView(request);
 
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
-    verify(eventNotificationService).updateActiveView("u-1", null, null, true);
+    verify(eventNotificationService).updateActiveView("u-1", null, null, true, false);
   }
 
   @Test
@@ -665,6 +734,7 @@ class EventNotificationControllerTest {
     return new EventNotificationController(
         s6RealService,
         teamDiscussionService,
+        messageMentionNotificationService,
         feedbackMessageEmailService,
         internalChatEmailService,
         authenticatedUser,
@@ -844,6 +914,7 @@ class EventNotificationControllerTest {
             mock(TeamDiscussionParticipantRepository.class),
             mock(NotificationRoomLevelRepository.class),
             agencies,
+            mock(de.caritas.cob.userservice.api.port.out.ConsultantRepository.class),
             s6Sessions,
             s6RealService,
             mock(

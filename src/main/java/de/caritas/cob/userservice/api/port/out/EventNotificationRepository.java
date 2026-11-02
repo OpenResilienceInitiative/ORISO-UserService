@@ -50,6 +50,9 @@ public interface EventNotificationRepository extends JpaRepository<EventNotifica
   boolean existsByRecipientUserIdAndDeduplicationKey(
       String recipientUserId, String deduplicationKey);
 
+  Optional<EventNotification> findByRecipientUserIdAndDeduplicationKey(
+      String recipientUserId, String deduplicationKey);
+
   /** Removes one deduplicated event again, e.g. a marker whose delivery failed (FE#1876). */
   @Modifying(flushAutomatically = true, clearAutomatically = true)
   @Query(
