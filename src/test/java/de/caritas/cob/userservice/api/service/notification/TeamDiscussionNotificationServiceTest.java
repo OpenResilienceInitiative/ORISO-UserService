@@ -57,6 +57,7 @@ class TeamDiscussionNotificationServiceTest {
   @Mock private ConsultantAgencyRepository consultantAgencyRepository;
   @Mock private SessionRepository sessionRepository;
   @Mock private EventNotificationService eventNotificationService;
+  @Mock private de.caritas.cob.userservice.api.port.out.ConsultantRepository consultantRepository;
 
   private TeamDiscussion discussion;
   private Session session;
@@ -147,6 +148,32 @@ class TeamDiscussionNotificationServiceTest {
             any());
     assertThat(discussion.isFirstNotified()).isTrue();
     verify(teamDiscussionRepository).save(discussion);
+  }
+
+  /** ORISO-UserService#1510: the composer sends the Matrix ids it put into m.mentions. */
+  @Test
+  void laterPost_shouldResolveAMatrixMentionToTheColleague() {
+    discussion.setFirstNotified(true);
+    when(participantRepository.findByTeamDiscussionId(DISCUSSION_ID))
+        .thenReturn(List.of(participant(SENDER)));
+    var colleague = new de.caritas.cob.userservice.api.model.Consultant();
+    colleague.setId(COLLEAGUE_B);
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull("@colleague-b:oriso"))
+        .thenReturn(Optional.of(colleague));
+
+    service.createTeamDiscussionNotification(ROOM_ID, SENDER, "Kim", List.of("@colleague-b:oriso"));
+
+    verify(eventNotificationService)
+        .createEvent(
+            eq(COLLEAGUE_B),
+            eq("team.discussion.new"),
+            anyString(),
+            anyString(),
+            anyString(),
+            org.mockito.ArgumentMatchers.contains("\"mentioned\":true"),
+            anyString(),
+            any(),
+            any());
   }
 
   @Test

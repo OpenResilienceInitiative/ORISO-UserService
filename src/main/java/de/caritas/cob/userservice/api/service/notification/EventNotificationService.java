@@ -775,6 +775,79 @@ public class EventNotificationService {
     }
   }
 
+  /**
+   * ORISO-UserService#1510: the row of each counsellor @-mentioned in this message says so. It is
+   * the same message row, under the same key, so a person never gets two rows for one message. Call
+   * this before the ordinary fan-out, which then finds the row written. Where the Matrix listener
+   * won the race, the row it wrote is marked instead. A mentioned colleague is not always the
+   * conversation's counsellor, so the link always opens the counsellor view.
+   */
+  @Transactional
+  public void createMentionNotifications(
+      String roomId,
+      String senderUserId,
+      String threadRootId,
+      PrivacyEnvelope envelope,
+      Set<String> recipientUserIds) {
+    String matrixEventId = envelope != null ? envelope.getMessageId() : null;
+    if (roomId == null || roomId.isBlank() || matrixEventId == null || matrixEventId.isBlank()) {
+      return;
+    }
+    Session session = sessionRepository.findByMatrixRoomId(roomId).orElse(null);
+    if (session == null) {
+      return;
+    }
+    boolean threadReply = threadRootId != null && !threadRootId.isBlank();
+    String eventType = threadReply ? "thread.reply.new" : "message.new";
+    String deduplicationKey = eventType + ":" + matrixEventId;
+    if (deduplicationKey.length() > MAX_DEDUPLICATION_KEY_LENGTH) {
+      return;
+    }
+    String senderLabel = resolveSenderName(senderUserId);
+    String text =
+        threadReply
+            ? buildThreadReplyNotificationText(senderLabel, envelope)
+            : buildMessageNotificationText(senderLabel, envelope);
+    for (String recipientUserId : recipientUserIds) {
+      if (shouldSuppressNotification(recipientUserId, roomId, threadRootId)) {
+        continue;
+      }
+      boolean written =
+          persistOnce(
+              deduplicationKey,
+              recipientUserId,
+              eventType,
+              CATEGORY_MESSAGE,
+              threadReply ? "New thread reply" : "New message",
+              text,
+              buildMentionParams(
+                  session, senderLabel, envelope.getContentClass(), threadRootId, matrixEventId),
+              buildSessionActionPath(session, threadRootId, true),
+              session.getId(),
+              session.getTenantId());
+      if (!written
+          && deduplicationWriter.markMentionedInNewTransaction(recipientUserId, deduplicationKey)) {
+        signalFeedUpdatedSafely(recipientUserId);
+      }
+    }
+  }
+
+  private String buildMentionParams(
+      Session session,
+      String senderName,
+      String contentClass,
+      String threadRootId,
+      String matrixEventId) {
+    Map<String, Object> params = baseParams(session);
+    putIfPresent(params, "senderName", senderName);
+    putIfPresent(params, "contentClass", contentClass);
+    putIfPresent(params, "threadRootId", threadRootId);
+    putIfPresent(params, "recipientRole", "consultant");
+    putIfPresent(params, "matrixEventId", matrixEventId);
+    params.put("mentioned", true);
+    return serializeParams(params);
+  }
+
   @Transactional(readOnly = true)
   public NotificationFeedResponse getFeed(String recipientUserId, int page, int perPage) {
     return getFeed(recipientUserId, page, perPage, Set.of());

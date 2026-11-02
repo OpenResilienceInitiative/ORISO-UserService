@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.service.notification.EventNotificationServ
 import de.caritas.cob.userservice.api.service.notification.FeedbackMessageEmailService;
 import de.caritas.cob.userservice.api.service.notification.InternalChatEmailService;
 import de.caritas.cob.userservice.api.service.notification.MessageEventCurrentAccessService;
+import de.caritas.cob.userservice.api.service.notification.MessageMentionNotificationService;
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.notification.TeamDiscussionNotificationService;
 import jakarta.validation.Valid;
@@ -38,6 +39,7 @@ public class EventNotificationController {
 
   private final @NonNull EventNotificationService eventNotificationService;
   private final @NonNull TeamDiscussionNotificationService teamDiscussionNotificationService;
+  private final @NonNull MessageMentionNotificationService messageMentionNotificationService;
   private final @NonNull FeedbackMessageEmailService feedbackMessageEmailService;
   private final @NonNull InternalChatEmailService internalChatEmailService;
   private final @NonNull AuthenticatedUser authenticatedUser;
@@ -215,6 +217,17 @@ public class EventNotificationController {
                 .hasAttachment(request.getHasAttachment() != null && request.getHasAttachment())
                 .build()
             : null;
+    // ORISO-UserService#1510: a mention is a counsellor's tool. Before the fan-out, which then
+    // finds
+    // the marked row instead of writing an ordinary one.
+    if (authenticatedUser.isConsultant()) {
+      messageMentionNotificationService.notifyMentioned(
+          request.getRoomId(),
+          authenticatedUser.getUserId(),
+          request.getMentionedUserIds(),
+          request.getThreadRootId(),
+          envelope);
+    }
     if (request.getThreadRootId() != null && !request.getThreadRootId().isBlank()) {
       eventNotificationService.createThreadReplyNotificationFromRoom(
           request.getRoomId(),
