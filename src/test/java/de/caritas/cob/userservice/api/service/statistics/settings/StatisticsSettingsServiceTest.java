@@ -94,7 +94,10 @@ class StatisticsSettingsServiceTest {
             "platformMinimumCounsellors",
             "messageCountTracking",
             "requestChartWeeks",
-            "topicMonths");
+            "topicMonths",
+            "agencySnapshotInterval",
+            "tenantSnapshotInterval",
+            "platformSnapshotInterval");
     var agency = settings.settings().get(0);
     assertThat(agency.value()).isEqualTo("5");
     assertThat(agency.options()).containsExactly("2", "3", "4", "5", "6", "7", "8", "9", "10");
@@ -294,5 +297,25 @@ class StatisticsSettingsServiceTest {
 
     assertThat(service.chartWeeks()).isEqualTo(5);
     assertThat(service.topicMonths()).isEqualTo(4);
+  }
+
+  @Test
+  void snapshotInterval_Should_FallBackToDaily_When_TheStoreFails() {
+    when(repository.findFirstBySettingKeyOrderByIdDesc("tenantSnapshotInterval"))
+        .thenThrow(new RuntimeException("db down"));
+
+    assertThat(service.snapshotInterval(StatisticsSetting.TENANT_SNAPSHOT_INTERVAL))
+        .isEqualTo(StatisticsSnapshotInterval.DAILY);
+    verify(repository).findFirstBySettingKeyOrderByIdDesc("tenantSnapshotInterval");
+  }
+
+  @Test
+  void snapshotInterval_Should_FallBackToDaily_When_TheStoredValueIsUnknown() {
+    when(repository.findFirstBySettingKeyOrderByIdDesc("agencySnapshotInterval"))
+        .thenReturn(Optional.of(change(12L, "agencySnapshotInterval", "WEEKLY", "HOURLY", NOW)));
+
+    assertThat(service.snapshotInterval(StatisticsSetting.AGENCY_SNAPSHOT_INTERVAL))
+        .isEqualTo(StatisticsSnapshotInterval.DAILY);
+    verify(repository).findFirstBySettingKeyOrderByIdDesc("agencySnapshotInterval");
   }
 }

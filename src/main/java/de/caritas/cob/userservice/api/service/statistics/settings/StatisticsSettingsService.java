@@ -137,6 +137,15 @@ public class StatisticsSettingsService {
     return Integer.parseInt(currentValue(StatisticsSetting.TOPIC_MONTHS));
   }
 
+  /**
+   * How often the admin role of this setting gets a new dashboard stand. No authorization: called
+   * while building the dashboard. Falls back to the default when the store cannot be read, so a
+   * failure never turns a fixed stand into live numbers.
+   */
+  public StatisticsSnapshotInterval snapshotInterval(StatisticsSetting setting) {
+    return StatisticsSnapshotInterval.valueOf(currentValue(setting));
+  }
+
   public boolean isMessageCountTrackingEnabled() {
     return StatisticsSetting.ENABLED.equals(currentValue(StatisticsSetting.MESSAGE_COUNT_TRACKING));
   }

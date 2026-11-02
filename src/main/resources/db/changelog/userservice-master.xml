@@ -261,4 +261,5 @@
   <include file="db/changelog/changeset/20261030_session_direct_link_medium_1952/changeSet.xml"/>
   <include file="db/changelog/changeset/20261101_statistics_setting_change_1535/changeSet.xml"/>
   <include file="db/changelog/changeset/20261101_statistics_time_windows_1544/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261102_statistics_dashboard_snapshot_1547/changeSet.xml"/>
 </databaseChangeLog>
