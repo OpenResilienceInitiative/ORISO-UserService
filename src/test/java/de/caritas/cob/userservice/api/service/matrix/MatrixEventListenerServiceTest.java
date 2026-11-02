@@ -1230,6 +1230,8 @@ class MatrixEventListenerServiceTest {
     invokeProcessMatrixSyncEvents(service, syncResultWithEvents(MATRIX_ROOM_ID, List.of(event)));
 
     verify(replyEmailService, never()).onConsultantReply(anyString(), anyString(), anyString());
+    verify(internalChatEmailService, never())
+        .onMatrixMessage(anyString(), anyString(), anyString());
   }
 
   @Test
@@ -1698,7 +1700,10 @@ class MatrixEventListenerServiceTest {
     }
 
     verifyNoInteractions(
-        replyEmailService, eventNotificationService, mobilePushNotificationService);
+        replyEmailService,
+        internalChatEmailService,
+        eventNotificationService,
+        mobilePushNotificationService);
   }
 
   @Test
