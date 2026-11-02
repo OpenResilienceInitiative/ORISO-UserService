@@ -15,6 +15,10 @@ import java.util.Optional;
  * <p>The two time windows of the admin dashboard ("requests per week" chart and "most frequent
  * topics") default to what the dashboard always showed: this week plus four before, this month plus
  * three before. The upper bounds keep the number of queries per dashboard request small.
+ *
+ * <p>The snapshot intervals set how often each admin role gets a new stand of the dashboard. A
+ * number that changes on every reload points at single cases even above the thresholds, so the
+ * default is one stand a day. A counsellor's own statistics stay live.
  */
 public enum StatisticsSetting {
   AGENCY_MINIMUM_COUNSELLORS("agencyMinimumCounsellors", "5", Options.THRESHOLDS),
@@ -22,7 +26,10 @@ public enum StatisticsSetting {
   PLATFORM_MINIMUM_COUNSELLORS("platformMinimumCounsellors", "5", Options.THRESHOLDS),
   MESSAGE_COUNT_TRACKING("messageCountTracking", "ENABLED", Options.SWITCH),
   REQUEST_CHART_WEEKS("requestChartWeeks", "5", Options.CHART_WEEKS),
-  TOPIC_MONTHS("topicMonths", "4", Options.TOPIC_MONTHS);
+  TOPIC_MONTHS("topicMonths", "4", Options.TOPIC_MONTHS),
+  AGENCY_SNAPSHOT_INTERVAL("agencySnapshotInterval", "DAILY", Options.SNAPSHOT_INTERVALS),
+  TENANT_SNAPSHOT_INTERVAL("tenantSnapshotInterval", "DAILY", Options.SNAPSHOT_INTERVALS),
+  PLATFORM_SNAPSHOT_INTERVAL("platformSnapshotInterval", "DAILY", Options.SNAPSHOT_INTERVALS);
 
   public static final String ENABLED = "ENABLED";
 
@@ -58,5 +65,6 @@ public enum StatisticsSetting {
     private static final List<String> SWITCH = List.of("ENABLED", "DISABLED");
     private static final List<String> CHART_WEEKS = List.of("5", "8", "12", "16", "20", "26");
     private static final List<String> TOPIC_MONTHS = List.of("3", "4", "6", "12");
+    private static final List<String> SNAPSHOT_INTERVALS = List.of("LIVE", "DAILY", "WEEKLY");
   }
 }

@@ -32,6 +32,7 @@ class AdminStatisticsRepositoryIT {
     assertThat(underTest.countActiveCasesByAgency(TENANT_ID)).isEmpty();
     assertThat(underTest.countActiveSessionsSinceByAgency(TENANT_ID, FROM)).isEmpty();
     assertThat(underTest.countDailyNewSessionsByAgency(TENANT_ID, FROM)).isEmpty();
+    assertThat(underTest.countHourlyNewSessionsByAgency(TENANT_ID, FROM, TO)).isEmpty();
     assertThat(underTest.countSessionTopicsByAgency(TENANT_ID, FROM, TO)).isEmpty();
     assertThat(underTest.countConsultantsByAgency(TENANT_ID)).isEmpty();
     assertThat(underTest.countConsultantsForTenant(TENANT_ID)).isZero();
@@ -45,6 +46,7 @@ class AdminStatisticsRepositoryIT {
     assertThat(underTest.countActiveCasesByTenant()).isEmpty();
     assertThat(underTest.countActiveSessionsSinceByTenant(FROM)).isEmpty();
     assertThat(underTest.countDailyNewSessionsByTenant(FROM)).isEmpty();
+    assertThat(underTest.countHourlyNewSessionsByTenant(FROM, TO)).isEmpty();
     assertThat(underTest.countSessionTopicsByTenant(FROM, TO)).isEmpty();
     assertThat(underTest.countConsultantsByTenant()).isEmpty();
     assertThat(underTest.countGroupChatsByTenant(FROM, TO)).isEmpty();

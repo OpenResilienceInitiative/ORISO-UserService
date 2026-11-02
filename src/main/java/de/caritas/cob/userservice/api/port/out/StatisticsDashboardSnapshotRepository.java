@@ -1,0 +1,39 @@
+package de.caritas.cob.userservice.api.port.out;
+
+import de.caritas.cob.userservice.api.model.StatisticsDashboardSnapshot;
+import java.time.LocalDateTime;
+import java.util.Optional;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
+public interface StatisticsDashboardSnapshotRepository
+    extends JpaRepository<StatisticsDashboardSnapshot, Long> {
+
+  Optional<StatisticsDashboardSnapshot> findByScopeAndTenantIdAndSnapshotIntervalAndCutoffAt(
+      String scope, Long tenantId, String snapshotInterval, LocalDateTime cutoffAt);
+
+  Optional<StatisticsDashboardSnapshot>
+      findFirstByScopeAndTenantIdAndSnapshotIntervalOrderByCutoffAtDesc(
+          String scope, Long tenantId, String snapshotInterval);
+
+  @Modifying
+  @Query(
+      "DELETE FROM StatisticsDashboardSnapshot s "
+          + "WHERE s.scope = :scope AND s.tenantId = :tenantId "
+          + "AND s.snapshotInterval = :snapshotInterval AND s.cutoffAt < :cutoffAt")
+  int deleteOlderStands(
+      @Param("scope") String scope,
+      @Param("tenantId") Long tenantId,
+      @Param("snapshotInterval") String snapshotInterval,
+      @Param("cutoffAt") LocalDateTime cutoffAt);
+
+  @Modifying
+  @Query("DELETE FROM StatisticsDashboardSnapshot s WHERE s.scope = :scope")
+  int deleteByScope(@Param("scope") String scope);
+
+  @Modifying
+  @Query("DELETE FROM StatisticsDashboardSnapshot s WHERE s.computedAt < :before")
+  int deleteComputedBefore(@Param("before") LocalDateTime before);
+}

@@ -905,6 +905,22 @@
         "userservice.replica.local_state"
       ],
       "status": "bounded"
+    },
+    {
+      "id": "statistics-dashboard-snapshot-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/statistics/AdminDashboardSnapshotScheduler.java",
+      "kind": "scheduler",
+      "owner": "statistics",
+      "risk": "correctness",
+      "components": [
+        "refreshStands"
+      ],
+      "decision": "Leases each run through ScheduledTaskClaimService. The stand lives in the database, not in a replica: a per-target lease serializes the calculation and a unique key on scope, tenant, interval and cutoff keeps one stand per cutoff, so every replica serves the same numbers.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "safe"
     }
   ]
 }

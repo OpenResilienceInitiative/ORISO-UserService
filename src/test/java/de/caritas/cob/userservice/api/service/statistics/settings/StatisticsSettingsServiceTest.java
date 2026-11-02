@@ -94,7 +94,10 @@ class StatisticsSettingsServiceTest {
             "platformMinimumCounsellors",
             "messageCountTracking",
             "requestChartWeeks",
-            "topicMonths");
+            "topicMonths",
+            "agencySnapshotInterval",
+            "tenantSnapshotInterval",
+            "platformSnapshotInterval");
     var agency = settings.settings().get(0);
     assertThat(agency.value()).isEqualTo("5");
     assertThat(agency.options()).containsExactly("2", "3", "4", "5", "6", "7", "8", "9", "10");
