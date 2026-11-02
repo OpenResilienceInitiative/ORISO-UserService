@@ -37,15 +37,24 @@ public class AdminDashboardStandRefresh {
 
   public void refreshAll() {
     for (var scope : DashboardScope.values()) {
-      var interval = settings.snapshotInterval(scope.snapshotSetting());
-      if (interval == StatisticsSnapshotInterval.LIVE) {
-        // The stands stay while the role is live (retention removes them): switching back within
-        // the same cutoff must serve the stand it had, not a fresh one (UserService#1562).
-        continue;
+      try {
+        refreshScope(scope);
+      } catch (RuntimeException failure) {
+        log.warn(
+            "No {} statistics stands in this run ({})", scope, failure.getClass().getSimpleName());
       }
-      tenantsOf(scope).forEach(tenantId -> refresh(scope, tenantId, interval));
     }
     writer.deleteComputedBefore(LocalDateTime.now(clock.withZone(ZoneOffset.UTC)).minus(RETENTION));
+  }
+
+  private void refreshScope(DashboardScope scope) {
+    var interval = settings.snapshotInterval(scope.snapshotSetting());
+    if (interval == StatisticsSnapshotInterval.LIVE) {
+      // The stands stay while the role is live (retention removes them): switching back within
+      // the same cutoff must serve the stand it had, not a fresh one (UserService#1562).
+      return;
+    }
+    tenantsOf(scope).forEach(tenantId -> refresh(scope, tenantId, interval));
   }
 
   private void refresh(DashboardScope scope, Long tenantId, StatisticsSnapshotInterval interval) {

@@ -33,6 +33,10 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Transactional;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -359,6 +363,36 @@ class StatisticsSettingsServiceTest {
     verify(repository).save(captor.capture());
     assertThat(captor.getValue().getOldValue()).isEqualTo("1");
     assertThat(captor.getValue().getNewValue()).isEqualTo("10");
+  }
+
+  @Test
+  void updateSettings_Should_Conflict_When_CreatingTheLockRowLosesTheRace() {
+    when(locks.saveAndFlush(any()))
+        .thenThrow(new DataIntegrityViolationException("duplicate lock row"));
+
+    assertThatThrownBy(() -> service.updateSettings(Map.of("agencyMinimumCounsellors", "2"), 0L))
+        .isInstanceOf(ConflictException.class);
+    verify(repository, never()).save(any());
+  }
+
+  @Test
+  void updateSettings_Should_Conflict_When_TheDatabaseResolvesTwoFirstSavesAsADeadlock() {
+    when(locks.saveAndFlush(any())).thenThrow(new CannotAcquireLockException("deadlock found"));
+
+    assertThatThrownBy(() -> service.updateSettings(Map.of("agencyMinimumCounsellors", "2"), 0L))
+        .isInstanceOf(ConflictException.class);
+    verify(repository, never()).save(any());
+  }
+
+  @Test
+  void updateSettings_Should_BeginItsOwnTransactionThatReadsOnlyCommittedData() throws Exception {
+    var transactional =
+        StatisticsSettingsService.class
+            .getMethod("updateSettings", Map.class, Long.class)
+            .getAnnotation(Transactional.class);
+
+    // MariaDB's default would pin the snapshot at an earlier read and hide the other save
+    assertThat(transactional.isolation()).isEqualTo(Isolation.READ_COMMITTED);
   }
 
   @Test

@@ -631,7 +631,9 @@ class AdminDashboardStandIT {
     scheduler().refreshStands();
 
     // a stand is not thrown away while its role is live: switching back must not refresh it
-    assertThat(stands.findAll()).hasSize(3);
+    assertThat(stands.findAll())
+        .extracting(stand -> stand.getScope())
+        .containsExactlyInAnyOrder("PLATFORM", "TENANT", "AGENCY");
   }
 
   @Test

@@ -19,7 +19,9 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -66,7 +68,9 @@ public class StatisticsSettingsService {
    * else saved in between, and nothing is written. Saves queue on a lock first, so two saves of the
    * same revision cannot both pass the check.
    */
-  @Transactional
+  // READ_COMMITTED: under MariaDB's REPEATABLE READ an earlier read would pin the snapshot, and the
+  // revision count after the lock would miss the save that just committed.
+  @Transactional(isolation = Isolation.READ_COMMITTED)
   public StatisticsSettings updateSettings(Map<String, String> values, Long revision) {
     requirePlatformAdmin();
     if (values == null || values.isEmpty()) {
@@ -218,7 +222,8 @@ public class StatisticsSettingsService {
     }
     try {
       locks.saveAndFlush(new StatisticsSettingsLock(StatisticsSettingsLock.ID));
-    } catch (DataIntegrityViolationException lostToAnotherSave) {
+    } catch (DataIntegrityViolationException
+        | PessimisticLockingFailureException lostToAnotherSave) {
       throw new ConflictException("Statistics settings were changed in the meantime");
     }
   }
