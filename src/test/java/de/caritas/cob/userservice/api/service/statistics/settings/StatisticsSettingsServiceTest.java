@@ -306,6 +306,7 @@ class StatisticsSettingsServiceTest {
 
     assertThat(service.snapshotInterval(StatisticsSetting.TENANT_SNAPSHOT_INTERVAL))
         .isEqualTo(StatisticsSnapshotInterval.DAILY);
+    verify(repository).findFirstBySettingKeyOrderByIdDesc("tenantSnapshotInterval");
   }
 
   @Test
@@ -315,5 +316,6 @@ class StatisticsSettingsServiceTest {
 
     assertThat(service.snapshotInterval(StatisticsSetting.AGENCY_SNAPSHOT_INTERVAL))
         .isEqualTo(StatisticsSnapshotInterval.DAILY);
+    verify(repository).findFirstBySettingKeyOrderByIdDesc("agencySnapshotInterval");
   }
 }
