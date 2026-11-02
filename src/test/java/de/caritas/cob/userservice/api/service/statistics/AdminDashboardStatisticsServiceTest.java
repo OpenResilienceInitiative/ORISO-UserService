@@ -426,6 +426,62 @@ class AdminDashboardStatisticsServiceTest {
   }
 
   @Test
+  void buildDashboard_Should_HideTheTenantTotal_When_ItsOwnThresholdIsLowerThanTheAgencyOne() {
+    // tenant minimum 3, agency minimum 5: the only agency (4) is hidden, and the total of 4
+    // passes its own threshold, but it would show that agency's figure as it is
+    givenTenantAdmin();
+    givenEmptyTenantScopedQueries();
+    when(statisticsSettingsService.minimumCounsellors(StatisticsSetting.TENANT_MINIMUM_COUNSELLORS))
+        .thenReturn(3);
+    when(adminStatisticsRepository.countConsultantsByAgency(TENANT_ID))
+        .thenReturn(List.of(groupCount(AGENCY_WITH_FEW_COUNSELORS, 4)));
+    when(adminStatisticsRepository.countActiveCasesByAgency(TENANT_ID))
+        .thenReturn(List.of(groupCount(AGENCY_WITH_FEW_COUNSELORS, 2)));
+    when(adminStatisticsRepository.countConsultantsForTenant(TENANT_ID)).thenReturn(4L);
+
+    var dashboard = service.buildDashboard();
+
+    assertThat(agency(dashboard, AGENCY_WITH_FEW_COUNSELORS).suppressed()).isTrue();
+    var total = dashboard.targets().get(0);
+    assertThat(total.targetType()).isEqualTo(TargetType.TENANT);
+    assertThat(total.suppressed()).isTrue();
+    assertThat(total.metrics()).isNull();
+    assertThat(total.counselorCount()).isZero();
+  }
+
+  @Test
+  void buildDashboard_Should_HideThePlatformTotal_When_ItsOwnThresholdIsLowerThanTheTenantOne() {
+    givenPlatformAdminWithTenants(List.of(groupCount(1L, 4)));
+    when(statisticsSettingsService.minimumCounsellors(
+            StatisticsSetting.PLATFORM_MINIMUM_COUNSELLORS))
+        .thenReturn(3);
+
+    var dashboard = service.buildDashboard();
+
+    assertThat(tenant(dashboard, 1L).suppressed()).isTrue();
+    var total = dashboard.targets().get(0);
+    assertThat(total.targetType()).isEqualTo(TargetType.PLATFORM);
+    assertThat(total.suppressed()).isTrue();
+    assertThat(total.metrics()).isNull();
+  }
+
+  @Test
+  void aStoredStand_Should_HideTheTotal_When_ARaisedThresholdLeavesItWithTheHiddenRowOnly() {
+    when(statisticsSettingsService.minimumCounsellors(StatisticsSetting.AGENCY_MINIMUM_COUNSELLORS))
+        .thenReturn(7);
+    when(statisticsSettingsService.minimumCounsellors(StatisticsSetting.TENANT_MINIMUM_COUNSELLORS))
+        .thenReturn(3);
+    givenStand(
+        List.of(
+            visible(TargetType.TENANT, null, 6), visible(TargetType.AGENCY, AGENCY_WITH_TEAM, 6)));
+
+    var dashboard = service.buildDashboard();
+
+    assertThat(agency(dashboard, AGENCY_WITH_TEAM).suppressed()).isTrue();
+    assertThat(dashboard.targets().get(0).suppressed()).isTrue();
+  }
+
+  @Test
   void aStoredStand_Should_HideASecondRow_AndScrubTheCountOfAHiddenRow() {
     // a stand from before the fix: one hidden row that still carries its exact count
     givenStand(

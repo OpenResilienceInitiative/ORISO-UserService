@@ -157,11 +157,17 @@ public interface AdminStatisticsRepository extends Repository<Session, Long> {
               + " GROUP BY ca.agency_id")
   List<GroupCountProjection> countConsultantsByAgency(@Param("tenantId") Long tenantId);
 
+  /**
+   * The people behind the tenant total: the same population as the agency rows ({@link
+   * #countConsultantsByAgency}), each counted once, so the total and its rows can be compared.
+   */
   @Query(
       nativeQuery = true,
       value =
-          "SELECT COUNT(*) FROM consultant c "
-              + "WHERE c.tenant_id = :tenantId AND "
+          "SELECT COUNT(DISTINCT ca.consultant_id) FROM consultant_agency ca "
+              + "JOIN consultant c ON c.consultant_id = ca.consultant_id "
+              + "WHERE ca.tenant_id = :tenantId AND ca.agency_id IS NOT NULL "
+              + "AND ca.delete_date IS NULL AND ca.status = 'CREATED' AND "
               + ACTIVE_CONSULTANT)
   long countConsultantsForTenant(@Param("tenantId") Long tenantId);
 
@@ -260,10 +266,13 @@ public interface AdminStatisticsRepository extends Repository<Session, Long> {
   @Query(
       nativeQuery = true,
       value =
-          "SELECT c.tenant_id AS groupId, COUNT(*) AS total FROM consultant c "
-              + "WHERE c.tenant_id IS NOT NULL AND "
+          "SELECT ca.tenant_id AS groupId, COUNT(DISTINCT ca.consultant_id) AS total "
+              + "FROM consultant_agency ca "
+              + "JOIN consultant c ON c.consultant_id = ca.consultant_id "
+              + "WHERE ca.tenant_id IS NOT NULL AND ca.agency_id IS NOT NULL "
+              + "AND ca.delete_date IS NULL AND ca.status = 'CREATED' AND "
               + ACTIVE_CONSULTANT
-              + " GROUP BY c.tenant_id")
+              + " GROUP BY ca.tenant_id")
   List<GroupCountProjection> countConsultantsByTenant();
 
   @Query(

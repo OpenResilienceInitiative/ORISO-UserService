@@ -55,6 +55,29 @@ class AdminStatisticsRepositoryActiveCounsellorsIT {
         .containsExactlyInAnyOrder(AGENCY_ID + ":1", OTHER_AGENCY_ID + ":1");
   }
 
+  @Test
+  void theTenantTotalCountsTheSamePeopleAsTheRows_NotConsultantsWithoutAnAgency() {
+    insertConsultant("linked", "CREATED", false, false, null, "ACTIVE", AGENCY_ID);
+    insertConsultant("unlinked-1", "CREATED", false, false, null, "ACTIVE");
+    insertConsultant("unlinked-2", "CREATED", false, false, null, "ACTIVE");
+
+    assertThat(underTest.countConsultantsForTenant(TENANT_ID)).isEqualTo(1);
+    assertThat(counts(underTest.countConsultantsByAgency(TENANT_ID)))
+        .containsExactly(AGENCY_ID + ":1");
+    assertThat(counts(underTest.countConsultantsByTenant())).contains(TENANT_ID + ":1");
+  }
+
+  @Test
+  void aLinkThatIsNotFinishedYet_Should_NotCount_InTheRowNorInTheTotal() {
+    insertConsultant("linked", "CREATED", false, false, null, "ACTIVE", AGENCY_ID);
+    insertConsultant("joining", "CREATED", false, false, null, "ACTIVE");
+    insertLink("joining", OTHER_AGENCY_ID, "IN_PROGRESS");
+
+    assertThat(underTest.countConsultantsForTenant(TENANT_ID)).isEqualTo(1);
+    assertThat(counts(underTest.countConsultantsByAgency(TENANT_ID)))
+        .containsExactly(AGENCY_ID + ":1");
+  }
+
   private static List<String> counts(
       List<AdminStatisticsRepository.GroupCountProjection> projections) {
     return projections.stream()
@@ -90,16 +113,26 @@ class AdminStatisticsRepositoryActiveCounsellorsIT {
         .setParameter("tenant", TENANT_ID)
         .executeUpdate();
     for (var agencyId : agencyIds) {
-      entityManager
-          .createNativeQuery(
-              "INSERT INTO consultant_agency (id, consultant_id, agency_id, tenant_id, status) "
-                  + "VALUES (:relationId, :id, :agency, :tenant, 'CREATED')")
-          .setParameter("relationId", nextRelationId++)
-          .setParameter("id", consultantId)
-          .setParameter("agency", agencyId)
-          .setParameter("tenant", TENANT_ID)
-          .executeUpdate();
+      insertLink(consultantId, agencyId, "CREATED");
     }
+    entityManager.flush();
+  }
+
+  private void insertLink(String consultantIdOrName, long agencyId, String status) {
+    var consultantId =
+        consultantIdOrName.startsWith("stats-1560-")
+            ? consultantIdOrName
+            : "stats-1560-" + consultantIdOrName;
+    entityManager
+        .createNativeQuery(
+            "INSERT INTO consultant_agency (id, consultant_id, agency_id, tenant_id, status) "
+                + "VALUES (:relationId, :id, :agency, :tenant, :status)")
+        .setParameter("relationId", nextRelationId++)
+        .setParameter("id", consultantId)
+        .setParameter("agency", agencyId)
+        .setParameter("tenant", TENANT_ID)
+        .setParameter("status", status)
+        .executeUpdate();
     entityManager.flush();
   }
 }

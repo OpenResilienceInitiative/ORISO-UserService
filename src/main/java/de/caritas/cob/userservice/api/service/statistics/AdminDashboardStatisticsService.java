@@ -57,9 +57,9 @@ import org.springframework.stereotype.Service;
  * <p>Subtraction protection (UserService#1560): a shown total that includes a hidden row would give
  * it away as "total minus the shown rows". So when a row is hidden, what the total leaves over
  * after the shown rows must be at least the row minimum in counsellors; if it is not, the smallest
- * shown rows are hidden too until it is. The total stays the true total, so no number is
- * misleading. A stored stand goes through the same rule on every read ({@link
- * #withCurrentThresholds}), so it cannot show what the live path hides.
+ * shown rows are hidden too until it is, and if none is left the total is hidden as well. A shown
+ * total is always the true total, so no number is misleading. A stored stand goes through the same
+ * rule on every read ({@link #withCurrentThresholds}), so it cannot show what the live path hides.
  *
  * <p>Differencing protection: a number that changes between two page loads can point at one case
  * even above the threshold. So each admin role reads a fixed stand ({@link
@@ -353,12 +353,16 @@ public class AdminDashboardStatisticsService {
   /**
    * A shown total must not let anyone work out a hidden row as "total minus the shown rows". What
    * the total leaves over, in counsellors, has to reach the row minimum; if it does not, the
-   * smallest shown rows are hidden as well, one by one, until it does or no shown row is left (the
-   * total alone is then judged by its own threshold). The agency scope has no total.
+   * smallest shown rows are hidden as well, one by one, until it does. If it still does not when no
+   * shown row is left, the total itself is hidden: the three minimums are set independently, so a
+   * total can pass its own threshold and still be little more than the hidden rows. The agency
+   * scope has no total.
    *
    * <p>The left-over is read from the counts of the shown rows only, so it works on a stored stand,
-   * which no longer holds the count of a hidden row. A counsellor in two shown agencies is counted
-   * twice, which makes the left-over smaller and hides more, never less.
+   * which no longer holds the count of a hidden row. The total counts the same people as its rows
+   * (each once), so a counsellor in several shown agencies is counted once in the total and once
+   * per agency in the rows: the left-over is smaller than the true one, which hides more, never
+   * less.
    */
   private static List<TargetStatistics> withoutDerivableRows(
       DashboardScope scope, List<TargetStatistics> targets, Suppression suppression) {
@@ -397,10 +401,11 @@ public class AdminDashboardStatisticsService {
       additionallyHidden.add(row);
       leftOver += row.counselorCount();
     }
+    var totalHidden = leftOver < minimum;
     return targets.stream()
         .map(
             target ->
-                additionallyHidden.contains(target)
+                additionallyHidden.contains(target) || (totalHidden && target == total.get())
                     ? suppressedTarget(target.targetType(), target.tenantId(), target.agencyId())
                     : target)
         .toList();
