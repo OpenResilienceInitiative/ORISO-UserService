@@ -420,12 +420,47 @@ class AgencyInviteLinkServiceTest {
             .tenantId(1L)
             .agencyId(5L)
             .build();
+    when(repository.findByToken("direct")).thenReturn(Optional.of(link));
     when(repository.findByTokenAndStatus("direct", InviteLinkStatus.ACTIVE.name()))
         .thenReturn(Optional.of(link));
     when(directInvitePolicy.allows(1L, 5L, InviteLinkChatType.AUDIO)).thenReturn(false);
 
     assertThatThrownBy(() -> service.redeem("direct"))
         .isInstanceOf(DirectLinkInactiveException.class);
+    // Refused before the row is locked.
+    verify(repository, org.mockito.Mockito.never()).findByTokenAndStatus(any(), any());
+  }
+
+  /** The remote policy reads must not run while the PESSIMISTIC_WRITE lock is held. */
+  @Test
+  void redeem_Should_AskThePolicyBeforeItLocksTheLink() {
+    AgencyInviteLink link =
+        AgencyInviteLink.builder()
+            .token("direct")
+            .status(InviteLinkStatus.ACTIVE.name())
+            .linkKind(InviteLinkKind.COUNSELLOR.name())
+            .chatType(InviteLinkChatType.CHAT.name())
+            .tenantId(1L)
+            .agencyId(5L)
+            .consultingTypeId(2)
+            .build();
+    when(repository.findByToken("direct")).thenReturn(Optional.of(link));
+    when(repository.findByTokenAndStatus("direct", InviteLinkStatus.ACTIVE.name()))
+        .thenReturn(Optional.of(link));
+    when(directInvitePolicy.allows(1L, 5L, InviteLinkChatType.CHAT)).thenReturn(true);
+    var owner = new Consultant();
+    owner.setId("owner");
+    link.setConsultantId("owner");
+    var membership = new de.caritas.cob.userservice.api.model.ConsultantAgency();
+    membership.setAgencyId(5L);
+    owner.setConsultantAgencies(java.util.Set.of(membership));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("owner")).thenReturn(Optional.of(owner));
+
+    service.redeem("direct");
+
+    var order = org.mockito.Mockito.inOrder(directInvitePolicy, repository);
+    order.verify(directInvitePolicy).allows(1L, 5L, InviteLinkChatType.CHAT);
+    order.verify(repository).findByTokenAndStatus("direct", InviteLinkStatus.ACTIVE.name());
   }
 
   @Test

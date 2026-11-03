@@ -21,6 +21,9 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.ResourceAccessException;
 
 @ExtendWith(MockitoExtension.class)
@@ -114,6 +117,42 @@ class EffectiveDirectInvitePolicyTest {
     when(tenantService.getRestrictedTenantDataFresh(TENANT))
         .thenReturn(new RestrictedTenantDTO().id(TENANT));
     assertThat(policy.allows(TENANT, AGENCY, InviteLinkChatType.CHAT)).isFalse();
+  }
+
+  /** A 4xx that is not a timeout is the provider saying no to the question: deny, no outage. */
+  @Test
+  void allows_Should_Deny_NotReportAnOutage_When_TheAgencyServiceAnswers400() {
+    when(agencySettings.findEffectiveSettings(AGENCY, TENANT))
+        .thenThrow(new HttpClientErrorException(HttpStatus.BAD_REQUEST));
+
+    assertThat(policy.allows(TENANT, AGENCY, InviteLinkChatType.CHAT)).isFalse();
+  }
+
+  @Test
+  void allows_Should_Deny_NotReportAnOutage_When_TheTenantServiceAnswers400() {
+    when(tenantService.getRestrictedTenantDataFresh(TENANT))
+        .thenThrow(new HttpClientErrorException(HttpStatus.BAD_REQUEST));
+
+    assertThat(policy.allows(TENANT, AGENCY, InviteLinkChatType.CHAT)).isFalse();
+  }
+
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(ints = {408, 429})
+  void allows_Should_ReportAnOutage_When_AProviderAsksToTryAgain(int status) {
+    when(agencySettings.findEffectiveSettings(AGENCY, TENANT))
+        .thenThrow(new HttpClientErrorException(HttpStatus.valueOf(status)));
+
+    assertThatThrownBy(() -> policy.allows(TENANT, AGENCY, InviteLinkChatType.CHAT))
+        .isInstanceOf(ServiceUnavailableException.class);
+  }
+
+  @Test
+  void allows_Should_ReportAnOutage_When_AProviderAnswers5xx() {
+    when(agencySettings.findEffectiveSettings(AGENCY, TENANT))
+        .thenThrow(new HttpServerErrorException(HttpStatus.BAD_GATEWAY));
+
+    assertThatThrownBy(() -> policy.allows(TENANT, AGENCY, InviteLinkChatType.CHAT))
+        .isInstanceOf(ServiceUnavailableException.class);
   }
 
   @Test

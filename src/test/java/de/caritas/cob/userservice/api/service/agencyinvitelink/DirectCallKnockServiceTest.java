@@ -538,6 +538,29 @@ class DirectCallKnockServiceTest {
     verify(callGuests).revokeSeat(binding, "@asker:example", "@counsellor:example");
   }
 
+  /** "Anklopfen" switched off lets everybody in: not while the permission is withdrawn. */
+  @Test
+  void admitWaitingOnCallLink_Should_Refuse_WhileTheMediumIsSwitchedOff_ButWaitingCanEnd() {
+    var waiting = callLinkKnock(1L, Status.PENDING);
+    when(repository.findByInviteLinkIdAndViaAndStatus(5L, Via.CALL_LINK, Status.PENDING))
+        .thenReturn(List.of(waiting));
+    var link = callLink("counsellor-1");
+    link.setAgencyId(99L);
+    link.setChatType("VIDEO");
+    when(inviteLinkRepository.findById(5L)).thenReturn(Optional.of(link));
+    when(directInvitePolicy.allows(TENANT, 99L, InviteLinkChatType.VIDEO)).thenReturn(false);
+
+    assertThatThrownBy(() -> service.admitWaitingOnCallLink(5L, "counsellor-1"))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    assertThat(waiting.getStatus()).isEqualTo(Status.PENDING);
+    verify(repository, never()).save(any());
+
+    // The call ending still closes the queue: no permission is needed to stop waiting.
+    service.cancelWaitingOnCallLink(5L);
+    assertThat(waiting.getStatus()).isEqualTo(Status.CANCELLED);
+  }
+
   @Test
   void cancelAdmissionsOnCallLink_Should_EndEarlierAdmissionsForRejoins() {
     var admitted = callLinkKnock(1L, Status.ADMITTED);

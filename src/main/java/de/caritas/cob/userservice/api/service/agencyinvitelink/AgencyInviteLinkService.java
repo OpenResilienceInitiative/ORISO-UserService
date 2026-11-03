@@ -367,6 +367,13 @@ public class AgencyInviteLinkService {
 
   @Transactional
   RedeemContext redeem(String token) {
+    // The remote policy reads must not run while the row lock below is held. Read the token
+    // unlocked first; status, expiry and the other checks still decide on the locked row.
+    repository
+        .findByToken(token)
+        .filter(unlocked -> InviteLinkStatus.ACTIVE.name().equals(unlocked.getStatus()))
+        .filter(unlocked -> !InviteLinkKind.CALL.name().equals(unlocked.getLinkKind()))
+        .ifPresent(this::requireDirectInviteAllowed);
     AgencyInviteLink link =
         repository
             .findByTokenAndStatus(token, InviteLinkStatus.ACTIVE.name())
@@ -391,7 +398,6 @@ public class AgencyInviteLinkService {
       // A call share link opens one running call only (#1487), never a registration context.
       throw new BadRequestException("Not a registration link");
     }
-    requireDirectInviteAllowed(link);
     if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now())) {
       link.setStatus(InviteLinkStatus.EXPIRED.name());
       repository.save(link);

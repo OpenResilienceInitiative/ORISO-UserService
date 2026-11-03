@@ -9,6 +9,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClientException;
 
 /**
@@ -22,8 +23,8 @@ import org.springframework.web.client.RestClientException;
  * <p>Fail closed: a switch that cannot be read, is not served, or belongs to another medium or
  * Träger never allows a link. This service caches nothing, so an admin's change applies to the next
  * request, also for links created earlier, as far as the AgencyService's own cache allows for the
- * Beratungsstelle value. An unreachable AgencyService or TenantService is an outage (503), not a
- * "no".
+ * Beratungsstelle value. An unreachable AgencyService or TenantService (timeout, 5xx, 408, 429,
+ * unreadable answer) is an outage (503), not a "no". Any other 4xx from a provider denies the link.
  */
 @Service
 @RequiredArgsConstructor
@@ -48,14 +49,35 @@ public class EffectiveDirectInvitePolicy implements DirectInvitePolicy {
                   agencyId == null
                       ? ofTenant(tenantId, medium)
                       : ofAgency(tenantId, agencyId, medium)));
-    } catch (RestClientException unavailable) {
+    } catch (HttpClientErrorException refused) {
+      if (isTransient(refused)) {
+        throw unavailable(tenantId, refused);
+      }
+      // The provider understood the question and said no (for example 400): a refusal of the
+      // link, not an outage. The caller answers 403 or 410, never a 500.
       log.warn(
-          "Direct invitation switch for tenant {} could not be read: {}",
+          "Direct invitation switch for tenant {} was refused by its provider with {}",
           tenantId,
-          unavailable.getClass().getSimpleName());
-      throw new ServiceUnavailableException("The direct invitation setting is not available");
+          refused.getStatusCode().value());
+      return false;
+    } catch (RestClientException failure) {
+      throw unavailable(tenantId, failure);
     }
     return Boolean.TRUE.equals(answer.get());
+  }
+
+  /** Timeouts, 5xx and unreadable answers are caught as outages; of the 4xx only these two are. */
+  private static boolean isTransient(HttpClientErrorException refused) {
+    return refused.getStatusCode().value() == 408 || refused.getStatusCode().value() == 429;
+  }
+
+  private ServiceUnavailableException unavailable(Long tenantId, RestClientException failure) {
+    // The cause is not attached: a downstream response body must not reach logs or API errors.
+    log.warn(
+        "Direct invitation switch for tenant {} could not be read: {}",
+        tenantId,
+        failure.getClass().getSimpleName());
+    return new ServiceUnavailableException("The direct invitation setting is not available");
   }
 
   /** Both the Träger (read fresh) and the served Beratungsstelle value must be true. */
