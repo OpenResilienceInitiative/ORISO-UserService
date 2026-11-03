@@ -68,6 +68,8 @@ class ReplicaSafetyInventoryContractTest {
           "reply-email-delivery-scheduler",
           "reply-email-tenant-rotation",
           "event-notification-retention-scheduler",
+          "statistics-feature-gate-cache",
+          "statistics-retention-scheduler",
           "team-discussion-retention-scheduler",
           "team-discussion-orphan-cleanup-scheduler",
           "agency-deletion-audit-pull-scheduler",

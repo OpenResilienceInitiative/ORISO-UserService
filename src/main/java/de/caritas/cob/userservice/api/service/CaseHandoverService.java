@@ -2521,6 +2521,32 @@ public class CaseHandoverService {
     return duration;
   }
 
+  /** Whether this counsellor holds a live co-access grant on this session right now. */
+  public boolean hasActiveCoAccess(Long sessionId, String consultantId) {
+    return caseHandoverRequestRepository
+        .findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(sessionId, consultantId)
+        .stream()
+        .anyMatch(this::isActiveCoAccess);
+  }
+
+  /** The sessions on which this counsellor holds a live co-access grant right now. */
+  public Set<Long> sessionIdsWithActiveCoAccess(String consultantId) {
+    return caseHandoverRequestRepository
+        .findLiveCoAccessCandidates(
+            consultantId,
+            List.of(Status.GRANTED, Status.GRANTED_PENDING_CLIENT_OPTOUT),
+            AccessType.CO_ACCESS,
+            LocalDateTime.now(clock))
+        .stream()
+        .filter(this::isActiveCoAccess)
+        .map(request -> request.getSession().getId())
+        .collect(Collectors.toSet());
+  }
+
+  private boolean isActiveCoAccess(CaseHandoverRequest request) {
+    return effectiveAccessType(request) == AccessType.CO_ACCESS && canViewContent(request);
+  }
+
   private boolean isExpired(CaseHandoverRequest request) {
     return hasGrantedAccess(request.getStatus())
         && effectiveAccessType(request) == AccessType.CO_ACCESS

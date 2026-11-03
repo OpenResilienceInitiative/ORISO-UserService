@@ -4,11 +4,13 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
+import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.GroupChatJoinRequest;
 import de.caritas.cob.userservice.api.model.MatrixCallBinding;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
+import de.caritas.cob.userservice.api.port.out.ChatAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.MatrixCallBindingRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
@@ -51,6 +53,7 @@ public class CallShareLinkService {
   private final @NonNull MatrixCallBindingRepository bindings;
   private final @NonNull MatrixCallGuestService callGuests;
   private final @NonNull SessionRepository sessions;
+  private final @NonNull ChatAgencyRepository chatAgencies;
   private final @NonNull DirectCallKnockService knocks;
   private final @NonNull DirectInvitePolicy directInvitePolicy;
   private final @NonNull TemporaryAccountPolicy temporaryAccountPolicy;
@@ -71,6 +74,7 @@ public class CallShareLinkService {
       Boolean knock,
       Boolean temporaryAccount) {
     var binding = requireCounsellorCall(tenant, consultantId, sourceRoomId, callId);
+    var existing = links.findByCallBindingId(binding.getId());
     var medium = mediumOf(binding);
     var session =
         binding.getSessionId() == null
@@ -79,22 +83,24 @@ public class CallShareLinkService {
     // The entry room needs the Beratungsstelle for its consent and legal texts (decision pending,
     // see the PR); policies read it from the call, not from the link.
     Long agencyId = session.map(Session::getAgencyId).orElse(null);
-    // Also for a link the call already has: a withdrawn permission must not hand it out again.
-    if (!directInvitePolicy.allows(tenant, agencyId, medium)) {
-      throw new ForbiddenException("Direct invitations are not allowed here");
-    }
-    var existing = links.findByCallBindingId(binding.getId());
+    requireDirectInvites(binding, agencyId);
     if (existing.isPresent()) {
+      requireUsable(existing.get(), binding);
+      requireSameAgency(existing.get(), agencyId);
       return view(existing.get(), false);
     }
-    boolean temporaryAllowed = temporaryAccountPolicy.allows(tenant, agencyId, medium);
+    Integer consultingTypeId = session.map(Session::getConsultingTypeId).orElse(null);
+    boolean temporaryAllowed =
+        agencyId != null
+            && consultingTypeId != null
+            && temporaryAccountPolicy.allows(tenant, agencyId, medium);
     var now = LocalDateTime.now();
     var link =
         AgencyInviteLink.builder()
             .token(generateToken())
             .tenantId(tenant)
             .agencyId(agencyId)
-            .consultingTypeId(session.map(Session::getConsultingTypeId).orElse(null))
+            .consultingTypeId(consultingTypeId)
             .topicId(session.map(Session::getMainTopicId).orElse(null))
             .linkKind(CALL)
             .chatType(medium.name())
@@ -120,6 +126,9 @@ public class CallShareLinkService {
             .findByCallBindingId(binding.getId())
             .orElseThrow(() -> new NotFoundException("No share link for this call"));
     requireUsable(link, binding);
+    var agencyId = agencyOf(binding);
+    requireSameAgency(link, agencyId);
+    requireDirectInvites(binding, agencyId);
     return view(link, false);
   }
 
@@ -142,10 +151,11 @@ public class CallShareLinkService {
     // Not in the call: indistinguishable from a link that does not exist (no IDOR).
     var binding =
         requireCounsellorCall(tenant, consultantId, stored.getSourceRoomId(), stored.getCallId());
+    var agencyId = agencyOf(binding);
+    requireSameAgency(link, agencyId);
+    requireDirectInvites(binding, agencyId);
     if (temporaryAccount != null) {
-      link.setTemporaryAccount(
-          temporaryAccount
-              && temporaryAccountPolicy.allows(tenant, agencyOf(binding), mediumOf(binding)));
+      link.setTemporaryAccount(temporaryAccount && temporaryAccountAllowed(link));
     }
     if (knock != null && knock != link.isKnock()) {
       link.setKnock(knock);
@@ -183,6 +193,14 @@ public class CallShareLinkService {
     var binding = bindingOf(link);
     requireUsable(link, binding);
     var medium = mediumOf(binding);
+    requireSameAgency(link, agencyOf(binding));
+    var temporary = guest.getTemporaryAccountSnapshot();
+    if (temporary != null
+        && (!Objects.equals(temporary.getInviteLinkId(), link.getId())
+            || temporary.getDeletionStartedAt() != null
+            || temporary.getDeletedAt() != null)) {
+      throw new ForbiddenException("A temporary account only opens its own active call link");
+    }
     // Removed by a counsellor: neither knocking nor joining brings the guest back into this call.
     if (callGuests.wasRemoved(binding, guest.getMatrixUserId())) {
       throw new ForbiddenException("Removed from this call");
@@ -307,12 +325,14 @@ public class CallShareLinkService {
       throw new ForbiddenException("Share link belongs to another tenant");
     }
     tenantService.requireOperationalTenant(link.getTenantId());
-    requireDirectInviteAllowed(link, binding);
+    requireDirectInviteAllowed(binding);
   }
 
   /** A withdrawn "Direkteinladung erlauben" ends the link for guests (410), the link is kept. */
-  private void requireDirectInviteAllowed(AgencyInviteLink link, MatrixCallBinding binding) {
-    if (!directInvitePolicy.allows(link.getTenantId(), agencyOf(binding), mediumOf(binding))) {
+  private void requireDirectInviteAllowed(MatrixCallBinding binding) {
+    try {
+      requireDirectInvites(binding, agencyOf(binding));
+    } catch (ForbiddenException denied) {
       throw new DirectLinkInactiveException();
     }
   }
@@ -320,20 +340,26 @@ public class CallShareLinkService {
   /** For the public link context: 410 while the permission for this call's medium is withdrawn. */
   @Transactional(readOnly = true)
   public void requireDirectInviteAllowed(AgencyInviteLink link) {
-    requireDirectInviteAllowed(link, bindingOf(link));
+    requireDirectInviteAllowed(bindingOf(link));
   }
 
   /** Whether temporary accounts may be offered; the effective value is the setting AND this. */
   @Transactional(readOnly = true)
   public boolean temporaryAccountAllowed(AgencyInviteLink link) {
-    var binding =
-        link.getCallBindingId() == null
-            ? null
-            : bindings.findById(link.getCallBindingId()).orElse(null);
-    return temporaryAccountPolicy.allows(
-        link.getTenantId(),
-        binding == null ? null : agencyOf(binding),
-        InviteLinkChatType.valueOf(link.getChatType()));
+    if (link.getAgencyId() == null
+        || link.getConsultingTypeId() == null
+        || link.getCallBindingId() == null) {
+      return false;
+    }
+    return bindings
+        .findById(link.getCallBindingId())
+        .filter(binding -> Objects.equals(link.getTenantId(), binding.getTenantId()))
+        .filter(binding -> Objects.equals(link.getAgencyId(), agencyOf(binding)))
+        .map(
+            binding ->
+                temporaryAccountPolicy.allows(
+                    link.getTenantId(), link.getAgencyId(), mediumOf(binding)))
+        .orElse(false);
   }
 
   private Long agencyOf(MatrixCallBinding binding) {
@@ -342,15 +368,51 @@ public class CallShareLinkService {
         : sessions.findById(binding.getSessionId()).map(Session::getAgencyId).orElse(null);
   }
 
-  /** For the public link context: throws 410 once the call is over. */
+  /** Checks the link before showing public context or registering a guest. */
   @Transactional(readOnly = true)
   public void requireUsable(AgencyInviteLink link) {
-    requireUsable(link, bindingOf(link));
+    var binding = bindingOf(link);
+    requireUsable(link, binding);
+    requireSameAgency(link, agencyOf(binding));
+  }
+
+  private static void requireSameAgency(AgencyInviteLink link, Long agencyId) {
+    if (!Objects.equals(link.getAgencyId(), agencyId)) {
+      throw new CallShareLinkEndedException();
+    }
+  }
+
+  private void requireDirectInvites(MatrixCallBinding binding, Long agencyId) {
+    if (binding.getSessionId() != null && agencyId == null) {
+      throw new CallShareLinkEndedException();
+    }
+    var tenant = binding.getTenantId();
+    var medium = mediumOf(binding);
+    if (agencyId == null && binding.getChatId() != null) {
+      var groupAgencies =
+          chatAgencies.findByChat_Id(binding.getChatId()).stream()
+              .map(ChatAgency::getAgencyId)
+              .distinct()
+              .toList();
+      if (!groupAgencies.isEmpty()) {
+        for (var groupAgency : groupAgencies) {
+          if (groupAgency == null || !directInvitePolicy.allows(tenant, groupAgency, medium)) {
+            throw new ForbiddenException("Direct invitations are not allowed here");
+          }
+        }
+        return;
+      }
+    }
+    if (!directInvitePolicy.allows(tenant, agencyId, medium)) {
+      throw new ForbiddenException("Direct invitations are not allowed here");
+    }
   }
 
   private void requireUsable(AgencyInviteLink link, MatrixCallBinding binding) {
-    if (!InviteLinkStatus.ACTIVE.name().equals(link.getStatus())
+    if (!Objects.equals(link.getTenantId(), binding.getTenantId())
+        || !InviteLinkStatus.ACTIVE.name().equals(link.getStatus())
         || outlived(link)
+        || !hasSeparateMediaRoom(binding)
         || !isLive(binding, System.currentTimeMillis())) {
       throw new CallShareLinkEndedException();
     }
@@ -417,10 +479,21 @@ public class CallShareLinkService {
     if (call.outcome() != Outcome.ADMITTED) {
       throw new NotFoundException("Call not found");
     }
-    if (!isLive(call.binding(), System.currentTimeMillis())) {
+    if (!hasSeparateMediaRoom(call.binding())
+        || !isLive(call.binding(), System.currentTimeMillis())) {
       throw new CallShareLinkEndedException();
     }
     return call.binding();
+  }
+
+  private static boolean hasSeparateMediaRoom(MatrixCallBinding binding) {
+    var source = binding.getSourceRoomId();
+    var media = binding.getMediaRoomId();
+    return source != null
+        && !source.isBlank()
+        && media != null
+        && !media.isBlank()
+        && !source.equals(media);
   }
 
   private ShareLink view(AgencyInviteLink link, boolean created) {
