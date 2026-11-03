@@ -75,6 +75,7 @@ public class AgencyInviteLinkService {
     }
     applyDefaults(cmd);
     validateEnums(cmd);
+    requireLiveChatLinkWriter(cmd.getLinkKind(), cmd.getChatType());
     if (InviteLinkKind.CALL.name().equals(cmd.getLinkKind())) {
       // Only a counsellor in a running call creates its share link (#1487).
       throw new BadRequestException("Call share links are created from the call");
@@ -203,7 +204,7 @@ public class AgencyInviteLinkService {
             .filter(l -> Objects.equals(l.getTenantId(), callerTenantId))
             .filter(l -> !InviteLinkKind.CALL.name().equals(l.getLinkKind()))
             .orElseThrow(() -> new NotFoundException("Invite link %s not found", linkId));
-    adminScope.assertMay(Target.placedIn(link.getTenantId(), link.getAgencyId()));
+    assertMayWriteLink(link);
 
     if (InviteLinkStatus.DISABLED.name().equals(link.getStatus())) {
       return link;
@@ -225,7 +226,7 @@ public class AgencyInviteLinkService {
   @Transactional
   public AgencyInviteLink reactivate(Long linkId) {
     AgencyInviteLink link = findExternalLinkOfCallerTenant(linkId);
-    adminScope.assertMay(Target.placedIn(link.getTenantId(), link.getAgencyId()));
+    assertMayWriteLink(link);
 
     if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now())) {
       throw new ConflictException("An expired invite link cannot be reactivated");
@@ -249,8 +250,21 @@ public class AgencyInviteLinkService {
   @Transactional
   public void delete(Long linkId) {
     AgencyInviteLink link = findExternalLinkOfCallerTenant(linkId);
-    adminScope.assertMay(Target.placedIn(link.getTenantId(), link.getAgencyId()));
+    assertMayWriteLink(link);
     repository.delete(link);
+  }
+
+  private void assertMayWriteLink(AgencyInviteLink link) {
+    requireLiveChatLinkWriter(link.getLinkKind(), link.getChatType());
+    adminScope.assertMay(Target.placedIn(link.getTenantId(), link.getAgencyId()));
+  }
+
+  private void requireLiveChatLinkWriter(String kind, String chatType) {
+    if (InviteLinkKind.EXTERNAL_INBOUND.name().equals(kind)
+        && InviteLinkChatType.LIVE_CHAT.name().equals(chatType)
+        && !authenticatedUser.isPlatformAdmin()) {
+      throw new ForbiddenException("Only platform admins can manage external live-chat links");
+    }
   }
 
   private AgencyInviteLink findExternalLinkOfCallerTenant(Long linkId) {

@@ -67,6 +67,7 @@ class AgencyInviteLinkServiceTest {
   void setTenantContext() {
     TenantContext.setCurrentTenant(1L);
     Mockito.lenient().when(adminScope.current()).thenReturn(new AdminScope.Tenant(1L));
+    Mockito.lenient().when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
   }
 
   @AfterEach
@@ -179,6 +180,7 @@ class AgencyInviteLinkServiceTest {
   @Test
   void create_Should_ThrowForbidden_When_TheCallerHasNoTenant() {
     TenantContext.clear();
+    Mockito.lenient().when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
     Mockito.when(authenticatedUser.getTenantId()).thenReturn(null);
     Mockito.when(authenticatedUser.getRoles()).thenReturn(java.util.Set.of("tenant-admin"));
     var realScope =
@@ -203,6 +205,7 @@ class AgencyInviteLinkServiceTest {
 
   /** A real, enforcing AdminScope for an agency admin of Träger 1 who administers agency 10. */
   private void actAsAgencyAdminOfAgencyTen() {
+    Mockito.lenient().when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
     Mockito.when(authenticatedUser.getUserId()).thenReturn("agency-admin");
     Mockito.when(authenticatedUser.getTenantId()).thenReturn(1L);
     Mockito.when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(true);
@@ -235,6 +238,7 @@ class AgencyInviteLinkServiceTest {
         .thenReturn(
             new de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO().id(11L).tenantId(1L));
     CreateInviteLinkCommand cmd = new CreateInviteLinkCommand();
+    cmd.setLinkKind("TENANT");
     cmd.setAgencyId(11L);
 
     assertThatThrownBy(() -> service.create(cmd)).isInstanceOf(ForbiddenException.class);
@@ -245,6 +249,7 @@ class AgencyInviteLinkServiceTest {
   void create_Should_ThrowForbidden_When_AgencyAdminCreatesALinkForTheWholeTraeger() {
     actAsAgencyAdminOfAgencyTen();
     CreateInviteLinkCommand cmd = new CreateInviteLinkCommand();
+    cmd.setLinkKind("TENANT");
 
     assertThatThrownBy(() -> service.create(cmd)).isInstanceOf(ForbiddenException.class);
     Mockito.verify(repository, Mockito.never()).save(Mockito.any());
@@ -702,6 +707,7 @@ class AgencyInviteLinkServiceTest {
         .tenantId(tenantId)
         .agencyId(agencyId)
         .linkKind(kind)
+        .chatType(InviteLinkChatType.LIVE_CHAT.name())
         .status(status)
         .build();
   }

@@ -31,7 +31,7 @@ The redeem endpoint (§3) requires **none** of these.
 
 `POST /useradmin/invitelinks`
 
-**Roles allowed:** `AUTHORIZATION_TENANT_ADMIN`, `AUTHORIZATION_USER_ADMIN`, `AUTHORIZATION_RESTRICTED_AGENCY_ADMIN`
+**Roles allowed:** `AUTHORIZATION_TENANT_ADMIN`, `AUTHORIZATION_USER_ADMIN`, `AUTHORIZATION_RESTRICTED_AGENCY_ADMIN` within their normal scope. External live-chat links (`EXTERNAL_INBOUND` with `LIVE_CHAT`) can only be created, paused, reactivated or deleted by platform admins. They select the target tenant via `X-Tenant-Id`. Omitted link kind and chat type default to this external live-chat combination.
 
 **Request body:**
 
@@ -95,7 +95,7 @@ The redeem endpoint (§3) requires **none** of these.
 
 `GET /useradmin/invitelinks`
 
-**Roles allowed:** same as create.
+**Roles allowed:** `AUTHORIZATION_TENANT_ADMIN`, `AUTHORIZATION_USER_ADMIN`, `AUTHORIZATION_RESTRICTED_AGENCY_ADMIN` within their normal read scope.
 
 **Query params (all optional):**
 
@@ -132,7 +132,7 @@ date math.
 
 ## Manage an external invite link
 
-Both operations require the same authentication and tenant context as creation.
+Both operations require the same authentication and tenant context as creation. Only a platform admin can perform either operation on a live-chat link.
 The link must be an `EXTERNAL_INBOUND` link in the caller's tenant and within the caller's
 admin scope.
 
