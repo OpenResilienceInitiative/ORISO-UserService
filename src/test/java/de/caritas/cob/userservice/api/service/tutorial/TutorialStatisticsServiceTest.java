@@ -355,4 +355,21 @@ class TutorialStatisticsServiceTest {
     environment.setActiveProfiles();
     assertThat(service.getStatistics().tenants().get(0).counts().get(0).suppressed()).isTrue();
   }
+
+  @Test
+  void switchOff_isIgnoredWhenAnotherProfileIsActiveNextToLocalOrTesting() {
+    authenticatedUser.setRoles(Set.of(UserRole.TENANT_ADMIN.getValue()));
+    ReflectionTestUtils.setField(service, "smallCellSuppressionEnabled", false);
+    when(tutorialStatisticsRepository.countByTenant(TENANT_ID))
+        .thenReturn(List.of(count(TENANT_ID, "frontend", "t", 1, "completed", 1)));
+
+    for (var profiles : List.of(new String[] {"prod", "local"}, new String[] {"testing", "prod"})) {
+      environment.setActiveProfiles(profiles);
+      assertThat(service.getStatistics().tenants().get(0).counts().get(0).suppressed())
+          .as("profiles %s", List.of(profiles))
+          .isTrue();
+    }
+    environment.setActiveProfiles("local", "testing");
+    assertThat(service.getStatistics().tenants().get(0).counts().get(0).suppressed()).isFalse();
+  }
 }

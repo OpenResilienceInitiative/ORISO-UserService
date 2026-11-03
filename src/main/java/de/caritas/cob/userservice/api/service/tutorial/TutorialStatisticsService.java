@@ -14,13 +14,13 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.env.Environment;
-import org.springframework.core.env.Profiles;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -49,13 +49,14 @@ public class TutorialStatisticsService {
 
   /**
    * Escape hatch for end-to-end testing with small test datasets, the same switch as the
-   * counselling statistics. Fail-closed: it only takes effect on the {@code local} and {@code
-   * testing} profiles; on any other profile, or none, suppression stays enforced.
+   * counselling statistics. Fail-closed: it only takes effect when at least one profile is active
+   * and every active profile is {@code local} or {@code testing}; with any other profile next to
+   * them, or none, suppression stays enforced.
    */
   @Value("${statistics.small-cell-suppression.enabled:true}")
   private boolean smallCellSuppressionEnabled = true;
 
-  private static final Profiles SUPPRESSION_MAY_BE_DISABLED = Profiles.of("local", "testing");
+  private static final Set<String> SUPPRESSION_MAY_BE_DISABLED_ON = Set.of("local", "testing");
 
   public enum TutorialStatisticsScope {
     PLATFORM,
@@ -118,10 +119,12 @@ public class TutorialStatisticsService {
     if (smallCellSuppressionEnabled) {
       return true;
     }
-    if (!environment.acceptsProfiles(SUPPRESSION_MAY_BE_DISABLED)) {
+    var activeProfiles = Set.of(environment.getActiveProfiles());
+    if (activeProfiles.isEmpty() || !SUPPRESSION_MAY_BE_DISABLED_ON.containsAll(activeProfiles)) {
       log.warn(
-          "statistics.small-cell-suppression.enabled=false was requested, but no local or testing "
-              + "profile is active - small-cell suppression stays enforced (fail-closed)");
+          "statistics.small-cell-suppression.enabled=false was requested, but the active profiles "
+              + "are not only local or testing - small-cell suppression stays enforced "
+              + "(fail-closed)");
       return true;
     }
     log.info("Small-cell suppression is DISABLED for tutorial statistics (local or testing)");
