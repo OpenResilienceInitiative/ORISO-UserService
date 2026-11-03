@@ -71,10 +71,6 @@ public class CallShareLinkService {
       Boolean knock,
       Boolean temporaryAccount) {
     var binding = requireCounsellorCall(tenant, consultantId, sourceRoomId, callId);
-    var existing = links.findByCallBindingId(binding.getId());
-    if (existing.isPresent()) {
-      return view(existing.get(), false);
-    }
     var medium = mediumOf(binding);
     var session =
         binding.getSessionId() == null
@@ -83,8 +79,13 @@ public class CallShareLinkService {
     // The entry room needs the Beratungsstelle for its consent and legal texts (decision pending,
     // see the PR); policies read it from the call, not from the link.
     Long agencyId = session.map(Session::getAgencyId).orElse(null);
+    // Also for a link the call already has: a withdrawn permission must not hand it out again.
     if (!directInvitePolicy.allows(tenant, agencyId, medium)) {
       throw new ForbiddenException("Direct invitations are not allowed here");
+    }
+    var existing = links.findByCallBindingId(binding.getId());
+    if (existing.isPresent()) {
+      return view(existing.get(), false);
     }
     boolean temporaryAllowed = temporaryAccountPolicy.allows(tenant, agencyId, medium);
     var now = LocalDateTime.now();
@@ -172,19 +173,16 @@ public class CallShareLinkService {
             .findByToken(token)
             .filter(value -> CALL.equals(value.getLinkKind()))
             .orElseThrow(() -> new NotFoundException("Share link not found"));
+    // The remote policy read happens before the row lock, so the lock is not held while it waits.
+    // The same checks run again on the locked row below; they are cheap.
+    var unlocked = bindingOf(found);
+    requireUsable(found, unlocked);
+    requireGuestMayUse(found, unlocked, guest);
     // Serialise visits on the link, so parallel visits of one guest insert one knock.
     var link = links.findByIdForUpdate(found.getId()).orElseThrow(CallShareLinkEndedException::new);
     var binding = bindingOf(link);
     requireUsable(link, binding);
-    // Fail closed: a person without a Träger never reaches a link of one.
-    if (!Objects.equals(guest.getTenantId(), link.getTenantId())) {
-      throw new ForbiddenException("Share link belongs to another tenant");
-    }
-    tenantService.requireOperationalTenant(link.getTenantId());
     var medium = mediumOf(binding);
-    if (!directInvitePolicy.allows(link.getTenantId(), agencyOf(binding), medium)) {
-      throw new ForbiddenException("Direct invitations are not allowed here");
-    }
     // Removed by a counsellor: neither knocking nor joining brings the guest back into this call.
     if (callGuests.wasRemoved(binding, guest.getMatrixUserId())) {
       throw new ForbiddenException("Removed from this call");
@@ -299,6 +297,30 @@ public class CallShareLinkService {
       return binding.getInviteExpiresAt() > now;
     }
     return binding.getDevices().values().stream().anyMatch(device -> device.getExpiresAt() > now);
+  }
+
+  /**
+   * Fail closed: another Träger's person, an inactive Träger or a withdrawn permission stop here.
+   */
+  private void requireGuestMayUse(AgencyInviteLink link, MatrixCallBinding binding, User guest) {
+    if (!Objects.equals(guest.getTenantId(), link.getTenantId())) {
+      throw new ForbiddenException("Share link belongs to another tenant");
+    }
+    tenantService.requireOperationalTenant(link.getTenantId());
+    requireDirectInviteAllowed(link, binding);
+  }
+
+  /** A withdrawn "Direkteinladung erlauben" ends the link for guests (410), the link is kept. */
+  private void requireDirectInviteAllowed(AgencyInviteLink link, MatrixCallBinding binding) {
+    if (!directInvitePolicy.allows(link.getTenantId(), agencyOf(binding), mediumOf(binding))) {
+      throw new DirectLinkInactiveException();
+    }
+  }
+
+  /** For the public link context: 410 while the permission for this call's medium is withdrawn. */
+  @Transactional(readOnly = true)
+  public void requireDirectInviteAllowed(AgencyInviteLink link) {
+    requireDirectInviteAllowed(link, bindingOf(link));
   }
 
   /** Whether temporary accounts may be offered; the effective value is the setting AND this. */
