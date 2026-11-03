@@ -117,8 +117,23 @@ class ErstantwortTenantTextResolverTest {
     assertThat(stated(Map.of("en", "Our team"), "de", false)).isNull();
     assertThat(stated(Map.of("de", "<p>&nbsp;</p>", "en", "Our team"), "en", false)).isNull();
     assertThat(stated(Map.of("de", "\u200b", "en", "Our team"), "en", false)).isNull();
-    // informal tenant: the source is de@informal; a leftover formal "de" is not a statement
-    assertThat(stated(Map.of("de@informal", " ", "de", "Unser Team"), "de", true)).isNull();
+    // informal Träger: the meta names de@informal, so a leftover formal "de" is not a statement
+    var informalSource =
+        Map.of("de@informal", " ", "de", "Unser Team", "de__meta", "{\"src\":\"de@informal\"}");
+    assertThat(stated(informalSource, "de", true)).isNull();
+    assertThat(stated(informalSource, "de", false)).isNull();
+    // no German variant filled and no meta
+    assertThat(stated(Map.of("de", " ", "de@informal", "<p></p>"), "de", true)).isNull();
+  }
+
+  /** The reader's form of address says nothing about which variant the Träger wrote. */
+  @Test
+  void theReadersFormOfAddressDoesNotDecideWhatCountsAsTheSource() {
+    assertThat(stated(Map.of("de", "<p>Unser Team</p>"), "de", true)).isEqualTo("Unser Team");
+    assertThat(stated(Map.of("de@informal", "<p>Euer Team</p>"), "de", false))
+        .isEqualTo("Euer Team");
+    assertThat(stated(Map.of("de@informal", "<p>Euer Team</p>"), "fr", false))
+        .isEqualTo("Euer Team");
   }
 
   @Test

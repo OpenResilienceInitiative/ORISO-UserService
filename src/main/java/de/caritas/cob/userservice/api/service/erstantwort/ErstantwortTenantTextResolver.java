@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualContent;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
@@ -159,8 +160,10 @@ public class ErstantwortTenantTextResolver {
    * Used for the one Baustein that makes a claim about people (who reads along, ORISO-UserService
    * #1565): a translation outlives an emptied source until somebody removes it, and a stale
    * translation (or an English text shown to a German reader) would state something nobody
-   * currently stands behind. The source is named by {@code <lang>__meta.src}; without one it is the
-   * Träger's German variant, the same default the Admin editor writes to.
+   * currently stands behind. The source is named by {@code <lang>__meta.src}; without one it is
+   * either German variant the Träger wrote to. {@code informal} describes the reader, not the
+   * Träger, so it must not decide what counts as the source: a reader whose form of address differs
+   * from the Träger's still gets the Träger's text.
    *
    * @return plain text, or {@code null} when the source language holds no text
    */
@@ -169,13 +172,17 @@ public class ErstantwortTenantTextResolver {
       return null;
     }
     var source = sourceLanguage(texts);
-    if (source == null) {
-      source = informal ? "de@informal" : "de";
-    }
-    if (toPlainText(texts.get(source)).isEmpty()) {
+    var ownText =
+        (source != null ? List.of(source) : List.of("de", "de@informal"))
+            .stream()
+                .map(key -> toPlainText(texts.get(key)))
+                .filter(plain -> !plain.isEmpty())
+                .findFirst();
+    if (ownText.isEmpty()) {
       return null;
     }
-    return pick(texts, locale, informal);
+    var text = pick(texts, locale, informal);
+    return text != null ? text : ownText.get();
   }
 
   private static void addVariants(ArrayList<String> candidates, String lang, boolean informal) {
