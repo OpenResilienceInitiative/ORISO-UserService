@@ -103,9 +103,9 @@ public class AgencyInviteLinkController {
 
   /** Public, read-only invitation metadata for selecting an identity before joining. */
   @GetMapping("/users/invitelinks/{token}/context")
-  public ResponseEntity<AgencyInviteLinkService.InvitationContext> context(
-      @PathVariable String token) {
-    return ResponseEntity.ok(agencyInviteLinkService.getContext(token));
+  public ResponseEntity<Object> context(@PathVariable String token) {
+    // InvitationContext, or CallShareContext for a call share link (#1487).
+    return ResponseEntity.ok(agencyInviteLinkService.getPublicContext(token));
   }
 
   // ---------------------------------------------------------------------------------------------

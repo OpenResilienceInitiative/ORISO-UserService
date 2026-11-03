@@ -90,6 +90,10 @@ class AssignEnquiryFacadeTest {
   @Mock
   de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeDelivery acceptanceDelivery;
 
+  @Mock
+  de.caritas.cob.userservice.api.service.furthercounselling.TopicDuplicateService
+      topicDuplicateService;
+
   private static final String USER_MATRIX_ID = "@user:matrix.example.com";
   private static final String CONSULTANT_MATRIX_ID = "@consultant:matrix.example.com";
   private static final String MATRIX_ROOM_ID = "!createdRoom:matrix.example.com";
@@ -122,7 +126,8 @@ class AssignEnquiryFacadeTest {
             sessionSupervisorFacade,
             teamDiscussionFacade,
             acceptanceNotices,
-            acceptanceDelivery);
+            acceptanceDelivery,
+            topicDuplicateService);
     CONSULTANT_WITH_AGENCY.setTenantId(41L);
     // ADR-002 §2: the display name comes from the resolver, never from the real name.
     lenient()
@@ -199,6 +204,28 @@ class AssignEnquiryFacadeTest {
 
     verify(userRepository).save(USER_WITH_MATRIX_ID);
     assertEquals(USER_MATRIX_ID, USER_WITH_MATRIX_ID.getMatrixUserId());
+  }
+
+  @Test
+  void assignRegisteredEnquiry_Should_NoticeSameTopicConversations_OnInitialAcceptance() {
+    TenantContext.setCurrentTenant(CURRENT_TENANT_ID);
+
+    assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+
+    verify(topicDuplicateService).notifyDuplicateStarted(SESSION_WITHOUT_CONSULTANT.getId());
+  }
+
+  @Test
+  void assignRegisteredEnquiry_Should_StillAccept_WhenTheSameTopicNoticeFails() {
+    TenantContext.setCurrentTenant(CURRENT_TENANT_ID);
+    Mockito.doThrow(new IllegalStateException("matrix down"))
+        .when(topicDuplicateService)
+        .notifyDuplicateStarted(any());
+
+    assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+
+    verify(eventNotificationService)
+        .createInquiryAcceptedNotification(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
   }
 
   @Test
@@ -771,13 +798,14 @@ class AssignEnquiryFacadeTest {
       var callbacks =
           org.springframework.transaction.support.TransactionSynchronizationManager
               .getSynchronizations();
-      assertThat(callbacks).hasSize(1);
+      // The acceptance notice and the FE#1876 same-topic notice: both wait for the commit.
+      assertThat(callbacks).hasSize(2);
       callbacks.forEach(
           cb ->
               cb.afterCompletion(
                   org.springframework.transaction.support.TransactionSynchronization
                       .STATUS_ROLLED_BACK));
-      org.mockito.Mockito.verifyNoInteractions(acceptanceDelivery);
+      org.mockito.Mockito.verifyNoInteractions(acceptanceDelivery, topicDuplicateService);
     } finally {
       org.springframework.transaction.support.TransactionSynchronizationManager
           .clearSynchronization();

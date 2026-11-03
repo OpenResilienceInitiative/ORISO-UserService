@@ -5,10 +5,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.service.notification.TenantSystemEmailClient;
 import de.caritas.cob.userservice.api.service.notification.TenantSystemEmailDelivery;
 import de.caritas.cob.userservice.api.service.notification.TenantSystemEmailRouteService;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailDTO;
@@ -95,6 +98,34 @@ class NotificationMailSenderTest {
     assertThat(sender.send(mail)).isFalse();
 
     verify(composer, never()).compose(any(), eq(7L));
+  }
+
+  @Test
+  void newEnquiryHonorsTheFreshDisabledTenantPolicyWithoutResolvingSmtp() {
+    var client = mock(TenantSystemEmailClient.class);
+    when(client.readMailContext(7L))
+        .thenReturn(new TenantSystemEmailClient.MailContext(false, null, null, false, false));
+    var tested =
+        new NotificationMailSender(composer, new TenantSystemEmailRouteService(client), delivery);
+
+    assertThat(tested.send(mail("enquiry-notification-consultant", "7", "7"))).isFalse();
+
+    verifyNoInteractions(composer, delivery);
+  }
+
+  @Test
+  void newEnquiryReportsMissingConfiguredRouteInsteadOfClaimingPolicySuppression() {
+    var client = mock(TenantSystemEmailClient.class);
+    when(client.readMailContext(7L))
+        .thenReturn(new TenantSystemEmailClient.MailContext(true, null, null, false, false));
+    var tested =
+        new NotificationMailSender(composer, new TenantSystemEmailRouteService(client), delivery);
+
+    assertThatThrownBy(() -> tested.send(mail("enquiry-notification-consultant", "7", "7")))
+        .isInstanceOf(TenantSystemEmailRouteService.ConfigurationException.class)
+        .hasMessageContaining("smtpMode");
+
+    verifyNoInteractions(composer, delivery);
   }
 
   @Test

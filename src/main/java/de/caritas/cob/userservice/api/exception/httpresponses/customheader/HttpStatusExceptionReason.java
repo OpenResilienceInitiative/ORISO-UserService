@@ -59,5 +59,7 @@ public enum HttpStatusExceptionReason {
   /** The session of a members-only chat ends with its chat; stop the chat instead. */
   MEMBERS_ONLY_CHAT_STOP_REQUIRED,
   /** The case owner changed after the case handover request or offer was created. */
-  CASE_OWNER_CHANGED
+  CASE_OWNER_CHANGED,
+  /** A moderator banned the caller from this group chat; joining again is refused. */
+  USER_BANNED_FROM_CHAT
 }

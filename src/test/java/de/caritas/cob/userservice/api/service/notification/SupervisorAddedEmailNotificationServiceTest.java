@@ -36,7 +36,6 @@ import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTe
 import de.caritas.cob.userservice.tenantservice.generated.web.model.Theming;
 import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -244,31 +243,9 @@ class SupervisorAddedEmailNotificationServiceTest {
   @ValueSource(strings = {"PLATFORM", "OWN"})
   void contactChangeMailIsNotMutedByTheTenantNotificationSwitch(String mode) {
     var client = mock(TenantSystemEmailClient.class);
-    when(client.readTenant(40L))
+    when(client.readMailContext(40L))
         .thenReturn(
-            Map.of(
-                "settings",
-                Map.of(
-                    "featureSystemNotificationEmailsEnabled",
-                    false,
-                    "smtpMode",
-                    mode,
-                    "smtp",
-                    Map.of(
-                        "enabled",
-                        true,
-                        "host",
-                        "smtp.tenant.example",
-                        "port",
-                        587,
-                        "secure",
-                        false,
-                        "username",
-                        "sender",
-                        "from",
-                        "sender@tenant.example",
-                        "passwordSet",
-                        true))));
+            new TenantSystemEmailClient.MailContext(false, mode, null, "OWN".equals(mode), true));
     ReflectionTestUtils.setField(service, "emailRoutes", new TenantSystemEmailRouteService(client));
 
     service.notifyEmailAddressChanged(
@@ -286,24 +263,15 @@ class SupervisorAddedEmailNotificationServiceTest {
             mail.capture());
     assertThat(mail.getValue().html()).contains("https://app.example.org", "johndoe");
     assertThat(mail.getValue().text()).contains("https://app.example.org", "johndoe");
-    verify(client).readTenant(40L);
+    verify(client).readMailContext(40L);
     verifyNoMoreInteractions(client, emailDelivery);
   }
 
   @Test
   void contactChangeMailRejectsIncompleteOwnTransportWithoutPlatformFallback() {
     var client = mock(TenantSystemEmailClient.class);
-    when(client.readTenant(40L))
-        .thenReturn(
-            Map.of(
-                "settings",
-                Map.of(
-                    "featureSystemNotificationEmailsEnabled",
-                    false,
-                    "smtpMode",
-                    "OWN",
-                    "smtp",
-                    Map.of("enabled", true))));
+    when(client.readMailContext(40L))
+        .thenReturn(new TenantSystemEmailClient.MailContext(false, "OWN", null, false, true));
     ReflectionTestUtils.setField(service, "emailRoutes", new TenantSystemEmailRouteService(client));
 
     try (var logs = LogbackCaptor.forClass(SupervisorAddedEmailNotificationService.class)) {
@@ -319,18 +287,15 @@ class SupervisorAddedEmailNotificationServiceTest {
                 assertThat(event.getFormattedMessage()).doesNotContain("new@example.org");
               });
     }
-    verify(client).readTenant(40L);
+    verify(client).readMailContext(40L);
     verifyNoMoreInteractions(client);
   }
 
   @Test
   void supervisorMailRemainsMutedByTheTenantNotificationSwitch() {
     var client = mock(TenantSystemEmailClient.class);
-    when(client.readTenant(40L))
-        .thenReturn(
-            Map.of(
-                "settings",
-                Map.of("featureSystemNotificationEmailsEnabled", false, "smtpMode", "PLATFORM")));
+    when(client.readMailContext(40L))
+        .thenReturn(new TenantSystemEmailClient.MailContext(false, "PLATFORM", null, false, false));
     ReflectionTestUtils.setField(service, "emailRoutes", new TenantSystemEmailRouteService(client));
     User user = new User();
     user.setTenantId(40L);
@@ -1110,5 +1075,78 @@ class SupervisorAddedEmailNotificationServiceTest {
     assertThat(email.getValue().text())
         .contains("Nord Beratung", "nord/impressum", "nord/datenschutz");
     verify(resolver).resolve(1L);
+  }
+
+  // ── FE#1876 topic duplicate mail ─────────────────────────────────────────
+
+  private Consultant topicDuplicateCounsellor() {
+    Consultant counsellor = new Consultant();
+    counsellor.setId("old-counsellor");
+    counsellor.setTenantId(3L);
+    counsellor.setEmail("old@example.org");
+    counsellor.setLanguageCode(LanguageCode.de);
+    counsellor.setNotificationsEnabled(true);
+    return counsellor;
+  }
+
+  @Test
+  void topicDuplicateMailGoesToTheExistingCounsellorWithTheChatLink() {
+    var route = routeSettings();
+    when(emailRoutes.resolve(3L)).thenReturn(Optional.of(route));
+
+    service.notifyTopicDuplicateStarted(topicDuplicateCounsellor(), 41L, null);
+
+    var mail = ArgumentCaptor.forClass(OrisoEmailRenderer.RenderedEmail.class);
+    verify(emailDelivery)
+        .send(
+            eq(3L),
+            eq(route),
+            eq(TenantSystemEmailDelivery.Purpose.NEW_MESSAGE),
+            eq("old@example.org"),
+            mail.capture());
+    assertThat(mail.getValue().text())
+        .contains("weitere Beratung begonnen")
+        .contains("/sessions/consultant/sessionView/session/41");
+  }
+
+  @Test
+  void topicDuplicateMailRespectsTheSwitchedOffMailPreference() {
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
+    var counsellor = topicDuplicateCounsellor();
+    counsellor.setNotificationsSettings("{\"newChatMessageNotificationEnabled\":true}");
+    counsellor.setNotificationsEnabled(false);
+
+    service.notifyTopicDuplicateStarted(counsellor, 41L, null);
+
+    verify(emailDelivery, never()).send(anyLong(), any(), any(), any(), any());
+  }
+
+  @Test
+  void topicDuplicateMailRespectsTheAdviceSeekerMessageSwitch() {
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
+    var counsellor = topicDuplicateCounsellor();
+    counsellor.setNotifyNewChatMessageFromAdviceSeeker(false);
+
+    service.notifyTopicDuplicateStarted(counsellor, 41L, null);
+
+    verify(emailDelivery, never()).send(anyLong(), any(), any(), any(), any());
+  }
+
+  @Test
+  void topicDuplicateMailRespectsTheSwitchedOffChatMessageSwitch() {
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
+    var counsellor = topicDuplicateCounsellor();
+    counsellor.setNotificationsSettings("{\"newChatMessageNotificationEnabled\":false}");
+
+    service.notifyTopicDuplicateStarted(counsellor, 41L, null);
+
+    verify(emailDelivery, never()).send(anyLong(), any(), any(), any(), any());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"de", "en", "fr", "ru", "ti", "tr"})
+  void topicDuplicateStatementExistsInEveryLanguage(String language) {
+    assertThat(service.staffStatementTopicDuplicateStarted(LanguageCode.valueOf(language)))
+        .isNotBlank();
   }
 }

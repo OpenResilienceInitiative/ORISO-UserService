@@ -151,7 +151,7 @@ public class ReplyEmailDeliveryWriter {
   @Transactional(readOnly = true)
   public List<Long> pendingIds() {
     return repository
-        .findTop100ByStatusAndNextAttemptAtLessThanEqualOrderByCreatedAtAsc(
+        .findTop100ByStatusAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAscCreatedAtAscIdAsc(
             ReplyEmailDelivery.Status.PENDING, LocalDateTime.now())
         .stream()
         .map(ReplyEmailDelivery::getId)

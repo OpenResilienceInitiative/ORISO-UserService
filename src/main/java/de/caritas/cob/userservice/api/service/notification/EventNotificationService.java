@@ -88,6 +88,64 @@ public class EventNotificationService {
         session.getTenantId());
   }
 
+  /** FE#1876: bell type for the existing counsellor when a same-topic conversation starts. */
+  public static final String TOPIC_DUPLICATE_STARTED_EVENT = "topic_duplicate.started";
+
+  /**
+   * FE#1876: bell entry for the existing conversation's counsellor, at most once per (existing,
+   * new) pair. The params carry ids only; the new centre is not named.
+   *
+   * @return true only when this call persisted the entry; false when it already existed or there is
+   *     no counsellor to notify
+   */
+  public boolean createTopicDuplicateStartedNotification(Session existing, Long newSessionId) {
+    if (existing == null
+        || existing.getId() == null
+        || newSessionId == null
+        || existing.getConsultant() == null
+        || existing.getConsultant().getId() == null
+        || existing.getConsultant().getId().isBlank()) {
+      return false;
+    }
+    String recipientId = existing.getConsultant().getId();
+    String key = topicDuplicateStartedKey(existing, newSessionId);
+    Map<String, Object> params = baseParams(existing);
+    params.put("topicId", existing.getMainTopicId());
+    return persistOnce(
+        key,
+        recipientId,
+        TOPIC_DUPLICATE_STARTED_EVENT,
+        CATEGORY_SYSTEM,
+        "Another counselling on the same topic",
+        String.format(
+            "Another counselling on the topic of chat #%s has started.", existing.getId()),
+        serializeParams(params),
+        buildSessionActionPath(existing),
+        existing.getId(),
+        existing.getTenantId());
+  }
+
+  /**
+   * FE#1876: releases the once-per-pair marker when the room notice was not delivered, so a later
+   * acceptance run can deliver it. Commits on its own, like the write.
+   */
+  public void removeTopicDuplicateStartedNotification(Session existing, Long newSessionId) {
+    if (existing == null
+        || existing.getId() == null
+        || newSessionId == null
+        || existing.getConsultant() == null
+        || existing.getConsultant().getId() == null
+        || existing.getConsultant().getId().isBlank()) {
+      return;
+    }
+    deduplicationWriter.deleteInNewTransaction(
+        existing.getConsultant().getId(), topicDuplicateStartedKey(existing, newSessionId));
+  }
+
+  private static String topicDuplicateStartedKey(Session existing, Long newSessionId) {
+    return TOPIC_DUPLICATE_STARTED_EVENT + ":" + existing.getId() + ":" + newSessionId;
+  }
+
   @Transactional
   public void createSupervisorAddedNotification(
       Session session, String recipientUserId, String supervisorName) {
@@ -907,24 +965,10 @@ public class EventNotificationService {
       String callId,
       String mediaRoomId,
       boolean video) {
-    var params = session.notificationParams();
-    params.put("callId", callId);
-    params.put("callRoomId", mediaRoomId);
+    var params = callParams(session, callId, mediaRoomId);
     params.put("callType", video ? "video" : "audio");
     params.put("callerName", resolveSenderName(senderId));
-    String sourceRoom = session.getMatrixRoomId();
-    String identity = sourceRoom.length() + ":" + sourceRoom + ":" + callId;
-    String key;
-    try {
-      key =
-          "call.invited:"
-              + java.util.HexFormat.of()
-                  .formatHex(
-                      java.security.MessageDigest.getInstance("SHA-256")
-                          .digest(identity.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-    } catch (java.security.NoSuchAlgorithmException impossible) {
-      throw new IllegalStateException("SHA-256 unavailable", impossible);
-    }
+    String key = callEventKey("call.invited", session.getMatrixRoomId(), callId);
     createEventOnce(
         key,
         recipientId,
@@ -932,6 +976,33 @@ public class EventNotificationService {
         CATEGORY_SYSTEM,
         "Call invitation",
         "You were invited to a call.",
+        serializeParams(params),
+        session.actionPath(consultantRecipient),
+        session.getSessionId(),
+        session.getTenantId());
+  }
+
+  /**
+   * One retained start per original invitee and call, independent of devices and listener restarts.
+   */
+  @Transactional
+  public void createCallStartedNotification(
+      de.caritas.cob.userservice.api.service.matrix.MatrixCallConversation session,
+      String recipientId,
+      boolean consultantRecipient,
+      String callId,
+      String mediaRoomId,
+      boolean video) {
+    var params = callParams(session, callId, mediaRoomId);
+    params.put("callType", video ? "video" : "audio");
+    String key = callEventKey("call.started", session.getMatrixRoomId(), callId);
+    createEventOnce(
+        key,
+        recipientId,
+        "call.started",
+        CATEGORY_SYSTEM,
+        "Call started",
+        "The call has started.",
         serializeParams(params),
         session.actionPath(consultantRecipient),
         session.getSessionId(),
@@ -947,23 +1018,9 @@ public class EventNotificationService {
       String mediaRoomId,
       long startedAt,
       long endedAt) {
-    var params = session.notificationParams();
-    params.put("callId", callId);
-    params.put("callRoomId", mediaRoomId);
+    var params = callParams(session, callId, mediaRoomId);
     params.put("durationSeconds", Long.toString(Math.max(0, endedAt - startedAt) / 1000));
-    String sourceRoom = session.getMatrixRoomId();
-    String identity = sourceRoom.length() + ":" + sourceRoom + ":" + callId;
-    String key;
-    try {
-      key =
-          "call.ended:"
-              + java.util.HexFormat.of()
-                  .formatHex(
-                      java.security.MessageDigest.getInstance("SHA-256")
-                          .digest(identity.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-    } catch (java.security.NoSuchAlgorithmException impossible) {
-      throw new IllegalStateException("SHA-256 unavailable", impossible);
-    }
+    String key = callEventKey("call.ended", session.getMatrixRoomId(), callId);
     createEventOnce(
         key,
         recipientId,
@@ -985,23 +1042,9 @@ public class EventNotificationService {
       String callId,
       String mediaRoomId,
       boolean video) {
-    var params = session.notificationParams();
-    params.put("callId", callId);
-    params.put("callRoomId", mediaRoomId);
+    var params = callParams(session, callId, mediaRoomId);
     params.put("callType", video ? "video" : "audio");
-    String sourceRoom = session.getMatrixRoomId();
-    String identity = sourceRoom.length() + ":" + sourceRoom + ":" + callId;
-    String key;
-    try {
-      key =
-          "call.missed:"
-              + java.util.HexFormat.of()
-                  .formatHex(
-                      java.security.MessageDigest.getInstance("SHA-256")
-                          .digest(identity.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-    } catch (java.security.NoSuchAlgorithmException impossible) {
-      throw new IllegalStateException("SHA-256 unavailable", impossible);
-    }
+    String key = callEventKey("call.missed", session.getMatrixRoomId(), callId);
     createEventOnce(
         key,
         recipientId,
@@ -1015,9 +1058,59 @@ public class EventNotificationService {
         session.getTenantId());
   }
 
+  private Map<String, Object> callParams(
+      de.caritas.cob.userservice.api.service.matrix.MatrixCallConversation conversation,
+      String callId,
+      String mediaRoomId) {
+    var params = conversation.notificationParams();
+    params.put("callId", callId);
+    params.put("callRoomId", mediaRoomId);
+    return params;
+  }
+
+  private String callEventKey(String eventType, String sourceRoom, String callId) {
+    // Keep the persisted identity exactly stable, including Java's UTF-16 room length.
+    String identity = sourceRoom.length() + ":" + sourceRoom + ":" + callId;
+    try {
+      return eventType
+          + ":"
+          + java.util.HexFormat.of()
+              .formatHex(
+                  java.security.MessageDigest.getInstance("SHA-256")
+                      .digest(identity.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    } catch (java.security.NoSuchAlgorithmException impossible) {
+      throw new IllegalStateException("SHA-256 unavailable", impossible);
+    }
+  }
+
   /** Persists an event at most once for a producer-owned key and recipient. */
   @Transactional
   public void createEventOnce(
+      String deduplicationKey,
+      String recipientUserId,
+      String eventType,
+      String category,
+      String title,
+      String text,
+      String params,
+      String actionPath,
+      Long sourceSessionId,
+      Long tenantId) {
+    persistOnce(
+        deduplicationKey,
+        recipientUserId,
+        eventType,
+        category,
+        title,
+        text,
+        params,
+        actionPath,
+        sourceSessionId,
+        tenantId);
+  }
+
+  /** Same as {@link #createEventOnce}; true only when this call persisted the event. */
+  private boolean persistOnce(
       String deduplicationKey,
       String recipientUserId,
       String eventType,
@@ -1034,7 +1127,7 @@ public class EventNotificationService {
         || deduplicationKey.isBlank()
         || eventNotificationRepository.existsByRecipientUserIdAndDeduplicationKey(
             recipientUserId, deduplicationKey)) {
-      return;
+      return false;
     }
 
     try {
@@ -1052,10 +1145,12 @@ public class EventNotificationService {
               deduplicationKey));
       // Only nudge on a genuine first persist — a duplicate-key race (below) already delivered.
       signalFeedUpdatedSafely(recipientUserId);
+      return true;
     } catch (DataIntegrityViolationException duplicate) {
       // Another scheduler replica won the unique-key race. The desired event already exists.
       log.debug(
           "Notification {} already persisted for recipient {}", deduplicationKey, recipientUserId);
+      return false;
     }
   }
 

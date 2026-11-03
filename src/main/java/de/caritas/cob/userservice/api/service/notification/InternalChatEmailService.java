@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.notification;
 
 import static de.caritas.cob.userservice.api.helper.EmailNotificationUtils.deserializeNotificationSettingsDTOOrDefaultIfNull;
+import static de.caritas.cob.userservice.api.service.notification.NotificationEmailDiagnostics.*;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
@@ -16,7 +17,6 @@ import de.caritas.cob.userservice.api.model.ReplyEmailDelivery.Status;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.donotdisturb.DoNotDisturbService;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
@@ -38,17 +38,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
-/**
- * Durable, content-free email for ordinary counsellor internal-group messages (ADR-024 addendum,
- * ported from US#1376 for FE#1725 story 40).
- */
+/** Durable, content-free email for ordinary counsellor internal-group messages. */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class InternalChatEmailService {
-  /** About one hour of five-minute retries before a preflight that never succeeds is rejected. */
-  static final int MAX_PREFLIGHT_ATTEMPTS = 12;
-
   // CREATED once provisioned; IN_PROGRESS while an existing counsellor gets another agency.
   private static final Set<ConsultantStatus> ACTIVE_CONSULTANT_STATUSES =
       Set.of(ConsultantStatus.CREATED, ConsultantStatus.IN_PROGRESS);
@@ -59,7 +53,7 @@ public class InternalChatEmailService {
   private final @NonNull SessionRepository sessions;
   private final @NonNull GroupChatParticipantRepository participants;
   private final @NonNull ConsultantRepository consultants;
-  private final @NonNull IdentityAccountStatusLookup identities;
+  private final @NonNull NotificationAccountEligibility accountEligibility;
   private final @NonNull MatrixSynapseService matrix;
   private final @NonNull ReplyEmailDeliveryWriter writer;
   private final @NonNull DoNotDisturbService doNotDisturb;
@@ -128,7 +122,11 @@ public class InternalChatEmailService {
     }
     try {
       if (!tenantAllowsMail(
-          id, intent.getTenantId(), tenants.getRestrictedTenantDataFresh(intent.getTenantId()))) {
+          id,
+          intent.getTenantId(),
+          at(
+              Stage.TENANT_CONTEXT,
+              () -> tenants.getRestrictedTenantDataFresh(intent.getTenantId())))) {
         writer.finish(id, Status.REJECTED);
         return;
       }
@@ -200,6 +198,7 @@ public class InternalChatEmailService {
 
     TenantSystemEmailRouteService.Route route;
     OrisoEmailRenderer.RenderedEmail email;
+    Stage setupStage = Stage.TENANT_POLICY;
     try {
       var selectedRoute = routes.resolve(claim.getTenantId());
       if (selectedRoute.isEmpty()) {
@@ -208,18 +207,21 @@ public class InternalChatEmailService {
         return;
       }
       route = selectedRoute.get();
+      setupStage = Stage.TENANT_SMTP;
       delivery.requireConfigured(route);
+      setupStage = Stage.TENANT_CONTEXT;
       var tenant = tenants.getRestrictedTenantDataFresh(claim.getTenantId());
       if (!tenantAllowsMail(id, claim.getTenantId(), tenant)) {
         writer.finish(id, Status.REJECTED);
         return;
       }
       if (multitenancyEnabled && !singleDomainMultitenancy && isBlank(tenant.getSubdomain())) {
-        throw new IllegalStateException("Internal-chat email tenant subdomain is missing");
+        throw failure(Stage.TENANT_CONTEXT, Reason.TENANT_SUBDOMAIN_MISSING);
       }
       String baseUrl =
           AdviceSeekerReplyEmailService.requireBaseUrl(
               multitenancyEnabled ? tenantTemplates.getTenantBaseUrl(tenant) : applicationBaseUrl);
+      setupStage = Stage.TEMPLATE;
       var tenantBrand = branding.resolveNotification(claim.getTenantId(), baseUrl);
       var values = emailBrand.valuesForResolvedBrand(baseUrl, tenantBrand);
       values.put("platformName", values.get("offeringName"));
@@ -235,7 +237,7 @@ public class InternalChatEmailService {
         tone = OrisoEmailRenderer.Tone.DE_INFORMAL;
       email = renderer.render("neue-nachricht-beratung", tone, values);
     } catch (RuntimeException unavailable) {
-      retryPreflight(claim, unavailable);
+      retryPreflight(claim, setupStage, unavailable);
       return;
     }
     try {
@@ -302,7 +304,7 @@ public class InternalChatEmailService {
   private boolean matches(
       Session session, ReplyEmailDelivery claim, Consultant actor, Set<String> participantIds) {
     return currentParticipant(session, actor, participantIds)
-        && identityEnabled(actor.getId())
+        && accountEligibility.allows(actor.getId())
         && Objects.equals(session.getId(), claim.getSessionId())
         && Objects.equals(session.getTenantId(), claim.getTenantId())
         && Objects.equals(actor.getMatrixUserId(), claim.getSourceMatrixUserId())
@@ -320,14 +322,10 @@ public class InternalChatEmailService {
             || !Boolean.FALSE.equals(
                 deserializeNotificationSettingsDTOOrDefaultIfNull(recipient)
                     .getInternalChatNotificationEnabled()))
-        && identityEnabled(recipient.getId())
+        && accountEligibility.allows(recipient.getId())
         && !doNotDisturb.isInDoNotDisturb(recipient.getId())
         && !isBlank(recipient.getEmail())
         && (isBlank(emailDummySuffix) || !recipient.getEmail().endsWith(emailDummySuffix));
-  }
-
-  private boolean identityEnabled(String userId) {
-    return identities.findEnabledById(userId).orElse(false);
   }
 
   private Set<String> participantIds(Session session) {
@@ -339,18 +337,29 @@ public class InternalChatEmailService {
   }
 
   private List<String> currentMembers(String roomId) {
-    return matrix
-        .getRoomMembers(roomId)
-        .orElseThrow(() -> new IllegalStateException("Internal room membership is unavailable"));
+    return at(
+        Stage.MATRIX_MEMBERSHIP,
+        () ->
+            matrix
+                .getRoomMembers(roomId)
+                .orElseThrow(
+                    () -> failure(Stage.MATRIX_MEMBERSHIP, Reason.DEPENDENCY_UNAVAILABLE)));
   }
 
   private boolean verifiedMatrixEvent(ReplyEmailDelivery claim, Consultant actor) {
-    String token = matrix.loginAsUserAccessToken(actor.getMatrixUserId());
-    if (isBlank(token)) throw new IllegalStateException("Internal Matrix token is unavailable");
+    String token =
+        at(
+            Stage.MATRIX_AUTHENTICATION,
+            () -> matrix.loginAsUserAccessToken(actor.getMatrixUserId()));
+    if (isBlank(token)) throw failure(Stage.MATRIX_AUTHENTICATION, Reason.DEPENDENCY_UNAVAILABLE);
+    // A 404 is terminal (unknown or browser-invented event); any other failure stays retryable.
     Map<String, Object> event =
-        matrix
-            .getRoomEvent(claim.getSourceRoomId(), claim.getSourceEventId(), token)
-            .orElseThrow(() -> new IllegalStateException("Internal Matrix event is unavailable"));
+        at(
+                Stage.MATRIX_EVENT,
+                () ->
+                    matrix.findRoomEvent(claim.getSourceRoomId(), claim.getSourceEventId(), token))
+            .orElse(null);
+    if (event == null) return false;
     if (!Objects.equals(claim.getSourceEventId(), event.get("event_id"))
         || !Objects.equals(actor.getMatrixUserId(), event.get("sender"))
         || !(event.get("content") instanceof Map<?, ?> content)) return false;
@@ -375,20 +384,12 @@ public class InternalChatEmailService {
   }
 
   private void retryPreflight(ReplyEmailDelivery row, RuntimeException unavailable) {
-    // Matrix answers a missing event and an outage alike, so only the attempt count ends a retry.
-    if (row.getAttemptCount() >= MAX_PREFLIGHT_ATTEMPTS) {
-      writer.finish(row.getId(), Status.REJECTED);
-      log.warn(
-          "Internal-chat email {} rejected after {} unavailable preflights ({})",
-          row.getId(),
-          row.getAttemptCount(),
-          unavailable.getClass().getSimpleName());
-      return;
-    }
-    writer.retryLater(row.getId());
-    log.warn(
-        "Internal-chat email {} preflight unavailable ({})",
-        row.getId(),
-        unavailable.getClass().getSimpleName());
+    retryPreflight(row, Stage.ELIGIBILITY, unavailable);
+  }
+
+  private void retryPreflight(ReplyEmailDelivery row, Stage stage, RuntimeException unavailable) {
+    long id = row.getId();
+    writer.retryLater(id);
+    NotificationEmailDiagnostics.retry(log, "internal-chat", id, stage, unavailable);
   }
 }

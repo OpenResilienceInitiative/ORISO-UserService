@@ -208,6 +208,130 @@ class UserAdminIdScopeIT {
         .andExpect(status().isOk());
   }
 
+  // --- PUT/DELETE /useradmin/agencyadmins/{adminId} (#1407) ----------------------------------
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void updateAgencyAdmin_Should_Refuse_When_AgencyAdminChangesColleagueOfSameAgency()
+      throws Exception {
+    actAsAgencyAdmin();
+    var emailBefore = emailOf(ownAgencyAdmin);
+
+    updateAgencyAdmin(ownAgencyAdmin, "changed@synthetic.oriso.test")
+        .andExpect(status().isForbidden());
+
+    assertThat(emailOf(ownAgencyAdmin)).isEqualTo(emailBefore);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void updateAgencyAdmin_Should_Refuse_When_AgencyAdminChangesOwnAdminRecord() throws Exception {
+    actAsAgencyAdmin();
+    var emailBefore = emailOf(callingAgencyAdmin);
+
+    updateAgencyAdmin(callingAgencyAdmin, "changed@synthetic.oriso.test")
+        .andExpect(status().isForbidden());
+
+    assertThat(emailOf(callingAgencyAdmin)).isEqualTo(emailBefore);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void deleteAgencyAdmin_Should_Refuse_When_AgencyAdminDeletesColleagueOfSameAgency()
+      throws Exception {
+    actAsAgencyAdmin();
+
+    mockMvc
+        .perform(withCsrf(delete("/useradmin/agencyadmins/" + ownAgencyAdmin.getId())))
+        .andExpect(status().isForbidden());
+
+    assertThat(Tenants.acrossAll(() -> adminRepository.findById(ownAgencyAdmin.getId())))
+        .isPresent();
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void updateAgencyAdmin_Should_Succeed_When_TenantAdminChangesAgencyAdminOfOwnTenant()
+      throws Exception {
+    actAsTenantAdmin();
+
+    updateAgencyAdmin(ownAgencyAdmin, "changed@synthetic.oriso.test").andExpect(status().isOk());
+
+    assertThat(emailOf(ownAgencyAdmin)).isEqualTo("changed@synthetic.oriso.test");
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void updateAgencyAdmin_Should_Succeed_When_PlatformAdminChangesAgencyAdmin() throws Exception {
+    actAsPlatformAdmin();
+
+    updateAgencyAdmin(ownAgencyAdmin, "changed@synthetic.oriso.test").andExpect(status().isOk());
+
+    assertThat(emailOf(ownAgencyAdmin)).isEqualTo("changed@synthetic.oriso.test");
+  }
+
+  // --- PUT /useradmin/accounts/{id}/status, POST .../setup-link (admin accounts) -------------
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void pauseAccount_Should_Refuse_When_AgencyAdminPausesColleagueOfSameAgency() throws Exception {
+    actAsAgencyAdmin();
+    when(caller.getGrantedAuthorities()).thenReturn(Set.of(AuthorityValue.USER_ADMIN));
+
+    pauseAccount(ownAgencyAdmin).andExpect(status().isForbidden());
+
+    assertThat(isPaused(ownAgencyAdmin)).isFalse();
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void pauseAccount_Should_Refuse_When_AgencyAdminPausesOwnAdminAccount() throws Exception {
+    actAsAgencyAdmin();
+    when(caller.getGrantedAuthorities()).thenReturn(Set.of(AuthorityValue.USER_ADMIN));
+
+    pauseAccount(callingAgencyAdmin).andExpect(status().isForbidden());
+
+    assertThat(isPaused(callingAgencyAdmin)).isFalse();
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void readAccountStatus_Should_Succeed_When_AgencyAdminReadsColleagueOfSameAgency()
+      throws Exception {
+    actAsAgencyAdmin();
+    when(caller.getGrantedAuthorities()).thenReturn(Set.of(AuthorityValue.USER_ADMIN));
+
+    mockMvc
+        .perform(withCsrf(get("/useradmin/accounts/" + ownAgencyAdmin.getId() + "/status")))
+        .andExpect(status().isOk());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN, AuthorityValue.TENANT_ADMIN})
+  void pauseAccount_Should_Succeed_When_TenantAdminPausesAgencyAdminOfOwnTenant() throws Exception {
+    actAsTenantAdmin();
+    when(caller.getGrantedAuthorities())
+        .thenReturn(Set.of(AuthorityValue.USER_ADMIN, AuthorityValue.TENANT_ADMIN));
+
+    pauseAccount(ownAgencyAdmin).andExpect(status().isOk());
+
+    assertThat(isPaused(ownAgencyAdmin)).isTrue();
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void reissueSetupLink_Should_Refuse_When_AgencyAdminTargetsColleagueOfSameAgency()
+      throws Exception {
+    actAsAgencyAdmin();
+
+    mockMvc
+        .perform(
+            withCsrf(post("/useradmin/accounts/" + ownAgencyAdmin.getId() + "/setup-link"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"targetRole\":\"AGENCY_ADMIN\"}"))
+        .andExpect(status().isForbidden());
+  }
+
   // --- POST/PUT/DELETE /useradmin/agencyadmins/{adminId}/agencies ------------------------------
 
   @Test
@@ -252,7 +376,7 @@ class UserAdminIdScopeIT {
 
   @Test
   @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
-  void addAgency_Should_Succeed_When_AgencyAdminAddsOwnAgencyToAdminOfOwnAgency() throws Exception {
+  void addAgency_Should_Refuse_When_AgencyAdminAddsOwnAgencyToAdminOfOwnAgency() throws Exception {
     actAsAgencyAdmin();
     adminAgencyRepository.deleteByAdminIdAndAgencyId(ownAgencyAdmin.getId(), OWN_AGENCY);
     adminAgencyRepository.save(
@@ -263,9 +387,10 @@ class UserAdminIdScopeIT {
             .agencyId(OTHER_AGENCY_OF_OWN_TENANT)
             .build());
 
-    addAgency(ownAgencyAdmin, OWN_AGENCY).andExpect(status().isCreated());
+    // #1407: admin accounts are managed from above, also inside a shared agency.
+    addAgency(ownAgencyAdmin, OWN_AGENCY).andExpect(status().isForbidden());
 
-    assertThat(agenciesOf(ownAgencyAdmin)).containsOnly(OWN_AGENCY, OTHER_AGENCY_OF_OWN_TENANT);
+    assertThat(agenciesOf(ownAgencyAdmin)).containsOnly(OTHER_AGENCY_OF_OWN_TENANT);
   }
 
   @Test
@@ -600,6 +725,33 @@ class UserAdminIdScopeIT {
   private Long tenantOf(Admin admin) {
     return Tenants.acrossAll(
         () -> adminRepository.findById(admin.getId()).orElseThrow().getTenantId());
+  }
+
+  private ResultActions updateAgencyAdmin(Admin target, String email) throws Exception {
+    return mockMvc.perform(
+        withCsrf(put("/useradmin/agencyadmins/" + target.getId()))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(
+                "{\"firstname\":\"Synthetic\",\"lastname\":\"Admin\",\"email\":\""
+                    + email
+                    + "\"}"));
+  }
+
+  private ResultActions pauseAccount(Admin target) throws Exception {
+    return mockMvc.perform(
+        withCsrf(put("/useradmin/accounts/" + target.getId() + "/status"))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"active\":false}"));
+  }
+
+  private boolean isPaused(Admin admin) {
+    return Tenants.acrossAll(
+        () -> adminRepository.findById(admin.getId()).orElseThrow().isManagedPaused());
+  }
+
+  private String emailOf(Admin admin) {
+    return Tenants.acrossAll(
+        () -> adminRepository.findById(admin.getId()).orElseThrow().getEmail());
   }
 
   private Set<Long> agenciesOf(Admin admin) {

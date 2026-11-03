@@ -84,6 +84,7 @@ class MatrixEventListenerServiceTest {
   @Mock private RedisMessageMirrorService redisMessageMirrorService;
   @Mock private ConsultantMessageStatService consultantMessageStatService;
   @Mock private AdviceSeekerReplyEmailService replyEmailService;
+
   @Mock private MatrixEmailSyncCursorStore emailSyncCursorStore;
 
   @Mock

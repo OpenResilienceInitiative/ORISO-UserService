@@ -34,6 +34,9 @@ import org.springframework.stereotype.Service;
 public class NewDirectEnquiryEmailSupplier implements EmailSupplier {
 
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
+  private final @NonNull de.caritas.cob.userservice.api.service.notification
+          .NotificationAccountEligibility
+      accountEligibility;
   private final TenantTemplateSupplier tenantTemplateSupplier;
 
   @Value("${app.base.url}")
@@ -71,6 +74,7 @@ public class NewDirectEnquiryEmailSupplier implements EmailSupplier {
 
     return consultantAgencyList.stream()
         .filter(this::validConsultantAgency)
+        .filter(this::currentlyEligible)
         .filter(this::shouldSendNewEnquiryNotificationForConsultant)
         .map(
             consultantAgency -> {
@@ -79,6 +83,19 @@ public class NewDirectEnquiryEmailSupplier implements EmailSupplier {
               return mailOf(consultantAgency.getConsultant(), postCode);
             })
         .collect(Collectors.toList());
+  }
+
+  private boolean currentlyEligible(ConsultantAgency relation) {
+    try {
+      return accountEligibility.allows(relation.getConsultant());
+    } catch (RuntimeException unavailable) {
+      // One unavailable lookup skips only this recipient, never the agency's whole batch.
+      log.warn(
+          "Skipping new enquiry email for consultant {}: eligibility unavailable ({})",
+          relation.getConsultant().getId(),
+          unavailable.getClass().getSimpleName());
+      return false;
+    }
   }
 
   private boolean validConsultantAgency(ConsultantAgency consultantAgency) {

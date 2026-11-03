@@ -161,16 +161,36 @@ class InviteMailTenantRoutingTest {
   @Test
   void legacyTenantWithoutSmtpMode_staysOnThePlatformServer() {
     givenTenant(
+        PLATFORM_TENANT, "{\"settings\":{\"featureSystemNotificationEmailsEnabled\":true}}");
+
+    invite(PLATFORM_TENANT, "b@example.org");
+
+    tenantService.verify();
+    verify(platformTransport).send(any(), eq("b@example.org"), any(), any(), any());
+  }
+
+  @Test
+  void partialLegacySmtpWithoutMode_blocksInviteBeforeAnySmtpHandoff() {
+    givenTenant(
         PLATFORM_TENANT,
         """
         {"settings":{"featureSystemNotificationEmailsEnabled":true,
           "smtp":{"enabled":true,"host":"mail.legacy.example"}}}
         """);
 
-    invite(PLATFORM_TENANT, "b@example.org");
+    assertThatThrownBy(() -> invite(PLATFORM_TENANT, "b@example.org"))
+        .isInstanceOfSatisfying(
+            SmtpSendException.class,
+            failure -> {
+              assertThat(failure.getCategory()).isEqualTo(Category.SMTP_DISABLED_OR_INCOMPLETE);
+              assertThat(failure.getDeliveryDisposition())
+                  .isEqualTo(DeliveryDisposition.CONFIRMED_NOT_SENT);
+            })
+        .hasMessageContaining("smtpMode")
+        .hasMessageNotContaining("mail.legacy.example");
 
     tenantService.verify();
-    verify(platformTransport).send(any(), eq("b@example.org"), any(), any(), any());
+    verifyNoInteractions(platformTransport);
   }
 
   @Test

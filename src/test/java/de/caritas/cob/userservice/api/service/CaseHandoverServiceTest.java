@@ -180,7 +180,9 @@ class CaseHandoverServiceTest {
     when(authenticatedUser.getUserId()).thenReturn(requester.getId());
     when(userAccountService.retrieveValidatedUser()).thenReturn(asker);
     when(sessionRepository.findById(123L)).thenReturn(Optional.of(session));
-    when(sessionRepository.findByIdForUpdate(123L)).thenReturn(Optional.of(session));
+    org.mockito.Mockito.lenient()
+        .when(sessionRepository.findByIdForUpdate(org.mockito.ArgumentMatchers.anyLong()))
+        .thenAnswer(call -> sessionRepository.findById(call.getArgument(0)));
     when(sessionOwnershipService.updateOwner(
             any(Session.class), any(Consultant.class), any(SessionStatus.class), any()))
         .thenAnswer(
@@ -228,6 +230,50 @@ class CaseHandoverServiceTest {
     assertFalse(status.isCanViewContent());
     assertEquals(previous, session.getConsultant());
     verify(matrixSynapseService, never()).getRoomMembers(anyString());
+  }
+
+  @Test
+  void aMembersOnlyCaseCannotCreateAHandoverForAnAgencyColleague() {
+    when(membersOnlyChatAccess.concerns(session)).thenReturn(true);
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException.class,
+        () -> caseHandoverService.requestAccess(123L, "COUNSELLOR_ASKED_FOR_ADVICE", "Advice"));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"requestAccess", "resolveClientConsent", "updateConsentPreference"})
+  void aMembersOnlyCaseRefusesEveryHandoverMutation(String mutation) {
+    when(membersOnlyChatAccess.concerns(session)).thenReturn(true);
+    // A pending request exists, so only the members-only guard can produce the refusal.
+    when(caseHandoverRequestRepository.findByIdAndSessionId(1L, 123L))
+        .thenReturn(Optional.of(pendingConsentRequest()));
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException.class,
+        () -> mutate(mutation));
+    verify(caseHandoverRequestRepository, never()).findByIdAndSessionId(any(), any());
+    verify(sessionRepository, never()).updateAdditionalAccessPreference(any(), anyBoolean());
+    verify(caseHandoverRequestRepository, never()).save(any());
+    verifyNoInteractions(matrixSynapseService);
+  }
+
+  private void mutate(String mutation) {
+    switch (mutation) {
+      case "requestAccess" ->
+          caseHandoverService.requestAccess(123L, "COUNSELLOR_ASKED_FOR_ADVICE", "support");
+      case "resolveClientConsent" -> caseHandoverService.resolveClientConsent(123L, 1L, true);
+      default -> caseHandoverService.updateConsentPreference(123L, false);
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"requestAccess", "resolveClientConsent", "updateConsentPreference"})
+  void aRejectedEnquiryRefusesEveryHandoverMutation(String mutation) {
+    session.setStatus(SessionStatus.REJECTED);
+    session.setMatrixRoomId("!case:example.org");
+    assertThrows(ConflictException.class, () -> mutate(mutation));
+    verify(sessionRepository, never()).updateAdditionalAccessPreference(any(), anyBoolean());
+    verify(caseHandoverRequestRepository, never()).save(any());
+    verifyNoInteractions(matrixSynapseService);
   }
 
   @Test

@@ -67,7 +67,8 @@ public class Session implements TenantAware {
     NEW(1),
     IN_PROGRESS(2),
     DONE(3),
-    IN_ARCHIVE(4);
+    IN_ARCHIVE(4),
+    REJECTED(5);
 
     private final int value;
 

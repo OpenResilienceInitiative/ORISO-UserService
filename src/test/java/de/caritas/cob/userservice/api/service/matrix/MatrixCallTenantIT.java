@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.port.out.*;
 import de.caritas.cob.userservice.api.service.mobilepushmessage.MobilePushNotificationService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationDeduplicationWriter;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.notification.InternalChatEmailService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.ConsultantMessageStatService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -50,7 +51,11 @@ import org.springframework.transaction.support.TransactionTemplate;
  * sync loop.
  */
 @DataJpaTest
-@TestPropertySource(properties = {"spring.profiles.active=testing", "multitenancy.enabled=true"})
+@TestPropertySource(
+    properties = {
+      "spring.profiles.active=testing,call-notification-account-fixture",
+      "multitenancy.enabled=true"
+    })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({
   MatrixCallTenantIT.AopConfiguration.class,
@@ -59,7 +64,9 @@ import org.springframework.transaction.support.TransactionTemplate;
   EventNotificationDeduplicationWriter.class,
   MatrixCallBindingService.class,
   MatrixCallBindingWriter.class,
+  MatrixCallNotificationIT.ActiveAccountFixture.class,
   MatrixCallLifecycleService.class,
+  MatrixCallGuestService.class,
   MatrixCallConversationResolver.class,
   MatrixCallStateService.class,
   MatrixCallInviteNotificationService.class
@@ -74,14 +81,22 @@ class MatrixCallTenantIT {
   @Autowired private ConsultantRepository consultants;
   @Autowired private SessionRepository sessions;
   @Autowired private EventNotificationRepository notifications;
+  @Autowired private javax.sql.DataSource accountDataSource;
+
+  @org.junit.jupiter.api.BeforeEach
+  void initializeAccountLifecycleRows() {
+    MatrixCallNotificationIT.initializeAccountLifecycleTable(accountDataSource);
+  }
+
   @Autowired private MatrixCallBindingRepository bindings;
   @Autowired private MatrixCallInviteNotificationService invites;
   @Autowired private MatrixCallStateService callStates;
+  @Autowired private MatrixCallGuestService callGuests;
   @Autowired private EventNotificationService notificationService;
   @Autowired private PlatformTransactionManager transactionManager;
   @MockitoBean private MatrixSynapseService matrix;
-  @MockitoBean private IdentityTombstoneService tombstones;
   @MockitoBean private MatrixFeedUpdateSignalService feedUpdateSignals;
+  @MockitoBean private IdentityTombstoneService tombstones;
 
   private MatrixEmailSyncCursorStore freshEmailCursor() {
     var cursor = mock(MatrixEmailSyncCursorStore.class);
@@ -132,9 +147,7 @@ class MatrixCallTenantIT {
                 de.caritas.cob.userservice.api.service.notification.AdviceSeekerReplyEmailService
                     .class),
             freshEmailCursor(),
-            mock(
-                de.caritas.cob.userservice.api.service.notification.InternalChatEmailService
-                    .class));
+            mock(InternalChatEmailService.class));
     try {
       // Control: this fixture must really enforce tenant isolation before testing the worker.
       TenantContext.setCurrentTenant(7L);
@@ -237,6 +250,27 @@ class MatrixCallTenantIT {
                               .map(binding -> binding.getStartedAt())
                               .orElse(null))
                       .isNotNull());
+      await()
+          .pollInSameThread()
+          .atMost(Duration.ofSeconds(5))
+          .untilAsserted(
+              () -> {
+                var started =
+                    notifications.findAll().stream()
+                        .filter(event -> "call.started".equals(event.getEventType()))
+                        .toList();
+                assertThat(started).hasSize(invitationAlreadyExpired ? 0 : 1);
+                assertThat(started)
+                    .allSatisfy(
+                        event -> {
+                          assertThat(event.getRecipientUserId()).isEqualTo("tenant-receiver");
+                          assertThat(event.getTenantId()).isEqualTo(7L);
+                          assertThat(event.getSourceSessionId()).isEqualTo(session.getId());
+                          assertThat(event.getParams())
+                              .contains(
+                                  "\"callId\":\"tenant-call\"", "\"callRoomId\":\"" + media + "\"");
+                        });
+              });
       if (invitationAlreadyExpired) assertThat(notifications.findAll()).isEmpty();
       response.set(
           Map.of(
@@ -285,7 +319,8 @@ class MatrixCallTenantIT {
       actor.setTenantId(7L);
       for (int reload = 0; reload < 2; reload++) {
         var mvc =
-            MockMvcBuilders.standaloneSetup(new MatrixCallStateController(callStates, actor))
+            MockMvcBuilders.standaloneSetup(
+                    new MatrixCallStateController(callStates, callGuests, actor))
                 .build();
         mvc.perform(
                 get("/matrix/calls/state")
@@ -305,7 +340,7 @@ class MatrixCallTenantIT {
       TenantContext.setCurrentTenant(8L);
       actor.setUserId("tenant-outsider");
       actor.setTenantId(8L);
-      MockMvcBuilders.standaloneSetup(new MatrixCallStateController(callStates, actor))
+      MockMvcBuilders.standaloneSetup(new MatrixCallStateController(callStates, callGuests, actor))
           .build()
           .perform(
               get("/matrix/calls/state")

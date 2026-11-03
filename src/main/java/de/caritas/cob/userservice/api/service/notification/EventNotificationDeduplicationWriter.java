@@ -19,4 +19,11 @@ public class EventNotificationDeduplicationWriter {
   public void persistInNewTransaction(EventNotification eventNotification) {
     eventNotificationRepository.saveAndFlush(eventNotification);
   }
+
+  /** Removes one deduplicated event; its own transaction, as callers run after a commit. */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public void deleteInNewTransaction(String recipientUserId, String deduplicationKey) {
+    eventNotificationRepository.deleteByRecipientUserIdAndDeduplicationKey(
+        recipientUserId, deduplicationKey);
+  }
 }

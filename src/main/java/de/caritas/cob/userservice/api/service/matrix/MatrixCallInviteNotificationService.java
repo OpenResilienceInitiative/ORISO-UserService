@@ -8,11 +8,15 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Resolves invite recipients from live source-room membership, never from event-supplied IDs. */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class MatrixCallInviteNotificationService {
   private final MatrixSynapseService matrix;
   private final MatrixCallConversationResolver conversations;
@@ -21,9 +25,20 @@ public class MatrixCallInviteNotificationService {
   private final EventNotificationService notifications;
   private final MatrixCallBindingService callBindings;
   private final MatrixCallLifecycleService lifecycle;
+  private final MatrixCallGuestService callGuests;
 
   public boolean handleMediaRoom(String room, Map<String, Object> roomData) {
     return lifecycle.handleRoom(room, roomData);
+  }
+
+  @SuppressWarnings("unchecked")
+  public void handleMediaRooms(Map<String, Object> joinedRooms) {
+    var known = callBindings.knownMediaRooms(joinedRooms.keySet());
+    for (var entry : joinedRooms.entrySet()) {
+      if (known.contains(entry.getKey())) {
+        lifecycle.handleRoom(entry.getKey(), (Map<String, Object>) entry.getValue());
+      }
+    }
   }
 
   public void handleMediaRoomLeft(String room) {
@@ -39,8 +54,13 @@ public class MatrixCallInviteNotificationService {
     for (String room : callBindings.expiredMediaRooms(System.currentTimeMillis())) {
       lifecycle.handleRoom(room, Map.of());
     }
+    // US#1477: an ended call can still hold a guest whose removal failed; retry without an event.
+    for (String room : callGuests.endedRoomsWithOutstandingGuests()) {
+      lifecycle.handleRoom(room, Map.of());
+    }
   }
 
+  @org.springframework.transaction.annotation.Transactional
   public boolean handle(String sourceRoom, Map<String, Object> event) {
     if (sourceRoom == null
         || sourceRoom.isBlank()
@@ -67,17 +87,18 @@ public class MatrixCallInviteNotificationService {
         || lifetime > Long.MAX_VALUE - timestamp
         || timestamp > now) return false;
     boolean expired = now - timestamp >= lifetime;
-    var session = conversations.resolve(sourceRoom).orElse(null);
+    var session = conversations.resolveForWriting(sourceRoom).orElse(null);
     if (session == null) return false;
     var members = matrix.getCallRoomMembers(sourceRoom).orElse(null);
     if (members == null || !members.contains(sender)) return false;
     var actor = identity(sender, session.getTenantId()).orElse(null);
-    if (actor == null) return false;
+    if (actor == null || !lifecycle.isActiveRecipient(actor.id())) return false;
     var binding = matrix.getCallRoomBinding(mediaRoom, sender).orElse(null);
     if (binding == null
         || !callId.equals(binding.get("call_id"))
         || !sourceRoom.equals(binding.get("source_room_id"))) return false;
-    if (!callBindings.register(
+    if (!conversations.lockCurrentForWriting(session)) return false;
+    var proposed =
         de.caritas.cob.userservice.api.model.MatrixCallBinding.builder()
             .sourceRoomId(sourceRoom)
             .callId(callId)
@@ -96,11 +117,16 @@ public class MatrixCallInviteNotificationService {
                         .filter(member -> !member.equals(sender))
                         .filter(member -> identity(member, session.getTenantId()).isPresent())
                         .collect(java.util.stream.Collectors.toSet()))
-            .build())) return false;
+            .build();
+    boolean registered =
+        session.getSessionId() == null
+            ? callBindings.register(proposed)
+            : callBindings.registerWhileSourceLocked(proposed);
+    if (!registered) return false;
     // Only a validated, persistently bound room may grant the listener membership.
     // Observer availability must not suppress a valid invitation. Failed observation is retried
     // from the persisted binding; expiry is gated on actually receiving media-room state.
-    matrix.ensureAdminInRoom(mediaRoom, sender);
+    observeAfterCommit(mediaRoom, sender);
     // A late sync can discover a call that is still running. Recover its identity and media
     // observation without ringing again or inventing a historical invitee list from today's
     // members.
@@ -113,6 +139,7 @@ public class MatrixCallInviteNotificationService {
         .flatMap(Optional::stream)
         .distinct()
         .filter(recipient -> !recipient.id().equals(actor.id()))
+        .filter(recipient -> lifecycle.isActiveRecipient(recipient.id()))
         .forEach(
             recipient ->
                 notifications.createCallInvitationNotification(
@@ -124,6 +151,29 @@ public class MatrixCallInviteNotificationService {
                     mediaRoom,
                     Boolean.TRUE.equals(content.get("is_video"))));
     return true;
+  }
+
+  private void observeAfterCommit(String mediaRoom, String sender) {
+    Runnable observe =
+        () -> {
+          try {
+            matrix.ensureAdminInRoom(mediaRoom, sender);
+          } catch (RuntimeException unavailable) {
+            // The committed binding is the recovery record; observer availability cannot undo it.
+            log.warn("Call observer join unavailable ({})", unavailable.getClass().getSimpleName());
+          }
+        };
+    if (TransactionSynchronizationManager.isSynchronizationActive()) {
+      TransactionSynchronizationManager.registerSynchronization(
+          new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+              observe.run();
+            }
+          });
+    } else {
+      observe.run();
+    }
   }
 
   private Optional<Identity> identity(String matrixId, Long tenantId) {

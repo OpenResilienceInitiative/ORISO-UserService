@@ -828,7 +828,7 @@ public class CaseHandoverService {
 
   @Transactional
   public ConsentPreference updateConsentPreference(Long sessionId, boolean alwaysAsk) {
-    Session session = getSessionForUpdate(sessionId);
+    Session session = getSessionForMutation(sessionId);
     verifyPreferenceOwner(session);
     sessionRepository.updateAdditionalAccessPreference(sessionId, alwaysAsk);
     // Bulk writes bypass managed state. Keep reads in this transaction consistent with the
@@ -893,7 +893,7 @@ public class CaseHandoverService {
       Long expectedOwnershipRevision,
       UUID operationId) {
     // Order preference saves and creation so every new request freezes one committed choice.
-    Session session = getSessionForUpdate(sessionId);
+    Session session = getSessionForMutation(sessionId);
     Consultant requester = retrieveCurrentConsultant();
 
     boolean guarded = expectedOwnershipRevision != null || operationId != null;
@@ -1296,7 +1296,7 @@ public class CaseHandoverService {
 
   @Transactional
   public CaseHandoverStatus resolveClientConsent(Long sessionId, Long requestId, boolean approved) {
-    Session session = getSessionForUpdate(sessionId);
+    Session session = getSessionForMutation(sessionId);
     User user = userAccountService.retrieveValidatedUser();
     verifyUserTenant(user, session);
     CaseHandoverRequest request =
@@ -1544,6 +1544,17 @@ public class CaseHandoverService {
       throw new ForbiddenException("Current user is not a consultant");
     }
     return consultant;
+  }
+
+  private Session getSessionForMutation(Long sessionId) {
+    var current =
+        sessionRepository
+            .findByIdForUpdate(sessionId)
+            .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId));
+    if (current.getStatus() == Session.SessionStatus.REJECTED) {
+      throw new ConflictException("Rejected enquiry cannot grant case access");
+    }
+    return requireHandable(current);
   }
 
   private Session getSession(Long sessionId) {
