@@ -37,9 +37,7 @@ jobs:
       uses: actions/checkout@v6
       with:
         repository: OpenResilienceInitiative/ORISO-AgencyService
-        # AgencyService dev HEAD (incl. PR347): featureDirectInvite{Chat,Audio,Video}Enabled.
-        # UserService no longer reads counsellorTopicPermission, so this branch needs no
-        # companion pin to ORISO-AgencyService#308.
+        # AgencyService dev with the direct-invitation settings consumed by UserService.
         ref: ${{ github.event_name == 'pull_request' && '699b9c7a1f856b47f0dedf89512a335b2cfb8af5' || 'dev' }}
         path: .providers/agency
         persist-credentials: false
