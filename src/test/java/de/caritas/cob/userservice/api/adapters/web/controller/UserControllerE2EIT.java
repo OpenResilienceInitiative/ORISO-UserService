@@ -53,6 +53,7 @@ import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.PasswordPolicy;
 import de.caritas.cob.userservice.api.helper.UserVerifier;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Chat;
@@ -2301,6 +2302,13 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     when(applicationSettingsService.getApplicationSettings())
         .thenReturn(new ApplicationSettingsDTO().releaseToggles(Maps.newHashMap()));
     var session = givenAExistingSession();
+    // Frontend#1979: the reassignment mail follows the Träger's advice-seeker e-mail
+    // policy. Pin what EasyRandom would otherwise pick at random: a counselling session
+    // of a known tenant whose settings leave e-mail on.
+    session.setConversationType(ConversationType.AGENCY_COUNSELLING);
+    session.getUser().setTenantId(1L);
+    userRepository.save(session.getUser());
+    sessionRepository.save(session);
     var assignemtNotification =
         new ReassignmentNotificationDTO()
             .toConsultantId(UUID.randomUUID())
@@ -2354,6 +2362,8 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     de.caritas.cob.userservice.api.tenant.TenantContext.setCurrentTenant(1L);
     userDTO = easyRandom.nextObject(UserDTO.class);
     userDTO.setUsername(RandomStringUtils.randomAlphabetic(5, 30));
+    // EasyRandom's password is usually shorter than the registration minimum.
+    userDTO.setPassword(RandomStringUtils.randomAlphanumeric(PasswordPolicy.MIN_LENGTH));
     userDTO.setAge("17");
     userDTO.setState("8");
     userDTO.setPostcode(RandomStringUtils.randomNumeric(5));
@@ -2715,6 +2725,7 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
 
   private void givenAPasswordDto() {
     passwordDto = easyRandom.nextObject(PasswordDTO.class);
+    passwordDto.setNewPassword(RandomStringUtils.randomAlphanumeric(PasswordPolicy.MIN_LENGTH));
   }
 
   private void givenADeleteUserAccountDto() {

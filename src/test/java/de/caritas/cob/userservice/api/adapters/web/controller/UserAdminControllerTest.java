@@ -2,10 +2,12 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminDTO;
@@ -44,6 +46,7 @@ import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenera
 import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService;
 import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPreferenceService;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.SearchFilter;
@@ -143,6 +146,38 @@ class UserAdminControllerTest {
     var captor = ArgumentCaptor.forClass(CreateAdminDTO.class);
     verify(adminUserFacade).createNewAgencyAdmin(captor.capture());
     assertEquals("upper@example.org", captor.getValue().getEmail());
+  }
+
+  @Test
+  void createAdminAndConsultant_Should_rejectAPasswordShorterThan16_beforeDelegation() {
+    // #1272: the published contract still says minLength 8, so the server must refuse 15
+    // characters itself, or an admin screen could create an account a later screen refuses.
+    var tenantAdmin = new CreateAdminDTO();
+    tenantAdmin.setEmail("tenant@example.org");
+    tenantAdmin.setPassword("a".repeat(15));
+    var agencyAdmin = new CreateAdminDTO();
+    agencyAdmin.setEmail("agency@example.org");
+    agencyAdmin.setPassword("a".repeat(15));
+    var consultant = new CreateConsultantDTO();
+    consultant.setEmail("consultant@example.org");
+    consultant.setUsername("user");
+    consultant.setPassword("a".repeat(15));
+
+    assertThrows(BadRequestException.class, () -> controller.createTenantAdmin(tenantAdmin));
+    assertThrows(BadRequestException.class, () -> controller.createAgencyAdmin(agencyAdmin));
+    assertThrows(BadRequestException.class, () -> controller.createConsultant(consultant));
+    verifyNoInteractions(adminUserFacade, consultantAdminFacade, accountSetupIssuer);
+  }
+
+  @Test
+  void createTenantAdmin_Should_acceptAPasswordOfExactly16() {
+    var dto = new CreateAdminDTO();
+    dto.setEmail("tenant@example.org");
+    dto.setPassword("a".repeat(16));
+    when(adminUserFacade.createNewTenantAdmin(any()))
+        .thenReturn(new AdminResponseDTO().embedded(new AdminDTO().id("admin-13")));
+
+    assertEquals(HttpStatus.OK, controller.createTenantAdmin(dto).getStatusCode());
   }
 
   @Test

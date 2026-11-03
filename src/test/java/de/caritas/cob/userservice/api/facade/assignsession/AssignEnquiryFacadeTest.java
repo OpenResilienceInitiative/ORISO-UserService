@@ -293,6 +293,9 @@ class AssignEnquiryFacadeTest {
     verify(eventNotificationService)
         .createInquiryAcceptedNotification(
             ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+    verify(eventNotificationService)
+        .retireOpenEnquiryNotifications(
+            ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY.getId());
   }
 
   // ---------------------------------------------------------------------------
@@ -373,6 +376,7 @@ class AssignEnquiryFacadeTest {
     // Nothing is saved: the enquiry stays NEW and the counsellor can accept it again.
     verify(sessionService, never()).updateConsultantAndStatusForSession(any(), any(), any());
     verify(eventNotificationService, never()).createInquiryAcceptedNotification(any(), any());
+    verify(eventNotificationService, never()).retireOpenEnquiryNotifications(any(), any());
   }
 
   @Test
@@ -457,6 +461,53 @@ class AssignEnquiryFacadeTest {
             SESSION_WITHOUT_CONSULTANT.getId(), CONSULTANT_WITH_AGENCY);
     verify(eventNotificationService)
         .createInquiryAcceptedNotification(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+  }
+
+  @Test
+  void assignRegisteredEnquiry_Should_retireTheOtherConsultantsNewRequestEntries() {
+    assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+
+    // ORISO-Frontend#1472: colleagues must not keep a "New client request" entry for a case that
+    // is no longer open to them.
+    verify(eventNotificationService)
+        .retireOpenEnquiryNotifications(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY.getId());
+  }
+
+  @Test
+  void assignRegisteredEnquiry_Should_stillSucceed_When_retiringTheEntriesFails() {
+    org.mockito.Mockito.doThrow(
+            new org.springframework.transaction.UnexpectedRollbackException("cleanup failed"))
+        .when(eventNotificationService)
+        .retireOpenEnquiryNotifications(any(), any());
+
+    org.junit.jupiter.api.Assertions.assertDoesNotThrow(
+        () ->
+            assignEnquiryFacade.assignRegisteredEnquiry(
+                SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY));
+    verify(eventNotificationService)
+        .createInquiryAcceptedNotification(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+  }
+
+  @Test
+  void assignRegisteredEnquiry_Should_retireTheEntriesOnlyAfterTheAcceptanceCommitted() {
+    org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+    try {
+      assignEnquiryFacade.assignRegisteredEnquiry(
+          SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+
+      verify(eventNotificationService, never()).retireOpenEnquiryNotifications(any(), any());
+
+      org.springframework.transaction.support.TransactionSynchronizationManager
+          .getSynchronizations()
+          .forEach(org.springframework.transaction.support.TransactionSynchronization::afterCommit);
+
+      verify(eventNotificationService)
+          .retireOpenEnquiryNotifications(
+              SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY.getId());
+    } finally {
+      org.springframework.transaction.support.TransactionSynchronizationManager
+          .clearSynchronization();
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -798,14 +849,16 @@ class AssignEnquiryFacadeTest {
       var callbacks =
           org.springframework.transaction.support.TransactionSynchronizationManager
               .getSynchronizations();
-      // The acceptance notice and the FE#1876 same-topic notice: both wait for the commit.
-      assertThat(callbacks).hasSize(2);
+      // The acceptance notice, the FE#1876 same-topic notice and the timeline cleanup (#1472) all
+      // wait for the commit.
+      assertThat(callbacks).hasSize(3);
       callbacks.forEach(
           cb ->
               cb.afterCompletion(
                   org.springframework.transaction.support.TransactionSynchronization
                       .STATUS_ROLLED_BACK));
       org.mockito.Mockito.verifyNoInteractions(acceptanceDelivery, topicDuplicateService);
+      verify(eventNotificationService, never()).retireOpenEnquiryNotifications(any(), any());
     } finally {
       org.springframework.transaction.support.TransactionSynchronizationManager
           .clearSynchronization();

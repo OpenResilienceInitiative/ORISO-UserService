@@ -340,6 +340,27 @@ public class KeycloakService
   }
 
   @Override
+  public java.util.List<String> emailVerificationAddresses(String userId) {
+    try {
+      var addresses = new java.util.ArrayList<String>();
+      for (var credential : keycloakClient.getUsersResource().get(userId).credentials()) {
+        if (!"MAIL_OTP_CM".equals(credential.getType())) continue;
+        var data =
+            new com.fasterxml.jackson.databind.ObjectMapper()
+                .readTree(credential.getCredentialData());
+        var email = data.get("email");
+        if (email == null || !email.isTextual() || email.asText().isBlank()) {
+          throw new IllegalStateException("Invalid mail OTP metadata");
+        }
+        addresses.add(email.asText());
+      }
+      return java.util.List.copyOf(addresses);
+    } catch (RuntimeException | java.io.IOException unavailable) {
+      throw new ServiceUnavailableException("Pending email verification metadata unavailable");
+    }
+  }
+
+  @Override
   public IdentityEmailVerification finishEmailVerification(String username, String initialCode) {
     var otpSetupDTO = keycloakMapper.otpSetupDtoOf(initialCode, null, null);
     var requestUrl = getOtpUrl(ENDPOINT_OTP_FINISH_EMAIL, username);

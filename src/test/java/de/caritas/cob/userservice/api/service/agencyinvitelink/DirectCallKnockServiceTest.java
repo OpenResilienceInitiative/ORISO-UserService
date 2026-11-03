@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.agencyinvitelink;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -33,6 +34,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -53,9 +56,16 @@ class DirectCallKnockServiceTest {
   @Mock private de.caritas.cob.userservice.api.port.out.UserRepository users;
   @Mock private de.caritas.cob.userservice.api.port.out.ConsultantRepository consultants;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.notification.EventNotificationService
+      eventNotifications;
+
+  @org.mockito.Mock private DirectInvitePolicy directInvitePolicy;
+
   private DirectCallKnockService service;
   private Consultant counsellor;
   private User asker;
+  private Session session;
 
   @BeforeEach
   void setUp() {
@@ -67,12 +77,14 @@ class DirectCallKnockServiceTest {
             callBindings,
             callGuests,
             users,
-            consultants);
+            consultants,
+            eventNotifications,
+            directInvitePolicy);
     counsellor = consultant("counsellor-1");
     when(callBindings.findById(3L)).thenReturn(Optional.of(binding()));
     asker = new User();
     asker.setUserId("asker-1");
-    var session = new Session();
+    session = new Session();
     session.setId(SESSION_ID);
     session.setConsultant(counsellor);
     when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
@@ -94,6 +106,91 @@ class DirectCallKnockServiceTest {
     // Never part of the Matrix admission path of the self-help groups.
     assertThat(knock.getSeriesId()).isNull();
     assertThat(knock.getAdmissionRequestedAt()).isNull();
+  }
+
+  /** FE#1952: a knock nobody hears is a knock nobody answers. */
+  @Test
+  void knock_Should_TellTheCounsellor_When_ANewKnockOpens() {
+    var knock = service.knock(SESSION_ID, asker, 9L, InviteLinkChatType.VIDEO);
+
+    verify(eventNotifications).createCallKnockRequestedNotification(session, knock);
+  }
+
+  /**
+   * The entry is written in its own transaction. Written before the knock commits, a rolled-back
+   * knock would still ring the counsellor for a person who is not waiting.
+   */
+  @Test
+  void knock_Should_TellTheCounsellorOnlyAfterTheKnockCommits() {
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      var knock = service.knock(SESSION_ID, asker, 9L, InviteLinkChatType.VIDEO);
+
+      verify(eventNotifications, never()).createCallKnockRequestedNotification(any(), any());
+      TransactionSynchronizationManager.getSynchronizations()
+          .forEach(TransactionSynchronization::afterCommit);
+      verify(eventNotifications).createCallKnockRequestedNotification(session, knock);
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+  }
+
+  @Test
+  void knock_Should_NotTellTheCounsellor_When_TheKnockRollsBack() {
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      service.knock(SESSION_ID, asker, 9L, InviteLinkChatType.VIDEO);
+
+      TransactionSynchronizationManager.getSynchronizations()
+          .forEach(sync -> sync.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+      verify(eventNotifications, never()).createCallKnockRequestedNotification(any(), any());
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+  }
+
+  @Test
+  void knock_Should_KeepTheKnock_When_TheNotificationFails() {
+    org.mockito.Mockito.doThrow(new IllegalStateException("feed down"))
+        .when(eventNotifications)
+        .createCallKnockRequestedNotification(any(), any());
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      var knock = service.knock(SESSION_ID, asker, 9L, InviteLinkChatType.VIDEO);
+
+      assertThatCode(
+              () ->
+                  TransactionSynchronizationManager.getSynchronizations()
+                      .forEach(TransactionSynchronization::afterCommit))
+          .doesNotThrowAnyException();
+      verify(eventNotifications).createCallKnockRequestedNotification(session, knock);
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+  }
+
+  @Test
+  void knock_Should_NotTellTheCounsellorAgain_When_ThePersonKnocksAgain() {
+    var open = pending(1L, LocalDateTime.now().minusMinutes(5));
+    when(repository.findPendingCallKnocksForUpdate(SESSION_ID, "asker-1", Via.DIRECT_LINK))
+        .thenReturn(List.of(open));
+
+    service.knock(SESSION_ID, asker, 9L, InviteLinkChatType.AUDIO);
+
+    verify(eventNotifications, never()).createCallKnockRequestedNotification(any(), any());
+  }
+
+  @Test
+  void knock_Should_NotTellTheCounsellor_When_ThePersonWasLetInBefore() {
+    var admitted = pending(1L, LocalDateTime.now().minusDays(3));
+    admitted.setStatus(Status.ADMITTED);
+    when(repository.findFirstBySessionIdAndUserIdAndViaAndStatusOrderByIdDesc(
+            SESSION_ID, "asker-1", Via.DIRECT_LINK, Status.ADMITTED))
+        .thenReturn(Optional.of(admitted));
+
+    service.knock(SESSION_ID, asker, 9L, InviteLinkChatType.VIDEO);
+
+    verify(eventNotifications, never()).createCallKnockRequestedNotification(any(), any());
   }
 
   @Test
@@ -128,6 +225,8 @@ class DirectCallKnockServiceTest {
     // conversation endpoints always judge the same, latest knock.
     assertThat(stale.getStatus()).isEqualTo(Status.CANCELLED);
     verify(repository, org.mockito.Mockito.times(2)).save(any());
+    // The fresh knock is a new knock: the counsellor hears it.
+    verify(eventNotifications).createCallKnockRequestedNotification(session, knock);
   }
 
   @Test
@@ -249,6 +348,38 @@ class DirectCallKnockServiceTest {
     assertThat(admitted)
         .extracting(GroupChatJoinRequest::getStatus)
         .containsExactly(Status.ADMITTED, Status.ADMITTED);
+  }
+
+  /** "Direkteinladung erlauben" withdrawn: a queued knock cannot be admitted, only declined. */
+  @Test
+  void withdrawnPermission_Should_NotAdmitAQueuedKnock() {
+    var knock = pending(1L, LocalDateTime.now());
+    knock.setInviteLinkId(9L);
+    when(repository.findByIdForUpdate(1L)).thenReturn(Optional.of(knock));
+    when(inviteLinkRepository.findById(9L))
+        .thenReturn(
+            Optional.of(
+                de.caritas.cob.userservice.api.model.AgencyInviteLink.builder()
+                    .id(9L)
+                    .tenantId(TENANT)
+                    .agencyId(99L)
+                    .chatType("VIDEO")
+                    .build()));
+    when(directInvitePolicy.allows(TENANT, 99L, InviteLinkChatType.VIDEO)).thenReturn(false);
+    when(repository.findCallKnocksForConsultantForUpdate(
+            eq("counsellor-1"), eq(Via.DIRECT_LINK), eq(Status.PENDING), any(), eq(SESSION_ID)))
+        .thenReturn(List.of(knock));
+
+    assertThatThrownBy(() -> service.admit(1L, counsellor))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    assertThatThrownBy(() -> service.admitAll(counsellor, SESSION_ID, null))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    assertThat(knock.getStatus()).isEqualTo(Status.PENDING);
+    verify(repository, never()).save(any());
+
+    assertThat(service.decline(1L, counsellor).getStatus()).isEqualTo(Status.DECLINED);
   }
 
   @Test
@@ -405,6 +536,29 @@ class DirectCallKnockServiceTest {
 
     assertThat(service.decline(1L, counsellor).getStatus()).isEqualTo(Status.DECLINED);
     verify(callGuests).revokeSeat(binding, "@asker:example", "@counsellor:example");
+  }
+
+  /** "Anklopfen" switched off lets everybody in: not while the permission is withdrawn. */
+  @Test
+  void admitWaitingOnCallLink_Should_Refuse_WhileTheMediumIsSwitchedOff_ButWaitingCanEnd() {
+    var waiting = callLinkKnock(1L, Status.PENDING);
+    when(repository.findByInviteLinkIdAndViaAndStatus(5L, Via.CALL_LINK, Status.PENDING))
+        .thenReturn(List.of(waiting));
+    var link = callLink("counsellor-1");
+    link.setAgencyId(99L);
+    link.setChatType("VIDEO");
+    when(inviteLinkRepository.findById(5L)).thenReturn(Optional.of(link));
+    when(directInvitePolicy.allows(TENANT, 99L, InviteLinkChatType.VIDEO)).thenReturn(false);
+
+    assertThatThrownBy(() -> service.admitWaitingOnCallLink(5L, "counsellor-1"))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    assertThat(waiting.getStatus()).isEqualTo(Status.PENDING);
+    verify(repository, never()).save(any());
+
+    // The call ending still closes the queue: no permission is needed to stop waiting.
+    service.cancelWaitingOnCallLink(5L);
+    assertThat(waiting.getStatus()).isEqualTo(Status.CANCELLED);
   }
 
   @Test

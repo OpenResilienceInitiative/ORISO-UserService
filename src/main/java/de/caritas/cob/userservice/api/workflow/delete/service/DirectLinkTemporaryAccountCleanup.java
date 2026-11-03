@@ -5,14 +5,17 @@ import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourc
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.model.MatrixCallBinding;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.MatrixCallBindingRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkKind;
 import de.caritas.cob.userservice.api.service.temporaryaccount.TemporaryAccountExpiryPolicy;
 import de.caritas.cob.userservice.api.service.temporaryaccount.TemporaryAccountExpiryPolicy.ConversationFacts;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
@@ -23,6 +26,7 @@ import java.time.ZoneOffset;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -54,6 +58,7 @@ public class DirectLinkTemporaryAccountCleanup {
       Set.of(SessionStatus.DONE, SessionStatus.IN_ARCHIVE);
 
   private final @NonNull UserRepository userRepository;
+  private final @NonNull AgencyInviteLinkRepository inviteLinks;
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull MatrixCallBindingRepository callBindings;
   private final @NonNull MatrixSynapseService matrixSynapseService;
@@ -76,6 +81,14 @@ public class DirectLinkTemporaryAccountCleanup {
     // A started deletion is finished; a half-deleted account is never judged again.
     if (snapshot != null && snapshot.getDeletionStartedAt() != null) {
       return snapshot.getDeletedAt() == null;
+    }
+    var sharedCall = sharedCallLink(user);
+    if (sharedCall.isPresent()) {
+      var endedAt = sharedCallBinding(sharedCall.get()).map(MatrixCallBinding::getEndedAt);
+      var facts =
+          new ConversationFacts(
+              false, null, endedAt.map(DirectLinkTemporaryAccountCleanup::utc).orElse(null), false);
+      return expiryPolicy.isDue(snapshot, user.getCreateDate(), facts, now);
     }
     var sessions = sessionRepository.findByUser(user);
     var facts = factsOf(sessions);
@@ -197,11 +210,38 @@ public class DirectLinkTemporaryAccountCleanup {
   }
 
   private List<String> roomsOf(User user) {
+    var sharedCall = sharedCallLink(user);
+    if (sharedCall.isPresent()) {
+      return sharedCallBinding(sharedCall.get())
+          .filter(binding -> !Objects.equals(binding.getMediaRoomId(), binding.getSourceRoomId()))
+          .map(MatrixCallBinding::getMediaRoomId)
+          .filter(room -> !room.isBlank())
+          .stream()
+          .toList();
+    }
     return sessionRepository.findByUser(user).stream()
         .map(Session::getMatrixRoomId)
         .filter(Objects::nonNull)
         .filter(room -> !room.isBlank())
         .toList();
+  }
+
+  private Optional<AgencyInviteLink> sharedCallLink(User user) {
+    var snapshot = user.getTemporaryAccountSnapshot();
+    if (snapshot == null || !snapshot.isCall() || snapshot.getInviteLinkId() == null) {
+      return Optional.empty();
+    }
+    return inviteLinks
+        .findById(snapshot.getInviteLinkId())
+        .filter(link -> InviteLinkKind.CALL.name().equals(link.getLinkKind()))
+        .filter(
+            link -> user.getTenantId() != null && user.getTenantId().equals(link.getTenantId()));
+  }
+
+  private Optional<MatrixCallBinding> sharedCallBinding(AgencyInviteLink link) {
+    return Optional.ofNullable(link.getCallBindingId())
+        .flatMap(callBindings::findById)
+        .filter(binding -> link.getTenantId().equals(binding.getTenantId()));
   }
 
   private void deleteIdentity(String userId) {

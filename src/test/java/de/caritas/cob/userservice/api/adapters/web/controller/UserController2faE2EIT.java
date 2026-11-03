@@ -10,6 +10,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.endsWith;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -22,6 +23,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.OneTimePasswordDTO;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.VideoChatConfig;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
@@ -45,6 +47,8 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.Settings;
 import jakarta.servlet.http.Cookie;
 import java.util.ArrayList;
 import java.util.List;
@@ -61,6 +65,7 @@ import org.keycloak.admin.client.resource.RealmResource;
 import org.keycloak.admin.client.resource.UserResource;
 import org.keycloak.admin.client.resource.UsersResource;
 import org.keycloak.admin.client.token.TokenManager;
+import org.keycloak.representations.idm.CredentialRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
@@ -122,6 +127,8 @@ class UserController2faE2EIT {
 
   @MockitoBean private AuthenticatedUser authenticatedUser;
 
+  @MockitoBean private TenantService tenantService;
+
   @MockitoBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
 
   @MockitoBean
@@ -133,6 +140,7 @@ class UserController2faE2EIT {
   @Captor private ArgumentCaptor<HttpEntity<OtpSetupDTO>> otpSetupCaptor;
 
   private User user;
+  private Long originalUserTenantId;
   private Consultant consultant;
   private List<ConsultantAgency> consultantAgencies = new ArrayList<>();
   private OneTimePasswordDTO oneTimePasswordDTO;
@@ -147,6 +155,7 @@ class UserController2faE2EIT {
   void reset() {
     if (nonNull(user)) {
       user.setDeleteDate(null);
+      user.setTenantId(originalUserTenantId);
       userRepository.save(user);
       user = null;
     }
@@ -404,6 +413,7 @@ class UserController2faE2EIT {
   @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT})
   void finishTwoFactorAuthByEmailSetupForAUserShouldRespondWithNoContent() throws Exception {
     givenAValidUser();
+    givenTenantEmailCollection(true);
     givenABearerToken();
     givenACorrectlyFormattedTan();
     givenAValidKeycloakSetupEmailResponse(keycloakUsername(user.getUsername()));
@@ -428,6 +438,65 @@ class UserController2faE2EIT {
 
     var u = userRepository.findById(user.getUserId()).orElseThrow();
     assertEquals(email, u.getEmail());
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void disabledEmailCollectionRejectsOtpStartBeforeSendingMail() throws Exception {
+    givenAValidUser();
+    givenTenantEmailCollection(false);
+    givenAValidEmailDTO();
+    givenKeycloakFoundNoEmailInUse();
+
+    mockMvc
+        .perform(
+            put("/users/2fa/email")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(emailDTO)))
+        .andExpect(status().isForbidden());
+
+    verify(tenantService).getRestrictedTenantDataFresh(user.getTenantId());
+    verify(keycloakRestTemplate, never())
+        .exchange(anyString(), eq(HttpMethod.PUT), any(HttpEntity.class), eq(Success.class));
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void disabledEmailCollectionRejectsPendingNewAddressBeforeOtpActivation() throws Exception {
+    givenAValidUser();
+    givenTenantEmailCollection(false);
+    givenACorrectlyFormattedTan();
+    var credential = new CredentialRepresentation();
+    credential.setType("MAIL_OTP_CM");
+    credential.setCredentialData("{\"email\":\"new-qa74@example.org\"}");
+    var users = mock(UsersResource.class);
+    var resource = mock(UserResource.class);
+    var realm = mock(RealmResource.class);
+    when(keycloak.realm(anyString())).thenReturn(realm);
+    when(realm.users()).thenReturn(users);
+    when(users.get(user.getUserId())).thenReturn(resource);
+    when(resource.credentials()).thenReturn(List.of(credential));
+
+    mockMvc
+        .perform(
+            post("/users/2fa/email/validate/{tan}", tan)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE))
+        .andExpect(status().isForbidden());
+
+    verify(tenantService).getRestrictedTenantDataFresh(user.getTenantId());
+    verify(keycloakRestTemplate, never())
+        .postForEntity(anyString(), any(HttpEntity.class), eq(SuccessWithEmail.class));
+  }
+
+  private void givenTenantEmailCollection(boolean enabled) {
+    when(tenantService.getRestrictedTenantDataFresh(user.getTenantId()))
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(user.getTenantId())
+                .settings(new Settings().featureAskerEmailEnabled(enabled)));
   }
 
   @Test
@@ -1042,6 +1111,9 @@ class UserController2faE2EIT {
 
   private void givenAValidUser() {
     user = userRepository.findAll().iterator().next();
+    originalUserTenantId = user.getTenantId();
+    user.setTenantId(1L);
+    userRepository.save(user);
     identityConfig.setOtpAllowedForUsers(true);
     when(authenticatedUser.getUserId()).thenReturn(user.getUserId());
     when(authenticatedUser.isAdviceSeeker()).thenReturn(true);

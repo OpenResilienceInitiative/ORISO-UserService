@@ -131,7 +131,11 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
             eventNotificationService,
             injectedRoomServicePlaceholder,
             erstantwortPayloadBuilder,
-            matrixSessionSystemMessageService);
+            matrixSessionSystemMessageService,
+            new de.caritas.cob.userservice.api.service.erstantwort.ErstantwortTenantTextResolver(
+                org.mockito.Mockito.mock(
+                    de.caritas.cob.userservice.api.service.erstantwort
+                        .TenantErstantwortContentClient.class)));
     // Wire a REAL room-provisioning service around the mocked Matrix collaborators so the
     // create/invite/join/persist orchestration actually executes when the facade calls it.
     var gateway = new MatrixSessionRoomGateway(matrixSynapseService, matrixConfig);

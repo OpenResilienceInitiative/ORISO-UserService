@@ -3,6 +3,8 @@ package de.caritas.cob.userservice.api.service.statistics;
 import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.CONSULTANT_DEFAULT;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -137,5 +139,29 @@ class ConsultantStatisticsServiceTest {
         .countAssignedSessionsCreatedInPeriod(CONSULTANT_ID, 7L, fromDateTime, toDateTime);
     verify(consultantStatisticsRepository)
         .countActiveSessionsInPeriod(CONSULTANT_ID, 7L, fromDateTime, toDateTime);
+  }
+
+  /**
+   * OBP #93: a counsellor always sees all of their own numbers. The small-cell thresholds of the
+   * global statistics settings apply to aggregated views only, never to the own panel - so a
+   * counsellor working alone, with one case and one message, still sees exactly that.
+   */
+  @Test
+  void buildStatisticsShouldNeverSuppressTheCounsellorsOwnNumbers() {
+    when(consultantStatisticsRepository.countAssignedSessionsCreatedInPeriod(
+            eq(CONSULTANT_ID), eq(TENANT_ID), any(), any()))
+        .thenReturn(1L);
+    when(consultantStatisticsRepository.countActiveSessionsInPeriod(
+            eq(CONSULTANT_ID), eq(TENANT_ID), any(), any()))
+        .thenReturn(1L);
+    when(consultantMessageStatService.countForConsultant(
+            eq(CONSULTANT_ID), eq(TENANT_ID), any(), any()))
+        .thenReturn(1L);
+
+    var statistics = service.buildStatistics("2026-07-01", "2026-07-31");
+
+    assertThat(statistics.numberOfAssignedSessions()).isEqualTo(1L);
+    assertThat(statistics.numberOfActiveSessions()).isEqualTo(1L);
+    assertThat(statistics.numberOfSentMessages()).isEqualTo(1L);
   }
 }

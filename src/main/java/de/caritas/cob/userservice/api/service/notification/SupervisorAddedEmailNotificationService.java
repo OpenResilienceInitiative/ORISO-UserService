@@ -4,9 +4,11 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
@@ -40,6 +42,8 @@ public class SupervisorAddedEmailNotificationService {
   private final @NonNull TenantTemplateSupplier tenantTemplateSupplier;
   private final @NonNull OrisoEmailRenderer emailRenderer;
   private final @NonNull OrisoEmailBrand emailBrand;
+  private final @NonNull TenantService tenantPolicies;
+  private final @NonNull SessionRepository sessions;
 
   @Value("${system.notification.frontend.base-url}")
   private String publicFrontendBaseUrl;
@@ -64,7 +68,7 @@ public class SupervisorAddedEmailNotificationService {
     String consultantChatUrl = buildSessionUrl(appUrl, sessionId, true);
 
     User recipientUser = resolveUserWithEmail(sessionUser);
-    if (hasValidUserEmail(recipientUser)) {
+    if (hasValidUserEmail(recipientUser) && traegerAllowsAdviceSeekerEmail(tenantId, sessionId)) {
       // Neither the case reference nor a session-specific route reaches the advice seeker's
       // copy: both name what happened as precisely as the anonymised statement text refuses to.
       renderAndSendTeamChange(
@@ -117,7 +121,7 @@ public class SupervisorAddedEmailNotificationService {
     String consultantChatUrl = buildSessionUrl(appUrl, sessionId, true);
 
     User recipientUser = resolveUserWithEmail(sessionUser);
-    if (hasValidUserEmail(recipientUser)) {
+    if (hasValidUserEmail(recipientUser) && traegerAllowsAdviceSeekerEmail(tenantId, sessionId)) {
       renderAndSendTeamChange(
           tenantId,
           route,
@@ -230,6 +234,28 @@ public class SupervisorAddedEmailNotificationService {
         TenantSystemEmailDelivery.Purpose.EMAIL_ADDRESS_CHANGED,
         newEmail,
         renderEmailChanged(username, appUrl, tenantId, tone));
+  }
+
+  /**
+   * Frontend#1979 (PO decision 2026-11-01): the advice seeker's team-change copy follows Admin >
+   * Berechtigungen like every other advice-seeker mail. A policy or session that cannot be read
+   * means no mail to the advice seeker; the counsellor's copy is not affected.
+   */
+  private boolean traegerAllowsAdviceSeekerEmail(Long tenantId, Long sessionId) {
+    try {
+      var session = sessionId == null ? null : sessions.findById(sessionId).orElse(null);
+      var tenant = tenantPolicies.getRestrictedTenantDataFresh(tenantId);
+      if (session == null || tenant == null) {
+        log.info("Team-change mail to the advice seeker skipped: e-mail policy unavailable");
+        return false;
+      }
+      return AskerNotificationChannelPolicy.emailAllowed(session, tenant.getSettings());
+    } catch (RuntimeException unavailable) {
+      log.warn(
+          "Team-change mail to the advice seeker skipped: e-mail policy lookup failed ({})",
+          unavailable.getClass().getSimpleName());
+      return false;
+    }
   }
 
   private Long resolveTenantId(User sessionUser, Consultant supervisor) {
