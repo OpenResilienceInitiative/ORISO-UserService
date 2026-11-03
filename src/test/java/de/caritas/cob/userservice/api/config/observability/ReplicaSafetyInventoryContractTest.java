@@ -66,6 +66,7 @@ class ReplicaSafetyInventoryContractTest {
           "handshake-expiry-scheduler",
           "support-room-expiry-scheduler",
           "reply-email-delivery-scheduler",
+          "reply-email-tenant-rotation",
           "event-notification-retention-scheduler",
           "statistics-feature-gate-cache",
           "statistics-retention-scheduler",

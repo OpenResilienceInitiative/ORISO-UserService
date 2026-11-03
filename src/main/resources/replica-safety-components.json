@@ -651,6 +651,21 @@
       "status": "bounded"
     },
     {
+      "id": "reply-email-tenant-rotation",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/notification/ReplyEmailDeliveryWriter.java",
+      "kind": "local-state",
+      "owner": "notifications",
+      "risk": "performance",
+      "components": [
+        "resumeAfterTenant"
+      ],
+      "decision": "Retain locally: only the starting tenant of the next batch when more than 100 tenants are due. Another replica or a restart starts from the lowest tenant id, which delays but never skips or duplicates a mail; claims stay row-locked in the database.",
+      "signals": [
+        "userservice.replica.local_state"
+      ],
+      "status": "bounded"
+    },
+    {
       "id": "event-notification-retention-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/workflow/notificationretention/scheduler/EventNotificationRetentionScheduler.java",
       "kind": "scheduler",

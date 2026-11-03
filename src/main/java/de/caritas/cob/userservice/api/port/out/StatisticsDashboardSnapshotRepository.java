@@ -30,10 +30,6 @@ public interface StatisticsDashboardSnapshotRepository
       @Param("cutoffAt") LocalDateTime cutoffAt);
 
   @Modifying
-  @Query("DELETE FROM StatisticsDashboardSnapshot s WHERE s.scope = :scope")
-  int deleteByScope(@Param("scope") String scope);
-
-  @Modifying
   @Query("DELETE FROM StatisticsDashboardSnapshot s WHERE s.computedAt < :before")
   int deleteComputedBefore(@Param("before") LocalDateTime before);
 }
