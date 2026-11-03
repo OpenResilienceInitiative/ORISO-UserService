@@ -149,13 +149,27 @@ public class AgencyService {
    */
   public List<AgencyDTO> getPublicAgenciesForTenant(Long tenantId, List<Long> agencyIds) {
     var client = getAgencyControllerApi();
+    var apiClient = client.getApiClient();
+    // AgencyService rejects a request without CSRF values even where no bearer token is needed.
+    securityHeaderSupplier
+        .getCsrfHttpHeaders()
+        .forEach((key, value) -> apiClient.addDefaultHeader(key, value.iterator().next()));
     if (tenantId != null) {
-      client.getApiClient().addDefaultHeader("tenantId", tenantId.toString());
+      apiClient.addDefaultHeader("tenantId", tenantId.toString());
     }
-    return client.getAgenciesByIds(agencyIds).stream()
-        .filter(agency -> java.util.Objects.equals(tenantId, agency.getTenantId()))
-        .map(this::fromOriginalAgency)
-        .toList();
+    try {
+      return client.getAgenciesByIds(agencyIds).stream()
+          .filter(agency -> java.util.Objects.equals(tenantId, agency.getTenantId()))
+          .map(this::fromOriginalAgency)
+          .toList();
+    } catch (HttpClientErrorException failure) {
+      if (HttpStatus.NOT_FOUND.equals(failure.getStatusCode())) {
+        // A stale centre reference must not hide the other eligible recipients.
+        log.warn("AgencyService returned 404 for public agency ids {}.", agencyIds);
+        return emptyList();
+      }
+      throw failure;
+    }
   }
 
   private AgencyControllerApi getAgencyControllerApi() {
