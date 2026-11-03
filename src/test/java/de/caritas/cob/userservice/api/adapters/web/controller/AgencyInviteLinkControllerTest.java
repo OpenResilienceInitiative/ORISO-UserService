@@ -204,6 +204,8 @@ class AgencyInviteLinkControllerTest {
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertNotNull(response.getBody());
+    assertEquals("token", response.getBody().getToken());
+    assertEquals("ACTIVE", response.getBody().getStatus());
     verify(agencyInviteLinkService).reactivate(5L);
   }
 

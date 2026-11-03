@@ -405,9 +405,8 @@ class AgencyInviteLinkServiceTest {
     assertThat(ctx.getConsultingTypeId()).isEqualTo(2);
   }
 
-  /** The 410 DIRECT_LINK_INACTIVE contract belongs to direct links; admin links keep 400. */
   @Test
-  void disabledAdminLink_Should_KeepTheBadRequestContract() {
+  void disabledLiveChatLink_Should_ReportThatTheLinkIsPaused() {
     AgencyInviteLink link =
         AgencyInviteLink.builder()
             .token("admin")
@@ -418,8 +417,9 @@ class AgencyInviteLinkServiceTest {
     when(repository.findByTokenAndStatus("admin", InviteLinkStatus.ACTIVE.name()))
         .thenReturn(Optional.empty());
 
-    assertThatThrownBy(() -> service.getContext("admin")).isInstanceOf(BadRequestException.class);
-    assertThatThrownBy(() -> service.redeem("admin")).isInstanceOf(BadRequestException.class);
+    assertThatThrownBy(() -> service.getContext("admin"))
+        .isInstanceOf(InviteLinkPausedException.class);
+    assertThatThrownBy(() -> service.redeem("admin")).isInstanceOf(InviteLinkPausedException.class);
   }
 
   @Test
@@ -791,6 +791,15 @@ class AgencyInviteLinkServiceTest {
     var link = storedLink(status, "EXTERNAL_INBOUND", 1L, null);
     link.setExpiresAt(expiresAt);
     return link;
+  }
+
+  @Test
+  void externalLinkWritesRejectMissingPlatformTenantBeforeLookup() {
+    when(adminScope.current()).thenReturn(new AdminScope.Platform());
+
+    assertThatThrownBy(() -> service.reactivate(7L)).isInstanceOf(ForbiddenException.class);
+    assertThatThrownBy(() -> service.delete(7L)).isInstanceOf(ForbiddenException.class);
+    verify(repository, Mockito.never()).findById(7L);
   }
 
   @Test

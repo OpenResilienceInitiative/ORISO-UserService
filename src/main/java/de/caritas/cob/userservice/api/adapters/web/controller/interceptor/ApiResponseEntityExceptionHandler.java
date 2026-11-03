@@ -24,6 +24,7 @@ import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.CallShareLinkEndedException;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.DirectLinkInactiveException;
+import de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkPausedException;
 import jakarta.persistence.OptimisticLockException;
 import jakarta.validation.ConstraintViolationException;
 import java.net.UnknownHostException;
@@ -350,6 +351,17 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
     return handleExceptionInternal(
         ex,
         reasonBody(DirectLinkInactiveException.REASON),
+        new HttpHeaders(),
+        HttpStatus.GONE,
+        request);
+  }
+
+  @ExceptionHandler({InviteLinkPausedException.class})
+  public ResponseEntity<Object> handleInviteLinkPaused(
+      final InviteLinkPausedException ex, final WebRequest request) {
+    return handleExceptionInternal(
+        ex,
+        reasonBody(InviteLinkPausedException.REASON),
         new HttpHeaders(),
         HttpStatus.GONE,
         request);

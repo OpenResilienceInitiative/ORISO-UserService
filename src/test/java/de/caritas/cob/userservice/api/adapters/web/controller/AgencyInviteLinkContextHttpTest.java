@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
@@ -169,6 +170,33 @@ class AgencyInviteLinkContextHttpTest {
     link.setExpiresAt(LocalDateTime.now().minusDays(1));
     when(repository.findByToken("token")).thenReturn(Optional.of(link));
     mvc.perform(get("/users/invitelinks/token/context")).andExpect(status().isBadRequest());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void pausedLiveChatContextReturns410WithReason(boolean signedIn) throws Exception {
+    var link = link();
+    link.setStatus("DISABLED");
+    when(repository.findByToken("token")).thenReturn(Optional.of(link));
+    var request = get("/users/invitelinks/token/context");
+    if (signedIn) request.principal(() -> "existing-user");
+    mvc.perform(request)
+        .andExpect(status().isGone())
+        .andExpect(content().json("{\"reason\":\"INVITE_LINK_PAUSED\"}"));
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void pausedLiveChatRedeemReturns410WithReason(boolean signedIn) throws Exception {
+    var link = link();
+    link.setStatus("DISABLED");
+    when(repository.findByToken("token")).thenReturn(Optional.of(link));
+    var request = post("/users/invitelinks/token/redeem");
+    if (signedIn) request.principal(() -> "existing-user");
+    mvc.perform(request)
+        .andExpect(status().isGone())
+        .andExpect(content().json("{\"reason\":\"INVITE_LINK_PAUSED\"}"));
+    verify(repository).findByTokenAndStatus("token", "ACTIVE");
   }
 
   @Test

@@ -142,7 +142,8 @@ admin scope.
 | `DELETE /useradmin/invitelinks/{linkId}` | `204 No Content` for a link in any status. Its URL stops resolving. Conversations already started through the link keep their own sessions. | A repeat request returns `404 Not Found`. |
 
 Both requests return `401` without authentication, `403` outside the caller's admin scope,
-and `404` for an unknown link, a link in another tenant, or another link kind.
+and `404` for an unknown link, a link in another tenant, or another link kind. A platform caller
+without a valid positive tenant ID receives `403`.
 
 ---
 
@@ -178,6 +179,11 @@ live-chat session ready — drop them straight into the chat UI; no second regis
 |---|---|
 | 400 | link already used / expired / never had a topic |
 | 404 | token doesn't exist |
+| 410 | paused live-chat link with body `{"reason":"INVITE_LINK_PAUSED"}` |
+
+The public `GET /users/invitelinks/{token}/context` returns the same paused-link reason before
+providing entry metadata. Neither route creates an account or conversation while the link is paused.
+A switched-off direct link retains `{"reason":"DIRECT_LINK_INACTIVE"}`.
 
 The token lookup uses a pessimistic lock; double-clicks and parallel calls cannot redeem the same
 link twice.

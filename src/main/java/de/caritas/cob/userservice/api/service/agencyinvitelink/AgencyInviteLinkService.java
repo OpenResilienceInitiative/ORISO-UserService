@@ -85,10 +85,7 @@ public class AgencyInviteLinkService {
       throw new BadRequestException("consultantId is required when linkKind = COUNSELLOR");
     }
 
-    Long callerTenantId = resolveCallerTenantId();
-    if (callerTenantId == null) {
-      throw new ForbiddenException("No tenant context — caller must be tenant-scoped");
-    }
+    Long callerTenantId = requireCallerTenantId();
 
     Integer consultingTypeId = null;
     if (cmd.getAgencyId() != null) {
@@ -257,7 +254,7 @@ public class AgencyInviteLinkService {
   }
 
   private AgencyInviteLink findExternalLinkOfCallerTenant(Long linkId) {
-    Long callerTenantId = resolveCallerTenantId();
+    Long callerTenantId = requireCallerTenantId();
     return repository
         .findById(linkId)
         .filter(l -> Objects.equals(l.getTenantId(), callerTenantId))
@@ -293,11 +290,18 @@ public class AgencyInviteLinkService {
     return contextOf(link);
   }
 
-  private InvitationContext contextOf(AgencyInviteLink link) {
-    if (InviteLinkStatus.DISABLED.name().equals(link.getStatus())
-        && InviteLinkChatType.isDirectMedium(link.getChatType())) {
+  private static void rejectPausedLink(AgencyInviteLink link) {
+    if (!InviteLinkStatus.DISABLED.name().equals(link.getStatus())) return;
+    if (InviteLinkChatType.isDirectMedium(link.getChatType())) {
       throw new DirectLinkInactiveException();
     }
+    if (!InviteLinkKind.CALL.name().equals(link.getLinkKind())) {
+      throw new InviteLinkPausedException();
+    }
+  }
+
+  private InvitationContext contextOf(AgencyInviteLink link) {
+    rejectPausedLink(link);
     if (!InviteLinkStatus.ACTIVE.name().equals(link.getStatus())) {
       throw new BadRequestException("Invite link is not active");
     }
@@ -408,10 +412,7 @@ public class AgencyInviteLinkService {
       if (InviteLinkStatus.USED.name().equals(existing.getStatus())) {
         throw new BadRequestException("Invite link already used");
       }
-      if (InviteLinkStatus.DISABLED.name().equals(existing.getStatus())
-          && InviteLinkChatType.isDirectMedium(existing.getChatType())) {
-        throw new DirectLinkInactiveException();
-      }
+      rejectPausedLink(existing);
       throw new BadRequestException("Invite link is not active");
     }
 
@@ -549,6 +550,14 @@ public class AgencyInviteLinkService {
     return link;
   }
 
+  private Long requireCallerTenantId() {
+    Long callerTenantId = resolveCallerTenantId();
+    if (callerTenantId == null) {
+      throw new ForbiddenException("No tenant context — caller must be tenant-scoped");
+    }
+    return callerTenantId;
+  }
+
   /** The platform picks the Träger with the X-Tenant-Id header; everybody else has their own. */
   private Long resolveCallerTenantId() {
     var reach = adminScope.current();
@@ -563,7 +572,8 @@ public class AgencyInviteLinkService {
       HttpServletRequest request = attrs.getRequest();
       String header = request.getHeader("X-Tenant-Id");
       if (header == null || header.isBlank()) return null;
-      return Long.parseLong(header.trim());
+      long tenantId = Long.parseLong(header.trim());
+      return tenantId > 0 ? tenantId : null;
     } catch (Exception ex) {
       return null;
     }
