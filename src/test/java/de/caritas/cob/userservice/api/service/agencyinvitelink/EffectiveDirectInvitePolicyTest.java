@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.agencyinvitelink;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -35,6 +36,21 @@ class EffectiveDirectInvitePolicyTest {
   @BeforeEach
   void setUp() {
     policy = new EffectiveDirectInvitePolicy(agencySettings, tenantService);
+    traegerAllows(true, true, true);
+  }
+
+  /** What the TenantService serves, read fresh, as the Träger's own switches. */
+  private void traegerAllows(boolean chat, boolean audio, boolean video) {
+    lenient()
+        .when(tenantService.getRestrictedTenantDataFresh(TENANT))
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(TENANT)
+                .settings(
+                    new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
+                        .featureDirectInviteChatEnabled(chat)
+                        .featureDirectInviteAudioEnabled(audio)
+                        .featureDirectInviteVideoEnabled(video)));
   }
 
   @ParameterizedTest
@@ -74,6 +90,53 @@ class EffectiveDirectInvitePolicyTest {
 
     assertThat(askedIn.get()).isEqualTo(TENANT);
     assertThat(TenantContext.getCurrentTenantData()).isNull();
+  }
+
+  /** The AgencyService caches tenant data: its "yes" is not enough once the Träger said no. */
+  @Test
+  void allows_Should_Refuse_When_TheTraegerSwitchedOff_EvenIfTheAgencyServiceStillServesYes() {
+    traegerAllows(true, true, false);
+    lenient()
+        .when(agencySettings.findEffectiveSettings(AGENCY, TENANT))
+        .thenReturn(Optional.of(new Settings().featureDirectInviteVideoEnabled(true)));
+
+    assertThat(policy.allows(TENANT, AGENCY, InviteLinkChatType.VIDEO)).isFalse();
+  }
+
+  @Test
+  void allows_Should_Refuse_When_TheTraegerValueIsUnknown() {
+    when(tenantService.getRestrictedTenantDataFresh(TENANT)).thenReturn(null);
+    lenient()
+        .when(agencySettings.findEffectiveSettings(AGENCY, TENANT))
+        .thenReturn(Optional.of(new Settings().featureDirectInviteChatEnabled(true)));
+    assertThat(policy.allows(TENANT, AGENCY, InviteLinkChatType.CHAT)).isFalse();
+
+    when(tenantService.getRestrictedTenantDataFresh(TENANT))
+        .thenReturn(new RestrictedTenantDTO().id(TENANT));
+    assertThat(policy.allows(TENANT, AGENCY, InviteLinkChatType.CHAT)).isFalse();
+  }
+
+  @Test
+  void allows_Should_ReportAnOutage_When_TheTenantServiceIsDown() {
+    when(tenantService.getRestrictedTenantDataFresh(TENANT))
+        .thenThrow(new ResourceAccessException("timeout"));
+
+    assertThatThrownBy(() -> policy.allows(TENANT, AGENCY, InviteLinkChatType.CHAT))
+        .isInstanceOf(ServiceUnavailableException.class);
+  }
+
+  @Test
+  void allows_Should_RestoreTheCallersTenantContext_Also_WhenTheLookupThrows() {
+    when(agencySettings.findEffectiveSettings(AGENCY, TENANT))
+        .thenThrow(new ResourceAccessException("timeout"));
+    TenantContext.setCurrentTenant(1L);
+    try {
+      assertThatThrownBy(() -> policy.allows(TENANT, AGENCY, InviteLinkChatType.CHAT))
+          .isInstanceOf(ServiceUnavailableException.class);
+      assertThat(TenantContext.getCurrentTenant()).isEqualTo(1L);
+    } finally {
+      TenantContext.clear();
+    }
   }
 
   @Test

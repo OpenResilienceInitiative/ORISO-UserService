@@ -41,6 +41,7 @@ import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.agency.EffectiveAgencySettingsLookup;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import jakarta.persistence.EntityManager;
 import jakarta.servlet.http.Cookie;
@@ -213,7 +214,8 @@ class DirectLinkControllerIT {
         .andExpect(jsonPath("$.reason", is("DIRECT_LINK_INACTIVE")));
     actAsAsker();
     asAsker(post("/users/invitelinks/{token}/conversations", token))
-        .andExpect(status().isForbidden());
+        .andExpect(status().isGone())
+        .andExpect(jsonPath("$.reason", is("DIRECT_LINK_INACTIVE")));
     verify(createNewSessionFacade, never()).initializeNewSession(any(), any(User.class), anyList());
     // Withdrawing is reversible: the link is kept, not deleted or switched off.
     assertThat(linkRepository.findById(id)).get().extracting("status").isEqualTo("ACTIVE");
@@ -265,6 +267,45 @@ class DirectLinkControllerIT {
     asConsultant(create).andExpect(status().isServiceUnavailable());
 
     assertThat(linkRepository.findAll()).isEmpty();
+  }
+
+  /** The AgencyService caches tenant data; a Träger "off" must hold although it still says yes. */
+  @Test
+  void traegerSwitchedOff_Should_Refuse_EvenIfTheAgencyServiceStillServesYes() throws Exception {
+    actAsConsultant(owner);
+    long id = createLink("VIDEO");
+    String token = linkRepository.findById(id).orElseThrow().getToken();
+
+    traegerAllowsDirectInvites(true, true, false);
+    asConsultant(
+            post("/users/directlinks")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"medium\":\"VIDEO\",\"topicId\":" + TOPIC_ID + "}"))
+        .andExpect(status().isForbidden());
+    mvc.perform(get("/users/invitelinks/{token}/context", token))
+        .andExpect(status().isGone())
+        .andExpect(jsonPath("$.reason", is("DIRECT_LINK_INACTIVE")));
+  }
+
+  /** The page falls back to redeem when the context fails: it must say the same. */
+  @Test
+  void withdrawnPermission_Should_AlsoStopTheRedeemRoute() throws Exception {
+    actAsConsultant(owner);
+    long id = createLink("CHAT");
+    String token = linkRepository.findById(id).orElseThrow().getToken();
+
+    mvc.perform(
+            post("/users/invitelinks/{token}/redeem", token)
+                .cookie(CSRF_COOKIE)
+                .header("X-CSRF-Token", "test"))
+        .andExpect(status().isOk());
+    allowDirectInvites(false, true, true);
+    mvc.perform(
+            post("/users/invitelinks/{token}/redeem", token)
+                .cookie(CSRF_COOKIE)
+                .header("X-CSRF-Token", "test"))
+        .andExpect(status().isGone())
+        .andExpect(jsonPath("$.reason", is("DIRECT_LINK_INACTIVE")));
   }
 
   @Test
@@ -502,8 +543,22 @@ class DirectLinkControllerIT {
     return linkRepository.findById(id).orElseThrow().getToken();
   }
 
+  /** The Träger's own switches, read fresh from the TenantService. */
+  private void traegerAllowsDirectInvites(boolean chat, boolean audio, boolean video) {
+    when(tenantService.getRestrictedTenantDataFresh(TENANT_ID))
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(TENANT_ID)
+                .settings(
+                    new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
+                        .featureDirectInviteChatEnabled(chat)
+                        .featureDirectInviteAudioEnabled(audio)
+                        .featureDirectInviteVideoEnabled(video)));
+  }
+
   /** What the AgencyService serves as the effective "Direkteinladung erlauben" per chat type. */
   private void allowDirectInvites(boolean chat, boolean audio, boolean video) {
+    traegerAllowsDirectInvites(chat, audio, video);
     when(effectiveAgencySettings.findEffectiveSettings(anyLong(), anyLong()))
         .thenReturn(
             Optional.of(

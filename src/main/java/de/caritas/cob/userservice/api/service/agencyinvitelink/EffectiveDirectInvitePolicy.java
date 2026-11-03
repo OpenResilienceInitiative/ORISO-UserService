@@ -12,14 +12,18 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClientException;
 
 /**
- * Reads the effective "Direkteinladung erlauben" switch (ORISO-Admin#1242) per chat type, as the
- * AgencyService serves it: Träger AND Beratungsstelle, a Träger "off" always wins. A link without a
- * Beratungsstelle (a call without a conversation) is judged by the Träger's own value.
+ * Reads the effective "Direkteinladung erlauben" switch (ORISO-Admin#1242) per chat type. The
+ * AgencyService serves Träger AND Beratungsstelle, a Träger "off" wins. That answer can lag: the
+ * AgencyService caches tenant data (ten minutes, no eviction) and serves the Beratungsstelle's own
+ * value when its TenantService read fails. So the Träger's value is also read fresh from the
+ * TenantService here and both must say yes. A link without a Beratungsstelle (a call without a
+ * conversation) is judged by the Träger's value alone.
  *
  * <p>Fail closed: a switch that cannot be read, is not served, or belongs to another medium or
- * Träger never allows a link. Nothing is cached, so a switch an admin turns off applies to the next
- * request, also for links created earlier. An unreachable AgencyService or TenantService is an
- * outage (503), not a "no".
+ * Träger never allows a link. This service caches nothing, so an admin's change applies to the next
+ * request, also for links created earlier, as far as the AgencyService's own cache allows for the
+ * Beratungsstelle value. An unreachable AgencyService or TenantService is an outage (503), not a
+ * "no".
  */
 @Service
 @RequiredArgsConstructor
@@ -54,7 +58,11 @@ public class EffectiveDirectInvitePolicy implements DirectInvitePolicy {
     return Boolean.TRUE.equals(answer.get());
   }
 
+  /** Both the Träger (read fresh) and the served Beratungsstelle value must be true. */
   private Boolean ofAgency(Long tenantId, Long agencyId, InviteLinkChatType medium) {
+    if (!Boolean.TRUE.equals(ofTenant(tenantId, medium))) {
+      return Boolean.FALSE;
+    }
     return effectiveAgencySettingsLookup
         .findEffectiveSettings(agencyId, tenantId)
         .map(

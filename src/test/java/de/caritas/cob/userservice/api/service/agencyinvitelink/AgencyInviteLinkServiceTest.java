@@ -408,6 +408,26 @@ class AgencyInviteLinkServiceTest {
         .hasMessageContaining("expired");
   }
 
+  /** The page falls back to redeem when the context fails: it must refuse a withdrawn link too. */
+  @Test
+  void redeem_Should_ReadAsNoLongerActive_When_TheDirectPermissionWasWithdrawn() {
+    AgencyInviteLink link =
+        AgencyInviteLink.builder()
+            .token("direct")
+            .status(InviteLinkStatus.ACTIVE.name())
+            .linkKind(InviteLinkKind.COUNSELLOR.name())
+            .chatType(InviteLinkChatType.AUDIO.name())
+            .tenantId(1L)
+            .agencyId(5L)
+            .build();
+    when(repository.findByTokenAndStatus("direct", InviteLinkStatus.ACTIVE.name()))
+        .thenReturn(Optional.of(link));
+    when(directInvitePolicy.allows(1L, 5L, InviteLinkChatType.AUDIO)).thenReturn(false);
+
+    assertThatThrownBy(() -> service.redeem("direct"))
+        .isInstanceOf(DirectLinkInactiveException.class);
+  }
+
   @Test
   void redeem_Should_ReturnContext_When_ValidToken() {
     AgencyInviteLink link =

@@ -282,7 +282,8 @@ class CallShareLinkIT {
     allowDirectInvites(true, false, true);
     assertThatThrownBy(() -> shareLinks.join(token, guest))
         .isInstanceOf(
-            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+            de.caritas.cob.userservice.api.service.agencyinvitelink.DirectLinkInactiveException
+                .class);
     assertThat(links.findByToken(token)).get().extracting("status").isEqualTo("ACTIVE");
 
     allowDirectInvites(true, true, true);
@@ -291,6 +292,15 @@ class CallShareLinkIT {
 
   /** What the AgencyService serves as the effective "Direkteinladung erlauben" per chat type. */
   private void allowDirectInvites(boolean chat, boolean audio, boolean video) {
+    when(tenantService.getRestrictedTenantDataFresh(7L))
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(7L)
+                .settings(
+                    new Settings()
+                        .featureDirectInviteChatEnabled(chat)
+                        .featureDirectInviteAudioEnabled(audio)
+                        .featureDirectInviteVideoEnabled(video)));
     when(effectiveAgencySettings.findEffectiveSettings(anyLong(), anyLong()))
         .thenReturn(
             Optional.of(

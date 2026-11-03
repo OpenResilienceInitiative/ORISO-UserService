@@ -134,6 +134,20 @@ class AgencyInviteLinkContextHttpTest {
         .andExpect(content().json("{\"reason\":\"CALL_SHARE_LINK_ENDED\"}"));
   }
 
+  @Test
+  void callShareLinkWhosePermissionWasWithdrawnReturns410() throws Exception {
+    var link = callLink();
+    when(repository.findByToken("token")).thenReturn(Optional.of(link));
+    doThrow(
+            new de.caritas.cob.userservice.api.service.agencyinvitelink
+                .DirectLinkInactiveException())
+        .when(callShareLinks)
+        .requireDirectInviteAllowed(link);
+    mvc.perform(get("/users/invitelinks/token/context"))
+        .andExpect(status().isGone())
+        .andExpect(content().json("{\"reason\":\"DIRECT_LINK_INACTIVE\"}"));
+  }
+
   private static AgencyInviteLink callLink() {
     return AgencyInviteLink.builder()
         .id(5L)

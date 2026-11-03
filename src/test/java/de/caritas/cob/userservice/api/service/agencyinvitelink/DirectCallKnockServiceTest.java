@@ -60,6 +60,8 @@ class DirectCallKnockServiceTest {
   private de.caritas.cob.userservice.api.service.notification.EventNotificationService
       eventNotifications;
 
+  @org.mockito.Mock private DirectInvitePolicy directInvitePolicy;
+
   private DirectCallKnockService service;
   private Consultant counsellor;
   private User asker;
@@ -76,7 +78,8 @@ class DirectCallKnockServiceTest {
             callGuests,
             users,
             consultants,
-            eventNotifications);
+            eventNotifications,
+            directInvitePolicy);
     counsellor = consultant("counsellor-1");
     when(callBindings.findById(3L)).thenReturn(Optional.of(binding()));
     asker = new User();
@@ -345,6 +348,38 @@ class DirectCallKnockServiceTest {
     assertThat(admitted)
         .extracting(GroupChatJoinRequest::getStatus)
         .containsExactly(Status.ADMITTED, Status.ADMITTED);
+  }
+
+  /** "Direkteinladung erlauben" withdrawn: a queued knock cannot be admitted, only declined. */
+  @Test
+  void withdrawnPermission_Should_NotAdmitAQueuedKnock() {
+    var knock = pending(1L, LocalDateTime.now());
+    knock.setInviteLinkId(9L);
+    when(repository.findByIdForUpdate(1L)).thenReturn(Optional.of(knock));
+    when(inviteLinkRepository.findById(9L))
+        .thenReturn(
+            Optional.of(
+                de.caritas.cob.userservice.api.model.AgencyInviteLink.builder()
+                    .id(9L)
+                    .tenantId(TENANT)
+                    .agencyId(99L)
+                    .chatType("VIDEO")
+                    .build()));
+    when(directInvitePolicy.allows(TENANT, 99L, InviteLinkChatType.VIDEO)).thenReturn(false);
+    when(repository.findCallKnocksForConsultantForUpdate(
+            eq("counsellor-1"), eq(Via.DIRECT_LINK), eq(Status.PENDING), any(), eq(SESSION_ID)))
+        .thenReturn(List.of(knock));
+
+    assertThatThrownBy(() -> service.admit(1L, counsellor))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    assertThatThrownBy(() -> service.admitAll(counsellor, SESSION_ID, null))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    assertThat(knock.getStatus()).isEqualTo(Status.PENDING);
+    verify(repository, never()).save(any());
+
+    assertThat(service.decline(1L, counsellor).getStatus()).isEqualTo(Status.DECLINED);
   }
 
   @Test
