@@ -66,5 +66,10 @@ public enum HttpStatusExceptionReason {
    * A self-help group invite link was refused: unknown or foreign group, not a self-help group, or
    * a wrong token. Says only that the link does not work, never whether the group exists (#1483).
    */
-  GROUP_INVITE_INVALID
+  GROUP_INVITE_INVALID,
+  /**
+   * An admin switched this feature off for the Träger or Beratungsstelle (#1564), or the switch
+   * cannot be read. The counselling app hides the button; this is the server refusing the action.
+   */
+  FEATURE_DISABLED
 }
