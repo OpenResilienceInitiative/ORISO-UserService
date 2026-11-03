@@ -1,0 +1,151 @@
+package de.caritas.cob.userservice.api.service.agencyinvitelink;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
+
+import de.caritas.cob.userservice.agencyserivce.generated.web.model.Settings;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
+import de.caritas.cob.userservice.api.service.agency.EffectiveAgencySettingsLookup;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import java.util.Optional;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.web.client.ResourceAccessException;
+
+@ExtendWith(MockitoExtension.class)
+class EffectiveDirectInvitePolicyTest {
+
+  private static final long TENANT = 5L;
+  private static final long AGENCY = 99L;
+
+  @Mock private EffectiveAgencySettingsLookup agencySettings;
+  @Mock private TenantService tenantService;
+  private EffectiveDirectInvitePolicy policy;
+
+  @BeforeEach
+  void setUp() {
+    policy = new EffectiveDirectInvitePolicy(agencySettings, tenantService);
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "CHAT, true, false, false, true",
+    "CHAT, false, true, true, false",
+    "AUDIO, false, true, false, true",
+    "AUDIO, true, false, true, false",
+    "VIDEO, false, false, true, true",
+    "VIDEO, true, true, false, false"
+  })
+  void allows_Should_ReadTheSwitchOfTheAskedMediumOnly(
+      InviteLinkChatType medium, boolean chat, boolean audio, boolean video, boolean expected) {
+    when(agencySettings.findEffectiveSettings(AGENCY, TENANT))
+        .thenReturn(
+            Optional.of(
+                new Settings()
+                    .featureDirectInviteChatEnabled(chat)
+                    .featureDirectInviteAudioEnabled(audio)
+                    .featureDirectInviteVideoEnabled(video)));
+
+    assertThat(policy.allows(TENANT, AGENCY, medium)).isEqualTo(expected);
+  }
+
+  @Test
+  void allows_Should_AskInTheLinksTraeger_AndLeaveNoContextBehind() {
+    var askedIn = new java.util.concurrent.atomic.AtomicReference<Long>();
+    when(agencySettings.findEffectiveSettings(AGENCY, TENANT))
+        .thenAnswer(
+            invocation -> {
+              askedIn.set(TenantContext.getCurrentTenant());
+              return Optional.of(new Settings().featureDirectInviteChatEnabled(true));
+            });
+    TenantContext.clear();
+
+    assertThat(policy.allows(TENANT, AGENCY, InviteLinkChatType.CHAT)).isTrue();
+
+    assertThat(askedIn.get()).isEqualTo(TENANT);
+    assertThat(TenantContext.getCurrentTenantData()).isNull();
+  }
+
+  @Test
+  void allows_Should_Refuse_When_TheSwitchIsNotServed() {
+    when(agencySettings.findEffectiveSettings(AGENCY, TENANT))
+        .thenReturn(Optional.of(new Settings().featureDirectInviteChatEnabled(true)));
+
+    assertThat(policy.allows(TENANT, AGENCY, InviteLinkChatType.VIDEO)).isFalse();
+  }
+
+  @Test
+  void allows_Should_Refuse_When_TheAgencyHasNoSettings() {
+    when(agencySettings.findEffectiveSettings(AGENCY, TENANT)).thenReturn(Optional.empty());
+
+    assertThat(policy.allows(TENANT, AGENCY, InviteLinkChatType.CHAT)).isFalse();
+  }
+
+  @Test
+  void allows_Should_Refuse_When_TheAgencyServiceRefusesAccess() {
+    when(agencySettings.findEffectiveSettings(AGENCY, TENANT))
+        .thenThrow(new ForbiddenException("another tenant"));
+
+    assertThatThrownBy(() -> policy.allows(TENANT, AGENCY, InviteLinkChatType.CHAT))
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void allows_Should_ReportAnOutage_NotAnAllowance() {
+    when(agencySettings.findEffectiveSettings(AGENCY, TENANT))
+        .thenThrow(new ResourceAccessException("timeout"));
+
+    assertThatThrownBy(() -> policy.allows(TENANT, AGENCY, InviteLinkChatType.CHAT))
+        .isInstanceOf(ServiceUnavailableException.class);
+  }
+
+  @Test
+  void allows_Should_NeverAllowAMediumThatIsNoDirectMediumOrWithoutTenant() {
+    assertThat(policy.allows(TENANT, AGENCY, InviteLinkChatType.LIVE_CHAT)).isFalse();
+    assertThat(policy.allows(TENANT, AGENCY, null)).isFalse();
+    assertThat(policy.allows(null, AGENCY, InviteLinkChatType.CHAT)).isFalse();
+    verifyNoInteractions(agencySettings, tenantService);
+  }
+
+  @Test
+  void allows_Should_UseTheTraegerSwitch_When_TheLinkHasNoAgency() {
+    when(tenantService.getRestrictedTenantDataFresh(TENANT))
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(TENANT)
+                .settings(
+                    new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
+                        .featureDirectInviteAudioEnabled(true)
+                        .featureDirectInviteVideoEnabled(false)));
+
+    assertThat(policy.allows(TENANT, null, InviteLinkChatType.AUDIO)).isTrue();
+    assertThat(policy.allows(TENANT, null, InviteLinkChatType.VIDEO)).isFalse();
+    assertThat(policy.allows(TENANT, null, InviteLinkChatType.CHAT)).isFalse();
+    verifyNoInteractions(agencySettings);
+  }
+
+  @Test
+  void allows_Should_Refuse_When_TheTenantAnswerIsForeignOrEmpty() {
+    when(tenantService.getRestrictedTenantDataFresh(TENANT))
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(TENANT + 1)
+                .settings(
+                    new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
+                        .featureDirectInviteChatEnabled(true)));
+    assertThat(policy.allows(TENANT, null, InviteLinkChatType.CHAT)).isFalse();
+
+    when(tenantService.getRestrictedTenantDataFresh(TENANT)).thenReturn(null);
+    assertThat(policy.allows(TENANT, null, InviteLinkChatType.CHAT)).isFalse();
+  }
+}

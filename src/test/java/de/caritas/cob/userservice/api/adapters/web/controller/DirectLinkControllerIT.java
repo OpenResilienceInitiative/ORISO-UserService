@@ -6,6 +6,7 @@ import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -18,6 +19,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.agencyserivce.generated.web.model.Settings;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationDto;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationResponseDto;
@@ -37,12 +39,14 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.agency.EffectiveAgencySettingsLookup;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import jakarta.persistence.EntityManager;
 import jakarta.servlet.http.Cookie;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.StreamSupport;
 import org.junit.jupiter.api.BeforeEach;
@@ -91,6 +95,7 @@ class DirectLinkControllerIT {
   @MockitoBean private TopicService topicService;
   @MockitoBean private CreateNewSessionFacade createNewSessionFacade;
   @MockitoBean private TenantService tenantService;
+  @MockitoBean private EffectiveAgencySettingsLookup effectiveAgencySettings;
 
   private Consultant owner;
   private Consultant otherCounsellor;
@@ -101,6 +106,7 @@ class DirectLinkControllerIT {
     when(agencyService.getAgencyWithoutCaching(AGENCY_ID))
         .thenReturn(
             new AgencyDTO().id(AGENCY_ID).tenantId(TENANT_ID).consultingType(1).postcode("10115"));
+    allowDirectInvites(true, true, true);
     when(topicService.getTopicById(TOPIC_ID)).thenReturn(new TopicDTO().id(TOPIC_ID));
     when(topicService.getAllTopicsMap())
         .thenReturn(Map.of(TOPIC_ID, new TopicDTO().id(TOPIC_ID).name("Schulden")));
@@ -169,6 +175,96 @@ class DirectLinkControllerIT {
     asConsultant(delete("/users/directlinks/{id}", id)).andExpect(status().isNoContent());
     asConsultant(get("/users/directlinks")).andExpect(jsonPath("$", hasSize(0)));
     assertThat(linkRepository.findById(id)).isEmpty();
+  }
+
+  @Test
+  void switchedOffMedium_Should_BeRefusedAtCreation_WhileTheOtherMediaStillWork() throws Exception {
+    allowDirectInvites(true, true, false);
+    actAsConsultant(owner);
+
+    asConsultant(
+            post("/users/directlinks")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"medium\":\"VIDEO\",\"topicId\":" + TOPIC_ID + "}"))
+        .andExpect(status().isForbidden());
+    assertThat(linkRepository.findAll()).isEmpty();
+
+    createLink("CHAT");
+    createLink("AUDIO");
+    assertThat(linkRepository.findAll()).hasSize(2);
+  }
+
+  @Test
+  void withdrawnPermission_Should_StopAnExistingLink_AndReturnWhenPermissionReturns()
+      throws Exception {
+    actAsConsultant(owner);
+    long id = createLink("CHAT");
+    String token = linkRepository.findById(id).orElseThrow().getToken();
+    when(createNewSessionFacade.initializeNewSession(any(), any(User.class), anyList()))
+        .thenReturn(
+            new NewRegistrationResponseDto()
+                .matrixRoomId("!direct:example")
+                .sessionId(9_002L)
+                .status(HttpStatus.CREATED));
+
+    allowDirectInvites(false, true, true);
+    mvc.perform(get("/users/invitelinks/{token}/context", token))
+        .andExpect(status().isGone())
+        .andExpect(jsonPath("$.reason", is("DIRECT_LINK_INACTIVE")));
+    actAsAsker();
+    asAsker(post("/users/invitelinks/{token}/conversations", token))
+        .andExpect(status().isForbidden());
+    verify(createNewSessionFacade, never()).initializeNewSession(any(), any(User.class), anyList());
+    // Withdrawing is reversible: the link is kept, not deleted or switched off.
+    assertThat(linkRepository.findById(id)).get().extracting("status").isEqualTo("ACTIVE");
+
+    allowDirectInvites(true, true, true);
+    mvc.perform(get("/users/invitelinks/{token}/context", token)).andExpect(status().isOk());
+    asAsker(post("/users/invitelinks/{token}/conversations", token))
+        .andExpect(status().isCreated());
+  }
+
+  @Test
+  void switchedOffMedium_Should_NotLetACounsellorSwitchADisabledLinkBackOn() throws Exception {
+    actAsConsultant(owner);
+    long id = createLink("AUDIO");
+    asConsultant(
+            patch("/users/directlinks/{id}", id)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"active\":false}"))
+        .andExpect(status().isOk());
+
+    allowDirectInvites(true, false, true);
+    asConsultant(
+            patch("/users/directlinks/{id}", id)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"active\":true}"))
+        .andExpect(status().isForbidden());
+    assertThat(linkRepository.findById(id)).get().extracting("status").isEqualTo("DISABLED");
+  }
+
+  @Test
+  void unreadableOrMissingSwitch_Should_RefuseInsteadOfCreatingALink() throws Exception {
+    actAsConsultant(owner);
+    var create =
+        post("/users/directlinks")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"medium\":\"CHAT\",\"topicId\":" + TOPIC_ID + "}");
+
+    // The agency answered without the switch (an AgencyService from before the switches existed).
+    when(effectiveAgencySettings.findEffectiveSettings(anyLong(), anyLong()))
+        .thenReturn(Optional.of(new Settings()));
+    asConsultant(create).andExpect(status().isForbidden());
+
+    when(effectiveAgencySettings.findEffectiveSettings(anyLong(), anyLong()))
+        .thenReturn(Optional.empty());
+    asConsultant(create).andExpect(status().isForbidden());
+
+    when(effectiveAgencySettings.findEffectiveSettings(anyLong(), anyLong()))
+        .thenThrow(new org.springframework.web.client.ResourceAccessException("down"));
+    asConsultant(create).andExpect(status().isServiceUnavailable());
+
+    assertThat(linkRepository.findAll()).isEmpty();
   }
 
   @Test
@@ -404,6 +500,17 @@ class DirectLinkControllerIT {
                 .sessionId(sessionId)
                 .status(HttpStatus.CONFLICT));
     return linkRepository.findById(id).orElseThrow().getToken();
+  }
+
+  /** What the AgencyService serves as the effective "Direkteinladung erlauben" per chat type. */
+  private void allowDirectInvites(boolean chat, boolean audio, boolean video) {
+    when(effectiveAgencySettings.findEffectiveSettings(anyLong(), anyLong()))
+        .thenReturn(
+            Optional.of(
+                new Settings()
+                    .featureDirectInviteChatEnabled(chat)
+                    .featureDirectInviteAudioEnabled(audio)
+                    .featureDirectInviteVideoEnabled(video)));
   }
 
   private long createLink(String medium) throws Exception {

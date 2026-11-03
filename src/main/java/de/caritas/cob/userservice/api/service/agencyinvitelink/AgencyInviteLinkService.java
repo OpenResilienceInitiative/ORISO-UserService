@@ -65,6 +65,8 @@ public class AgencyInviteLinkService {
           .TemporaryAccountSettingsService
       temporaryAccountSettings;
 
+  private final @NonNull DirectInvitePolicy directInvitePolicy;
+
   /** Call share links (#1487) in the public context; not {@code @NonNull} for older test wiring. */
   private final CallShareLinkService callShareLinkService;
 
@@ -257,6 +259,14 @@ public class AgencyInviteLinkService {
     }
     if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now())) {
       throw new BadRequestException("Invite link expired");
+    }
+    // An admin who withdrew "Direkteinladung erlauben" stops the links that already exist.
+    if (InviteLinkChatType.isDirectMedium(link.getChatType())
+        && !directInvitePolicy.allows(
+            link.getTenantId(),
+            link.getAgencyId(),
+            InviteLinkChatType.valueOf(link.getChatType()))) {
+      throw new DirectLinkInactiveException();
     }
     TenantData previousTenant = TenantContext.getCurrentTenantData();
     try {

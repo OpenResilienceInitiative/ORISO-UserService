@@ -59,6 +59,8 @@ class AgencyInviteLinkServiceTest {
   private de.caritas.cob.userservice.api.service.temporaryaccount.TemporaryAccountSettingsService
       temporaryAccountSettings;
 
+  @Mock private DirectInvitePolicy directInvitePolicy;
+
   @InjectMocks private AgencyInviteLinkService service;
 
   @Mock private AdminScope adminScope;
@@ -325,6 +327,7 @@ class AgencyInviteLinkServiceTest {
     var membership = new de.caritas.cob.userservice.api.model.ConsultantAgency();
     membership.setAgencyId(5L);
     owner.setConsultantAgencies(java.util.Set.of(membership));
+    when(directInvitePolicy.allows(83L, 5L, InviteLinkChatType.CHAT)).thenReturn(true);
     when(repository.findByToken("direct")).thenReturn(Optional.of(link));
     when(repository.findByTokenAndStatus("direct", InviteLinkStatus.ACTIVE.name()))
         .thenReturn(Optional.of(link));
@@ -338,6 +341,27 @@ class AgencyInviteLinkServiceTest {
     assertThat(service.getContext("direct").agencyId()).isEqualTo(5L);
     assertThat(service.redeem("direct").getAgencyId()).isEqualTo(5L);
     assertThat(TenantContext.getCurrentTenant()).isNull();
+  }
+
+  /** "Direkteinladung erlauben" withdrawn: the link stays stored, but the page says it is off. */
+  @Test
+  void directLinkWithWithdrawnPermission_Should_ReadAsNoLongerActive() {
+    var link =
+        AgencyInviteLink.builder()
+            .token("direct")
+            .status(InviteLinkStatus.ACTIVE.name())
+            .tenantId(83L)
+            .linkKind(InviteLinkKind.COUNSELLOR.name())
+            .chatType(InviteLinkChatType.VIDEO.name())
+            .consultantId("owner")
+            .agencyId(5L)
+            .build();
+    when(repository.findByToken("direct")).thenReturn(Optional.of(link));
+    when(directInvitePolicy.allows(83L, 5L, InviteLinkChatType.VIDEO)).thenReturn(false);
+
+    assertThatThrownBy(() -> service.getContext("direct"))
+        .isInstanceOf(DirectLinkInactiveException.class);
+    verify(repository, org.mockito.Mockito.never()).save(any());
   }
 
   @Test
