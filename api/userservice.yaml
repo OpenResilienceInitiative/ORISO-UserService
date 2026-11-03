@@ -1811,6 +1811,38 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
+  /users/chat/internal-subset/recipients:
+    get:
+      tags:
+        - user-controller
+      summary: List eligible recipients for a private internal chat
+      operationId: listInternalSubsetChatRecipients
+      parameters:
+        - name: agencyId
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        200:
+          description: Eligible recipients
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/InternalChatRecipientDTO'
+        204:
+          description: No eligible recipients
+        401:
+          description: Unauthorized
+        403:
+          description: The caller cannot create an internal chat for this centre
+        503:
+          description: Internal chat is temporarily unavailable
+      security:
+        - Bearer: [ ]
   /users/chat/internal-subset:
     post:
       tags:
@@ -1818,7 +1850,9 @@ paths:
       summary: 'Open the members-only room for a subset of selected colleagues: a dedicated encrypted room with exactly the caller and the selected colleagues, created or reused [Authorization: Role: consultant with authority CREATE_NEW_CHAT]'
       description: >-
         Every selected colleague must be within the recipient scope of the caller's Träger (counselling centre, Träger or platform;
-        TenantService setting internalGroupChat.recipientScope, counselling centre when unset). One colleague outside the scope refuses
+        TenantService setting internalGroupChat.recipientScope, counselling centre when unset). Colleagues from other Träger require
+        platform scope on both Träger. Active platform admins without a Träger may be invited at any scope if they already have
+        an active chat identity. One colleague outside the scope refuses
         the whole request; nobody is dropped silently and no broader room is ever used. A room that holds exactly the same members is reused (200).
         The room is members-only: no other colleague can list, open or join it. Every error answers with the header and the body field
         X-Reason / reason set to one of the codes below.
@@ -5003,6 +5037,29 @@ components:
               type: string
               maxLength: 120
 
+    InternalChatRecipientDTO:
+      type: object
+      required: [consultantId, displayName, agencies]
+      properties:
+        consultantId:
+          type: string
+        displayName:
+          type: string
+        tenantName:
+          type: string
+        agencies:
+          type: array
+          items:
+            $ref: '#/components/schemas/InternalChatRecipientAgencyDTO'
+    InternalChatRecipientAgencyDTO:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
     InternalSubsetChatDTO:
       type: object
       required:

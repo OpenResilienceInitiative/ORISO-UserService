@@ -82,6 +82,9 @@ public interface ConsultantRepository
 
   List<Consultant> findByDeleteDateIsNull();
 
+  @EntityGraph(attributePaths = "consultantAgencies")
+  List<Consultant> findByDeleteDateIsNullAndManagedPausedFalseAndMatrixUserIdIsNotNull();
+
   List<Consultant> findByTenantIdAndDeleteDateIsNullOrderByFirstNameAscLastNameAsc(Long tenantId);
 
   List<Consultant> findAllByIdIn(List<String> ids);

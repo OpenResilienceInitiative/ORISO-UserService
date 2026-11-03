@@ -142,6 +142,22 @@ public class AgencyService {
     return emptyList();
   }
 
+  /**
+   * Public centre metadata for ids already authorised by the internal chat recipient policy. Using
+   * the recipient tenant and no caller token avoids forwarding the caller's tenant claim to a
+   * different tenant.
+   */
+  public List<AgencyDTO> getPublicAgenciesForTenant(Long tenantId, List<Long> agencyIds) {
+    var client = getAgencyControllerApi();
+    if (tenantId != null) {
+      client.getApiClient().addDefaultHeader("tenantId", tenantId.toString());
+    }
+    return client.getAgenciesByIds(agencyIds).stream()
+        .filter(agency -> java.util.Objects.equals(tenantId, agency.getTenantId()))
+        .map(this::fromOriginalAgency)
+        .toList();
+  }
+
   private AgencyControllerApi getAgencyControllerApi() {
     return agencyServiceApiControllerFactory.createControllerApi();
   }

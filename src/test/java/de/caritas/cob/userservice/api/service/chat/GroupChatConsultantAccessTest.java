@@ -229,7 +229,11 @@ class GroupChatConsultantAccessTest {
     assertThat(access.mayAccess(chat, otherTraeger)).isFalse();
 
     when(scopes.resolve(1L)).thenReturn(InternalGroupChatRecipientScope.PLATFORM);
+    when(scopes.resolve(2L)).thenReturn(InternalGroupChatRecipientScope.AGENCY);
     assertThat(access.mayAccess(chat, otherCentre)).isTrue();
+    assertThat(access.mayAccess(chat, otherTraeger)).isFalse();
+
+    when(scopes.resolve(2L)).thenReturn(InternalGroupChatRecipientScope.PLATFORM);
     assertThat(access.mayAccess(chat, otherTraeger)).isTrue();
   }
 
@@ -240,6 +244,7 @@ class GroupChatConsultantAccessTest {
     var otherTraeger = consultant("other-traeger", 2L, 300L);
     var sameCentre = consultant("same-centre", 1L, 100L);
     lenient().when(scopes.resolve(1L)).thenReturn(InternalGroupChatRecipientScope.PLATFORM);
+    when(scopes.resolve(2L)).thenReturn(InternalGroupChatRecipientScope.PLATFORM);
     when(participants.findBySeriesIdAndConsultantId(any(), any())).thenReturn(Optional.empty());
     when(participants.findBySeriesIdInAndConsultantId(any(), any())).thenReturn(List.of());
 
