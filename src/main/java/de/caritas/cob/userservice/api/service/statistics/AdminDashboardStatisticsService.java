@@ -32,6 +32,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
 import lombok.NonNull;
@@ -39,7 +40,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.env.Environment;
-import org.springframework.core.env.Profiles;
 import org.springframework.stereotype.Service;
 
 /**
@@ -89,8 +89,16 @@ public class AdminDashboardStatisticsService {
   private final @NonNull AdminDashboardStandService dashboardStands;
 
   /**
-   * Dev-only escape hatch for end-to-end testing with small test datasets. Fail-closed: when the
-   * prod profile is active, suppression stays enforced regardless of this property.
+   * Only the profiles for a developer's machine and the automated tests may switch suppression off,
+   * and only when no other profile is active next to them. Everything else - prod, staging, dev, a
+   * missing or a new profile - keeps it on.
+   */
+  private static final Set<String> SUPPRESSION_MAY_BE_DISABLED_ON = Set.of("local", "testing");
+
+  /**
+   * Escape hatch for end-to-end testing with small test datasets. Fail-closed: it only takes effect
+   * on the {@code local} and {@code testing} profiles; on any other profile, or none, suppression
+   * stays enforced regardless of this property.
    */
   @Value("${statistics.small-cell-suppression.enabled:true}")
   private boolean smallCellSuppressionEnabled = true;
@@ -430,20 +438,23 @@ public class AdminDashboardStatisticsService {
   }
 
   /**
-   * Small-cell suppression may only be switched off outside production. If the prod profile is
-   * active, the property is ignored and suppression stays enforced (fail-closed).
+   * Small-cell suppression may only be switched off when every active profile is local or testing.
+   * With any other profile active, or none, the property is ignored and suppression stays enforced
+   * (fail-closed).
    */
   private boolean resolveSuppressionActive() {
     if (smallCellSuppressionEnabled) {
       return true;
     }
-    if (environment.acceptsProfiles(Profiles.of("prod"))) {
+    var activeProfiles = Set.of(environment.getActiveProfiles());
+    if (activeProfiles.isEmpty() || !SUPPRESSION_MAY_BE_DISABLED_ON.containsAll(activeProfiles)) {
       log.warn(
-          "statistics.small-cell-suppression.enabled=false was requested, but the prod profile "
-              + "is active - small-cell suppression stays enforced (fail-closed)");
+          "statistics.small-cell-suppression.enabled=false was requested, but the active profiles "
+              + "are not only local or testing - small-cell suppression stays enforced "
+              + "(fail-closed)");
       return true;
     }
-    log.info("Small-cell suppression is DISABLED for admin statistics (non-production profile)");
+    log.info("Small-cell suppression is DISABLED for admin statistics (local or testing profile)");
     return false;
   }
 

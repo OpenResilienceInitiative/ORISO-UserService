@@ -607,6 +607,7 @@ class AdminDashboardStatisticsServiceTest {
         .thenReturn(List.of(groupCount(AGENCY_WITH_FEW_COUNSELORS, 2)));
     when(adminStatisticsRepository.countConsultantsForTenant(TENANT_ID)).thenReturn(1L);
     ReflectionTestUtils.setField(service, "smallCellSuppressionEnabled", false);
+    mockEnvironment.setActiveProfiles("testing");
 
     var dashboard = service.buildDashboard();
 
@@ -644,6 +645,57 @@ class AdminDashboardStatisticsServiceTest {
             .orElseThrow();
     assertThat(singleCounselorAgency.suppressed()).isTrue();
     assertThat(singleCounselorAgency.metrics()).isNull();
+  }
+
+  @Test
+  void buildDashboard_Should_EnforceSuppression_When_DisabledButNoProfileIsActive() {
+    assertSuppressionStaysOn();
+  }
+
+  @Test
+  void buildDashboard_Should_EnforceSuppression_When_DisabledOnDevStagingOrAnUnknownProfile() {
+    for (var profile : List.of("dev", "staging", "pre-dev", "something-new")) {
+      assertSuppressionStaysOn(profile);
+    }
+  }
+
+  @Test
+  void buildDashboard_Should_EnforceSuppression_When_DisabledButProdRunsAlongsideALocalProfile() {
+    assertSuppressionStaysOn("prod", "local");
+    assertSuppressionStaysOn("testing", "prod");
+  }
+
+  @Test
+  void buildDashboard_Should_SkipSuppression_When_DisabledOnTheLocalProfile() {
+    givenSingleCounsellorAgency();
+    ReflectionTestUtils.setField(service, "smallCellSuppressionEnabled", false);
+    mockEnvironment.setActiveProfiles("local");
+
+    assertThat(service.buildDashboard().suppressionDisabled()).isTrue();
+  }
+
+  private void assertSuppressionStaysOn(String... profiles) {
+    givenSingleCounsellorAgency();
+    ReflectionTestUtils.setField(service, "smallCellSuppressionEnabled", false);
+    mockEnvironment.setActiveProfiles(profiles);
+
+    var dashboard = service.buildDashboard();
+
+    assertThat(dashboard.suppressionDisabled()).as("profiles %s", List.of(profiles)).isFalse();
+    assertThat(dashboard.targets())
+        .filteredOn(target -> Long.valueOf(AGENCY_WITH_FEW_COUNSELORS).equals(target.agencyId()))
+        .hasSize(1)
+        .allSatisfy(target -> assertThat(target.suppressed()).isTrue());
+  }
+
+  private void givenSingleCounsellorAgency() {
+    givenTenantAdmin();
+    givenEmptyTenantScopedQueries();
+    when(adminStatisticsRepository.countConsultantsByAgency(TENANT_ID))
+        .thenReturn(List.of(groupCount(AGENCY_WITH_FEW_COUNSELORS, 1)));
+    when(adminStatisticsRepository.countActiveCasesByAgency(TENANT_ID))
+        .thenReturn(List.of(groupCount(AGENCY_WITH_FEW_COUNSELORS, 2)));
+    when(adminStatisticsRepository.countConsultantsForTenant(TENANT_ID)).thenReturn(1L);
   }
 
   @Test
