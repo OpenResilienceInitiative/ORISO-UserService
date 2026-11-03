@@ -7,11 +7,13 @@ import java.util.Optional;
 import java.util.function.Supplier;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 
 /** Replica-neutral API for claiming one scheduled execution for a bounded interval. */
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class ScheduledTaskClaimService {
 
@@ -63,6 +65,34 @@ public class ScheduledTaskClaimService {
   /** Runs one bounded operation while the lease row remains exclusively locked. */
   public boolean runIfHeld(ClaimLease lease, Runnable operation) {
     return claimWriter.runIfHeld(lease, operation);
+  }
+
+  /**
+   * Runs one sweep exclusively: takes a lease, runs the operation while the lease row is held and
+   * releases the lease afterwards so the next tick of any replica can run again.
+   *
+   * <p>The operation runs in the lease's own transaction, so it commits before the lease is
+   * released. A replica that loses the claim skips the run. The operation must still be idempotent:
+   * the lease prevents overlap, not a later re-run.
+   *
+   * @return {@code true} if this replica ran the operation
+   */
+  public boolean runIfClaimed(String taskName, Duration claimDuration, Runnable operation) {
+    var lease = tryClaimLease(taskName, claimDuration);
+    if (lease.isEmpty()) {
+      return false;
+    }
+    try {
+      return runIfHeld(lease.get(), operation);
+    } finally {
+      try {
+        release(lease.get());
+      } catch (RuntimeException releaseFailure) {
+        // The lease expires on its own; a failed release must not hide the operation's outcome.
+        log.warn(
+            "Could not release claim {} ({})", taskName, releaseFailure.getClass().getSimpleName());
+      }
+    }
   }
 
   public boolean release(ClaimLease lease) {

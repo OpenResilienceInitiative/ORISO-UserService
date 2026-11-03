@@ -16,6 +16,8 @@ import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.HandshakeAuditEventRepository;
 import de.caritas.cob.userservice.api.port.out.SupportRoomRepository;
+import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -39,6 +41,8 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class SupportRoomService {
 
+  public static final String SWEEP_TASK_NAME = "support-room-expiry-sweep";
+
   private static final String EVENT_ROOM_CREATED = "SUPPORT_ROOM_CREATED";
   private static final String EVENT_ROOM_CLOSED = "SUPPORT_ROOM_CLOSED";
   private static final String REASON_EXPIRED = "EXPIRED";
@@ -50,12 +54,16 @@ public class SupportRoomService {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull MatrixConfig matrixConfig;
+  private final @NonNull ScheduledTaskClaimService claims;
 
   @Value("${support.room-ttl-hours:4}")
   private long roomTtlHours;
 
   @Value("${support.room-sweep-batch-size:200}")
   private int sweepBatchSize;
+
+  @Value("${support.room-sweep-claim-duration:PT5M}")
+  private Duration sweepClaimDuration;
 
   /**
    * Creates the fresh encrypted 1:1 room for a confirmed SUPPORT_ACCESS handshake. Any failure here
@@ -156,10 +164,17 @@ public class SupportRoomService {
         .toList();
   }
 
-  /** ADR-018 hard cutoff: at four hours the lease ends even if the homeserver hiccups. */
+  /**
+   * ADR-018 hard cutoff: at four hours the lease ends even if the homeserver hiccups. Takes a
+   * shared lease ({@link ScheduledTaskClaimService}) so two overlapping instances do not both leave
+   * the Matrix room and audit the same close; the work commits inside the lease transaction.
+   */
   @Scheduled(fixedDelayString = "${support.room-sweep-delay-ms:60000}")
-  @Transactional
   public void sweepExpired() {
+    claims.runIfClaimed(SWEEP_TASK_NAME, sweepClaimDuration, this::closeLapsedRooms);
+  }
+
+  private void closeLapsedRooms() {
     supportRoomRepository
         .findAllByStatusAndExpiryDateBefore(
             SupportRoomStatus.ACTIVE,

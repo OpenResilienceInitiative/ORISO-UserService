@@ -117,4 +117,70 @@ class ScheduledTaskClaimServiceTest {
 
     assertThat(service.release(lease)).isTrue();
   }
+
+  @Test
+  void runIfClaimedShouldRunTheOperationUnderTheLeaseAndReleaseIt() {
+    var service = new ScheduledTaskClaimService(claimWriter);
+    var duration = Duration.ofMinutes(2);
+    var claimedUntil = LocalDateTime.of(2026, 10, 25, 12, 0);
+    var lease = new ScheduledTaskClaimService.ClaimLease("task", claimedUntil);
+    when(claimWriter.claimUntil("task", duration)).thenReturn(Optional.of(claimedUntil));
+    when(claimWriter.runIfHeld(
+            org.mockito.ArgumentMatchers.eq(lease), org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            invocation -> {
+              ((Runnable) invocation.getArgument(1)).run();
+              return true;
+            });
+    var ran = new java.util.concurrent.atomic.AtomicInteger();
+
+    assertThat(service.runIfClaimed("task", duration, ran::incrementAndGet)).isTrue();
+
+    assertThat(ran).hasValue(1);
+    verify(claimWriter).release("task", claimedUntil);
+  }
+
+  @Test
+  void runIfClaimedShouldSkipTheOperationWhenAnotherReplicaHoldsTheClaim() {
+    var service = new ScheduledTaskClaimService(claimWriter);
+    var duration = Duration.ofMinutes(2);
+    when(claimWriter.claimUntil("task", duration)).thenReturn(Optional.empty());
+    var ran = new java.util.concurrent.atomic.AtomicInteger();
+
+    assertThat(service.runIfClaimed("task", duration, ran::incrementAndGet)).isFalse();
+
+    assertThat(ran).hasValue(0);
+    verify(claimWriter, never())
+        .release(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  void runIfClaimedShouldReleaseTheLeaseWhenTheOperationFails() {
+    var service = new ScheduledTaskClaimService(claimWriter);
+    var duration = Duration.ofMinutes(2);
+    var claimedUntil = LocalDateTime.of(2026, 10, 25, 12, 0);
+    when(claimWriter.claimUntil("task", duration)).thenReturn(Optional.of(claimedUntil));
+    var failure = new IllegalStateException("boom");
+    when(claimWriter.runIfHeld(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+        .thenThrow(failure);
+
+    assertThatThrownBy(() -> service.runIfClaimed("task", duration, () -> {})).isSameAs(failure);
+
+    verify(claimWriter).release("task", claimedUntil);
+  }
+
+  @Test
+  void runIfClaimedShouldNotLetAFailedReleaseHideTheOperationResult() {
+    var service = new ScheduledTaskClaimService(claimWriter);
+    var duration = Duration.ofMinutes(2);
+    var claimedUntil = LocalDateTime.of(2026, 10, 25, 12, 0);
+    when(claimWriter.claimUntil("task", duration)).thenReturn(Optional.of(claimedUntil));
+    when(claimWriter.runIfHeld(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(true);
+    when(claimWriter.release("task", claimedUntil)).thenThrow(new CannotAcquireLockException("x"));
+
+    assertThat(service.runIfClaimed("task", duration, () -> {})).isTrue();
+  }
 }

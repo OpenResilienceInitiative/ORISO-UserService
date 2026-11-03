@@ -193,6 +193,7 @@ class RequiredCiContractTest(unittest.TestCase):
             "DeactivateGroupChatSchedulerMariaDbReplicaIT",
             "DeleteUserAccountSchedulerMariaDbReplicaIT",
             "DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT",
+            "ReplicaSweepClaimMariaDbIT",
             "SupportRoomMigrationConvergenceIT",
             "GroupChatMatrixCleanupAdoptionMariaDbIT",
         ):
@@ -315,6 +316,7 @@ class RequiredCiContractTest(unittest.TestCase):
         self.assertIn("DeactivateGroupChatSchedulerMariaDbReplicaIT", reusable)
         self.assertIn("DeleteUserAccountSchedulerMariaDbReplicaIT", reusable)
         self.assertIn("DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT", reusable)
+        self.assertIn("ReplicaSweepClaimMariaDbIT", reusable)
         self.assertNotIn("continue-on-error:", reusable)
 
         for relative_path in (
