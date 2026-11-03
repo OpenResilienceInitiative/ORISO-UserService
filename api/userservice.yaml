@@ -58,7 +58,7 @@ paths:
         '404':
           description: Invitation not found
         '410':
-          description: The direct link was switched off; body {"reason":"DIRECT_LINK_INACTIVE"}
+          description: The link was switched off; body {"reason":"DIRECT_LINK_INACTIVE"}
   /users/invitelinks/{token}/conversations:
     post:
       tags: [direct-link-controller]
@@ -4562,9 +4562,9 @@ components:
           readOnly: true
           description: >-
             Current account email collection capability for the authenticated asker. The account
-            master must allow collection; restrictive conversation-type permissions additionally
-            require an actually owned allowed session or joined self-help group. False while
-            current policy/context availability cannot be established. Absent for consultants.
+            master must allow collection, and the asker must own an eligible agency counselling
+            session or belong to an eligible self-help group. False while current policy or
+            context cannot be established. Absent for consultants.
         displayName:
           type: string
           example: Max M.

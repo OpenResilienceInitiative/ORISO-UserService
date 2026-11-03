@@ -527,6 +527,18 @@ components:
         featureAnonymousChatEnabled:
           type: boolean
           example: true
+        featureDirectInviteChatEnabled:
+          type: boolean
+          example: true
+          description: "Direkteinladung erlauben for chats (ADR-029 §6): may counsellors create and may guests redeem direct links. On the public agency response this is the effective value: Traeger AND Beratungsstelle; a Traeger 'off' always wins (ADR-013)."
+        featureDirectInviteAudioEnabled:
+          type: boolean
+          example: true
+          description: "Direkteinladung erlauben for audio calls (ADR-029 §6): may counsellors create and may guests redeem direct links. On the public agency response this is the effective value: Traeger AND Beratungsstelle; a Traeger 'off' always wins (ADR-013)."
+        featureDirectInviteVideoEnabled:
+          type: boolean
+          example: true
+          description: "Direkteinladung erlauben for video calls (ADR-029 §6): may counsellors create and may guests redeem direct links. On the public agency response this is the effective value: Traeger AND Beratungsstelle; a Traeger 'off' always wins (ADR-013)."
         featureCallsEnabled:
           type: boolean
           example: true

@@ -411,7 +411,7 @@ class CounsellorDirectLinkServiceTest {
     when(policy.allows(TENANT, AGENCY, InviteLinkChatType.AUDIO)).thenReturn(false);
 
     assertThatThrownBy(() -> service.startConversation("tok", asker("a")))
-        .isInstanceOf(ForbiddenException.class);
+        .isInstanceOf(DirectLinkInactiveException.class);
     verifyNoInteractions(createNewSessionFacade);
   }
 

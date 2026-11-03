@@ -563,7 +563,33 @@ class AdminDashboardStandIT {
     var body = dashboard(tenantAdmin());
     assertThat(JsonPath.<List<Boolean>>read(body, "$.targets[*].suppressed")).containsOnly(true);
     assertThat(JsonPath.<List<Object>>read(body, "$.targets[*].metrics")).containsOnlyNulls();
-    assertThat(JsonPath.<List<Integer>>read(body, "$.targets[*].counselorCount")).containsOnly(8);
+    assertThat(JsonPath.<List<Integer>>read(body, "$.targets[*].counselorCount")).containsOnly(0);
+  }
+
+  @Test
+  void aStoredStand_Should_NotLetTheTotalMinusTheShownRowsRevealAHiddenRow() throws Exception {
+    // 16 counsellors in total: 6 + 3 + 7 in the agencies. Hiding the 3 alone would leave it
+    // readable as total minus the two shown rows, so the smallest shown agency goes with it.
+    when(statistics.countConsultantsForTenant(anyLong())).thenReturn(16L);
+    when(statistics.countConsultantsByAgency(anyLong()))
+        .thenReturn(
+            List.of(groupCount(AGENCY, 6), groupCount(OTHER_AGENCY, 3), groupCount(13L, 7)));
+
+    var body = dashboard(tenantAdmin());
+
+    assertThat(JsonPath.<List<Boolean>>read(body, "$.targets[?(@.agencyId == 11)].suppressed"))
+        .containsExactly(true);
+    assertThat(JsonPath.<List<Boolean>>read(body, "$.targets[?(@.agencyId == 12)].suppressed"))
+        .containsExactly(true);
+    assertThat(JsonPath.<List<Boolean>>read(body, "$.targets[?(@.agencyId == 13)].suppressed"))
+        .containsExactly(false);
+    assertThat(
+            JsonPath.<List<Boolean>>read(body, "$.targets[?(@.targetType == 'TENANT')].suppressed"))
+        .containsExactly(false);
+    assertThat(stands.findAll().getFirst().getPayload())
+        .as("the stored stand holds no exact count of a hidden row")
+        .doesNotContain("\"counselorCount\":3")
+        .doesNotContain("\"counselorCount\":6");
   }
 
   @Test
@@ -624,15 +650,43 @@ class AdminDashboardStandIT {
   }
 
   @Test
-  void theScheduler_Should_SkipLiveRoles_AndRemoveTheirOldStands() throws Exception {
+  void theScheduler_Should_SkipLiveRoles_AndKeepTheirStands() throws Exception {
     scheduler().refreshStands();
 
     setInterval("tenantSnapshotInterval", "LIVE");
     scheduler().refreshStands();
 
+    // a stand is not thrown away while its role is live: switching back must not refresh it
     assertThat(stands.findAll())
         .extracting(stand -> stand.getScope())
-        .containsExactlyInAnyOrder("PLATFORM", "AGENCY");
+        .containsExactlyInAnyOrder("PLATFORM", "TENANT", "AGENCY");
+  }
+
+  @Test
+  void switchingToLiveAndBack_Should_NotRefreshTheStandOfThatCutoff() throws Exception {
+    assertThat(enquiries(dashboard(tenantAdmin()))).isEqualTo(23);
+
+    cases = 30;
+    setInterval("tenantSnapshotInterval", "LIVE");
+    scheduler().refreshStands();
+    assertThat(enquiries(dashboard(tenantAdmin()))).as("live").isEqualTo(30);
+
+    setInterval("tenantSnapshotInterval", "DAILY");
+    scheduler().refreshStands();
+    assertThat(enquiries(dashboard(tenantAdmin()))).as("back on the stand").isEqualTo(23);
+  }
+
+  @Test
+  void switchingToLiveAndBack_Should_GiveANewStand_AfterTheNextCutoff() throws Exception {
+    dashboard(tenantAdmin());
+    cases = 30;
+    setInterval("tenantSnapshotInterval", "LIVE");
+    scheduler().refreshStands();
+    setInterval("tenantSnapshotInterval", "DAILY");
+
+    clock.moveTo(Instant.parse("2026-11-05T05:00:00Z"));
+
+    assertThat(enquiries(dashboard(tenantAdmin()))).isEqualTo(30);
   }
 
   @Test

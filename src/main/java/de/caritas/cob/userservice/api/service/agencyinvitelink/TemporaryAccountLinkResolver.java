@@ -66,7 +66,7 @@ public class TemporaryAccountLinkResolver {
     }
     if (!directInvitePolicy.allows(
         link.getTenantId(), link.getAgencyId(), InviteLinkChatType.valueOf(link.getChatType()))) {
-      throw new ForbiddenException("Direct invitations are not allowed here");
+      throw new DirectLinkInactiveException();
     }
     DirectLinkOwner.requireStillServing(consultantRepository, link);
     return Optional.of(link);

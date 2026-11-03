@@ -129,6 +129,51 @@ class AdminStatisticsRepositoryMariaDbIT {
         .isEmpty();
   }
 
+  @Test
+  void activeCounsellorCountsShouldRunOnMariaDbAndCountTheSamePeople() {
+    seedConsultant("active", false, "ACTIVE", "CREATED");
+    seedConsultant("absent", true, "ACTIVE", "CREATED");
+    seedConsultant("leaving", false, "PENDING_DELETION", "CREATED");
+    seedConsultant("joining", false, "ACTIVE", "IN_PROGRESS");
+
+    assertThat(underTest.countConsultantsForTenant(TENANT_ID)).isEqualTo(1);
+    assertThat(underTest.countConsultantsByAgency(TENANT_ID))
+        .extracting(row -> row.getGroupId() + ":" + row.getTotal())
+        .containsExactly(AGENCY_ID + ":1");
+    assertThat(underTest.countConsultantsByTenant())
+        .extracting(row -> row.getGroupId() + ":" + row.getTotal())
+        .contains(TENANT_ID + ":1");
+  }
+
+  private void seedConsultant(
+      String name, boolean absent, String lifecycleState, String linkStatus) {
+    var id = "stats-1560-" + name;
+    entityManager
+        .createNativeQuery(
+            "INSERT INTO `consultant` (`consultant_id`, `username`, `first_name`, `last_name`, "
+                + "`email`, `is_absent`, `is_team_consultant`, `language_formal`, `tenant_id`, "
+                + "`status`, `deletion_lifecycle_state`) "
+                + "VALUES (:id, :id, 'A', 'B', :email, :absent, 0, 1, :tenantId, 'CREATED', "
+                + ":lifecycle)")
+        .setParameter("id", id)
+        .setParameter("email", id + "@example.test")
+        .setParameter("absent", absent ? 1 : 0)
+        .setParameter("tenantId", TENANT_ID)
+        .setParameter("lifecycle", lifecycleState)
+        .executeUpdate();
+    entityManager
+        .createNativeQuery(
+            "INSERT INTO `consultant_agency` (`id`, `consultant_id`, `agency_id`, `tenant_id`, "
+                + "`status`) VALUES (:relationId, :id, :agencyId, :tenantId, :status)")
+        .setParameter("relationId", 990_000L + Math.abs(name.hashCode() % 1000))
+        .setParameter("id", id)
+        .setParameter("agencyId", AGENCY_ID)
+        .setParameter("tenantId", TENANT_ID)
+        .setParameter("status", linkStatus)
+        .executeUpdate();
+    entityManager.flush();
+  }
+
   private void seedSingleSession(LocalDate day) {
     seedSingleSession(day, null);
   }

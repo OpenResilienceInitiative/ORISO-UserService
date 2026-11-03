@@ -23,23 +23,49 @@ class ErstantwortLocaleTest {
   })
   void freezesNewPlatformDefaultsInTheRequestedLanguage(String locale, String heading)
       throws Exception {
-    var context = ErstantwortContext.builder().locale(locale).responseDeadlineDays(7).build();
+    var context =
+        ErstantwortContext.builder()
+            .locale(locale)
+            .responseDeadlineDays(7)
+            .whoReadsAlongByTenant("Our own team text")
+            .build();
     var payload = payload(context);
     var readers = block(payload, "whoReadsAlong");
     assertThat(readers.path("headline").asText()).isEqualTo(heading);
+    assertThat(readers.path("body").asText()).isEqualTo("Our own team text");
     assertThat(block(payload, "responseDeadline").path("body").asText()).contains("7");
     assertThat(payload.toString()).doesNotContain("{{", "erstantwort.");
   }
 
   @Test
-  void germanLocaleWithInformalPreferenceFreezesInformalHeadlineAndBody() throws Exception {
-    var context = ErstantwortContext.builder().locale("de").informal(true).build();
+  void germanLocaleWithInformalPreferenceFreezesInformalHeadlineAndAuthoredBody() throws Exception {
+    var context =
+        ErstantwortContext.builder()
+            .locale("de")
+            .informal(true)
+            .whoReadsAlongByTenant("Unser Team liest mit.")
+            .build();
     var readers = block(payload(context), "whoReadsAlong");
     assertThat(readers.path("headline").asText()).isEqualTo("Wer Deine Nachricht liest");
-    assertThat(readers.path("body").asText())
-        .isEqualTo(
-            "Deine Nachricht lesen ausschließlich die Fachkräfte der zuständigen Beratungsstelle."
-                + " Alle sind zur Verschwiegenheit verpflichtet.");
+    assertThat(readers.path("body").asText()).isEqualTo("Unser Team liest mit.");
+  }
+
+  /** #1565: no localized platform sentence about who reads along may leak into a payload. */
+  @ParameterizedTest
+  @CsvSource({"de", "de@informal", "en", "fr", "ru", "tr", "ti"})
+  void withoutAnAuthoredTextNoLocaleSaysWhoReadsAlong(String locale) throws Exception {
+    var payload = payload(ErstantwortContext.builder().locale(locale).build());
+    for (var block : payload.path("bausteine")) {
+      assertThat(block.path("id").asText()).isNotEqualTo("whoReadsAlong");
+    }
+    var json = payload.toString();
+    var catalogue =
+        new ObjectMapper()
+            .readTree(getClass().getResourceAsStream("/erstantwort/" + locale + ".json"));
+    assertThat(json).doesNotContain(catalogue.path("whoReadsAlong").path("headline").asText());
+    // The catalogue holds no wording for it at all, so nobody can reconnect a claim by accident.
+    assertThat(catalogue.path("whoReadsAlong").has("body")).as(locale).isFalse();
+    assertThat(block(payload, "closing").path("body").asText()).isNotBlank();
   }
 
   @ParameterizedTest
@@ -59,6 +85,35 @@ class ErstantwortLocaleTest {
         .isEqualTo("FROZEN AGENCY TEXT");
     assertThat(block(payload, "closing").path("body").asText()).isEqualTo("FROZEN TOPIC TEXT");
     assertThat(block(payload, "freeNotice").path("body").asText()).isEqualTo("FROZEN FREE TEXT");
+  }
+
+  /** One predicate for builder and localisation: no-break and zero-width text is not authored. */
+  @ParameterizedTest
+  @CsvSource({"en", "fr", "de@informal"})
+  void textOfOnlyNoBreakOrZeroWidthCharactersCountsAsNotAuthoredEverywhere(String locale)
+      throws Exception {
+    var invisible = "\u00A0\u200B \u2007\uFEFF";
+    var context =
+        ErstantwortContext.builder()
+            .locale(locale)
+            .greetingByTopic(invisible)
+            .whoReadsAlongByTopic(invisible)
+            .closingByAgency(invisible)
+            .freeNoticeByTenant(invisible)
+            .emergencyAdditionByTenant(invisible)
+            .build();
+    var payload = payload(context);
+    var defaults = payload(ErstantwortContext.builder().locale(locale).build());
+    for (var id : java.util.List.of("greeting", "closing")) {
+      // Localised platform wording, identical to the case where nothing was authored.
+      assertThat(block(payload, id).path("body").asText())
+          .as(locale + " " + id)
+          .isEqualTo(block(defaults, id).path("body").asText());
+    }
+    for (var block : payload.path("bausteine")) {
+      assertThat(block.path("id").asText())
+          .isNotIn("whoReadsAlong", "freeNotice", "emergencyAddition");
+    }
   }
 
   @ParameterizedTest
@@ -85,6 +140,10 @@ class ErstantwortLocaleTest {
     var reference = mapper.readTree(getClass().getResourceAsStream("/erstantwort/en.json"));
     var actual =
         mapper.readTree(getClass().getResourceAsStream("/erstantwort/" + locale + ".json"));
+    // whoReadsAlong has no platform body any more (#1565): the builder cannot emit one, so the
+    // catalogues must not carry one. Every key the builder can still emit is checked below.
+    assertThat(reference.path("whoReadsAlong").has("body")).isFalse();
+    assertThat(actual.path("whoReadsAlong").has("body")).as(locale).isFalse();
     for (var field : (Iterable<String>) reference::fieldNames) {
       for (var leaf : (Iterable<String>) reference.path(field)::fieldNames) {
         assertThat(actual.path(field).path(leaf).asText(""))
@@ -116,6 +175,8 @@ class ErstantwortLocaleTest {
     for (var value : defaults.values()) {
       assertThat(String.valueOf(value)).isNotBlank();
     }
+    // #1565: the editor must not show a platform sentence the send path no longer sends.
+    assertThat(defaults).doesNotContainKey("whoReadsAlong");
   }
 
   private JsonNode payload(ErstantwortContext context) throws Exception {

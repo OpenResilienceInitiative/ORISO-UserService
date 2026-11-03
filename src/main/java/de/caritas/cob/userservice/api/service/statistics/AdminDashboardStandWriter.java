@@ -32,11 +32,6 @@ public class AdminDashboardStandWriter {
   }
 
   @Transactional(propagation = Propagation.REQUIRES_NEW)
-  public void deleteScope(String scope) {
-    repository.deleteByScope(scope);
-  }
-
-  @Transactional(propagation = Propagation.REQUIRES_NEW)
   public void deleteComputedBefore(LocalDateTime before) {
     repository.deleteComputedBefore(before);
   }
