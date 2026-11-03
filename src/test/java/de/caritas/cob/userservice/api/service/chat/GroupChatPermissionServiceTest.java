@@ -29,7 +29,18 @@ class GroupChatPermissionServiceTest {
 
   @BeforeEach
   void setUp() {
-    service = new GroupChatPermissionService(new GroupChatConsultantAccess(participantRepository));
+    var membersOnly =
+        new MembersOnlyChatAccess(
+            org.mockito.Mockito.mock(de.caritas.cob.userservice.api.port.out.ChatRepository.class),
+            participantRepository);
+    service =
+        new GroupChatPermissionService(
+            new GroupChatConsultantAccess(
+                participantRepository,
+                org.mockito.Mockito.mock(
+                    de.caritas.cob.userservice.api.service.chat
+                        .InternalGroupChatRecipientScopeResolver.class),
+                membersOnly));
   }
 
   @Test

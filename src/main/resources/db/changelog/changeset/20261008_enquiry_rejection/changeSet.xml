@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+ xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+ xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+ <changeSet id="20261008-enquiry-rejection" author="oriso">
+  <createTable tableName="enquiry_rejection">
+   <column name="session_id" type="bigint unsigned"><constraints primaryKey="true" nullable="false"/></column>
+   <column name="version" type="bigint"><constraints nullable="false"/></column>
+   <column name="tenant_id" type="bigint"><constraints nullable="false"/></column>
+   <column name="actor_id" type="varchar(36)"><constraints nullable="false"/></column>
+   <column name="seeker_id" type="varchar(64)"><constraints nullable="false"/></column>
+   <column name="agency_id" type="bigint"><constraints nullable="false"/></column>
+   <column name="primary_room_id" type="varchar(255)"/>
+   <column name="team_room_id" type="varchar(255)"/>
+   <column name="generation" type="varchar(36)"><constraints nullable="false"/></column>
+   <column name="rejected_at" type="datetime(6)"><constraints nullable="false"/></column>
+   <column name="closure_state" type="varchar(20)"><constraints nullable="false"/></column>
+   <column name="recipient_outcome" type="varchar(20)"><constraints nullable="false"/></column>
+   <column name="attempt_count" type="int"><constraints nullable="false"/></column>
+   <column name="last_attempt_at" type="datetime(6)"/>
+   <column name="next_attempt_at" type="datetime(6)"><constraints nullable="false"/></column>
+   <column name="claim_token" type="varchar(36)"/>
+   <column name="claim_until" type="datetime(6)"/>
+   <column name="failure_stage" type="varchar(32)"/>
+   <column name="confirmed_at" type="datetime(6)"/>
+  </createTable>
+  <addForeignKeyConstraint baseTableName="enquiry_rejection" baseColumnNames="session_id"
+   referencedTableName="session" referencedColumnNames="id" constraintName="fk_rejection_session" onDelete="CASCADE"/>
+  <createIndex tableName="enquiry_rejection" indexName="idx_rejection_retry">
+   <column name="closure_state"/><column name="next_attempt_at"/>
+  </createIndex>
+  <rollback><dropTable tableName="enquiry_rejection"/></rollback>
+ </changeSet>
+</databaseChangeLog>

@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -19,7 +20,7 @@ public interface ChatRepository extends CrudRepository<Chat, Long> {
           "SELECT c.id, c.topic, c.consulting_type, c.initial_start_date, c.start_date, "
               + "c.duration, c.is_repetitive, c.chat_interval, c.is_active, c.max_participants, "
               + "c.repeat_count, c.current_occurrence_index, c.timezone, c.modality, "
-              + "c.conversation_type, "
+              + "c.conversation_type, c.members_only, "
               + "c.consultant_id_owner, c.matrix_room_id, c.update_date, c.create_date, "
               + "c.hint_message, c.source_language, c.hint_message_translations, "
               + "c.group_chat_rules_translations, c.invite_token FROM chat c JOIN chat_agency ca ON c"
@@ -32,7 +33,7 @@ public interface ChatRepository extends CrudRepository<Chat, Long> {
           "SELECT c.id, c.topic, c.consulting_type, c.initial_start_date, c.start_date, "
               + "c.duration, c.is_repetitive, c.chat_interval, c.is_active, c.max_participants, "
               + "c.repeat_count, c.current_occurrence_index, c.timezone, c.modality, "
-              + "c.conversation_type, "
+              + "c.conversation_type, c.members_only, "
               + "c.consultant_id_owner, c.matrix_room_id, c.update_date, c.create_date, "
               + "c.hint_message, c.source_language, c.hint_message_translations, "
               + "c.group_chat_rules_translations, c.invite_token FROM chat c "
@@ -45,6 +46,24 @@ public interface ChatRepository extends CrudRepository<Chat, Long> {
   List<Chat> findByAgencyIds(@Param(value = "agency_ids") Set<Long> agencyIds);
 
   Optional<Chat> findByMatrixRoomId(String matrixRoomId);
+
+  /** Whether the room belongs to a members-only chat (#1418). */
+  boolean existsByMatrixRoomId(String matrixRoomId);
+
+  @Query("select c.matrixRoomId from Chat c where c.matrixRoomId in :room_ids")
+  Set<String> findExistingMatrixRoomIds(@Param("room_ids") Collection<String> roomIds);
+
+  boolean existsByMatrixRoomIdAndMembersOnlyTrue(String matrixRoomId);
+
+  /** Of these rooms, the ones that belong to a members-only chat (#1418). */
+  @Query(
+      "select c.matrixRoomId from Chat c where c.membersOnly = true and c.matrixRoomId in :room_ids")
+  Set<String> findMembersOnlyMatrixRoomIds(
+      @Param(value = "room_ids") Collection<String> matrixRoomIds);
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("select c from Chat c where c.matrixRoomId = :matrixRoomId")
+  Optional<Chat> findByMatrixRoomIdForUpdate(@Param("matrixRoomId") String matrixRoomId);
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("select c from Chat c where c.id = :chatId")

@@ -44,7 +44,11 @@ public class CaseHandoverRequest implements TenantAware {
     GRANTED,
     DENIED,
     CLIENT_CONSENT_DECLINED,
-    EXPIRED
+    EXPIRED,
+    /** The counsellor a takeover moved the case away from took it back. */
+    RECLAIMED,
+    /** The offering counsellor took a colleague offer back before it was settled. */
+    WITHDRAWN
   }
 
   public enum AccessType {
@@ -134,6 +138,10 @@ public class CaseHandoverRequest implements TenantAware {
 
   @Column(name = "expires_at")
   private LocalDateTime expiresAt;
+
+  /** When the co-access colleague used their one extension (#200); null = not extended. */
+  @Column(name = "extended_at")
+  private LocalDateTime extendedAt;
 
   /** True only when this handover, rather than department provisioning, added Matrix membership. */
   @Column(name = "matrix_membership_added")

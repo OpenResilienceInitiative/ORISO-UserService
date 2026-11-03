@@ -20,8 +20,10 @@ public class ReplyEmailDeliveryScheduler {
   private final @NonNull ReplyEmailDeliveryWriter writer;
   private final @NonNull AdviceSeekerReplyEmailService service;
   private final @NonNull FeedbackMessageEmailService feedback;
+  private final @NonNull InternalChatEmailService internalChat;
   private final @NonNull ScheduledTaskClaimService claims;
   private long lastObservedUncertainCount = -1;
+  private long lastObservedQuarantinedCount = -1;
 
   @Scheduled(fixedDelayString = "${notification.reply-email.retry-delay-ms:60000}")
   public void deliverPending() {
@@ -45,6 +47,7 @@ public class ReplyEmailDeliveryScheduler {
         }
         lastObservedUncertainCount = outstanding;
       }
+      reportQuarantined();
       writer.pendingIds().forEach(this::deliverSafely);
     } finally {
       TenantContext.clear();
@@ -58,6 +61,22 @@ public class ReplyEmailDeliveryScheduler {
     }
   }
 
+  private void reportQuarantined() {
+    long quarantined = writer.quarantinedCount();
+    if (quarantined == lastObservedQuarantinedCount) {
+      return;
+    }
+    if (quarantined > 0) {
+      log.error(
+          "{} reply-email deliveries are QUARANTINED; fix the tenant notification setup and"
+              + " requeue (docs/reply-email-quarantine.md)",
+          quarantined);
+    } else if (lastObservedQuarantinedCount > 0) {
+      log.info("No reply-email deliveries remain quarantined");
+    }
+    lastObservedQuarantinedCount = quarantined;
+  }
+
   private void deliverSafely(long id) {
     try {
       var kind = writer.kindOf(id);
@@ -67,6 +86,8 @@ public class ReplyEmailDeliveryScheduler {
       switch (kind.get()) {
         case FEEDBACK_INTENT -> feedback.resolveIntent(id);
         case FEEDBACK -> feedback.deliverPending(id);
+        case INTERNAL_INTENT -> internalChat.resolveIntent(id);
+        case INTERNAL -> internalChat.deliverPending(id);
         case ASKER, CONSULTANT -> service.deliverPending(id);
       }
     } catch (RuntimeException failure) {

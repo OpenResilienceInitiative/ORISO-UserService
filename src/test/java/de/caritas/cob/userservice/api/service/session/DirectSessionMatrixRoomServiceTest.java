@@ -42,6 +42,10 @@ class DirectSessionMatrixRoomServiceTest {
   @Mock private UserHelper userHelper;
   @Mock private ConsultantDisplayNameResolver consultantDisplayNameResolver;
 
+  @org.mockito.Spy
+  private de.caritas.cob.userservice.api.helper.UsernameTranscoder usernameTranscoder =
+      new de.caritas.cob.userservice.api.helper.UsernameTranscoder();
+
   private Session session;
   private Consultant consultant;
   private User user;
@@ -74,6 +78,18 @@ class DirectSessionMatrixRoomServiceTest {
   // ---------------------------------------------------------------------------
   // provisionRoomForDirectSession — guard clauses
   // ---------------------------------------------------------------------------
+
+  @Test
+  void missingConsultantIdentityUsesDecodedStoredUsername() throws Exception {
+    consultant.setUsername(usernameTranscoder.encodeUsername("Original.Name"));
+    consultant.setMatrixUserId(null);
+    when(userHelper.getRandomPassword()).thenReturn("pw");
+    when(consultantDisplayNameResolver.resolveMatrixDisplayName(consultant)).thenReturn("Name");
+    when(sessionRoomGateway.createUser("Original.Name", "pw", "Name")).thenReturn(CONSULTANT_MXID);
+    service.provisionRoomForDirectSession(session, consultant);
+    verify(sessionRoomGateway).createUser("Original.Name", "pw", "Name");
+    assertThat(consultant.getMatrixUserId()).isEqualTo(CONSULTANT_MXID);
+  }
 
   @Test
   void provisionRoomForDirectSession_Should_doNothing_When_sessionNull() throws Exception {

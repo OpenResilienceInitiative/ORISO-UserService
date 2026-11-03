@@ -45,6 +45,10 @@ class AdminUserFacadeTest {
 
   @Mock private AdminScope adminScope;
 
+  @Mock
+  private de.caritas.cob.userservice.api.admin.service.admin.AccountLoginStatusService
+      accountStatus;
+
   @Mock private AgencyAdminUserService agencyAdminUserService;
   @Mock private AdminAgencyRelationService adminAgencyRelationService;
   @Mock private AdminFilterService adminFilterService;

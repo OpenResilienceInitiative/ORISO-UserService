@@ -19,6 +19,7 @@ import de.caritas.cob.userservice.api.adapters.web.controller.CaseHandoverContro
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.admin.service.agency.AgencyAdminService;
 import de.caritas.cob.userservice.api.admin.service.agency.ConsultantAgencyAdminService;
 import de.caritas.cob.userservice.api.admin.service.agency.ConsultantAgencyDeletionValidationService;
@@ -61,6 +62,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityPasswordChangeRequirement
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityReactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
@@ -72,10 +74,12 @@ import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService;
 import de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairAction;
 import de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairService;
+import de.caritas.cob.userservice.api.service.CaseHandoverPolicyCacheService;
 import de.caritas.cob.userservice.api.service.CaseHandoverService;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.CaseHandoverEmailNotification;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationDeduplicationWriter;
@@ -219,6 +223,7 @@ class ConsultantTenantChangeMariaDbIT {
         IdentityPasswordUpdater.class,
         IdentityProfileLookup.class,
         IdentityProfileUpdater.class,
+        IdentityReactivator.class,
         IdentityRoleLookup.class,
         IdentityRoleUpdater.class,
         IdentitySecondFactor.class,
@@ -960,7 +965,7 @@ class ConsultantTenantChangeMariaDbIT {
   }
 
   private CaseHandoverService handoverService() {
-    var cache = mock(de.caritas.cob.userservice.api.service.CaseHandoverPolicyCacheService.class);
+    var cache = mock(CaseHandoverPolicyCacheService.class);
     var policy =
         new de.caritas.cob.userservice.tenantadminservice.generated.web.model
                 .CaseHandoverReasonPolicy()
@@ -981,11 +986,11 @@ class ConsultantTenantChangeMariaDbIT {
                     .value(
                         de.caritas.cob.userservice.tenantadminservice.generated.web.model
                             .CaseHandoverConsentValue.NONE));
-    when(cache.getEffective(OLD_TRAEGER))
-        .thenReturn(
-            new de.caritas.cob.userservice.tenantadminservice.generated.web.model
-                    .CaseHandoverPolicies()
-                .reasons(java.util.Map.of("COUNSELLOR_LEFT", policy)));
+    var policies =
+        new de.caritas.cob.userservice.tenantadminservice.generated.web.model.CaseHandoverPolicies()
+            .reasons(java.util.Map.of("COUNSELLOR_LEFT", policy));
+    when(cache.getCurrent(OLD_TRAEGER))
+        .thenReturn(new CaseHandoverPolicyCacheService.CurrentPolicy(true, policies));
 
     UserAccountService accounts = mock(UserAccountService.class);
     when(accounts.retrieveValidatedConsultant())
@@ -1024,7 +1029,10 @@ class ConsultantTenantChangeMariaDbIT {
         new de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver(),
         mock(de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService.class),
         java.time.Clock.systemUTC(),
-        transactionManager);
+        transactionManager,
+        agencyService,
+        mock(AdminScope.class),
+        mock(MembersOnlyChatAccess.class));
   }
 
   private static String matrixId(String consultantId) {

@@ -48,6 +48,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityPasswordChangeRequirement
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityReactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
@@ -139,6 +140,7 @@ class UserAdminAgencyScopeIT {
         IdentityAccountStatusLookup.class,
         IdentityAuthentication.class,
         IdentityDeactivator.class,
+        IdentityReactivator.class,
         IdentityDummyEmailUpdater.class,
         IdentityEmailAddressUpdater.class,
         IdentityEmailOwnerLookup.class,
@@ -628,7 +630,10 @@ class UserAdminAgencyScopeIT {
             id ->
                 withCsrf(
                     delete("/useradmin/consultants/" + id + "/agencies/" + FOREIGN_TENANT_AGENCY))),
-        route("POST deletion/pause", id -> pauseDeletion("consultants", id)));
+        route("POST deletion/pause", id -> pauseDeletion("consultants", id)),
+        route(
+            "POST deletion/cancel",
+            id -> withCsrf(post("/useradmin/consultants/" + id + "/deletion/cancel"))));
   }
 
   /** The picture routes check access in their own module and hide a foreign counsellor (404). */
@@ -832,6 +837,42 @@ class UserAdminAgencyScopeIT {
     mockMvc.perform(pauseDeletion("consultants", ownConsultant.getId())).andExpect(status().isOk());
 
     assertThat(pausedBy(ownConsultant)).isEqualTo(callingAgencyAdmin.getId());
+  }
+
+  @Test
+  @AsAgencyAdmin
+  void cancelConsultantDeletion_Should_Refuse_When_AgencyAdminCancelsCounsellorOfAnotherAgency()
+      throws Exception {
+    actAsAgencyAdmin();
+    markDeleted(otherAgencyConsultant);
+
+    var result =
+        mockMvc
+            .perform(
+                withCsrf(
+                    post(
+                        "/useradmin/consultants/"
+                            + otherAgencyConsultant.getId()
+                            + "/deletion/cancel")))
+            .andReturn();
+
+    assertThat(deleteDateOf(otherAgencyConsultant)).isNotNull();
+    assertStatus(result, 403);
+  }
+
+  @Test
+  @AsAgencyAdmin
+  void cancelConsultantDeletion_Should_Succeed_When_AgencyAdminCancelsCounsellorOfOwnAgency()
+      throws Exception {
+    actAsAgencyAdmin();
+    markDeleted(ownConsultant);
+
+    mockMvc
+        .perform(
+            withCsrf(post("/useradmin/consultants/" + ownConsultant.getId() + "/deletion/cancel")))
+        .andExpect(status().isOk());
+
+    assertThat(deleteDateOf(ownConsultant)).isNull();
   }
 
   @Test
@@ -1198,6 +1239,10 @@ class UserAdminAgencyScopeIT {
 
   private String pausedBy(User user) {
     return reload(user).getDeletionPausedBy();
+  }
+
+  private LocalDateTime deleteDateOf(Consultant consultant) {
+    return reload(consultant).getDeleteDate();
   }
 
   private LocalDateTime deleteDateOf(User user) {

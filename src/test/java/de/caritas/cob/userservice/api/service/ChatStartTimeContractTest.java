@@ -53,7 +53,19 @@ class ChatStartTimeContractTest {
   private static final LocalDateTime LONG_AGO = LocalDateTime.of(2020, 1, 1, 0, 0);
 
   @InjectMocks private ChatService chatService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
+
+  @Mock private de.caritas.cob.userservice.api.service.chat.MembersOnlyRevocation revocation;
+
+  @Mock private de.caritas.cob.userservice.api.actions.chat.MatrixChatShutdownService shutdown;
   @Mock private ChatRepository chatRepository;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.matrixgroup.GroupMatrixLifecycleCleanup
+      participationHistory;
+
   @Mock private ChatAgencyRepository chatAgencyRepository;
   @Mock private UserChatRepository chatUserRepository;
   @Mock private ConsultantService consultantService;

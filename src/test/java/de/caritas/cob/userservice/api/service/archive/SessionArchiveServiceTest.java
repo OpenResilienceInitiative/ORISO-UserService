@@ -4,9 +4,11 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.SESSION_ID
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
@@ -40,6 +42,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 public class SessionArchiveServiceTest {
 
   @InjectMocks SessionArchiveService sessionArchiveService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
+
   @Mock SessionRepository sessionRepository;
 
   @Mock
@@ -57,6 +63,10 @@ public class SessionArchiveServiceTest {
   AccountManager accountManager;
 
   @Mock StatisticsService statisticsService;
+
+  @Mock
+  de.caritas.cob.userservice.api.service.furthercounselling.TopicDuplicateService
+      topicDuplicateService;
 
   private LogbackCaptor logCaptor;
 
@@ -112,6 +122,42 @@ public class SessionArchiveServiceTest {
 
           verify(session, times(0)).setStatus(SessionStatus.IN_ARCHIVE);
         });
+  }
+
+  @Test
+  public void archiveAndDearchive_Should_AskToStopTheChat_ForTheSessionOfAMembersOnlyChat() {
+    Session session = Mockito.mock(Session.class);
+    when(session.isAdvised(any())).thenReturn(true);
+    when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
+    when(membersOnlyChatAccess.concerns(session)).thenReturn(true);
+
+    for (Runnable change :
+        java.util.List.<Runnable>of(
+            () -> sessionArchiveService.archiveSession(SESSION_ID),
+            () -> sessionArchiveService.dearchiveSession(SESSION_ID))) {
+      var refused =
+          assertThrows(
+              de.caritas.cob.userservice.api.exception.httpresponses
+                  .CustomValidationHttpStatusException.class,
+              change::run);
+      org.junit.jupiter.api.Assertions.assertEquals(
+          org.springframework.http.HttpStatus.CONFLICT, refused.getHttpStatus());
+      org.junit.jupiter.api.Assertions.assertEquals(
+          "MEMBERS_ONLY_CHAT_STOP_REQUIRED", refused.getCustomHttpHeaders().getFirst("X-Reason"));
+    }
+    verify(session, times(0)).setStatus(any());
+    verify(sessionRepository, times(0)).save(any());
+  }
+
+  @Test
+  public void archiveSession_Should_RefuseANonParticipantOfAMembersOnlyChatWith403() {
+    Session session = Mockito.mock(Session.class);
+    when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
+    when(membersOnlyChatAccess.excludes(
+            any(Session.class), org.mockito.ArgumentMatchers.<String>any()))
+        .thenReturn(true);
+
+    assertThrows(ForbiddenException.class, () -> sessionArchiveService.archiveSession(SESSION_ID));
   }
 
   @Test
@@ -294,5 +340,110 @@ public class SessionArchiveServiceTest {
     sessionArchiveService.dearchiveSession(SESSION_ID);
 
     verify(session, times(1)).setStatus(SessionStatus.IN_PROGRESS);
+  }
+
+  // ── FE#1876 S6: ending a same-topic duplicate ────────────────────────────
+
+  private Session acceptedSession(long id, String askerId) {
+    var asker = new User();
+    asker.setUserId(askerId);
+    var session = new Session();
+    session.setId(id);
+    session.setUser(asker);
+    session.setStatus(SessionStatus.IN_PROGRESS);
+    session.setMainTopicId(3L);
+    session.setPostcode("79098");
+    return session;
+  }
+
+  @Test
+  public void endTopicDuplicate_Should_ArchiveAndNoticeTheOlderRoom() {
+    var newer = acceptedSession(SESSION_ID, "asker");
+    var older = acceptedSession(1L, "asker");
+    when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(newer));
+    when(authenticatedUser.getUserId()).thenReturn("asker");
+    when(topicDuplicateService.olderActiveSameTopicSessions(newer))
+        .thenReturn(java.util.List.of(older));
+
+    sessionArchiveService.endTopicDuplicate(SESSION_ID);
+
+    assertThat(newer.getStatus()).isEqualTo(SessionStatus.IN_ARCHIVE);
+    verify(sessionRepository).save(newer);
+    verify(topicDuplicateService).notifyDuplicateEnded(java.util.List.of(older), 3L);
+  }
+
+  @Test
+  public void endTopicDuplicate_Should_BeForbidden_ForSomebodyElse() {
+    var newer = acceptedSession(SESSION_ID, "asker");
+    when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(newer));
+    when(authenticatedUser.getUserId()).thenReturn("another-asker");
+
+    assertThrows(
+        ForbiddenException.class, () -> sessionArchiveService.endTopicDuplicate(SESSION_ID));
+    verify(sessionRepository, times(0)).save(any());
+  }
+
+  @Test
+  public void endTopicDuplicate_Should_Conflict_WhenThereIsNoOlderSameTopicSession() {
+    var only = acceptedSession(SESSION_ID, "asker");
+    when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(only));
+    when(authenticatedUser.getUserId()).thenReturn("asker");
+    when(topicDuplicateService.olderActiveSameTopicSessions(only)).thenReturn(java.util.List.of());
+
+    assertThrows(
+        ConflictException.class, () -> sessionArchiveService.endTopicDuplicate(SESSION_ID));
+    verify(sessionRepository, times(0)).save(any());
+  }
+
+  @Test
+  public void endTopicDuplicate_Should_Conflict_WhenTheSessionIsNotInProgress() {
+    var archived = acceptedSession(SESSION_ID, "asker");
+    archived.setStatus(SessionStatus.IN_ARCHIVE);
+    when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(archived));
+    when(authenticatedUser.getUserId()).thenReturn("asker");
+
+    assertThrows(
+        ConflictException.class, () -> sessionArchiveService.endTopicDuplicate(SESSION_ID));
+  }
+
+  @Test
+  public void archiveSession_Should_NoticeTheOlderRoom_WhenACounsellorArchivesTheNewerDuplicate() {
+    var newer = acceptedSession(SESSION_ID, "asker");
+    var older = acceptedSession(1L, "asker");
+    when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(newer));
+    when(authenticatedUser.getUserId()).thenReturn("counsellor");
+    var counsellor = new de.caritas.cob.userservice.api.model.Consultant();
+    counsellor.setId("counsellor");
+    newer.setConsultant(counsellor);
+    when(topicDuplicateService.olderActiveSameTopicSessions(newer))
+        .thenReturn(java.util.List.of(older));
+
+    sessionArchiveService.archiveSession(SESSION_ID);
+
+    verify(topicDuplicateService).notifyDuplicateEnded(java.util.List.of(older), 3L);
+  }
+
+  @Test
+  public void archiveSession_Should_SendNoDuplicateNotice_ForAnOrdinarySession() {
+    var only = acceptedSession(SESSION_ID, "asker");
+    when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(only));
+    when(authenticatedUser.getUserId()).thenReturn("asker");
+    when(topicDuplicateService.olderActiveSameTopicSessions(only)).thenReturn(java.util.List.of());
+
+    sessionArchiveService.archiveSession(SESSION_ID);
+
+    verify(topicDuplicateService, times(0)).notifyDuplicateEnded(any(), anyLong());
+  }
+
+  @Test
+  public void archiveSession_Should_SkipTheTopicLookup_WhenTheSessionHasNoTopic() {
+    var only = acceptedSession(SESSION_ID, "asker");
+    only.setMainTopicId(null);
+    when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(only));
+    when(authenticatedUser.getUserId()).thenReturn("asker");
+
+    sessionArchiveService.archiveSession(SESSION_ID);
+
+    verifyNoInteractions(topicDuplicateService);
   }
 }

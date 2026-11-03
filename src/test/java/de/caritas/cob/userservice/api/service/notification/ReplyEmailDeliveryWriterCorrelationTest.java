@@ -80,10 +80,13 @@ class ReplyEmailDeliveryWriterCorrelationTest {
     assertThat(saved.getValue().getRecipientUserId()).isEqualTo("consultant-id");
   }
 
-  @Test
-  void crashedIntentCanRetryWithoutTreatingItAsAnUncertainSmtpOutcome() {
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = RecipientKind.class,
+      names = {"FEEDBACK_INTENT", "INTERNAL_INTENT"})
+  void crashedIntentCanRetryWithoutTreatingItAsAnUncertainSmtpOutcome(RecipientKind kind) {
     var intent = new ReplyEmailDelivery();
-    intent.setRecipientKind(RecipientKind.FEEDBACK_INTENT);
+    intent.setRecipientKind(kind);
     intent.setStatus(ReplyEmailDelivery.Status.SENDING);
     var mail = new ReplyEmailDelivery();
     mail.setRecipientKind(RecipientKind.FEEDBACK);

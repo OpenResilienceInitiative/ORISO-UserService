@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.workflow.delete.service;
 import static java.util.Collections.singletonList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
@@ -37,6 +38,7 @@ import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteMa
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -98,6 +100,10 @@ class DeleteUserAccountServiceActionCoverageTest {
 
   @Mock private DeletionLifecycleService deletionLifecycleService;
 
+  @Mock private UserHardDeleteClaimService userHardDeleteClaimService;
+
+  @Mock private ConsultantHardDeleteClaimService consultantHardDeleteClaimService;
+
   @Mock private ActionContainer<AskerDeletionWorkflowDTO> askerContainer;
 
   @Mock private ActionContainer<ConsultantDeletionWorkflowDTO> consultantContainer;
@@ -105,12 +111,19 @@ class DeleteUserAccountServiceActionCoverageTest {
   @BeforeEach
   void setupLifecycleMocks() {
     lenient()
-        .when(deletionLifecycleService.normalizeUserLifecycle(any(User.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
-    lenient()
         .when(deletionLifecycleService.normalizeConsultantLifecycle(any(Consultant.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
-    lenient().when(deletionLifecycleService.isReadyForHardDelete(any(User.class))).thenReturn(true);
+    lenient()
+        .when(userHardDeleteClaimService.claim(any()))
+        .thenAnswer(invocation -> Optional.of(new User()));
+    lenient()
+        .when(consultantHardDeleteClaimService.claim(anyString()))
+        .thenAnswer(
+            invocation -> {
+              var claimed = new Consultant();
+              claimed.setId(invocation.getArgument(0));
+              return Optional.of(claimed);
+            });
     lenient()
         .when(deletionLifecycleService.isReadyForHardDelete(any(Consultant.class)))
         .thenReturn(true);
@@ -132,8 +145,10 @@ class DeleteUserAccountServiceActionCoverageTest {
 
   @Test
   void consultantDeletion_registersEveryActionOfTheChain_inOrder() {
+    var consultant = new Consultant();
+    consultant.setId("chain-consultant");
     when(this.consultantRepository.findAllByDeleteDateNotNull())
-        .thenReturn(singletonList(new Consultant()));
+        .thenReturn(singletonList(consultant));
     when(this.actionsRegistry.buildContainerForType(ConsultantDeletionWorkflowDTO.class))
         .thenReturn(this.consultantContainer);
     when(this.consultantContainer.addActionToExecute(any())).thenReturn(this.consultantContainer);

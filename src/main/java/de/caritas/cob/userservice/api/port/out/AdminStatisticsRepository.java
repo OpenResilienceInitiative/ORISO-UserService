@@ -40,6 +40,22 @@ public interface AdminStatisticsRepository extends Repository<Session, Long> {
     Long getTotal();
   }
 
+  /**
+   * New sessions per hour in the stored time (UTC). A fixed stand counts German calendar days, and
+   * only the Java side can turn an hour into its German day the same way on every database.
+   */
+  interface HourlyCountProjection {
+    Long getGroupId();
+
+    /** See {@link DailyCountProjection#getDay()} for why this is a {@link LocalDate}. */
+    LocalDate getDay();
+
+    /** {@link Number}: the concrete type of {@code EXTRACT} differs between the databases. */
+    Number getHourOfDay();
+
+    Long getTotal();
+  }
+
   interface TopicCountProjection {
     Long getGroupId();
 
@@ -89,6 +105,21 @@ public interface AdminStatisticsRepository extends Repository<Session, Long> {
               + "GROUP BY s.agency_id, CAST(s.create_date AS DATE)")
   List<DailyCountProjection> countDailyNewSessionsByAgency(
       @Param("tenantId") Long tenantId, @Param("fromDate") LocalDateTime fromDate);
+
+  @Query(
+      nativeQuery = true,
+      value =
+          "SELECT s.agency_id AS groupId, CAST(s.create_date AS DATE) AS day, "
+              + "EXTRACT(HOUR FROM s.create_date) AS hourOfDay, COUNT(*) AS total "
+              + "FROM session s "
+              + "WHERE s.tenant_id = :tenantId "
+              + "AND s.create_date >= :fromDate AND s.create_date < :toDate "
+              + "GROUP BY s.agency_id, CAST(s.create_date AS DATE), "
+              + "EXTRACT(HOUR FROM s.create_date)")
+  List<HourlyCountProjection> countHourlyNewSessionsByAgency(
+      @Param("tenantId") Long tenantId,
+      @Param("fromDate") LocalDateTime fromDate,
+      @Param("toDate") LocalDateTime toDate);
 
   @Query(
       nativeQuery = true,
@@ -188,6 +219,19 @@ public interface AdminStatisticsRepository extends Repository<Session, Long> {
               + "GROUP BY s.tenant_id, CAST(s.create_date AS DATE)")
   List<DailyCountProjection> countDailyNewSessionsByTenant(
       @Param("fromDate") LocalDateTime fromDate);
+
+  @Query(
+      nativeQuery = true,
+      value =
+          "SELECT s.tenant_id AS groupId, CAST(s.create_date AS DATE) AS day, "
+              + "EXTRACT(HOUR FROM s.create_date) AS hourOfDay, COUNT(*) AS total "
+              + "FROM session s "
+              + "WHERE s.tenant_id IS NOT NULL "
+              + "AND s.create_date >= :fromDate AND s.create_date < :toDate "
+              + "GROUP BY s.tenant_id, CAST(s.create_date AS DATE), "
+              + "EXTRACT(HOUR FROM s.create_date)")
+  List<HourlyCountProjection> countHourlyNewSessionsByTenant(
+      @Param("fromDate") LocalDateTime fromDate, @Param("toDate") LocalDateTime toDate);
 
   @Query(
       nativeQuery = true,

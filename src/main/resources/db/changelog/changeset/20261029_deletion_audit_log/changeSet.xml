@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- Deletion log (OBP 2.1 feature #130, "Meta-logging of deletions"): who deleted what, when,
+       with which outcome. Deliberately only opaque ids, role/type labels and the outcome - no
+       names, e-mail addresses or messages, so the row is not personal data of the deleted
+       person beyond the id that already survives in identity_tombstone. No foreign keys: the
+       entry must outlive the account it describes. -->
+  <changeSet id="20261029-deletion-audit-log" author="oriso">
+    <createTable tableName="deletion_audit_log">
+      <column name="id" type="BIGINT" autoIncrement="true">
+        <constraints primaryKey="true" nullable="false"/>
+      </column>
+      <column name="actor_id" type="VARCHAR(64)"/>
+      <column name="actor_role" type="VARCHAR(32)">
+        <constraints nullable="false"/>
+      </column>
+      <column name="target_type" type="VARCHAR(32)">
+        <constraints nullable="false"/>
+      </column>
+      <column name="target_id" type="VARCHAR(64)">
+        <constraints nullable="false"/>
+      </column>
+      <column name="tenant_id" type="BIGINT"/>
+      <column name="outcome" type="VARCHAR(16)">
+        <constraints nullable="false"/>
+      </column>
+      <column name="create_date" type="DATETIME">
+        <constraints nullable="false"/>
+      </column>
+    </createTable>
+    <createIndex tableName="deletion_audit_log" indexName="idx_deletion_audit_log_created">
+      <column name="create_date"/>
+    </createIndex>
+    <createIndex tableName="deletion_audit_log" indexName="idx_deletion_audit_log_target">
+      <column name="target_type"/>
+      <column name="target_id"/>
+    </createIndex>
+    <rollback>
+      <dropTable tableName="deletion_audit_log"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

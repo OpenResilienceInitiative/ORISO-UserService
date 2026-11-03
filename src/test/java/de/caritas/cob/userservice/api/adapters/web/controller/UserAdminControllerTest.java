@@ -2,9 +2,12 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminDTO;
@@ -13,6 +16,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyConsultantResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyTypeDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AskerReactivationRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAgencyResponseDTO;
@@ -42,6 +46,7 @@ import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenera
 import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService;
 import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPreferenceService;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.SearchFilter;
@@ -52,7 +57,9 @@ import java.lang.reflect.Method;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -98,24 +105,25 @@ class UserAdminControllerTest {
             grantConsultantIdentityService,
             userIdentitiesService,
             adminListPreferenceService,
-            accountSetupIssuer);
+            accountSetupIssuer,
+            mock(de.caritas.cob.userservice.api.helper.UserHelper.class));
   }
 
   @Test
   void createTenantAdmin_emailIsLowercased_beforeDelegation() {
     // Business reason: admin account e-mails must be normalized to avoid duplicate identities by
-    // case.
+    // case, independently of the host JVM locale.
     var dto = new CreateAdminDTO();
-    dto.setEmail("UPPER@EXAMPLE.ORG");
+    dto.setEmail("IDENTITY@EXAMPLE.ORG");
     when(adminUserFacade.createNewTenantAdmin(any()))
         .thenReturn(new AdminResponseDTO().embedded(new AdminDTO().id("admin-11")));
 
-    var response = controller.createTenantAdmin(dto);
+    var response = withTurkishDefaultLocale(() -> controller.createTenantAdmin(dto));
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     var captor = ArgumentCaptor.forClass(CreateAdminDTO.class);
     verify(adminUserFacade).createNewTenantAdmin(captor.capture());
-    assertEquals("upper@example.org", captor.getValue().getEmail());
+    assertEquals("identity@example.org", captor.getValue().getEmail());
   }
 
   @Test
@@ -138,6 +146,38 @@ class UserAdminControllerTest {
     var captor = ArgumentCaptor.forClass(CreateAdminDTO.class);
     verify(adminUserFacade).createNewAgencyAdmin(captor.capture());
     assertEquals("upper@example.org", captor.getValue().getEmail());
+  }
+
+  @Test
+  void createAdminAndConsultant_Should_rejectAPasswordShorterThan16_beforeDelegation() {
+    // #1272: the published contract still says minLength 8, so the server must refuse 15
+    // characters itself, or an admin screen could create an account a later screen refuses.
+    var tenantAdmin = new CreateAdminDTO();
+    tenantAdmin.setEmail("tenant@example.org");
+    tenantAdmin.setPassword("a".repeat(15));
+    var agencyAdmin = new CreateAdminDTO();
+    agencyAdmin.setEmail("agency@example.org");
+    agencyAdmin.setPassword("a".repeat(15));
+    var consultant = new CreateConsultantDTO();
+    consultant.setEmail("consultant@example.org");
+    consultant.setUsername("user");
+    consultant.setPassword("a".repeat(15));
+
+    assertThrows(BadRequestException.class, () -> controller.createTenantAdmin(tenantAdmin));
+    assertThrows(BadRequestException.class, () -> controller.createAgencyAdmin(agencyAdmin));
+    assertThrows(BadRequestException.class, () -> controller.createConsultant(consultant));
+    verifyNoInteractions(adminUserFacade, consultantAdminFacade, accountSetupIssuer);
+  }
+
+  @Test
+  void createTenantAdmin_Should_acceptAPasswordOfExactly16() {
+    var dto = new CreateAdminDTO();
+    dto.setEmail("tenant@example.org");
+    dto.setPassword("a".repeat(16));
+    when(adminUserFacade.createNewTenantAdmin(any()))
+        .thenReturn(new AdminResponseDTO().embedded(new AdminDTO().id("admin-13")));
+
+    assertEquals(HttpStatus.OK, controller.createTenantAdmin(dto).getStatusCode());
   }
 
   @Test
@@ -227,18 +267,18 @@ class UserAdminControllerTest {
   @Test
   void createConsultant_emailIsLowercased_beforeDelegation() {
     var dto = new CreateConsultantDTO();
-    dto.setEmail("UPPER@EXAMPLE.ORG");
+    dto.setEmail("IDENTITY@EXAMPLE.ORG");
     dto.setUsername("user");
     when(consultantAdminFacade.createNewConsultant(any()))
         .thenReturn(
             new ConsultantAdminResponseDTO().embedded(new ConsultantDTO().id("consultant-1")));
 
-    var response = controller.createConsultant(dto);
+    var response = withTurkishDefaultLocale(() -> controller.createConsultant(dto));
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     var captor = ArgumentCaptor.forClass(CreateConsultantDTO.class);
     verify(consultantAdminFacade).createNewConsultant(captor.capture());
-    assertEquals("upper@example.org", captor.getValue().getEmail());
+    assertEquals("identity@example.org", captor.getValue().getEmail());
     verify(accountSetupIssuer)
         .issueAfterCreation(AccountInviteTargetRole.COUNSELLOR, "consultant-1", dto.getPassword());
   }
@@ -340,16 +380,16 @@ class UserAdminControllerTest {
   @Test
   void updateConsultant_emailIsLowercased_beforeDelegation() {
     var dto = new UpdateAdminConsultantDTO();
-    dto.setEmail("CASE@EXAMPLE.ORG");
+    dto.setEmail("IDENTITY@EXAMPLE.ORG");
     when(consultantAdminFacade.updateConsultant(eq("c-1"), any()))
         .thenReturn(new ConsultantAdminResponseDTO());
 
-    var response = controller.updateConsultant("c-1", dto);
+    var response = withTurkishDefaultLocale(() -> controller.updateConsultant("c-1", dto));
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     var captor = ArgumentCaptor.forClass(UpdateAdminConsultantDTO.class);
     verify(consultantAdminFacade).updateConsultant(eq("c-1"), captor.capture());
-    assertEquals("case@example.org", captor.getValue().getEmail());
+    assertEquals("identity@example.org", captor.getValue().getEmail());
   }
 
   @Test
@@ -429,6 +469,16 @@ class UserAdminControllerTest {
   }
 
   @Test
+  void reactivateAsker_shouldDelegateAndReturnNoContent() {
+    var request = new AskerReactivationRequestDTO();
+
+    var response = controller.reactivateAsker(request);
+
+    assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
+    verify(askerUserAdminFacade).reactivateAsker(request);
+  }
+
+  @Test
   void pauseAskerDeletion_Should_delegateWithAuthenticatedUser() {
     var request = new DeletionPauseRequestDTO();
     request.setReason("hold");
@@ -455,14 +505,17 @@ class UserAdminControllerTest {
   @Test
   void createAgencyAdmin_Should_delegate() {
     var dto = new CreateAdminDTO();
-    dto.setEmail("a@x.org");
+    dto.setEmail("IDENTITY@EXAMPLE.ORG");
     var expected = new AdminResponseDTO().embedded(new AdminDTO().id("admin-13"));
-    when(adminUserFacade.createNewAgencyAdmin(dto)).thenReturn(expected);
+    when(adminUserFacade.createNewAgencyAdmin(any())).thenReturn(expected);
 
-    var response = controller.createAgencyAdmin(dto);
+    var response = withTurkishDefaultLocale(() -> controller.createAgencyAdmin(dto));
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals(expected, response.getBody());
+    var captor = ArgumentCaptor.forClass(CreateAdminDTO.class);
+    verify(adminUserFacade).createNewAgencyAdmin(captor.capture());
+    assertEquals("identity@example.org", captor.getValue().getEmail());
   }
 
   @Test
@@ -628,5 +681,23 @@ class UserAdminControllerTest {
     assertEquals(
         "jakarta.validation.Valid",
         askerPause.getParameters()[1].getAnnotations()[0].annotationType().getName());
+  }
+
+  private <T> T withTurkishDefaultLocale(Supplier<T> action) {
+    Locale originalLocale = Locale.getDefault();
+    try {
+      Locale.setDefault(Locale.forLanguageTag("tr-TR"));
+      return action.get();
+    } finally {
+      Locale.setDefault(originalLocale);
+    }
+  }
+
+  @Test
+  void cancelConsultantDeletion_Should_delegate() {
+    var response = controller.cancelConsultantDeletion("c-1");
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    verify(consultantAdminFacade).cancelConsultantDeletion("c-1");
   }
 }

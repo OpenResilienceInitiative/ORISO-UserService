@@ -82,7 +82,7 @@ public class TopicConsultantRoutingService {
 
     var availableConsultantIds =
         new ArrayList<>(
-            consultantActivityRegistry.filterActive(activeConsultantIds, activeWindowMs));
+            consultantActivityRegistry.filterActiveOrThrow(activeConsultantIds, activeWindowMs));
     diagnosticMetrics.recordRouting(
         RoutingStage.AVAILABILITY,
         availableConsultantIds.isEmpty()

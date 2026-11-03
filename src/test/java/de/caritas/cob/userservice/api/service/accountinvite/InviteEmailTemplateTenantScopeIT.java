@@ -39,9 +39,9 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>So a template now carries a {@code tenant_id}:
  *
  * <ul>
- *   <li>{@code null} = a <b>platform template</b>, written by the platform admin, visible to
- *       everyone and changeable only by the platform admin. Every row that existed before this
- *       change is one.
+ *   <li>{@code null} = a <b>platform template</b>, written by the platform admin; only system
+ *       defaults are visible to scoped admins. Custom platform rows remain in the platform
+ *       catalogue.
  *   <li>a tenant id = that Träger's own template: only they see it, use it and change it.
  * </ul>
  *
@@ -144,13 +144,14 @@ class InviteEmailTemplateTenantScopeIT {
     actAsTenantAdmin(TRAEGER_B);
     service.createTemplate(command("B's own"));
     actAsPlatformAdmin();
-    service.createTemplate(command("Platform text"));
+    systemDefault();
+    service.createTemplate(command("Legacy platform custom"));
     actAsTenantAdmin(TRAEGER_A);
     service.createTemplate(command("A's own"));
 
     assertThat(service.listTemplates(null))
         .extracting(InviteEmailTemplate::getName)
-        .containsExactlyInAnyOrder("A's own", "Platform text")
+        .containsExactlyInAnyOrder("A's own", "System text")
         .doesNotContain("B's own");
   }
 
@@ -159,7 +160,8 @@ class InviteEmailTemplateTenantScopeIT {
     actAsTenantAdmin(TRAEGER_B);
     service.createTemplate(command("B's own"));
     actAsPlatformAdmin();
-    service.createTemplate(command("Platform text"));
+    systemDefault();
+    service.createTemplate(command("Legacy platform custom"));
     actAsTenantAdmin(TRAEGER_A);
     service.createTemplate(command("A's own"));
     // Visible to A as well, but of another kind: the kind filter must drop it.
@@ -167,7 +169,7 @@ class InviteEmailTemplateTenantScopeIT {
 
     assertThat(service.listTemplates(InviteEmailTemplateKind.COUNSELLOR_INVITE))
         .extracting(InviteEmailTemplate::getName)
-        .containsExactlyInAnyOrder("A's own", "Platform text");
+        .containsExactlyInAnyOrder("A's own", "System text");
   }
 
   @Test
@@ -241,13 +243,13 @@ class InviteEmailTemplateTenantScopeIT {
   }
 
   @Test
-  void requireUsableTemplate_Should_Succeed_When_TraegerSendsWithAPlatformTemplate() {
+  void requireUsableTemplate_Should_Succeed_When_TraegerSendsWithSystemDefault() {
     actAsPlatformAdmin();
-    InviteEmailTemplate platformTemplate = service.createTemplate(command("Platform text"));
+    InviteEmailTemplate platformTemplate = systemDefault();
     actAsTenantAdmin(TRAEGER_A);
 
     assertThat(service.requireUsableTemplate(platformTemplate.getId()).getName())
-        .isEqualTo("Platform text");
+        .isEqualTo("System text");
   }
 
   @Test
@@ -259,6 +261,12 @@ class InviteEmailTemplateTenantScopeIT {
   }
 
   // --- helpers ---------------------------------------------------------------------------------
+
+  private InviteEmailTemplate systemDefault() {
+    InviteEmailTemplate template = service.createTemplate(command("System text"));
+    template.setSystemDefault(true);
+    return templateRepository.saveAndFlush(template);
+  }
 
   private static TemplateCommand command(String name) {
     return command(name, InviteEmailTemplateKind.COUNSELLOR_INVITE);

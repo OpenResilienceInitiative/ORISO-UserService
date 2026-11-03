@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.model.CaseHandoverMatrixRepairTask;
 import de.caritas.cob.userservice.api.port.out.CaseHandoverMatrixRepairTaskRepository;
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
 import java.time.Duration;
@@ -79,6 +80,7 @@ class CaseHandoverMatrixRepairServiceAdminPowerTest {
             mock(CaseHandoverRequestRepository.class),
             gateway,
             mock(SessionRepository.class),
+            mock(SessionSupervisorRepository.class),
             Clock.fixed(Instant.parse("2026-10-17T10:00:00Z"), ZoneOffset.UTC),
             transactionManager,
             meters);

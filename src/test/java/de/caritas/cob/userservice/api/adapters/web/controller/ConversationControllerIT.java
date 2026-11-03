@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.ConversationDtoMapper;
 import de.caritas.cob.userservice.api.config.auth.RoleAuthorizationAuthorityMapper;
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics;
 import de.caritas.cob.userservice.api.conversation.facade.AcceptAnonymousEnquiryFacade;
 import de.caritas.cob.userservice.api.conversation.facade.CreateAnonymousEnquiryFacade;
 import de.caritas.cob.userservice.api.conversation.facade.FinishAnonymousConversationFacade;
@@ -72,6 +73,10 @@ class ConversationControllerIT {
   @SuppressWarnings("unused")
   @MockitoBean
   private AuthenticatedUser authenticatedUser;
+
+  @SuppressWarnings("unused")
+  @MockitoBean
+  private LiveChatDiagnosticMetrics liveChatDiagnosticMetrics;
 
   @Test
   void getAnonymousEnquiries_Should_returnOk_When_requestParamsAreValid() throws Exception {

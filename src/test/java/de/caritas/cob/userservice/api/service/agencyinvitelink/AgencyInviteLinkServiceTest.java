@@ -53,6 +53,12 @@ class AgencyInviteLinkServiceTest {
   @Mock private AgencyService agencyService;
   @Mock private CreateAnonymousEnquiryFacade createAnonymousEnquiryFacade;
 
+  @Mock private de.caritas.cob.userservice.api.admin.service.tenant.TenantService tenantService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.temporaryaccount.TemporaryAccountSettingsService
+      temporaryAccountSettings;
+
   @InjectMocks private AgencyInviteLinkService service;
 
   @Mock private AdminScope adminScope;
@@ -296,6 +302,44 @@ class AgencyInviteLinkServiceTest {
 
   // --- redeem ---
 
+  /**
+   * The public context and redeem routes run without a tenant; the owner lookup is tenant-filtered,
+   * so it must run under the link's tenant or a valid direct link reads as inactive.
+   */
+  @Test
+  void directLinkOwnerIsLookedUpUnderTheLinkTenant() {
+    TenantContext.clear();
+    var link =
+        AgencyInviteLink.builder()
+            .token("direct")
+            .status(InviteLinkStatus.ACTIVE.name())
+            .tenantId(83L)
+            .linkKind(InviteLinkKind.COUNSELLOR.name())
+            .chatType(InviteLinkChatType.CHAT.name())
+            .consultantId("owner")
+            .agencyId(5L)
+            .consultingTypeId(1)
+            .build();
+    var owner = new Consultant();
+    owner.setId("owner");
+    var membership = new de.caritas.cob.userservice.api.model.ConsultantAgency();
+    membership.setAgencyId(5L);
+    owner.setConsultantAgencies(java.util.Set.of(membership));
+    when(repository.findByToken("direct")).thenReturn(Optional.of(link));
+    when(repository.findByTokenAndStatus("direct", InviteLinkStatus.ACTIVE.name()))
+        .thenReturn(Optional.of(link));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("owner"))
+        .thenAnswer(
+            call ->
+                Long.valueOf(83L).equals(TenantContext.getCurrentTenant())
+                    ? Optional.of(owner)
+                    : Optional.empty());
+
+    assertThat(service.getContext("direct").agencyId()).isEqualTo(5L);
+    assertThat(service.redeem("direct").getAgencyId()).isEqualTo(5L);
+    assertThat(TenantContext.getCurrentTenant()).isNull();
+  }
+
   @Test
   void redeem_Should_ThrowNotFound_When_TokenDoesNotExist() {
     when(repository.findByTokenAndStatus("bad-token", InviteLinkStatus.ACTIVE.name()))
@@ -359,6 +403,23 @@ class AgencyInviteLinkServiceTest {
     assertThat(ctx.getTenantId()).isEqualTo(1L);
     assertThat(ctx.getAgencyId()).isEqualTo(5L);
     assertThat(ctx.getConsultingTypeId()).isEqualTo(2);
+  }
+
+  /** The 410 DIRECT_LINK_INACTIVE contract belongs to direct links; admin links keep 400. */
+  @Test
+  void disabledAdminLink_Should_KeepTheBadRequestContract() {
+    AgencyInviteLink link =
+        AgencyInviteLink.builder()
+            .token("admin")
+            .status(InviteLinkStatus.DISABLED.name())
+            .chatType(InviteLinkChatType.LIVE_CHAT.name())
+            .build();
+    when(repository.findByToken("admin")).thenReturn(Optional.of(link));
+    when(repository.findByTokenAndStatus("admin", InviteLinkStatus.ACTIVE.name()))
+        .thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> service.getContext("admin")).isInstanceOf(BadRequestException.class);
+    assertThatThrownBy(() -> service.redeem("admin")).isInstanceOf(BadRequestException.class);
   }
 
   @Test
@@ -425,6 +486,25 @@ class AgencyInviteLinkServiceTest {
   }
 
   // --- list ---
+
+  /** Security review of #1488: admins never list call share links, so never see their token. */
+  @Test
+  void list_Should_RefuseCallShareLinks_WithoutTouchingTheRepository() {
+    assertThatThrownBy(() -> service.list("CALL", null, null, null, 0, 20))
+        .isInstanceOf(BadRequestException.class);
+    Mockito.verifyNoInteractions(repository);
+  }
+
+  @Test
+  void create_Should_RefuseCallShareLinks_FromTheAdminRoute() {
+    var cmd = new AgencyInviteLinkService.CreateInviteLinkCommand();
+    cmd.setLinkKind("CALL");
+    // Default chat type (LIVE_CHAT) passes validateEnums, so only the CALL guard can refuse.
+    assertThatThrownBy(() -> service.create(cmd))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessageContaining("created from the call");
+    Mockito.verify(repository, Mockito.never()).save(Mockito.any());
+  }
 
   @Test
   void list_Should_ThrowBadRequest_When_InvalidLinkKind() {
@@ -611,5 +691,97 @@ class AgencyInviteLinkServiceTest {
         .isInstanceOf(
             de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException
                 .class);
+  }
+
+  // --- deactivate ---
+
+  private AgencyInviteLink storedLink(String status, String kind, Long tenantId, Long agencyId) {
+    return AgencyInviteLink.builder()
+        .id(7L)
+        .token("tok-d")
+        .tenantId(tenantId)
+        .agencyId(agencyId)
+        .linkKind(kind)
+        .status(status)
+        .build();
+  }
+
+  @Test
+  void deactivate_Should_SwitchAnActiveLinkOff() {
+    var link = storedLink("ACTIVE", "EXTERNAL_INBOUND", 1L, null);
+    when(repository.findById(7L)).thenReturn(Optional.of(link));
+    when(repository.save(any(AgencyInviteLink.class))).thenAnswer(i -> i.getArgument(0));
+
+    var result = service.deactivate(7L);
+
+    assertThat(result.getStatus()).isEqualTo(InviteLinkStatus.DISABLED.name());
+    verify(repository).save(link);
+  }
+
+  @Test
+  void deactivate_Should_BeIdempotent_When_LinkIsAlreadyDisabled() {
+    var link = storedLink("DISABLED", "EXTERNAL_INBOUND", 1L, null);
+    when(repository.findById(7L)).thenReturn(Optional.of(link));
+
+    var result = service.deactivate(7L);
+
+    assertThat(result.getStatus()).isEqualTo("DISABLED");
+    Mockito.verify(repository, Mockito.never()).save(any());
+  }
+
+  @Test
+  void deactivate_Should_ThrowConflict_When_LinkWasAlreadyUsedOrExpired() {
+    for (String status : List.of("USED", "EXPIRED")) {
+      when(repository.findById(7L))
+          .thenReturn(Optional.of(storedLink(status, "EXTERNAL_INBOUND", 1L, null)));
+
+      assertThatThrownBy(() -> service.deactivate(7L))
+          .isInstanceOf(
+              de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
+    }
+    Mockito.verify(repository, Mockito.never()).save(any());
+  }
+
+  @Test
+  void deactivate_Should_ThrowNotFound_When_LinkDoesNotExist() {
+    when(repository.findById(7L)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> service.deactivate(7L)).isInstanceOf(NotFoundException.class);
+  }
+
+  @Test
+  void deactivate_Should_ThrowNotFound_When_LinkBelongsToAnotherTenant() {
+    when(repository.findById(7L))
+        .thenReturn(Optional.of(storedLink("ACTIVE", "EXTERNAL_INBOUND", 2L, null)));
+
+    assertThatThrownBy(() -> service.deactivate(7L)).isInstanceOf(NotFoundException.class);
+    Mockito.verify(repository, Mockito.never()).save(any());
+  }
+
+  @Test
+  void deactivate_Should_ThrowNotFound_When_LinkIsACallShareLink() {
+    when(repository.findById(7L)).thenReturn(Optional.of(storedLink("ACTIVE", "CALL", 1L, null)));
+
+    assertThatThrownBy(() -> service.deactivate(7L)).isInstanceOf(NotFoundException.class);
+    Mockito.verify(repository, Mockito.never()).save(any());
+  }
+
+  @Test
+  void deactivate_Should_ThrowForbidden_When_AgencyAdminTargetsAnotherAgenciesLink() {
+    actAsAgencyAdminOfAgencyTen();
+    when(repository.findById(7L))
+        .thenReturn(Optional.of(storedLink("ACTIVE", "EXTERNAL_INBOUND", 1L, 11L)));
+
+    assertThatThrownBy(() -> service.deactivate(7L)).isInstanceOf(ForbiddenException.class);
+    Mockito.verify(repository, Mockito.never()).save(any());
+  }
+
+  @Test
+  void deactivate_Should_ThrowForbidden_When_AgencyAdminTargetsAWholeTraegerLink() {
+    actAsAgencyAdminOfAgencyTen();
+    when(repository.findById(7L))
+        .thenReturn(Optional.of(storedLink("ACTIVE", "EXTERNAL_INBOUND", 1L, null)));
+
+    assertThatThrownBy(() -> service.deactivate(7L)).isInstanceOf(ForbiddenException.class);
   }
 }

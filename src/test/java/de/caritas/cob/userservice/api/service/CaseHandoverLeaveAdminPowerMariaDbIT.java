@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.port.out.CaseHandoverMatrixRepairTaskRepos
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairService.RoomRef;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -66,6 +67,7 @@ class CaseHandoverLeaveAdminPowerMariaDbIT {
   private static final String ADMIN_MXID = FakeSynapseHomeserver.adminMxid();
 
   @Autowired private SessionRepository sessionRepository;
+  @Autowired private SessionSupervisorRepository sessionSupervisorRepository;
   @Autowired private ConsultantRepository consultantRepository;
   @Autowired private UserRepository userRepository;
   @Autowired private CaseHandoverMatrixRepairTaskRepository repairTaskRepository;
@@ -106,6 +108,7 @@ class CaseHandoverLeaveAdminPowerMariaDbIT {
             caseHandoverRequestRepository,
             gateway,
             sessionRepository,
+            sessionSupervisorRepository,
             Clock.systemUTC(),
             transactionManager,
             new SimpleMeterRegistry());

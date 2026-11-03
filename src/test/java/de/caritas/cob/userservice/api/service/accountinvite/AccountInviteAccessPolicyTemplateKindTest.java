@@ -114,20 +114,23 @@ class AccountInviteAccessPolicyTemplateKindTest {
     for (InviteEmailTemplateKind kind : InviteEmailTemplateKind.values()) {
       boolean allowed = kinds.contains(kind);
       assertThat(policy.mayUseTemplateKind(kind)).as("may use %s", kind).isEqualTo(allowed);
-      assertThat(policy.canUseTemplate(null, kind)).as("use platform %s", kind).isEqualTo(allowed);
+      assertThat(policy.canUseTemplate(null, kind, true))
+          .as("use platform %s", kind)
+          .isEqualTo(allowed);
       assertThat(policy.canChangeTemplate(ownTemplate, kind))
           .as("change own %s", kind)
           .isEqualTo(allowed);
       if (allowed) {
         assertThatCode(() -> policy.authorizeTemplateKind(kind)).doesNotThrowAnyException();
-        assertThatCode(() -> policy.authorizeTemplateUse(null, kind)).doesNotThrowAnyException();
+        assertThatCode(() -> policy.authorizeTemplateUse(null, kind, true))
+            .doesNotThrowAnyException();
         assertThatCode(() -> policy.authorizeTemplateUpdate(ownTemplate, kind))
             .doesNotThrowAnyException();
       } else {
         assertThatThrownBy(() -> policy.authorizeTemplateKind(kind))
             .as("create %s", kind)
             .isInstanceOf(ForbiddenException.class);
-        assertThatThrownBy(() -> policy.authorizeTemplateUse(null, kind))
+        assertThatThrownBy(() -> policy.authorizeTemplateUse(null, kind, true))
             .as("use %s", kind)
             .isInstanceOf(ForbiddenException.class);
         assertThatThrownBy(() -> policy.authorizeTemplateUpdate(ownTemplate, kind))
@@ -141,10 +144,10 @@ class AccountInviteAccessPolicyTemplateKindTest {
   void kindRule_Should_NotWidenTheOwnerRule_When_KindIsAllowed() {
     actAs(OWN_TENANT, UserRole.TENANT_ADMIN, UserRole.AGENCY_ADMIN, UserRole.USER_ADMIN);
 
-    assertThat(policy.canUseTemplate(FOREIGN_TENANT, COUNSELLOR_INVITE)).isFalse();
+    assertThat(policy.canUseTemplate(FOREIGN_TENANT, COUNSELLOR_INVITE, false)).isFalse();
     assertThat(policy.canChangeTemplate(FOREIGN_TENANT, TENANT_INVITE)).isFalse();
     assertThat(policy.canChangeTemplate(null, COUNSELLOR_INVITE)).isFalse();
-    assertThatThrownBy(() -> policy.authorizeTemplateUse(FOREIGN_TENANT, COUNSELLOR_INVITE))
+    assertThatThrownBy(() -> policy.authorizeTemplateUse(FOREIGN_TENANT, COUNSELLOR_INVITE, false))
         .isInstanceOf(ForbiddenException.class);
     assertThatThrownBy(() -> policy.authorizeTemplateUpdate(null, COUNSELLOR_INVITE))
         .isInstanceOf(ForbiddenException.class);
@@ -155,7 +158,7 @@ class AccountInviteAccessPolicyTemplateKindTest {
     // A DPA_FORWARD row a Träger saved before the kind rule existed stays theirs, but out of use.
     actAs(OWN_TENANT, UserRole.TENANT_ADMIN, UserRole.AGENCY_ADMIN, UserRole.USER_ADMIN);
 
-    assertThat(policy.canUseTemplate(OWN_TENANT, DPA_FORWARD)).isFalse();
+    assertThat(policy.canUseTemplate(OWN_TENANT, DPA_FORWARD, false)).isFalse();
     assertThat(policy.canChangeTemplate(OWN_TENANT, DPA_FORWARD)).isFalse();
   }
 

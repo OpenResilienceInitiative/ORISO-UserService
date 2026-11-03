@@ -14,7 +14,11 @@ import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import java.io.IOException;
 import java.net.http.HttpResponse;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -23,14 +27,18 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.ClientHttpRequest;
 import org.springframework.http.client.ClientHttpResponse;
+import org.springframework.mock.http.client.MockClientHttpRequest;
 
 /** Actual public join/update APIs: assignment is not proof of begun participation. */
 class GroupCounsellingDpaEntryIT extends GroupCounsellingDpaHttpFixture {
   @Autowired private UserChatRepository userChats;
   @Autowired private UserRepository users;
   private final AtomicInteger memberReads = new AtomicInteger();
+  private final List<String> membershipWritePaths = new ArrayList<>();
+  private final List<String> invitedMemberBodies = new ArrayList<>();
   private String members = "{\"members\":[]}";
   private int memberStatus = 200;
+  private boolean leaveSucceeds = true;
 
   @Test
   void assignedNewcomerUsesServingOwnerBeforeMatrixAdmission() throws Exception {
@@ -187,7 +195,8 @@ class GroupCounsellingDpaEntryIT extends GroupCounsellingDpaHttpFixture {
   @Test
   void removingAModeratorRemainsPossibleWhileTheOwnerServiceIsUnavailable() throws Exception {
     Chat chat = storedChat(ConversationType.SELF_HELP);
-    addModerator(chat);
+    Consultant moderator = addModerator(chat);
+    members = "{\"members\":[\"" + moderator.getMatrixUserId() + "\"]}";
     ownerStatus = 503;
 
     var response = update(chat, "[]");
@@ -200,6 +209,23 @@ class GroupCounsellingDpaEntryIT extends GroupCounsellingDpaHttpFixture {
   }
 
   @Test
+  void failedMatrixRemovalRetainsModeratorTrackingAndRollsBackTheUpdate() throws Exception {
+    Chat chat = storedChat(ConversationType.SELF_HELP);
+    Consultant moderator = addModerator(chat);
+    members = "{\"members\":[\"" + moderator.getMatrixUserId() + "\"]}";
+    leaveSucceeds = false;
+    ownerStatus = 503;
+
+    var response = update(chat, "[]");
+
+    assertEquals(500, response.statusCode(), response.body());
+    assertEquals(0, ownerReads.get());
+    assertEquals(1, matrixWrites.get());
+    assertEquals(2, participants.findBySeriesId(chat.getId()).size());
+    assertEquals("Synthetic AVV group", chats.findById(chat.getId()).orElseThrow().getTopic());
+  }
+
+  @Test
   void settingsAndExistingModeratorsCanChangeWithoutOpeningNewCounselling() throws Exception {
     Chat chat = storedChat(ConversationType.SELF_HELP);
     Consultant existing = addModerator(chat);
@@ -209,7 +235,21 @@ class GroupCounsellingDpaEntryIT extends GroupCounsellingDpaHttpFixture {
 
     assertEquals(200, response.statusCode(), response.body());
     assertEquals(0, ownerReads.get());
-    assertEquals(0, matrixWrites.get());
+    // The existing database row is not proof of Matrix access: retry only this member's
+    // idempotent invitation/join without asking the unavailable DPA owner for new enrolment.
+    assertEquals(2, matrixWrites.get());
+    assertEquals(
+        List.of(
+            "POST /_matrix/client/r0/rooms/" + chat.getMatrixRoomId() + "/invite",
+            "POST /_matrix/client/r0/rooms/" + chat.getMatrixRoomId() + "/join"),
+        membershipWritePaths);
+    assertEquals(
+        List.of("{\"user_id\":\"" + existing.getMatrixUserId() + "\"}"), invitedMemberBodies);
+    assertEquals(
+        Set.of(consultant.getId(), existing.getId()),
+        participants.findBySeriesId(chat.getId()).stream()
+            .map(GroupChatParticipant::getConsultantId)
+            .collect(Collectors.toSet()));
     assertEquals(2, participants.findBySeriesId(chat.getId()).size());
   }
 
@@ -370,6 +410,15 @@ class GroupCounsellingDpaEntryIT extends GroupCounsellingDpaHttpFixture {
         || path.contains("/join/")
         || path.endsWith("/leave")) {
       matrixWrites.incrementAndGet();
+      membershipWritePaths.add(request.getMethod() + " " + path);
+      if (path.endsWith("/invite")) {
+        invitedMemberBodies.add(((MockClientHttpRequest) request).getBodyAsString());
+      }
+      if (path.endsWith("/leave")) {
+        if (!leaveSucceeds)
+          return withStatus(HttpStatus.INTERNAL_SERVER_ERROR).createResponse(request);
+        members = "{\"members\":[]}";
+      }
       return withSuccess(
               "{\"room_id\":\"!synthetic-stored:synthetic.oriso.test\"}",
               MediaType.APPLICATION_JSON)

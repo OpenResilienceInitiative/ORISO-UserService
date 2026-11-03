@@ -1,6 +1,9 @@
 package de.caritas.cob.userservice.api.service.chat;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -17,6 +20,7 @@ import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -32,6 +36,8 @@ class GroupChatRoleServiceTest {
 
   @Mock private GroupChatMembershipService groupChatMembershipService;
 
+  @Mock private MembersOnlyRevocation revocation;
+
   @InjectMocks private GroupChatRoleService roleService;
 
   @Test
@@ -44,6 +50,32 @@ class GroupChatRoleServiceTest {
         () -> roleService.changeRole(42L, "owner", "owner", ParticipantRole.CO_MODERATOR));
 
     verify(participantRepository, never()).save(owner);
+  }
+
+  @Test
+  void demotingAnOwnerWhileAnotherRemainsPassesThePrimaryOwnershipOn() {
+    var actor = participant(42L, "owner", ParticipantRole.OWNER);
+    var target = participant(42L, "other", ParticipantRole.OWNER);
+    var series = org.mockito.Mockito.mock(Chat.class);
+    when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(actor, target));
+    when(chatRepository.findById(42L)).thenReturn(java.util.Optional.of(series));
+
+    roleService.changeRole(42L, "owner", "other", ParticipantRole.CO_MODERATOR);
+
+    assertThat(target.getRole()).isEqualTo(ParticipantRole.CO_MODERATOR);
+    verify(revocation).passOwnershipOn(series, "other");
+  }
+
+  @Test
+  void changingTheRoleOfANonOwnerDoesNotTouchTheOwnership() {
+    var actor = participant(42L, "owner", ParticipantRole.OWNER);
+    var target = participant(42L, "other", ParticipantRole.CO_MODERATOR);
+    when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(actor, target));
+
+    roleService.changeRole(42L, "owner", "other", ParticipantRole.OWNER);
+    roleService.changeRole(42L, "owner", "other", ParticipantRole.PARTICIPANT);
+
+    verify(revocation, never()).passOwnershipOn(any(), any());
   }
 
   @Test
@@ -101,8 +133,12 @@ class GroupChatRoleServiceTest {
     roleService.removeParticipant(42L, "owner", "target");
 
     verify(participantRepository).delete(target);
-    verify(groupChatMembershipService)
-        .removeLeavingMemberFromRoom(series, "@target:matrix.example");
+    InOrder handOver = inOrder(revocation, participantRepository, groupChatMembershipService);
+    handOver.verify(revocation).revokeAccessOf(series, target);
+    handOver.verify(participantRepository).delete(target);
+    handOver
+        .verify(groupChatMembershipService)
+        .removeParticipantFromRoom(series, "@target:matrix.example");
   }
 
   @Test
@@ -117,7 +153,7 @@ class GroupChatRoleServiceTest {
     assertThrows(ConflictException.class, () -> roleService.leaveSeries(series, consultant));
 
     verify(participantRepository, never()).delete(owner);
-    verify(groupChatMembershipService, never()).removeLeavingMemberFromRoom(series, null);
+    verify(groupChatMembershipService, never()).removeParticipantFromRoom(series, null);
   }
 
   @Test
@@ -132,8 +168,41 @@ class GroupChatRoleServiceTest {
     roleService.leaveSeries(series, consultant);
 
     verify(participantRepository).delete(coModerator);
-    verify(groupChatMembershipService)
-        .removeLeavingMemberFromRoom(series, "@co-mod:matrix.example");
+    InOrder handOver = inOrder(revocation, participantRepository, groupChatMembershipService);
+    handOver.verify(revocation).revokeAccessOf(series, coModerator);
+    handOver.verify(participantRepository).delete(coModerator);
+    handOver
+        .verify(groupChatMembershipService)
+        .removeParticipantFromRoom(series, "@co-mod:matrix.example");
+  }
+
+  @Test
+  void anOwnerWhoLeavesWhileAnotherOwnerRemainsPassesThePrimaryOwnershipOn() {
+    var leaving = participant(42L, "owner", ParticipantRole.OWNER);
+    var other = participant(42L, "other", ParticipantRole.OWNER);
+    var series = org.mockito.Mockito.mock(Chat.class);
+    var consultant = org.mockito.Mockito.mock(Consultant.class);
+    when(series.getId()).thenReturn(42L);
+    when(consultant.getId()).thenReturn("owner");
+    when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(leaving, other));
+
+    roleService.leaveSeries(series, consultant);
+
+    verify(revocation).passOwnershipOn(series, "owner");
+  }
+
+  @Test
+  void aCoModeratorWhoLeavesDoesNotTouchTheOwnership() {
+    var coModerator = participant(42L, "co-mod", ParticipantRole.CO_MODERATOR);
+    var series = org.mockito.Mockito.mock(Chat.class);
+    var consultant = org.mockito.Mockito.mock(Consultant.class);
+    when(series.getId()).thenReturn(42L);
+    when(consultant.getId()).thenReturn("co-mod");
+    when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(coModerator));
+
+    roleService.leaveSeries(series, consultant);
+
+    verify(revocation, never()).passOwnershipOn(any(), any());
   }
 
   private GroupChatParticipant participant(

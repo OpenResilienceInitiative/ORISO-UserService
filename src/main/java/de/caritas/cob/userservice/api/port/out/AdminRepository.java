@@ -15,6 +15,7 @@ import org.springframework.data.repository.query.Param;
 
 public interface AdminRepository
     extends JpaRepository<Admin, String>, JpaSpecificationExecutor<Admin> {
+  boolean existsByIdAndManagedPausedTrue(String id);
 
   /** Serializes one admin's own changes, e.g. a first self-assignment, which has no row to lock. */
   @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)

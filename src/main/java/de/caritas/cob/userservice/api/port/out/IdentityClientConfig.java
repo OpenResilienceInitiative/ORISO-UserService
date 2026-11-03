@@ -1,10 +1,20 @@
 package de.caritas.cob.userservice.api.port.out;
 
+import de.caritas.cob.userservice.api.config.auth.TaskPurpose;
 import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
 import jakarta.validation.constraints.NotNull;
 import java.util.Set;
 
 public interface IdentityClientConfig {
+
+  /** Staged source selection; the production preflight remains a separate full-cutover gate. */
+  default boolean isFiveActorMode() {
+    return false;
+  }
+
+  default String taskAccessToken(TaskPurpose purpose) {
+    throw new IllegalStateException("Task actor authentication unavailable");
+  }
 
   String getErrorMessageDuplicatedEmail();
 
