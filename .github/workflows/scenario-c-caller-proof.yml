@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
-      SCENARIO_C_DEV_BASE: c944417d9d664d35d63b31bb57c55f852c2d783c
+      SCENARIO_C_DEV_BASE: 208d38329f1e7e53be7851a42ac3c3bd154a12ae
       MAVEN_OPTS: -Xmx1024m -XX:ActiveProcessorCount=2
       JAVA_TOOL_OPTIONS: -Xmx512m -XX:MaxMetaspaceSize=192m -XX:ActiveProcessorCount=2
     steps:
@@ -518,7 +518,7 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     env:
-      SCENARIO_C_DEV_BASE: c944417d9d664d35d63b31bb57c55f852c2d783c
+      SCENARIO_C_DEV_BASE: 208d38329f1e7e53be7851a42ac3c3bd154a12ae
       MAVEN_OPTS: -Xmx1024m -XX:ActiveProcessorCount=2
       JAVA_TOOL_OPTIONS: -Xmx512m -XX:MaxMetaspaceSize=192m -XX:ActiveProcessorCount=2
       CALLER_FAIRNESS_DB_URL: jdbc:mariadb://127.0.0.1:3306/caller_fairness

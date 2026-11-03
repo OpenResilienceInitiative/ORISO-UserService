@@ -1999,12 +1999,6 @@ components:
             separately from internal group chats (#250). When the tenant never stored a value, this
             reads the tenant's featureGroupChatV2Enabled.
           example: 'true'
-        featureDisplayNameEditable:
-          type: boolean
-          example: 'true'
-          description: 'ORISO-Admin#602 switch 1. Whether an advice seeker may type their own Anzeigename
-            (displayName), or may only re-roll the generated one. Never governs the Anmeldename (userName),
-            which is immutable at every layer. Opt-out: defaults to true.'
         smtpMode:
           type: string
           enum:
@@ -2383,30 +2377,6 @@ components:
             type: string
         confirmTermsAndConditions:
           type: boolean
-        erstantwortGreeting:
-          type: object
-          additionalProperties:
-            type: string
-        erstantwortWhoReadsAlong:
-          type: object
-          additionalProperties:
-            type: string
-        erstantwortEmergencyAddition:
-          type: object
-          additionalProperties:
-            type: string
-        erstantwortFreeNotice:
-          type: object
-          additionalProperties:
-            type: string
-        erstantwortClosing:
-          type: object
-          additionalProperties:
-            type: string
-        erstantwortResponseDeadlineDays:
-          type: integer
-          minimum: 1
-          maximum: 30
         dataProtectionContactTemplate:
           type: object
           additionalProperties:
