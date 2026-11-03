@@ -183,13 +183,23 @@ class SupervisorAddedEmailNotificationServiceTest {
   }
 
   @Test
-  void teamChangeMailSkipsTheAdviceSeekerWhenTheSessionIsUnknown() {
-    when(emailRoutes.resolve(8L)).thenReturn(Optional.of(routeSettings()));
+  void teamChangeMailSkipsBothRecipientsWhenTheSessionIsUnknown() {
     when(sessions.findById(42L)).thenReturn(Optional.empty());
 
     service.notifySupervisorAdded(askerOfTenant(8L), supervisorWithMail(), 42L, null, null);
 
-    verify(emailDelivery, never()).send(anyLong(), any(), any(), eq("asker@example.org"), any());
+    verifyNoInteractions(emailDelivery);
+  }
+
+  @Test
+  void liveChatTeamChangesNeverSendEmailToEitherParticipant() {
+    when(sessions.findById(42L)).thenReturn(Optional.of(session(ConversationType.LIVE_CHAT)));
+
+    service.notifySupervisorAdded(askerOfTenant(8L), supervisorWithMail(), 42L, null, null);
+    service.notifySupervisorRemoved(askerOfTenant(8L), supervisorWithMail(), 42L, null, null);
+    service.notifyTopicDuplicateStarted(supervisorWithMail(), 42L, null);
+
+    verifyNoInteractions(emailDelivery);
   }
 
   @Test

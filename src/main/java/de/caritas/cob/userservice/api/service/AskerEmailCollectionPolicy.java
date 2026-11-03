@@ -56,9 +56,6 @@ public class AskerEmailCollectionPolicy {
     var authority = AskerIdentityPolicy.currentTenant(tenants, user.getTenantId());
     Settings settings = authority.getSettings();
     if (!masterAllowed(settings)) return false;
-    if (typeAllowed(settings, ConversationType.AGENCY_COUNSELLING)
-        && typeAllowed(settings, ConversationType.LIVE_CHAT)
-        && typeAllowed(settings, ConversationType.SELF_HELP)) return true;
     var transaction = new TransactionTemplate(transactionManager);
     transaction.setReadOnly(true);
     try {
@@ -91,8 +88,7 @@ public class AskerEmailCollectionPolicy {
                     ? ConversationType.AGENCY_COUNSELLING
                     : null;
       }
-      if (type == ConversationType.AGENCY_COUNSELLING || type == ConversationType.LIVE_CHAT)
-        types.add(type);
+      if (type == ConversationType.AGENCY_COUNSELLING) types.add(type);
     }
     for (var membership : userChats.findByUser(user)) {
       if (membership.getUser() != null
@@ -114,11 +110,9 @@ public class AskerEmailCollectionPolicy {
     return switch (type) {
       case AGENCY_COUNSELLING ->
           !Boolean.FALSE.equals(settings.getFeatureAskerEmailCollectionAgencyCounsellingEnabled());
-      case LIVE_CHAT ->
-          !Boolean.FALSE.equals(settings.getFeatureAskerEmailCollectionLiveChatEnabled());
       case SELF_HELP ->
           !Boolean.FALSE.equals(settings.getFeatureAskerEmailCollectionSelfHelpEnabled());
-      case INTERNAL_GROUP -> false;
+      case LIVE_CHAT, INTERNAL_GROUP -> false;
     };
   }
 

@@ -129,6 +129,8 @@ class UserController2faE2EIT {
 
   @MockitoBean private TenantService tenantService;
 
+  @MockitoBean private de.caritas.cob.userservice.api.port.out.SessionRepository sessions;
+
   @MockitoBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
 
   @MockitoBean
@@ -413,6 +415,12 @@ class UserController2faE2EIT {
   @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT})
   void finishTwoFactorAuthByEmailSetupForAUserShouldRespondWithNoContent() throws Exception {
     givenAValidUser();
+    var ownedSession = new de.caritas.cob.userservice.api.model.Session();
+    ownedSession.setUser(user);
+    ownedSession.setTenantId(user.getTenantId());
+    ownedSession.setConversationType(
+        de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING);
+    when(sessions.findByUser(user)).thenReturn(List.of(ownedSession));
     givenTenantEmailCollection(true);
     givenABearerToken();
     givenACorrectlyFormattedTan();
@@ -549,7 +557,6 @@ class UserController2faE2EIT {
                     new Settings()
                         .featureAskerEmailEnabled(true)
                         .featureAskerEmailCollectionAgencyCounsellingEnabled(enabled)
-                        .featureAskerEmailCollectionLiveChatEnabled(enabled)
                         .featureAskerEmailCollectionSelfHelpEnabled(enabled)));
   }
 

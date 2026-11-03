@@ -1542,20 +1542,23 @@ components:
         featureDisplayNameEditable:
           type: boolean
           description: Whether askers may type a custom session alias; generated pseudonyms remain allowed. Opt-out defaults to true.
+        featureDisplayNameEditableAgencyCounsellingEnabled:
+          type: boolean
+          description: Allows typed asker names in this conversation type when the account-wide name rule permits them.
+        featureDisplayNameEditableLiveChatEnabled:
+          type: boolean
+          description: Allows typed asker names in this conversation type when the account-wide name rule permits them.
+        featureDisplayNameEditableSelfHelpEnabled:
+          type: boolean
+          description: Allows typed asker names in this conversation type when the account-wide name rule permits them.
         featureAskerEmailEnabled:
           type: boolean
           default: true
         featureAskerEmailCollectionAgencyCounsellingEnabled:
           type: boolean
-          default: true
           description: Allows optional advice-seeker email collection in agency counselling; featureAskerEmailEnabled remains the account-wide outer limit. This is separate from email delivery and does not make an address required.
-        featureAskerEmailCollectionLiveChatEnabled:
-          type: boolean
-          default: true
-          description: Allows optional advice-seeker email collection in live chat; featureAskerEmailEnabled remains the account-wide outer limit. This is separate from email delivery and does not make an address required.
         featureAskerEmailCollectionSelfHelpEnabled:
           type: boolean
-          default: true
           description: Allows optional advice-seeker email collection in self-help groups; featureAskerEmailEnabled remains the account-wide outer limit. This is separate from email delivery and does not make an address required.
         featureAskerEmailAgencyCounsellingEnabled:
           type: boolean

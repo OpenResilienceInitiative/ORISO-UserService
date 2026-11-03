@@ -127,7 +127,6 @@ class AskerIdentityPolicySingleTenantTest {
                   """
               {"id":42,"settings":{"featureAskerEmailEnabled":true,
               "featureAskerEmailCollectionAgencyCounsellingEnabled":false,
-              "featureAskerEmailCollectionLiveChatEnabled":false,
               "featureAskerEmailCollectionSelfHelpEnabled":false}}
               """,
                   MediaType.APPLICATION_JSON));
@@ -142,12 +141,14 @@ class AskerIdentityPolicySingleTenantTest {
             withSuccess(
                 """
             {"id":42,"settings":{"featureAskerEmailEnabled":true,
-            "featureAskerEmailLiveChatEnabled":false,
-            "featureAskerEmailCollectionLiveChatEnabled":true}}
+            "featureAskerEmailLiveChatEnabled":true}}
             """,
                 MediaType.APPLICATION_JSON));
-    policy.requireForRegistration(
-        42L, de.caritas.cob.userservice.api.model.ConversationType.LIVE_CHAT);
+    assertThatThrownBy(
+            () ->
+                policy.requireForRegistration(
+                    42L, de.caritas.cob.userservice.api.model.ConversationType.LIVE_CHAT))
+        .isInstanceOf(ForbiddenException.class);
     server.verify();
   }
 

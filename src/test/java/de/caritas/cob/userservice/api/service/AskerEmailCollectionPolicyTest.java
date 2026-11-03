@@ -46,7 +46,6 @@ class AskerEmailCollectionPolicyTest {
         new Settings()
             .featureAskerEmailEnabled(true)
             .featureAskerEmailCollectionAgencyCounsellingEnabled(true)
-            .featureAskerEmailCollectionLiveChatEnabled(true)
             .featureAskerEmailCollectionSelfHelpEnabled(true);
     lenient()
         .when(tenants.getRestrictedTenantDataFresh(42L))
@@ -56,14 +55,14 @@ class AskerEmailCollectionPolicyTest {
   }
 
   @Test
-  void unrestrictedAndLegacyMissingCollectionFlagsKeepMasterOnlyCompatibility() {
-    assertThat(policy.allowedForAccount(user)).isTrue();
+  void unrestrictedAndLegacyMissingCollectionFlagsStillRequireAnOwnedEligibleContext() {
+    assertThat(policy.allowedForAccount(user)).isFalse();
     settings
         .featureAskerEmailCollectionAgencyCounsellingEnabled(null)
-        .featureAskerEmailCollectionLiveChatEnabled(null)
         .featureAskerEmailCollectionSelfHelpEnabled(null);
+    when(sessions.findByUser(user))
+        .thenReturn(List.of(session(ConversationType.AGENCY_COUNSELLING, user)));
     assertThat(policy.allowedForAccount(user)).isTrue();
-    verifyNoInteractions(sessions, userChats, transactions);
   }
 
   @Test
@@ -91,8 +90,7 @@ class AskerEmailCollectionPolicyTest {
     allowOnly(type);
     when(sessions.findByUser(user)).thenReturn(List.of(session(type, user)));
     assertThat(policy.allowedForAccount(user))
-        .isEqualTo(
-            type == ConversationType.AGENCY_COUNSELLING || type == ConversationType.LIVE_CHAT);
+        .isEqualTo(type == ConversationType.AGENCY_COUNSELLING);
   }
 
   @Test
@@ -126,7 +124,7 @@ class AskerEmailCollectionPolicyTest {
 
   @Test
   void aRealMixedAccountUsesTheAllowedOwnedContextButLiveOnlyDoesNot() {
-    settings.featureAskerEmailCollectionLiveChatEnabled(false);
+
     when(sessions.findByUser(user))
         .thenReturn(
             List.of(session(ConversationType.LIVE_CHAT, user)),
@@ -160,17 +158,16 @@ class AskerEmailCollectionPolicyTest {
   @Test
   void deliverySwitchesNeverSubstituteForCollectionPermission() {
     settings.featureAskerEmailLiveChatEnabled(false);
-    policy.requireForRegistration(42L, ConversationType.LIVE_CHAT);
-    settings
-        .featureAskerEmailLiveChatEnabled(true)
-        .featureAskerEmailCollectionLiveChatEnabled(false);
+    assertThatThrownBy(() -> policy.requireForRegistration(42L, ConversationType.LIVE_CHAT))
+        .isInstanceOf(ForbiddenException.class);
+    settings.featureAskerEmailLiveChatEnabled(true);
     assertThatThrownBy(() -> policy.requireForRegistration(42L, ConversationType.LIVE_CHAT))
         .isInstanceOf(ForbiddenException.class);
   }
 
   @Test
   void policyAndOwnedAvailabilityAreFreshAtTheNextAction() {
-    settings.featureAskerEmailCollectionLiveChatEnabled(false);
+
     when(sessions.findByUser(user))
         .thenReturn(List.of(session(ConversationType.AGENCY_COUNSELLING, user)), List.of());
     assertThat(policy.allowedForAccount(user)).isTrue();
@@ -231,6 +228,8 @@ class AskerEmailCollectionPolicyTest {
 
   @Test
   void actualAccountTenantWinsOverTheRequestHeader() {
+    when(sessions.findByUser(user))
+        .thenReturn(List.of(session(ConversationType.AGENCY_COUNSELLING, user)));
     TenantContext.setCurrentTenant(999L);
     try {
       assertThat(policy.allowedForAccount(user)).isTrue();
@@ -329,7 +328,6 @@ class AskerEmailCollectionPolicyTest {
     settings
         .featureAskerEmailCollectionAgencyCounsellingEnabled(
             type == ConversationType.AGENCY_COUNSELLING)
-        .featureAskerEmailCollectionLiveChatEnabled(type == ConversationType.LIVE_CHAT)
         .featureAskerEmailCollectionSelfHelpEnabled(type == ConversationType.SELF_HELP);
   }
 

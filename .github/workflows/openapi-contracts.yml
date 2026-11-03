@@ -58,7 +58,7 @@ jobs:
       with:
         repository: OpenResilienceInitiative/ORISO-TenantService
         # QA74 Tenant-owned collection policies (issue336), including current dev contracts.
-        ref: ${{ github.event_name == 'pull_request' && '966956bdc4f2c315b848ecf371c55c8fbea2a247' || 'dev' }}
+        ref: ${{ github.event_name == 'pull_request' && 'd51ff0ac1d6739f4912e1ed322815941cbce2367' || 'dev' }}
         path: .providers/tenant
         persist-credentials: false
 

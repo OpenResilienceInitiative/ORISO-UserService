@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionDataDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.SessionDataProvider;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.SessionDataRepository;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -137,6 +138,7 @@ public class SessionDataServiceTest {
   public void saveSessionDataForSessionId_Should_SaveSessionData() {
     SessionDataDTO sessionData = easyRandom.nextObject(SessionDataDTO.class);
     Session session = easyRandom.nextObject(Session.class);
+    session.setConversationType(ConversationType.AGENCY_COUNSELLING);
     session.getUser().setUserId("asker");
     session.setTenantId(42L);
     when(sessionService.assertAskerHasAccess(any(), any())).thenReturn(session);
@@ -151,6 +153,7 @@ public class SessionDataServiceTest {
   public void saveSessionDataForSessionId_Should_RefuseTheSessionOfAMembersOnlyChat() {
     SessionDataDTO sessionData = easyRandom.nextObject(SessionDataDTO.class);
     Session session = easyRandom.nextObject(Session.class);
+    session.setConversationType(ConversationType.AGENCY_COUNSELLING);
     session.getUser().setUserId("asker");
     session.setTenantId(42L);
     when(sessionService.assertAskerHasAccess(any(), any())).thenReturn(session);
@@ -170,6 +173,7 @@ public class SessionDataServiceTest {
   public void saveSessionData_Should_SaveValidatedSessionData() {
     SessionDataDTO sessionData = easyRandom.nextObject(SessionDataDTO.class);
     Session session = easyRandom.nextObject(Session.class);
+    session.setConversationType(ConversationType.AGENCY_COUNSELLING);
     session.getUser().setUserId("asker");
     session.setTenantId(42L);
     when(sessionService.assertAskerHasAccess(any(), any())).thenReturn(session);
@@ -186,6 +190,32 @@ public class SessionDataServiceTest {
     when(tenantService.getRestrictedTenantDataFresh(42L)).thenReturn(tenant(false));
     sessionDataService.saveSessionData(
         session, new SessionDataDTO().displayName("katze_mika_1234"));
+    verify(sessionDataRepository).saveAll(any());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+  void liveChatAliasUsesItsOwnTypingRuleRatherThanCounselling(boolean editable) {
+    var session = aliasSession();
+    session.setRegistrationType(Session.RegistrationType.ANONYMOUS);
+    var policy = tenant(true);
+    policy
+        .getSettings()
+        .featureDisplayNameEditableAgencyCounsellingEnabled(!editable)
+        .featureDisplayNameEditableLiveChatEnabled(editable);
+    when(tenantService.getRestrictedTenantDataFresh(42L)).thenReturn(policy);
+    var typed = new SessionDataDTO().displayName("Freely typed name");
+
+    if (editable) {
+      sessionDataService.saveSessionData(session, typed);
+    } else {
+      org.assertj.core.api.Assertions.assertThatThrownBy(
+              () -> sessionDataService.saveSessionData(session, typed))
+          .isInstanceOf(
+              de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+      sessionDataService.saveSessionData(
+          session, new SessionDataDTO().displayName("ruhiges Pferd Jules"));
+    }
     verify(sessionDataRepository).saveAll(any());
   }
 

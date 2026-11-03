@@ -3571,8 +3571,10 @@ components:
     UserDTO:
       description: >-
         Registration data. An optional displayName is attached only to the new ordinary personal
-        session; omitted or blank keeps the existing login Username fallback. A self-help invite
-        creates no personal session and retains the legacy ignored-alias behavior.
+        session; omitted or blank keeps the existing login username fallback. When the resolved
+        conversation type requires generated names, the submitted login username and any supplied
+        alias must match the generated vocabulary. Self-help and direct-link registrations do
+        not attach the alias to a shared room or a global profile.
       allOf:
         - $ref: '#/components/schemas/SessionDataDTO'
       type: object

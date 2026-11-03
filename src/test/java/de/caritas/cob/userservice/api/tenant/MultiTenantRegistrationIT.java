@@ -306,9 +306,10 @@ class MultiTenantRegistrationIT {
   void registrationStoresOptionalAliasOnItsOwnFirstSessionWithoutChangingLogin(
       String input, boolean editable, String expected) throws Exception {
     var tenant = ChatRecoveryPolicyFixtures.tenant().id(TENANT);
-    tenant.getSettings().setFeatureDisplayNameEditable(editable);
+    tenant.getSettings().setFeatureDisplayNameEditableAgencyCounsellingEnabled(editable);
     when(tenantService.getRestrictedTenantDataFresh(TENANT)).thenReturn(tenant);
-    String submittedLogin = "reg" + RandomStringUtils.randomAlphabetic(8);
+    String submittedLogin =
+        editable ? "reg" + RandomStringUtils.randomAlphabetic(8) : "loewe_mika_1234";
     var result =
         mockMvc
             .perform(register(Map.of("displayName", input, "username", submittedLogin)))
@@ -343,7 +344,26 @@ class MultiTenantRegistrationIT {
     tenant.getSettings().setFeatureDisplayNameEditable(false);
     when(tenantService.getRestrictedTenantDataFresh(TENANT)).thenReturn(tenant);
     var result =
-        mockMvc.perform(register(Map.of("displayName", "arbitrary typed alias"))).andReturn();
+        mockMvc
+            .perform(
+                register(
+                    Map.of("displayName", "arbitrary typed alias", "username", "loewe_mika_1234")))
+            .andReturn();
+    assertStatus(result, 403);
+    assertThat(createdUserIds).isEmpty();
+    verify(identityClient, never()).createUser(any());
+    verify(matrixSynapseService, never()).createUser(anyString(), anyString(), anyString());
+  }
+
+  @Test
+  void directRegistrationRequestCannotBypassCounsellingDiceOnlyUsername() throws Exception {
+    var tenant = ChatRecoveryPolicyFixtures.tenant().id(TENANT);
+    tenant.getSettings().setFeatureDisplayNameEditable(true);
+    tenant.getSettings().setFeatureDisplayNameEditableAgencyCounsellingEnabled(false);
+    when(tenantService.getRestrictedTenantDataFresh(TENANT)).thenReturn(tenant);
+
+    var result = mockMvc.perform(register(Map.of("username", "arbitrary_user_1234"))).andReturn();
+
     assertStatus(result, 403);
     assertThat(createdUserIds).isEmpty();
     verify(identityClient, never()).createUser(any());
@@ -356,8 +376,7 @@ class MultiTenantRegistrationIT {
     tenant
         .getSettings()
         .featureAskerEmailEnabled(true)
-        .featureAskerEmailCollectionAgencyCounsellingEnabled(false)
-        .featureAskerEmailCollectionLiveChatEnabled(true);
+        .featureAskerEmailCollectionAgencyCounsellingEnabled(false);
     when(tenantService.getRestrictedTenantDataFresh(TENANT)).thenReturn(tenant);
     var result = mockMvc.perform(register(Map.of("conversationType", "LIVE_CHAT"))).andReturn();
     assertStatus(result, 403);
@@ -393,6 +412,34 @@ class MultiTenantRegistrationIT {
     } finally {
       TenantContext.clear();
     }
+  }
+
+  @Test
+  void signedSelfHelpInviteCannotBypassDiceOnlyUsernameEvenWhenCounsellingAllowsTyping()
+      throws Exception {
+    var group = persistChat();
+    chatAgencyRepository.save(new de.caritas.cob.userservice.api.model.ChatAgency(group, AGENCY));
+    var tenant = ChatRecoveryPolicyFixtures.tenant().id(TENANT);
+    tenant
+        .getSettings()
+        .featureDisplayNameEditable(true)
+        .featureDisplayNameEditableAgencyCounsellingEnabled(true)
+        .featureDisplayNameEditableSelfHelpEnabled(false);
+    when(tenantService.getRestrictedTenantDataFresh(TENANT)).thenReturn(tenant);
+
+    var result =
+        mockMvc
+            .perform(
+                register(
+                    Map.of(
+                        "groupChatId", group.getId(),
+                        "groupChatInviteToken", group.getInviteToken(),
+                        "username", "arbitrary_user_1234")))
+            .andReturn();
+
+    assertStatus(result, 403);
+    assertThat(createdUserIds).isEmpty();
+    verify(identityClient, never()).createUser(any());
   }
 
   // --- live-chat guest --------------------------------------------------------------------------
@@ -504,7 +551,7 @@ class MultiTenantRegistrationIT {
         .featureAskerEmailEnabled(true)
         .featureAskerEmailCollectionAgencyCounsellingEnabled(false)
         .featureAskerEmailCollectionSelfHelpEnabled(enabled)
-        .featureDisplayNameEditable(false);
+        .featureDisplayNameEditableSelfHelpEnabled(true);
     when(tenantService.getRestrictedTenantDataFresh(TENANT)).thenReturn(tenant);
     var result =
         mockMvc

@@ -148,17 +148,19 @@ public class CreateUserFacade {
       }
       Optional<Chat> invitedGroup = groupInviteRegistration.resolveInvitedGroup(userDTO);
       var directLink = temporaryAccountLinkResolver.resolve(userDTO);
+      var registrationType =
+          invitedGroup.isPresent()
+              ? ConversationType.SELF_HELP
+              : ConversationType.AGENCY_COUNSELLING;
+      Long tenantId = TenantContext.getCurrentTenant();
       if (userDTO.getEmail() != null && !userDTO.getEmail().isBlank()) {
-        emailCollectionPolicy.requireForRegistration(
-            TenantContext.getCurrentTenant(),
-            invitedGroup.isPresent()
-                ? ConversationType.SELF_HELP
-                : ConversationType.AGENCY_COUNSELLING);
+        emailCollectionPolicy.requireForRegistration(tenantId, registrationType);
       }
+      var displayName =
+          sessionDataService.validateRegistrationNames(
+              userDTO.getUsername(), userDTO.getDisplayName(), tenantId, registrationType);
       if (invitedGroup.isEmpty() && directLink.isEmpty()) {
-        userDTO.setDisplayName(
-            sessionDataService.validateInitialAlias(
-                userDTO.getDisplayName(), TenantContext.getCurrentTenant()));
+        userDTO.setDisplayName(displayName);
       } else {
         // Group/direct-link signup creates no personal Session here; no shared/global alias.
         userDTO.setDisplayName(null);

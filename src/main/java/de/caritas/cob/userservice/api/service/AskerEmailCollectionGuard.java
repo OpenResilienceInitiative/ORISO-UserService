@@ -21,10 +21,12 @@ public class AskerEmailCollectionGuard {
   private final IdentitySecondFactor secondFactor;
 
   public void beforeStart(String address) {
+    requireRegisteredAccount();
     currentAsker().ifPresent(user -> requireChangeAllowed(user, address));
   }
 
   public void beforeFinish() {
+    requireRegisteredAccount();
     currentAsker()
         .ifPresent(
             user -> {
@@ -46,6 +48,12 @@ public class AskerEmailCollectionGuard {
               throw new ForbiddenException(
                   "Email collection is disabled for the pending verification");
             });
+  }
+
+  private void requireRegisteredAccount() {
+    if (authenticatedUser.isAnonymous()) {
+      throw new ForbiddenException("Anonymous live-chat accounts cannot verify an email address");
+    }
   }
 
   private void requireChangeAllowed(User user, String target) {

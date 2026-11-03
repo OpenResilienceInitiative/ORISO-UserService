@@ -137,6 +137,9 @@ public class UserAccountService {
    */
   public void changeUserAccountEmailAddress(Optional<String> optionalEmail) {
     ensureCurrentAccountIsWritable();
+    if (optionalEmail.isPresent() && authenticatedUser.isAnonymous()) {
+      throw new ForbiddenException("Anonymous live-chat accounts cannot add an email address");
+    }
     var userId = authenticatedUser.getUserId();
     var email = optionalEmail.orElseGet(() -> userHelper.getDummyEmail(userId));
     Optional<Consultant> consultantOpt = consultantService.getConsultant(userId);

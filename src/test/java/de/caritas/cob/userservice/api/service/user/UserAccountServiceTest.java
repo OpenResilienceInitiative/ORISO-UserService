@@ -58,6 +58,7 @@ public class UserAccountServiceTest {
 
   @InjectMocks private UserAccountService accountProvider;
   @Mock private UserService userService;
+  @Mock private de.caritas.cob.userservice.api.port.out.SessionRepository sessions;
   @Mock private de.caritas.cob.userservice.api.admin.service.tenant.TenantService tenantService;
   @Mock private ConsultantService consultantService;
   @Mock private AuthenticatedUser authenticatedUser;
@@ -82,7 +83,7 @@ public class UserAccountServiceTest {
         "emailCollectionPolicy",
         new de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy(
             tenantService,
-            mock(de.caritas.cob.userservice.api.port.out.SessionRepository.class),
+            sessions,
             mock(de.caritas.cob.userservice.api.port.out.UserChatRepository.class),
             mock(org.springframework.transaction.PlatformTransactionManager.class)));
     org.mockito.Mockito.lenient()
@@ -95,6 +96,14 @@ public class UserAccountServiceTest {
                     .settings(
                         new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
                             .featureAskerEmailEnabled(true)));
+  }
+
+  private void givenOwnedCounsellingSession(User user) {
+    var session = new de.caritas.cob.userservice.api.model.Session();
+    session.setUser(user);
+    session.setConversationType(
+        de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING);
+    when(sessions.findByUser(user)).thenReturn(java.util.List.of(session));
   }
 
   @Test
@@ -123,7 +132,6 @@ public class UserAccountServiceTest {
   @org.junit.jupiter.params.provider.ValueSource(
       strings = {
         "featureAskerEmailCollectionAgencyCounsellingEnabled",
-        "featureAskerEmailCollectionLiveChatEnabled",
         "featureAskerEmailCollectionSelfHelpEnabled"
       })
   void restrictedCollectionCannotBeBypassedByTheGlobalProfileWithoutAnOwnedContext(String key) {
@@ -313,6 +321,7 @@ public class UserAccountServiceTest {
       changeUserAccountEmailAddress_Should_changeNonEmptyAddressInKeycloakAndUserRepository_When_authenticatedUserIsUser() {
     User user = EASY_RANDOM.nextObject(User.class);
     user.setTenantId(42L);
+    givenOwnedCounsellingSession(user);
     when(this.authenticatedUser.getUserId()).thenReturn("user");
     when(this.userService.getUser("user")).thenReturn(Optional.of(user));
 
@@ -334,6 +343,7 @@ public class UserAccountServiceTest {
   public void changeUserAccountEmailAddress_Should_UseGermanNotice_WhenUserLanguageIsMissing() {
     User user = EASY_RANDOM.nextObject(User.class);
     user.setTenantId(42L);
+    givenOwnedCounsellingSession(user);
     user.setLanguageCode(null);
     when(authenticatedUser.getUserId()).thenReturn("user");
     when(userService.getUser("user")).thenReturn(Optional.of(user));
@@ -351,6 +361,7 @@ public class UserAccountServiceTest {
       changeUserAccountEmailAddress_Should_changeNonEmptyAddressInKeycloakAndUserRepository_When_authenticatedUserHasNoLegacyChatId() {
     User user = EASY_RANDOM.nextObject(User.class);
     user.setTenantId(42L);
+    givenOwnedCounsellingSession(user);
     user.setMatrixUserId(null);
     when(this.authenticatedUser.getUserId()).thenReturn("user");
     when(this.userService.getUser("user")).thenReturn(Optional.of(user));

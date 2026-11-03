@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.Settings;
 import java.util.Objects;
@@ -14,6 +15,21 @@ public final class AskerIdentityPolicy {
   public static boolean customNamesAllowed(TenantService tenants, Long tenantId) {
     return !Boolean.FALSE.equals(
         currentSettings(tenants, tenantId).getFeatureDisplayNameEditable());
+  }
+
+  public static boolean customNamesAllowed(
+      TenantService tenants, Long tenantId, ConversationType type) {
+    Settings settings = currentSettings(tenants, tenantId);
+    if (Boolean.FALSE.equals(settings.getFeatureDisplayNameEditable())) return false;
+    return switch (type) {
+      case AGENCY_COUNSELLING ->
+          !Boolean.FALSE.equals(settings.getFeatureDisplayNameEditableAgencyCounsellingEnabled());
+      case LIVE_CHAT ->
+          !Boolean.FALSE.equals(settings.getFeatureDisplayNameEditableLiveChatEnabled());
+      case SELF_HELP ->
+          !Boolean.FALSE.equals(settings.getFeatureDisplayNameEditableSelfHelpEnabled());
+      case INTERNAL_GROUP -> false;
+    };
   }
 
   public static void requireEmailCollectionAllowed(TenantService tenants, Long tenantId) {

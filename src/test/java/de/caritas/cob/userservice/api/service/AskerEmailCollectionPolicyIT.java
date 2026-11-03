@@ -54,7 +54,6 @@ class AskerEmailCollectionPolicyIT {
         new Settings()
             .featureAskerEmailEnabled(true)
             .featureAskerEmailCollectionAgencyCounsellingEnabled(true)
-            .featureAskerEmailCollectionLiveChatEnabled(false)
             .featureAskerEmailCollectionSelfHelpEnabled(false);
     when(tenants.getRestrictedTenantDataFresh(42L))
         .thenReturn(new RestrictedTenantDTO().id(42L).settings(settings));

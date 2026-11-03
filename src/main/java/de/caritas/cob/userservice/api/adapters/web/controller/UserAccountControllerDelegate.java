@@ -131,7 +131,7 @@ class UserAccountControllerDelegate {
       var user = userAccountProvider.retrieveValidatedUser();
       partialUserData = askerDataProvider.retrieveData(user);
       partialUserData.setIsAskerEmailCollectionAllowed(
-          emailCollectionPolicy.capabilityForAccount(user));
+          !authenticatedUser.isAnonymous() && emailCollectionPolicy.capabilityForAccount(user));
     }
     var otpInfoDTO = retrieveOtpCredentialIfAllowed();
 

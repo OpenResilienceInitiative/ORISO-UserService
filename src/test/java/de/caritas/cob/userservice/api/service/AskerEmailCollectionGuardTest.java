@@ -45,15 +45,26 @@ class AskerEmailCollectionGuardTest {
     user.setUserId("asker");
     user.setTenantId(42L);
     user.setEmail("existing@example.org");
-    when(authenticatedUser.getUserId()).thenReturn("asker");
-    when(users.findByUserIdAndDeleteDateIsNull("asker")).thenReturn(Optional.of(user));
+    org.mockito.Mockito.lenient().when(authenticatedUser.getUserId()).thenReturn("asker");
+    org.mockito.Mockito.lenient()
+        .when(users.findByUserIdAndDeleteDateIsNull("asker"))
+        .thenReturn(Optional.of(user));
+  }
+
+  @Test
+  void anonymousLiveChatCannotSendOtpEvenForAPreviouslyStoredAddress() {
+    when(authenticatedUser.isAnonymous()).thenReturn(true);
+
+    assertThatThrownBy(() -> guard.beforeStart("existing@example.org"))
+        .isInstanceOf(ForbiddenException.class);
+    assertThatThrownBy(guard::beforeFinish).isInstanceOf(ForbiddenException.class);
+    verifyNoInteractions(secondFactor);
   }
 
   @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.ValueSource(
       strings = {
         "featureAskerEmailCollectionAgencyCounsellingEnabled",
-        "featureAskerEmailCollectionLiveChatEnabled",
         "featureAskerEmailCollectionSelfHelpEnabled"
       })
   void restrictiveCollectionCannotAuthorizeAnUnknownAccountContext(String restrictedKey)
@@ -114,10 +125,7 @@ class AskerEmailCollectionGuardTest {
 
   @Test
   void losingTheOnlyAllowedContextBeforeFinishRefusesThePendingNewAddress() {
-    var settings =
-        new Settings()
-            .featureAskerEmailEnabled(true)
-            .featureAskerEmailCollectionLiveChatEnabled(false);
+    var settings = new Settings().featureAskerEmailEnabled(true);
     when(tenants.getRestrictedTenantDataFresh(42L))
         .thenReturn(new RestrictedTenantDTO().id(42L).settings(settings));
     var user = users.findByUserIdAndDeleteDateIsNull("asker").orElseThrow();
@@ -150,6 +158,7 @@ class AskerEmailCollectionGuardTest {
 
   @Test
   void enabledCollectionDoesNotNeedProviderMetadata() {
+    givenOwnedCounsellingSession(users.findByUserIdAndDeleteDateIsNull("asker").orElseThrow());
     when(tenants.getRestrictedTenantDataFresh(42L)).thenReturn(tenant(true));
     guard.beforeFinish();
     verifyNoInteractions(secondFactor);
@@ -191,11 +200,22 @@ class AskerEmailCollectionGuardTest {
   void legacySingleTenantOtpFinishUsesConfiguredPolicyBeforeProviderEffects() {
     var user = new User();
     user.setUserId("asker");
-    when(users.findByUserIdAndDeleteDateIsNull("asker")).thenReturn(Optional.of(user));
+    org.mockito.Mockito.lenient()
+        .when(users.findByUserIdAndDeleteDateIsNull("asker"))
+        .thenReturn(Optional.of(user));
+    givenOwnedCounsellingSession(user);
     when(tenants.getSingleTenancyTenantDataFresh()).thenReturn(tenant(true));
     guard.beforeFinish();
     verify(tenants).getSingleTenancyTenantDataFresh();
     verifyNoInteractions(secondFactor);
+  }
+
+  private void givenOwnedCounsellingSession(User user) {
+    var session = new de.caritas.cob.userservice.api.model.Session();
+    session.setUser(user);
+    session.setConversationType(
+        de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING);
+    when(sessions.findByUser(user)).thenReturn(List.of(session));
   }
 
   private void disabled() {

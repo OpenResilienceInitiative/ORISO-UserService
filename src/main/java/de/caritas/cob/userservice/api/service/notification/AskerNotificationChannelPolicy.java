@@ -17,6 +17,10 @@ public final class AskerNotificationChannelPolicy {
         : ConversationType.AGENCY_COUNSELLING;
   }
 
+  public static boolean isLiveChat(Session session) {
+    return conversationType(session) == ConversationType.LIVE_CHAT;
+  }
+
   public static boolean emailAllowed(Session session, Settings settings) {
     return emailAllowed(conversationType(session), settings);
   }
@@ -29,11 +33,9 @@ public final class AskerNotificationChannelPolicy {
       case AGENCY_COUNSELLING ->
           settings == null
               || !Boolean.FALSE.equals(settings.getFeatureAskerEmailAgencyCounsellingEnabled());
-      case LIVE_CHAT ->
-          settings != null && Boolean.TRUE.equals(settings.getFeatureAskerEmailLiveChatEnabled());
       case SELF_HELP ->
           settings == null || !Boolean.FALSE.equals(settings.getFeatureAskerEmailSelfHelpEnabled());
-      case INTERNAL_GROUP -> false;
+      case LIVE_CHAT, INTERNAL_GROUP -> false;
     };
   }
 }

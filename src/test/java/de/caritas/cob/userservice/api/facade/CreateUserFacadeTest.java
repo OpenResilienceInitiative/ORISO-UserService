@@ -371,8 +371,11 @@ public class CreateUserFacadeTest {
     } finally {
       TenantContext.clear();
     }
+    verify(names)
+        .validateRegistrationNames(
+            "direct-login", "legacy ignored alias", 42L, ConversationType.AGENCY_COUNSELLING);
     org.mockito.Mockito.verifyNoInteractions(
-        names, createNewSessionFacade, matrixSynapseService, userService);
+        createNewSessionFacade, matrixSynapseService, userService);
   }
 
   @Test
@@ -402,8 +405,7 @@ public class CreateUserFacadeTest {
                 .settings(
                     new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
                         .featureAskerEmailEnabled(true)
-                        .featureAskerEmailCollectionAgencyCounsellingEnabled(false)
-                        .featureAskerEmailCollectionLiveChatEnabled(true)));
+                        .featureAskerEmailCollectionAgencyCounsellingEnabled(false)));
     var policy =
         new de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy(
             tenantService,
