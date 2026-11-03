@@ -756,7 +756,7 @@ class AccountInviteServiceTest {
     // The revoke wins: the old link is not brought back and the revoked row is kept.
     assertThat(oldInvite.getStatus()).isEqualTo(AccountInviteStatus.SUPERSEDED);
     verify(accountInviteRepository, never()).deleteById(any());
-    verify(accountInviteRepository, never()).delete(any());
+    verify(accountInviteRepository, never()).delete(any(AccountInvite.class));
     verify(accountInviteRepository, never()).deleteAll(any());
     verify(accountInviteRepository, never()).deleteAll();
     // Only the three writes of the handover itself; nothing after the failed send.

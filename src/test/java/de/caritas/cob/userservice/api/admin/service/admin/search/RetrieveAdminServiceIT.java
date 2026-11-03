@@ -6,15 +6,20 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.anySet;
+import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.UserServiceApplication;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.NoContentException;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminBase;
 import de.caritas.cob.userservice.api.model.AdminAgency.AdminAgencyBase;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -23,6 +28,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
@@ -32,6 +38,19 @@ public class RetrieveAdminServiceIT {
   private final String VALID_ADMIN_ID = "164be67d-4d1b-4d80-bb6b-0ee057a1c59e";
 
   @Autowired private RetrieveAdminService retrieveAdminService;
+  @MockitoBean private TenantService tenantService;
+
+  @BeforeEach
+  void relevantOwnerFixture() {
+    when(tenantService.getRestrictedTenantData(anySet()))
+        .thenAnswer(
+            call -> {
+              Set<Long> ids = call.getArgument(0);
+              return ids.stream()
+                  .map(id -> new RestrictedTenantDTO().id(id).name("Tenant " + id))
+                  .toList();
+            });
+  }
 
   @Test
   public void findAgencyAdmin_Should_returnCorrectAdmin_When_correctIdIsProvided() {
