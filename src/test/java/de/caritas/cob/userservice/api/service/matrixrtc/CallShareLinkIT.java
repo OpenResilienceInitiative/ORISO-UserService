@@ -39,6 +39,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.agency.EffectiveAgencySettingsLookup;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.CallShareLinkEndedException;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.CallShareLinkService;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.CallShareLinkSweep;
@@ -152,6 +153,7 @@ class CallShareLinkIT {
   @MockitoBean private MatrixFeedUpdateSignalService feedUpdateSignals;
   @MockitoBean private IdentityTombstoneService tombstones;
   @MockitoBean private TenantService tenantService;
+  @MockitoBean private EffectiveAgencySettingsLookup agencySettings;
 
   private final ObjectMapper json = new ObjectMapper();
   private TransactionTemplate transaction;
@@ -161,6 +163,16 @@ class CallShareLinkIT {
 
   @BeforeEach
   void setUp() {
+    when(tenantService.getRestrictedTenantDataFresh(7L))
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(7L)
+                .settings(new Settings().featureDirectInviteAudioEnabled(true)));
+    when(agencySettings.findEffectiveSettings(99L, 7L))
+        .thenReturn(
+            Optional.of(
+                new de.caritas.cob.userservice.agencyserivce.generated.web.model.Settings()
+                    .featureDirectInviteAudioEnabled(true)));
     transaction = new TransactionTemplate(transactionManager);
     var jdbc = new JdbcTemplate(dataSource);
     jdbc.execute(
@@ -490,6 +502,21 @@ class CallShareLinkIT {
 
     assertThat(policy.resolve(SOURCE, GUEST, MEDIA)).isEqualTo(CallMediaPolicy.denied());
     assertThatThrownBy(() -> shareLinks.join(link.getToken(), guest))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+  }
+
+  @Test
+  void aPreviouslySharedLinkCannotAdmitAGuestAfterTheAgencyDisablesInvites() {
+    var link = shareLinks.create(7L, counsellor.getId(), SOURCE, "share-call", false, null).link();
+    when(agencySettings.findEffectiveSettings(99L, 7L))
+        .thenReturn(
+            Optional.of(
+                new de.caritas.cob.userservice.agencyserivce.generated.web.model.Settings()
+                    .featureDirectInviteAudioEnabled(false)));
+
+    assertThatThrownBy(
+            () -> shareLinks.join(link.getToken(), users.findById("share-guest").orElseThrow()))
         .isInstanceOf(
             de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
   }

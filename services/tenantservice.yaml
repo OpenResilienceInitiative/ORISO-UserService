@@ -1596,6 +1596,15 @@ components:
         featureAnonymousChatEnabled:
           type: boolean
           example: 'true'
+        featureDirectInviteChatEnabled:
+          type: boolean
+          description: Effective permission to invite directly by chat link.
+        featureDirectInviteAudioEnabled:
+          type: boolean
+          description: Effective permission to invite directly by audio link.
+        featureDirectInviteVideoEnabled:
+          type: boolean
+          description: Effective permission to invite directly by video link.
         featureCallsEnabled:
           type: boolean
           example: 'true'

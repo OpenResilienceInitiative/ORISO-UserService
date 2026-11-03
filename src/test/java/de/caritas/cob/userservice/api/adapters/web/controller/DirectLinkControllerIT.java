@@ -37,12 +37,16 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.agency.EffectiveAgencySettingsLookup;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.Settings;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import jakarta.persistence.EntityManager;
 import jakarta.servlet.http.Cookie;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.StreamSupport;
 import org.junit.jupiter.api.BeforeEach;
@@ -91,6 +95,7 @@ class DirectLinkControllerIT {
   @MockitoBean private TopicService topicService;
   @MockitoBean private CreateNewSessionFacade createNewSessionFacade;
   @MockitoBean private TenantService tenantService;
+  @MockitoBean private EffectiveAgencySettingsLookup agencySettings;
 
   private Consultant owner;
   private Consultant otherCounsellor;
@@ -98,6 +103,22 @@ class DirectLinkControllerIT {
 
   @BeforeEach
   void setUp() {
+    when(tenantService.getRestrictedTenantDataFresh(TENANT_ID))
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(TENANT_ID)
+                .settings(
+                    new Settings()
+                        .featureDirectInviteChatEnabled(true)
+                        .featureDirectInviteAudioEnabled(true)
+                        .featureDirectInviteVideoEnabled(true)));
+    when(agencySettings.findEffectiveSettings(AGENCY_ID, TENANT_ID))
+        .thenReturn(
+            Optional.of(
+                new de.caritas.cob.userservice.agencyserivce.generated.web.model.Settings()
+                    .featureDirectInviteChatEnabled(true)
+                    .featureDirectInviteAudioEnabled(true)
+                    .featureDirectInviteVideoEnabled(true)));
     when(agencyService.getAgencyWithoutCaching(AGENCY_ID))
         .thenReturn(
             new AgencyDTO().id(AGENCY_ID).tenantId(TENANT_ID).consultingType(1).postcode("10115"));
