@@ -24,6 +24,7 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
@@ -84,6 +85,7 @@ class SessionAppointmentControllerIT {
   @Autowired private MockMvc mockMvc;
   @Autowired private CaseHandoverRequestRepository handovers;
   @Autowired private SessionRepository sessions;
+  @Autowired private ConsultantRepository consultants;
 
   @MockitoBean TenantService tenantService;
   @MockitoBean TenantResolverService tenantResolverService;
@@ -241,6 +243,8 @@ class SessionAppointmentControllerIT {
 
   @Test
   void upcoming_Should_ListOnlyMyScheduledAppointments_EarliestFirst() throws Exception {
+    counsellor.setDisplayName("Synthetic Display");
+    Tenants.in(TENANT, () -> consultants.save(counsellor));
     actAsCounsellor(counsellor);
     var later = createdAppointment(in(5), in(6));
     var sooner = createdAppointment(in(1), in(2));
@@ -256,7 +260,7 @@ class SessionAppointmentControllerIT {
     var askerRows = body(get("/users/appointments/upcoming"));
     assertThat(askerRows).extracting(row -> row.get("id")).containsExactly(sooner, later);
     assertThat(((Map<?, ?>) askerRows.get(0).get("counterpart")).get("displayName"))
-        .isEqualTo(counsellor.getDisplayName());
+        .isEqualTo("Synthetic Display");
 
     actAsCounsellor(otherCounsellor);
     assertThat(body(get("/users/appointments/upcoming"))).isEmpty();

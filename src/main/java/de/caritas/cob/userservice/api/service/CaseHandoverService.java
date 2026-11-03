@@ -2531,7 +2531,13 @@ public class CaseHandoverService {
 
   /** The sessions on which this counsellor holds a live co-access grant right now. */
   public Set<Long> sessionIdsWithActiveCoAccess(String consultantId) {
-    return caseHandoverRequestRepository.findByRequesterConsultantId(consultantId).stream()
+    return caseHandoverRequestRepository
+        .findLiveCoAccessCandidates(
+            consultantId,
+            List.of(Status.GRANTED, Status.GRANTED_PENDING_CLIENT_OPTOUT),
+            AccessType.CO_ACCESS,
+            LocalDateTime.now(clock))
+        .stream()
         .filter(this::isActiveCoAccess)
         .map(request -> request.getSession().getId())
         .collect(Collectors.toSet());
