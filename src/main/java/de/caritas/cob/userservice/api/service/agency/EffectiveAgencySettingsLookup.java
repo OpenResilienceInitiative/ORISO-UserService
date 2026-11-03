@@ -36,7 +36,8 @@ import org.springframework.web.client.UnknownContentTypeException;
  * <p>Failure contract: an unknown agency, a 404, or an agency without a settings block yields
  * {@link Optional#empty()}. Foreign/ambiguous projections and authorization refusals fail closed.
  * Availability failures (timeout, 5xx, ...) propagate as {@link
- * org.springframework.web.client.RestClientException}; the caller falls back to the tenant value.
+ * org.springframework.web.client.RestClientException}; each caller decides what an outage means (a
+ * gate that must not allow on doubt refuses, or answers 503).
  */
 @Component
 @RequiredArgsConstructor

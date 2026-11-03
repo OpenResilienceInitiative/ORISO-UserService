@@ -59,6 +59,8 @@ class AgencyInviteLinkServiceTest {
   private de.caritas.cob.userservice.api.service.temporaryaccount.TemporaryAccountSettingsService
       temporaryAccountSettings;
 
+  @Mock private DirectInvitePolicy directInvitePolicy;
+
   @InjectMocks private AgencyInviteLinkService service;
 
   @Mock private AdminScope adminScope;
@@ -325,6 +327,7 @@ class AgencyInviteLinkServiceTest {
     var membership = new de.caritas.cob.userservice.api.model.ConsultantAgency();
     membership.setAgencyId(5L);
     owner.setConsultantAgencies(java.util.Set.of(membership));
+    when(directInvitePolicy.allows(83L, 5L, InviteLinkChatType.CHAT)).thenReturn(true);
     when(repository.findByToken("direct")).thenReturn(Optional.of(link));
     when(repository.findByTokenAndStatus("direct", InviteLinkStatus.ACTIVE.name()))
         .thenReturn(Optional.of(link));
@@ -338,6 +341,27 @@ class AgencyInviteLinkServiceTest {
     assertThat(service.getContext("direct").agencyId()).isEqualTo(5L);
     assertThat(service.redeem("direct").getAgencyId()).isEqualTo(5L);
     assertThat(TenantContext.getCurrentTenant()).isNull();
+  }
+
+  /** "Direkteinladung erlauben" withdrawn: the link stays stored, but the page says it is off. */
+  @Test
+  void directLinkWithWithdrawnPermission_Should_ReadAsNoLongerActive() {
+    var link =
+        AgencyInviteLink.builder()
+            .token("direct")
+            .status(InviteLinkStatus.ACTIVE.name())
+            .tenantId(83L)
+            .linkKind(InviteLinkKind.COUNSELLOR.name())
+            .chatType(InviteLinkChatType.VIDEO.name())
+            .consultantId("owner")
+            .agencyId(5L)
+            .build();
+    when(repository.findByToken("direct")).thenReturn(Optional.of(link));
+    when(directInvitePolicy.allows(83L, 5L, InviteLinkChatType.VIDEO)).thenReturn(false);
+
+    assertThatThrownBy(() -> service.getContext("direct"))
+        .isInstanceOf(DirectLinkInactiveException.class);
+    verify(repository, org.mockito.Mockito.never()).save(any());
   }
 
   @Test
@@ -382,6 +406,61 @@ class AgencyInviteLinkServiceTest {
     assertThatThrownBy(() -> service.redeem("token"))
         .isInstanceOf(BadRequestException.class)
         .hasMessageContaining("expired");
+  }
+
+  /** The page falls back to redeem when the context fails: it must refuse a withdrawn link too. */
+  @Test
+  void redeem_Should_ReadAsNoLongerActive_When_TheDirectPermissionWasWithdrawn() {
+    AgencyInviteLink link =
+        AgencyInviteLink.builder()
+            .token("direct")
+            .status(InviteLinkStatus.ACTIVE.name())
+            .linkKind(InviteLinkKind.COUNSELLOR.name())
+            .chatType(InviteLinkChatType.AUDIO.name())
+            .tenantId(1L)
+            .agencyId(5L)
+            .build();
+    when(repository.findByToken("direct")).thenReturn(Optional.of(link));
+    when(repository.findByTokenAndStatus("direct", InviteLinkStatus.ACTIVE.name()))
+        .thenReturn(Optional.of(link));
+    when(directInvitePolicy.allows(1L, 5L, InviteLinkChatType.AUDIO)).thenReturn(false);
+
+    assertThatThrownBy(() -> service.redeem("direct"))
+        .isInstanceOf(DirectLinkInactiveException.class);
+    // Refused before the row is locked.
+    verify(repository, org.mockito.Mockito.never()).findByTokenAndStatus(any(), any());
+  }
+
+  /** The remote policy reads must not run while the PESSIMISTIC_WRITE lock is held. */
+  @Test
+  void redeem_Should_AskThePolicyBeforeItLocksTheLink() {
+    AgencyInviteLink link =
+        AgencyInviteLink.builder()
+            .token("direct")
+            .status(InviteLinkStatus.ACTIVE.name())
+            .linkKind(InviteLinkKind.COUNSELLOR.name())
+            .chatType(InviteLinkChatType.CHAT.name())
+            .tenantId(1L)
+            .agencyId(5L)
+            .consultingTypeId(2)
+            .build();
+    when(repository.findByToken("direct")).thenReturn(Optional.of(link));
+    when(repository.findByTokenAndStatus("direct", InviteLinkStatus.ACTIVE.name()))
+        .thenReturn(Optional.of(link));
+    when(directInvitePolicy.allows(1L, 5L, InviteLinkChatType.CHAT)).thenReturn(true);
+    var owner = new Consultant();
+    owner.setId("owner");
+    link.setConsultantId("owner");
+    var membership = new de.caritas.cob.userservice.api.model.ConsultantAgency();
+    membership.setAgencyId(5L);
+    owner.setConsultantAgencies(java.util.Set.of(membership));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("owner")).thenReturn(Optional.of(owner));
+
+    service.redeem("direct");
+
+    var order = org.mockito.Mockito.inOrder(directInvitePolicy, repository);
+    order.verify(directInvitePolicy).allows(1L, 5L, InviteLinkChatType.CHAT);
+    order.verify(repository).findByTokenAndStatus("direct", InviteLinkStatus.ACTIVE.name());
   }
 
   @Test
