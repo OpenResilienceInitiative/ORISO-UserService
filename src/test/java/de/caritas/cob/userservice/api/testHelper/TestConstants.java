@@ -180,8 +180,8 @@ public class TestConstants {
   public static final String FIRST_NAME = "vorname";
   public static final String LAST_NAME = "nachname";
   public static final String EMAIL = "email@email.com";
-  public static final String PASSWORD = "TestPw!#123";
-  public static final String PASSWORD_URL_ENCODED = "TestPw!%23123";
+  public static final String PASSWORD = "TestPw!#123456789";
+  public static final String PASSWORD_URL_ENCODED = "TestPw!%23123456789";
   public static final boolean IS_TEAM_CONSULTANT = true;
   public static final boolean IS_LANGUAGE_FORMAL = true;
   public static final String VALID_AGE = "1";
@@ -882,8 +882,8 @@ public class TestConstants {
   /*
    * Passwords
    */
-  public static final String ENCODED_PASSWORD = "Tester123%24";
-  public static final String DECODED_PASSWORD = "Tester123$";
+  public static final String ENCODED_PASSWORD = "Tester123456789%24";
+  public static final String DECODED_PASSWORD = "Tester123456789$";
   /*
    * Masterkey
    */

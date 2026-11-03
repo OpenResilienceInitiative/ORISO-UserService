@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.port.out.MatrixCallBindingRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService;
+import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.EnumSet;
@@ -28,9 +29,12 @@ import java.util.function.Predicate;
 import java.util.stream.Stream;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * Knock-first admission for audio and video direct links (#1475, ADR-029 §2), on the knock model of
@@ -44,6 +48,7 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class DirectCallKnockService {
 
   private final @NonNull GroupChatJoinRequestRepository repository;
@@ -53,6 +58,7 @@ public class DirectCallKnockService {
   private final @NonNull MatrixCallGuestService callGuests;
   private final @NonNull UserRepository users;
   private final @NonNull ConsultantRepository consultants;
+  private final @NonNull EventNotificationService eventNotifications;
 
   private static final Set<Via> CALL_KNOCKS = EnumSet.of(Via.DIRECT_LINK, Via.CALL_LINK);
   private static final Comparator<GroupChatJoinRequest> BY_REQUESTED_AT =
@@ -67,14 +73,16 @@ public class DirectCallKnockService {
    * Let in once: an admission holds for the whole conversation and is returned on every later
    * visit. Otherwise one open knock per person and conversation: knocking again returns it, and
    * after a decline the next visit knocks anew. The conversation row is locked first, so two
-   * parallel visits cannot both find no knock and insert two.
+   * parallel visits cannot both find no knock and insert two. A new knock tells the counsellor
+   * (FE#1952); returning an open knock or an admission does not ring again.
    */
   @Transactional
   public GroupChatJoinRequest knock(
       Long sessionId, User user, Long inviteLinkId, InviteLinkChatType medium) {
-    sessionRepository
-        .findByIdForUpdate(sessionId)
-        .orElseThrow(() -> new NotFoundException("Session %s not found", sessionId));
+    var session =
+        sessionRepository
+            .findByIdForUpdate(sessionId)
+            .orElseThrow(() -> new NotFoundException("Session %s not found", sessionId));
     return admissionOf(sessionId, user)
         .or(
             () ->
@@ -83,18 +91,51 @@ public class DirectCallKnockService {
                     .stream()
                     .findFirst()
                     .filter(this::stillWaitingOrSupersede))
-        .orElseGet(
-            () ->
-                repository.save(
-                    GroupChatJoinRequest.builder()
-                        .via(Via.DIRECT_LINK)
-                        .sessionId(sessionId)
-                        .userId(user.getUserId())
-                        .inviteLinkId(inviteLinkId)
-                        .medium(medium.name())
-                        .status(Status.PENDING)
-                        .requestedAt(LocalDateTime.now())
-                        .build()));
+        .orElseGet(() -> openKnock(session, user, inviteLinkId, medium));
+  }
+
+  private GroupChatJoinRequest openKnock(
+      Session session, User user, Long inviteLinkId, InviteLinkChatType medium) {
+    var knock =
+        repository.save(
+            GroupChatJoinRequest.builder()
+                .via(Via.DIRECT_LINK)
+                .sessionId(session.getId())
+                .userId(user.getUserId())
+                .inviteLinkId(inviteLinkId)
+                .medium(medium.name())
+                .status(Status.PENDING)
+                .requestedAt(LocalDateTime.now())
+                .build());
+    tellCounsellorAfterCommit(session, knock);
+    return knock;
+  }
+
+  /**
+   * The entry is written in its own transaction, so it waits for the knock to commit: a knock that
+   * rolls back must not ring the counsellor for a person who is not waiting. At afterCommit the
+   * writer's REQUIRES_NEW boundary still persists; a failure there never reaches the person.
+   */
+  private void tellCounsellorAfterCommit(Session session, GroupChatJoinRequest knock) {
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      eventNotifications.createCallKnockRequestedNotification(session, knock);
+      return;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            try {
+              eventNotifications.createCallKnockRequestedNotification(session, knock);
+            } catch (RuntimeException notificationFailure) {
+              log.warn(
+                  "Knock {} committed, but its notification for session {} failed",
+                  knock.getId(),
+                  session.getId(),
+                  notificationFailure);
+            }
+          }
+        });
   }
 
   /**

@@ -18,9 +18,14 @@ public final class AskerNotificationChannelPolicy {
   }
 
   public static boolean emailAllowed(Session session, Settings settings) {
+    return emailAllowed(conversationType(session), settings);
+  }
+
+  /** For mails without a session, e.g. self-help appointments addressed per group. */
+  public static boolean emailAllowed(ConversationType conversationType, Settings settings) {
     if (settings != null && Boolean.FALSE.equals(settings.getFeatureAskerEmailEnabled()))
       return false;
-    return switch (conversationType(session)) {
+    return switch (conversationType) {
       case AGENCY_COUNSELLING ->
           settings == null
               || !Boolean.FALSE.equals(settings.getFeatureAskerEmailAgencyCounsellingEnabled());

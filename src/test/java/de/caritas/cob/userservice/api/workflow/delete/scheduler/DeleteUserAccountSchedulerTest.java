@@ -7,6 +7,7 @@ import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import de.caritas.cob.userservice.api.admin.service.IdentityReactivationRepairService;
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
+import de.caritas.cob.userservice.api.workflow.delete.service.ConsultantHardDeleteClaimService;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeleteUserAccountService;
 import de.caritas.cob.userservice.api.workflow.delete.service.UserHardDeleteClaimService;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
@@ -32,6 +33,8 @@ public class DeleteUserAccountSchedulerTest {
 
   @Mock private UserHardDeleteClaimService userHardDeleteClaimService;
 
+  @Mock private ConsultantHardDeleteClaimService consultantHardDeleteClaimService;
+
   @Mock private IdentityReactivationRepairService identityReactivationRepairService;
 
   @BeforeEach
@@ -53,10 +56,12 @@ public class DeleteUserAccountSchedulerTest {
             tenantContextProvider,
             identityReactivationRepairService,
             userHardDeleteClaimService,
+            consultantHardDeleteClaimService,
             deleteUserAccountService);
     inOrder.verify(tenantContextProvider).setTechnicalContextIfMultiTenancyIsEnabled();
     inOrder.verify(identityReactivationRepairService).retryOutstandingRepairs();
     inOrder.verify(userHardDeleteClaimService).releaseInterruptedClaims();
+    inOrder.verify(consultantHardDeleteClaimService).releaseInterruptedClaims();
     inOrder.verify(deleteUserAccountService).deleteUserAccounts();
     inOrder.verifyNoMoreInteractions();
   }
@@ -71,6 +76,7 @@ public class DeleteUserAccountSchedulerTest {
         tenantContextProvider,
         identityReactivationRepairService,
         userHardDeleteClaimService,
+        consultantHardDeleteClaimService,
         deleteUserAccountService);
   }
 }

@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransac
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
+import de.caritas.cob.userservice.api.service.consultant.ConsultantMatrixDisplayNamePublisher;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,6 +25,8 @@ public class PatchConsultantSaga {
 
   private final AppointmentService appointmentService;
 
+  private final ConsultantMatrixDisplayNamePublisher consultantMatrixDisplayNamePublisher;
+
   @Transactional
   public Map<String, Object> executeTransactional(
       Consultant patchedConsultant, Map<String, Object> patchMap) {
@@ -31,8 +34,11 @@ public class PatchConsultantSaga {
     userServiceMapper
         .displayNameOf(patchMap)
         .ifPresent(
-            displayName ->
-                patchConsultantInAppointmentServiceOrRollback(savedConsultant, displayName));
+            displayName -> {
+              patchConsultantInAppointmentServiceOrRollback(savedConsultant, displayName);
+              // #1541: like the PUT path, the Matrix profile follows -- after the commit only.
+              consultantMatrixDisplayNamePublisher.publishAfterCommit(savedConsultant);
+            });
     return userServiceMapper.mapOf(savedConsultant, patchMap);
   }
 

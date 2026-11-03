@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.HttpTe
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.IpPrivacyHeaderFilter;
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.StatelessCsrfFilter;
 import de.caritas.cob.userservice.api.config.CsrfSecurityProperties;
+import de.caritas.cob.userservice.api.model.PublicSlugFormat;
 import java.math.BigDecimal;
 import java.util.Collection;
 import java.util.HashSet;
@@ -48,16 +49,19 @@ public class SecurityConfig {
       "\\b[0-9a-f]{8}\\b-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-\\b[0-9a-f]{12}\\b";
 
   /**
-   * A public consultant id is either a UUID or a public slug (lowercase words joined by single
-   * hyphens). The negative lookahead keeps the sibling literal routes under {@code
-   * /users/consultants/*} (search, absences, import, sessions, languages) out of the permitAll
-   * match — they carry their own role rules below and are also seeded as reserved slugs. Only
-   * non-capturing groups: Spring's PathPattern rejects capture groups in {var:regex} constraints.
+   * A public consultant id is either a UUID or a public slug ({@link PublicSlugFormat}: lowercase
+   * letters and digits joined by single hyphens). The negative lookahead keeps the sibling literal
+   * routes under {@code /users/consultants/*} (search, absences, import, sessions, languages) out
+   * of the permitAll match — they carry their own role rules below and are also seeded as reserved
+   * slugs. Only non-capturing groups: Spring's PathPattern rejects capture groups in {var:regex}
+   * constraints.
    */
   private static final String PUBLIC_CONSULTANT_ID_PATTERN =
       "(?:"
           + UUID_PATTERN
-          + ")|(?:(?!(?:search|absences|import|sessions|languages)$)[a-z]+(?:-[a-z]+)*)";
+          + ")|(?:(?!(?:search|absences|import|sessions|languages)$)"
+          + PublicSlugFormat.REGEX
+          + ")";
 
   public static final String APPOINTMENTS_APPOINTMENT_ID = "/appointments/{appointmentId:";
 
@@ -442,6 +446,10 @@ public class SecurityConfig {
                     "/users/sessions/{sessionId:[0-9]+}/contact-sheet-email",
                     "/service/users/sessions/{sessionId:[0-9]+}/contact-sheet-email")
                 .hasAnyAuthority(USER_DEFAULT, ANONYMOUS_DEFAULT)
+                // Anonymous live-chat owners set the same session-scoped alias as registered
+                // askers. SessionDataService checks owner/session access before any mutation.
+                .requestMatchers(HttpMethod.PUT, "/users/sessions/{sessionId:[0-9]+}/data")
+                .hasAnyAuthority(USER_DEFAULT, ANONYMOUS_DEFAULT)
                 .requestMatchers(
                     HttpMethod.GET, "/users/sessions/{sessionId:[0-9]+}/enquiry/permission")
                 .hasAuthority(USER_DEFAULT)
@@ -521,6 +529,8 @@ public class SecurityConfig {
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover/recipients",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/recipient-decision",
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/recipient-decision",
+                    "/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/withdraw",
+                    "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/withdraw",
                     "/users/chat-series/**",
                     "/service/users/chat-series/**",
                     "/users/agencies/{agencyId:[0-9]+}/admin-contacts",
@@ -628,6 +638,16 @@ public class SecurityConfig {
                         + "}/deletion/pause")
                 .hasAnyAuthority(
                     USER_ADMIN, RESTRICTED_AGENCY_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+                // Cancelling a consultant deletion: the same callers who may delete or pause it,
+                // scoped to their own agencies/tenant in ConsultantAdminFacade (AdminScope).
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/deletion/cancel",
+                    "/service/useradmin/consultants/{consultantId:"
+                        + UUID_PATTERN
+                        + "}/deletion/cancel")
+                .hasAnyAuthority(
+                    USER_ADMIN, RESTRICTED_AGENCY_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
                 .requestMatchers(
                     HttpMethod.POST,
                     "/useradmin/askers/deletion/reactivate",
@@ -656,8 +676,23 @@ public class SecurityConfig {
                     "/useradmin/statistics/tutorials",
                     "/service/useradmin/statistics/tutorials")
                 .hasAnyAuthority(TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+                // Global statistics settings and their protocol (OBP #93): platform admins only.
+                // Must precede the generic /useradmin/** rule, which a Träger admin also passes.
+                .requestMatchers(
+                    "/useradmin/statistics/settings",
+                    "/useradmin/statistics/settings/**",
+                    "/service/useradmin/statistics/settings",
+                    "/service/useradmin/statistics/settings/**")
+                .access(this::isPlatformAdmin)
                 // An admin's own list sorts (#1263): every admin role that sees a user list keeps
                 // its own; the data is always the caller's, so no other access widens.
+                // Platform default Erstantwort texts for the Träger editor (Admin#601); read-only.
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/useradmin/erstantwort/defaults",
+                    "/service/useradmin/erstantwort/defaults")
+                .hasAnyAuthority(
+                    USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
                 .requestMatchers("/useradmin/list-preferences", "/useradmin/list-preferences/**")
                 .hasAnyAuthority(
                     USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
@@ -677,7 +712,14 @@ public class SecurityConfig {
                 .requestMatchers(
                     "/users/inactive-accounts/audit-logs",
                     "/service/users/inactive-accounts/audit-logs")
-                .access(this::canAccessInactiveAccountAuditLogs)
+                .access(this::canAccessPlatformAuditLogs)
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/users/deletion-audit-logs",
+                    "/service/users/deletion-audit-logs")
+                .access(this::canReportDeletion)
+                .requestMatchers("/users/deletion-audit-logs", "/service/users/deletion-audit-logs")
+                .access(this::canAccessPlatformAuditLogs)
                 .requestMatchers(
                     "/users/consultants/sessions/{sessionId:[0-9]+}",
                     "/users/sessions/{sessionId:[0-9]+}/archive",
@@ -792,7 +834,7 @@ public class SecurityConfig {
             && isPlatformAdmin(authenticationSupplier, requestContext).isGranted());
   }
 
-  private AuthorizationDecision canAccessInactiveAccountAuditLogs(
+  private AuthorizationDecision canAccessPlatformAuditLogs(
       Supplier<? extends Authentication> authenticationSupplier,
       RequestAuthorizationContext requestContext) {
     Authentication authentication = authenticationSupplier.get();
@@ -805,6 +847,29 @@ public class SecurityConfig {
     }
 
     return isPlatformAdmin(authenticationSupplier, requestContext);
+  }
+
+  /**
+   * Who may report an agency or tenant deletion: everyone AgencyService and TenantService let
+   * delete one. The plain agency-admin role maps to no authority here but may delete a
+   * Beratungsstelle in AgencyService, so it is checked as a realm role.
+   */
+  private AuthorizationDecision canReportDeletion(
+      Supplier<? extends Authentication> authenticationSupplier,
+      RequestAuthorizationContext requestContext) {
+    Authentication authentication = authenticationSupplier.get();
+    Set<String> allowed =
+        Set.of(TECHNICAL_DEFAULT, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN);
+    if (authentication.getAuthorities().stream()
+        .anyMatch(authority -> allowed.contains(authority.getAuthority()))) {
+      return new AuthorizationDecision(true);
+    }
+    if (!(authentication instanceof JwtAuthenticationToken jwtAuthentication)) {
+      return new AuthorizationDecision(false);
+    }
+    return new AuthorizationDecision(
+        KeycloakRoles.of(jwtAuthentication.getToken().getClaims())
+            .contains(UserRole.AGENCY_ADMIN.getValue()));
   }
 
   private AuthorizationDecision isPlatformAdmin(

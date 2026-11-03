@@ -2206,6 +2206,22 @@ class UserControllerAuthorizationIT {
   }
 
   @Test
+  @WithMockUser(authorities = {AuthorityValue.ANONYMOUS_DEFAULT})
+  void updateSessionDataAllowsAnonymousAuthorityBeforeOwningServiceChecks() throws Exception {
+    mvc.perform(
+            put(PATH_PUT_UPDATE_SESSION_DATA)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    new ObjectMapper()
+                        .writeValueAsString(new SessionDataDTO().displayName("katze_mika_1234"))))
+        .andExpect(status().isOk());
+    verify(sessionDataService)
+        .saveSessionData(org.mockito.ArgumentMatchers.anyLong(), any(SessionDataDTO.class));
+  }
+
+  @Test
   @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT})
   void updateSessionData_Should_ReturnOK_When_ProperlyAuthorizedWithUserAuthority()
       throws Exception {

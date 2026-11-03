@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.config.auth.UserRole;
@@ -16,12 +18,17 @@ import de.caritas.cob.userservice.api.port.out.AdminStatisticsRepository;
 import de.caritas.cob.userservice.api.port.out.AdminStatisticsRepository.GroupCountProjection;
 import de.caritas.cob.userservice.api.port.out.AdminStatisticsRepository.TopicCountProjection;
 import de.caritas.cob.userservice.api.service.statistics.AdminDashboardStatisticsService.DashboardScope;
+import de.caritas.cob.userservice.api.service.statistics.AdminDashboardStatisticsService.TargetStatistics;
 import de.caritas.cob.userservice.api.service.statistics.AdminDashboardStatisticsService.TargetType;
+import de.caritas.cob.userservice.api.service.statistics.settings.StatisticsSetting;
+import de.caritas.cob.userservice.api.service.statistics.settings.StatisticsSettingsService;
+import de.caritas.cob.userservice.api.service.statistics.settings.StatisticsSnapshotInterval;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Set;
@@ -29,6 +36,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -51,6 +59,8 @@ class AdminDashboardStatisticsServiceTest {
 
   @Mock private AdminStatisticsRepository adminStatisticsRepository;
   @Mock private AdminAgencyRepository adminAgencyRepository;
+  @Mock private StatisticsSettingsService statisticsSettingsService;
+  @Mock private AdminDashboardStandService dashboardStands;
 
   private AuthenticatedUser authenticatedUser;
   private MockEnvironment mockEnvironment;
@@ -70,7 +80,15 @@ class AdminDashboardStatisticsServiceTest {
             adminAgencyRepository,
             authenticatedUser,
             clock,
-            mockEnvironment);
+            mockEnvironment,
+            statisticsSettingsService,
+            dashboardStands);
+    lenient()
+        .when(statisticsSettingsService.snapshotInterval(any()))
+        .thenReturn(StatisticsSnapshotInterval.LIVE);
+    lenient().when(statisticsSettingsService.minimumCounsellors(any())).thenReturn(5);
+    lenient().when(statisticsSettingsService.chartWeeks()).thenReturn(5);
+    lenient().when(statisticsSettingsService.topicMonths()).thenReturn(4);
     TenantContext.clear();
   }
 
@@ -399,7 +417,7 @@ class AdminDashboardStatisticsServiceTest {
     var dashboard = service.buildDashboard();
 
     assertThat(dashboard.scope()).isEqualTo(DashboardScope.PLATFORM);
-    assertThat(dashboard.targets()).hasSize(2);
+    assertThat(dashboard.targets()).hasSize(3);
 
     var tenantOne =
         dashboard.targets().stream()
@@ -418,5 +436,189 @@ class AdminDashboardStatisticsServiceTest {
             .orElseThrow();
     assertThat(tenantTwo.suppressed()).isTrue();
     assertThat(tenantTwo.metrics()).isNull();
+  }
+
+  private void givenPlatformAdminWithTenants(List<GroupCountProjection> counsellorsByTenant) {
+    authenticatedUser.setRoles(
+        Set.of(UserRole.TENANT_ADMIN.getValue(), UserRole.AGENCY_ADMIN.getValue()));
+    authenticatedUser.setTenantId(0L);
+    TenantContext.setCurrentTenant(0L);
+    lenient()
+        .when(adminStatisticsRepository.countConsultantsByTenant())
+        .thenReturn(counsellorsByTenant);
+    lenient()
+        .when(adminStatisticsRepository.countNewSessionsByTenant(any(), any()))
+        .thenReturn(List.of());
+    lenient()
+        .when(adminStatisticsRepository.countActiveCasesByTenant())
+        .thenReturn(List.of(groupCount(1L, 10), groupCount(2L, 3)));
+    lenient()
+        .when(adminStatisticsRepository.countActiveSessionsSinceByTenant(any()))
+        .thenReturn(List.of());
+    lenient()
+        .when(adminStatisticsRepository.countDailyNewSessionsByTenant(any()))
+        .thenReturn(List.of());
+    lenient()
+        .when(adminStatisticsRepository.countSessionTopicsByTenant(any(), any()))
+        .thenReturn(List.of());
+    lenient()
+        .when(adminStatisticsRepository.countGroupChatsByTenant(any(), any()))
+        .thenReturn(List.of(groupCount(1L, 2), groupCount(2L, 1)));
+  }
+
+  @Test
+  void buildDashboard_Should_ShowPlatformTotal_When_EachTenantIsBelowThresholdButPlatformIsNot() {
+    // OBP #93: 3 + 3 counsellors - every Träger is below 5, the platform with 6 is not
+    givenPlatformAdminWithTenants(List.of(groupCount(1L, 3), groupCount(2L, 3)));
+
+    var dashboard = service.buildDashboard();
+
+    var platform =
+        dashboard.targets().stream()
+            .filter(target -> target.targetType() == TargetType.PLATFORM)
+            .findFirst()
+            .orElseThrow();
+    assertThat(platform.tenantId()).isNull();
+    assertThat(platform.agencyId()).isNull();
+    assertThat(platform.counselorCount()).isEqualTo(6);
+    assertThat(platform.suppressed()).isFalse();
+    assertThat(platform.metrics().activeCases()).isEqualTo(13);
+    assertThat(platform.groupChatCountsByPeriod().total()).isEqualTo(3);
+    // the single Träger rows stay protected
+    assertThat(
+            dashboard.targets().stream()
+                .filter(target -> target.targetType() == TargetType.TENANT)
+                .allMatch(TargetStatistics::suppressed))
+        .isTrue();
+  }
+
+  @Test
+  void buildDashboard_Should_SuppressPlatformTotal_When_BelowThePlatformThreshold() {
+    givenPlatformAdminWithTenants(List.of(groupCount(1L, 3), groupCount(2L, 3)));
+    when(statisticsSettingsService.minimumCounsellors(
+            StatisticsSetting.PLATFORM_MINIMUM_COUNSELLORS))
+        .thenReturn(7);
+
+    var dashboard = service.buildDashboard();
+
+    var platform = dashboard.targets().get(0);
+    assertThat(platform.targetType()).isEqualTo(TargetType.PLATFORM);
+    assertThat(platform.suppressed()).isTrue();
+    assertThat(platform.metrics()).isNull();
+  }
+
+  @Test
+  void buildDashboard_Should_UseTheConfiguredAgencyThreshold() {
+    givenTenantAdmin();
+    givenEmptyTenantScopedQueries();
+    when(statisticsSettingsService.minimumCounsellors(StatisticsSetting.AGENCY_MINIMUM_COUNSELLORS))
+        .thenReturn(2);
+    when(adminStatisticsRepository.countConsultantsByAgency(TENANT_ID))
+        .thenReturn(List.of(groupCount(AGENCY_WITH_FEW_COUNSELORS, 2)));
+    when(adminStatisticsRepository.countActiveCasesByAgency(TENANT_ID))
+        .thenReturn(List.of(groupCount(AGENCY_WITH_FEW_COUNSELORS, 4)));
+    when(adminStatisticsRepository.countConsultantsForTenant(TENANT_ID)).thenReturn(2L);
+
+    var dashboard = service.buildDashboard();
+
+    var agency =
+        dashboard.targets().stream()
+            .filter(target -> target.targetType() == TargetType.AGENCY)
+            .findFirst()
+            .orElseThrow();
+    assertThat(agency.suppressed()).isFalse();
+    assertThat(agency.metrics().activeCases()).isEqualTo(4);
+    // the tenant total still uses the tenant threshold (default 5)
+    assertThat(dashboard.targets().get(0).targetType()).isEqualTo(TargetType.TENANT);
+    assertThat(dashboard.targets().get(0).suppressed()).isTrue();
+  }
+
+  @Test
+  void buildDashboard_Should_UseTheConfiguredTenantThreshold() {
+    givenTenantAdmin();
+    givenEmptyTenantScopedQueries();
+    when(statisticsSettingsService.minimumCounsellors(StatisticsSetting.TENANT_MINIMUM_COUNSELLORS))
+        .thenReturn(3);
+    when(adminStatisticsRepository.countConsultantsForTenant(TENANT_ID)).thenReturn(3L);
+
+    var dashboard = service.buildDashboard();
+
+    assertThat(dashboard.targets().get(0).targetType()).isEqualTo(TargetType.TENANT);
+    assertThat(dashboard.targets().get(0).suppressed()).isFalse();
+  }
+
+  @Test
+  void buildDashboard_Should_QueryTodaysTimeWindows_ByDefault() {
+    givenTenantAdmin();
+    givenEmptyTenantScopedQueries();
+
+    service.buildDashboard();
+
+    // Saturday 2026-07-11: this week starts Monday 2026-07-06, plus four weeks before
+    verify(adminStatisticsRepository)
+        .countDailyNewSessionsByAgency(TENANT_ID, LocalDateTime.of(2026, 6, 8, 0, 0));
+    assertThat(topicMonthsQueried()).containsExactly("2026-07", "2026-06", "2026-05", "2026-04");
+  }
+
+  @Test
+  void buildDashboard_Should_UseTheConfiguredChartWeeks() {
+    givenTenantAdmin();
+    givenEmptyTenantScopedQueries();
+    when(statisticsSettingsService.chartWeeks()).thenReturn(12);
+
+    service.buildDashboard();
+
+    // this week plus eleven before
+    verify(adminStatisticsRepository)
+        .countDailyNewSessionsByAgency(TENANT_ID, LocalDateTime.of(2026, 4, 20, 0, 0));
+  }
+
+  @Test
+  void buildDashboard_Should_UseTheConfiguredTopicMonths() {
+    givenTenantAdmin();
+    givenEmptyTenantScopedQueries();
+    when(statisticsSettingsService.topicMonths()).thenReturn(12);
+    when(adminStatisticsRepository.countConsultantsByAgency(TENANT_ID))
+        .thenReturn(List.of(groupCount(AGENCY_WITH_TEAM, 5)));
+    when(adminStatisticsRepository.countConsultantsForTenant(TENANT_ID)).thenReturn(5L);
+    when(adminStatisticsRepository.countSessionTopicsByAgency(
+            any(), any(LocalDateTime.class), any(LocalDateTime.class)))
+        .thenAnswer(
+            invocation -> {
+              LocalDateTime from = invocation.getArgument(1);
+              return from.toLocalDate().equals(LocalDate.of(2025, 8, 1))
+                  ? List.of(topicCount(AGENCY_WITH_TEAM, 300L, 2))
+                  : List.of();
+            });
+
+    var dashboard = service.buildDashboard();
+
+    assertThat(topicMonthsQueried())
+        .containsExactly(
+            "2026-07", "2026-06", "2026-05", "2026-04", "2026-03", "2026-02", "2026-01", "2025-12",
+            "2025-11", "2025-10", "2025-09", "2025-08");
+    assertThat(dashboard.targets().get(0).monthlyTopTopics())
+        .extracting(AdminDashboardStatisticsService.MonthlyTopic::month)
+        .containsExactly("2025-08");
+  }
+
+  @Test
+  void buildDashboard_Should_TellTheDashboardWhichWindowsItCovers() {
+    givenTenantAdmin();
+    givenEmptyTenantScopedQueries();
+    when(statisticsSettingsService.chartWeeks()).thenReturn(26);
+    when(statisticsSettingsService.topicMonths()).thenReturn(6);
+
+    var dashboard = service.buildDashboard();
+
+    assertThat(dashboard.chartWeeks()).isEqualTo(26);
+    assertThat(dashboard.topicMonths()).isEqualTo(6);
+  }
+
+  private List<String> topicMonthsQueried() {
+    var from = ArgumentCaptor.forClass(LocalDateTime.class);
+    verify(adminStatisticsRepository, atLeast(0))
+        .countSessionTopicsByAgency(any(), from.capture(), any(LocalDateTime.class));
+    return from.getAllValues().stream().map(value -> YearMonth.from(value).toString()).toList();
   }
 }

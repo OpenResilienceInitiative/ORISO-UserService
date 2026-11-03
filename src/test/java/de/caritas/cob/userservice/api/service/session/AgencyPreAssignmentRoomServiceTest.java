@@ -57,6 +57,8 @@ class AgencyPreAssignmentRoomServiceTest {
   @Mock private SessionRoomGateway sessionRoomGateway;
   @Mock private SessionService sessionService;
   @Mock private AgencySilentMembershipService agencySilentMembershipService;
+  @Mock private AgencyDepartmentMembershipBackfill departmentMembershipBackfill;
+  @Mock private MatrixRateLimitPause rateLimitPause;
 
   @InjectMocks private AgencyPreAssignmentRoomService underTest;
 
@@ -262,7 +264,8 @@ class AgencyPreAssignmentRoomServiceTest {
     inOrder.verify(sessionRoomGateway).createRoom(anyString(), anyString(), eq(AGENCY_TOKEN));
     inOrder
         .verify(agencySilentMembershipService)
-        .joinAgencyConsultants(AGENCY_ID, NEW_ROOM_ID, AGENCY_TOKEN);
+        .joinAgencyConsultantsWithoutWaiting(
+            eq(AGENCY_ID), eq(NEW_ROOM_ID), eq(AGENCY_TOKEN), any());
     inOrder.verify(sessionRoomGateway).inviteUser(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN);
     inOrder.verify(sessionRoomGateway).joinRoom(NEW_ROOM_ID, USER_TOKEN);
     inOrder.verify(sessionService).saveSession(session);
@@ -273,8 +276,9 @@ class AgencyPreAssignmentRoomServiceTest {
   void ensureHoldingRoom_provisionsRoomForAsker_whenNoConsultantJoined() throws Exception {
     stubHappyPathUntilRoomCreation();
     // AgencySilentMembershipService reports "nobody joined" (no consultants, or none usable).
-    when(agencySilentMembershipService.joinAgencyConsultants(AGENCY_ID, NEW_ROOM_ID, AGENCY_TOKEN))
-        .thenReturn(0);
+    when(agencySilentMembershipService.joinAgencyConsultantsWithoutWaiting(
+            eq(AGENCY_ID), eq(NEW_ROOM_ID), eq(AGENCY_TOKEN), any()))
+        .thenReturn(AgencySilentMembershipService.DepartmentFanOut.NONE);
     when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
     when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
 
@@ -292,7 +296,8 @@ class AgencyPreAssignmentRoomServiceTest {
     stubHappyPathUntilRoomCreation();
     // Department membership runs BEFORE the asker's invite now, so a blow-up here (e.g. the
     // consultant lookup) must be contained — it is a side effect, not a precondition.
-    when(agencySilentMembershipService.joinAgencyConsultants(AGENCY_ID, NEW_ROOM_ID, AGENCY_TOKEN))
+    when(agencySilentMembershipService.joinAgencyConsultantsWithoutWaiting(
+            eq(AGENCY_ID), eq(NEW_ROOM_ID), eq(AGENCY_TOKEN), any()))
         .thenThrow(new RuntimeException("consultant lookup failed"));
     when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
     when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
@@ -354,5 +359,82 @@ class AgencyPreAssignmentRoomServiceTest {
     underTest.ensureHoldingRoom(session, null);
 
     verifyNoInteractions(matrixCredentialClient, sessionRoomGateway, sessionService);
+  }
+
+  @Test
+  @DisplayName(
+      "registration does not wait for a rate-limited department: the rest is queued after the asker")
+  void ensureHoldingRoom_defersThrottledDepartmentToBackground() throws Exception {
+    stubHappyPathUntilRoomCreation();
+    var deferred =
+        java.util.stream.IntStream.range(0, 54)
+            .mapToObj(
+                i -> {
+                  var consultant = new de.caritas.cob.userservice.api.model.Consultant();
+                  consultant.setId("consultant-" + i);
+                  return consultant;
+                })
+            .toList();
+    when(agencySilentMembershipService.joinAgencyConsultantsWithoutWaiting(
+            AGENCY_ID,
+            NEW_ROOM_ID,
+            AGENCY_TOKEN,
+            AgencyPreAssignmentRoomService.DEPARTMENT_IN_REQUEST_BUDGET))
+        .thenReturn(new AgencySilentMembershipService.DepartmentFanOut(10, deferred, 3_300L));
+    when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
+    when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
+
+    underTest.ensureHoldingRoom(session, user);
+
+    // The request waits once, bounded, so the asker's invite is not refused by the same limit — and
+    // never once per counsellor.
+    verify(rateLimitPause).pause(3_300L);
+    var inOrder =
+        org.mockito.Mockito.inOrder(
+            sessionRoomGateway, sessionService, departmentMembershipBackfill);
+    inOrder.verify(sessionRoomGateway).inviteUser(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN);
+    inOrder.verify(sessionService).saveSession(session);
+    inOrder
+        .verify(departmentMembershipBackfill)
+        .schedule(AGENCY_ID, SESSION_ID, NEW_ROOM_ID, AGENCY_MATRIX_ID, deferred);
+    assertEquals(NEW_ROOM_ID, session.getMatrixRoomId());
+  }
+
+  @Test
+  @DisplayName("the wait before the asker's invite is capped, whatever delay Synapse asks for")
+  void ensureHoldingRoom_capsWaitBeforeAskerInvite() throws Exception {
+    stubHappyPathUntilRoomCreation();
+    when(agencySilentMembershipService.joinAgencyConsultantsWithoutWaiting(
+            eq(AGENCY_ID), eq(NEW_ROOM_ID), eq(AGENCY_TOKEN), any()))
+        .thenReturn(
+            new AgencySilentMembershipService.DepartmentFanOut(
+                0,
+                java.util.List.of(new de.caritas.cob.userservice.api.model.Consultant()),
+                300_000L));
+    when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
+    when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
+
+    underTest.ensureHoldingRoom(session, user);
+
+    verify(rateLimitPause).pause(AgencyPreAssignmentRoomService.MAX_WAIT_BEFORE_ASKER_INVITE_MS);
+  }
+
+  @Test
+  @DisplayName("a room that could not be given to the asker queues no department backfill")
+  void ensureHoldingRoom_queuesNoBackfill_whenAskerInviteFails() throws Exception {
+    stubHappyPathUntilRoomCreation();
+    when(agencySilentMembershipService.joinAgencyConsultantsWithoutWaiting(
+            eq(AGENCY_ID), eq(NEW_ROOM_ID), eq(AGENCY_TOKEN), any()))
+        .thenReturn(
+            new AgencySilentMembershipService.DepartmentFanOut(
+                0, java.util.List.of(new de.caritas.cob.userservice.api.model.Consultant()), 0L));
+    org.mockito.Mockito.doThrow(new MatrixInviteUserException("refused"))
+        .when(sessionRoomGateway)
+        .inviteUser(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN);
+
+    underTest.ensureHoldingRoom(session, user);
+
+    verifyNoInteractions(departmentMembershipBackfill, rateLimitPause);
+    assertNull(session.getMatrixRoomId());
   }
 }

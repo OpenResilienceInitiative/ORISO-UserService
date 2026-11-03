@@ -214,7 +214,7 @@ class UserAdminControllerAuthorizationIT {
     request.setUsername("marge.simpson@dreambau.de");
     request.setEmail("marge.simpson@dreambau.de");
     request.setTenantId(40L);
-    request.setPassword("NewPassw0rd!");
+    request.setPassword("NewPassw0rd!12345!");
     return request;
   }
 
@@ -492,7 +492,7 @@ class UserAdminControllerAuthorizationIT {
     // fixed default seed, so adding fields to any DTO shifts the deterministic string stream —
     // which can hand `password` a value shorter than its @Size(min = 8) and turn this into a
     // seed-dependent 400. Pin the only min-length-constrained field to a valid value.
-    createConsultantDTO.setPassword("SecurePass123!");
+    createConsultantDTO.setPassword("SecurePass123!ok16");
     when(consultantAdminFacade.createNewConsultant(any()))
         .thenReturn(
             new ConsultantAdminResponseDTO().embedded(new ConsultantDTO().id("consultant-1")));

@@ -5,11 +5,19 @@ import de.caritas.cob.userservice.api.model.ReplyEmailDelivery.RecipientKind;
 import de.caritas.cob.userservice.api.port.out.ReplyEmailDeliveryRepository;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Limit;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,8 +25,20 @@ import org.springframework.transaction.annotation.Transactional;
 /** Keeps the unique claim transaction separate from Matrix event processing. */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class ReplyEmailDeliveryWriter {
+  /**
+   * How long a failing preflight is retried before the row is quarantined. Long enough that a
+   * platform outage recovers on its own, short enough that a broken tenant setup stops cycling.
+   */
+  static final Duration MAX_RETRY_AGE = Duration.ofHours(24);
+
+  private static final int BATCH_SIZE = 100;
+
   private final @NonNull ReplyEmailDeliveryRepository repository;
+
+  /** Rotation point when more tenants are due than fit one batch; per instance, best effort. */
+  private final AtomicReference<Long> resumeAfterTenant = new AtomicReference<>();
 
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public long reserve(
@@ -148,14 +168,77 @@ public class ReplyEmailDeliveryWriter {
     return repository.findById(id).map(ReplyEmailDelivery::getRecipientKind);
   }
 
+  /**
+   * Due row ids, interleaved round-robin across tenants (oldest row of each tenant first), so one
+   * tenant's backlog cannot fill the batch and hold back mail for every other tenant (#1449). Each
+   * tenant is first asked only for its fair share; unused slots are then topped up from tenants
+   * with more due rows. With more due tenants than slots, the next batch resumes after the last
+   * tenant served, so no tenant waits behind the same hundred others forever.
+   */
   @Transactional(readOnly = true)
   public List<Long> pendingIds() {
-    return repository
-        .findTop100ByStatusAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAscCreatedAtAscIdAsc(
-            ReplyEmailDelivery.Status.PENDING, LocalDateTime.now())
-        .stream()
-        .map(ReplyEmailDelivery::getId)
-        .toList();
+    var now = LocalDateTime.now();
+    var due = repository.findDueTenantIds(ReplyEmailDelivery.Status.PENDING, now);
+    if (due.isEmpty()) {
+      return List.of();
+    }
+    var round = rotate(due);
+    int quota = (BATCH_SIZE + round.size() - 1) / round.size();
+    var perTenant = new LinkedHashMap<Long, List<Long>>();
+    for (Long tenantId : round) {
+      perTenant.put(tenantId, dueIds(tenantId, now, quota));
+    }
+    var batch = interleave(perTenant.values());
+    for (var entry : perTenant.entrySet()) {
+      if (batch.size() >= BATCH_SIZE) {
+        break;
+      }
+      if (entry.getValue().size() == quota) {
+        var more = dueIds(entry.getKey(), now, quota + BATCH_SIZE - batch.size());
+        // Rows may have been claimed meanwhile; the set skips ids already in the batch.
+        more.stream().skip(quota).limit(BATCH_SIZE - batch.size()).forEach(batch::add);
+      }
+    }
+    return List.copyOf(batch);
+  }
+
+  private List<Long> rotate(List<Long> dueTenants) {
+    Long resumeAfter = resumeAfterTenant.get();
+    int start = 0;
+    if (resumeAfter != null) {
+      while (start < dueTenants.size() && dueTenants.get(start) <= resumeAfter) {
+        start++;
+      }
+      start = start % dueTenants.size();
+    }
+    var round = new ArrayList<Long>(Math.min(BATCH_SIZE, dueTenants.size()));
+    for (int i = 0; i < dueTenants.size() && round.size() < BATCH_SIZE; i++) {
+      round.add(dueTenants.get((start + i) % dueTenants.size()));
+    }
+    resumeAfterTenant.set(dueTenants.size() > BATCH_SIZE ? round.get(round.size() - 1) : null);
+    return round;
+  }
+
+  private List<Long> dueIds(Long tenantId, LocalDateTime now, int max) {
+    return repository.findDueIds(ReplyEmailDelivery.Status.PENDING, tenantId, now, Limit.of(max));
+  }
+
+  private static LinkedHashSet<Long> interleave(Collection<List<Long>> perTenant) {
+    var batch = new LinkedHashSet<Long>();
+    var cursors = new ArrayList<Iterator<Long>>();
+    perTenant.forEach(ids -> cursors.add(ids.iterator()));
+    while (batch.size() < BATCH_SIZE && !cursors.isEmpty()) {
+      var tenants = cursors.iterator();
+      while (tenants.hasNext() && batch.size() < BATCH_SIZE) {
+        var ids = tenants.next();
+        if (ids.hasNext()) {
+          batch.add(ids.next());
+        } else {
+          tenants.remove();
+        }
+      }
+    }
+    return batch;
   }
 
   @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -177,6 +260,18 @@ public class ReplyEmailDeliveryWriter {
   public void retryLater(long id) {
     var delivery = repository.findById(id).orElseThrow();
     if (delivery.getStatus() != ReplyEmailDelivery.Status.SENDING) {
+      return;
+    }
+    if (delivery.getCreatedAt().isBefore(LocalDateTime.now().minus(MAX_RETRY_AGE))) {
+      // Bounded retries: a tenant whose mail setup stays broken must not cycle forever (#1449).
+      delivery.setStatus(ReplyEmailDelivery.Status.QUARANTINED);
+      log.error(
+          "Reply-email delivery {} of tenant {} QUARANTINED after {} attempts in {}; fix the"
+              + " tenant's notification setup, then requeue (docs/reply-email-quarantine.md)",
+          id,
+          delivery.getTenantId(),
+          delivery.getAttemptCount(),
+          MAX_RETRY_AGE);
       return;
     }
     delivery.setStatus(ReplyEmailDelivery.Status.PENDING);
@@ -202,6 +297,11 @@ public class ReplyEmailDeliveryWriter {
       }
     }
     return uncertain;
+  }
+
+  @Transactional(readOnly = true)
+  public long quarantinedCount() {
+    return repository.countByStatus(ReplyEmailDelivery.Status.QUARANTINED);
   }
 
   @Transactional(readOnly = true)

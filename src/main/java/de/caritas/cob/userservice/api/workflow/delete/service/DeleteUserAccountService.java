@@ -49,6 +49,7 @@ public class DeleteUserAccountService {
   private final @NonNull WorkflowErrorMailService workflowErrorMailService;
   private final @NonNull DeletionLifecycleService deletionLifecycleService;
   private final @NonNull UserHardDeleteClaimService userHardDeleteClaimService;
+  private final @NonNull ConsultantHardDeleteClaimService consultantHardDeleteClaimService;
 
   /** Deletes all user accounts marked as deleted in database. */
   public void deleteUserAccounts() {
@@ -104,12 +105,22 @@ public class DeleteUserAccountService {
 
   private List<DeletionWorkflowError> deleteConsultantsAndCollectPossibleErrors() {
     return this.consultantRepository.findAllByDeleteDateNotNull().stream()
-        .map(deletionLifecycleService::normalizeConsultantLifecycle)
-        .peek(consultantRepository::save)
-        .filter(deletionLifecycleService::isReadyForHardDelete)
-        .map(this::performConsultantDeletion)
+        .map(Consultant::getId)
+        .map(consultantHardDeleteClaimService::claim)
+        .flatMap(java.util.Optional::stream)
+        .map(this::performClaimedConsultantDeletion)
         .flatMap(Collection::stream)
         .collect(Collectors.toList());
+  }
+
+  private List<DeletionWorkflowError> performClaimedConsultantDeletion(Consultant consultant) {
+    try {
+      return performConsultantDeletion(consultant);
+    } finally {
+      // As for askers: a retained row may already have lost its login or Matrix account, so it
+      // stays retryable for hard deletion and can no longer be cancelled.
+      consultantHardDeleteClaimService.release(consultant.getId());
+    }
   }
 
   public List<DeletionWorkflowError> performConsultantDeletion(Consultant consultant) {

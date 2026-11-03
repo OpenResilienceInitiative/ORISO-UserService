@@ -53,9 +53,9 @@ public class OrisoEmailRenderer {
    * design system places the logo, and this is the markup that token expands to when a logo URL is
    * configured. When {@code logoUrl} is blank the token expands to nothing at all: an {@code <img
    * src="">} renders as a broken-image icon next to the platform name, so the text wordmark has to
-   * carry the header alone. Known logos wider than 3:1 hide the adjacent name on phones, so their
-   * image carries the platform name as alternative text. Other logos stay decorative beside the
-   * visible name. The image carries the page colour {@code #f2efef} as its background: while a
+   * carry the header alone. The name is never hidden: logos wider than 3:1 stack it under the logo
+   * on phones (the image still carries it as alternative text); other logos stay decorative beside
+   * the visible name. The image carries the page colour {@code #f2efef} as its background: while a
    * client blocks remote images it paints the empty image box, and without a background that box
    * shows up as the client's own coloured placeholder beside the name (Frank, 2026-10-09). The
    * dialect has no conditional syntax — this constant is one of the conditionals the mails need,

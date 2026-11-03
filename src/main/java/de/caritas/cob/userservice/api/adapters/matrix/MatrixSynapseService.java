@@ -1445,6 +1445,13 @@ public class MatrixSynapseService implements MatrixUserClient {
     return matrixRoomClient.inviteUserToRoom(roomId, userId, accessToken);
   }
 
+  /** Single invite attempt; a 429 surfaces with the server's retry delay instead of a sleep. */
+  public ResponseEntity<MatrixInviteUserResponseDTO> inviteUserToRoomOnce(
+      String roomId, String userId, String accessToken) throws MatrixInviteUserException {
+
+    return matrixRoomClient.inviteUserToRoomOnce(roomId, userId, accessToken);
+  }
+
   /**
    * Accepts a room invitation (joins the room) on behalf of a user.
    *
