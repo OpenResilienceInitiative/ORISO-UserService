@@ -26,9 +26,10 @@ import org.springframework.stereotype.Component;
 /**
  * Resolves the Träger-authored Erstantwort texts at send time (ADR-018 §6, §8). Per field: the
  * reader's locale, else the original publication language (named by {@code <lang>__meta.src}), else
- * English, else the Träger's German variant, else nothing — and nothing means the platform default.
- * The editor stores HTML, the bubble renders plain text, so markup is removed here, before the
- * event freezes. Never throws: an unreachable TenantService must not cost anyone their enquiry.
+ * English, else the Träger's German variant, else nothing — and nothing means the platform default
+ * where one exists, and otherwise that the Baustein is left out of the reply (who reads along has
+ * none). The editor stores HTML, the bubble renders plain text, so markup is removed here, before
+ * the event freezes. Never throws: an unreachable TenantService must not cost anyone their enquiry.
  */
 @Slf4j
 @Component
@@ -86,7 +87,8 @@ public class ErstantwortTenantTextResolver {
       return content == null ? ErstantwortTenantTexts.none() : resolve(content, locale, informal);
     } catch (RuntimeException | TimeoutException exception) {
       log.warn(
-          "Erstantwort Träger texts unavailable for tenant {}, using platform defaults ({})",
+          "Erstantwort Träger texts unavailable for tenant {}: this first reply is sent without"
+              + " them, so the who-reads-along text may be missing from it ({})",
           tenantId,
           rootCauseName(exception));
       return ErstantwortTenantTexts.none();
@@ -120,7 +122,7 @@ public class ErstantwortTenantTextResolver {
     var days = content.getErstantwortResponseDeadlineDays();
     return ErstantwortTenantTexts.builder()
         .greeting(pick(content.getErstantwortGreeting(), locale, informal))
-        .whoReadsAlong(pick(content.getErstantwortWhoReadsAlong(), locale, informal))
+        .whoReadsAlong(pickStated(content.getErstantwortWhoReadsAlong(), locale, informal))
         .emergencyAddition(pick(content.getErstantwortEmergencyAddition(), locale, informal))
         .freeNotice(pick(content.getErstantwortFreeNotice(), locale, informal))
         .closing(pick(content.getErstantwortClosing(), locale, informal))
@@ -150,6 +152,30 @@ public class ErstantwortTenantTextResolver {
       }
     }
     return null;
+  }
+
+  /**
+   * Like {@link #pick}, but only when the Träger's own text — the source language — is non-empty.
+   * Used for the one Baustein that makes a claim about people (who reads along, ORISO-UserService
+   * #1565): a translation outlives an emptied source until somebody removes it, and a stale
+   * translation (or an English text shown to a German reader) would state something nobody
+   * currently stands behind. The source is named by {@code <lang>__meta.src}; without one it is the
+   * Träger's German variant, the same default the Admin editor writes to.
+   *
+   * @return plain text, or {@code null} when the source language holds no text
+   */
+  static String pickStated(Map<String, String> texts, String locale, boolean informal) {
+    if (texts == null || texts.isEmpty()) {
+      return null;
+    }
+    var source = sourceLanguage(texts);
+    if (source == null) {
+      source = informal ? "de@informal" : "de";
+    }
+    if (toPlainText(texts.get(source)).isEmpty()) {
+      return null;
+    }
+    return pick(texts, locale, informal);
   }
 
   private static void addVariants(ArrayList<String> candidates, String lang, boolean informal) {
@@ -199,6 +225,8 @@ public class ErstantwortTenantTextResolver {
     for (var line : doc.body().wholeText().replace(' ', ' ').split("\n", -1)) {
       lines.add(line.strip());
     }
-    return String.join("\n", lines).replaceAll("\n{3,}", "\n\n").strip();
+    var plain = String.join("\n", lines).replaceAll("\n{3,}", "\n\n").strip();
+    // Zero-width characters survive strip(); text made only of them says nothing.
+    return ErstantwortText.hasText(plain) ? plain : "";
   }
 }

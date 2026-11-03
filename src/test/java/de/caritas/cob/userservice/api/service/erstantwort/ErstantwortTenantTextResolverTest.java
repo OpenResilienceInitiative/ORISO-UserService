@@ -95,6 +95,66 @@ class ErstantwortTenantTextResolverTest {
     }
   }
 
+  private static String stated(Map<String, String> texts, String locale, boolean informal) {
+    var content = new MultilingualContent().erstantwortWhoReadsAlong(texts);
+    return ErstantwortTenantTextResolver.resolve(content, locale, informal).getWhoReadsAlong();
+  }
+
+  /** #1565: an emptied source text must not leave a translation or another language standing. */
+  @Test
+  void anEmptySourceTextMeansNotStatedInEveryLanguage() {
+    // stale French translation after the German source was emptied (meta names the source)
+    var stale =
+        Map.of("de", "<p></p>", "fr", "<p>old translation</p>", "fr__meta", "{\"src\":\"de\"}");
+    assertThat(stated(stale, "fr", false)).isNull();
+    assertThat(stated(stale, "de", false)).isNull();
+    assertThat(stated(stale, "en", false)).isNull();
+    // the issue's own shape: the meta key sits on the source language
+    var onSource = Map.of("de", "", "fr", "<p>old translation</p>", "de__meta", "{\"src\":\"de\"}");
+    assertThat(stated(onSource, "fr", false)).isNull();
+    // no meta at all: the default source is the German variant, so English alone is not a statement
+    assertThat(stated(Map.of("de", "", "en", "Our team"), "de", false)).isNull();
+    assertThat(stated(Map.of("en", "Our team"), "de", false)).isNull();
+    assertThat(stated(Map.of("de", "<p>&nbsp;</p>", "en", "Our team"), "en", false)).isNull();
+    assertThat(stated(Map.of("de", "\u200b", "en", "Our team"), "en", false)).isNull();
+    // informal tenant: the source is de@informal; a leftover formal "de" is not a statement
+    assertThat(stated(Map.of("de@informal", " ", "de", "Unser Team"), "de", true)).isNull();
+  }
+
+  @Test
+  void aNonEmptySourceTextStillShowsInTheReadersLanguageOrTheSource() {
+    var texts =
+        Map.of(
+            "de", "<p>Unser Team</p>",
+            "en", "<p>Our team</p>",
+            "en__meta", "{\"src\":\"de\"}");
+    assertThat(stated(texts, "en", false)).isEqualTo("Our team");
+    assertThat(stated(texts, "de", false)).isEqualTo("Unser Team");
+    // a language without a translation falls back as before (source, then English)
+    assertThat(stated(texts, "tr", false)).isEqualTo("Unser Team");
+    // no meta: German source, shown to a German reader
+    assertThat(stated(Map.of("de", "<p>Unser Team</p>"), "de", false)).isEqualTo("Unser Team");
+    assertThat(stated(Map.of("de@informal", "<p>Unser Team</p>"), "de", true))
+        .isEqualTo("Unser Team");
+  }
+
+  /**
+   * The strict source rule is for the who-reads-along claim only; other Bausteine are unchanged.
+   */
+  @Test
+  void otherBausteineKeepTheirExistingFallbackWithoutASourceText() {
+    var texts = Map.of("de", "", "en", "<p>Hello</p>");
+    assertThat(resolveGreeting(texts, "en", false)).isEqualTo("Hello");
+    assertThat(ErstantwortTenantTextResolver.pick(texts, "de", false)).isEqualTo("Hello");
+  }
+
+  @Test
+  void textOfOnlyInvisibleCharactersIsEmpty() {
+    assertThat(ErstantwortTenantTextResolver.toPlainText("<p>\u200b\u00a0\ufeff</p>")).isEmpty();
+    assertThat(ErstantwortTenantTextResolver.toPlainText("<p>Ein\u200bwort</p>"))
+        .isEqualTo("Ein\u200bwort");
+  }
+
   @Test
   void anEmptyWhoReadsAlongStillYieldsAFirstReplyWithoutAnyClaim() throws Exception {
     var content =
@@ -181,6 +241,7 @@ class ErstantwortTenantTextResolverTest {
       var event = appender.list.get(0);
       assertThat(event.getFormattedMessage())
           .contains("tenant 3")
+          .contains("who-reads-along text may be missing")
           .contains("IllegalArgumentException")
           .doesNotContain("secret-detail");
       assertThat(event.getThrowableProxy()).isNull();

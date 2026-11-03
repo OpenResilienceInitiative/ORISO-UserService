@@ -127,7 +127,8 @@ class ErstantwortPayloadBuilderTest {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = {"", " ", "   ", "\n", "\t \n ", "\u00a0"})
+  @ValueSource(
+      strings = {"", " ", "   ", "\n", "\t \n ", "\u00a0", "\u200b", "\u00a0\u200b\ufeff \u202f"})
   void blankTextAtEveryLevelCountsAsNotStated(String blank) throws Exception {
     JsonNode payload =
         buildFor(

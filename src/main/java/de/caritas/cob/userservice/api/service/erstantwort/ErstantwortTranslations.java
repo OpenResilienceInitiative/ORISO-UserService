@@ -1,7 +1,5 @@
 package de.caritas.cob.userservice.api.service.erstantwort;
 
-import static org.apache.commons.lang3.StringUtils.isNotBlank;
-
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
@@ -105,28 +103,23 @@ public final class ErstantwortTranslations {
   private static boolean hasAuthoredBody(String id, ErstantwortContext context) {
     return switch (id) {
       case "greeting" ->
-          any(
+          ErstantwortText.anyText(
               context.getGreetingByTopic(),
               context.getGreetingByAgency(),
               context.getGreetingByTenant());
       case "whoReadsAlong" ->
-          any(
+          ErstantwortText.anyText(
               context.getWhoReadsAlongByTopic(),
               context.getWhoReadsAlongByAgency(),
               context.getWhoReadsAlongByTenant());
       case "emergencyAddition" -> true;
       case "closing" ->
-          any(
+          ErstantwortText.anyText(
               context.getClosingByTopic(),
               context.getClosingByAgency(),
               context.getClosingByTenant());
       default -> false;
     };
-  }
-
-  private static boolean any(String... values) {
-    for (var value : values) if (isNotBlank(value)) return true;
-    return false;
   }
 
   private static JsonNode catalogue(String locale) {
