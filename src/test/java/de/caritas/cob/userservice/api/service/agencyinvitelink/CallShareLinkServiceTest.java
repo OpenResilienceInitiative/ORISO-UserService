@@ -205,6 +205,25 @@ class CallShareLinkServiceTest {
         .isInstanceOf(ForbiddenException.class);
   }
 
+  /** A link the call already has is not handed out again once the permission is withdrawn. */
+  @Test
+  void create_Should_Return403_ForAnExistingLink_When_TheMediumWasSwitchedOff() {
+    joinable(false);
+    when(directInvitePolicy.allows(TENANT, 99L, InviteLinkChatType.VIDEO)).thenReturn(false);
+
+    assertThatThrownBy(() -> service.create(TENANT, COUNSELLOR, SOURCE, CALL_ID, null, null))
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void requireDirectInviteAllowed_Should_Return410_WhileTheMediumIsSwitchedOff() {
+    var link = joinable(false);
+    when(directInvitePolicy.allows(TENANT, 99L, InviteLinkChatType.VIDEO)).thenReturn(false);
+
+    assertThatThrownBy(() -> service.requireDirectInviteAllowed(link))
+        .isInstanceOf(DirectLinkInactiveException.class);
+  }
+
   @Test
   void withdrawingDirectInvitesAlsoDisablesThePreviouslySharedLink() {
     var link = link(true, true);
@@ -212,7 +231,8 @@ class CallShareLinkServiceTest {
     when(links.findByIdForUpdate(5L)).thenReturn(Optional.of(link));
     when(directInvitePolicy.allows(TENANT, 99L, InviteLinkChatType.VIDEO)).thenReturn(false);
 
-    assertThatThrownBy(() -> service.requireUsable(link)).isInstanceOf(ForbiddenException.class);
+    assertThatThrownBy(() -> service.requireDirectInviteAllowed(link))
+        .isInstanceOf(DirectLinkInactiveException.class);
     assertThatThrownBy(() -> service.create(TENANT, COUNSELLOR, SOURCE, CALL_ID, null, null))
         .isInstanceOf(ForbiddenException.class);
     assertThatThrownBy(() -> service.current(TENANT, COUNSELLOR, SOURCE, CALL_ID))
@@ -474,11 +494,13 @@ class CallShareLinkServiceTest {
   }
 
   @Test
-  void join_Should_Return403_When_DirectInvitationsWereSwitchedOffDuringTheCall() {
+  void join_Should_Return410_When_DirectInvitationsWereSwitchedOffDuringTheCall() {
     joinable(false);
     when(directInvitePolicy.allows(TENANT, 99L, InviteLinkChatType.VIDEO)).thenReturn(false);
 
-    assertThatThrownBy(() -> service.join("token-5", guest)).isInstanceOf(ForbiddenException.class);
+    assertThatThrownBy(() -> service.join("token-5", guest))
+        .isInstanceOf(DirectLinkInactiveException.class);
+    verify(links, never()).findByIdForUpdate(any());
   }
 
   @Test

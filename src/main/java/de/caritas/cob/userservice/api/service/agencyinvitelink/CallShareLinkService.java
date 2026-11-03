@@ -183,19 +183,17 @@ public class CallShareLinkService {
             .findByToken(token)
             .filter(value -> CALL.equals(value.getLinkKind()))
             .orElseThrow(() -> new NotFoundException("Share link not found"));
+    // The remote policy read happens before the row lock, so the lock is not held while it waits.
+    // The same checks run again on the locked row below; they are cheap.
+    var unlocked = bindingOf(found);
+    requireUsable(found, unlocked);
+    requireGuestMayUse(found, unlocked, guest);
     // Serialise visits on the link, so parallel visits of one guest insert one knock.
     var link = links.findByIdForUpdate(found.getId()).orElseThrow(CallShareLinkEndedException::new);
     var binding = bindingOf(link);
     requireUsable(link, binding);
-    // Fail closed: a person without a Träger never reaches a link of one.
-    if (!Objects.equals(guest.getTenantId(), link.getTenantId())) {
-      throw new ForbiddenException("Share link belongs to another tenant");
-    }
-    tenantService.requireOperationalTenant(link.getTenantId());
     var medium = mediumOf(binding);
-    var agencyId = agencyOf(binding);
-    requireSameAgency(link, agencyId);
-    requireDirectInvites(binding, agencyId);
+    requireSameAgency(link, agencyOf(binding));
     var temporary = guest.getTemporaryAccountSnapshot();
     if (temporary != null
         && (!Objects.equals(temporary.getInviteLinkId(), link.getId())
@@ -319,6 +317,32 @@ public class CallShareLinkService {
     return binding.getDevices().values().stream().anyMatch(device -> device.getExpiresAt() > now);
   }
 
+  /**
+   * Fail closed: another Träger's person, an inactive Träger or a withdrawn permission stop here.
+   */
+  private void requireGuestMayUse(AgencyInviteLink link, MatrixCallBinding binding, User guest) {
+    if (!Objects.equals(guest.getTenantId(), link.getTenantId())) {
+      throw new ForbiddenException("Share link belongs to another tenant");
+    }
+    tenantService.requireOperationalTenant(link.getTenantId());
+    requireDirectInviteAllowed(binding);
+  }
+
+  /** A withdrawn "Direkteinladung erlauben" ends the link for guests (410), the link is kept. */
+  private void requireDirectInviteAllowed(MatrixCallBinding binding) {
+    try {
+      requireDirectInvites(binding, agencyOf(binding));
+    } catch (ForbiddenException denied) {
+      throw new DirectLinkInactiveException();
+    }
+  }
+
+  /** For the public link context: 410 while the permission for this call's medium is withdrawn. */
+  @Transactional(readOnly = true)
+  public void requireDirectInviteAllowed(AgencyInviteLink link) {
+    requireDirectInviteAllowed(bindingOf(link));
+  }
+
   /** Whether temporary accounts may be offered; the effective value is the setting AND this. */
   @Transactional(readOnly = true)
   public boolean temporaryAccountAllowed(AgencyInviteLink link) {
@@ -349,9 +373,7 @@ public class CallShareLinkService {
   public void requireUsable(AgencyInviteLink link) {
     var binding = bindingOf(link);
     requireUsable(link, binding);
-    Long agencyId = agencyOf(binding);
-    requireSameAgency(link, agencyId);
-    requireDirectInvites(binding, agencyId);
+    requireSameAgency(link, agencyOf(binding));
   }
 
   private static void requireSameAgency(AgencyInviteLink link, Long agencyId) {

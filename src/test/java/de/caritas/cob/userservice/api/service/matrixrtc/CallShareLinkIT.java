@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.matrixrtc;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -43,9 +44,9 @@ import de.caritas.cob.userservice.api.service.agency.EffectiveAgencySettingsLook
 import de.caritas.cob.userservice.api.service.agencyinvitelink.CallShareLinkEndedException;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.CallShareLinkService;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.CallShareLinkSweep;
-import de.caritas.cob.userservice.api.service.agencyinvitelink.ConfiguredDirectInvitePolicy;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.ConfiguredTemporaryAccountPolicy;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.DirectCallKnockService;
+import de.caritas.cob.userservice.api.service.agencyinvitelink.EffectiveDirectInvitePolicy;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkAdmission;
 import de.caritas.cob.userservice.api.service.matrix.MatrixCallConversationResolver;
 import de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService;
@@ -102,7 +103,7 @@ import org.springframework.transaction.support.TransactionTemplate;
   CallShareLinkService.class,
   CallShareLinkSweep.class,
   DirectCallKnockService.class,
-  ConfiguredDirectInvitePolicy.class,
+  EffectiveDirectInvitePolicy.class,
   ConfiguredTemporaryAccountPolicy.class,
   CallShareLinkIT.AccountFixture.class
 })
@@ -153,7 +154,7 @@ class CallShareLinkIT {
   @MockitoBean private MatrixFeedUpdateSignalService feedUpdateSignals;
   @MockitoBean private IdentityTombstoneService tombstones;
   @MockitoBean private TenantService tenantService;
-  @MockitoBean private EffectiveAgencySettingsLookup agencySettings;
+  @MockitoBean private EffectiveAgencySettingsLookup effectiveAgencySettings;
 
   private final ObjectMapper json = new ObjectMapper();
   private TransactionTemplate transaction;
@@ -163,17 +164,8 @@ class CallShareLinkIT {
 
   @BeforeEach
   void setUp() {
-    when(tenantService.getRestrictedTenantDataFresh(7L))
-        .thenReturn(
-            new RestrictedTenantDTO()
-                .id(7L)
-                .settings(new Settings().featureDirectInviteAudioEnabled(true)));
-    when(agencySettings.findEffectiveSettings(99L, 7L))
-        .thenReturn(
-            Optional.of(
-                new de.caritas.cob.userservice.agencyserivce.generated.web.model.Settings()
-                    .featureDirectInviteAudioEnabled(true)));
     transaction = new TransactionTemplate(transactionManager);
+    allowDirectInvites(true, true, true);
     var jdbc = new JdbcTemplate(dataSource);
     jdbc.execute(
         "CREATE TABLE IF NOT EXISTS account_inactivity(identity_id VARCHAR(36) PRIMARY KEY,"
@@ -260,6 +252,62 @@ class CallShareLinkIT {
           consultants.deleteById(counsellor.getId());
           consultants.deleteById(colleague.getId());
         });
+  }
+
+  @Test
+  void audioSwitchedOff_Should_RefuseTheShareLink_ButNotTheOtherMedia() throws Exception {
+    allowDirectInvites(true, false, true);
+    mvc(counsellor.getId(), "consultant", null)
+        .perform(
+            post("/matrix/calls/share-links")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(CREATE))
+        .andExpect(status().isForbidden());
+    assertThat(links.count()).isZero();
+  }
+
+  @Test
+  void withdrawnPermission_Should_KeepTheLinkButRefuseGuests() throws Exception {
+    var created =
+        mvc(counsellor.getId(), "consultant", null)
+            .perform(
+                post("/matrix/calls/share-links")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(CREATE))
+            .andExpect(status().isCreated())
+            .andReturn();
+    String token = json.readTree(created.getResponse().getContentAsString()).get("token").asText();
+    var guest = users.findById("share-guest").orElseThrow();
+
+    allowDirectInvites(true, false, true);
+    assertThatThrownBy(() -> shareLinks.join(token, guest))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.service.agencyinvitelink.DirectLinkInactiveException
+                .class);
+    assertThat(links.findByToken(token)).get().extracting("status").isEqualTo("ACTIVE");
+
+    allowDirectInvites(true, true, true);
+    assertThat(shareLinks.join(token, guest).knockId()).isNotNull();
+  }
+
+  /** What the AgencyService serves as the effective "Direkteinladung erlauben" per chat type. */
+  private void allowDirectInvites(boolean chat, boolean audio, boolean video) {
+    when(tenantService.getRestrictedTenantDataFresh(7L))
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(7L)
+                .settings(
+                    new Settings()
+                        .featureDirectInviteChatEnabled(chat)
+                        .featureDirectInviteAudioEnabled(audio)
+                        .featureDirectInviteVideoEnabled(video)));
+    when(effectiveAgencySettings.findEffectiveSettings(anyLong(), anyLong()))
+        .thenReturn(
+            Optional.of(
+                new de.caritas.cob.userservice.agencyserivce.generated.web.model.Settings()
+                    .featureDirectInviteChatEnabled(chat)
+                    .featureDirectInviteAudioEnabled(audio)
+                    .featureDirectInviteVideoEnabled(video)));
   }
 
   @Test
@@ -502,21 +550,6 @@ class CallShareLinkIT {
 
     assertThat(policy.resolve(SOURCE, GUEST, MEDIA)).isEqualTo(CallMediaPolicy.denied());
     assertThatThrownBy(() -> shareLinks.join(link.getToken(), guest))
-        .isInstanceOf(
-            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
-  }
-
-  @Test
-  void aPreviouslySharedLinkCannotAdmitAGuestAfterTheAgencyDisablesInvites() {
-    var link = shareLinks.create(7L, counsellor.getId(), SOURCE, "share-call", false, null).link();
-    when(agencySettings.findEffectiveSettings(99L, 7L))
-        .thenReturn(
-            Optional.of(
-                new de.caritas.cob.userservice.agencyserivce.generated.web.model.Settings()
-                    .featureDirectInviteAudioEnabled(false)));
-
-    assertThatThrownBy(
-            () -> shareLinks.join(link.getToken(), users.findById("share-guest").orElseThrow()))
         .isInstanceOf(
             de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
   }

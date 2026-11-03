@@ -64,7 +64,7 @@ public class TemporaryAccountLinkResolver {
     }
     if (!directInvitePolicy.allows(
         link.getTenantId(), link.getAgencyId(), InviteLinkChatType.valueOf(link.getChatType()))) {
-      throw new ForbiddenException("Direct invitations are not allowed here");
+      throw new DirectLinkInactiveException();
     }
     DirectLinkOwner.requireStillServing(consultantRepository, link);
     return Optional.of(link);
@@ -84,6 +84,7 @@ public class TemporaryAccountLinkResolver {
       throw new BadRequestException("The terms must be accepted before joining the call");
     }
     callShareLinks.requireUsable(link);
+    callShareLinks.requireDirectInviteAllowed(link);
     requireMatchingAccountType(
         userDTO, link.isTemporaryAccount() && callShareLinks.temporaryAccountAllowed(link));
   }

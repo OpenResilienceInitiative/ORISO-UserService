@@ -1598,13 +1598,16 @@ components:
           example: 'true'
         featureDirectInviteChatEnabled:
           type: boolean
-          description: Effective permission to invite directly by chat link.
+          example: 'true'
+          description: "Direkteinladung erlauben for chats (ADR-029 §6): may counsellors create and may guests redeem direct links. Effective Traeger value; opt-out, reads true when never stored."
         featureDirectInviteAudioEnabled:
           type: boolean
-          description: Effective permission to invite directly by audio link.
+          example: 'true'
+          description: "Direkteinladung erlauben for audio calls (ADR-029 §6): may counsellors create and may guests redeem direct links. Effective Traeger value; opt-out, reads true when never stored."
         featureDirectInviteVideoEnabled:
           type: boolean
-          description: Effective permission to invite directly by video link.
+          example: 'true'
+          description: "Direkteinladung erlauben for video calls (ADR-029 §6): may counsellors create and may guests redeem direct links. Effective Traeger value; opt-out, reads true when never stored."
         featureCallsEnabled:
           type: boolean
           example: 'true'

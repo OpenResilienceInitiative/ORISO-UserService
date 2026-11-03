@@ -70,7 +70,7 @@ class TemporaryAccountLinkResolverTest {
     when(directInvitePolicy.allows(5L, 99L, InviteLinkChatType.VIDEO)).thenReturn(false);
 
     assertThatThrownBy(() -> resolver.resolve(registration("tok", true)))
-        .isInstanceOf(ForbiddenException.class);
+        .isInstanceOf(DirectLinkInactiveException.class);
   }
 
   @AfterEach
