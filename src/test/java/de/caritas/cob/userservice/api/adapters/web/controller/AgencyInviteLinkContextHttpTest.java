@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -113,6 +114,37 @@ class AgencyInviteLinkContextHttpTest {
             """,
                     org.springframework.test.json.JsonCompareMode.STRICT));
     verify(callShareLinks).requireUsable(link);
+  }
+
+  @Test
+  void publicCallContextUsesTheLinkTenantForPolicyAndRestoresTheRequestTenant() throws Exception {
+    var link = callLink();
+    TenantContext.setCurrentTenant(56L);
+    when(repository.findByToken("token")).thenReturn(Optional.of(link));
+    doAnswer(
+            invocation -> {
+              assertEquals(83L, TenantContext.getCurrentTenant());
+              return null;
+            })
+        .when(callShareLinks)
+        .requireUsable(link);
+
+    mvc.perform(get("/users/invitelinks/token/context")).andExpect(status().isOk());
+
+    assertEquals(56L, TenantContext.getCurrentTenant());
+  }
+
+  @Test
+  void temporaryCallContextIncludesPasswordAndRetentionSettings() throws Exception {
+    var link = callLink();
+    link.setTemporaryAccount(true);
+    when(repository.findByToken("token")).thenReturn(Optional.of(link));
+    when(callShareLinks.temporaryAccountAllowed(link)).thenReturn(true);
+
+    mvc.perform(get("/users/invitelinks/token/context"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.hidePasswordField").value(true))
+        .andExpect(jsonPath("$.messageRetention").value("ALWAYS_PERSISTENT"));
   }
 
   @Test

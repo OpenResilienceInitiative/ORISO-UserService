@@ -17,9 +17,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 /**
- * Registration through a counsellor direct link, temporary or persistent (ADR-029 §3, #1476). The
- * same checks as starting the conversation run before any Keycloak or Matrix user exists, so an
- * invalid or switched-off link never leaves an account behind.
+ * Validates counsellor direct links and links to a running call before Keycloak or Matrix account
+ * creation (ADR-029 §3).
  */
 @Component
 @RequiredArgsConstructor
@@ -28,6 +27,7 @@ public class TemporaryAccountLinkResolver {
   private final @NonNull AgencyInviteLinkRepository repository;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull DirectInvitePolicy directInvitePolicy;
+  private final @NonNull CallShareLinkService callShareLinks;
 
   /** The direct link the registration names, or empty for every other registration. */
   public Optional<AgencyInviteLink> resolve(UserDTO userDTO) {
@@ -42,6 +42,10 @@ public class TemporaryAccountLinkResolver {
         repository
             .findByToken(userDTO.getDirectLinkToken())
             .orElseThrow(() -> new ForbiddenException("The direct link is not valid"));
+    if (InviteLinkKind.CALL.name().equals(link.getLinkKind())) {
+      requireCallRegistration(link, userDTO);
+      return Optional.of(link);
+    }
     if (!InviteLinkKind.COUNSELLOR.name().equals(link.getLinkKind())
         || !InviteLinkChatType.isDirectMedium(link.getChatType())) {
       throw new ForbiddenException("The direct link is not valid");
@@ -53,13 +57,7 @@ public class TemporaryAccountLinkResolver {
         || (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now()))) {
       throw new BadRequestException("Invite link expired");
     }
-    if (userDTO.isTemporary() != link.isTemporaryAccount()) {
-      // The link decides the account kind; the registration must ask for the same one.
-      throw new BadRequestException(
-          link.isTemporaryAccount()
-              ? "This direct link creates temporary accounts."
-              : "This direct link does not create temporary accounts.");
-    }
+    requireMatchingAccountType(userDTO, link.isTemporaryAccount());
     var registrationTenant = TenantContext.getCurrentTenant();
     if (registrationTenant != null && !Objects.equals(registrationTenant, link.getTenantId())) {
       throw new ForbiddenException("Invite link belongs to another tenant");
@@ -70,5 +68,32 @@ public class TemporaryAccountLinkResolver {
     }
     DirectLinkOwner.requireStillServing(consultantRepository, link);
     return Optional.of(link);
+  }
+
+  private void requireCallRegistration(AgencyInviteLink link, UserDTO userDTO) {
+    if (link.getTenantId() == null
+        || !Objects.equals(TenantContext.getCurrentTenant(), link.getTenantId())
+        || link.getAgencyId() == null
+        || !Objects.equals(link.getAgencyId(), userDTO.getAgencyId())
+        || link.getConsultingTypeId() == null
+        || !link.getConsultingTypeId().toString().equals(userDTO.getConsultingType())
+        || !Objects.equals(link.getTopicId(), userDTO.getMainTopicId())) {
+      throw new ForbiddenException("Registration does not match the call invitation");
+    }
+    if (!"true".equals(userDTO.getTermsAccepted())) {
+      throw new BadRequestException("The terms must be accepted before joining the call");
+    }
+    callShareLinks.requireUsable(link);
+    requireMatchingAccountType(
+        userDTO, link.isTemporaryAccount() && callShareLinks.temporaryAccountAllowed(link));
+  }
+
+  private static void requireMatchingAccountType(UserDTO userDTO, boolean temporary) {
+    if (userDTO.isTemporary() != temporary) {
+      throw new BadRequestException(
+          temporary
+              ? "This direct link creates temporary accounts."
+              : "This direct link does not create temporary accounts.");
+    }
   }
 }

@@ -75,6 +75,8 @@ import java.util.Optional;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
@@ -659,10 +661,11 @@ public class CreateUserFacadeTest {
     verify(groupInviteRegistration).join(group, user);
   }
 
-  @Test
+  @ParameterizedTest
+  @ValueSource(strings = {"COUNSELLOR", "CALL"})
   void
-      createUserAccountWithInitializedConsultingType_Should_CopyTheLifetimesAndOpenNoEnquiry_When_RegisteringThroughADirectLink()
-          throws Exception {
+      createUserAccountWithInitializedConsultingType_Should_CopyTheLifetimesAndOpenNoEnquiry_When_RegisteringThroughADirectLink(
+          String linkKind) throws Exception {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
     when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
@@ -671,6 +674,7 @@ public class CreateUserFacadeTest {
     var link =
         de.caritas.cob.userservice.api.model.AgencyInviteLink.builder()
             .id(9L)
+            .linkKind(linkKind)
             .chatType("AUDIO")
             .temporaryAccount(true)
             .build();

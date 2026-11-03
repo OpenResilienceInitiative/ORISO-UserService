@@ -13,12 +13,14 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
+import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.GroupChatJoinRequest;
 import de.caritas.cob.userservice.api.model.MatrixCallBinding;
 import de.caritas.cob.userservice.api.model.MatrixCallDevice;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
+import de.caritas.cob.userservice.api.port.out.ChatAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.MatrixCallBindingRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService;
@@ -32,6 +34,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -59,27 +62,14 @@ class CallShareLinkServiceTest {
   @Mock private TenantService tenantService;
   @Mock private de.caritas.cob.userservice.api.port.out.UserRepository users;
 
-  private CallShareLinkService service;
+  @Mock private ChatAgencyRepository chatAgencies;
+  @InjectMocks private CallShareLinkService service;
   private MatrixCallBinding binding;
   private User guest;
 
   @BeforeEach
   void setUp() {
-    service =
-        new CallShareLinkService(
-            links,
-            bindings,
-            callGuests,
-            sessions,
-            knocks,
-            directInvitePolicy,
-            temporaryAccountPolicy,
-            tenantService,
-            users);
-    binding = runningCall();
-    when(bindings.findById(binding.getId())).thenReturn(Optional.of(binding));
-    when(callGuests.counsellorCall(TENANT, COUNSELLOR, SOURCE, CALL_ID))
-        .thenReturn(new CounsellorCall(Outcome.ADMITTED, binding, "@c:example", List.of()));
+    useBinding(runningCall(500L, null, MEDIA));
     var session = new Session();
     session.setAgencyId(99L);
     session.setConsultingTypeId(1);
@@ -92,6 +82,47 @@ class CallShareLinkServiceTest {
     guest.setUserId("guest-1");
     guest.setTenantId(TENANT);
     guest.setMatrixUserId("@guest:example");
+  }
+
+  private void useBinding(MatrixCallBinding replacement) {
+    binding = replacement;
+    when(bindings.findById(binding.getId())).thenReturn(Optional.of(binding));
+    when(callGuests.counsellorCall(TENANT, COUNSELLOR, SOURCE, CALL_ID))
+        .thenReturn(new CounsellorCall(Outcome.ADMITTED, binding, "@c:example", List.of()));
+  }
+
+  @Test
+  void groupShareChecksEveryAssociatedAgencyPermission() {
+    useBinding(runningCall(null, 600L, MEDIA));
+    when(chatAgencies.findByChat_Id(600L))
+        .thenReturn(
+            List.of(
+                ChatAgency.builder().agencyId(99L).build(),
+                ChatAgency.builder().agencyId(101L).build()));
+    when(directInvitePolicy.allows(TENANT, 101L, InviteLinkChatType.VIDEO)).thenReturn(false);
+
+    assertThatThrownBy(() -> service.create(TENANT, COUNSELLOR, SOURCE, CALL_ID, true, true))
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void groupWithoutRegistrationContextCannotOfferTemporaryAccounts() {
+    useBinding(runningCall(null, 600L, MEDIA));
+
+    var share = service.create(TENANT, COUNSELLOR, SOURCE, CALL_ID, true, true);
+
+    assertThat(share.temporaryAccountAllowed()).isFalse();
+    assertThat(share.temporaryAccount()).isFalse();
+  }
+
+  @Test
+  void callInSourceRoomCannotBeSharedWithGuests() {
+    useBinding(runningCall(500L, null, SOURCE));
+
+    assertThatThrownBy(() -> service.create(TENANT, COUNSELLOR, SOURCE, CALL_ID, true, true))
+        .isInstanceOf(CallShareLinkEndedException.class);
+    assertThatThrownBy(() -> service.requireUsable(link(true, true)))
+        .isInstanceOf(CallShareLinkEndedException.class);
   }
 
   @Test
@@ -172,6 +203,34 @@ class CallShareLinkServiceTest {
 
     assertThatThrownBy(() -> service.create(TENANT, COUNSELLOR, SOURCE, CALL_ID, null, null))
         .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void withdrawingDirectInvitesAlsoDisablesThePreviouslySharedLink() {
+    var link = link(true, true);
+    when(links.findByCallBindingId(binding.getId())).thenReturn(Optional.of(link));
+    when(links.findByIdForUpdate(5L)).thenReturn(Optional.of(link));
+    when(directInvitePolicy.allows(TENANT, 99L, InviteLinkChatType.VIDEO)).thenReturn(false);
+
+    assertThatThrownBy(() -> service.requireUsable(link)).isInstanceOf(ForbiddenException.class);
+    assertThatThrownBy(() -> service.create(TENANT, COUNSELLOR, SOURCE, CALL_ID, null, null))
+        .isInstanceOf(ForbiddenException.class);
+    assertThatThrownBy(() -> service.current(TENANT, COUNSELLOR, SOURCE, CALL_ID))
+        .isInstanceOf(ForbiddenException.class);
+    assertThatThrownBy(() -> service.update(TENANT, COUNSELLOR, 5L, false, null))
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void temporaryGuestCannotJoinViaAnotherLink() {
+    joinable(true);
+    guest.setTemporaryAccountSnapshot(
+        de.caritas.cob.userservice.api.model.TemporaryAccountSnapshot.builder()
+            .inviteLinkId(55L)
+            .build());
+
+    assertThatThrownBy(() -> service.join("token-5", guest)).isInstanceOf(ForbiddenException.class);
+    verify(knocks, never()).knockOnCallLink(any(), any(), anyString());
   }
 
   @Test
@@ -548,6 +607,7 @@ class CallShareLinkServiceTest {
         .token("token-5")
         .tenantId(TENANT)
         .agencyId(99L)
+        .consultingTypeId(1)
         .linkKind("CALL")
         .chatType("VIDEO")
         .anonymity("FULL")
@@ -583,16 +643,17 @@ class CallShareLinkServiceTest {
     return new MatrixCallDevice("@c:example", expiresAt - 1000, expiresAt, true, "$e");
   }
 
-  private static MatrixCallBinding runningCall() {
+  private static MatrixCallBinding runningCall(Long sessionId, Long chatId, String mediaRoom) {
     long now = System.currentTimeMillis();
     var call =
         MatrixCallBinding.builder()
             .id(3L)
             .sourceRoomId(SOURCE)
             .callId(CALL_ID)
-            .mediaRoomId(MEDIA)
+            .mediaRoomId(mediaRoom)
             .callerMatrixId("@c:example")
-            .sessionId(500L)
+            .sessionId(sessionId)
+            .chatId(chatId)
             .tenantId(TENANT)
             .invitedAt(now - 1000)
             .inviteExpiresAt(now - 500)

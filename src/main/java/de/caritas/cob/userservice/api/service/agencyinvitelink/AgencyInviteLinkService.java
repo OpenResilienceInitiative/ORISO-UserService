@@ -300,16 +300,31 @@ public class AgencyInviteLinkService {
    * about the call or its conversation is exposed.
    */
   private CallShareContext callShareContext(AgencyInviteLink link) {
-    callShareLinkService.requireUsable(link);
-    return new CallShareContext(
-        link.getTenantId(),
-        link.getAgencyId(),
-        link.getConsultingTypeId(),
-        link.getTopicId(),
-        link.getChatType(),
-        link.isTemporaryAccount() && callShareLinkService.temporaryAccountAllowed(link),
-        (link.isKnock() ? InviteLinkAdmission.KNOCK : InviteLinkAdmission.DIRECT).name(),
-        InviteLinkKind.CALL.name());
+    TenantData previousTenant = TenantContext.getCurrentTenantData();
+    try {
+      TenantContext.setCurrentTenantData(new TenantData(link.getTenantId(), null));
+      callShareLinkService.requireUsable(link);
+      boolean temporary =
+          link.isTemporaryAccount() && callShareLinkService.temporaryAccountAllowed(link);
+      var settings = temporary ? temporaryAccountSettings.current() : null;
+      return new CallShareContext(
+          link.getTenantId(),
+          link.getAgencyId(),
+          link.getConsultingTypeId(),
+          link.getTopicId(),
+          link.getChatType(),
+          temporary,
+          (link.isKnock() ? InviteLinkAdmission.KNOCK : InviteLinkAdmission.DIRECT).name(),
+          InviteLinkKind.CALL.name(),
+          settings == null ? null : settings.hidePasswordField(),
+          settings == null ? null : settings.messageRetention().name());
+    } finally {
+      if (previousTenant == null) {
+        TenantContext.clear();
+      } else {
+        TenantContext.setCurrentTenantData(previousTenant);
+      }
+    }
   }
 
   /** Public context of a call share link (#1487). */
@@ -321,7 +336,9 @@ public class AgencyInviteLinkService {
       String chatType,
       boolean temporaryAccount,
       String admission,
-      String linkKind) {}
+      String linkKind,
+      @JsonInclude(JsonInclude.Include.NON_NULL) Boolean hidePasswordField,
+      @JsonInclude(JsonInclude.Include.NON_NULL) String messageRetention) {}
 
   /**
    * Public context deliberately excludes credentials and invitation administration data, including
