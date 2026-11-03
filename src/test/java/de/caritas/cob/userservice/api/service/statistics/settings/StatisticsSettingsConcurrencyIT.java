@@ -118,7 +118,7 @@ class StatisticsSettingsConcurrencyIT {
     first.get(WAIT_SECONDS, TimeUnit.SECONDS);
     assertThatThrownBy(() -> second.get(WAIT_SECONDS, TimeUnit.SECONDS))
         .isInstanceOf(ExecutionException.class)
-        .hasRootCauseInstanceOf(ConflictException.class);
+        .hasCauseInstanceOf(ConflictException.class);
     assertThat(repository.findAllByOrderByIdAsc())
         .extracting(change -> change.getNewValue())
         .containsExactly("2");
