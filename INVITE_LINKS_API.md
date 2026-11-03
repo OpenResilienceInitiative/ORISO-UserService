@@ -130,6 +130,22 @@ date math.
 
 ---
 
+## Manage an external invite link
+
+Both operations require the same authentication and tenant context as creation.
+The link must be an `EXTERNAL_INBOUND` link in the caller's tenant and within the caller's
+admin scope.
+
+| Request | Success | Other responses |
+|---|---|---|
+| `POST /useradmin/invitelinks/{linkId}/reactivate` | `200 OK` with the link response from §1. Its status is `ACTIVE` and its token stays the same. Repeating the request on an active, unexpired link returns the same link. | `409 Conflict` for expired links or statuses other than `ACTIVE` and `DISABLED`. |
+| `DELETE /useradmin/invitelinks/{linkId}` | `204 No Content` for a link in any status. Its URL stops resolving. Conversations already started through the link keep their own sessions. | A repeat request returns `404 Not Found`. |
+
+Both requests return `401` without authentication, `403` outside the caller's admin scope,
+and `404` for an unknown link, a link in another tenant, or another link kind.
+
+---
+
 ## 3. Redeem invite link (PUBLIC — no auth)
 
 `POST /users/invitelinks/{token}/redeem`
