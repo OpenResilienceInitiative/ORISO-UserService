@@ -19,4 +19,12 @@
     <createIndex tableName="consultant_tenant_change_audit" indexName="idx_consultant_tenant_change_audit_consultant"><column name="consultant_id"/><column name="create_date"/></createIndex>
     <rollback><dropTable tableName="consultant_tenant_change_audit"/></rollback>
   </changeSet>
+  <!-- MariaDB DDL does not roll back: a run that created the table but not its index would be
+       marked as ran above and stay without the index. This one finds that and repairs it. The
+       table's rollback removes the index with it, so there is nothing to undo here. -->
+  <changeSet id="20261016-consultant-tenant-change-audit-index" author="oriso">
+    <preConditions onFail="MARK_RAN"><not><indexExists tableName="consultant_tenant_change_audit" indexName="idx_consultant_tenant_change_audit_consultant"/></not></preConditions>
+    <createIndex tableName="consultant_tenant_change_audit" indexName="idx_consultant_tenant_change_audit_consultant"><column name="consultant_id"/><column name="create_date"/></createIndex>
+    <rollback/>
+  </changeSet>
 </databaseChangeLog>

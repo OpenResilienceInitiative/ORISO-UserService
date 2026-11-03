@@ -806,6 +806,19 @@ public class MatrixRoomClient {
     }
   }
 
+  /**
+   * The power level of {@code userId}, read with {@code token}. Empty when Matrix refuses or cannot
+   * be reached. Never throws. Logs the exception type only, never a user or room ID.
+   */
+  public Optional<Integer> findUserPowerLevel(String roomId, String userId, String token) {
+    try {
+      return Optional.of(userPower(readPowerLevels(roomId, token), userId));
+    } catch (Exception failure) {
+      log.warn("Could not read a Matrix power level ({})", failure.getClass().getSimpleName());
+      return Optional.empty();
+    }
+  }
+
   /** What {@link #raiseUserPowerLevel} found and did. */
   public enum PowerRaise {
     /** The user already held at least the requested level; nothing was written. */
