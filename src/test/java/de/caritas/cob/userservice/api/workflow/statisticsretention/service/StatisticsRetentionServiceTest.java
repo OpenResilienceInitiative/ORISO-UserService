@@ -138,9 +138,11 @@ class StatisticsRetentionServiceTest {
     try (var input = new ClassPathResource("application.properties").getInputStream()) {
       properties.load(input);
     }
-    assertThat(properties.getProperty("statistics.message-count.retention.days"))
-        .isEqualTo("${STATISTICS_MESSAGE_COUNT_RETENTION_DAYS:731}");
-    // 731 = the longest look-back plus the day on which the oldest row is still inside the period
-    assertThat(731).isGreaterThan((int) longestLookBack);
+    var raw = properties.getProperty("statistics.message-count.retention.days");
+    // The default is the text after the last ':' and before the closing '}'.
+    // It must keep the longest look-back plus the day on which the oldest row is still inside.
+    int configuredDefault =
+        Integer.parseInt(raw.substring(raw.lastIndexOf(':') + 1, raw.length() - 1));
+    assertThat(configuredDefault).isGreaterThan((int) longestLookBack);
   }
 }
