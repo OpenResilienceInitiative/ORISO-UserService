@@ -5861,6 +5861,9 @@ class CaseHandoverServiceTest {
     var gateway = org.mockito.Mockito.spy(homeserver.gateway());
     org.mockito.Mockito.doReturn(false).when(gateway).makeRoomAdmin(anyString(), anyString());
     ReflectionTestUtils.setField(caseHandoverService, "matrixSynapseService", gateway);
+    // A real row, so the last assertion can fail: nothing is completed without one.
+    when(matrixRepairService.stagePowerRaise(any(), any(), any(), any()))
+        .thenReturn(new CaseHandoverMatrixRepairService.StagedRepair(5L, 1L));
 
     TransactionSynchronizationManager.initSynchronization();
     try {
