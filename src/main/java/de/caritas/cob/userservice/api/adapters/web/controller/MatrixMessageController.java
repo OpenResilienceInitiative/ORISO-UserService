@@ -10,6 +10,8 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
+import de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeature;
+import de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeatureGate;
 import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserService;
@@ -41,6 +43,7 @@ public class MatrixMessageController {
   private final @NonNull UserService userService;
   private final @NonNull AgencyMatrixCredentialClient matrixCredentialClient;
   private final @NonNull ChatPermissionVerifier chatPermissionVerifier;
+  private final @NonNull ConversationFeatureGate conversationFeatureGate;
   private final Optional<RedisMessageMirrorService> redisMessageMirrorService;
 
   /**
@@ -305,6 +308,8 @@ public class MatrixMessageController {
       @PathVariable Long sessionId, @RequestParam("file") MultipartFile file) {
 
     var roomAccess = resolveAuthorizedMatrixRoom(sessionId);
+    // Outside the try below: its catch-all would turn the refusal into a 500.
+    roomAccess.ifPresent(this::requireMediaUploadAllowed);
 
     try {
       log.info("📤 Upload request for session {}, file: {}", sessionId, file.getOriginalFilename());
@@ -348,6 +353,15 @@ public class MatrixMessageController {
     }
   }
 
+  /** An admin who switched attachments off for the Träger or Beratungsstelle (#1564). */
+  private void requireMediaUploadAllowed(MatrixRoomAccess room) {
+    if (room.isSession()) {
+      conversationFeatureGate.require(ConversationFeature.MEDIA_UPLOAD, room.getSession());
+    } else {
+      conversationFeatureGate.require(ConversationFeature.MEDIA_UPLOAD, room.getChat());
+    }
+  }
+
   private Optional<MatrixRoomAccess> resolveAuthorizedMatrixRoom(Long sessionId) {
     var session = sessionService.getSession(sessionId);
     if (session.isPresent() && session.get().getMatrixRoomId() != null) {
@@ -369,18 +383,24 @@ public class MatrixMessageController {
 
     private final String matrixRoomId;
     private final Session session;
+    private final Chat chat;
 
-    private MatrixRoomAccess(String matrixRoomId, Session session) {
+    private MatrixRoomAccess(String matrixRoomId, Session session, Chat chat) {
       this.matrixRoomId = matrixRoomId;
       this.session = session;
+      this.chat = chat;
     }
 
     static MatrixRoomAccess forSession(Session session) {
-      return new MatrixRoomAccess(session.getMatrixRoomId(), session);
+      return new MatrixRoomAccess(session.getMatrixRoomId(), session, null);
     }
 
     static MatrixRoomAccess forChat(Chat chat) {
-      return new MatrixRoomAccess(chat.getMatrixRoomId(), null);
+      return new MatrixRoomAccess(chat.getMatrixRoomId(), null, chat);
+    }
+
+    Chat getChat() {
+      return chat;
     }
 
     String getMatrixRoomId() {

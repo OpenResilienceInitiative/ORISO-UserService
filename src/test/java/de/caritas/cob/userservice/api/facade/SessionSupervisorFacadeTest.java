@@ -65,6 +65,11 @@ class SessionSupervisorFacadeTest {
   private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
 
   @Mock private de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairService repairs;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeatureGate
+      conversationFeatureGate;
+
   @Mock private SessionSupervisorRepository sessionSupervisorRepository;
   @Mock private SessionRepository sessionRepository;
   @Mock private ConsultantRepository consultantRepository;
@@ -121,6 +126,42 @@ class SessionSupervisorFacadeTest {
     when(matrixSynapseService.joinRoom(any(), any())).thenReturn(true);
     when(sessionSupervisorRepository.save(any()))
         .thenAnswer(inv -> inv.getArgument(0, SessionSupervisor.class));
+  }
+
+  @Test
+  void addSupervisor_Should_beRefusedBeforeAnyMatrixCall_whenSupervisionIsSwitchedOff() {
+    org.mockito.Mockito.doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException(
+                de.caritas.cob.userservice.api.exception.httpresponses.customheader
+                    .HttpStatusExceptionReason.FEATURE_DISABLED,
+                org.springframework.http.HttpStatus.FORBIDDEN))
+        .when(conversationFeatureGate)
+        .require(
+            de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeature
+                .SUPERVISION,
+            session);
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException
+            .class,
+        () -> facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason"));
+
+    org.mockito.Mockito.verifyNoInteractions(matrixSynapseService);
+    verify(sessionSupervisorRepository, org.mockito.Mockito.never()).save(any());
+  }
+
+  @Test
+  void addSupervisor_Should_notAskTheSwitchesOfAPersonWhoMayNotManageSupervisors() {
+    var stranger = new Consultant();
+    stranger.setId("stranger");
+    stranger.setMatrixUserId("@stranger:oriso");
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+        () -> facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, stranger, null, "reason"));
+
+    org.mockito.Mockito.verifyNoInteractions(conversationFeatureGate);
   }
 
   @Test

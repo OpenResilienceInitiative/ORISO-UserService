@@ -30,6 +30,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
+import de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeatureGate;
 import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserService;
@@ -68,6 +69,7 @@ class MatrixMessageControllerTest {
   @Mock private UserService userService;
   @Mock private AgencyMatrixCredentialClient matrixCredentialClient;
   @Mock private ChatPermissionVerifier chatPermissionVerifier;
+  @Mock private ConversationFeatureGate conversationFeatureGate;
 
   private MatrixMessageController controller;
 
@@ -83,6 +85,7 @@ class MatrixMessageControllerTest {
             userService,
             matrixCredentialClient,
             chatPermissionVerifier,
+            conversationFeatureGate,
             Optional.<RedisMessageMirrorService>empty());
   }
 
@@ -94,6 +97,34 @@ class MatrixMessageControllerTest {
     var response =
         controller.sendMessage(SESSION_ID, Map.of("message", "Blocked synthetic message"));
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+    verifyNoInteractions(matrixSynapseService);
+  }
+
+  @Test
+  void uploadFile_ShouldBeRefusedBeforeAnyMatrixCall_WhenAttachmentsAreSwitchedOff() {
+    var session = sessionWithMatrixRoom();
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(session));
+    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser)).thenReturn(session);
+    doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException(
+                de.caritas.cob.userservice.api.exception.httpresponses.customheader
+                    .HttpStatusExceptionReason.FEATURE_DISABLED,
+                HttpStatus.FORBIDDEN))
+        .when(conversationFeatureGate)
+        .require(
+            de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeature
+                .MEDIA_UPLOAD,
+            session);
+
+    // Not turned into a 500 by the controller's own catch-all.
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException
+            .class,
+        () ->
+            controller.uploadFile(
+                SESSION_ID,
+                new MockMultipartFile("file", "photo.png", "image/png", "bytes".getBytes())));
     verifyNoInteractions(matrixSynapseService);
   }
 
