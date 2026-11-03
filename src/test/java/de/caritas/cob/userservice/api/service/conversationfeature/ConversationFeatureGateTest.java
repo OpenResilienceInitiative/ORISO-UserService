@@ -24,6 +24,7 @@ import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.ChatAgencyRepository;
 import de.caritas.cob.userservice.api.service.agency.EffectiveAgencySettingsLookup;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import de.caritas.cob.userservice.testutils.LogbackCaptor;
@@ -45,6 +46,7 @@ import org.springframework.web.client.ResourceAccessException;
 
 class ConversationFeatureGateTest {
 
+  private static final java.util.function.Predicate<Session> NO_MEMBERS_ONLY = session -> false;
   private static final long TENANT_ID = 9L;
   private static final long AGENCY_ID = 31L;
   private static final long OTHER_AGENCY_ID = 32L;
@@ -53,8 +55,9 @@ class ConversationFeatureGateTest {
   private final EffectiveAgencySettingsLookup agencySettings =
       mock(EffectiveAgencySettingsLookup.class);
   private final ChatAgencyRepository chatAgencies = mock(ChatAgencyRepository.class);
+  private final MembersOnlyChatAccess membersOnly = mock(MembersOnlyChatAccess.class);
   private final ConversationFeatureGate gate =
-      new ConversationFeatureGate(tenantService, agencySettings, chatAgencies);
+      new ConversationFeatureGate(tenantService, agencySettings, chatAgencies, membersOnly);
 
   @BeforeEach
   void everythingUnset() {
@@ -172,18 +175,77 @@ class ConversationFeatureGateTest {
     var storedAsCounselling = session(ConversationType.AGENCY_COUNSELLING);
     storedAsCounselling.setPostcode("00000");
 
-    assertThat(ConversationKind.of(anonymousByPostcode)).isEqualTo(ConversationKind.ANONYMOUS);
-    assertThat(ConversationKind.of(anonymousByName)).isEqualTo(ConversationKind.ANONYMOUS);
-    assertThat(ConversationKind.of(anonymousByRegistration)).isEqualTo(ConversationKind.ANONYMOUS);
-    assertThat(ConversationKind.of(session(ConversationType.LIVE_CHAT)))
+    assertThat(ConversationKind.of(anonymousByPostcode, NO_MEMBERS_ONLY))
+        .isEqualTo(ConversationKind.ANONYMOUS);
+    assertThat(ConversationKind.of(anonymousByName, NO_MEMBERS_ONLY))
+        .isEqualTo(ConversationKind.ANONYMOUS);
+    assertThat(ConversationKind.of(anonymousByRegistration, NO_MEMBERS_ONLY))
+        .isEqualTo(ConversationKind.ANONYMOUS);
+    assertThat(ConversationKind.of(session(ConversationType.LIVE_CHAT), NO_MEMBERS_ONLY))
         .isEqualTo(ConversationKind.ANONYMOUS);
     // A stored kind wins over the old signals, as in the app.
-    assertThat(ConversationKind.of(storedAsCounselling)).isEqualTo(ConversationKind.ONE_ON_ONE);
-    assertThat(ConversationKind.of(session(null))).isEqualTo(ConversationKind.ONE_ON_ONE);
-    assertThat(ConversationKind.of(session(ConversationType.INTERNAL_GROUP)))
+    assertThat(ConversationKind.of(storedAsCounselling, NO_MEMBERS_ONLY))
+        .isEqualTo(ConversationKind.ONE_ON_ONE);
+    assertThat(ConversationKind.of(session(null), NO_MEMBERS_ONLY))
+        .isEqualTo(ConversationKind.ONE_ON_ONE);
+    assertThat(ConversationKind.of(session(ConversationType.INTERNAL_GROUP), NO_MEMBERS_ONLY))
         .isEqualTo(ConversationKind.GROUP);
-    assertThat(ConversationKind.of(session(ConversationType.SELF_HELP)))
+    assertThat(ConversationKind.of(session(ConversationType.SELF_HELP), NO_MEMBERS_ONLY))
         .isEqualTo(ConversationKind.GROUP);
+  }
+
+  @Test
+  void theTechnicalSessionOfAMembersOnlyChat_Should_BeAGroup_NotAnonymous() {
+    // CreateChatFacade gives every group chat's technical session the dummy postcode 00000.
+    var technical = session(null);
+    technical.setPostcode("00000");
+    technical.setMatrixRoomId("!members-only:example");
+    when(membersOnly.concerns(technical)).thenReturn(true);
+
+    assertThat(ConversationKind.of(technical, membersOnly::concerns))
+        .isEqualTo(ConversationKind.GROUP);
+  }
+
+  @Test
+  void aPlainAnonymousSessionWithoutAKind_Should_StayAnonymous() {
+    var plain = session(null);
+    plain.setPostcode("00000");
+
+    assertThat(ConversationKind.of(plain, membersOnly::concerns))
+        .isEqualTo(ConversationKind.ANONYMOUS);
+  }
+
+  @Test
+  void theGateJudgesAMembersOnlyTechnicalSessionByTheGroupSwitch_NotTheAnonymousOne() {
+    var technical = session(null);
+    technical.setPostcode("00000");
+    technical.setMatrixRoomId("!members-only:example");
+    technical.setAgencyId(null);
+    when(membersOnly.concerns(technical)).thenReturn(true);
+    traeger(
+        settings ->
+            settings
+                .featureMediaUploadAnonymousChatsEnabled(false)
+                .featureMediaUploadGroupChatsEnabled(true));
+
+    assertThatCode(() -> gate.require(ConversationFeature.MEDIA_UPLOAD, technical))
+        .doesNotThrowAnyException();
+
+    traeger(settings -> settings.featureMediaUploadGroupChatsEnabled(false));
+    assertThatThrownBy(() -> gate.require(ConversationFeature.MEDIA_UPLOAD, technical))
+        .isInstanceOf(CustomValidationHttpStatusException.class);
+  }
+
+  @Test
+  void theMembersOnlyRuleIsAskedOnlyForASessionWithoutAKindThatLooksAnonymous() {
+    var stored = session(ConversationType.AGENCY_COUNSELLING);
+    stored.setPostcode("00000");
+    var plainWithKind = session(null);
+
+    ConversationKind.of(stored, membersOnly::concerns);
+    ConversationKind.of(plainWithKind, membersOnly::concerns);
+
+    verifyNoInteractions(membersOnly);
   }
 
   @Test

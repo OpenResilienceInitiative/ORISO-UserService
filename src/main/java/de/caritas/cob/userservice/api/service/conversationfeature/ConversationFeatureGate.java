@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.ChatAgencyRepository;
 import de.caritas.cob.userservice.api.service.agency.EffectiveAgencySettingsLookup;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -137,6 +138,7 @@ public class ConversationFeatureGate {
   private final @NonNull TenantService tenantService;
   private final @NonNull EffectiveAgencySettingsLookup effectiveAgencySettingsLookup;
   private final @NonNull ChatAgencyRepository chatAgencyRepository;
+  private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
 
   /** Refuses unless the feature is on for this session's Träger and Beratungsstelle. */
   public void require(ConversationFeature feature, Session session) {
@@ -147,7 +149,7 @@ public class ConversationFeatureGate {
   public void require(List<ConversationFeature> features, Session session) {
     var agencyIds =
         session.getAgencyId() == null ? List.<Long>of() : List.of(session.getAgencyId());
-    requireAll(features, ConversationKind.of(session), session.getTenantId(), agencyIds);
+    requireAll(features, kindOf(session), session.getTenantId(), agencyIds);
   }
 
   /**
@@ -155,6 +157,12 @@ public class ConversationFeatureGate {
    */
   public void require(ConversationFeature feature, Chat chat) {
     require(List.of(feature), chat);
+  }
+
+  private ConversationKind kindOf(Session session) {
+    // Members-only chats are read across Träger, like everywhere else that asks the rule.
+    return ConversationKind.of(
+        session, s -> TenantContext.supplyAcrossTenants(() -> membersOnlyChatAccess.concerns(s)));
   }
 
   /**

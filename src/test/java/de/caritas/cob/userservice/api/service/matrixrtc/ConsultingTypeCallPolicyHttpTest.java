@@ -137,7 +137,7 @@ class ConsultingTypeCallPolicyHttpTest {
   @Test
   void consultingTypeWithoutAValue_Should_DenyLikeTheAppHidesTheMenu() throws Exception {
     inSession(ConversationType.AGENCY_COUNSELLING);
-    when(consultingTypeService.getExtendedConsultingTypeResponseDTO(anyInt()))
+    when(consultingTypeService.getFreshExtendedConsultingTypeResponseDTO(anyInt()))
         .thenReturn(new ExtendedConsultingTypeResponseDTO());
 
     policy()
@@ -148,7 +148,7 @@ class ConsultingTypeCallPolicyHttpTest {
   @Test
   void consultingTypeThatCannotBeRead_Should_DenyAndNotAllowOnDoubt() throws Exception {
     inSession(ConversationType.AGENCY_COUNSELLING);
-    when(consultingTypeService.getExtendedConsultingTypeResponseDTO(anyInt()))
+    when(consultingTypeService.getFreshExtendedConsultingTypeResponseDTO(anyInt()))
         .thenThrow(new ResourceAccessException("consulting type service down"));
 
     policy()

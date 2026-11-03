@@ -610,7 +610,8 @@ class SessionSupervisorFacadeTest {
             org.mockito.Mockito.mock(
                 de.caritas.cob.userservice.api.service.agency.EffectiveAgencySettingsLookup.class),
             org.mockito.Mockito.mock(
-                de.caritas.cob.userservice.api.port.out.ChatAgencyRepository.class));
+                de.caritas.cob.userservice.api.port.out.ChatAgencyRepository.class),
+            membersOnlyChatAccess);
     org.mockito.Mockito.doAnswer(
             invocation -> {
               realGate.require(
