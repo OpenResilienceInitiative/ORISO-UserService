@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixMediaClient;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.web.dto.MatrixBrowserTokenResponseDTO;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -15,6 +16,7 @@ import de.caritas.cob.userservice.api.service.conversationfeature.ConversationFe
 import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserService;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import lombok.NonNull;
@@ -309,7 +311,7 @@ public class MatrixMessageController {
 
     var roomAccess = resolveAuthorizedMatrixRoom(sessionId);
     // Outside the try below: its catch-all would turn the refusal into a 500.
-    roomAccess.ifPresent(this::requireMediaUploadAllowed);
+    roomAccess.ifPresent(room -> requireMediaUploadAllowed(room, file));
 
     try {
       log.info("📤 Upload request for session {}, file: {}", sessionId, file.getOriginalFilename());
@@ -353,12 +355,19 @@ public class MatrixMessageController {
     }
   }
 
-  /** An admin who switched attachments off for the Träger or Beratungsstelle (#1564). */
-  private void requireMediaUploadAllowed(MatrixRoomAccess room) {
+  /**
+   * An admin who switched attachments off for the Träger or Beratungsstelle (#1564). A file that is
+   * posted as audio is a voice message and must pass the voice switch as well.
+   */
+  private void requireMediaUploadAllowed(MatrixRoomAccess room, MultipartFile file) {
+    var features =
+        MatrixMediaClient.isAudio(file.getContentType())
+            ? List.of(ConversationFeature.MEDIA_UPLOAD, ConversationFeature.VOICE_MESSAGES)
+            : List.of(ConversationFeature.MEDIA_UPLOAD);
     if (room.isSession()) {
-      conversationFeatureGate.require(ConversationFeature.MEDIA_UPLOAD, room.getSession());
+      conversationFeatureGate.require(features, room.getSession());
     } else {
-      conversationFeatureGate.require(ConversationFeature.MEDIA_UPLOAD, room.getChat());
+      conversationFeatureGate.require(features, room.getChat());
     }
   }
 

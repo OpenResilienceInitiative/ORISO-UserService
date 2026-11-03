@@ -24,7 +24,7 @@ Two concrete cases:
 |---|---|---|
 | Input fails validation | `400` | message describing what is wrong |
 | Caller is authenticated but not allowed | `403` | none |
-| An admin switched the feature off for the Träger or Beratungsstelle (or the switch cannot be read) | `403` | `X-Reason: FEATURE_DISABLED`, so the app can say why instead of "failed" |
+| An admin switched the feature off for the Träger or Beratungsstelle, or the switch cannot be read (not served, refused or a 4xx other than 408/429 from the settings service) | `403` | `X-Reason: FEATURE_DISABLED`, so the app can say why instead of "failed". A settings service that times out, answers 408/429/5xx or sends an unreadable answer is `503`, never "allowed" |
 | Addressed entity does not exist | `404` | none |
 | Request conflicts with current state (duplicate, concurrent change) | `409` | machine-readable reason where one exists |
 | A downstream service the call depends on failed | `424` / `502` | reason header or body |

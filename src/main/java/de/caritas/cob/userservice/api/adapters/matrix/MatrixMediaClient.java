@@ -111,6 +111,14 @@ public class MatrixMediaClient {
     return response.getBody();
   }
 
+  /**
+   * Whether an upload with this content type is posted as a voice message ({@code m.audio}). The
+   * one rule for "this is audio": the feature switch for voice messages asks it before the upload.
+   */
+  public static boolean isAudio(String mimeType) {
+    return mimeType != null && mimeType.startsWith("audio/");
+  }
+
   private void sendFileMessage(
       String roomId,
       String fileName,
@@ -128,7 +136,7 @@ public class MatrixMediaClient {
           msgtype = "m.image";
         } else if (mimeType.startsWith("video/")) {
           msgtype = "m.video";
-        } else if (mimeType.startsWith("audio/")) {
+        } else if (isAudio(mimeType)) {
           msgtype = "m.audio";
         }
       }

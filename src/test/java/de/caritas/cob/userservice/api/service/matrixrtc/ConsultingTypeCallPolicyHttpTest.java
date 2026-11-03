@@ -206,6 +206,54 @@ class ConsultingTypeCallPolicyHttpTest {
         .getExtendedConsultingTypeResponseDTO(anyInt());
   }
 
+  // ---- a team discussion room follows the form of counselling of its parent session
+
+  @Test
+  void teamDiscussion_Should_FollowTheConsultingTypeOfItsParentSession() throws Exception {
+    teamDiscussionOf(Optional.of(session(ConversationType.AGENCY_COUNSELLING)));
+    consultingTypeAllowsCalls(false);
+
+    policy()
+        .andExpect(jsonPath("$.audioAllowed").value(false))
+        .andExpect(jsonPath("$.videoAllowed").value(false));
+  }
+
+  /**
+   * Not part of #1564: such a room was allowed before the consulting type was consulted, and stays
+   * so. There is no form of counselling to ask.
+   */
+  @Test
+  void teamDiscussionWhoseParentSessionIsGone_Should_StayAsItWas() throws Exception {
+    teamDiscussionOf(Optional.empty());
+    consultingTypeAllowsCalls(false);
+
+    policy()
+        .andExpect(jsonPath("$.audioAllowed").value(true))
+        .andExpect(jsonPath("$.videoAllowed").value(true));
+    org.mockito.Mockito.verify(consultingTypeService, org.mockito.Mockito.never())
+        .getFreshExtendedConsultingTypeResponseDTO(anyInt());
+  }
+
+  @Test
+  void teamDiscussionWhoseParentSessionIsRejected_Should_StayClosed() throws Exception {
+    var parent = session(ConversationType.AGENCY_COUNSELLING);
+    when(parent.getStatus()).thenReturn(Session.SessionStatus.REJECTED);
+    teamDiscussionOf(Optional.of(parent));
+    consultingTypeAllowsCalls(true);
+
+    policy()
+        .andExpect(jsonPath("$.audioAllowed").value(false))
+        .andExpect(jsonPath("$.videoAllowed").value(false));
+  }
+
+  private void teamDiscussionOf(Optional<Session> parent) {
+    var discussion = mock(de.caritas.cob.userservice.api.model.TeamDiscussion.class);
+    when(discussion.getSessionId()).thenReturn(77L);
+    when(discussion.getTenantId()).thenReturn(TENANT_ID);
+    when(discussionRepository.findByMatrixRoomId(ROOM_ID)).thenReturn(Optional.of(discussion));
+    when(sessionRepository.findById(77L)).thenReturn(parent);
+  }
+
   // ---- helpers
 
   private ResultActions policy() throws Exception {

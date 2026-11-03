@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.conversationfeature;
 import de.caritas.cob.userservice.agencyserivce.generated.web.model.Settings;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.model.Chat;
@@ -11,15 +12,17 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.ChatAgencyRepository;
 import de.caritas.cob.userservice.api.service.agency.EffectiveAgencySettingsLookup;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClientException;
 
 /**
@@ -36,8 +39,13 @@ import org.springframework.web.client.RestClientException;
  * <p>Two different "not known" cases: a switch nobody has set is <b>on</b>, as in the counselling
  * app and in the call policy (the settings of existing Träger carry none of the newer switches). A
  * switch that cannot be <b>read</b> (settings not served, Beratungsstelle unknown) is refused with
- * 403, and an unreachable TenantService or AgencyService answers 503: never "allowed on doubt".
- * Nothing is cached here, so an admin's change applies to the next request.
+ * 403. A provider that answers with a 4xx (other than 408 and 429) has understood the question and
+ * said no, which is a refusal too; timeouts, 5xx, 408, 429 and unreadable answers are an outage and
+ * answer 503, as {@code EffectiveDirectInvitePolicy} does. Never "allowed on doubt". Nothing is
+ * cached here, so an admin's change applies to the next request.
+ *
+ * <p>The Träger is asked first: when it says no, the Beratungsstelle is not asked at all, so a
+ * switched-off Träger answers 403 even while the AgencyService is down.
  */
 @Service
 @RequiredArgsConstructor
@@ -48,14 +56,10 @@ public class ConversationFeatureGate {
   private record Flags<S>(
       Function<S, Boolean> master, Map<ConversationKind, Function<S, Boolean>> perKind) {
 
-    List<Boolean> relevantFor(S settings, ConversationKind kind) {
+    boolean allows(S settings, ConversationKind kind) {
       var kindFlag = perKind.get(kind);
-      var values = new java.util.ArrayList<Boolean>();
-      values.add(master.apply(settings));
-      if (kindFlag != null) {
-        values.add(kindFlag.apply(settings));
-      }
-      return values;
+      return !Boolean.FALSE.equals(master.apply(settings))
+          && (kindFlag == null || !Boolean.FALSE.equals(kindFlag.apply(settings)));
     }
   }
 
@@ -88,10 +92,21 @@ public class ConversationFeatureGate {
                           ::getFeatureMediaUploadOneOnOneChatsEnabled,
                       ConversationKind.GROUP,
                       de.caritas.cob.userservice.tenantservice.generated.web.model.Settings
-                          ::getFeatureMediaUploadGroupChatsEnabled,
-                      ConversationKind.SUPERVISION,
+                          ::getFeatureMediaUploadGroupChatsEnabled)),
+              ConversationFeature.VOICE_MESSAGES,
+              new Flags<>(
+                  de.caritas.cob.userservice.tenantservice.generated.web.model.Settings
+                      ::getFeatureVoiceMessagesEnabled,
+                  Map.of(
+                      ConversationKind.ANONYMOUS,
                       de.caritas.cob.userservice.tenantservice.generated.web.model.Settings
-                          ::getFeatureMediaUploadSupervisionChatsEnabled)));
+                          ::getFeatureVoiceMessagesAnonymousChatsEnabled,
+                      ConversationKind.ONE_ON_ONE,
+                      de.caritas.cob.userservice.tenantservice.generated.web.model.Settings
+                          ::getFeatureVoiceMessagesOneOnOneChatsEnabled,
+                      ConversationKind.GROUP,
+                      de.caritas.cob.userservice.tenantservice.generated.web.model.Settings
+                          ::getFeatureVoiceMessagesGroupChatsEnabled)));
 
   private static final Map<ConversationFeature, Flags<Settings>> AGENCY =
       Map.of(
@@ -108,9 +123,16 @@ public class ConversationFeatureGate {
               Map.of(
                   ConversationKind.ANONYMOUS, Settings::getFeatureMediaUploadAnonymousChatsEnabled,
                   ConversationKind.ONE_ON_ONE, Settings::getFeatureMediaUploadOneOnOneChatsEnabled,
-                  ConversationKind.GROUP, Settings::getFeatureMediaUploadGroupChatsEnabled,
-                  ConversationKind.SUPERVISION,
-                      Settings::getFeatureMediaUploadSupervisionChatsEnabled)));
+                  ConversationKind.GROUP, Settings::getFeatureMediaUploadGroupChatsEnabled)),
+          ConversationFeature.VOICE_MESSAGES,
+          new Flags<>(
+              Settings::getFeatureVoiceMessagesEnabled,
+              Map.of(
+                  ConversationKind.ANONYMOUS,
+                      Settings::getFeatureVoiceMessagesAnonymousChatsEnabled,
+                  ConversationKind.ONE_ON_ONE,
+                      Settings::getFeatureVoiceMessagesOneOnOneChatsEnabled,
+                  ConversationKind.GROUP, Settings::getFeatureVoiceMessagesGroupChatsEnabled)));
 
   private final @NonNull TenantService tenantService;
   private final @NonNull EffectiveAgencySettingsLookup effectiveAgencySettingsLookup;
@@ -118,57 +140,100 @@ public class ConversationFeatureGate {
 
   /** Refuses unless the feature is on for this session's Träger and Beratungsstelle. */
   public void require(ConversationFeature feature, Session session) {
-    require(feature, ConversationKind.of(session), session.getTenantId(), session.getAgencyId());
+    require(List.of(feature), session);
+  }
+
+  /** Refuses unless every one of the features is on for this session. */
+  public void require(List<ConversationFeature> features, Session session) {
+    var agencyIds =
+        session.getAgencyId() == null ? List.<Long>of() : List.of(session.getAgencyId());
+    requireAll(features, ConversationKind.of(session), session.getTenantId(), agencyIds);
   }
 
   /**
-   * Refuses unless the feature is on for this group chat's Träger and, when the chat belongs to
-   * exactly one Beratungsstelle (as the app reads it), for that Beratungsstelle.
+   * Refuses unless the feature is on for this group chat's Träger and each of its Beratungsstellen.
    */
   public void require(ConversationFeature feature, Chat chat) {
+    require(List.of(feature), chat);
+  }
+
+  /**
+   * Refuses unless every one of the features is on for the group chat's Träger and for every
+   * Beratungsstelle the chat belongs to: one that says no is enough.
+   */
+  public void require(List<ConversationFeature> features, Chat chat) {
     Long tenantId = chat.getChatOwner() == null ? null : chat.getChatOwner().getTenantId();
-    List<ChatAgency> agencies = chatAgencyRepository.findByChat_Id(chat.getId());
-    Long agencyId = agencies.size() == 1 ? agencies.getFirst().getAgencyId() : null;
-    require(feature, ConversationKind.GROUP, tenantId, agencyId);
+    var agencyIds = new LinkedHashSet<Long>();
+    for (ChatAgency agency : chatAgencyRepository.findByChat_Id(chat.getId())) {
+      agencyIds.add(agency.getAgencyId());
+    }
+    requireAll(features, ConversationKind.GROUP, tenantId, List.copyOf(agencyIds));
   }
 
   /**
    * @param tenantId the Träger of the conversation, null in a single-Träger installation
-   * @param agencyId the Beratungsstelle, null when the conversation has none or several
+   * @param agencyId the Beratungsstelle, null when the conversation has none
    * @throws CustomValidationHttpStatusException 403 with reason FEATURE_DISABLED when switched off
    *     or not readable
    * @throws ServiceUnavailableException 503 when the TenantService or AgencyService is unreachable
    */
   public void require(
       ConversationFeature feature, ConversationKind kind, Long tenantId, Long agencyId) {
-    var verdicts = new AtomicReference<List<Boolean>>();
+    requireAll(
+        List.of(feature), kind, tenantId, agencyId == null ? List.<Long>of() : List.of(agencyId));
+  }
+
+  private void requireAll(
+      List<ConversationFeature> features,
+      ConversationKind kind,
+      Long tenantId,
+      List<Long> agencyIds) {
+    var allowed = new AtomicBoolean(false);
     try {
       if (tenantId == null) {
-        verdicts.set(evaluate(feature, kind, null, agencyId));
+        allowed.set(allows(features, kind, null, agencyIds));
       } else {
         // The caller may belong to another Träger than the conversation (members-only chats):
         // ask in the conversation's Träger.
         TenantContext.runIn(
-            tenantId, () -> verdicts.set(evaluate(feature, kind, tenantId, agencyId)));
+            tenantId, () -> allowed.set(allows(features, kind, tenantId, agencyIds)));
       }
-    } catch (RestClientException unavailable) {
+    } catch (ForbiddenException refused) {
+      // The AgencyService refused to serve the Beratungsstelle: nothing to read, so no.
       log.warn(
-          "Feature switch {} for tenant {} could not be read: {}",
-          feature,
+          "Feature switches {} for tenant {} refused: the settings were not served",
+          features,
+          tenantId);
+      throw featureDisabled();
+    } catch (HttpClientErrorException refused) {
+      if (isTransient(refused)) {
+        throw unavailable(features, tenantId, refused);
+      }
+      // The provider understood the question and said no (for example 400): a refusal, not an
+      // outage. Only the status is logged, never the body.
+      log.warn(
+          "Feature switches {} for tenant {} were refused by their provider with {}",
+          features,
           tenantId,
-          unavailable.getClass().getSimpleName());
-      throw new ServiceUnavailableException("The feature setting is not available");
+          refused.getStatusCode().value());
+      throw featureDisabled();
+    } catch (RestClientException failure) {
+      throw unavailable(features, tenantId, failure);
     }
-    var answer = verdicts.get();
-    if (answer == null || answer.stream().anyMatch(Boolean.FALSE::equals)) {
-      throw new CustomValidationHttpStatusException(
-          HttpStatusExceptionReason.FEATURE_DISABLED, HttpStatus.FORBIDDEN);
+    if (!allowed.get()) {
+      throw featureDisabled();
     }
   }
 
-  /** All switches that apply; {@code null} when they cannot be read. */
-  private List<Boolean> evaluate(
-      ConversationFeature feature, ConversationKind kind, Long tenantId, Long agencyId) {
+  /**
+   * Whether every switch that applies is on. The Träger is asked first and, when it says no, the
+   * Beratungsstellen are not asked at all.
+   */
+  private boolean allows(
+      List<ConversationFeature> features,
+      ConversationKind kind,
+      Long tenantId,
+      List<Long> agencyIds) {
     var tenant =
         tenantId == null
             ? tenantService.getSingleTenancyTenantDataFresh()
@@ -176,19 +241,52 @@ public class ConversationFeatureGate {
     if (tenant == null
         || tenant.getSettings() == null
         || (tenantId != null && !tenantId.equals(tenant.getId()))) {
-      log.warn("Feature switch {} refused: the Traeger settings are not served", feature);
-      return null;
+      log.warn("Feature switches {} refused: the Traeger settings are not served", features);
+      return false;
     }
-    var values =
-        new java.util.ArrayList<>(TRAEGER.get(feature).relevantFor(tenant.getSettings(), kind));
-    if (agencyId != null) {
+    if (!allOn(TRAEGER, tenant.getSettings(), features, kind)) {
+      return false;
+    }
+    for (Long agencyId : agencyIds) {
       var agency = effectiveAgencySettingsLookup.findEffectiveSettings(agencyId, tenantId);
       if (agency.isEmpty()) {
-        log.warn("Feature switch {} refused: the Beratungsstelle settings are not served", feature);
-        return null;
+        log.warn(
+            "Feature switches {} refused: the Beratungsstelle settings are not served", features);
+        return false;
       }
-      values.addAll(AGENCY.get(feature).relevantFor(agency.get(), kind));
+      if (!allOn(AGENCY, agency.get(), features, kind)) {
+        return false;
+      }
     }
-    return values;
+    return true;
+  }
+
+  private static <S> boolean allOn(
+      Map<ConversationFeature, Flags<S>> table,
+      S settings,
+      List<ConversationFeature> features,
+      ConversationKind kind) {
+    return features.stream().allMatch(feature -> table.get(feature).allows(settings, kind));
+  }
+
+  /** Of the 4xx only these two are an outage; a timeout or a 5xx never gets here. */
+  private static boolean isTransient(HttpClientErrorException refused) {
+    return refused.getStatusCode().value() == 408 || refused.getStatusCode().value() == 429;
+  }
+
+  private ServiceUnavailableException unavailable(
+      List<ConversationFeature> features, Long tenantId, RestClientException failure) {
+    // The cause is not attached: a downstream response body must not reach logs or API errors.
+    log.warn(
+        "Feature switches {} for tenant {} could not be read: {}",
+        features,
+        tenantId,
+        failure.getClass().getSimpleName());
+    return new ServiceUnavailableException("The feature setting is not available");
+  }
+
+  private static CustomValidationHttpStatusException featureDisabled() {
+    return new CustomValidationHttpStatusException(
+        HttpStatusExceptionReason.FEATURE_DISABLED, HttpStatus.FORBIDDEN);
   }
 }

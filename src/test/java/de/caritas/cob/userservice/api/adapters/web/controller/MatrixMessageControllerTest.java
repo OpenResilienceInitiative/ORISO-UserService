@@ -113,8 +113,9 @@ class MatrixMessageControllerTest {
                 HttpStatus.FORBIDDEN))
         .when(conversationFeatureGate)
         .require(
-            de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeature
-                .MEDIA_UPLOAD,
+            List.of(
+                de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeature
+                    .MEDIA_UPLOAD),
             session);
 
     // Not turned into a 500 by the controller's own catch-all.
@@ -125,6 +126,36 @@ class MatrixMessageControllerTest {
             controller.uploadFile(
                 SESSION_ID,
                 new MockMultipartFile("file", "photo.png", "image/png", "bytes".getBytes())));
+    verifyNoInteractions(matrixSynapseService);
+  }
+
+  @Test
+  void uploadFile_ShouldAskTheVoiceSwitchToo_WhenTheFileBecomesAVoiceMessage() {
+    var session = sessionWithMatrixRoom();
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(session));
+    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser)).thenReturn(session);
+    doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException(
+                de.caritas.cob.userservice.api.exception.httpresponses.customheader
+                    .HttpStatusExceptionReason.FEATURE_DISABLED,
+                HttpStatus.FORBIDDEN))
+        .when(conversationFeatureGate)
+        .require(
+            List.of(
+                de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeature
+                    .MEDIA_UPLOAD,
+                de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeature
+                    .VOICE_MESSAGES),
+            session);
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException
+            .class,
+        () ->
+            controller.uploadFile(
+                SESSION_ID,
+                new MockMultipartFile("file", "note.mp3", "audio/mpeg", "bytes".getBytes())));
     verifyNoInteractions(matrixSynapseService);
   }
 

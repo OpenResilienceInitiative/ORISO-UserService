@@ -5,5 +5,7 @@ public enum ConversationFeature {
   /** "Supervision": attaching a colleague to a case (and with it opening the supervision room). */
   SUPERVISION,
   /** "Dateianhänge": putting a file into a conversation. */
-  MEDIA_UPLOAD
+  MEDIA_UPLOAD,
+  /** "Sprachnachrichten": an audio file becomes a voice message (an {@code m.audio} event). */
+  VOICE_MESSAGES
 }

@@ -16,7 +16,13 @@ import org.springframework.stereotype.Service;
  *
  * <p>It narrows what {@link MatrixRtcCallPolicyService} granted (the Träger switches per chat
  * type), it never widens it. A supervision room is not gated: its calls are staff to staff and the
- * app does not apply this switch there either (product decision 12.09.2026).
+ * app does not apply this switch there either (product decision 12.09.2026). Neither is a team
+ * discussion whose parent session is gone: it has no form of counselling to ask, and calls in it
+ * were never closed by this switch.
+ *
+ * <p>The switch closes audio and video together, as the app does: its call buttons (audio and video
+ * alike) sit behind {@code isVideoCallAllowed}, so the switch is in effect "calls in this form of
+ * counselling".
  *
  * <p>The setting is read fresh from the ConsultingTypeService, never from the one-day cache, in the
  * Träger of the conversation. A value that is not {@code true} (switched off, missing) closes the
@@ -46,7 +52,7 @@ public class ConsultingTypeCallGate {
       return deny(CallPolicyDenialReason.NO_TENANT_CONTEXT, null);
     }
     var conversation = context.get();
-    if (conversation.chatType() == MatrixRtcPolicyContext.ChatType.SUPERVISION) {
+    if (!conversation.followsConsultingType()) {
       return granted;
     }
     if (conversation.consultingTypeId() == null || conversation.tenantId() == null) {
