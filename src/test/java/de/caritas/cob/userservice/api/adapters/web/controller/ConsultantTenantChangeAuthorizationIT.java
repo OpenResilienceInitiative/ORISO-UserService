@@ -131,6 +131,20 @@ class ConsultantTenantChangeAuthorizationIT {
     verifyNoInteractions(consultantAdminFacade);
   }
 
+  @Test
+  void aRequestWithoutATenantIsRejectedBeforeTheFacade() throws Exception {
+    mvc.perform(
+            put(ENDPOINT)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"agencies\":[{\"agencyId\":800,\"roleSetKey\":\"consultant\"}]}")
+                .cookie(new Cookie("CSRF-TOKEN", "test"))
+                .header("X-CSRF-Token", "test")
+                .with(adminToken(0, TENANT_ADMIN)))
+        .andExpect(status().isBadRequest());
+
+    verifyNoInteractions(consultantAdminFacade);
+  }
+
   /** The Admin maps these codes; the status and the header must reach it over HTTP. */
   @Test
   void everyRefusalAnswersWithItsStatusAndAStableXReasonHeader() throws Exception {

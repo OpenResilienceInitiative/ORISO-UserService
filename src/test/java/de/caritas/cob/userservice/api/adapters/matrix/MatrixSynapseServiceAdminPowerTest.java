@@ -103,6 +103,19 @@ class MatrixSynapseServiceAdminPowerTest {
   }
 
   @Test
+  void aMemberWithoutOwnerPowerNeverPullsTheAdminIntoTheRoom() {
+    // A supervision side room: the mover is only a member and the admin is not in it.
+    String room = homeserver.createRoom(OWNER);
+    homeserver.member(room, COUNSELLOR, 0);
+
+    boolean done = gateway.ensureAdminHoldsRoomPower(room, COUNSELLOR, tokenOf(COUNSELLOR));
+
+    assertThat(done).isTrue();
+    assertThat(homeserver.isMember(room, ADMIN)).isFalse();
+    assertThat(homeserver.isInvited(room, ADMIN)).isFalse();
+  }
+
+  @Test
   void aCounsellorWhoIsNotInTheRoomAnyMoreCannotHandOverAndTheCallSaysSo() {
     String room = homeserver.createRoom(COUNSELLOR);
     homeserver.member(room, ADMIN, 0).memberLeaves(room, COUNSELLOR);

@@ -588,6 +588,8 @@ class ConsultantTenantChangeServiceTest {
     // move stays done and the failure is only logged.
     TransactionSynchronizationManager.getSynchronizations()
         .forEach(TransactionSynchronization::afterCommit);
+
+    verify(identityTenantUpdater).endSessions(CONSULTANT_ID);
   }
 
   @Test

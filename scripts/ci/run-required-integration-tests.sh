@@ -65,6 +65,7 @@ mariadb_owned_tests=(
   ConsultantTenantChangeMariaDbIT
   CaseHandoverLeaveAdminPowerMariaDbIT
   CaseHandoverTakeoverMatrixMariaDbIT
+  MoveThenTakeoverMatrixMariaDbIT
   GroupChatMatrixCleanupAdoptionMariaDbIT
   IdentityReactivationSagaMariaDbIT
   UserHardDeleteClaimMariaDbIT

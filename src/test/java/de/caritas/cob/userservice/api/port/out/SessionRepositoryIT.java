@@ -254,6 +254,10 @@ class SessionRepositoryIT {
   void countOpenCasesOfTenantCountsOnlyOpenCasesOfThatTenant() {
     givenAUser();
     var consultant = consultantRepository.findAll().iterator().next();
+    var id = consultant.getId();
+    var open = List.of(SessionStatus.NEW, SessionStatus.IN_PROGRESS);
+    // This consultant may already have seeded open cases, which count for tenant 1.
+    long seededInTenant1 = underTest.countOpenCasesOfTenant(id, open, 1L);
     var sessions =
         List.of(
             sessionOf(consultant, SessionStatus.NEW, 11L),
@@ -263,15 +267,13 @@ class SessionRepositoryIT {
             sessionOf(consultant, SessionStatus.IN_PROGRESS, null));
     underTest.saveAll(sessions);
     entityManager.flush();
-    var open = List.of(SessionStatus.NEW, SessionStatus.IN_PROGRESS);
 
     try {
-      var id = consultant.getId();
       assertEquals(2, underTest.countOpenCasesOfTenant(id, open, 11L));
       assertEquals(1, underTest.countOpenCasesOfTenant(id, open, 22L));
       assertEquals(0, underTest.countOpenCasesOfTenant(id, open, 33L));
       // Cases without a tenant belong to the technical tenant 1, as in the room queries.
-      assertEquals(1, underTest.countOpenCasesOfTenant(id, open, 1L));
+      assertEquals(seededInTenant1 + 1, underTest.countOpenCasesOfTenant(id, open, 1L));
       assertEquals(0, underTest.countOpenCasesOfTenant(id, open, null));
     } finally {
       underTest.deleteAll(sessions);

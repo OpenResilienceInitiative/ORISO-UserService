@@ -1665,6 +1665,15 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
         || memberToken.isBlank()) {
       return false;
     }
+    var memberPower = matrixRoomClient.findUserPowerLevel(roomId, memberMatrixUserId, memberToken);
+    if (memberPower.isEmpty()) {
+      return false;
+    }
+    if (memberPower.get() < ROOM_OWNER_POWER_LEVEL) {
+      // Checked first, so the admin is never pulled into a room this member does not own (a
+      // supervision side room, say) and a refused invite cannot keep them in it.
+      return true;
+    }
     String adminToken = getAdminToken();
     if (adminToken == null) {
       log.warn("Could not get the Matrix admin token to hand room power to the technical admin");
