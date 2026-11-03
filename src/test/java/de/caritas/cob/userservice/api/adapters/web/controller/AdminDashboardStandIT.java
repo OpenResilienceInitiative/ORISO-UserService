@@ -563,7 +563,33 @@ class AdminDashboardStandIT {
     var body = dashboard(tenantAdmin());
     assertThat(JsonPath.<List<Boolean>>read(body, "$.targets[*].suppressed")).containsOnly(true);
     assertThat(JsonPath.<List<Object>>read(body, "$.targets[*].metrics")).containsOnlyNulls();
-    assertThat(JsonPath.<List<Integer>>read(body, "$.targets[*].counselorCount")).containsOnly(8);
+    assertThat(JsonPath.<List<Integer>>read(body, "$.targets[*].counselorCount")).containsOnly(0);
+  }
+
+  @Test
+  void aStoredStand_Should_NotLetTheTotalMinusTheShownRowsRevealAHiddenRow() throws Exception {
+    // 16 counsellors in total: 6 + 3 + 7 in the agencies. Hiding the 3 alone would leave it
+    // readable as total minus the two shown rows, so the smallest shown agency goes with it.
+    when(statistics.countConsultantsForTenant(anyLong())).thenReturn(16L);
+    when(statistics.countConsultantsByAgency(anyLong()))
+        .thenReturn(
+            List.of(groupCount(AGENCY, 6), groupCount(OTHER_AGENCY, 3), groupCount(13L, 7)));
+
+    var body = dashboard(tenantAdmin());
+
+    assertThat(JsonPath.<List<Boolean>>read(body, "$.targets[?(@.agencyId == 11)].suppressed"))
+        .containsExactly(true);
+    assertThat(JsonPath.<List<Boolean>>read(body, "$.targets[?(@.agencyId == 12)].suppressed"))
+        .containsExactly(true);
+    assertThat(JsonPath.<List<Boolean>>read(body, "$.targets[?(@.agencyId == 13)].suppressed"))
+        .containsExactly(false);
+    assertThat(
+            JsonPath.<List<Boolean>>read(body, "$.targets[?(@.targetType == 'TENANT')].suppressed"))
+        .containsExactly(false);
+    assertThat(stands.findAll().getFirst().getPayload())
+        .as("the stored stand holds no exact count of a hidden row")
+        .doesNotContain("\"counselorCount\":3")
+        .doesNotContain("\"counselorCount\":6");
   }
 
   @Test
