@@ -167,8 +167,9 @@ public class CounsellorDirectLinkService {
     }
     tenantService.requireOperationalTenant(link.getTenantId());
     var medium = InviteLinkChatType.valueOf(link.getChatType());
+    // A withdrawn "Direkteinladung erlauben" reads as a link that is no longer active (410).
     if (!directInvitePolicy.allows(link.getTenantId(), link.getAgencyId(), medium)) {
-      throw new ForbiddenException("Direct invitations are not allowed here");
+      throw new DirectLinkInactiveException();
     }
     DirectLinkOwner.requireStillServing(consultantRepository, link);
 

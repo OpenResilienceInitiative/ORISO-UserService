@@ -174,7 +174,8 @@ public class TenantAdminUserService {
   }
 
   public AdminResponseDTO patchTenantAdmin(String adminId, PatchAdminDTO patchAdminDTO) {
-    adminScope.assertMay(Target.managedAdmin(adminId));
+    // Only reached from the caller's own profile (PATCH /useradmin/data), which stays editable.
+    adminScope.assertMay(Target.admin(adminId));
     final Admin updatedAdmin = updateAdminService.patchTenantAdmin(adminId, patchAdminDTO);
     var responseDTO =
         AdminResponseDTOBuilder.getInstance(updatedAdmin).buildAgencyAdminResponseDTO();

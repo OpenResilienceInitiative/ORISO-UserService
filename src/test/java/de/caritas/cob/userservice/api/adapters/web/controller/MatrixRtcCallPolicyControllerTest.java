@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.controller.MatrixRtcCallPolicyController.CallPolicyRequest;
 import de.caritas.cob.userservice.api.service.matrixrtc.CallMediaPolicy;
+import de.caritas.cob.userservice.api.service.matrixrtc.ConsultingTypeCallGate;
 import de.caritas.cob.userservice.api.service.matrixrtc.MatrixRtcCallPolicyService;
 import de.caritas.cob.userservice.api.service.matrixrtc.MatrixRtcPolicyTokenVerifier;
 import java.util.Map;
@@ -22,6 +23,7 @@ import org.springframework.http.HttpStatus;
 class MatrixRtcCallPolicyControllerTest {
 
   @Mock private MatrixRtcCallPolicyService callPolicyService;
+  @Mock private ConsultingTypeCallGate consultingTypeCallGate;
 
   private static final String ROOM_ID = "!room:matrix.example.org";
   private static final String MATRIX_USER_ID = "@participant:matrix.example.org";
@@ -30,7 +32,9 @@ class MatrixRtcCallPolicyControllerTest {
   void rejectsMissingOrInvalidInternalCredentialBeforeResolvingRoom() {
     var controller =
         new MatrixRtcCallPolicyController(
-            callPolicyService, new MatrixRtcPolicyTokenVerifier("expected-secret"));
+            callPolicyService,
+            new MatrixRtcPolicyTokenVerifier("expected-secret"),
+            consultingTypeCallGate);
 
     assertThat(
             controller
@@ -42,16 +46,19 @@ class MatrixRtcCallPolicyControllerTest {
                 .resolve("wrong-secret", new CallPolicyRequest(ROOM_ID, MATRIX_USER_ID))
                 .getStatusCode())
         .isEqualTo(HttpStatus.UNAUTHORIZED);
-    verifyNoInteractions(callPolicyService);
+    verifyNoInteractions(callPolicyService, consultingTypeCallGate);
   }
 
   @Test
   void returnsCurrentPolicyForValidInternalCredential() {
     var policy = new CallMediaPolicy(true, false);
     when(callPolicyService.resolve(ROOM_ID, MATRIX_USER_ID)).thenReturn(policy);
+    when(consultingTypeCallGate.restrict(policy, ROOM_ID)).thenReturn(policy);
     var controller =
         new MatrixRtcCallPolicyController(
-            callPolicyService, new MatrixRtcPolicyTokenVerifier("expected-secret"));
+            callPolicyService,
+            new MatrixRtcPolicyTokenVerifier("expected-secret"),
+            consultingTypeCallGate);
 
     var response =
         controller.resolve("expected-secret", new CallPolicyRequest(ROOM_ID, MATRIX_USER_ID));
@@ -59,6 +66,23 @@ class MatrixRtcCallPolicyControllerTest {
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     assertThat(response.getBody()).isEqualTo(policy);
     verify(callPolicyService).resolve(ROOM_ID, MATRIX_USER_ID);
+  }
+
+  @Test
+  void answersWhatTheConsultingTypeGateLeavesOfThePolicy() {
+    var granted = new CallMediaPolicy(true, true);
+    when(callPolicyService.resolve(ROOM_ID, MATRIX_USER_ID)).thenReturn(granted);
+    when(consultingTypeCallGate.restrict(granted, ROOM_ID)).thenReturn(CallMediaPolicy.denied());
+    var controller =
+        new MatrixRtcCallPolicyController(
+            callPolicyService,
+            new MatrixRtcPolicyTokenVerifier("expected-secret"),
+            consultingTypeCallGate);
+
+    var response =
+        controller.resolve("expected-secret", new CallPolicyRequest(ROOM_ID, MATRIX_USER_ID));
+
+    assertThat(response.getBody()).isEqualTo(CallMediaPolicy.denied());
   }
 
   @Test

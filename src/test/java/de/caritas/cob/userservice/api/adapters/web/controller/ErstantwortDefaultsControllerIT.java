@@ -52,7 +52,9 @@ class ErstantwortDefaultsControllerIT {
         .andExpect(jsonPath("$.greeting").value(org.hamcrest.Matchers.containsString("Sie")))
         .andExpect(
             jsonPath("$.emergencyNumbers").value(org.hamcrest.Matchers.containsString("112")))
-        .andExpect(jsonPath("$.responseDeadlineDays").value(2));
+        .andExpect(jsonPath("$.responseDeadlineDays").value(2))
+        // #1565: no platform wording for who reads along, so the editor must not show one.
+        .andExpect(jsonPath("$.whoReadsAlong").doesNotExist());
   }
 
   @Test
