@@ -65,6 +65,8 @@ public class AgencyInviteLinkService {
           .TemporaryAccountSettingsService
       temporaryAccountSettings;
 
+  private final @NonNull DirectInvitePolicy directInvitePolicy;
+
   /** Call share links (#1487) in the public context; not {@code @NonNull} for older test wiring. */
   private final CallShareLinkService callShareLinkService;
 
@@ -304,6 +306,20 @@ public class AgencyInviteLinkService {
     return contextOf(link);
   }
 
+  /**
+   * An admin who withdrew "Direkteinladung erlauben" stops the links that already exist, on every
+   * route a person uses to open one (context and redeem): 410, so the page says "no longer active".
+   */
+  private void requireDirectInviteAllowed(AgencyInviteLink link) {
+    if (InviteLinkChatType.isDirectMedium(link.getChatType())
+        && !directInvitePolicy.allows(
+            link.getTenantId(),
+            link.getAgencyId(),
+            InviteLinkChatType.valueOf(link.getChatType()))) {
+      throw new DirectLinkInactiveException();
+    }
+  }
+
   private static void rejectPausedLink(AgencyInviteLink link) {
     if (!InviteLinkStatus.DISABLED.name().equals(link.getStatus())) return;
     if (InviteLinkChatType.isDirectMedium(link.getChatType())) {
@@ -322,6 +338,7 @@ public class AgencyInviteLinkService {
     if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now())) {
       throw new BadRequestException("Invite link expired");
     }
+    requireDirectInviteAllowed(link);
     TenantData previousTenant = TenantContext.getCurrentTenantData();
     try {
       TenantContext.setCurrentTenantData(new TenantData(link.getTenantId(), null));
@@ -365,6 +382,7 @@ public class AgencyInviteLinkService {
    */
   private CallShareContext callShareContext(AgencyInviteLink link) {
     callShareLinkService.requireUsable(link);
+    callShareLinkService.requireDirectInviteAllowed(link);
     return new CallShareContext(
         link.getTenantId(),
         link.getAgencyId(),
@@ -413,6 +431,13 @@ public class AgencyInviteLinkService {
 
   @Transactional
   RedeemContext redeem(String token) {
+    // The remote policy reads must not run while the row lock below is held. Read the token
+    // unlocked first; status, expiry and the other checks still decide on the locked row.
+    repository
+        .findByToken(token)
+        .filter(unlocked -> InviteLinkStatus.ACTIVE.name().equals(unlocked.getStatus()))
+        .filter(unlocked -> !InviteLinkKind.CALL.name().equals(unlocked.getLinkKind()))
+        .ifPresent(this::requireDirectInviteAllowed);
     AgencyInviteLink link =
         repository
             .findByTokenAndStatus(token, InviteLinkStatus.ACTIVE.name())

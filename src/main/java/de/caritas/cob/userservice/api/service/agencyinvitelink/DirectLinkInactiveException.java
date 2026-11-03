@@ -1,6 +1,9 @@
 package de.caritas.cob.userservice.api.service.agencyinvitelink;
 
-/** The owner switched the link off. Mapped to 410 with body {"reason":"DIRECT_LINK_INACTIVE"}. */
+/**
+ * The link was switched off: a direct link by its counsellor, any other link by an admin (#1554).
+ * Mapped to 410 with body {"reason":"DIRECT_LINK_INACTIVE"}.
+ */
 public class DirectLinkInactiveException extends RuntimeException {
 
   private static final long serialVersionUID = 1L;

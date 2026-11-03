@@ -113,6 +113,9 @@ class GuestIdentityHttpTest {
   @MockitoBean
   de.caritas.cob.userservice.api.service.agencyinvitelink.CallShareLinkService callShareLinks;
 
+  @MockitoBean
+  de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitePolicy directInvitePolicy;
+
   @MockitoBean IdentityUsernameAvailability identityProvider;
   @MockitoBean UserRepository users;
   @MockitoBean MatrixUserClient matrix;
