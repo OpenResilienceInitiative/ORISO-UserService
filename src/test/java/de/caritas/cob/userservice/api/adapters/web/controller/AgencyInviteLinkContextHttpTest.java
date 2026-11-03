@@ -201,6 +201,16 @@ class AgencyInviteLinkContextHttpTest {
   }
 
   @Test
+  void switchedOffLiveChatLinkReturns410WithReason() throws Exception {
+    var link = link();
+    link.setStatus("DISABLED");
+    when(repository.findByToken("token")).thenReturn(Optional.of(link));
+    mvc.perform(get("/users/invitelinks/token/context"))
+        .andExpect(status().isGone())
+        .andExpect(content().json("{\"reason\":\"DIRECT_LINK_INACTIVE\"}"));
+  }
+
+  @Test
   void directLinkContextNamesAdmissionButNotTheOwner() throws Exception {
     when(repository.findByToken("token")).thenReturn(Optional.of(directLink()));
     ownerServes(99L);
