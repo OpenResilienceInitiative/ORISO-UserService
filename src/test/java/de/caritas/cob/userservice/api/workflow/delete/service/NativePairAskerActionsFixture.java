@@ -256,6 +256,9 @@ final class NativePairAskerActionsFixture implements AutoCloseable {
                     errorMail,
                     new DeletionLifecycleService(),
                     mock(UserHardDeleteClaimService.class),
+                    org.mockito.Mockito.mock(
+                        de.caritas.cob.userservice.api.workflow.delete.service
+                            .ConsultantHardDeleteClaimService.class),
                     finalAction,
                     appointmentsAction,
                     draftsAction,
@@ -266,7 +269,10 @@ final class NativePairAskerActionsFixture implements AutoCloseable {
                     new ActionsRegistry(context),
                     errorMail,
                     new DeletionLifecycleService(),
-                    mock(UserHardDeleteClaimService.class)));
+                    mock(UserHardDeleteClaimService.class),
+                    org.mockito.Mockito.mock(
+                        de.caritas.cob.userservice.api.workflow.delete.service
+                            .ConsultantHardDeleteClaimService.class)));
     doAnswer(
             invocation -> {
               serviceEntries.incrementAndGet();

@@ -38,10 +38,41 @@ class IdentityManagerTest {
   @Mock private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @Mock private IdentityRoleLookup identityRoleLookup;
   @Mock private IdentitySecondFactor identitySecondFactor;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.AskerEmailCollectionGuard
+      askerEmailCollectionGuard;
+
   @Mock private IdentityUsernameAvailability identityUsernameAvailability;
   @Spy private UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
   @InjectMocks private IdentityManager identityManager;
+
+  @Test
+  void forbiddenEmailEnrollmentSendsNoOtpAndUpdatesNoIdentity() {
+    org.mockito.Mockito.doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException("off"))
+        .when(askerEmailCollectionGuard)
+        .beforeStart(EMAIL);
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> identityManager.setUpOneTimePassword(ENCODED_USERNAME, EMAIL))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    org.mockito.Mockito.verifyNoInteractions(identitySecondFactor, identityEmailAddressUpdater);
+  }
+
+  @Test
+  void forbiddenPendingEmailEnrollmentDoesNotConsumeOtpOrUpdateIdentity() {
+    org.mockito.Mockito.doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException("off"))
+        .when(askerEmailCollectionGuard)
+        .beforeFinish();
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> identityManager.validateOneTimePassword(ENCODED_USERNAME, "123456"))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    org.mockito.Mockito.verifyNoInteractions(identitySecondFactor, identityEmailAddressUpdater);
+  }
 
   @Test
   void validatePasswordIgnoring2faShouldPreserveEncodedUsernameForIdentityAuthentication() {

@@ -185,7 +185,13 @@ final class AcknowledgedConsultantActionsFixture implements AutoCloseable {
         .execute(any());
     register(matrixAction);
     register(new DeleteDatabaseConsultantAgencyAction(agencies));
-    register(new DeleteChatAction(chats, matrix));
+    register(
+        new DeleteChatAction(
+            chats,
+            matrix,
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.service.matrixgroup.GroupMatrixLifecycleCleanup
+                    .class)));
     register(new DeleteAppointmentServiceConsultantAction(appointments));
     register(new DeleteCaseHandoverRequestsForConsultantAction(handovers));
     register(new DeleteConsultantDraftMessagesAction(drafts));
@@ -197,7 +203,9 @@ final class AcknowledgedConsultantActionsFixture implements AutoCloseable {
             (SessionOwnershipService) proxy.getProxy(),
             supervisors,
             mobile,
-            tombstone);
+            tombstone,
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.workflow.delete.service.DeletionAuditService.class));
     register(finalAction);
     context.refresh();
     service =
@@ -208,7 +216,8 @@ final class AcknowledgedConsultantActionsFixture implements AutoCloseable {
                 new ActionsRegistry(context),
                 mock(WorkflowErrorMailService.class),
                 new DeletionLifecycleService(),
-                mock(UserHardDeleteClaimService.class)));
+                mock(UserHardDeleteClaimService.class),
+                mock(ConsultantHardDeleteClaimService.class)));
     doAnswer(
             invocation -> {
               serviceEntries.incrementAndGet();

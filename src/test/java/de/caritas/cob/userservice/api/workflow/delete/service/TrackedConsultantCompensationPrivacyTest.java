@@ -31,11 +31,13 @@ class TrackedConsultantCompensationPrivacyTest {
           DeleteConsultantDraftMessagesAction.class,
           DeleteConsultantEventNotificationsAction.class,
           DeleteConsultantMessageEmailDeliveriesAction.class,
+          de.caritas.cob.userservice.api.workflow.delete.action.consultant
+              .DeleteConsultantMessageStatsAction.class,
           DeleteDatabaseConsultantAction.class);
   static final String PRIVATE = "CompensationPasswordEmailUsernameCanary";
 
   @ParameterizedTest
-  @ValueSource(ints = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
+  @ValueSource(ints = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10})
   @SuppressWarnings({"rawtypes", "unchecked"})
   void actualActionChainNeverLogsNestedFailuresOrPrivateDto(int failingAction) throws Exception {
     var consultant =
@@ -82,7 +84,10 @@ class TrackedConsultantCompensationPrivacyTest {
             mock(DeletionLifecycleService.class),
             mock(
                 de.caritas.cob.userservice.api.workflow.delete.service.UserHardDeleteClaimService
-                    .class));
+                    .class),
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.workflow.delete.service
+                    .ConsultantHardDeleteClaimService.class));
     var facade =
         new RollbackFacade(
             mock(IdentityAccountRemover.class),

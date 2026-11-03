@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.helper.PasswordPolicy;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.Admin;
@@ -165,6 +166,10 @@ public class ExistingAccountSetupService {
       return;
     }
     passwords.requirePasswordUpdateSupport();
+    if (!PasswordPolicy.isLongEnough(chosenPassword)) {
+      throw new BadRequestException(
+          "Chosen password must be at least " + PasswordPolicy.MIN_LENGTH + " characters long");
+    }
     SetupTarget target = inTransaction(() -> claim(rawToken));
     try {
       requireSameCurrentIdentity(target);

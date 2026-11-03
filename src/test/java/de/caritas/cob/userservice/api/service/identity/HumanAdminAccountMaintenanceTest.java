@@ -887,7 +887,10 @@ class HumanAdminAccountMaintenanceTest {
             mock(
                 de.caritas.cob.userservice.api.admin.service.consultant.validation
                     .ConsultantTopicAgencyCompatibilityValidator.class),
-            new de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver());
+            new de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver(),
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.service.matrix.ConsultantRenameSystemMessageService
+                    .class));
     updater.setScopedAdminMaintenance(mode, service);
     var proxy = new org.springframework.aop.framework.ProxyFactory(updater);
     proxy.setProxyTargetClass(true);

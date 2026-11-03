@@ -12,6 +12,7 @@ import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
@@ -25,6 +26,13 @@ public class TenantService {
 
   private final @NonNull TenantServiceApiControllerFactory tenantServiceApiControllerFactory;
   private final @NonNull CacheManager cacheManager;
+
+  @Value("${multitenancy.enabled:false}")
+  private boolean multitenancyEnabled;
+
+  public boolean isMultitenancyEnabled() {
+    return multitenancyEnabled;
+  }
 
   @Cacheable(cacheNames = CacheManagerConfig.TENANT_CACHE, key = "#subdomain")
   public RestrictedTenantDTO getRestrictedTenantData(String subdomain) {

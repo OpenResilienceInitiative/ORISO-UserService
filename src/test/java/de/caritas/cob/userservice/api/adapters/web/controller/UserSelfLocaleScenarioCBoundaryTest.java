@@ -442,7 +442,12 @@ class UserSelfLocaleScenarioCBoundaryTest {
       var transcoder = new UsernameTranscoder();
       var consultantPatch =
           new PatchConsultantSaga(
-              consultants, new UserServiceMapper(transcoder), mock(AppointmentService.class));
+              consultants,
+              new UserServiceMapper(transcoder),
+              mock(AppointmentService.class),
+              org.mockito.Mockito.mock(
+                  de.caritas.cob.userservice.api.service.consultant
+                      .ConsultantMatrixDisplayNamePublisher.class));
       var accounts =
           new AccountManager(
               consultants,
@@ -456,7 +461,11 @@ class UserSelfLocaleScenarioCBoundaryTest {
               human,
               mock(SessionRepository.class),
               mock(AppointmentService.class),
-              consultantPatch);
+              consultantPatch,
+              mock(de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver.class),
+              mock(
+                  de.caritas.cob.userservice.api.service.matrix.ConsultantRenameSystemMessageService
+                      .class));
       var policy = mock(IdentityPolicy.class);
       delegate =
           new UserAccountControllerDelegate(

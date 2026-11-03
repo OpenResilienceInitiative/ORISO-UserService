@@ -24,6 +24,9 @@ import de.caritas.cob.userservice.api.picture.PictureDiagnostics;
 import de.caritas.cob.userservice.api.port.out.IdentitySessionExchange.MagicLinkChallenge;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
+import de.caritas.cob.userservice.api.service.agencyinvitelink.CallShareLinkEndedException;
+import de.caritas.cob.userservice.api.service.agencyinvitelink.DirectLinkInactiveException;
+import de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkPausedException;
 import de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance.DefiniteProfileConflict;
 import de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance.DefiniteProfileForbidden;
 import de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance.DefiniteProfileNoEffect;
@@ -368,6 +371,45 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
 
     return handleExceptionInternal(
         ex, reasonBody(ex.getReason().name()), new HttpHeaders(), HttpStatus.GONE, request);
+  }
+
+  /**
+   * 410 - Gone: the owner switched the direct link off (#1475).
+   *
+   * @param request the invoking request
+   * @param ex the thrown exception
+   */
+  @ExceptionHandler({DirectLinkInactiveException.class})
+  public ResponseEntity<Object> handleDirectLinkInactive(
+      final DirectLinkInactiveException ex, final WebRequest request) {
+    return handleExceptionInternal(
+        ex,
+        reasonBody(DirectLinkInactiveException.REASON),
+        new HttpHeaders(),
+        HttpStatus.GONE,
+        request);
+  }
+
+  @ExceptionHandler({InviteLinkPausedException.class})
+  public ResponseEntity<Object> handleInviteLinkPaused(
+      final InviteLinkPausedException ex, final WebRequest request) {
+    return handleExceptionInternal(
+        ex,
+        reasonBody(InviteLinkPausedException.REASON),
+        new HttpHeaders(),
+        HttpStatus.GONE,
+        request);
+  }
+
+  @ExceptionHandler({CallShareLinkEndedException.class})
+  public ResponseEntity<Object> handleCallShareLinkEnded(
+      final CallShareLinkEndedException ex, final WebRequest request) {
+    return handleExceptionInternal(
+        ex,
+        reasonBody(CallShareLinkEndedException.REASON),
+        new HttpHeaders(),
+        HttpStatus.GONE,
+        request);
   }
 
   /**

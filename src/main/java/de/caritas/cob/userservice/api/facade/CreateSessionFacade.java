@@ -146,6 +146,10 @@ public class CreateSessionFacade {
             consultant, user, extendedConsultingTypeResponseDTO.getId());
     if (existingSession.isPresent()) {
       var session = existingSession.get();
+      // An earlier visit may have failed to provision the room; provisioning is idempotent.
+      if (session.getMatrixRoomId() == null || session.getMatrixRoomId().isBlank()) {
+        directSessionMatrixRoomService.provisionRoomForDirectSession(session, consultant);
+      }
       return new NewRegistrationResponseDto()
           .sessionId(session.getId())
           .matrixRoomId(session.getMatrixRoomId())
@@ -178,7 +182,10 @@ public class CreateSessionFacade {
       directSessionMatrixRoomService.provisionRoomForDirectSession(session, consultant);
     else directSessionMatrixRoomService.provisionRoomForDirectSession(session, consultant, effects);
 
-    return new NewRegistrationResponseDto().sessionId(session.getId()).status(HttpStatus.CREATED);
+    return new NewRegistrationResponseDto()
+        .sessionId(session.getId())
+        .matrixRoomId(session.getMatrixRoomId())
+        .status(HttpStatus.CREATED);
   }
 
   private Session initializeSession(UserDTO userDTO, User user, AgencyDTO agencyDTO) {

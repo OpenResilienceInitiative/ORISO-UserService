@@ -513,7 +513,12 @@ class AskerReactivationNativePairProof {
                 self,
                 sessions,
                 mock(de.caritas.cob.userservice.api.service.appointment.AppointmentService.class),
-                mock(de.caritas.cob.userservice.api.PatchConsultantSaga.class));
+                mock(de.caritas.cob.userservice.api.PatchConsultantSaga.class),
+                org.mockito.Mockito.mock(
+                    de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver.class),
+                org.mockito.Mockito.mock(
+                    de.caritas.cob.userservice.api.service.matrix
+                        .ConsultantRenameSystemMessageService.class));
         assertTrue(accounts.patchUser(map).isPresent());
       } finally {
         TenantContext.setCurrentTenant(0L);

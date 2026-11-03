@@ -30,7 +30,7 @@ public abstract class DeleteMatrixUserAction {
       deactivateMatrixUser(matrixUserId);
       return;
     }
-    if (isNotBlank(matrixUserId) && !matrixSynapseService.deactivateUser(matrixUserId, true))
+    if (isNotBlank(matrixUserId) && !matrixSynapseService.deactivateUser(matrixUserId, true, true))
       throw new IllegalStateException(ERROR_REASON);
   }
 

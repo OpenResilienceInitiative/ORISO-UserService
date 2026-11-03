@@ -26,6 +26,7 @@ import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteCh
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantDraftMessagesAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantEventNotificationsAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantMessageEmailDeliveriesAction;
+import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantMessageStatsAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteDatabaseConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteDatabaseConsultantAgencyAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteKeycloakConsultantAction;
@@ -52,13 +53,14 @@ public class DeleteUserAccountService {
   private final @NonNull WorkflowErrorMailService workflowErrorMailService;
   private final @NonNull DeletionLifecycleService deletionLifecycleService;
   private final @NonNull UserHardDeleteClaimService userHardDeleteClaimService;
+  private final @NonNull ConsultantHardDeleteClaimService consultantHardDeleteClaimService;
 
   private DeleteDatabaseAskerAction acknowledgedFinalAction;
   private DeleteAppointmentServiceAskerAction absentAppointments;
   private DeleteAskerDraftMessagesAction absentDrafts;
   private DeleteAskerEventNotificationsAction absentNotifications;
 
-  /** Existing action beans only; the old six-argument compatibility constructor remains. */
+  /** Existing action beans only; the old seven-argument compatibility constructor remains. */
   @org.springframework.beans.factory.annotation.Autowired
   public DeleteUserAccountService(
       UserRepository users,
@@ -67,11 +69,12 @@ public class DeleteUserAccountService {
       WorkflowErrorMailService errors,
       DeletionLifecycleService lifecycle,
       UserHardDeleteClaimService hardDelete,
+      ConsultantHardDeleteClaimService consultantHardDelete,
       DeleteDatabaseAskerAction finalAction,
       DeleteAppointmentServiceAskerAction appointments,
       DeleteAskerDraftMessagesAction drafts,
       DeleteAskerEventNotificationsAction notifications) {
-    this(users, consultants, registry, errors, lifecycle, hardDelete);
+    this(users, consultants, registry, errors, lifecycle, hardDelete, consultantHardDelete);
     this.acknowledgedFinalAction = finalAction;
     this.absentAppointments = appointments;
     this.absentDrafts = drafts;
@@ -177,6 +180,9 @@ public class DeleteUserAccountService {
               () ->
                   executeAcknowledgedConsultant(
                       target, DeleteConsultantMessageEmailDeliveriesAction.class));
+          target.runOwnedLocal(
+              () ->
+                  executeAcknowledgedConsultant(target, DeleteConsultantMessageStatsAction.class));
           target.completeOwnedLocalDeletion(
               () -> executeAcknowledgedConsultant(target, DeleteDatabaseConsultantAction.class));
           if (isNotEmpty(target.getDeletionWorkflowErrors())) {
@@ -303,12 +309,22 @@ public class DeleteUserAccountService {
 
   private List<DeletionWorkflowError> deleteConsultantsAndCollectPossibleErrors() {
     return this.consultantRepository.findAllByDeleteDateNotNull().stream()
-        .map(deletionLifecycleService::normalizeConsultantLifecycle)
-        .peek(consultantRepository::save)
-        .filter(deletionLifecycleService::isReadyForHardDelete)
-        .map(this::performConsultantDeletion)
+        .map(Consultant::getId)
+        .map(consultantHardDeleteClaimService::claim)
+        .flatMap(java.util.Optional::stream)
+        .map(this::performClaimedConsultantDeletion)
         .flatMap(Collection::stream)
         .collect(Collectors.toList());
+  }
+
+  private List<DeletionWorkflowError> performClaimedConsultantDeletion(Consultant consultant) {
+    try {
+      return performConsultantDeletion(consultant);
+    } finally {
+      // As for askers: a retained row may already have lost its login or Matrix account, so it
+      // stays retryable for hard deletion and can no longer be cancelled.
+      consultantHardDeleteClaimService.release(consultant.getId());
+    }
   }
 
   public List<DeletionWorkflowError> performConsultantDeletion(Consultant consultant) {
@@ -333,6 +349,7 @@ public class DeleteUserAccountService {
           .addActionToExecute(DeleteConsultantDraftMessagesAction.class)
           .addActionToExecute(DeleteConsultantEventNotificationsAction.class)
           .addActionToExecute(DeleteConsultantMessageEmailDeliveriesAction.class)
+          .addActionToExecute(DeleteConsultantMessageStatsAction.class)
           .addActionToExecute(DeleteDatabaseConsultantAction.class)
           .executeActions(deletionWorkflowDTO);
     } catch (ScopedIdentityCommandRequiredException denied) {
@@ -369,6 +386,7 @@ public class DeleteUserAccountService {
         .addActionToExecute(DeleteConsultantDraftMessagesAction.class)
         .addActionToExecute(DeleteConsultantEventNotificationsAction.class)
         .addActionToExecute(DeleteConsultantMessageEmailDeliveriesAction.class)
+        .addActionToExecute(DeleteConsultantMessageStatsAction.class)
         .addActionToExecute(DeleteDatabaseConsultantAction.class);
     return true;
   }

@@ -143,7 +143,8 @@ class MatrixTrackedCreationAndCompensationTest {
                         "MatrixUserCanary", "MatrixPasswordCanary", "MatrixDisplayCanary"))
                 .isEqualTo("@matrixusercanary:matrix.invalid");
         case "adminMissing" ->
-            assertThat(service.deactivateUser("@MatrixUserCanary:matrix.invalid", true)).isFalse();
+            assertThat(service.deactivateUser("@MatrixUserCanary:matrix.invalid", true, true))
+                .isFalse();
         case "purge" ->
             assertThat(service.purgeRoom("!MatrixRoomCanary:matrix.invalid", true)).isFalse();
       }

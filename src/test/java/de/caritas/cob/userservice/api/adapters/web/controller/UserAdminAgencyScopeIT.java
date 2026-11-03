@@ -628,7 +628,10 @@ class UserAdminAgencyScopeIT {
             id ->
                 withCsrf(
                     delete("/useradmin/consultants/" + id + "/agencies/" + FOREIGN_TENANT_AGENCY))),
-        route("POST deletion/pause", id -> pauseDeletion("consultants", id)));
+        route("POST deletion/pause", id -> pauseDeletion("consultants", id)),
+        route(
+            "POST deletion/cancel",
+            id -> withCsrf(post("/useradmin/consultants/" + id + "/deletion/cancel"))));
   }
 
   /** The picture routes check access in their own module and hide a foreign counsellor (404). */
@@ -836,6 +839,42 @@ class UserAdminAgencyScopeIT {
 
   @Test
   @AsAgencyAdmin
+  void cancelConsultantDeletion_Should_Refuse_When_AgencyAdminCancelsCounsellorOfAnotherAgency()
+      throws Exception {
+    actAsAgencyAdmin();
+    markDeleted(otherAgencyConsultant);
+
+    var result =
+        mockMvc
+            .perform(
+                withCsrf(
+                    post(
+                        "/useradmin/consultants/"
+                            + otherAgencyConsultant.getId()
+                            + "/deletion/cancel")))
+            .andReturn();
+
+    assertThat(deleteDateOf(otherAgencyConsultant)).isNotNull();
+    assertStatus(result, 403);
+  }
+
+  @Test
+  @AsAgencyAdmin
+  void cancelConsultantDeletion_Should_Succeed_When_AgencyAdminCancelsCounsellorOfOwnAgency()
+      throws Exception {
+    actAsAgencyAdmin();
+    markDeleted(ownConsultant);
+
+    mockMvc
+        .perform(
+            withCsrf(post("/useradmin/consultants/" + ownConsultant.getId() + "/deletion/cancel")))
+        .andExpect(status().isOk());
+
+    assertThat(deleteDateOf(ownConsultant)).isNull();
+  }
+
+  @Test
+  @AsAgencyAdmin
   void pauseConsultantDeletion_Should_Refuse_When_DeletedCounsellorHadLeftTheAgencyBefore()
       throws Exception {
     actAsAgencyAdmin();
@@ -1032,7 +1071,9 @@ class UserAdminAgencyScopeIT {
 
     var result =
         mockMvc
-            .perform(createInviteLink("{\"agencyId\":" + OTHER_AGENCY_OF_OWN_TENANT + "}"))
+            .perform(
+                createInviteLink(
+                    "{\"linkKind\":\"TENANT\",\"agencyId\":" + OTHER_AGENCY_OF_OWN_TENANT + "}"))
             .andReturn();
 
     assertThat(inviteLinksOf(OTHER_AGENCY_OF_OWN_TENANT)).isEmpty();
@@ -1045,7 +1086,7 @@ class UserAdminAgencyScopeIT {
       throws Exception {
     actAsAgencyAdmin();
 
-    var result = mockMvc.perform(createInviteLink("{}")).andReturn();
+    var result = mockMvc.perform(createInviteLink("{\"linkKind\":\"TENANT\"}")).andReturn();
 
     assertThat(agencyInviteLinkRepository.findAll()).isEmpty();
     assertStatus(result, 403);
@@ -1074,13 +1115,106 @@ class UserAdminAgencyScopeIT {
 
   @Test
   @AsAgencyAdmin
-  void createInviteLink_Should_Succeed_When_AgencyAdminNamesOwnAgency() throws Exception {
+  void tenantInviteRemainsWritableByTheAdminOfItsAgency() throws Exception {
     actAsAgencyAdmin();
 
-    var result = mockMvc.perform(createInviteLink("{\"agencyId\":" + OWN_AGENCY + "}")).andReturn();
+    var result =
+        mockMvc
+            .perform(createInviteLink("{\"linkKind\":\"TENANT\",\"agencyId\":" + OWN_AGENCY + "}"))
+            .andReturn();
 
     assertStatus(result, 201);
-    assertThat(inviteLinksOf(OWN_AGENCY)).hasSize(1);
+    var link = inviteLinksOf(OWN_AGENCY).getFirst();
+    assertThat(link.getLinkKind()).isEqualTo("TENANT");
+    assertStatus(
+        mockMvc
+            .perform(withCsrf(post("/useradmin/invitelinks/{id}/deactivate", link.getId())))
+            .andReturn(),
+        200);
+  }
+
+  @Test
+  @AsTenantAdmin
+  void tenantAdminCannotMutateLiveChatLinksThroughTheApi() throws Exception {
+    actAsTenantAdmin();
+    assertLiveChatWritesRefused();
+  }
+
+  @Test
+  @AsAgencyAdmin
+  void agencyAdminCannotMutateLiveChatLinksEvenForTheirOwnAgency() throws Exception {
+    actAsAgencyAdmin();
+    assertLiveChatWritesRefused();
+  }
+
+  @Test
+  @AsTenantAdmin
+  void platformAdminCanManageLiveChatLinksInTheSelectedTenant() throws Exception {
+    Tenants.actAs(
+        caller,
+        "platform-admin",
+        0L,
+        UserRole.TENANT_ADMIN,
+        UserRole.AGENCY_ADMIN,
+        UserRole.USER_ADMIN);
+
+    assertStatus(
+        mockMvc.perform(createInviteLink("{}").header("X-Tenant-Id", OWN_TENANT)).andReturn(), 201);
+    var link = agencyInviteLinkRepository.findAll().iterator().next();
+    assertThat(link.getTenantId()).isEqualTo(OWN_TENANT);
+    assertThat(link.getChatType()).isEqualTo("LIVE_CHAT");
+
+    assertStatus(
+        mockMvc
+            .perform(
+                withCsrf(
+                    post("/useradmin/invitelinks/{id}/deactivate", link.getId())
+                        .header("X-Tenant-Id", OWN_TENANT)))
+            .andReturn(),
+        200);
+    assertStatus(
+        mockMvc
+            .perform(
+                withCsrf(
+                    post("/useradmin/invitelinks/{id}/reactivate", link.getId())
+                        .header("X-Tenant-Id", OWN_TENANT)))
+            .andReturn(),
+        200);
+    assertStatus(
+        mockMvc
+            .perform(
+                withCsrf(
+                    delete("/useradmin/invitelinks/{id}", link.getId())
+                        .header("X-Tenant-Id", OWN_TENANT)))
+            .andReturn(),
+        204);
+    assertThat(agencyInviteLinkRepository.findById(link.getId())).isEmpty();
+  }
+
+  private void assertLiveChatWritesRefused() throws Exception {
+    var link = persistInviteLink(OWN_AGENCY, "EXTERNAL_INBOUND");
+    var list = mockMvc.perform(get("/useradmin/invitelinks")).andReturn();
+    assertStatus(list, 200);
+    assertThat(list.getResponse().getContentAsString()).contains(link.getToken());
+
+    var create = mockMvc.perform(createInviteLink("{\"agencyId\":" + OWN_AGENCY + "}")).andReturn();
+    var pause =
+        mockMvc
+            .perform(withCsrf(post("/useradmin/invitelinks/{id}/deactivate", link.getId())))
+            .andReturn();
+    var reactivate =
+        mockMvc
+            .perform(withCsrf(post("/useradmin/invitelinks/{id}/reactivate", link.getId())))
+            .andReturn();
+    var remove =
+        mockMvc.perform(withCsrf(delete("/useradmin/invitelinks/{id}", link.getId()))).andReturn();
+
+    assertThat(List.of(create, pause, reactivate, remove))
+        .extracting(result -> result.getResponse().getStatus())
+        .containsExactly(403, 403, 403, 403);
+    assertThat(inviteLinksOf(OWN_AGENCY))
+        .singleElement()
+        .satisfies(existing -> assertThat(existing.getStatus()).isEqualTo("ACTIVE"));
   }
 
   @Test
@@ -1200,6 +1334,10 @@ class UserAdminAgencyScopeIT {
     return reload(user).getDeletionPausedBy();
   }
 
+  private LocalDateTime deleteDateOf(Consultant consultant) {
+    return reload(consultant).getDeleteDate();
+  }
+
   private LocalDateTime deleteDateOf(User user) {
     return reload(user).getDeleteDate();
   }
@@ -1269,12 +1407,16 @@ class UserAdminAgencyScopeIT {
   }
 
   private AgencyInviteLink persistInviteLink(long agencyId) {
+    return persistInviteLink(agencyId, "TENANT");
+  }
+
+  private AgencyInviteLink persistInviteLink(long agencyId, String kind) {
     return agencyInviteLinkRepository.save(
         AgencyInviteLink.builder()
             .token("scope-link-" + UUID.randomUUID())
             .tenantId(OWN_TENANT)
             .agencyId(agencyId)
-            .linkKind("TENANT")
+            .linkKind(kind)
             .chatType("LIVE_CHAT")
             .anonymity("FULL")
             .createdByUserId("tenant-admin-1")

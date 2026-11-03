@@ -69,6 +69,7 @@ mariadb_owned_tests=(
   AccountLifecycleRetryFairnessMariaDbIT
   # Required creation-outcome-mariadb owns all eight real JPA/MariaDB transaction cases.
   CreationOperationMariaDbIT
+  StatisticsRetentionMariaDbIT
 )
 required_test_pattern="**/*IT"
 for mariadb_owned_test in "${mariadb_owned_tests[@]}"; do

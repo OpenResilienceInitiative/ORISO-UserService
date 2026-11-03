@@ -690,7 +690,12 @@ class UserSelfMaintenanceNativePairProof {
                   human,
                   mock(SessionRepository.class),
                   mock(AppointmentService.class),
-                  mock(PatchConsultantSaga.class))));
+                  mock(PatchConsultantSaga.class),
+                  org.mockito.Mockito.mock(
+                      de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver.class),
+                  org.mockito.Mockito.mock(
+                      de.caritas.cob.userservice.api.service.matrix
+                          .ConsultantRenameSystemMessageService.class))));
     }
     var contactService = mock(UserAccountService.class);
     if (contact(kind)) {
@@ -699,6 +704,8 @@ class UserSelfMaintenanceNativePairProof {
       contactService =
           new UserAccountService(
               contactUsers,
+              org.mockito.Mockito.mock(
+                  de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class),
               consultantService,
               contactAppointments,
               human,

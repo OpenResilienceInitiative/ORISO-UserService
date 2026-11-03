@@ -142,6 +142,11 @@ class CaseHandoverRequiredConsentMailIT {
     when(actor.retrieveValidatedConsultant()).thenReturn(incoming);
     when(toggles.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS)).thenReturn(true);
     when(policies.getEffective(7L)).thenReturn(policy(CaseHandoverConsentValue.OPT_IN));
+    when(policies.getCurrent(7L))
+        .thenAnswer(
+            call ->
+                new de.caritas.cob.userservice.api.service.CaseHandoverPolicyCacheService
+                    .CurrentPolicy(true, policies.getEffective(7L)));
   }
 
   @AfterEach
@@ -171,15 +176,26 @@ class CaseHandoverRequiredConsentMailIT {
 
   @Test
   void requiredPersonalConsentQueuesNeutralActionAfterCommitDespiteOptionalMailOptOut() {
-    new TransactionTemplate(transactions)
-        .executeWithoutResult(
-            status -> {
-              var outcome =
-                  handovers.requestAccess(
-                      session.getId(), "UNPLANNED_ABSENCE", "Staff-only absence explanation");
-              assertThat(outcome.getStatus()).isEqualTo("PENDING_CLIENT_CONSENT");
-              verifyNoInteractions(queuedMail);
-            });
+    var independentRead = new TransactionTemplate(transactions);
+    independentRead.setPropagationBehavior(
+        org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              CaseHandoverEmailNotification.Mail mail = call.getArgument(0);
+              Boolean committed =
+                  independentRead.execute(
+                      ignored -> requests.findById(mail.requestId()).isPresent());
+              assertThat(committed)
+                  .as("required mail must only be queued after its handover request commits")
+                  .isTrue();
+              return null;
+            })
+        .when(queuedMail)
+        .send(any());
+    var outcome =
+        handovers.requestAccess(
+            session.getId(), "UNPLANNED_ABSENCE", "Staff-only absence explanation");
+    assertThat(outcome.getStatus()).isEqualTo("PENDING_CLIENT_CONSENT");
     var sent = ArgumentCaptor.forClass(CaseHandoverEmailNotification.Mail.class);
     verify(queuedMail).send(sent.capture());
     assertThat(sent.getValue().outcome())

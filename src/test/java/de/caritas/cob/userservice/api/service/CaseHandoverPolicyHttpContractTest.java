@@ -74,6 +74,86 @@ class CaseHandoverPolicyHttpContractTest {
 
   private final AdminScope adminScope = mock(AdminScope.class);
   private CaseHandoverService caseHandoverService;
+  private CaseHandoverPolicyCacheService cacheService;
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"invalid json", "unknown mode", "incompatible content type"})
+  void malformedSuccessfulProviderResponseCannotAuthorizeFromAnOlderAllowedSnapshot(String kind) {
+    var cache =
+        de.caritas.cob.userservice.api.model.TenantCaseHandoverPolicyCache.builder()
+            .tenantId(7L)
+            .policies(
+                """
+            {"tenantId":7,"policies":{"caseHandoverEnabled":{"value":true,"mode":"ENFORCED"}},"caseHandoverPolicies":{"reasons":{}}}
+            """)
+            .build();
+    when(cacheRepository.findById(7L)).thenReturn(Optional.of(cache));
+    String body =
+        kind.equals("invalid json")
+            ? "invalid json - synthetic-sensitive-body"
+            : """
+        {"tenantId":7,"policies":{"caseHandoverEnabled":{"value":true,"mode":"UNKNOWN"}},"caseHandoverPolicies":{"reasons":{}}}
+        """;
+    if (kind.equals("incompatible content type")) body = cache.getPolicies();
+    server
+        .expect(requestTo(POLICY_URL))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(
+            withSuccess(
+                body,
+                kind.equals("incompatible content type")
+                    ? MediaType.TEXT_PLAIN
+                    : MediaType.APPLICATION_JSON));
+
+    assertThatThrownBy(() -> cacheService.getCurrent(7L))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException
+                .class)
+        .hasNoCause()
+        .hasMessageNotContaining("synthetic-sensitive")
+        .hasMessageNotContaining("UNKNOWN");
+    server.verify();
+  }
+
+  @Test
+  void providerTransportFailureStillUsesTheValidatedFullSnapshot() {
+    givenAllowedSnapshot();
+    server
+        .expect(requestTo(POLICY_URL))
+        .andRespond(
+            org.springframework.test.web.client.response.MockRestResponseCreators.withStatus(
+                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE)
+                .body("synthetic-sensitive-provider-body"));
+
+    assertThat(cacheService.getCurrent(7L).enabled()).isTrue();
+    server.verify();
+  }
+
+  @Test
+  void tokenDecodeOutageDoesNotMasqueradeAsMalformedPolicyAuthority() {
+    givenAllowedSnapshot();
+    when(identity.loginService("synthetic-service", "synthetic-password"))
+        .thenThrow(
+            new org.springframework.http.converter.HttpMessageConversionException(
+                "synthetic-token-body"));
+
+    assertThat(cacheService.getCurrent(7L).enabled()).isTrue();
+    server.verify();
+  }
+
+  private void givenAllowedSnapshot() {
+    when(cacheRepository.findById(7L))
+        .thenReturn(
+            Optional.of(
+                de.caritas.cob.userservice.api.model.TenantCaseHandoverPolicyCache.builder()
+                    .tenantId(7L)
+                    .policies(
+                        """
+                {"tenantId":7,"policies":{"caseHandoverEnabled":{"value":true,"mode":"ENFORCED"}},"caseHandoverPolicies":{"reasons":{}}}
+                """)
+                    .build()));
+  }
 
   @BeforeEach
   void setUp() {
@@ -119,7 +199,7 @@ class CaseHandoverPolicyHttpContractTest {
 
     var policyClient =
         new TenantCaseHandoverPolicyReadClient(factory, identity, identityConfig, headers);
-    var cacheService =
+    cacheService =
         new CaseHandoverPolicyCacheService(
             cacheRepository, policyClient, claims, clock, transactionManager);
 
@@ -171,7 +251,7 @@ class CaseHandoverPolicyHttpContractTest {
   void aChangedDurationReachesTenantServiceEvenWhenTheStoredReasonCarriesNoDurationYet() {
     String storedWithoutDuration =
         """
-        {"tenantId":7,"policies":{},"caseHandoverPolicies":{"reasons":{
+        {"tenantId":7,"policies":{"caseHandoverEnabled":{"value":true,"mode":"ENFORCED"}},"caseHandoverPolicies":{"reasons":{
           "COUNSELLOR_ASKED_FOR_ADVICE":{
             "code":"COUNSELLOR_ASKED_FOR_ADVICE",
             "labels":{"value":{"de":"Rat benötigt"},"mode":"SUGGESTED"},
@@ -236,7 +316,7 @@ class CaseHandoverPolicyHttpContractTest {
 
   private static final String STORED_POLICY =
       """
-      {"tenantId":7,"policies":{},"caseHandoverPolicies":{"reasons":{
+      {"tenantId":7,"policies":{"caseHandoverEnabled":{"value":true,"mode":"ENFORCED"}},"caseHandoverPolicies":{"reasons":{
         "COUNSELLOR_ASKED_FOR_ADVICE":{
           "code":"COUNSELLOR_ASKED_FOR_ADVICE",
           "labels":{"value":{"de":"Rat benötigt"},"mode":"SUGGESTED"},

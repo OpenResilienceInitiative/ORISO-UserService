@@ -1461,7 +1461,9 @@ class UserSelfAppOtpScenarioCBoundaryTest {
                 nativeService,
                 nativeService,
                 nativeService,
-                transcoder);
+                transcoder,
+                org.mockito.Mockito.mock(
+                    de.caritas.cob.userservice.api.service.AskerEmailCollectionGuard.class));
         when(accounts.patchUser(anyMap()))
             .thenAnswer(
                 invocation -> {

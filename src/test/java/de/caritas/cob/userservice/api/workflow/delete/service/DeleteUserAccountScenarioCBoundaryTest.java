@@ -97,9 +97,12 @@ class DeleteUserAccountScenarioCBoundaryTest {
   private final WorkflowErrorMailService mail = mock(WorkflowErrorMailService.class);
   private final DeletionLifecycleService lifecycle = new DeletionLifecycleService();
   private final UserHardDeleteClaimService claim = new UserHardDeleteClaimService(users, lifecycle);
+  private final ConsultantHardDeleteClaimService consultantClaim =
+      mock(ConsultantHardDeleteClaimService.class);
   private final ActionCommandMockProvider actions = new ActionCommandMockProvider();
   private final DeleteUserAccountService service =
-      new DeleteUserAccountService(users, consultants, registry, mail, lifecycle, claim);
+      new DeleteUserAccountService(
+          users, consultants, registry, mail, lifecycle, claim, consultantClaim);
 
   private void eligiblePersistedAsker(boolean fiveActors) {
     when(config.isFiveActorMode()).thenReturn(fiveActors);
@@ -186,6 +189,7 @@ class DeleteUserAccountScenarioCBoundaryTest {
                     mock(TenantContextProvider.class),
                     mock(ScheduledTaskClaimService.class),
                     claim,
+                    consultantClaim,
                     mock(IdentityReactivationRepairService.class)));
   }
 
@@ -205,6 +209,7 @@ class DeleteUserAccountScenarioCBoundaryTest {
     consultant.setDeletionReadOnlyUntil(LocalDateTime.now(ZoneOffset.UTC).minusDays(1));
     when(users.findAllByDeleteDateNotNull()).thenReturn(List.of());
     when(consultants.findAllByDeleteDateNotNull()).thenReturn(List.of(consultant));
+    when(consultantClaim.claim(any())).thenReturn(java.util.Optional.of(consultant));
     when(consultants.save(any(Consultant.class))).thenAnswer(call -> call.getArgument(0));
     doAnswer(
             call -> {
@@ -235,7 +240,14 @@ class DeleteUserAccountScenarioCBoundaryTest {
     var database =
         spy(
             new DeleteDatabaseConsultantAction(
-                consultants, sessions, supervisors, mobileTokens, tombstones));
+                consultants,
+                sessions,
+                supervisors,
+                mobileTokens,
+                tombstones,
+                org.mockito.Mockito.mock(
+                    de.caritas.cob.userservice.api.workflow.delete.service.DeletionAuditService
+                        .class)));
     actions.setCustomClassForAction(
         DeleteKeycloakConsultantAction.class, new DeleteKeycloakConsultantAction(identity));
     actions.setCustomClassForAction(DeleteDatabaseConsultantAction.class, database);
@@ -522,6 +534,7 @@ class DeleteUserAccountScenarioCBoundaryTest {
             mock(TenantContextProvider.class),
             claims,
             claim,
+            consultantClaim,
             mock(IdentityReactivationRepairService.class));
     ReflectionTestUtils.setField(scheduler, "scopedMaintenance", freshWorker.get());
     if (lostReply) {

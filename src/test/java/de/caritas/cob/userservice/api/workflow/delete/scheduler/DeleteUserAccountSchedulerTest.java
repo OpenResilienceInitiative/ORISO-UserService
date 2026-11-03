@@ -10,6 +10,7 @@ import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import de.caritas.cob.userservice.api.admin.service.IdentityReactivationRepairService;
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
+import de.caritas.cob.userservice.api.workflow.delete.service.ConsultantHardDeleteClaimService;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeleteUserAccountService;
 import de.caritas.cob.userservice.api.workflow.delete.service.ScheduledAskerMaintenance;
 import de.caritas.cob.userservice.api.workflow.delete.service.ScheduledConsultantMaintenance;
@@ -40,6 +41,8 @@ public class DeleteUserAccountSchedulerTest {
 
   @Mock private UserHardDeleteClaimService userHardDeleteClaimService;
 
+  @Mock private ConsultantHardDeleteClaimService consultantHardDeleteClaimService;
+
   @Mock private IdentityReactivationRepairService identityReactivationRepairService;
 
   @Mock private ScheduledConsultantMaintenance scopedConsultants;
@@ -63,10 +66,12 @@ public class DeleteUserAccountSchedulerTest {
             tenantContextProvider,
             identityReactivationRepairService,
             userHardDeleteClaimService,
+            consultantHardDeleteClaimService,
             deleteUserAccountService);
     inOrder.verify(tenantContextProvider).setTechnicalContextIfMultiTenancyIsEnabled();
     inOrder.verify(identityReactivationRepairService).retryOutstandingRepairs();
     inOrder.verify(userHardDeleteClaimService).releaseInterruptedClaims();
+    inOrder.verify(consultantHardDeleteClaimService).releaseInterruptedClaims();
     inOrder.verify(deleteUserAccountService).deleteUserAccounts();
     inOrder.verifyNoMoreInteractions();
   }
@@ -81,6 +86,7 @@ public class DeleteUserAccountSchedulerTest {
         tenantContextProvider,
         identityReactivationRepairService,
         userHardDeleteClaimService,
+        consultantHardDeleteClaimService,
         deleteUserAccountService);
   }
 
@@ -124,6 +130,9 @@ public class DeleteUserAccountSchedulerTest {
             tenantContextProvider,
             taskClaimService,
             userHardDeleteClaimService,
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.workflow.delete.service
+                    .ConsultantHardDeleteClaimService.class),
             identityReactivationRepairService);
     setField(incomplete, "taskIdentityModel", "FIVE_ACTORS");
     setField(incomplete, "scopedMaintenance", mock(ScheduledAskerMaintenance.class));

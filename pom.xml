@@ -782,6 +782,29 @@
 							<output>target/generated-sources</output>
 						</configuration>
 					</execution>
+					<!-- Generate session appointments API (ORISO-Frontend#1960) -->
+					<execution>
+						<id>session-appointment-service</id>
+						<goals>
+							<goal>generate</goal>
+						</goals>
+						<configuration>
+								<configOptions>
+									<interfaceOnly>true</interfaceOnly>
+									<sourceFolder>/</sourceFolder>
+									<useJakartaEe>true</useJakartaEe>
+									<useSpringBoot3>true</useSpringBoot3>
+								</configOptions>
+							<inputSpec>${project.basedir}/api/sessionappointments.yaml</inputSpec>
+							<generatorName>spring</generatorName>
+							<apiPackage>
+								${project.groupId}.${project.artifactId}.generated.api.sessionappointment.controller
+							</apiPackage>
+							<modelPackage>${adapters.web.dto.path}</modelPackage>
+							<generateSupportingFiles>true</generateSupportingFiles>
+							<output>target/generated-sources</output>
+						</configuration>
+					</execution>
 					<!-- Generate conversations API -->
 					<execution>
 						<id>conversation-service</id>

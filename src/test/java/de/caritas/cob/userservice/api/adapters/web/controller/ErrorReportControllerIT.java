@@ -202,4 +202,26 @@ class ErrorReportControllerIT {
     org.assertj.core.api.Assertions.assertThat(event.getFormattedMessage().length())
         .isLessThan(15000);
   }
+
+  @Test
+  void reportClientError_Should_return202_When_sizeGuardSeesARealisticReport() throws Exception {
+    // With the size guard in front, as deployed: a 372-byte report was refused with 400 on dev.
+    var guarded =
+        MockMvcBuilders.standaloneSetup(new ErrorReportController())
+            .addFilters(
+                new de.caritas.cob.userservice.api.adapters.web.controller.interceptor
+                    .ErrorReportBodySizeLimitFilter())
+            .build();
+    var report = new ErrorReportDTO();
+    report.setMessage(
+        "User was redirected to error page undefined because of a 403 " + "x".repeat(250));
+    report.setUrl("https://dev.oriso.org/sessions/user/view/group/31");
+
+    guarded
+        .perform(
+            post(PATH)
+                .contentType("application/json")
+                .content(objectMapper.writeValueAsString(report)))
+        .andExpect(status().isAccepted());
+  }
 }

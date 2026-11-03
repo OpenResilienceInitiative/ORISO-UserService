@@ -164,6 +164,22 @@ public class KeycloakServiceTest {
   }
 
   @Test
+  void pendingEmailMetadataReadsOnlyTheMailCredentialAddresses() {
+    var userResource = mock(org.keycloak.admin.client.resource.UserResource.class);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    when(usersResource.get(USER_ID)).thenReturn(userResource);
+    var mail = new CredentialRepresentation();
+    mail.setType("MAIL_OTP_CM");
+    mail.setCredentialData("{\"email\":\"existing@example.org\",\"active\":false}");
+    var unrelated = new CredentialRepresentation();
+    unrelated.setType("otp");
+    unrelated.setCredentialData("not read");
+    when(userResource.credentials()).thenReturn(java.util.List.of(mail, unrelated));
+    org.assertj.core.api.Assertions.assertThat(keycloakService.emailVerificationAddresses(USER_ID))
+        .containsExactly("existing@example.org");
+  }
+
+  @Test
   void findEnabledById_Should_RefreshUnauthorizedSessionAndRetryOnce() {
     var resource = mock(UserResource.class);
     var representation = new UserRepresentation();
@@ -2939,5 +2955,27 @@ public class KeycloakServiceTest {
     assertThat(attributes.get("locale"), is(singletonList("de")));
     assertThat(attributes.get("userId"), is(singletonList(USER_ID)));
     assertThat(attributes.get("username"), is(singletonList("username")));
+  }
+
+  @Test
+  public void activateUser_Should_enableTheLoginAndTouchNothingElse() {
+    var stored = givenStoredUserWithAttributes("email");
+    stored.setEnabled(false);
+    stored.setRequiredActions(List.of("CONFIGURE_TOTP"));
+    UserResource userResource = givenUserResourceHolding(stored);
+
+    this.keycloakService.activateUser("userId");
+
+    var representationCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
+    verify(userResource).update(representationCaptor.capture());
+    assertThat(representationCaptor.getValue().isEnabled(), is(true));
+    // Authentication is not weakened: required actions (2FA setup) and attributes stay as they
+    // were, and no credential is reset, removed or created.
+    assertThat(representationCaptor.getValue().getRequiredActions(), is(List.of("CONFIGURE_TOTP")));
+    assertThat(
+        representationCaptor.getValue().getAttributes().get("userId"), is(singletonList("userId")));
+    verify(userResource, never()).resetPassword(any());
+    verify(userResource, never()).removeCredential(any());
+    verify(userResource, never()).credentials();
   }
 }

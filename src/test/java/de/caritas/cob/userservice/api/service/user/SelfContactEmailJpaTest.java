@@ -204,6 +204,8 @@ class SelfContactEmailJpaTest {
     var service =
         new UserAccountService(
             userService,
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class),
             new ConsultantService(consultants, mock(ConsultantMobileTokenRepository.class)),
             appointments,
             actor,

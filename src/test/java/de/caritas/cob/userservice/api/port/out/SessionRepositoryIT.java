@@ -91,6 +91,35 @@ class SessionRepositoryIT {
     session = finalState;
   }
 
+  /** FE#1952: the medium of the direct link a conversation came from is written once. */
+  @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
+  void directLinkOriginIsWrittenOnceAndSurvivesStaleSaves() {
+    givenAUser();
+    givenValidSession();
+    session = underTest.save(session);
+    Long id = session.getId();
+    Session stale;
+    try (var detachedReader = entityManagerFactory.createEntityManager()) {
+      stale = detachedReader.find(Session.class, id);
+    }
+    var version = stale.getRowVersion();
+
+    assertEquals(1, underTest.recordDirectLinkOrigin(id, "VIDEO"));
+    // A later link of another medium does not relabel the conversation.
+    assertEquals(0, underTest.recordDirectLinkOrigin(id, "AUDIO"));
+    assertEquals("VIDEO", underTest.findById(id).orElseThrow().getDirectLinkMedium());
+    assertEquals(version, underTest.findById(id).orElseThrow().getRowVersion());
+
+    // A whole-entity save from before the write must not erase it.
+    stale.setPostcode("54321");
+    underTest.save(stale);
+    var finalState = underTest.findById(id).orElseThrow();
+    session = finalState;
+    assertEquals("VIDEO", finalState.getDirectLinkMedium());
+    assertEquals("54321", finalState.getPostcode());
+  }
+
   @Test
   @Transactional(propagation = Propagation.NOT_SUPPORTED)
   void detachedStaleSessionSaveCannotRevertAnIndependentPreferenceWrite() {

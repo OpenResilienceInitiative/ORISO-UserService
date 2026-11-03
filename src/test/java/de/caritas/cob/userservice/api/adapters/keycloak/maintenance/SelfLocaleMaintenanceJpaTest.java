@@ -176,7 +176,12 @@ class SelfLocaleMaintenanceJpaTest {
             human,
             mock(SessionRepository.class),
             mock(AppointmentService.class),
-            mock(PatchConsultantSaga.class));
+            mock(PatchConsultantSaga.class),
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver.class),
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.service.matrix.ConsultantRenameSystemMessageService
+                    .class));
   }
 
   @Test

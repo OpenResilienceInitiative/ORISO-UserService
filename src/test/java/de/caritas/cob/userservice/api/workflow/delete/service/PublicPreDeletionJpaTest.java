@@ -195,6 +195,12 @@ class PublicPreDeletionJpaTest {
       genericAttempts.incrementAndGet();
       throw new ScopedIdentityCommandRequiredException();
     }
+
+    @Override
+    public void activateUser(String account) {
+      genericAttempts.incrementAndGet();
+      throw new ScopedIdentityCommandRequiredException();
+    }
   }
 
   @BeforeEach
@@ -1236,7 +1242,9 @@ class PublicPreDeletionJpaTest {
         new de.caritas.cob.userservice.api.admin.service.admin.delete.DeleteAdminService(
             admins,
             adminAgencies,
-            mock(de.caritas.cob.userservice.api.port.out.IdentityAccountRemover.class));
+            mock(de.caritas.cob.userservice.api.port.out.IdentityAccountRemover.class),
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.workflow.delete.service.DeletionAuditService.class));
     service.setScopedMaintenance(mode, maintenance);
     service.setPublicPreDeletion(owner());
     org.springframework.test.util.ReflectionTestUtils.setField(service, "entities", entities);
@@ -3555,6 +3563,8 @@ class PublicPreDeletionJpaTest {
     var service =
         new UserAccountService(
             userService,
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class),
             new ConsultantService(consultants, mock(ConsultantMobileTokenRepository.class)),
             mock(AppointmentService.class),
             actor,
@@ -3612,6 +3622,8 @@ class PublicPreDeletionJpaTest {
             mock(AccountManager.class),
             mock(AppointmentService.class),
             lifecycle,
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.workflow.delete.service.DeletionAuditService.class),
             mock(ConsultantTopicRepository.class),
             mock(TopicService.class));
     target.setScopedPreDeletion(mode, owner());

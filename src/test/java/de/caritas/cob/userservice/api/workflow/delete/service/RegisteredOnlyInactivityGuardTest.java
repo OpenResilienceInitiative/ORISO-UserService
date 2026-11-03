@@ -108,7 +108,8 @@ class RegisteredOnlyInactivityGuardTest {
               new ActionsRegistry(context),
               mail,
               new DeletionLifecycleService(),
-              org.mockito.Mockito.mock(UserHardDeleteClaimService.class));
+              org.mockito.Mockito.mock(UserHardDeleteClaimService.class),
+              org.mockito.Mockito.mock(ConsultantHardDeleteClaimService.class));
       var legacy = new DeleteUsersRegisteredOnlyService(users, deletion, mail, jdbc);
       ReflectionTestUtils.setField(legacy, "userRegisteredOnlyDeleteWorkflowCheckDays", 30);
       for (String state :

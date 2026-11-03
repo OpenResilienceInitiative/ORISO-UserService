@@ -200,7 +200,9 @@ class UserUsernameAvailabilityScenarioCBoundaryTest {
               mock(IdentityRoleLookup.class),
               mock(IdentitySecondFactor.class),
               service,
-              new UsernameTranscoder());
+              new UsernameTranscoder(),
+              org.mockito.Mockito.mock(
+                  de.caritas.cob.userservice.api.service.AskerEmailCollectionGuard.class));
       ReflectionTestUtils.setField(controller, "identityManager", identity);
       when(actors.require(TaskPurpose.ACCOUNT_PROVISIONING))
           .thenReturn(
