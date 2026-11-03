@@ -123,6 +123,10 @@ class GrantConsultantIdentityScopedJpaTest {
 
   @MockitoBean private IdentityProfileUpdater genericProfile;
 
+  // DeleteAdminService now writes the deletion log (dev); the slice has no such bean otherwise.
+  @MockitoBean
+  private de.caritas.cob.userservice.api.workflow.delete.service.DeletionAuditService deletionAudit;
+
   @MockitoBean
   private de.caritas.cob.userservice.api.admin.service.consultant.validation
           .UserAccountInputValidator

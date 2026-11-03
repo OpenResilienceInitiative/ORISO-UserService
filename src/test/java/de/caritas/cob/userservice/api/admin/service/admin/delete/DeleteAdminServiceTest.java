@@ -177,6 +177,102 @@ public class DeleteAdminServiceTest {
     verify(deletionAuditService, never()).recordAsCurrentActor(any(), any(), any(), any());
   }
 
+  /**
+   * Order pinned after the dev/PR merge: identity first, then relations, then the row, then the
+   * log.
+   */
+  @Test
+  void deleteAgencyAdmin_Should_RemoveIdentityThenRelationsThenRowThenLog() {
+    when(adminRepository.findById(VALID_ADMIN_ID))
+        .thenReturn(Optional.of(adminOfTenant(7L, Admin.AdminType.AGENCY)));
+
+    deleteAdminService.deleteAgencyAdmin(VALID_ADMIN_ID);
+
+    var order =
+        inOrder(
+            identityAccountRemover, adminAgencyRepository, adminRepository, deletionAuditService);
+    order.verify(identityAccountRemover).deleteUser(VALID_ADMIN_ID);
+    order.verify(adminAgencyRepository).deleteByAdminId(VALID_ADMIN_ID);
+    order.verify(adminRepository).deleteById(VALID_ADMIN_ID);
+    order
+        .verify(deletionAuditService)
+        .recordAsCurrentActor(
+            DeletionAuditTargetType.AGENCY_ADMIN,
+            VALID_ADMIN_ID,
+            7L,
+            DeletionAuditOutcome.EXECUTED);
+    verify(adminAgencyRepository, org.mockito.Mockito.times(1)).deleteByAdminId(VALID_ADMIN_ID);
+  }
+
+  @Test
+  void deleteTenantAdmin_Should_RemoveIdentityThenRowThenLog_AndNeverTouchAgencyRelations() {
+    when(adminRepository.findById(VALID_ADMIN_ID))
+        .thenReturn(Optional.of(adminOfTenant(3L, Admin.AdminType.TENANT)));
+
+    deleteAdminService.deleteTenantAdmin(VALID_ADMIN_ID);
+
+    var order = inOrder(identityAccountRemover, adminRepository, deletionAuditService);
+    order.verify(identityAccountRemover).deleteUser(VALID_ADMIN_ID);
+    order.verify(adminRepository).deleteById(VALID_ADMIN_ID);
+    order
+        .verify(deletionAuditService)
+        .recordAsCurrentActor(
+            DeletionAuditTargetType.TENANT_ADMIN,
+            VALID_ADMIN_ID,
+            3L,
+            DeletionAuditOutcome.EXECUTED);
+    verifyNoInteractions(adminAgencyRepository);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void scopedAdministratorRemoval_Should_LeaveAnExecutedLogEntry_LikeTheLegacyPath(boolean tenant)
+      throws Exception {
+    var mode =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
+    when(mode.isFiveActorMode()).thenReturn(true);
+    var maintenance =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.service.identity.HumanAdminAccountMaintenance.class);
+    when(maintenance.isFiveActorMode()).thenReturn(true);
+    var entities = org.mockito.Mockito.mock(jakarta.persistence.EntityManager.class);
+    when(entities.isJoinedToTransaction()).thenReturn(true);
+    deleteAdminService.setScopedMaintenance(mode, maintenance);
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        deleteAdminService, "entities", entities);
+    var type = tenant ? Admin.AdminType.TENANT : Admin.AdminType.AGENCY;
+    when(adminRepository.findById(VALID_ADMIN_ID)).thenReturn(Optional.of(adminOfTenant(9L, type)));
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              DeleteAdminService.ScopedRemoval removal = call.getArgument(0);
+              org.springframework.transaction.support.TransactionSynchronizationManager
+                  .bindResource(removal, removal);
+              try {
+                removal.apply();
+              } finally {
+                org.springframework.transaction.support.TransactionSynchronizationManager
+                    .unbindResource(removal);
+              }
+              return null;
+            })
+        .when(maintenance)
+        .removeAdministrator(any());
+
+    if (tenant) deleteAdminService.deleteTenantAdmin(VALID_ADMIN_ID);
+    else deleteAdminService.deleteAgencyAdmin(VALID_ADMIN_ID);
+
+    // The native command owns the identity: the legacy remover must stay untouched.
+    verifyNoInteractions(identityAccountRemover);
+    verify(adminRepository).delete(any(Admin.class));
+    verify(deletionAuditService)
+        .recordAsCurrentActor(
+            tenant ? DeletionAuditTargetType.TENANT_ADMIN : DeletionAuditTargetType.AGENCY_ADMIN,
+            VALID_ADMIN_ID,
+            9L,
+            DeletionAuditOutcome.EXECUTED);
+  }
+
   private static Admin adminOfTenant(Long tenantId, Admin.AdminType type) {
     var admin = new Admin();
     admin.setTenantId(tenantId);

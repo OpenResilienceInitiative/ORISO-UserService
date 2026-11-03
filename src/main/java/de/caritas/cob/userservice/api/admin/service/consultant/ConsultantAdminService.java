@@ -311,6 +311,12 @@ public class ConsultantAdminService {
                   pictureStore.removeForConsultantDeletion(consultantId);
                   consultant.setStatus(ConsultantStatus.IN_DELETION);
                   consultantRepository.save(consultant);
+                  // Same SCHEDULED log row as the legacy path; ids only, written after commit.
+                  deletionAuditService.recordAsCurrentActor(
+                      DeletionAuditTargetType.CONSULTANT,
+                      consultantId,
+                      consultant.getTenantId(),
+                      DeletionAuditOutcome.SCHEDULED);
                 });
           });
       return;

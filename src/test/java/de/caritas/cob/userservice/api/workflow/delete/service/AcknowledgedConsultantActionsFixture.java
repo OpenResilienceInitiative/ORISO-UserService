@@ -197,6 +197,13 @@ final class AcknowledgedConsultantActionsFixture implements AutoCloseable {
     register(new DeleteConsultantDraftMessagesAction(drafts));
     register(new DeleteConsultantEventNotificationsAction(notifications));
     register(new DeleteConsultantMessageEmailDeliveriesAction(email));
+    // Added by dev; the acknowledged chain now runs it before the final delete.
+    register(
+        new de.caritas.cob.userservice.api.workflow.delete.action.consultant
+            .DeleteConsultantMessageStatsAction(
+            mock(
+                de.caritas.cob.userservice.api.service.statistics.ConsultantMessageStatService
+                    .class)));
     finalAction =
         new DeleteDatabaseConsultantAction(
             consultants,

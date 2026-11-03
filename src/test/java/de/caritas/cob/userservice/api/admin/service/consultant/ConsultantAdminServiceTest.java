@@ -507,6 +507,115 @@ public class ConsultantAdminServiceTest {
     order.verify(consultantPreDeletionService).deactivateIdentity(consultant);
   }
 
+  /**
+   * Whole legacy chain after the dev/PR merge: relations, rooms, row, login last, log after that.
+   */
+  @Test
+  void markConsultantForDeletion_Should_RunTheWholeLegacyChainInOrder_AndLogOnlyAtTheEnd() {
+    var consultant = new Consultant();
+    consultant.setId("c-9");
+    consultant.setTenantId(4L);
+    when(pictureStore.lockActiveConsultant("c-9")).thenReturn(consultant);
+
+    consultantAdminService.markConsultantForDeletion("c-9", false);
+
+    var order =
+        inOrder(
+            consultantPreDeletionService,
+            membersOnlyRevocation,
+            deletionLifecycleService,
+            pictureStore,
+            consultantRepository,
+            deletionAuditService);
+    order
+        .verify(consultantPreDeletionService)
+        .performPreDeletionSteps(eq(consultant), any(), any());
+    order.verify(membersOnlyRevocation).revokeAllAccessOf(consultant);
+    order.verify(deletionLifecycleService).beginConsultantDeletion(eq(consultant), any());
+    order.verify(pictureStore).removeForConsultantDeletion("c-9");
+    order.verify(consultantRepository).save(consultant);
+    order.verify(consultantPreDeletionService).deactivateIdentity(consultant);
+    order
+        .verify(deletionAuditService)
+        .recordAsCurrentActor(
+            de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditTargetType.CONSULTANT,
+            "c-9",
+            4L,
+            de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditOutcome.SCHEDULED);
+    assertEquals(ConsultantStatus.IN_DELETION, consultant.getStatus());
+  }
+
+  /** Five-actor mode: the native ACK owns the login, so the service must not touch Keycloak. */
+  @Test
+  void
+      markConsultantForDeletion_Should_LogScheduled_AlsoInFiveActorMode_WithoutDeactivatingItself() {
+    var mode = mock(de.caritas.cob.userservice.api.port.out.IdentityClientConfig.class);
+    when(mode.isFiveActorMode()).thenReturn(true);
+    var owner =
+        mock(
+            de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+                .class);
+    when(owner.isFiveActorMode()).thenReturn(true);
+    consultantAdminService.setScopedPreDeletion(mode, owner);
+
+    var consultant = new Consultant();
+    consultant.setId("c-5");
+    consultant.setTenantId(8L);
+    var acknowledged =
+        mock(
+            de.caritas.cob.userservice.api.workflow.delete.service.PublicPreDeletionMaintenance
+                .AcknowledgedPreDeletion.class);
+    var relations = mock(ConsultantPreDeletionService.PreparedRelations.class);
+    var memberships =
+        mock(
+            de.caritas.cob.userservice.api.service.chat.MembersOnlyRevocation.PreparedRemoval
+                .class);
+    when(consultantPreDeletionService.prepareAcknowledgedDeletion(acknowledged, false))
+        .thenReturn(relations);
+    when(membersOnlyRevocation.prepareAcknowledgedDeletion(acknowledged, false))
+        .thenReturn(memberships);
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              java.util.function.Consumer<Object> continuation = call.getArgument(2);
+              continuation.accept(acknowledged);
+              return null;
+            })
+        .when(owner)
+        .startAdminConsultant(eq("c-5"), eq(false), any());
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              java.util.function.Consumer<Consultant> effect = call.getArgument(0);
+              effect.accept(consultant);
+              return null;
+            })
+        .when(acknowledged)
+        .completeConsultant(any());
+
+    consultantAdminService.markConsultantForDeletion("c-5", false);
+
+    var order =
+        inOrder(
+            relations,
+            memberships,
+            deletionLifecycleService,
+            consultantRepository,
+            deletionAuditService);
+    order.verify(relations).apply(eq(consultant), any());
+    order.verify(memberships).apply(consultant);
+    order.verify(deletionLifecycleService).beginConsultantDeletion(eq(consultant), any());
+    order.verify(consultantRepository).save(consultant);
+    order
+        .verify(deletionAuditService)
+        .recordAsCurrentActor(
+            de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditTargetType.CONSULTANT,
+            "c-5",
+            8L,
+            de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditOutcome.SCHEDULED);
+    verify(consultantPreDeletionService, never()).deactivateIdentity(any());
+    verify(consultantPreDeletionService, never()).performPreDeletionSteps(any(), any(), any());
+    assertEquals(ConsultantStatus.IN_DELETION, consultant.getStatus());
+  }
+
   @Test
   void markConsultantForDeletion_Should_notDeactivateTheIdentity_When_aPrivateRoomCannotBeLeft() {
     Consultant consultant = mock(Consultant.class);

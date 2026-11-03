@@ -181,10 +181,18 @@ public class DeleteAdminService {
       if (!type.equals(current.getType().name()))
         throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(
             "Administrator type changed");
+      var tenantId = current.getTenantId();
       adminAgencyRepository.deleteByAdminId(account);
       adminRepository.delete(current);
       entities.flush();
       entities.clear();
+      // Dev's deletion log entry must not depend on the identity mode; written after commit.
+      logExecuted(
+          "TENANT".equals(type)
+              ? DeletionAuditTargetType.TENANT_ADMIN
+              : DeletionAuditTargetType.AGENCY_ADMIN,
+          account,
+          tenantId);
     }
 
     @Override

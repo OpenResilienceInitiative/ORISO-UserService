@@ -302,6 +302,53 @@ class MatrixSynapseServiceTest {
     assertThat(matrixSynapseService().deactivateUser(MATRIX_USER_ID)).isTrue();
   }
 
+  private static final URI DEACTIVATE_URI =
+      URI.create(
+          "https://matrix.example.com/_synapse/admin/v1/deactivate/"
+              + "%40seeker%3Amatrix.example.com");
+
+  @SuppressWarnings("unchecked")
+  private Object sentEraseFlag(java.util.function.Consumer<MatrixSynapseService> call) {
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            eq(DEACTIVATE_URI), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
+        .thenReturn(ResponseEntity.ok(""));
+    call.accept(matrixSynapseService());
+    var captor = ArgumentCaptor.forClass(HttpEntity.class);
+    verify(restTemplate)
+        .exchange(eq(DEACTIVATE_URI), eq(HttpMethod.POST), captor.capture(), eq(String.class));
+    return ((Map<String, Object>) captor.getValue().getBody()).get("erase");
+  }
+
+  /**
+   * Merge of dev (erase flag) and the PR (fixed diagnostics): the overloads must keep dev's
+   * meaning.
+   */
+  @Test
+  void deactivateUserWithoutFlagErasesTheUser() {
+    assertThat(sentEraseFlag(s -> assertThat(s.deactivateUser(MATRIX_USER_ID)).isTrue()))
+        .isEqualTo(true);
+  }
+
+  @Test
+  void deactivateUserSecondBooleanIsEraseNotFixedDiagnostics() {
+    assertThat(sentEraseFlag(s -> assertThat(s.deactivateUser(MATRIX_USER_ID, true)).isTrue()))
+        .isEqualTo(true);
+  }
+
+  @Test
+  void deactivateUserWithEraseFalseKeepsTheUsersEvents() {
+    assertThat(sentEraseFlag(s -> assertThat(s.deactivateUser(MATRIX_USER_ID, false)).isTrue()))
+        .isEqualTo(false);
+  }
+
+  @Test
+  void deactivateUserThreeArgumentFormWithoutFixedDiagnosticsBehavesLikeTheTwoArgumentForm() {
+    assertThat(
+            sentEraseFlag(s -> assertThat(s.deactivateUser(MATRIX_USER_ID, true, false)).isTrue()))
+        .isEqualTo(true);
+  }
+
   @Test
   void deactivateUserShouldReturnFalseWhenSynapseReturnsServiceUnavailable() {
     stubAdminLogin();
