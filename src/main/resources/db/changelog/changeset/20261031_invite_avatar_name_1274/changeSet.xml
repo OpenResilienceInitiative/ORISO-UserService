@@ -5,9 +5,17 @@
   <!-- ORISO-Admin#1274: the inviting admin may suggest an avatar and a public display name. All
        three columns are nullable, so every invite created before this change still resolves. -->
   <changeSet id="20261031-invite-avatar-name-1274" author="oriso">
+    <!-- Runs while any column is missing; migrate.sql adds only the missing ones. -->
+    <preConditions onFail="MARK_RAN">
+      <or>
+        <not><columnExists tableName="account_invite" columnName="avatar_kind"/></not>
+        <not><columnExists tableName="account_invite" columnName="avatar_id"/></not>
+        <not><columnExists tableName="account_invite" columnName="display_name"/></not>
+      </or>
+    </preConditions>
     <sqlFile path="migrate.sql" relativeToChangelogFile="true"/>
-    <rollback>
-      <sqlFile path="rollback.sql" relativeToChangelogFile="true"/>
-    </rollback>
+    <!-- No drop: the columns may predate this changeset and hold data. They are nullable, old code
+         ignores them and a new run skips them, so keeping them is safe after a rollback. -->
+    <rollback/>
   </changeSet>
 </databaseChangeLog>
