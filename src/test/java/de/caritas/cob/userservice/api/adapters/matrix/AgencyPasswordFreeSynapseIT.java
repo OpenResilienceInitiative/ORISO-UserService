@@ -304,6 +304,9 @@ class AgencyPasswordFreeSynapseIT {
             mock(UserService.class),
             identities,
             mock(ChatPermissionVerifier.class),
+            mock(
+                de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeatureGate
+                    .class),
             Optional.empty());
     var response = controller.getMessages(42L);
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
