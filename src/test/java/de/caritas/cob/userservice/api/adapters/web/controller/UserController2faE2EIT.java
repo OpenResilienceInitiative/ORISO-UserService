@@ -415,12 +415,7 @@ class UserController2faE2EIT {
   @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT})
   void finishTwoFactorAuthByEmailSetupForAUserShouldRespondWithNoContent() throws Exception {
     givenAValidUser();
-    var ownedSession = new de.caritas.cob.userservice.api.model.Session();
-    ownedSession.setUser(user);
-    ownedSession.setTenantId(user.getTenantId());
-    ownedSession.setConversationType(
-        de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING);
-    when(sessions.findByUser(user)).thenReturn(List.of(ownedSession));
+    givenAnOwnedAgencyCounsellingSession();
     givenTenantEmailCollection(true);
     givenABearerToken();
     givenACorrectlyFormattedTan();
@@ -503,6 +498,7 @@ class UserController2faE2EIT {
   @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
   void closedConversationCollectionRejectsOtpStartEvenWithGlobalMasterOn() throws Exception {
     givenAValidUser();
+    givenAnOwnedAgencyCounsellingSession();
     givenTenantAllConversationCollection(false);
     givenAValidEmailDTO();
     givenKeycloakFoundNoEmailInUse();
@@ -523,6 +519,7 @@ class UserController2faE2EIT {
   void closingConversationCollectionBeforeFinishRejectsNewPendingAddressWithoutActivation()
       throws Exception {
     givenAValidUser();
+    givenAnOwnedAgencyCounsellingSession();
     givenTenantAllConversationCollection(false);
     givenACorrectlyFormattedTan();
     var credential = new CredentialRepresentation();
@@ -546,6 +543,16 @@ class UserController2faE2EIT {
         .postForEntity(anyString(), any(HttpEntity.class), eq(SuccessWithEmail.class));
     assertEquals(previous, userRepository.findById(user.getUserId()).orElseThrow().getEmail());
     verify(resource, never()).update(any(UserRepresentation.class));
+  }
+
+  // Without an owned conversation the policy denies for an empty context, whatever the flags say.
+  private void givenAnOwnedAgencyCounsellingSession() {
+    var ownedSession = new de.caritas.cob.userservice.api.model.Session();
+    ownedSession.setUser(user);
+    ownedSession.setTenantId(user.getTenantId());
+    ownedSession.setConversationType(
+        de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING);
+    when(sessions.findByUser(user)).thenReturn(List.of(ownedSession));
   }
 
   private void givenTenantAllConversationCollection(boolean enabled) {
