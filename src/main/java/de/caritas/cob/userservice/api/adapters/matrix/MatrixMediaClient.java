@@ -116,7 +116,8 @@ public class MatrixMediaClient {
    * one rule for "this is audio": the feature switch for voice messages asks it before the upload.
    */
   public static boolean isAudio(String mimeType) {
-    return mimeType != null && mimeType.startsWith("audio/");
+    // Media types are case-insensitive (RFC 9110): "AUDIO/ogg" is audio, also for the event.
+    return mimeType != null && mimeType.regionMatches(true, 0, "audio/", 0, "audio/".length());
   }
 
   private void sendFileMessage(

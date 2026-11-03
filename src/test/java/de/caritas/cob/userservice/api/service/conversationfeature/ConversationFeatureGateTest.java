@@ -431,6 +431,57 @@ class ConversationFeatureGateTest {
         .isInstanceOf(ServiceUnavailableException.class);
   }
 
+  // ---- a Traeger id that is no Traeger
+
+  @ParameterizedTest
+  @ValueSource(longs = {0L, -1L, -9_000L})
+  void aTenantIdThatIsNoTraeger_Should_BeARefusal_AndAskNobody(long tenantId) {
+    assertThatThrownBy(
+            () ->
+                gate.require(
+                    ConversationFeature.MEDIA_UPLOAD,
+                    ConversationKind.ONE_ON_ONE,
+                    tenantId,
+                    AGENCY_ID))
+        .isInstanceOfSatisfying(
+            CustomValidationHttpStatusException.class,
+            refusal -> {
+              assertThat(refusal.getHttpStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+              assertThat(refusal.getCustomHttpHeaders().getFirst("X-Reason"))
+                  .isEqualTo("FEATURE_DISABLED");
+            });
+
+    verify(tenantService, never()).getRestrictedTenantDataFresh(tenantId);
+    verifyNoInteractions(agencySettings);
+  }
+
+  @Test
+  void anIllegalArgumentFromTheLookup_Should_BeARefusal_NotA500_AndLogOnlyTheClass() {
+    when(tenantService.getRestrictedTenantDataFresh(TENANT_ID))
+        .thenThrow(new IllegalArgumentException("secret detail of the lower layer"));
+
+    try (var logs = LogbackCaptor.forClass(ConversationFeatureGate.class)) {
+      assertRefusedAsDisabled();
+
+      assertThat(logs.contains(Level.WARN, "IllegalArgumentException")).isTrue();
+      assertThat(logs.events())
+          .allSatisfy(
+              event -> assertThat(event.getFormattedMessage()).doesNotContain("secret detail"));
+    }
+  }
+
+  // ---- an empty settings block is all switches unset; a missing one is not a live entity
+
+  @Test
+  void aServedButEmptySettingsBlock_Should_CountAsAllSwitchesUnset_SoOn() {
+    traeger(settings -> {});
+    agency(settings -> {});
+
+    assertAllowed(ConversationFeature.MEDIA_UPLOAD, ConversationKind.ONE_ON_ONE);
+    assertAllowed(ConversationFeature.VOICE_MESSAGES, ConversationKind.GROUP);
+    assertAllowed(ConversationFeature.SUPERVISION, ConversationKind.ANONYMOUS);
+  }
+
   // ---- what a provider answer means
 
   @ParameterizedTest

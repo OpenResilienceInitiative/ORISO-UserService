@@ -395,6 +395,17 @@ class ConversationFeatureSwitchesIT {
   }
 
   @Test
+  void audioUploadInUpperCaseWithParameters_Should_BeTakenForAVoiceMessage() throws Exception {
+    traegerSettings(settings -> settings.setFeatureVoiceMessagesEnabled(false));
+
+    upload(session.getId(), "note.ogg", "AUDIO/ogg; codecs=opus")
+        .andExpect(status().isForbidden())
+        .andExpect(header().string("X-Reason", "FEATURE_DISABLED"));
+
+    verify(matrixSynapseService, never()).uploadFile(any(), anyString(), anyString());
+  }
+
+  @Test
   void audioUploadWithAttachmentsOff_Should_BeRefused_EvenWhenVoiceMessagesAreOn()
       throws Exception {
     traegerSettings(

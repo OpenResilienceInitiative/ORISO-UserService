@@ -188,6 +188,12 @@ public class ConversationFeatureGate {
       ConversationKind kind,
       Long tenantId,
       List<Long> agencyIds) {
+    if (tenantId != null && tenantId <= 0) {
+      // 0 is the technical tenant and TenantService rejects it; a negative id is no Träger either.
+      // Refuse here instead of letting the lookup throw into a 500.
+      log.warn("Feature switches {} refused: no concrete Traeger", features);
+      throw featureDisabled();
+    }
     var allowed = new AtomicBoolean(false);
     try {
       if (tenantId == null) {
@@ -198,6 +204,14 @@ public class ConversationFeatureGate {
         TenantContext.runIn(
             tenantId, () -> allowed.set(allows(features, kind, tenantId, agencyIds)));
       }
+    } catch (IllegalArgumentException invalid) {
+      // Only the class: the message of a lower layer may carry what was asked.
+      log.warn(
+          "Feature switches {} for tenant {} refused: {}",
+          features,
+          tenantId,
+          invalid.getClass().getSimpleName());
+      throw featureDisabled();
     } catch (ForbiddenException refused) {
       // The AgencyService refused to serve the Beratungsstelle: nothing to read, so no.
       log.warn(
@@ -238,6 +252,9 @@ public class ConversationFeatureGate {
         tenantId == null
             ? tenantService.getSingleTenancyTenantDataFresh()
             : tenantService.getRestrictedTenantDataFresh(tenantId);
+    // A live Träger is always served with a settings block, empty when nothing is stored
+    // (ORISO-TenantService TenantConverter.getSettings: new Settings()), and an empty block reads
+    // as all switches unset, so on. A missing block is therefore not a live Träger: refuse.
     if (tenant == null
         || tenant.getSettings() == null
         || (tenantId != null && !tenantId.equals(tenant.getId()))) {
@@ -248,6 +265,10 @@ public class ConversationFeatureGate {
       return false;
     }
     for (Long agencyId : agencyIds) {
+      // A live Beratungsstelle is always served with a settings block, empty when nothing is stored
+      // (ORISO-AgencyService AgencySettingsService.storedSettings: new Settings(), served by
+      // AgencyService.buildAgencySettings). Empty here means not served at all (404, deleted,
+      // another Träger's, no unique match): refuse.
       var agency = effectiveAgencySettingsLookup.findEffectiveSettings(agencyId, tenantId);
       if (agency.isEmpty()) {
         log.warn(
