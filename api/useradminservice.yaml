@@ -1312,9 +1312,11 @@ paths:
       summary: 'Platform default Erstantwort texts as plain text, for the Träger editor [Authorization: tenant-admin, single-tenant-admin, restricted-agency-admin, user-admin]'
       description: >-
         Read-only. Returns the texts that are sent when a Träger leaves a field empty:
-        greeting, whoReadsAlong, closing, the fixed emergencyNumbers sentence and the derived
-        responseDeadline sentence with the platform default number. There is no platform default
-        for emergencyAddition or freeNotice. Served by the hand-written
+        greeting, closing, the fixed emergencyNumbers sentence and the derived responseDeadline
+        sentence with the platform default number. There is no platform default for
+        emergencyAddition, freeNotice or whoReadsAlong: the platform cannot know who reads along at
+        a centre, so the Baustein is left out of the first reply until a centre states it, and the
+        whoReadsAlong property of this response is never filled. Served by the hand-written
         ErstantwortDefaultsController, hence x-internal.
       operationId: getErstantwortDefaults
       parameters:

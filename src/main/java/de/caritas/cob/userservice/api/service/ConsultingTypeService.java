@@ -42,6 +42,22 @@ public class ConsultingTypeService {
   }
 
   /**
+   * Same as {@link #getExtendedConsultingTypeResponseDTO(int)}, but never from the cache (which
+   * holds an entry for a day): for a gate that must follow an admin's change at the next call.
+   *
+   * @param consultingTypeId the consulting type ID
+   * @return the {@link ExtendedConsultingTypeResponseDTO} as the ConsultingTypeService serves it
+   *     now
+   */
+  public ExtendedConsultingTypeResponseDTO getFreshExtendedConsultingTypeResponseDTO(
+      int consultingTypeId) throws RestClientException {
+    var consultingTypeControllerApi =
+        consultingTypeServiceApiControllerFactory.createControllerApi();
+    addDefaultHeaders(consultingTypeControllerApi.getApiClient());
+    return consultingTypeControllerApi.getExtendedConsultingTypeById(consultingTypeId);
+  }
+
+  /**
    * Returns all existing consulting type ids. the id´s will be cached for further requests.
    *
    * @return list with consulting type ids

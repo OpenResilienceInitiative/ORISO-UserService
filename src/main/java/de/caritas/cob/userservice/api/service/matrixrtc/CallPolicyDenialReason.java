@@ -17,5 +17,9 @@ public enum CallPolicyDenialReason {
   INACTIVITY_STATE_UNAVAILABLE,
   ACCOUNT_NOT_ACTIVE,
   /** The person knocked through a direct link and the counsellor has not let them in (#1475). */
-  KNOCK_NOT_ADMITTED
+  KNOCK_NOT_ADMITTED,
+  /** The admin switched calls off for this form of counselling (#1564). */
+  CONSULTING_TYPE_CALLS_DISABLED,
+  /** The form of counselling is unknown or its setting cannot be read; calls stay closed. */
+  CONSULTING_TYPE_UNAVAILABLE
 }

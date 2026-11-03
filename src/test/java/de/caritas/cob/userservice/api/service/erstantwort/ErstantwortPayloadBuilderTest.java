@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * ADR-018 / ORISO-UserService#926.
@@ -97,6 +99,123 @@ class ErstantwortPayloadBuilderTest {
     assertThat(idsOf(payload)).doesNotContain("whoReadsAlong", "responseDeadline");
     // The two safety-bearing Bausteine apply everywhere, Live Chat included.
     assertThat(idsOf(payload)).contains("noPersonalData", "emergencyNumbers");
+  }
+
+  /**
+   * #1565: the platform must not claim who reads along when nobody has said so. A centre where a
+   * supervisor reads along would otherwise tell an advice seeker something untrue, and the person
+   * decides what to write based on it. Without a stated text the Baustein is left out, and nothing
+   * else about the first reply changes.
+   */
+  @Test
+  void leavesOutWhoReadsAlongWhenNoLevelStatedIt() throws Exception {
+    JsonNode payload = buildFor(agencyCounselling().build());
+
+    assertThat(idsOf(payload)).doesNotContain("whoReadsAlong");
+    assertNoClaimAboutWhoReadsAlong(payload);
+    assertThat(idsOf(payload))
+        .containsExactly(
+            "greeting",
+            "responseDeadline",
+            "modalityNote",
+            "noPersonalData",
+            "emergencyNumbers",
+            "dataProtection",
+            "emailNotification",
+            "accountProtection",
+            "closing");
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {"", " ", "   ", "\n", "\t \n ", "\u00a0", "\u200b", "\u00a0\u200b\ufeff \u202f"})
+  void blankTextAtEveryLevelCountsAsNotStated(String blank) throws Exception {
+    JsonNode payload =
+        buildFor(
+            agencyCounselling()
+                .whoReadsAlongByTopic(blank)
+                .whoReadsAlongByAgency(blank)
+                .whoReadsAlongByTenant(blank)
+                .build());
+
+    assertThat(idsOf(payload)).doesNotContain("whoReadsAlong");
+    assertNoClaimAboutWhoReadsAlong(payload);
+  }
+
+  @Test
+  void leavesNoBlankBodyHeadlineOrPlaceholderBehindWhenTheSentenceIsDropped() throws Exception {
+    JsonNode payload = buildFor(agencyCounselling().whoReadsAlongByTenant("  ").build());
+
+    for (JsonNode baustein : payload.get("bausteine")) {
+      assertThat(baustein.get("body").asText()).isNotBlank();
+      assertThat(baustein.get("body").isNull()).isFalse();
+      if (baustein.has("headline")) {
+        assertThat(baustein.get("headline").asText()).isNotBlank();
+      }
+    }
+    assertThat(payload.toString())
+        .doesNotContain("Wer Ihre Nachricht liest", "Wer Deine Nachricht liest", "null", "{{");
+  }
+
+  @Test
+  void stillSendsTheRestOfTheFirstReplyWithoutIt() throws Exception {
+    JsonNode payload = buildFor(agencyCounselling().responseDeadlineDays(5).build());
+
+    assertThat(bodyOf(payload, "responseDeadline")).contains("5 Werktagen");
+    assertThat(idsOf(payload))
+        .contains("greeting", "noPersonalData", "emergencyNumbers", "closing");
+  }
+
+  @Test
+  void aTenantTextIsShownWhenNoMoreSpecificLevelHasOne() throws Exception {
+    JsonNode payload =
+        buildFor(
+            agencyCounselling()
+                .whoReadsAlongByTenant("  Unser Team und die Supervision.  ")
+                .build());
+
+    assertThat(bodyOf(payload, "whoReadsAlong")).isEqualTo("Unser Team und die Supervision.");
+    assertThat(bausteinOf(payload, "whoReadsAlong").get("headline").asText())
+        .isEqualTo("Wer Ihre Nachricht liest");
+  }
+
+  @Test
+  void anAgencyTextIsShownWhenNoTopicTextExistsAndBeatsTheTenant() throws Exception {
+    JsonNode payload =
+        buildFor(
+            agencyCounselling()
+                .whoReadsAlongByTopic(" ")
+                .whoReadsAlongByAgency("Nur unser Team.")
+                .whoReadsAlongByTenant("Träger-Text")
+                .build());
+
+    assertThat(bodyOf(payload, "whoReadsAlong")).isEqualTo("Nur unser Team.");
+  }
+
+  @Test
+  void aTopicTextBeatsAgencyAndTenant() throws Exception {
+    JsonNode payload =
+        buildFor(
+            agencyCounselling()
+                .whoReadsAlongByTopic("Fachbereich")
+                .whoReadsAlongByAgency("Beratungsstelle")
+                .whoReadsAlongByTenant("Träger")
+                .build());
+
+    assertThat(bodyOf(payload, "whoReadsAlong")).isEqualTo("Fachbereich");
+  }
+
+  @Test
+  void anAuthoredTextStaysAfterTheGreetingAndBeforeTheDeadline() throws Exception {
+    JsonNode payload = buildFor(agencyCounselling().whoReadsAlongByTenant("Team").build());
+
+    assertThat(idsOf(payload).subList(0, 3))
+        .containsExactly("greeting", "whoReadsAlong", "responseDeadline");
+  }
+
+  private static void assertNoClaimAboutWhoReadsAlong(JsonNode payload) {
+    assertThat(payload.toString())
+        .doesNotContain("ausschließlich die Fachkräfte", "Nachricht lesen", "Wer Ihre Nachricht");
   }
 
   @Test

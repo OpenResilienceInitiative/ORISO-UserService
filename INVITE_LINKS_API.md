@@ -31,7 +31,7 @@ The redeem endpoint (§3) requires **none** of these.
 
 `POST /useradmin/invitelinks`
 
-**Roles allowed:** `AUTHORIZATION_TENANT_ADMIN`, `AUTHORIZATION_USER_ADMIN`, `AUTHORIZATION_RESTRICTED_AGENCY_ADMIN`
+**Roles allowed:** `AUTHORIZATION_TENANT_ADMIN`, `AUTHORIZATION_USER_ADMIN`, `AUTHORIZATION_RESTRICTED_AGENCY_ADMIN` within their normal scope. External live-chat links (`EXTERNAL_INBOUND` with `LIVE_CHAT`) can only be created, paused, reactivated or deleted by platform admins. They select the target tenant via `X-Tenant-Id`. Omitted link kind and chat type default to this external live-chat combination.
 
 **Request body:**
 
@@ -95,7 +95,7 @@ The redeem endpoint (§3) requires **none** of these.
 
 `GET /useradmin/invitelinks`
 
-**Roles allowed:** same as create.
+**Roles allowed:** `AUTHORIZATION_TENANT_ADMIN`, `AUTHORIZATION_USER_ADMIN`, `AUTHORIZATION_RESTRICTED_AGENCY_ADMIN` within their normal read scope.
 
 **Query params (all optional):**
 
@@ -127,6 +127,23 @@ Backend **always** filters by caller's `tenantId` (from `X-Tenant-Id`) — no pa
 The result is sorted by `createDate` descending. Links whose `expiresAt` has passed are
 auto-flipped to `status = EXPIRED` on read, so the UI always shows fresh status without you doing
 date math.
+
+---
+
+## Manage an external invite link
+
+Both operations require the same authentication and tenant context as creation. Only a platform admin can perform either operation on a live-chat link.
+The link must be an `EXTERNAL_INBOUND` link in the caller's tenant and within the caller's
+admin scope.
+
+| Request | Success | Other responses |
+|---|---|---|
+| `POST /useradmin/invitelinks/{linkId}/reactivate` | `200 OK` with the link response from §1. Its status is `ACTIVE` and its token stays the same. Repeating the request on an active, unexpired link returns the same link. | `409 Conflict` for expired links or statuses other than `ACTIVE` and `DISABLED`. |
+| `DELETE /useradmin/invitelinks/{linkId}` | `204 No Content` for a link in any status. Its URL stops resolving. Conversations already started through the link keep their own sessions. | A repeat request returns `404 Not Found`. |
+
+Both requests return `401` without authentication, `403` outside the caller's admin scope,
+and `404` for an unknown link, a link in another tenant, or another link kind. A platform caller
+without a valid positive tenant ID receives `403`.
 
 ---
 
@@ -162,6 +179,11 @@ live-chat session ready — drop them straight into the chat UI; no second regis
 |---|---|
 | 400 | link already used / expired / never had a topic |
 | 404 | token doesn't exist |
+| 410 | paused live-chat link with body `{"reason":"INVITE_LINK_PAUSED"}` |
+
+The public `GET /users/invitelinks/{token}/context` returns the same paused-link reason before
+providing entry metadata. Neither route creates an account or conversation while the link is paused.
+A switched-off direct link retains `{"reason":"DIRECT_LINK_INACTIVE"}`.
 
 The token lookup uses a pessimistic lock; double-clicks and parallel calls cannot redeem the same
 link twice.

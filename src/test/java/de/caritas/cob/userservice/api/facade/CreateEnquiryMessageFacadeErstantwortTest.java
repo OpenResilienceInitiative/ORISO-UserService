@@ -186,6 +186,54 @@ class CreateEnquiryMessageFacadeErstantwortTest {
         .doesNotContain("<p>", "</p>");
   }
 
+  /**
+   * #1565: when TenantService cannot be read (timeout, refused, pool saturated) the centre's text
+   * is unknown. Omitting the sentence is the right result: the rest of the first reply goes out and
+   * the platform does not guess who reads along.
+   */
+  @Test
+  void whenTheTenantLookupFailsTheReplyGoesOutWithoutWhoReadsAlong() {
+    session.setTenantId(77L);
+    when(tenantContentClient.readContent(77L))
+        .thenThrow(new java.util.concurrent.RejectedExecutionException("pool busy"));
+    when(erstantwortPayloadBuilder.buildFirstResponseBody(any()))
+        .thenAnswer(
+            call -> new ErstantwortPayloadBuilder().buildFirstResponseBody(call.getArgument(0)));
+    var data = enquiryData();
+    data.setUiLocale("de");
+
+    var response = facade.createEnquiryMessage(data);
+
+    assertThat(response.getMatrixRoomId()).isEqualTo(ROOM_ID);
+    var body = ArgumentCaptor.forClass(String.class);
+    verify(matrixSessionSystemMessageService).postFirstResponseMessage(eq(session), body.capture());
+    assertThat(body.getValue())
+        .doesNotContain("whoReadsAlong", "Fachkräfte", "Wer Ihre Nachricht liest")
+        .contains("\"greeting\"", "responseDeadline", "noPersonalData", "emergencyNumbers")
+        .contains("\"closing\"");
+    verify(eventNotificationService).createFirstResponseNotification(session);
+  }
+
+  @Test
+  void aCentresOwnWhoReadsAlongTextReachesThePostedPayload() {
+    session.setTenantId(77L);
+    when(tenantContentClient.readContent(77L))
+        .thenReturn(
+            new MultilingualContent()
+                .erstantwortWhoReadsAlong(Map.of("de", "<p>Unser Team und die Supervision.</p>")));
+    when(erstantwortPayloadBuilder.buildFirstResponseBody(any()))
+        .thenAnswer(
+            call -> new ErstantwortPayloadBuilder().buildFirstResponseBody(call.getArgument(0)));
+    var data = enquiryData();
+    data.setUiLocale("de");
+
+    facade.createEnquiryMessage(data);
+
+    var body = ArgumentCaptor.forClass(String.class);
+    verify(matrixSessionSystemMessageService).postFirstResponseMessage(eq(session), body.capture());
+    assertThat(body.getValue()).contains("whoReadsAlong", "Unser Team und die Supervision.");
+  }
+
   @Test
   void dispatchPostsTheErstantwortAndWritesOneTimelineEntry() {
     facade.createEnquiryMessage(enquiryData());

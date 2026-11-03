@@ -727,6 +727,18 @@ public class SecurityConfig {
                 .access(this::canReportDeletion)
                 .requestMatchers("/users/deletion-audit-logs", "/service/users/deletion-audit-logs")
                 .access(this::canAccessPlatformAuditLogs)
+                // 1:1 appointments (ORISO-Frontend#1960): who may do what is decided per session in
+                // SessionAppointmentService.
+                .requestMatchers(
+                    "/users/sessions/{sessionId:[0-9]+}/appointments",
+                    "/service/users/sessions/{sessionId:[0-9]+}/appointments",
+                    "/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}",
+                    "/service/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}",
+                    "/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}/cancel",
+                    "/service/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}/cancel",
+                    "/users/appointments/upcoming",
+                    "/service/users/appointments/upcoming")
+                .hasAnyAuthority(USER_DEFAULT, ANONYMOUS_DEFAULT, CONSULTANT_DEFAULT)
                 .requestMatchers(
                     "/users/consultants/sessions/{sessionId:[0-9]+}",
                     "/users/sessions/{sessionId:[0-9]+}/archive",

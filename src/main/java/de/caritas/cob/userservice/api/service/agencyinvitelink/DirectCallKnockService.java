@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.agencyinvitelink;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.GroupChatJoinRequest;
@@ -59,6 +60,7 @@ public class DirectCallKnockService {
   private final @NonNull UserRepository users;
   private final @NonNull ConsultantRepository consultants;
   private final @NonNull EventNotificationService eventNotifications;
+  private final @NonNull DirectInvitePolicy directInvitePolicy;
 
   private static final Set<Via> CALL_KNOCKS = EnumSet.of(Via.DIRECT_LINK, Via.CALL_LINK);
   private static final Comparator<GroupChatJoinRequest> BY_REQUESTED_AT =
@@ -223,9 +225,13 @@ public class DirectCallKnockService {
   private List<GroupChatJoinRequest> closeWaitingOnCallLink(
       Long linkId, Status outcome, String decidedBy) {
     var now = LocalDateTime.now();
-    return repository
-        .findByInviteLinkIdAndViaAndStatus(linkId, Via.CALL_LINK, Status.PENDING)
-        .stream()
+    var waiting =
+        repository.findByInviteLinkIdAndViaAndStatus(linkId, Via.CALL_LINK, Status.PENDING);
+    // All of them wait on one link: one check says whether anybody may be let in.
+    if (outcome == Status.ADMITTED && !waiting.isEmpty()) {
+      requireStillAllowed(waiting.getFirst());
+    }
+    return waiting.stream()
         .map(
             knock -> {
               knock.setStatus(outcome);
@@ -333,6 +339,7 @@ public class DirectCallKnockService {
     // Loaded under lock in one query, so a knock cancelled or declined meanwhile is not pending
     // any more; no earlier unlocked read can leave a stale entity in the persistence context.
     var since = waitingSince();
+    var checkedLinks = new java.util.HashSet<Long>();
     return Stream.concat(
             scope.directLinks()
                 ? repository
@@ -354,12 +361,34 @@ public class DirectCallKnockService {
         .sorted(BY_REQUESTED_AT)
         .map(
             knock -> {
+              if (checkedLinks.add(knock.getInviteLinkId())) {
+                requireStillAllowed(knock);
+              }
               knock.setStatus(Status.ADMITTED);
               knock.setDecidedAt(now);
               knock.setDecidedBy(consultant.getId());
               return repository.save(knock);
             })
         .toList();
+  }
+
+  /**
+   * A withdrawn "Direkteinladung erlauben" must not let a queued knock in. Conversations that
+   * already exist stay (documented); a knock without its link has no medium to judge and is left.
+   */
+  private void requireStillAllowed(GroupChatJoinRequest knock) {
+    var link =
+        knock.getInviteLinkId() == null
+            ? null
+            : inviteLinkRepository.findById(knock.getInviteLinkId()).orElse(null);
+    if (link != null
+        && InviteLinkChatType.isDirectMedium(link.getChatType())
+        && !directInvitePolicy.allows(
+            link.getTenantId(),
+            link.getAgencyId(),
+            InviteLinkChatType.valueOf(link.getChatType()))) {
+      throw new ForbiddenException("Direct invitations are not allowed here");
+    }
   }
 
   private GroupChatJoinRequest decide(Long knockId, Consultant consultant, Status outcome) {
@@ -379,6 +408,9 @@ public class DirectCallKnockService {
     }
     if (!knock.isPending()) {
       throw new ConflictException("Call knock is already " + knock.getStatus());
+    }
+    if (outcome == Status.ADMITTED) {
+      requireStillAllowed(knock);
     }
     knock.setStatus(outcome);
     knock.setDecidedAt(LocalDateTime.now());
