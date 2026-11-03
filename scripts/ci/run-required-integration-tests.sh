@@ -64,6 +64,7 @@ mariadb_owned_tests=(
   AccountInviteRevokeAcceptRaceMariaDbIT
   ConsultantTenantChangeMariaDbIT
   CaseHandoverLeaveAdminPowerMariaDbIT
+  CaseHandoverTakeoverMatrixMariaDbIT
   GroupChatMatrixCleanupAdoptionMariaDbIT
   IdentityReactivationSagaMariaDbIT
   UserHardDeleteClaimMariaDbIT

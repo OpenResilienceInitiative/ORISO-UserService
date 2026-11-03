@@ -9,5 +9,7 @@ public enum CaseHandoverMatrixRepairAction {
    * A counsellor who left a Träger leaves the chat rooms of its cases with their own token (#1419).
    * Unlike {@link #REMOVE} this ignores earlier handover grants: the move ends them all.
    */
-  LEAVE
+  LEAVE,
+  /** Retry the owner power raise of a takeover whose new owner could not post without it. */
+  POWER_RAISE
 }
