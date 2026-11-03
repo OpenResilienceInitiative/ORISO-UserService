@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- #1419: who moved which counsellor from which Träger to which, and when. Account ids and
+       counts only: no name, no case, no advice seeker. -->
+  <changeSet id="20261016-consultant-tenant-change-audit" author="oriso">
+    <preConditions onFail="MARK_RAN"><not><tableExists tableName="consultant_tenant_change_audit"/></not></preConditions>
+    <createTable tableName="consultant_tenant_change_audit">
+      <column name="id" type="BIGINT" autoIncrement="true"><constraints primaryKey="true" nullable="false"/></column>
+      <column name="consultant_id" type="VARCHAR(36)"><constraints nullable="false"/></column>
+      <column name="actor_id" type="VARCHAR(36)"><constraints nullable="false"/></column>
+      <column name="previous_tenant_id" type="BIGINT"/>
+      <column name="new_tenant_id" type="BIGINT"><constraints nullable="false"/></column>
+      <column name="previous_agency_ids" type="VARCHAR(1024)"/>
+      <column name="new_agency_ids" type="VARCHAR(1024)"/>
+      <column name="cases_left_with_previous_tenant" type="INT"><constraints nullable="false"/></column>
+      <column name="matrix_access_revocations_queued" type="INT"><constraints nullable="false"/></column>
+      <column name="create_date" type="DATETIME(6)"><constraints nullable="false"/></column>
+    </createTable>
+    <createIndex tableName="consultant_tenant_change_audit" indexName="idx_consultant_tenant_change_audit_consultant"><column name="consultant_id"/><column name="create_date"/></createIndex>
+    <rollback><dropTable tableName="consultant_tenant_change_audit"/></rollback>
+  </changeSet>
+</databaseChangeLog>

@@ -62,6 +62,9 @@ mariadb_owned_tests=(
   ChatMembersOnlyMariaDbIT
   CaseHandoverStatusHttpMariaDbIT
   AccountInviteRevokeAcceptRaceMariaDbIT
+  ConsultantTenantChangeMariaDbIT
+  CaseHandoverLeaveAdminPowerMariaDbIT
+  CaseHandoverTakeoverMatrixMariaDbIT
   GroupChatMatrixCleanupAdoptionMariaDbIT
   IdentityReactivationSagaMariaDbIT
   UserHardDeleteClaimMariaDbIT
