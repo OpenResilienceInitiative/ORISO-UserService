@@ -103,17 +103,23 @@ public class ErstantwortPayloadBuilder {
 
     if (modality.isAsynchronous()) {
       // Live Chat has neither teams nor case handover — nothing to disclose.
-      add(
-          bausteine,
-          "whoReadsAlong",
-          informal ? "Wer Deine Nachricht liest" : "Wer Ihre Nachricht liest",
+      /* ORISO-UserService#1565: who else reads a conversation differs per centre (a supervisor,
+      a team lead, a case handover), so the platform must not say it for them. This is the one
+      Baustein without a platform wording: when no level stated it, it is left out entirely —
+      no headline, no empty body — and the rest of the first reply goes out unchanged. */
+      var whoReadsAlong =
           resolve(
               context.getWhoReadsAlongByTopic(),
               context.getWhoReadsAlongByAgency(),
               context.getWhoReadsAlongByTenant(),
-              (informal ? "Deine" : "Ihre")
-                  + " Nachricht lesen ausschließlich die Fachkräfte der zuständigen"
-                  + " Beratungsstelle. Alle sind zur Verschwiegenheit verpflichtet."));
+              null);
+      if (whoReadsAlong != null) {
+        add(
+            bausteine,
+            "whoReadsAlong",
+            informal ? "Wer Deine Nachricht liest" : "Wer Ihre Nachricht liest",
+            whoReadsAlong);
+      }
 
       var days =
           context.getResponseDeadlineDays() == null
@@ -237,16 +243,24 @@ public class ErstantwortPayloadBuilder {
    * must not silence a text the level below it still provides.
    */
   private String resolve(String byTopic, String byAgency, String byTenant, String platform) {
-    if (isNotBlank(byTopic)) {
+    if (hasText(byTopic)) {
       return byTopic.trim();
     }
-    if (isNotBlank(byAgency)) {
+    if (hasText(byAgency)) {
       return byAgency.trim();
     }
-    if (isNotBlank(byTenant)) {
+    if (hasText(byTenant)) {
       return byTenant.trim();
     }
     return platform;
+  }
+
+  /**
+   * Blank includes the no-break spaces an editor leaves behind: {@code isNotBlank} treats them as
+   * text, which would publish an empty Baustein.
+   */
+  private static boolean hasText(String value) {
+    return value != null && !value.replaceAll("[\\u00A0\\u2007\\u202F]", " ").isBlank();
   }
 
   private Map<String, Object> add(

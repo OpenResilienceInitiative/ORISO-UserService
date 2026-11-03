@@ -26,6 +26,8 @@ public final class ErstantwortTranslations {
   /**
    * The platform's own plain texts for the Träger editor, so an admin sees what is sent when the
    * field stays empty. {@code de} with {@code informal} selects the {@code de@informal} variant.
+   * {@code whoReadsAlong} is deliberately absent: it has no platform wording, because the platform
+   * cannot know who reads along at a given centre (ORISO-UserService#1565).
    *
    * @throws IllegalArgumentException for a locale outside the whitelist
    */
@@ -36,7 +38,7 @@ public final class ErstantwortTranslations {
     var catalogue = catalogue(valid);
     var result = new java.util.LinkedHashMap<String, Object>();
     result.put("locale", valid);
-    for (var id : List.of("greeting", "whoReadsAlong", "closing", "emergencyNumbers")) {
+    for (var id : List.of("greeting", "closing", "emergencyNumbers")) {
       result.put(id, catalogue.path(id).path("body").asText(""));
     }
     result.put(

@@ -76,6 +76,46 @@ class ErstantwortTenantTextResolverTest {
     assertThat(resolveGreeting(Map.of(), "de", false)).isNull();
   }
 
+  /** #1565: an editor that saved "nothing" must read as not stated, never as a text. */
+  @Test
+  void aWhoReadsAlongThatHoldsNoVisibleTextIsNotStated() {
+    var empty = new java.util.ArrayList<Map<String, String>>();
+    empty.add(null);
+    empty.add(Map.of());
+    empty.add(Map.of("de", ""));
+    empty.add(Map.of("de", "   "));
+    empty.add(Map.of("de", "<p></p>"));
+    empty.add(Map.of("de", "<p>&nbsp;</p><p><br></p>"));
+    empty.add(Map.of("de__meta", META_DE));
+    for (var texts : empty) {
+      var content = new MultilingualContent().erstantwortWhoReadsAlong(texts);
+      assertThat(ErstantwortTenantTextResolver.resolve(content, "de", false).getWhoReadsAlong())
+          .as(String.valueOf(texts))
+          .isNull();
+    }
+  }
+
+  @Test
+  void anEmptyWhoReadsAlongStillYieldsAFirstReplyWithoutAnyClaim() throws Exception {
+    var content =
+        new MultilingualContent()
+            .erstantwortGreeting(Map.of("de", "<p>Willkommen</p>"))
+            .erstantwortWhoReadsAlong(Map.of("de", "<p> </p>"));
+    var texts = ErstantwortTenantTextResolver.resolve(content, "de", false);
+
+    var body =
+        new ErstantwortPayloadBuilder()
+            .buildFirstResponseBody(
+                ErstantwortContext.builder()
+                    .modality(ErstantwortModality.AGENCY_COUNSELLING)
+                    .greetingByTenant(texts.getGreeting())
+                    .whoReadsAlongByTenant(texts.getWhoReadsAlong())
+                    .build());
+
+    assertThat(body).isNotNull().contains("Willkommen", "emergencyNumbers", "closing");
+    assertThat(body).doesNotContain("whoReadsAlong", "Fachkräfte");
+  }
+
   @Test
   void strippingProducesPlainTextOnly() {
     var html = "<p>Zeile&nbsp;eins &amp; <b>zwei</b></p><p>Drei<br>vier &lt;ok&gt;</p>";
