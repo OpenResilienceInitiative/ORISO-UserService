@@ -62,9 +62,9 @@ public class CreateConsultantDTOCreationInputAdapter implements ConsultantCreati
   }
 
   /**
-   * Whether the created counsellor must set up a second factor. Always true here: an administrator
-   * chooses the initial password and passes it out of band, so it is not a secret only the
-   * counsellor holds.
+   * Whether the created counsellor must set up a second factor. Always true here: the initial
+   * password is not a secret only the counsellor holds (it is either typed by an administrator or
+   * generated and unknown).
    */
   @Override
   public boolean isTwoFactorRequired() {
@@ -73,7 +73,7 @@ public class CreateConsultantDTOCreationInputAdapter implements ConsultantCreati
 
   /**
    * Whether the created counsellor must replace their password. Always true here, for the same
-   * reason as the second factor: the password was typed by an administrator.
+   * reason as the second factor: the counsellor did not choose the initial password.
    */
   @Override
   public boolean isPasswordChangeRequired() {

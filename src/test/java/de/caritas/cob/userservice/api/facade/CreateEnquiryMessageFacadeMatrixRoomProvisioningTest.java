@@ -131,21 +131,40 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
             eventNotificationService,
             injectedRoomServicePlaceholder,
             erstantwortPayloadBuilder,
-            matrixSessionSystemMessageService);
+            matrixSessionSystemMessageService,
+            new de.caritas.cob.userservice.api.service.erstantwort.ErstantwortTenantTextResolver(
+                org.mockito.Mockito.mock(
+                    de.caritas.cob.userservice.api.service.erstantwort
+                        .TenantErstantwortContentClient.class)));
     // Wire a REAL room-provisioning service around the mocked Matrix collaborators so the
     // create/invite/join/persist orchestration actually executes when the facade calls it.
     var gateway = new MatrixSessionRoomGateway(matrixSynapseService, matrixConfig);
+    var silentMembership =
+        new de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService(
+            consultantRepository,
+            gateway,
+            userHelper,
+            usernameTranscoder,
+            new de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver());
+    var pause = new de.caritas.cob.userservice.api.service.session.MatrixRateLimitPause();
     var realRoomService =
         new AgencyPreAssignmentRoomService(
             matrixCredentialClient,
             gateway,
             sessionService,
-            new de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService(
-                consultantRepository,
+            silentMembership,
+            // Runs deferred counsellors inline, so the test sees the same membership end state.
+            new de.caritas.cob.userservice.api.service.session.AgencyDepartmentMembershipBackfill(
+                silentMembership,
                 gateway,
-                userHelper,
-                usernameTranscoder,
-                new de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver()));
+                pause,
+                Runnable::run,
+                consultantRepository,
+                org.mockito.Mockito.mock(
+                    de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository.class),
+                org.mockito.Mockito.mock(
+                    de.caritas.cob.userservice.api.port.out.SessionRepository.class)),
+            pause);
     setField(createEnquiryMessageFacade, "agencyPreAssignmentRoomService", realRoomService);
 
     user = new User();
@@ -161,6 +180,13 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
     session.setConsultant(null);
     session.setIsConsultantDirectlySet(false);
     session.setMatrixRoomId(null); // no room yet -> provisioning must run
+    when(sessionService.finalizeEnquiry(session, null, NEW_ROOM_ID))
+        .thenAnswer(
+            invocation -> {
+              session.setStatus(SessionStatus.NEW);
+              session.setEnquiryMessageDate(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
+              return session;
+            });
 
     RequestContextHolder.setRequestAttributes(
         new ServletRequestAttributes(Mockito.mock(HttpServletRequest.class)));
@@ -218,8 +244,7 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
     // The already browser-encrypted event is validated in the provisioned room.
     verify(matrixSynapseService).getRoomEvent(NEW_ROOM_ID, MATRIX_EVENT_ID, USER_TOKEN);
 
-    // Session persisted with the provisioned room id (once by the room service, once by the
-    // facade).
+    // The room service persists the provisioned room; the facade then uses locked finalization.
     verify(sessionService, Mockito.atLeastOnce()).saveSession(session);
     assertEquals(NEW_ROOM_ID, session.getMatrixRoomId());
     assertEquals(SessionStatus.NEW, session.getStatus());
@@ -279,7 +304,8 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
     createEnquiryMessageFacade.createEnquiryMessage(enquiryData);
 
     // The counsellor is a real member of the room...
-    verify(matrixSynapseService).inviteUserToRoom(NEW_ROOM_ID, consultantMatrixId, AGENCY_TOKEN);
+    verify(matrixSynapseService)
+        .inviteUserToRoomOnce(NEW_ROOM_ID, consultantMatrixId, AGENCY_TOKEN);
     verify(matrixSynapseService).joinRoom(NEW_ROOM_ID, consultantToken);
 
     // ...and joined before the backend finalizes the referenced encrypted enquiry event.

@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.availability.ConsultantActivityRegistry;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService.ResolvedRoomMember;
 import java.time.LocalDateTime;
@@ -43,6 +44,7 @@ public class Messenger implements Messaging {
   private final MatrixSynapseService matrixSynapseService;
   private final ConsultantActivityRegistry consultantActivityRegistry;
   private final LiveChatDiagnosticMetrics diagnosticMetrics;
+  private final MembersOnlyChatAccess membersOnlyChatAccess;
 
   /**
    * How long a live-chat queue entry stays visible without a sign of life from the guest who is
@@ -177,6 +179,12 @@ public class Messenger implements Messaging {
   public boolean removeConsultantFromSession(Long sessionId, String consultantId) {
     var session = sessionRepository.findById(sessionId).orElseThrow();
     var consultant = consultantRepository.findByIdAndDeleteDateIsNull(consultantId).orElseThrow();
+
+    // Who is in a members-only chat is decided by its participants, through the chat's own leave
+    // and remove endpoints; taking someone out of the room here would leave the two apart.
+    membersOnlyChatAccess.requireOrdinary(
+        session,
+        "Participants of a members-only chat are removed through the chat, not through its session");
 
     if (!session.isAdvisedBy(consultant) && !isResponsible(session, consultant)) {
       if (isInChat(session, consultant)) {

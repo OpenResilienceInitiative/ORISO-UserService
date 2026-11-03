@@ -24,7 +24,10 @@ public class ReplyEmailDelivery {
     ASKER,
     CONSULTANT,
     FEEDBACK_INTENT,
-    FEEDBACK
+    FEEDBACK,
+    // Fits recipient_kind VARCHAR(16); no migration needed.
+    INTERNAL_INTENT,
+    INTERNAL
   }
 
   public enum Status {
@@ -33,7 +36,9 @@ public class ReplyEmailDelivery {
     SENT,
     REJECTED,
     RESOLVED,
-    UNCERTAIN
+    UNCERTAIN,
+    /** Set aside after too many preflight retries; an operator requeues it once fixed. */
+    QUARANTINED
   }
 
   @Id
@@ -54,7 +59,7 @@ public class ReplyEmailDelivery {
   @Column(name = "source_room_id", length = 255)
   private String sourceRoomId;
 
-  /** Matrix event identity for a protected feedback intent; never message content. */
+  /** Matrix event identity for a feedback or internal-group intent; never message content. */
   @Column(name = "source_event_id", length = 255)
   private String sourceEventId;
 

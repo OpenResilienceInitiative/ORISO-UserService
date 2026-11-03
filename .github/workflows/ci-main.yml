@@ -13,6 +13,32 @@ env:
   ORG: openresilienceinitiative
 
 jobs:
+  build:
+    name: test and package application
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+      with:
+        persist-credentials: false
+
+    - name: Run UserService tests and build
+      uses: ./.github/actions/maven-build
+      with:
+        java_version: '21'
+
+    - name: Save the tested application for publication
+      uses: actions/upload-artifact@v4
+      with:
+        name: userservice-jar
+        path: target/UserService.jar
+        if-no-files-found: error
+        compression-level: 0
+        retention-days: 1
+
   mariadb-contract:
     uses: ./.github/workflows/mariadb-contract.yml
 
@@ -41,8 +67,8 @@ jobs:
         java_version: '21'
 
   publish:
-    name: test, build and publish image
-    needs: [required-integration-tests, mariadb-contract]
+    name: scan and publish image
+    needs: [build, required-integration-tests, mariadb-contract, notification-smtp-contract]
     runs-on: ubuntu-latest
 
     permissions:
@@ -56,10 +82,11 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v6
 
-    - name: Run UserService tests and build
-      uses: ./.github/actions/maven-build
+    - name: Download the tested application from this run
+      uses: actions/download-artifact@v4
       with:
-        java_version: '21'
+        name: userservice-jar
+        path: target
 
     - name: Build, scan and publish UserService Docker image
       id: image
@@ -78,3 +105,6 @@ jobs:
 
     - name: Record immutable release digest
       run: echo '${{ env.REGISTRY }}/${{ env.ORG }}/oriso-userservice@${{ steps.image.outputs.digest }}' >> "$GITHUB_STEP_SUMMARY"
+
+  notification-smtp-contract:
+    uses: ./.github/workflows/notification-smtp-contract.yml

@@ -48,5 +48,28 @@ public enum HttpStatusExceptionReason {
    * A case takeover would leave the new owner unable to write in the Matrix room: they are
    * read-only and no room member is left who could restore their right to write.
    */
-  CASE_HANDOVER_REQUESTER_CANNOT_WRITE
+  CASE_HANDOVER_REQUESTER_CANNOT_WRITE,
+  /** An internal chat to selected colleagues was asked without any colleague besides the caller. */
+  INTERNAL_CHAT_RECIPIENTS_REQUIRED,
+  /** A selected colleague the caller may pick has no chat identity and cannot join a room. */
+  INTERNAL_CHAT_RECIPIENT_UNKNOWN,
+  /** A selected colleague is outside the Träger's recipient scope (ORISO-TenantService#319). */
+  INTERNAL_CHAT_RECIPIENT_OUT_OF_SCOPE,
+  /** The chat service could not add or remove every selected colleague in the room. */
+  INTERNAL_CHAT_MEMBERSHIP_FAILED,
+  /** A private room is only created when end-to-end encryption is enabled. */
+  INTERNAL_CHAT_ENCRYPTION_REQUIRED,
+  /** Another request for the same people is still being processed; try again. */
+  INTERNAL_CHAT_BUSY,
+  /** The session of a members-only chat ends with its chat; stop the chat instead. */
+  MEMBERS_ONLY_CHAT_STOP_REQUIRED,
+  /** The case owner changed after the case handover request or offer was created. */
+  CASE_OWNER_CHANGED,
+  /** A moderator banned the caller from this group chat; joining again is refused. */
+  USER_BANNED_FROM_CHAT,
+  /**
+   * A self-help group invite link was refused: unknown or foreign group, not a self-help group, or
+   * a wrong token. Says only that the link does not work, never whether the group exists (#1483).
+   */
+  GROUP_INVITE_INVALID
 }

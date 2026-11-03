@@ -121,6 +121,10 @@ public class MatrixMessageController {
       @PathVariable Long sessionId, @RequestBody Map<String, Object> messageRequest) {
 
     var session = sessionService.assertUserHasAccess(sessionId, authenticatedUser);
+    if (session.getStatus() == Session.SessionStatus.REJECTED) {
+      return ResponseEntity.status(HttpStatus.CONFLICT)
+          .body(Map.of("error", "Rejected conversation is read-only"));
+    }
 
     try {
       if (session.getMatrixRoomId() == null) {
@@ -311,6 +315,11 @@ public class MatrixMessageController {
             .body(Map.of("error", "Session not found or has no Matrix room"));
       }
       var authorizedRoom = roomAccess.get();
+      if (authorizedRoom.isSession()
+          && authorizedRoom.getSession().getStatus() == Session.SessionStatus.REJECTED) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+            .body(Map.of("error", "Rejected conversation is read-only"));
+      }
       log.info("📤 Upload: Found authorized Matrix room: {}", authorizedRoom.getMatrixRoomId());
 
       String keycloakUsername = authenticatedUser.getUsername();

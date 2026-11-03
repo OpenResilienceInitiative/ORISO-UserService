@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <!-- ORISO-UserService#1418: a chat that only its members may see and join (a room for a
+       subset of selected colleagues). Every existing chat keeps today's rule (false). -->
+  <changeSet id="20261017-chat-members-only-1418" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <columnExists tableName="chat" columnName="members_only"/>
+      </not>
+    </preConditions>
+    <addColumn tableName="chat">
+      <column name="members_only" type="BOOLEAN" defaultValueBoolean="false">
+        <constraints nullable="false"/>
+      </column>
+    </addColumn>
+    <rollback>
+      <dropColumn tableName="chat" columnName="members_only"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

@@ -4,6 +4,7 @@ import static de.caritas.cob.userservice.api.model.Session.RegistrationType.REGI
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_PROGRESS;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -11,6 +12,7 @@ import static org.mockito.Mockito.when;
 
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.matrix.FakeSynapseHomeserver;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
@@ -28,6 +30,8 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.EventNotificationRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.CaseHandoverEmailNotification;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationDeduplicationWriter;
@@ -114,6 +118,7 @@ class CaseHandoverTakeoverMatrixMariaDbIT {
   private FakeSynapseHomeserver homeserver;
   private CaseHandoverMatrixRepairService repairService;
   private CaseHandoverService handovers;
+  private CaseHandoverEmailNotification handoverEmails;
 
   @DynamicPropertySource
   private static void databaseProperties(DynamicPropertyRegistry registry) {
@@ -137,6 +142,7 @@ class CaseHandoverTakeoverMatrixMariaDbIT {
     transactions = new TransactionTemplate(transactionManager);
     homeserver = new FakeSynapseHomeserver();
     repairService = mock(CaseHandoverMatrixRepairService.class);
+    handoverEmails = mock(CaseHandoverEmailNotification.class);
     transactions.executeWithoutResult(
         ignored -> {
           LocalDateTime now = LocalDateTime.now();
@@ -273,14 +279,15 @@ class CaseHandoverTakeoverMatrixMariaDbIT {
     String room = roomOf(sessionId);
     homeserver.member(room, COLLEAGUE_MXID, 0); // silent department member, never removed again
 
+    // The request commits in its own transaction. Fail after ownership is written but before
+    // that transaction commits, rather than rolling back an unrelated outer transaction.
+    doThrow(new IllegalStateException("takeover fails before commit"))
+        .when(handoverEmails)
+        .ownershipGranted(any(CaseHandoverRequest.class));
     org.assertj.core.api.Assertions.assertThatThrownBy(
-            () ->
-                transactions.execute(
-                    ignored -> {
-                      handovers.requestAccess(sessionId, "ASSIGNMENT_ENDED", "Moved on.");
-                      throw new IllegalStateException("commit fails after the grant");
-                    }))
-        .isInstanceOf(IllegalStateException.class);
+            () -> handovers.requestAccess(sessionId, "ASSIGNMENT_ENDED", "Moved on."))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("takeover fails before commit");
 
     assertThat(readSession(sessionId).getConsultant().getId()).isEqualTo(PREVIOUS_ID);
     assertThat(homeserver.powerOf(room, COLLEAGUE_MXID)).isZero();
@@ -394,8 +401,10 @@ class CaseHandoverTakeoverMatrixMariaDbIT {
             .enabled(new BooleanPermissionPolicy(null).value(true))
             .accessAllowed(new BooleanPermissionPolicy(null).value(true))
             .clientConsent(new ConsentPermissionPolicy(null).value(CaseHandoverConsentValue.NONE));
-    when(cache.getEffective(TENANT_ID))
-        .thenReturn(new CaseHandoverPolicies().reasons(Map.of("COUNSELLOR_LEFT", policy)));
+    var policies = new CaseHandoverPolicies().reasons(Map.of("COUNSELLOR_LEFT", policy));
+    when(cache.getEffective(TENANT_ID)).thenReturn(policies);
+    when(cache.getCurrent(TENANT_ID))
+        .thenReturn(new CaseHandoverPolicyCacheService.CurrentPolicy(true, policies));
 
     return new CaseHandoverService(
         caseHandoverRequestRepository,
@@ -407,7 +416,7 @@ class CaseHandoverTakeoverMatrixMariaDbIT {
         consultantAgencyRepository,
         accounts,
         eventNotificationService,
-        mock(CaseHandoverEmailNotification.class),
+        handoverEmails,
         homeserver.gateway(),
         repairService,
         mock(MatrixSessionSystemMessageService.class),
@@ -416,7 +425,10 @@ class CaseHandoverTakeoverMatrixMariaDbIT {
         new ConsultantDisplayNameResolver(),
         mock(ScheduledTaskClaimService.class),
         Clock.systemUTC(),
-        transactionManager);
+        transactionManager,
+        mock(AgencyService.class),
+        mock(AdminScope.class),
+        mock(MembersOnlyChatAccess.class));
   }
 
   private static Consultant consultant(String id, String matrixUserId, LocalDateTime now) {

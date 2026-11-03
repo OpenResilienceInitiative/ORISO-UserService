@@ -143,9 +143,13 @@ public class StatelessCsrfFilter extends OncePerRequestFilter {
         }
       }
       // Invite-link redeem is a public bootstrap endpoint too — anyone opening the shared link
-      // hits it before any session / CSRF cookie exists.
+      // hits it before any session / CSRF cookie exists. Kept to context/redeem: the signed-in
+      // direct-link conversation route (#1475) passes the normal check.
       if (request.getRequestURI() != null
-          && request.getRequestURI().toLowerCase().contains("/users/invitelinks/")) {
+          && request
+              .getRequestURI()
+              .toLowerCase()
+              .matches(".*/users/invitelinks/[^/]+/(context|redeem)$")) {
         return true;
       }
       // Registration is public and may be called with or without the /service prefix.

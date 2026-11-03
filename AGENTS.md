@@ -45,9 +45,12 @@ delivery rules"). Summary:
   `In review`. Merge only on an explicit, per-PR instruction naming that PR.
 - **Request reviewers in the same step that opens the PR.** A PR without
   requested reviewers is not open for review.
-- **"Pre-Dev is free" means the server, not the branch.** Deploying images,
-  mutating config or data and running E2E on the Pre-Dev server needs no
-  approval; the `dev` *branch* is review-gated like any shared branch.
+- **Branches:** open PRs against `dev`; `main` is the release branch, and agents
+  never target it (releases are done by Hassan). `ORISO-E2E` is the explicit
+  exception and integrates into `pre-dev`.
+- **Pre-Dev changes need explicit authorization.** Deploying images, mutating
+  config or data on the Pre-Dev server only happens with an explicit per-task
+  instruction from Frank that names Pre-Dev. Read-only inspection is fine.
 - **Restore what you borrowed.** Record image reference *and* `imagePullPolicy`
   before swapping anything on Pre-Dev, put both back before reporting done, and
   say so in the report.
@@ -95,3 +98,19 @@ text may be changed. They do not relax the delivery rules above.
   which ticket survives. A ticket that came back from Caritas — raised by
   `BjoernLudwig` or `HelenaSKloeckner` — is the one that stays open. Close the
   agent-created duplicate against it and link the survivor.
+
+## Agent skills
+
+For Matt Pocock engineering workflows, resolve `~/.config/agent-routing/paths.env` and follow `${PROJECT_ORISO_ROOT}/AGENTS.md`. Reuse shared installed skills; load these adapters on demand.
+
+### Issue tracker
+
+GitHub Issues in `OpenResilienceInitiative/ORISO-UserService`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Reuse existing labels; leave unmapped roles unchanged. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context; shared knowledge stays in the project Core. See `docs/agents/domain.md`.

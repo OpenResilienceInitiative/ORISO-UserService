@@ -87,6 +87,37 @@ public class ConsultantTest {
   }
 
   @Test
+  public void getInternalDisplayNameOrRealName_Should_returnInternalName_When_set() {
+    Consultant consultant = new Consultant();
+    consultant.setDisplayName("Anna B.");
+    consultant.setInternalDisplayName("Standort Nord");
+    consultant.setFirstName("Anna");
+    consultant.setLastName("Berger");
+
+    assertEquals("Standort Nord", consultant.getInternalDisplayNameOrRealName());
+  }
+
+  @Test
+  public void getInternalDisplayNameOrRealName_Should_fallbackToRealName_NotThePublicName() {
+    Consultant consultant = new Consultant();
+    consultant.setDisplayName("Anna B.");
+    consultant.setInternalDisplayName(" ");
+    consultant.setFirstName(" Anna ");
+    consultant.setLastName(" ");
+
+    assertEquals("Anna", consultant.getInternalDisplayNameOrRealName());
+  }
+
+  @Test
+  public void getInternalDisplayNameOrRealName_Should_returnNull_When_noInternalOrRealName() {
+    Consultant consultant = new Consultant();
+    consultant.setDisplayName("Anna B.");
+    consultant.setFirstName("");
+
+    assertEquals(null, consultant.getInternalDisplayNameOrRealName());
+  }
+
+  @Test
   public void equals_Should_returnTrue_When_objectIsSameReference() {
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);
 

@@ -2,6 +2,8 @@ package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Consultant.ConsultantBase;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -11,11 +13,15 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 public interface ConsultantRepository
     extends JpaRepository<Consultant, String>, JpaSpecificationExecutor<Consultant> {
+
+  boolean existsByIdAndManagedPausedTrue(String id);
 
   @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
   @Query("select c from Consultant c where c.id = :id")
@@ -27,6 +33,9 @@ public interface ConsultantRepository
 
   @EntityGraph(attributePaths = {"consultantAgencies", "languages"})
   Optional<Consultant> findByIdAndDeleteDateIsNull(String id);
+
+  /** Active selection only; scalar identity fields suffice, so no association fetch graph. */
+  List<Consultant> findByIdInAndDeleteDateIsNull(Collection<String> ids);
 
   Optional<Consultant> findByEmailAndDeleteDateIsNull(String email);
 
@@ -136,4 +145,47 @@ public interface ConsultantRepository
   long countByDeleteDateIsNull();
 
   long countByTenantIdAndDeleteDateIsNull(Long tenantId);
+
+  /**
+   * Opens the account-setup gate once the counsellor has reset their own password (#1699). Native
+   * SQL on purpose: a public reset link runs with the link's tenant, and the tenant filter would
+   * hide a counsellor of another provider from an entity lookup.
+   *
+   * @return the number of counsellors whose requirement was cleared (0 or 1)
+   */
+  @Modifying
+  @Transactional
+  @Query(
+      value =
+          "UPDATE consultant SET password_change_required = FALSE, update_date = :now"
+              + " WHERE consultant_id = :id AND password_change_required = TRUE"
+              + " AND delete_date IS NULL",
+      nativeQuery = true)
+  int clearPasswordChangeRequired(@Param("id") String id, @Param("now") LocalDateTime now);
+
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      """
+      UPDATE Consultant consultant
+         SET consultant.deletionLifecycleState = :readyState
+       WHERE consultant.id = :id
+         AND consultant.deleteDate IS NOT NULL
+         AND consultant.deletionLifecycleState = :claimedState
+      """)
+  int releaseConsultantHardDeleteClaim(
+      @Param("id") String id,
+      @Param("claimedState") DeletionLifecycleState claimedState,
+      @Param("readyState") DeletionLifecycleState readyState);
+
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      """
+      UPDATE Consultant consultant
+         SET consultant.deletionLifecycleState = :readyState
+       WHERE consultant.deleteDate IS NOT NULL
+         AND consultant.deletionLifecycleState = :claimedState
+      """)
+  int releaseInterruptedConsultantHardDeleteClaims(
+      @Param("claimedState") DeletionLifecycleState claimedState,
+      @Param("readyState") DeletionLifecycleState readyState);
 }

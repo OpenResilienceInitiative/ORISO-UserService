@@ -138,4 +138,29 @@ class LiveChatDiagnosticMetricsTest {
       throw new IllegalStateException("registry unavailable");
     }
   }
+
+  @Test
+  void countsSwallowedAvailabilityLookupFailuresPerEndpoint() {
+    metrics.recordAvailabilityLookupFailure(
+        LiveChatDiagnosticMetrics.AvailabilityEndpoint.ANONYMOUS_DOOR);
+    metrics.recordAvailabilityLookupFailure(
+        LiveChatDiagnosticMetrics.AvailabilityEndpoint.ANONYMOUS_DOOR);
+    metrics.recordAvailabilityLookupFailure(
+        LiveChatDiagnosticMetrics.AvailabilityEndpoint.ENQUIRY_DETAILS);
+
+    assertThat(
+            registry
+                .get("oriso.live_chat.availability.lookup.failures")
+                .tag("endpoint", "anonymous_door")
+                .counter()
+                .count())
+        .isEqualTo(2);
+    assertThat(
+            registry
+                .get("oriso.live_chat.availability.lookup.failures")
+                .tag("endpoint", "enquiry_details")
+                .counter()
+                .count())
+        .isEqualTo(1);
+  }
 }

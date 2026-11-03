@@ -53,11 +53,11 @@ public class OrisoEmailRenderer {
    * design system places the logo, and this is the markup that token expands to when a logo URL is
    * configured. When {@code logoUrl} is blank the token expands to nothing at all: an {@code <img
    * src="">} renders as a broken-image icon next to the platform name, so the text wordmark has to
-   * carry the header alone. Known logos wider than 3:1 hide the adjacent name on phones, so their
-   * image carries the platform name as alternative text. Other logos stay decorative beside the
-   * visible name. The dialect has no conditional syntax — this constant is one of the conditionals
-   * the mails need, and it stays in the renderer so the markup remains e-mail-client table markup
-   * reviewed together with the templates.
+   * carry the header alone. The name is never hidden: logos wider than 3:1 stack it under the logo
+   * on phones (the image still carries it as alternative text); other logos stay decorative beside
+   * the visible name. The dialect has no conditional syntax — this constant is one of the
+   * conditionals the mails need, and it stays in the renderer so the markup remains e-mail-client
+   * table markup reviewed together with the templates.
    */
   private static final String LOGO_CELL =
       "<td class=\"logo-cell{{logoCellClass}}\" valign=\"middle\" style=\"padding-right:12px;\">"
@@ -304,6 +304,11 @@ public class OrisoEmailRenderer {
       String templateId, Map<String, String> values) {
     String link = values.get("unsubscribeUrl");
     if (!isUnsubscribable(templateId) || link == null || link.isBlank()) {
+      return values;
+    }
+    // One neutral template may serve separate preference occasions. Preserve the producer's
+    // explicit selector rather than adding a second, conflicting mail parameter.
+    if (Pattern.compile("[?&]mail=[^&#]+").matcher(link).find()) {
       return values;
     }
     Map<String, String> decorated = new LinkedHashMap<>(values);

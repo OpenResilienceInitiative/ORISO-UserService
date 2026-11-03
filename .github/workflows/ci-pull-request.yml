@@ -137,7 +137,7 @@ jobs:
   required-ci:
     name: required PreDev CI
     if: always()
-    needs: [validate, redis-contract, mariadb-contract, required-integration-tests, tenant-filter-on-integration-tests]
+    needs: [validate, redis-contract, mariadb-contract, required-integration-tests, tenant-filter-on-integration-tests, notification-smtp-contract]
     runs-on: ubuntu-latest
 
     steps:
@@ -148,13 +148,14 @@ jobs:
         MARIADB_RESULT: ${{ needs.mariadb-contract.result }}
         INTEGRATION_RESULT: ${{ needs.required-integration-tests.result }}
         TENANT_FILTER_RESULT: ${{ needs.tenant-filter-on-integration-tests.result }}
+        SMTP_RESULT: ${{ needs.notification-smtp-contract.result }}
       run: |
         conclusion=success
-        if [[ "${VALIDATE_RESULT}" != success || "${REDIS_RESULT}" != success || "${MARIADB_RESULT}" != success || "${INTEGRATION_RESULT}" != success || "${TENANT_FILTER_RESULT}" != success ]]; then
+        if [[ "${VALIDATE_RESULT}" != success || "${REDIS_RESULT}" != success || "${MARIADB_RESULT}" != success || "${INTEGRATION_RESULT}" != success || "${TENANT_FILTER_RESULT}" != success || "${SMTP_RESULT}" != success ]]; then
           conclusion=failure
         fi
         if [[ "${conclusion}" != success ]]; then
-          echo "::error::Required CI failed: validate=${VALIDATE_RESULT}, redis=${REDIS_RESULT}, mariadb=${MARIADB_RESULT}, integration=${INTEGRATION_RESULT}, tenant-filter=${TENANT_FILTER_RESULT}"
+          echo "::error::Required CI failed: validate=${VALIDATE_RESULT}, redis=${REDIS_RESULT}, mariadb=${MARIADB_RESULT}, integration=${INTEGRATION_RESULT}, tenant-filter=${TENANT_FILTER_RESULT}, smtp=${SMTP_RESULT}"
           exit 1
         fi
 
@@ -200,3 +201,6 @@ jobs:
           echo "::warning::oasdiff found (formally) breaking API spec changes - report-only; see the log groups above. Flip to a hard failure once the breaking-change process is agreed."
           echo "### api-contract-diff: breaking changes detected (report-only)" >> "$GITHUB_STEP_SUMMARY"
         fi
+
+  notification-smtp-contract:
+    uses: ./.github/workflows/notification-smtp-contract.yml

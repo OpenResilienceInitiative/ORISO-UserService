@@ -26,6 +26,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
+import de.caritas.cob.userservice.api.service.matrix.ConsultantRenameSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -59,6 +60,7 @@ public class ConsultantUpdateService {
   private final @NonNull ConsultantTopicAgencyCompatibilityValidator
       consultantTopicAgencyCompatibilityValidator;
   private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
+  private final @NonNull ConsultantRenameSystemMessageService consultantRenameSystemMessageService;
 
   /**
    * Updates the basic data of consultant with given id.
@@ -412,6 +414,10 @@ public class ConsultantUpdateService {
    *       logged: the old pseudonym plus the new one is a rename history, and with no pseudonym
    *       stored both values are the real name.
    * </ul>
+   *
+   * <p>The in-chat notice posted alongside it (OBP 2.1 #119, {@link
+   * ConsultantRenameSystemMessageService}) does name both pseudonyms, by product decision: it goes
+   * only into rooms where the advice seeker already saw the old name, and it is never logged.
    */
   private void emitCounselorRenameNotificationsIfNeeded(
       Consultant consultant, String previousPublishedName, String nextPublishedName) {
@@ -433,5 +439,8 @@ public class ConsultantUpdateService {
         "Counselor rename event created for consultantId={} sessions={}",
         consultant.getId(),
         sessions.size());
+    // OBP 2.1 #119 / #1533: the same rename, announced in the chats themselves (after commit).
+    consultantRenameSystemMessageService.postRenameMessagesAfterCommit(
+        consultant, previousPublishedName, nextPublishedName);
   }
 }

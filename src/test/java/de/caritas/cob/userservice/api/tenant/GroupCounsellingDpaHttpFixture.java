@@ -81,6 +81,8 @@ abstract class GroupCounsellingDpaHttpFixture {
   protected String gate = EXPIRED;
   protected int ownerStatus = 200;
   protected long agencyTenant = OWNER;
+  protected boolean firstAgencyProjectionIsScopedPolicy;
+  protected final AtomicInteger agencyProjectionReads = new AtomicInteger();
   protected final AtomicInteger recipientOwnerReads = new AtomicInteger();
   protected boolean systemUserExisted;
   protected final AtomicInteger ownerReads = new AtomicInteger();
@@ -117,9 +119,16 @@ abstract class GroupCounsellingDpaHttpFixture {
                     .createResponse(request);
               }
               if (path.endsWith("/agencies/410")) {
+                // The feature gate reads first. Tests may then supply contradictory owner facts
+                // to exercise the separate DPA boundary without bypassing the feature guard.
+                long projectedTenant =
+                    agencyProjectionReads.getAndIncrement() == 0
+                            && firstAgencyProjectionIsScopedPolicy
+                        ? OWNER
+                        : agencyTenant;
                 return withSuccess(
                         "[{\"id\":410,\"tenantId\":"
-                            + agencyTenant
+                            + projectedTenant
                             + ",\"consultingType\":1,\"teamAgency\":false,\"topicIds\":[],\"settings\":{\"featureGroupChatV2Enabled\":true,\"featureSelfHelpGroupsEnabled\":true,\"featureInternalGroupChatEnabled\":true}}]",
                         MediaType.APPLICATION_JSON)
                     .createResponse(request);
@@ -142,6 +151,10 @@ abstract class GroupCounsellingDpaHttpFixture {
                         "{\"dpaPublished\":true,\"dpaSigned\":true}", MediaType.APPLICATION_JSON)
                     .createResponse(request);
               }
+              if (path.startsWith("/_synapse/admin/v1/users/")
+                  && path.endsWith("/login")
+                  && !matrixImpersonationAvailable(path))
+                return withStatus(HttpStatus.SERVICE_UNAVAILABLE).createResponse(request);
               if (path.equals("/_matrix/client/r0/login")
                   || (path.startsWith("/_synapse/admin/v1/users/") && path.endsWith("/login"))) {
                 return withSuccess(
@@ -150,6 +163,7 @@ abstract class GroupCounsellingDpaHttpFixture {
               }
               if (path.equals("/_matrix/client/r0/createRoom")) {
                 matrixWrites.incrementAndGet();
+                onGroupRoomCreated();
                 return withSuccess(
                         "{\"room_id\":\"!synthetic-created:synthetic.oriso.test\"}",
                         MediaType.APPLICATION_JSON)
@@ -200,6 +214,8 @@ abstract class GroupCounsellingDpaHttpFixture {
         chats.save(
             Chat.builder()
                 .topic("Synthetic AVV group")
+                .createDate(java.time.LocalDateTime.now())
+                .updateDate(java.time.LocalDateTime.now())
                 .consultingTypeId(1)
                 .chatOwner(consultant)
                 .initialStartDate(start)
@@ -254,9 +270,22 @@ abstract class GroupCounsellingDpaHttpFixture {
     return HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
   }
 
+  protected void onGroupRoomCreated() {}
+
+  protected boolean matrixImpersonationAvailable(String path) {
+    return true;
+  }
+
   /** Extension point for a route's outgoing Matrix/HTTP responses, never an internal mock. */
   protected org.springframework.http.client.ClientHttpResponse additionalExternalResponse(
       org.springframework.http.client.ClientHttpRequest request) throws java.io.IOException {
-    throw new AssertionError("Unexpected external HTTP path: " + request.getURI().getPath());
+    var path = request.getURI().getPath();
+    if (path.matches("/tenantadmin/\\d+/permission-policies")) {
+      // A TenantService that does not know the internal-group-chat recipient scope (#1418).
+      return org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
+              "{\"policies\":{}}", org.springframework.http.MediaType.APPLICATION_JSON)
+          .createResponse(request);
+    }
+    throw new AssertionError("Unexpected external HTTP path: " + path);
   }
 }

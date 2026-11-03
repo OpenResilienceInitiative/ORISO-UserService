@@ -28,6 +28,7 @@ import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 @Entity
+@org.hibernate.annotations.DynamicUpdate
 @Table(
     name = "admin",
     indexes = {
@@ -56,6 +57,11 @@ public class Admin implements TenantAware {
     /** Global Support Admin (ADR-018) — additive support identity, separate from Platform Admin. */
     SUPPORT
   }
+
+  /** Explicit management pause; independent identity and lifecycle restrictions stay intact. */
+  @org.hibernate.annotations.ColumnDefault("false")
+  @Column(name = "managed_paused", nullable = false)
+  private boolean managedPaused;
 
   @Id
   @Column(name = "admin_id", updatable = false, nullable = false)

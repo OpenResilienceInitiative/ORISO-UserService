@@ -2,16 +2,19 @@ package de.caritas.cob.userservice.api.service.notification;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.NotificationRoomLevel;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.TeamDiscussion;
 import de.caritas.cob.userservice.api.model.TeamDiscussionParticipant;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.NotificationRoomLevelRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
+import de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService;
 import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -48,8 +51,10 @@ public class TeamDiscussionNotificationService {
   private final @NonNull TeamDiscussionParticipantRepository participantRepository;
   private final @NonNull NotificationRoomLevelRepository notificationRoomLevelRepository;
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
+  private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull EventNotificationService eventNotificationService;
+  private final @NonNull AccountInactivityService accountLifecycle;
   private final ObjectMapper paramsObjectMapper = new ObjectMapper();
 
   /**
@@ -76,7 +81,7 @@ public class TeamDiscussionNotificationService {
       return;
     }
     Session session = sessionOpt.get();
-    if (session.getConsultant() != null) {
+    if (session.getConsultant() != null || session.getStatus() == Session.SessionStatus.REJECTED) {
       // Create/accept race guard: once the case is accepted, an OPEN row must not keep
       // notifying — the facade lazily archives it on next access.
       return;
@@ -112,7 +117,11 @@ public class TeamDiscussionNotificationService {
 
     recordSenderAsParticipant(discussion, senderUserId, eligible);
 
+    var inactive = accountLifecycle.inactiveAmong(recipients);
     for (String recipientId : recipients) {
+      // Suspension may retain the domain identity and agency membership. Legacy accounts
+      // without a lifecycle row keep their established eligibility.
+      if (inactive.contains(recipientId)) continue;
       if (dropForConversationLevel(recipientId, roomId, mentioned.contains(recipientId))) {
         continue;
       }
@@ -152,7 +161,8 @@ public class TeamDiscussionNotificationService {
     Set<String> ids = new HashSet<>();
     for (ConsultantAgency consultantAgency : consultantAgencies) {
       if (consultantAgency.getConsultant() != null
-          && consultantAgency.getConsultant().getId() != null) {
+          && consultantAgency.getConsultant().getId() != null
+          && consultantAgency.getConsultant().getDeleteDate() == null) {
         ids.add(consultantAgency.getConsultant().getId());
       }
     }
@@ -163,12 +173,24 @@ public class TeamDiscussionNotificationService {
     Set<String> mentioned = new HashSet<>();
     if (mentionedUserIds != null) {
       for (String userId : mentionedUserIds) {
-        if (userId != null && eligible.contains(userId)) {
-          mentioned.add(userId);
+        String consultantId = toConsultantId(userId);
+        if (consultantId != null && eligible.contains(consultantId)) {
+          mentioned.add(consultantId);
         }
       }
     }
     return mentioned;
+  }
+
+  /** ORISO-UserService#1510: the composer names people by their Matrix id, as in m.mentions. */
+  private String toConsultantId(String userId) {
+    if (userId == null || !userId.startsWith("@")) {
+      return userId;
+    }
+    return consultantRepository
+        .findByMatrixUserIdAndDeleteDateIsNull(userId)
+        .map(Consultant::getId)
+        .orElse(null);
   }
 
   private void recordSenderAsParticipant(
@@ -189,7 +211,7 @@ public class TeamDiscussionNotificationService {
   }
 
   /** True when the recipient's per-conversation level says: drop this notification. */
-  private boolean dropForConversationLevel(String recipientId, String roomId, boolean isMentioned) {
+  boolean dropForConversationLevel(String recipientId, String roomId, boolean isMentioned) {
     Optional<NotificationRoomLevel> levelOpt =
         notificationRoomLevelRepository.findByUserIdAndRoomId(recipientId, roomId);
     if (levelOpt.isEmpty()) {

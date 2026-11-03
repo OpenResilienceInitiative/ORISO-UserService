@@ -47,6 +47,7 @@ import org.springframework.test.context.DynamicPropertySource;
 class AdminStatisticsRepositoryMariaDbIT {
 
   private static final long TENANT_ID = 4242L;
+  private static final long AGENCY_ID = 777L;
 
   @DynamicPropertySource
   private static void databaseProperties(DynamicPropertyRegistry registry) {
@@ -84,7 +85,55 @@ class AdminStatisticsRepositoryMariaDbIT {
     assertThat(row.getDay()).isEqualTo(today);
   }
 
+  @Test
+  void countHourlyNewSessionsByTenantShouldProjectDayAndHour() {
+    var today = LocalDate.now();
+    seedSingleSession(today);
+
+    var rows =
+        underTest.countHourlyNewSessionsByTenant(
+            today.atStartOfDay(), today.plusDays(1).atStartOfDay());
+
+    assertThat(rows).hasSize(1);
+    var row = rows.get(0);
+    assertThat(row.getGroupId()).isEqualTo(TENANT_ID);
+    assertThat(row.getDay()).isEqualTo(today);
+    assertThat(row.getHourOfDay().intValue()).isEqualTo(9);
+    assertThat(row.getTotal()).isEqualTo(1L);
+    assertThat(
+            underTest.countHourlyNewSessionsByTenant(
+                today.minusDays(2).atStartOfDay(), today.atStartOfDay()))
+        .as("the end of the range is exclusive")
+        .isEmpty();
+  }
+
+  @Test
+  void countHourlyNewSessionsByAgencyShouldProjectAgencyDayAndHour() {
+    var today = LocalDate.now();
+    seedSingleSession(today, AGENCY_ID);
+
+    var rows =
+        underTest.countHourlyNewSessionsByAgency(
+            TENANT_ID, today.atStartOfDay(), today.plusDays(1).atStartOfDay());
+
+    assertThat(rows).hasSize(1);
+    var row = rows.get(0);
+    assertThat(row.getGroupId()).isEqualTo(AGENCY_ID);
+    assertThat(row.getDay()).isEqualTo(today);
+    assertThat(row.getHourOfDay().intValue()).isEqualTo(9);
+    assertThat(row.getTotal()).isEqualTo(1L);
+    assertThat(
+            underTest.countHourlyNewSessionsByAgency(
+                TENANT_ID, today.minusDays(2).atStartOfDay(), today.atStartOfDay()))
+        .as("the end of the range is exclusive")
+        .isEmpty();
+  }
+
   private void seedSingleSession(LocalDate day) {
+    seedSingleSession(day, null);
+  }
+
+  private void seedSingleSession(LocalDate day, Long agencyId) {
     var userId = "stats-it-user-" + TENANT_ID;
     entityManager
         .createNativeQuery(
@@ -107,6 +156,14 @@ class AdminStatisticsRepositoryMariaDbIT {
         .setParameter("userId", userId)
         .setParameter("createDate", LocalDateTime.of(day, java.time.LocalTime.of(9, 0)))
         .executeUpdate();
+
+    if (agencyId != null) {
+      entityManager
+          .createNativeQuery("UPDATE `session` SET `agency_id` = :agencyId WHERE `id` = :id")
+          .setParameter("agencyId", agencyId)
+          .setParameter("id", 999_000_001L)
+          .executeUpdate();
+    }
 
     entityManager.flush();
   }

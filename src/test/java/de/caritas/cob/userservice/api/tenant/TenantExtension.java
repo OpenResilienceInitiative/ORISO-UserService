@@ -67,6 +67,14 @@ class TenantExtension implements BeforeEachCallback, AfterEachCallback {
       doAnswer(call -> new RestrictedTenantDTO().id(call.getArgument(0)).subdomain("synthetic"))
           .when(tenants)
           .getRestrictedTenantData(anyLong());
+      doAnswer(
+              call ->
+                  new RestrictedTenantDTO()
+                      .id(call.getArgument(0))
+                      .active(true)
+                      .subdomain("synthetic"))
+          .when(tenants)
+          .getRestrictedTenantDataFresh(anyLong());
     }
   }
 

@@ -111,6 +111,33 @@ public class AccountInactivityService {
         .findFirst();
   }
 
+  /**
+   * Current lifecycle exclusions for an already admitted audience; missing legacy rows stay
+   * eligible.
+   */
+  public java.util.Set<String> inactiveAmong(java.util.Collection<String> identityIds) {
+    if (identityIds == null || identityIds.isEmpty()) return java.util.Set.of();
+    var ids =
+        identityIds.stream()
+            .filter(java.util.Objects::nonNull)
+            .filter(id -> !id.isBlank())
+            .distinct()
+            .toList();
+    var inactive = new java.util.HashSet<String>();
+    for (int offset = 0; offset < ids.size(); offset += 256) {
+      var chunk = ids.subList(offset, Math.min(offset + 256, ids.size()));
+      String placeholders = String.join(",", java.util.Collections.nCopies(chunk.size(), "?"));
+      inactive.addAll(
+          jdbc.queryForList(
+              "SELECT identity_id FROM account_inactivity WHERE status <> 'ACTIVE' AND identity_id IN ("
+                  + placeholders
+                  + ")",
+              String.class,
+              chunk.toArray()));
+    }
+    return inactive;
+  }
+
   public void recordActivity(String id, Instant activityAt) {
     admit(id, activityAt);
   }

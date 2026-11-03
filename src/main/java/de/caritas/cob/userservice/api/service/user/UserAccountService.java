@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.user;
 
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.NotificationsSettingsDTO;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -13,6 +14,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
+import de.caritas.cob.userservice.api.service.AskerIdentityPolicy;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
@@ -23,6 +25,7 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import java.time.LocalDateTime;
+import java.util.Objects;
 import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -37,6 +40,7 @@ import org.springframework.stereotype.Service;
 public class UserAccountService {
 
   private final @NonNull UserService userService;
+  private final @NonNull TenantService tenantService;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull AppointmentService appointmentService;
   private final @NonNull AuthenticatedUser authenticatedUser;
@@ -139,6 +143,11 @@ public class UserAccountService {
     var email = optionalEmail.orElseGet(() -> userHelper.getDummyEmail(userId));
     Optional<Consultant> consultantOpt = consultantService.getConsultant(userId);
     Optional<User> userOpt = userService.getUser(userId);
+    if (optionalEmail.isPresent()
+        && userOpt.isPresent()
+        && !optionalEmail.get().equalsIgnoreCase(Objects.toString(userOpt.get().getEmail(), ""))) {
+      AskerIdentityPolicy.requireEmailCollectionAllowed(tenantService, userOpt.get().getTenantId());
+    }
     LanguageCode notificationLanguage =
         userOpt
             .map(User::getLanguageCode)
@@ -269,27 +278,43 @@ public class UserAccountService {
   }
 
   private void ensureCurrentAccountIsWritable() {
-    this.userService.getUser(this.authenticatedUser.getUserId()).ifPresent(this::assertWritable);
+    String userId = this.authenticatedUser.getUserId();
+    // getUser filters deleteDate IS NULL, so on its own it can never return an account in a
+    // deletion lifecycle state — every branch of assertWritable(User) below would be unreachable.
+    // The soft-deleted account is exactly the one the safeguard exists to freeze, so fall back to
+    // the lookup that includes it.
+    this.userService
+        .getUser(userId)
+        .or(() -> this.userService.findDeletedById(userId))
+        .ifPresent(this::assertWritable);
+    // Same reasoning as for the user above: getConsultant filters deleteDate IS NULL, so the
+    // consultant in the safeguard window is only found by the lookup that includes deleted ones.
     this.consultantService
-        .getConsultant(this.authenticatedUser.getUserId())
+        .getConsultant(userId)
+        .or(() -> this.consultantService.findConsultantIncludingDeleted(userId))
         .ifPresent(this::assertWritable);
   }
 
   private void assertWritable(User user) {
-    if (user.getDeleteDate() == null) {
-      return;
-    }
-    if (user.getDeletionLifecycleState() == DeletionLifecycleState.READ_ONLY_SAFEGUARD) {
+    if (user.getDeleteDate() != null && isFrozen(user.getDeletionLifecycleState())) {
       throw new ForbiddenException("Account is in read-only safeguard mode.");
     }
   }
 
+  // The same frozen states as for an asker: a consultant claimed by the nightly purge
+  // (HARD_DELETE_IN_PROGRESS, then HARD_DELETE_PARTIAL_FAILURE on a failed run) must not write
+  // either.
   private void assertWritable(Consultant consultant) {
-    if (consultant.getDeleteDate() == null) {
-      return;
-    }
-    if (consultant.getDeletionLifecycleState() == DeletionLifecycleState.READ_ONLY_SAFEGUARD) {
+    if (consultant.getDeleteDate() != null && isFrozen(consultant.getDeletionLifecycleState())) {
       throw new ForbiddenException("Account is in read-only safeguard mode.");
     }
+  }
+
+  private static boolean isFrozen(DeletionLifecycleState state) {
+    return state == DeletionLifecycleState.READ_ONLY_SAFEGUARD
+        || state == DeletionLifecycleState.REACTIVATION_IN_PROGRESS
+        || state == DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED
+        || state == DeletionLifecycleState.HARD_DELETE_IN_PROGRESS
+        || state == DeletionLifecycleState.HARD_DELETE_PARTIAL_FAILURE;
   }
 }

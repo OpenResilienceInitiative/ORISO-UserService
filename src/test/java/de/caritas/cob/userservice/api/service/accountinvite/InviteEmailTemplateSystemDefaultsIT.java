@@ -210,7 +210,7 @@ class InviteEmailTemplateSystemDefaultsIT {
   // --- isolation: own Träger + platform, never another Träger ------------------------------
 
   @Test
-  void nonPlatformAdmins_Should_SeeExactlyThePlatformsAndTheirOwnTraegersTemplates()
+  void nonPlatformAdmins_Should_SeeExactlySystemDefaultsAndTheirOwnTraegersTemplates()
       throws Exception {
     runSystemDefaultsSeed();
     actAsPlatformAdmin();
@@ -222,10 +222,14 @@ class InviteEmailTemplateSystemDefaultsIT {
     // Counsellor invites: the one kind every admin role works with.
     List<Long> platformIds =
         templateRepository.findAll().stream()
-            .filter(t -> t.getTenantId() == null && t.getKind() == COUNSELLOR_INVITE)
+            .filter(
+                t ->
+                    t.getTenantId() == null
+                        && Boolean.TRUE.equals(t.getSystemDefault())
+                        && t.getKind() == COUNSELLOR_INVITE)
             .map(InviteEmailTemplate::getId)
             .toList();
-    assertThat(platformIds).contains(platform.getId()).hasSize(3);
+    assertThat(platformIds).doesNotContain(platform.getId()).hasSize(2);
 
     actAsTenantAdmin(TRAEGER_A);
     assertThat(idsOf(service.listTemplates(COUNSELLOR_INVITE)))

@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.chat;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -10,6 +11,7 @@ import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
@@ -27,7 +29,11 @@ import org.springframework.test.util.ReflectionTestUtils;
 @ExtendWith(MockitoExtension.class)
 class GroupChatConsultantAccessTest {
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
+
   @Mock private GroupChatParticipantRepository participants;
+  @Mock private InternalGroupChatRecipientScopeResolver scopes;
   @InjectMocks private GroupChatConsultantAccess access;
 
   @Test
@@ -180,6 +186,86 @@ class GroupChatConsultantAccessTest {
     assertThat(access.mayStartStopOrBan(series, consultant("colleague", 1L, 100L))).isTrue();
     assertThat(access.mayStartStopOrBan(series, consultant("foreign", 2L, 100L))).isFalse();
     assertThat(access.mayStartStopOrBan(series, consultant("elsewhere", 1L, 200L))).isFalse();
+  }
+
+  @Test
+  void aMembersOnlyChatIsOpenToItsMembersAndToNobodyElseWhateverTheScope() {
+    var owner = consultant("owner", 1L, 100L);
+    var chat = series(41L, owner, 100L);
+    chat.setMembersOnly(true);
+    when(membersOnlyChatAccess.concerns(chat)).thenReturn(true);
+    lenient().when(scopes.resolve(1L)).thenReturn(InternalGroupChatRecipientScope.PLATFORM);
+    var member = consultant("member", 1L, 100L);
+    var colleague = consultant("colleague", 1L, 100L);
+    when(participants.findBySeriesIdAndConsultantId(41L, "member"))
+        .thenReturn(Optional.of(participant(41L, "member", ParticipantRole.PARTICIPANT)));
+    when(participants.findBySeriesIdAndConsultantId(41L, "colleague")).thenReturn(Optional.empty());
+    when(participants.findBySeriesIdInAndConsultantId(List.of(41L), "colleague"))
+        .thenReturn(List.of());
+    when(participants.findBySeriesIdInAndConsultantId(List.of(41L), "member"))
+        .thenReturn(List.of(participant(41L, "member", ParticipantRole.PARTICIPANT)));
+
+    assertThat(access.mayAccess(chat, member)).isTrue();
+    assertThat(access.mayAccess(chat, colleague)).isFalse();
+    assertThat(access.mayModerate(chat, colleague)).isFalse();
+    assertThat(access.filterAccessible(List.of(chat), colleague)).isEmpty();
+    assertThat(access.filterAccessible(List.of(chat), member)).containsExactly(chat);
+  }
+
+  @Test
+  void theTraegerScopeDecidesWhoMaySeeAndJoinAnOrdinaryInternalChat() {
+    var owner = consultant("owner", 1L, 100L);
+    var chat = series(42L, owner, 100L);
+    var otherCentre = consultant("other-centre", 1L, 200L);
+    var otherTraeger = consultant("other-traeger", 2L, 300L);
+    when(participants.findBySeriesIdAndConsultantId(any(), any())).thenReturn(Optional.empty());
+
+    when(scopes.resolve(1L)).thenReturn(InternalGroupChatRecipientScope.AGENCY);
+    assertThat(access.mayAccess(chat, otherCentre)).isFalse();
+    assertThat(access.mayAccess(chat, otherTraeger)).isFalse();
+
+    when(scopes.resolve(1L)).thenReturn(InternalGroupChatRecipientScope.TENANT);
+    assertThat(access.mayAccess(chat, otherCentre)).isTrue();
+    assertThat(access.mayAccess(chat, otherTraeger)).isFalse();
+
+    when(scopes.resolve(1L)).thenReturn(InternalGroupChatRecipientScope.PLATFORM);
+    assertThat(access.mayAccess(chat, otherCentre)).isTrue();
+    assertThat(access.mayAccess(chat, otherTraeger)).isTrue();
+  }
+
+  @Test
+  void theRecipientScopeNeverWidensAConversationCircleOrAnyOtherClientFacingChat() {
+    var owner = consultant("owner", 1L, 100L);
+    var otherCentre = consultant("other-centre", 1L, 200L);
+    var otherTraeger = consultant("other-traeger", 2L, 300L);
+    var sameCentre = consultant("same-centre", 1L, 100L);
+    lenient().when(scopes.resolve(1L)).thenReturn(InternalGroupChatRecipientScope.PLATFORM);
+    when(participants.findBySeriesIdAndConsultantId(any(), any())).thenReturn(Optional.empty());
+    when(participants.findBySeriesIdInAndConsultantId(any(), any())).thenReturn(List.of());
+
+    for (var type :
+        List.of(
+            ConversationType.SELF_HELP,
+            ConversationType.AGENCY_COUNSELLING,
+            ConversationType.LIVE_CHAT)) {
+      var circle = series(50L, owner, 100L);
+      circle.setConversationType(type);
+      assertThat(access.mayAccess(circle, otherCentre)).as("%s other centre", type).isFalse();
+      assertThat(access.mayAccess(circle, otherTraeger)).as("%s other Traeger", type).isFalse();
+      assertThat(access.filterAccessible(List.of(circle), otherTraeger))
+          .as("%s list", type)
+          .isEmpty();
+      assertThat(access.mayAccess(circle, sameCentre)).as("%s own centre", type).isTrue();
+    }
+    // A legacy circle without a stored type is recognised by its repetition.
+    var legacyCircle = series(51L, owner, 100L);
+    legacyCircle.setRepetitive(true);
+    assertThat(access.mayAccess(legacyCircle, otherTraeger)).isFalse();
+    assertThat(access.mayAccess(legacyCircle, sameCentre)).isTrue();
+    // The internal chat itself is widened by the same scope.
+    var internal = series(52L, owner, 100L);
+    internal.setConversationType(ConversationType.INTERNAL_GROUP);
+    assertThat(access.mayAccess(internal, otherTraeger)).isTrue();
   }
 
   private static GroupChatParticipant participant(
