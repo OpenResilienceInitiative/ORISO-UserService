@@ -194,4 +194,41 @@ class AgencyInviteLinkControllerTest {
         .status("ACTIVE")
         .build();
   }
+
+  @Test
+  void reactivate_returnsOkWithLink() {
+    when(topicService.getAllTopicsMap()).thenReturn(Map.of());
+    when(agencyInviteLinkService.reactivate(5L)).thenReturn(sampleLink());
+
+    var response = controller.reactivate(5L);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertNotNull(response.getBody());
+    verify(agencyInviteLinkService).reactivate(5L);
+  }
+
+  @Test
+  void delete_returnsNoContent() {
+    var response = controller.delete(5L);
+
+    assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
+    verify(agencyInviteLinkService).delete(5L);
+  }
+
+  @Test
+  void reactivateAndDelete_keepTheSameAuthoritiesAsDeactivate() throws Exception {
+    String expected =
+        AgencyInviteLinkController.class
+            .getMethod("deactivate", Long.class)
+            .getAnnotation(PreAuthorize.class)
+            .value();
+    for (String name : List.of("reactivate", "delete")) {
+      assertEquals(
+          expected,
+          AgencyInviteLinkController.class
+              .getMethod(name, Long.class)
+              .getAnnotation(PreAuthorize.class)
+              .value());
+    }
+  }
 }

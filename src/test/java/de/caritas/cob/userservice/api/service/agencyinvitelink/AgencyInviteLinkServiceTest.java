@@ -784,4 +784,124 @@ class AgencyInviteLinkServiceTest {
 
     assertThatThrownBy(() -> service.deactivate(7L)).isInstanceOf(ForbiddenException.class);
   }
+
+  // --- reactivate / delete ---
+
+  private AgencyInviteLink expiringLink(String status, LocalDateTime expiresAt) {
+    var link = storedLink(status, "EXTERNAL_INBOUND", 1L, null);
+    link.setExpiresAt(expiresAt);
+    return link;
+  }
+
+  @Test
+  void reactivate_Should_SwitchDisabledLinkOnAndSetUpdateDate() {
+    var link = expiringLink("DISABLED", LocalDateTime.now().plusDays(1));
+    when(repository.findById(7L)).thenReturn(Optional.of(link));
+    when(repository.save(any(AgencyInviteLink.class))).thenAnswer(i -> i.getArgument(0));
+
+    var result = service.reactivate(7L);
+
+    assertThat(result.getStatus()).isEqualTo("ACTIVE");
+    assertThat(result.getUpdateDate()).isNotNull();
+    verify(repository).save(link);
+  }
+
+  @Test
+  void reactivate_Should_BeIdempotent_When_LinkIsAlreadyActive() {
+    when(repository.findById(7L)).thenReturn(Optional.of(expiringLink("ACTIVE", null)));
+
+    var result = service.reactivate(7L);
+
+    assertThat(result.getStatus()).isEqualTo("ACTIVE");
+    Mockito.verify(repository, Mockito.never()).save(any());
+  }
+
+  @Test
+  void reactivate_Should_ThrowConflict_When_ExpiryHasPassed() {
+    for (String status : List.of("DISABLED", "ACTIVE", "EXPIRED")) {
+      when(repository.findById(7L))
+          .thenReturn(Optional.of(expiringLink(status, LocalDateTime.now().minusMinutes(1))));
+
+      assertThatThrownBy(() -> service.reactivate(7L))
+          .isInstanceOf(
+              de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
+    }
+    Mockito.verify(repository, Mockito.never()).save(any());
+  }
+
+  @Test
+  void reactivate_Should_ThrowConflict_When_LinkWasUsedOrExpired() {
+    for (String status : List.of("USED", "EXPIRED")) {
+      when(repository.findById(7L)).thenReturn(Optional.of(expiringLink(status, null)));
+
+      assertThatThrownBy(() -> service.reactivate(7L))
+          .isInstanceOf(
+              de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
+    }
+    Mockito.verify(repository, Mockito.never()).save(any());
+  }
+
+  @Test
+  void reactivate_Should_ThrowNotFound_When_OtherTenantOrOtherKindOrMissing() {
+    when(repository.findById(7L))
+        .thenReturn(Optional.of(storedLink("DISABLED", "EXTERNAL_INBOUND", 2L, null)));
+    assertThatThrownBy(() -> service.reactivate(7L)).isInstanceOf(NotFoundException.class);
+
+    for (String kind : List.of("TENANT", "COUNSELLOR", "CALL")) {
+      when(repository.findById(7L)).thenReturn(Optional.of(storedLink("DISABLED", kind, 1L, null)));
+      assertThatThrownBy(() -> service.reactivate(7L)).isInstanceOf(NotFoundException.class);
+    }
+
+    when(repository.findById(7L)).thenReturn(Optional.empty());
+    assertThatThrownBy(() -> service.reactivate(7L)).isInstanceOf(NotFoundException.class);
+    Mockito.verify(repository, Mockito.never()).save(any());
+  }
+
+  @Test
+  void reactivate_Should_ThrowForbidden_When_AgencyAdminTargetsAnotherAgenciesLink() {
+    actAsAgencyAdminOfAgencyTen();
+    when(repository.findById(7L))
+        .thenReturn(Optional.of(storedLink("DISABLED", "EXTERNAL_INBOUND", 1L, 11L)));
+
+    assertThatThrownBy(() -> service.reactivate(7L)).isInstanceOf(ForbiddenException.class);
+    Mockito.verify(repository, Mockito.never()).save(any());
+  }
+
+  @Test
+  void delete_Should_RemoveExternalLinkOfAnyStatus() {
+    for (String status : List.of("ACTIVE", "DISABLED", "USED", "EXPIRED")) {
+      var link = storedLink(status, "EXTERNAL_INBOUND", 1L, null);
+      when(repository.findById(7L)).thenReturn(Optional.of(link));
+
+      service.delete(7L);
+
+      verify(repository).delete(link);
+    }
+  }
+
+  @Test
+  void delete_Should_ThrowNotFound_When_OtherTenantOrOtherKindOrMissing() {
+    when(repository.findById(7L))
+        .thenReturn(Optional.of(storedLink("ACTIVE", "EXTERNAL_INBOUND", 2L, null)));
+    assertThatThrownBy(() -> service.delete(7L)).isInstanceOf(NotFoundException.class);
+
+    for (String kind : List.of("TENANT", "COUNSELLOR", "CALL")) {
+      when(repository.findById(7L)).thenReturn(Optional.of(storedLink("ACTIVE", kind, 1L, null)));
+      assertThatThrownBy(() -> service.delete(7L)).isInstanceOf(NotFoundException.class);
+    }
+
+    when(repository.findById(7L)).thenReturn(Optional.empty());
+    assertThatThrownBy(() -> service.delete(7L)).isInstanceOf(NotFoundException.class);
+    Mockito.verify(repository, Mockito.never()).delete(any(AgencyInviteLink.class));
+  }
+
+  @Test
+  void delete_Should_ThrowForbidden_When_AgencyAdminTargetsAWholeTraegerLink() {
+    actAsAgencyAdminOfAgencyTen();
+    when(repository.findById(7L))
+        .thenReturn(Optional.of(storedLink("ACTIVE", "EXTERNAL_INBOUND", 1L, null)));
+
+    assertThatThrownBy(() -> service.delete(7L)).isInstanceOf(ForbiddenException.class);
+    Mockito.verify(repository, Mockito.never()).delete(any(AgencyInviteLink.class));
+  }
 }

@@ -220,6 +220,52 @@ public class AgencyInviteLinkService {
   }
 
   /**
+   * Switch a disabled external link back on. Only {@code EXTERNAL_INBOUND} links of the caller's
+   * Träger exist for this route; any other link reads as not found. A link whose {@code expiresAt}
+   * has passed stays dead (the list and redeem routes derive EXPIRED from it), so it is refused
+   * even while its stored status still says ACTIVE or DISABLED.
+   */
+  @Transactional
+  public AgencyInviteLink reactivate(Long linkId) {
+    AgencyInviteLink link = findExternalLinkOfCallerTenant(linkId);
+    adminScope.assertMay(Target.placedIn(link.getTenantId(), link.getAgencyId()));
+
+    if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now())) {
+      throw new ConflictException("An expired invite link cannot be reactivated");
+    }
+    if (InviteLinkStatus.ACTIVE.name().equals(link.getStatus())) {
+      return link;
+    }
+    if (!InviteLinkStatus.DISABLED.name().equals(link.getStatus())) {
+      throw new ConflictException("Only a deactivated invite link can be reactivated");
+    }
+    link.setStatus(InviteLinkStatus.ACTIVE.name());
+    link.setUpdateDate(LocalDateTime.now());
+    return repository.save(link);
+  }
+
+  /**
+   * Hard-delete an external link of any status. Nothing references such a row by foreign key, and
+   * no code reads it again for a conversation that started from it (redeem of a live-chat link
+   * creates its own session and stores no link id).
+   */
+  @Transactional
+  public void delete(Long linkId) {
+    AgencyInviteLink link = findExternalLinkOfCallerTenant(linkId);
+    adminScope.assertMay(Target.placedIn(link.getTenantId(), link.getAgencyId()));
+    repository.delete(link);
+  }
+
+  private AgencyInviteLink findExternalLinkOfCallerTenant(Long linkId) {
+    Long callerTenantId = resolveCallerTenantId();
+    return repository
+        .findById(linkId)
+        .filter(l -> Objects.equals(l.getTenantId(), callerTenantId))
+        .filter(l -> InviteLinkKind.EXTERNAL_INBOUND.name().equals(l.getLinkKind()))
+        .orElseThrow(() -> new NotFoundException("Invite link %s not found", linkId));
+  }
+
+  /**
    * Public entry metadata of any link (the {@code /context} route): a call share link (#1487) has
    * its own, smaller shape.
    */
