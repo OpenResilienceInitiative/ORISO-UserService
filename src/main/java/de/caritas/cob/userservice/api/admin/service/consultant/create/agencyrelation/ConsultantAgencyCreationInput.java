@@ -19,6 +19,15 @@ public interface ConsultantAgencyCreationInput {
     return Set.of(getAgencyId());
   }
 
+  /**
+   * Whether the caller writes the identity roles itself, later (see {@code identityRolesOf}). Used
+   * by a caller that has a refusable step of its own and wants the roles to follow it, so a refusal
+   * leaves the identity provider as it was.
+   */
+  default boolean defersIdentityRoles() {
+    return false;
+  }
+
   default LocalDateTime getCreateDate() {
     return nowInUtc();
   }

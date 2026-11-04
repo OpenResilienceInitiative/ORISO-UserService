@@ -155,7 +155,7 @@ class CreateSessionFacadeTest {
               .thenThrow(new InternalServerErrorException(MESSAGE));
           doThrow(INTERNAL_SERVER_ERROR_EXCEPTION)
               .when(sessionDataService)
-              .saveSessionData(any(Session.class), any());
+              .saveInitialSessionData(any(Session.class), any(), any());
 
           createSessionFacade.createUserSession(
               USER_DTO_SUCHT, USER, CONSULTING_TYPE_SETTINGS_SUCHT, validationConstraints);
@@ -179,7 +179,7 @@ class CreateSessionFacadeTest {
               .thenReturn(SESSION_WITHOUT_CONSULTANT);
           doThrow(INTERNAL_SERVER_ERROR_EXCEPTION)
               .when(sessionDataService)
-              .saveSessionData(any(Session.class), any());
+              .saveInitialSessionData(any(Session.class), any(), any());
 
           createSessionFacade.createUserSession(
               USER_DTO_SUCHT, USER, CONSULTING_TYPE_SETTINGS_SUCHT, validationConstraints);
@@ -233,7 +233,7 @@ class CreateSessionFacadeTest {
             USER_DTO_SUCHT, USER, CONSULTING_TYPE_SETTINGS_SUCHT, validationConstraints);
 
     assertEquals(SESSION_WITHOUT_CONSULTANT.getId(), result);
-    verify(sessionDataService, times(1)).saveSessionData(any(Session.class), any());
+    verify(sessionDataService, times(1)).saveInitialSessionData(any(Session.class), any(), any());
   }
 
   @Test
@@ -272,6 +272,57 @@ class CreateSessionFacadeTest {
 
     assertThat(result.getStatus(), is(HttpStatus.CREATED));
     assertThat(result.getSessionId(), is(session.getId()));
+  }
+
+  @Test
+  public void createDirectUserSession_Should_returnTheProvisionedRoom_When_theSessionIsNew() {
+    var agencyDTO = new EasyRandom().nextObject(AgencyDTO.class);
+    agencyDTO.setTenantId(41L);
+    var session = new EasyRandom().nextObject(Session.class);
+    session.setMatrixRoomId(null);
+    when(agencyVerifier.getVerifiedAgency(anyLong(), anyInt())).thenReturn(agencyDTO);
+    when(sessionService.findSessionByConsultantAndUserAndConsultingType(any(), any(), any()))
+        .thenReturn(Optional.empty());
+    when(sessionService.initializeDirectSession(any(), any(), any(), anyBoolean()))
+        .thenReturn(session);
+    when(sessionService.saveSession(session)).thenReturn(session);
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              session.setMatrixRoomId("!new:example");
+              return null;
+            })
+        .when(directSessionMatrixRoomService)
+        .provisionRoomForDirectSession(org.mockito.ArgumentMatchers.eq(session), any());
+
+    var result =
+        createSessionFacade.createDirectUserSession(
+            null, mock(UserDTO.class), null, mock(ExtendedConsultingTypeResponseDTO.class));
+
+    assertThat(result.getMatrixRoomId(), is("!new:example"));
+  }
+
+  /** A first visit whose room provisioning failed is repaired by the next visit. */
+  @Test
+  public void
+      createDirectUserSession_Should_provisionTheRoomAgain_When_theExistingSessionHasNone() {
+    var session = new EasyRandom().nextObject(Session.class);
+    session.setMatrixRoomId(null);
+    when(sessionService.findSessionByConsultantAndUserAndConsultingType(any(), any(), any()))
+        .thenReturn(Optional.of(session));
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              session.setMatrixRoomId("!repaired:example");
+              return null;
+            })
+        .when(directSessionMatrixRoomService)
+        .provisionRoomForDirectSession(org.mockito.ArgumentMatchers.eq(session), any());
+
+    var result =
+        createSessionFacade.createDirectUserSession(
+            null, null, null, new ExtendedConsultingTypeResponseDTO());
+
+    assertThat(result.getStatus(), is(HttpStatus.CONFLICT));
+    assertThat(result.getMatrixRoomId(), is("!repaired:example"));
   }
 
   @Test

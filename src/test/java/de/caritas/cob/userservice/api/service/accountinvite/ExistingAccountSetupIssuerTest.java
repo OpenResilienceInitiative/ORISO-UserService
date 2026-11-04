@@ -118,7 +118,7 @@ class ExistingAccountSetupIssuerTest {
 
     issuer.reissue(AccountInviteTargetRole.TENANT_ADMIN, "admin-11");
 
-    verify(adminScope).assertMay(AdminScope.Target.admin("admin-11"));
+    verify(adminScope).assertMay(AdminScope.Target.managedAdmin("admin-11"));
     verify(confirmation, org.mockito.Mockito.times(2))
         .requireSameCurrentIdentity(
             "admin-11",
@@ -159,7 +159,7 @@ class ExistingAccountSetupIssuerTest {
     org.assertj.core.api.Assertions.assertThatThrownBy(
             () -> issuer.reissue(AccountInviteTargetRole.TENANT_ADMIN, "admin-11"))
         .isInstanceOf(ConflictException.class);
-    verify(adminScope).assertMay(AdminScope.Target.admin("admin-11"));
+    verify(adminScope).assertMay(AdminScope.Target.managedAdmin("admin-11"));
     verify(invites, never()).findByActiveSetupIdentityKey(any());
     verify(invites, never()).saveAndFlush(any());
   }

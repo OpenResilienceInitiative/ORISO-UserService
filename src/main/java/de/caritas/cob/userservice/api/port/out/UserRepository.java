@@ -124,6 +124,16 @@ public interface UserRepository extends CrudRepository<User, String> {
    */
   @Query(
       "SELECT u.userId FROM User u WHERE u.temporaryAccount = true AND u.deleteDate IS NULL"
-          + " AND u.createDate < ?1")
+          + " AND u.temporaryAccountSnapshot.medium IS NULL AND u.createDate < ?1")
   List<String> findTemporaryAccountIdsCreatedBefore(LocalDateTime createdBefore);
+
+  /**
+   * Direct-link temporary accounts (ADR-029, #1476) whose identities still exist. Their own
+   * snapshotted lifetimes decide when they go, not {@code user.temporary.deleteWorkflow.maxAge}.
+   */
+  @Query(
+      "SELECT u.userId FROM User u WHERE u.temporaryAccount = true AND u.deleteDate IS NULL"
+          + " AND u.temporaryAccountSnapshot.medium IS NOT NULL"
+          + " AND u.temporaryAccountSnapshot.deletedAt IS NULL")
+  List<String> findLiveDirectLinkTemporaryAccountIds();
 }

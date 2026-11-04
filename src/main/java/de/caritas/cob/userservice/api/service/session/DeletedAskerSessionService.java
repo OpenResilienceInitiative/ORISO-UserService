@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.session;
 import de.caritas.cob.userservice.api.model.DeletedAskerSession;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.DeletedAskerSessionRepository;
+import de.caritas.cob.userservice.api.port.out.EventNotificationRepository;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -40,6 +41,7 @@ public class DeletedAskerSessionService {
   public static final String EVENT_TYPE = "session.asker_deleted";
 
   private final @NonNull DeletedAskerSessionRepository deletedAskerSessionRepository;
+  private final @NonNull EventNotificationRepository eventNotificationRepository;
   private final @NonNull EventNotificationService eventNotificationService;
   private final @NonNull PlatformTransactionManager transactionManager;
 
@@ -162,9 +164,11 @@ public class DeletedAskerSessionService {
     if (retentionDays <= 0) {
       return 0;
     }
-    int purged =
-        deletedAskerSessionRepository.deleteDeletedBefore(
-            LocalDateTime.now(ZoneOffset.UTC).minusDays(retentionDays));
+    var cutoff = LocalDateTime.now(ZoneOffset.UTC).minusDays(retentionDays);
+    int purged = deletedAskerSessionRepository.deleteDeletedBefore(cutoff);
+    // EventNotification.createDate uses the server-local clock, unlike deletedAt.
+    eventNotificationRepository.deleteByEventTypeCreatedBefore(
+        EVENT_TYPE, LocalDateTime.now().minusDays(retentionDays));
     if (purged > 0) {
       log.info("Purged {} deleted-asker placeholders older than {} days", purged, retentionDays);
     }

@@ -4,9 +4,12 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
@@ -40,6 +43,8 @@ public class SupervisorAddedEmailNotificationService {
   private final @NonNull TenantTemplateSupplier tenantTemplateSupplier;
   private final @NonNull OrisoEmailRenderer emailRenderer;
   private final @NonNull OrisoEmailBrand emailBrand;
+  private final @NonNull TenantService tenantPolicies;
+  private final @NonNull SessionRepository sessions;
 
   @Value("${system.notification.frontend.base-url}")
   private String publicFrontendBaseUrl;
@@ -54,6 +59,8 @@ public class SupervisorAddedEmailNotificationService {
       Long sessionId,
       TenantData tenantData,
       String accessToken) {
+    var session = loadEmailableSession(sessionId);
+    if (session == null) return;
     Long tenantId =
         tenantData != null ? tenantData.getTenantId() : resolveTenantId(sessionUser, supervisor);
     var route = resolveRoute(tenantId, TenantSystemEmailDelivery.Purpose.SUPERVISOR_ADDED);
@@ -64,7 +71,7 @@ public class SupervisorAddedEmailNotificationService {
     String consultantChatUrl = buildSessionUrl(appUrl, sessionId, true);
 
     User recipientUser = resolveUserWithEmail(sessionUser);
-    if (hasValidUserEmail(recipientUser)) {
+    if (hasValidUserEmail(recipientUser) && traegerAllowsAdviceSeekerEmail(tenantId, session)) {
       // Neither the case reference nor a session-specific route reaches the advice seeker's
       // copy: both name what happened as precisely as the anonymised statement text refuses to.
       renderAndSendTeamChange(
@@ -107,6 +114,8 @@ public class SupervisorAddedEmailNotificationService {
       Long sessionId,
       TenantData tenantData,
       String accessToken) {
+    var session = loadEmailableSession(sessionId);
+    if (session == null) return;
     Long tenantId =
         tenantData != null ? tenantData.getTenantId() : resolveTenantId(sessionUser, supervisor);
     var route = resolveRoute(tenantId, TenantSystemEmailDelivery.Purpose.SUPERVISOR_REMOVED);
@@ -117,7 +126,7 @@ public class SupervisorAddedEmailNotificationService {
     String consultantChatUrl = buildSessionUrl(appUrl, sessionId, true);
 
     User recipientUser = resolveUserWithEmail(sessionUser);
-    if (hasValidUserEmail(recipientUser)) {
+    if (hasValidUserEmail(recipientUser) && traegerAllowsAdviceSeekerEmail(tenantId, session)) {
       renderAndSendTeamChange(
           tenantId,
           route,
@@ -151,6 +160,64 @@ public class SupervisorAddedEmailNotificationService {
     }
   }
 
+  /**
+   * FE#1876: tells the counsellor of the existing conversation that the asker started a second
+   * accepted conversation on the same topic. Reuses the team-change card and the NEW_MESSAGE route,
+   * and honours the counsellor's chat-message mail preference. The statement names neither the
+   * topic nor the new centre.
+   */
+  @Async
+  public void notifyTopicDuplicateStarted(
+      Consultant counsellor, Long existingSessionId, TenantData tenantData) {
+    if (loadEmailableSession(existingSessionId) == null
+        || !hasValidConsultantEmail(counsellor)
+        || !wantsChatMessageMails(counsellor)) {
+      return;
+    }
+    Long tenantId = tenantData != null ? tenantData.getTenantId() : counsellor.getTenantId();
+    var route = resolveRoute(tenantId, TenantSystemEmailDelivery.Purpose.NEW_MESSAGE);
+    if (route == null) {
+      return;
+    }
+    try {
+      String appUrl = resolveAppFrontendUrlSafely(tenantData, tenantId);
+      String chatUrl = buildSessionUrl(appUrl, existingSessionId, true);
+      renderAndSendTeamChange(
+          tenantId,
+          route,
+          TenantSystemEmailDelivery.Purpose.NEW_MESSAGE,
+          counsellor.getEmail(),
+          "counsellor",
+          () -> {
+            LanguageCode language = languageCodeOf(counsellor);
+            return renderTeamChange(
+                language,
+                staffStatementTopicDuplicateStarted(language),
+                appUrl,
+                chatUrl,
+                existingSessionId,
+                tenantId);
+          });
+    } catch (RuntimeException failure) {
+      log.warn(
+          "Skipping topic duplicate mail for session {} ({})",
+          existingSessionId,
+          failure.getClass().getSimpleName());
+    }
+  }
+
+  // The counsellor's new-message mail rule (AdviceSeekerReplyEmailService): never saved = on.
+  private boolean wantsChatMessageMails(Consultant counsellor) {
+    return counsellor.getDeleteDate() == null
+        && !Boolean.FALSE.equals(counsellor.getNotifyNewChatMessageFromAdviceSeeker())
+        && (isBlank(counsellor.getNotificationsSettings())
+            || (counsellor.isNotificationsEnabled()
+                && Boolean.TRUE.equals(
+                    de.caritas.cob.userservice.api.helper.EmailNotificationUtils
+                        .deserializeNotificationSettingsDTOOrDefaultIfNull(counsellor)
+                        .getNewChatMessageNotificationEnabled())));
+  }
+
   @Async
   public void notifyEmailAddressChanged(
       String username,
@@ -174,6 +241,40 @@ public class SupervisorAddedEmailNotificationService {
         TenantSystemEmailDelivery.Purpose.EMAIL_ADDRESS_CHANGED,
         newEmail,
         renderEmailChanged(username, appUrl, tenantId, tone));
+  }
+
+  private Session loadEmailableSession(Long sessionId) {
+    if (sessionId == null) return null;
+    try {
+      return sessions
+          .findById(sessionId)
+          .filter(session -> !AskerNotificationChannelPolicy.isLiveChat(session))
+          .orElse(null);
+    } catch (RuntimeException unavailable) {
+      log.warn(
+          "Team-change email session lookup failed ({})", unavailable.getClass().getSimpleName());
+      return null;
+    }
+  }
+
+  /**
+   * Frontend#1979 (PO decision 2026-11-01): the advice seeker's team-change copy follows Admin >
+   * Berechtigungen like every other advice-seeker mail.
+   */
+  private boolean traegerAllowsAdviceSeekerEmail(Long tenantId, Session session) {
+    try {
+      var tenant = tenantPolicies.getRestrictedTenantDataFresh(tenantId);
+      if (tenant == null) {
+        log.info("Team-change mail to the advice seeker skipped: e-mail policy unavailable");
+        return false;
+      }
+      return AskerNotificationChannelPolicy.emailAllowed(session, tenant.getSettings());
+    } catch (RuntimeException unavailable) {
+      log.warn(
+          "Team-change mail to the advice seeker skipped: e-mail policy lookup failed ({})",
+          unavailable.getClass().getSimpleName());
+      return false;
+    }
   }
 
   private Long resolveTenantId(User sessionUser, Consultant supervisor) {
@@ -442,6 +543,27 @@ public class SupervisorAddedEmailNotificationService {
       case RU -> "Вы добавлены к этому делу в качестве консультанта-супервизора.";
       case TI -> "ከም ተቆጻጻሪ ኣማኻሪ ናብዚ ጉዳይ ተወሲኽኩም ኣለኹም።";
       case TR -> "Bu vakaya süpervizör danışman olarak eklendiniz.";
+    };
+  }
+
+  String staffStatementTopicDuplicateStarted(LanguageCode languageCode) {
+    return switch (OrisoEmailRenderer.Tone.of(languageCode)) {
+      case DE_FORMAL, DE_INFORMAL ->
+          "Zum Thema dieses Vorgangs wurde eine weitere Beratung begonnen. Bitte klären Sie"
+              + " gemeinsam, welche Beratung weitergeführt wird.";
+      case EN ->
+          "Another counselling on the topic of this case has started. Please agree together"
+              + " which one continues.";
+      case FR ->
+          "Un autre accompagnement sur le thème de ce dossier a commencé. Veuillez convenir"
+              + " ensemble lequel se poursuit.";
+      case RU ->
+          "По теме этого дела началась ещё одна консультация. Пожалуйста, договоритесь,"
+              + " какая из них будет продолжена.";
+      case TI -> "ብዛዕባ ኣርእስቲ እዚ ጉዳይ ካልእ ምኽሪ ተጀሚሩ ኣሎ። በጃኹም የናይ መን ከም ዝቕጽል ብሓባር ተሰማምዑ።";
+      case TR ->
+          "Bu vakanın konusunda başka bir danışmanlık başladı. Lütfen hangisinin devam edeceğini"
+              + " birlikte kararlaştırın.";
     };
   }
 

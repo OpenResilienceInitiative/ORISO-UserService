@@ -83,7 +83,7 @@ public class TenantAdminUserService {
   public AdminResponseDTO updateTenantAdmin(
       final String adminId, final UpdateTenantAdminDTO updateTenantAdminDTO) {
     validateUpdateAdmin(updateTenantAdminDTO);
-    adminScope.assertMay(Target.admin(adminId));
+    adminScope.assertMay(Target.managedAdmin(adminId));
     final Admin updatedAdmin = updateAdminService.updateTenantAdmin(adminId, updateTenantAdminDTO);
     var responseDTO =
         AdminResponseDTOBuilder.getInstance(updatedAdmin).buildAgencyAdminResponseDTO();
@@ -99,7 +99,7 @@ public class TenantAdminUserService {
   }
 
   public void deleteTenantAdmin(final String adminId) {
-    adminScope.assertMay(Target.admin(adminId));
+    adminScope.assertMay(Target.managedAdmin(adminId));
     this.deleteAdminService.deleteTenantAdmin(adminId);
   }
 
@@ -174,6 +174,7 @@ public class TenantAdminUserService {
   }
 
   public AdminResponseDTO patchTenantAdmin(String adminId, PatchAdminDTO patchAdminDTO) {
+    // Only reached from the caller's own profile (PATCH /useradmin/data), which stays editable.
     adminScope.assertMay(Target.admin(adminId));
     final Admin updatedAdmin = updateAdminService.patchTenantAdmin(adminId, patchAdminDTO);
     var responseDTO =

@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.port.out;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import de.caritas.cob.userservice.api.model.DeletedAskerSession;
+import de.caritas.cob.userservice.api.model.EventNotification;
 import java.time.LocalDateTime;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,6 +21,7 @@ class DeletedAskerSessionRepositoryIT {
   private static final LocalDateTime NOW = LocalDateTime.of(2026, 10, 29, 12, 0);
 
   @Autowired private DeletedAskerSessionRepository underTest;
+  @Autowired private EventNotificationRepository notifications;
 
   @Test
   void findsOnlyTheCounsellorsOwnPlaceholdersInsideTheWindow_newestFirst() {
@@ -52,6 +54,34 @@ class DeletedAskerSessionRepositoryIT {
 
     assertThat(underTest.existsByConsultantIdAndFormerSessionId("consultant-1", 1L)).isTrue();
     assertThat(underTest.existsByConsultantIdAndFormerSessionId("consultant-2", 1L)).isFalse();
+  }
+
+  @Test
+  void purgeDeletedAskerEventsRemovesReadAndUnreadButKeepsOtherEvents() {
+    saveEvent("session.asker_deleted", NOW.minusDays(31), NOW.minusDays(1));
+    saveEvent("session.asker_deleted", NOW.minusDays(31), null);
+    saveEvent("session.asker_deleted", NOW.minusDays(29), null);
+    saveEvent("other.event", NOW.minusDays(31), null);
+
+    assertThat(
+            notifications.deleteByEventTypeCreatedBefore(
+                "session.asker_deleted", NOW.minusDays(30)))
+        .isEqualTo(2);
+    assertThat(notifications.findAll())
+        .extracting(EventNotification::getEventType)
+        .containsExactlyInAnyOrder("session.asker_deleted", "other.event");
+  }
+
+  private void saveEvent(String type, LocalDateTime created, LocalDateTime read) {
+    notifications.save(
+        EventNotification.builder()
+            .recipientUserId("synthetic-counsellor")
+            .eventType(type)
+            .category("SYSTEM")
+            .title("Synthetic")
+            .createDate(created)
+            .readDate(read)
+            .build());
   }
 
   private void save(String consultantId, Long formerSessionId, LocalDateTime deletedAt) {

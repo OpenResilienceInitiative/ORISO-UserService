@@ -25,6 +25,7 @@ public class MatrixCallInviteNotificationService {
   private final EventNotificationService notifications;
   private final MatrixCallBindingService callBindings;
   private final MatrixCallLifecycleService lifecycle;
+  private final MatrixCallGuestService callGuests;
 
   public boolean handleMediaRoom(String room, Map<String, Object> roomData) {
     return lifecycle.handleRoom(room, roomData);
@@ -51,6 +52,10 @@ public class MatrixCallInviteNotificationService {
       lifecycle.restoreObservation(room);
     }
     for (String room : callBindings.expiredMediaRooms(System.currentTimeMillis())) {
+      lifecycle.handleRoom(room, Map.of());
+    }
+    // US#1477: an ended call can still hold a guest whose removal failed; retry without an event.
+    for (String room : callGuests.endedRoomsWithOutstandingGuests()) {
       lifecycle.handleRoom(room, Map.of());
     }
   }

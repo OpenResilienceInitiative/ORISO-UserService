@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.HttpTe
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.IpPrivacyHeaderFilter;
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.StatelessCsrfFilter;
 import de.caritas.cob.userservice.api.config.CsrfSecurityProperties;
+import de.caritas.cob.userservice.api.model.PublicSlugFormat;
 import java.math.BigDecimal;
 import java.util.Collection;
 import java.util.HashSet;
@@ -48,16 +49,19 @@ public class SecurityConfig {
       "\\b[0-9a-f]{8}\\b-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-\\b[0-9a-f]{12}\\b";
 
   /**
-   * A public consultant id is either a UUID or a public slug (lowercase words joined by single
-   * hyphens). The negative lookahead keeps the sibling literal routes under {@code
-   * /users/consultants/*} (search, absences, import, sessions, languages) out of the permitAll
-   * match — they carry their own role rules below and are also seeded as reserved slugs. Only
-   * non-capturing groups: Spring's PathPattern rejects capture groups in {var:regex} constraints.
+   * A public consultant id is either a UUID or a public slug ({@link PublicSlugFormat}: lowercase
+   * letters and digits joined by single hyphens). The negative lookahead keeps the sibling literal
+   * routes under {@code /users/consultants/*} (search, absences, import, sessions, languages) out
+   * of the permitAll match — they carry their own role rules below and are also seeded as reserved
+   * slugs. Only non-capturing groups: Spring's PathPattern rejects capture groups in {var:regex}
+   * constraints.
    */
   private static final String PUBLIC_CONSULTANT_ID_PATTERN =
       "(?:"
           + UUID_PATTERN
-          + ")|(?:(?!(?:search|absences|import|sessions|languages)$)[a-z]+(?:-[a-z]+)*)";
+          + ")|(?:(?!(?:search|absences|import|sessions|languages)$)"
+          + PublicSlugFormat.REGEX
+          + ")";
 
   public static final String APPOINTMENTS_APPOINTMENT_ID = "/appointments/{appointmentId:";
 
@@ -320,6 +324,21 @@ public class SecurityConfig {
                     RESTRICTED_AGENCY_ADMIN)
                 .requestMatchers(HttpMethod.GET, APPOINTMENTS_APPOINTMENT_ID + UUID_PATTERN + "}")
                 .permitAll()
+                // Call share links (#1487), ahead of /matrix/**: guests join, counsellors manage;
+                // membership of the call is checked in the service.
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/matrix/calls/share-links/*/join",
+                    "/service/matrix/calls/share-links/*/join")
+                .hasAuthority(USER_DEFAULT)
+                .requestMatchers(
+                    "/matrix/calls/share-links",
+                    "/service/matrix/calls/share-links",
+                    "/matrix/calls/share-links/{linkId:[0-9]+}",
+                    "/service/matrix/calls/share-links/{linkId:[0-9]+}",
+                    "/matrix/calls/share-links/{linkId:[0-9]+}/guests/remove",
+                    "/service/matrix/calls/share-links/{linkId:[0-9]+}/guests/remove")
+                .hasAuthority(CONSULTANT_DEFAULT)
                 .requestMatchers(
                     "/users/email",
                     "/users/drafts",
@@ -353,6 +372,11 @@ public class SecurityConfig {
                 .access(this::isPlatformAdmin)
                 .requestMatchers("/users/system-notification-emails/test")
                 .access(this::isPlatformAdmin)
+                // Temporary-account lifetimes and message retention (ADR-029, #1476).
+                .requestMatchers(
+                    "/users/admin/temporary-account-settings",
+                    "/service/users/admin/temporary-account-settings")
+                .access(this::isPlatformAdmin)
                 .requestMatchers(
                     "/users/admin/service-notices/drafts",
                     "/users/admin/service-notices/drafts/**",
@@ -375,6 +399,41 @@ public class SecurityConfig {
                     USER_DEFAULT,
                     CONSULTANT_DEFAULT,
                     RESTRICTED_AGENCY_ADMIN)
+                // The caller's own direct-link temporary account (#1476).
+                .requestMatchers(
+                    "/users/temporary-account",
+                    "/users/temporary-account/message-retention",
+                    "/service/users/temporary-account",
+                    "/service/users/temporary-account/message-retention")
+                .hasAuthority(USER_DEFAULT)
+                // Counsellor direct links (#1475): ownership is checked in the service.
+                .requestMatchers(
+                    "/users/call-knocks/mine",
+                    "/service/users/call-knocks/mine",
+                    "/users/call-knocks/mine/{knockId:[0-9]+}",
+                    "/service/users/call-knocks/mine/{knockId:[0-9]+}")
+                .hasAuthority(USER_DEFAULT)
+                .requestMatchers(
+                    "/users/call-knocks",
+                    "/service/users/call-knocks",
+                    "/users/call-knocks/admit-all",
+                    "/service/users/call-knocks/admit-all",
+                    "/users/call-knocks/{knockId:[0-9]+}/admit",
+                    "/service/users/call-knocks/{knockId:[0-9]+}/admit",
+                    "/users/call-knocks/{knockId:[0-9]+}/decline",
+                    "/service/users/call-knocks/{knockId:[0-9]+}/decline")
+                .hasAuthority(CONSULTANT_DEFAULT)
+                .requestMatchers(
+                    "/users/directlinks",
+                    "/service/users/directlinks",
+                    "/users/directlinks/{linkId:[0-9]+}",
+                    "/service/users/directlinks/{linkId:[0-9]+}")
+                .hasAuthority(CONSULTANT_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/users/invitelinks/*/conversations",
+                    "/service/users/invitelinks/*/conversations")
+                .hasAuthority(USER_DEFAULT)
                 .requestMatchers("/users/statistics/registration")
                 .hasAnyAuthority(SINGLE_TENANT_ADMIN, TENANT_ADMIN)
                 .requestMatchers(
@@ -386,6 +445,10 @@ public class SecurityConfig {
                     HttpMethod.POST,
                     "/users/sessions/{sessionId:[0-9]+}/contact-sheet-email",
                     "/service/users/sessions/{sessionId:[0-9]+}/contact-sheet-email")
+                .hasAnyAuthority(USER_DEFAULT, ANONYMOUS_DEFAULT)
+                // Anonymous live-chat owners set the same session-scoped alias as registered
+                // askers. SessionDataService checks owner/session access before any mutation.
+                .requestMatchers(HttpMethod.PUT, "/users/sessions/{sessionId:[0-9]+}/data")
                 .hasAnyAuthority(USER_DEFAULT, ANONYMOUS_DEFAULT)
                 .requestMatchers(
                     HttpMethod.GET, "/users/sessions/{sessionId:[0-9]+}/enquiry/permission")
@@ -405,6 +468,18 @@ public class SecurityConfig {
                     "/users/sessions/{sessionId:[0-9]+}/supervision/opt-out",
                     "/service/users/sessions/{sessionId:[0-9]+}/supervision/opt-out")
                 .hasAuthority(USER_DEFAULT)
+                // FE#1876 S6: ownership and duplicate state are checked in SessionArchiveService.
+                .requestMatchers(
+                    HttpMethod.PUT,
+                    "/users/askers/sessions/{sessionId:[0-9]+}/end-duplicate",
+                    "/service/users/askers/sessions/{sessionId:[0-9]+}/end-duplicate")
+                .hasAuthority(USER_DEFAULT)
+                // FE#1876 S2: assignment and state are checked in the recommendation service.
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/users/sessions/{sessionId:[0-9]+}/further-counselling-recommendation",
+                    "/service/users/sessions/{sessionId:[0-9]+}/further-counselling-recommendation")
+                .hasAuthority(CONSULTANT_DEFAULT)
                 /* Gate 2 consent pointer (ADR-022 decision 2). Anonymous help-seekers are the
                 main case — they hold ANONYMOUS_DEFAULT, not USER_DEFAULT — but a registered
                 help-seeker passes the same gate in the room. Ownership of the session is
@@ -456,8 +531,12 @@ public class SecurityConfig {
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover/recipients",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/recipient-decision",
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/recipient-decision",
+                    "/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/withdraw",
+                    "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/withdraw",
                     "/users/chat-series/**",
                     "/service/users/chat-series/**",
+                    "/users/agencies/{agencyId:[0-9]+}/admin-contacts",
+                    "/service/users/agencies/{agencyId:[0-9]+}/admin-contacts",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover",
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover/extend",
@@ -487,7 +566,10 @@ public class SecurityConfig {
                 .requestMatchers("/users/messages/key")
                 .hasAuthority(TECHNICAL_DEFAULT)
                 .requestMatchers(
-                    "/users/chat/new", "/users/chat/v2/new", "/users/chat/internal-subset")
+                    "/users/chat/new",
+                    "/users/chat/v2/new",
+                    "/users/chat/internal-subset",
+                    "/users/chat/internal-subset/recipients")
                 .hasAuthority(CREATE_NEW_CHAT)
                 .requestMatchers("/users/chat/{chatId:[0-9]+}/start")
                 .hasAuthority(START_CHAT)
@@ -541,6 +623,13 @@ public class SecurityConfig {
                     HttpMethod.PUT,
                     "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/agencies")
                 .hasAnyAuthority(CONSULTANT_UPDATE, TECHNICAL_DEFAULT)
+                // Moving a counsellor to another Träger crosses the boundary between two Träger:
+                // platform admin only (tenant 0 and both admin roles), not even a Träger admin.
+                .requestMatchers(
+                    HttpMethod.PUT,
+                    "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/tenant",
+                    "/service/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/tenant")
+                .access(this::isPlatformAdmin)
                 // Repairing a missing chat identity changes the consultant, so it follows the
                 // consultant-update authority rather than the /useradmin/** catch-all, which only
                 // a user admin passes.
@@ -559,6 +648,16 @@ public class SecurityConfig {
                     "/service/useradmin/consultants/{consultantId:"
                         + UUID_PATTERN
                         + "}/deletion/pause")
+                .hasAnyAuthority(
+                    USER_ADMIN, RESTRICTED_AGENCY_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+                // Cancelling a consultant deletion: the same callers who may delete or pause it,
+                // scoped to their own agencies/tenant in ConsultantAdminFacade (AdminScope).
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/deletion/cancel",
+                    "/service/useradmin/consultants/{consultantId:"
+                        + UUID_PATTERN
+                        + "}/deletion/cancel")
                 .hasAnyAuthority(
                     USER_ADMIN, RESTRICTED_AGENCY_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
                 .requestMatchers(
@@ -589,8 +688,23 @@ public class SecurityConfig {
                     "/useradmin/statistics/tutorials",
                     "/service/useradmin/statistics/tutorials")
                 .hasAnyAuthority(TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+                // Global statistics settings and their protocol (OBP #93): platform admins only.
+                // Must precede the generic /useradmin/** rule, which a Träger admin also passes.
+                .requestMatchers(
+                    "/useradmin/statistics/settings",
+                    "/useradmin/statistics/settings/**",
+                    "/service/useradmin/statistics/settings",
+                    "/service/useradmin/statistics/settings/**")
+                .access(this::isPlatformAdmin)
                 // An admin's own list sorts (#1263): every admin role that sees a user list keeps
                 // its own; the data is always the caller's, so no other access widens.
+                // Platform default Erstantwort texts for the Träger editor (Admin#601); read-only.
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/useradmin/erstantwort/defaults",
+                    "/service/useradmin/erstantwort/defaults")
+                .hasAnyAuthority(
+                    USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
                 .requestMatchers("/useradmin/list-preferences", "/useradmin/list-preferences/**")
                 .hasAnyAuthority(
                     USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
@@ -610,7 +724,26 @@ public class SecurityConfig {
                 .requestMatchers(
                     "/users/inactive-accounts/audit-logs",
                     "/service/users/inactive-accounts/audit-logs")
-                .access(this::canAccessInactiveAccountAuditLogs)
+                .access(this::canAccessPlatformAuditLogs)
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/users/deletion-audit-logs",
+                    "/service/users/deletion-audit-logs")
+                .access(this::canReportDeletion)
+                .requestMatchers("/users/deletion-audit-logs", "/service/users/deletion-audit-logs")
+                .access(this::canAccessPlatformAuditLogs)
+                // 1:1 appointments (ORISO-Frontend#1960): who may do what is decided per session in
+                // SessionAppointmentService.
+                .requestMatchers(
+                    "/users/sessions/{sessionId:[0-9]+}/appointments",
+                    "/service/users/sessions/{sessionId:[0-9]+}/appointments",
+                    "/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}",
+                    "/service/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}",
+                    "/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}/cancel",
+                    "/service/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}/cancel",
+                    "/users/appointments/upcoming",
+                    "/service/users/appointments/upcoming")
+                .hasAnyAuthority(USER_DEFAULT, ANONYMOUS_DEFAULT, CONSULTANT_DEFAULT)
                 .requestMatchers(
                     "/users/consultants/sessions/{sessionId:[0-9]+}",
                     "/users/sessions/{sessionId:[0-9]+}/archive",
@@ -725,7 +858,7 @@ public class SecurityConfig {
             && isPlatformAdmin(authenticationSupplier, requestContext).isGranted());
   }
 
-  private AuthorizationDecision canAccessInactiveAccountAuditLogs(
+  private AuthorizationDecision canAccessPlatformAuditLogs(
       Supplier<? extends Authentication> authenticationSupplier,
       RequestAuthorizationContext requestContext) {
     Authentication authentication = authenticationSupplier.get();
@@ -738,6 +871,29 @@ public class SecurityConfig {
     }
 
     return isPlatformAdmin(authenticationSupplier, requestContext);
+  }
+
+  /**
+   * Who may report an agency or tenant deletion: everyone AgencyService and TenantService let
+   * delete one. The plain agency-admin role maps to no authority here but may delete a
+   * Beratungsstelle in AgencyService, so it is checked as a realm role.
+   */
+  private AuthorizationDecision canReportDeletion(
+      Supplier<? extends Authentication> authenticationSupplier,
+      RequestAuthorizationContext requestContext) {
+    Authentication authentication = authenticationSupplier.get();
+    Set<String> allowed =
+        Set.of(TECHNICAL_DEFAULT, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN);
+    if (authentication.getAuthorities().stream()
+        .anyMatch(authority -> allowed.contains(authority.getAuthority()))) {
+      return new AuthorizationDecision(true);
+    }
+    if (!(authentication instanceof JwtAuthenticationToken jwtAuthentication)) {
+      return new AuthorizationDecision(false);
+    }
+    return new AuthorizationDecision(
+        KeycloakRoles.of(jwtAuthentication.getToken().getClaims())
+            .contains(UserRole.AGENCY_ADMIN.getValue()));
   }
 
   private AuthorizationDecision isPlatformAdmin(

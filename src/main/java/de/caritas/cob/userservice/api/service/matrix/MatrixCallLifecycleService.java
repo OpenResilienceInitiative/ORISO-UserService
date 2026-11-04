@@ -28,6 +28,7 @@ public class MatrixCallLifecycleService {
   private final ConsultantRepository consultants;
   private final EventNotificationService notifications;
   private final AccountInactivityService accountLifecycle;
+  private final MatrixCallGuestService callGuests;
 
   @org.springframework.beans.factory.annotation.Value("${matrix.calls.observation-retry-ms:30000}")
   private long observationRetryMillis = 30000;
@@ -73,19 +74,29 @@ public class MatrixCallLifecycleService {
   public boolean handleRoom(String room, Map<String, Object> roomData) {
     var binding = bindings.lockByMediaRoomId(room).orElse(null);
     if (binding == null) return false;
-    if (binding.getEndedAt() != null) return true;
+    handleBoundRoom(binding, roomData);
+    // US#1477: a guest's call-room seat ends with the call; a failed removal retries on the
+    // next event for this room.
+    callGuests.revokeOutstanding(binding);
+    return true;
+  }
+
+  private void handleBoundRoom(
+      de.caritas.cob.userservice.api.model.MatrixCallBinding binding,
+      Map<String, Object> roomData) {
+    if (binding.getEndedAt() != null) return;
     var session = conversations.resolve(binding.getSourceRoomId()).orElse(null);
     if (session == null
         || !Objects.equals(session.getSessionId(), binding.getSessionId())
         || !Objects.equals(session.getChatId(), binding.getChatId())
-        || !Objects.equals(session.getTenantId(), binding.getTenantId())) return true;
+        || !Objects.equals(session.getTenantId(), binding.getTenantId())) return;
     var members = matrix.getCallRoomMembers(binding.getSourceRoomId()).orElse(null);
-    if (members == null) return true;
+    if (members == null) return;
     boolean retainedClosure = !conversations.lockCurrentForWriting(session);
     if (retainedClosure && !startedBeforeRejection(binding)) {
       // No call history is retained here; close silently so expiry stops reselecting the row.
       binding.finish(System.currentTimeMillis());
-      return true;
+      return;
     }
     long now = System.currentTimeMillis();
     if (roomData.get("state") instanceof Map<?, ?>
@@ -153,7 +164,7 @@ public class MatrixCallLifecycleService {
                   .max()
                   .orElse(now);
       binding.finish(lastPresenceEnd);
-      if (retainedClosure) return true;
+      if (retainedClosure) return;
       binding.getDevices().values().stream()
           .filter(MatrixCallDevice::isAttended)
           .map(MatrixCallDevice::getSenderMatrixId)
@@ -196,7 +207,6 @@ public class MatrixCallLifecycleService {
                       binding.getMediaRoomId(),
                       binding.isVideo()));
     }
-    return true;
   }
 
   private boolean startedBeforeRejection(

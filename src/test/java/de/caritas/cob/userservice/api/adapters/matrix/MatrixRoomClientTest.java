@@ -66,6 +66,33 @@ class MatrixRoomClientTest {
         .thenAnswer(invocation -> API_URL + invocation.getArgument(0, String.class));
   }
 
+  /** A RestTemplate message can carry the request URL, and with it the Matrix user ID. */
+  @Test
+  void guestCleanupFailuresAreLoggedWithoutTheRestTemplateMessage() {
+    var failure = new org.springframework.web.client.ResourceAccessException("GET " + USER_ID);
+    when(restTemplate.postForEntity(
+            org.mockito.ArgumentMatchers.any(URI.class),
+            org.mockito.ArgumentMatchers.any(),
+            eq(Map.class)))
+        .thenThrow(failure);
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.any(URI.class),
+            eq(HttpMethod.GET),
+            org.mockito.ArgumentMatchers.any(),
+            eq(Map.class)))
+        .thenThrow(failure);
+
+    try (var logs =
+        de.caritas.cob.userservice.testutils.LogbackCaptor.forClass(MatrixRoomClient.class)) {
+      assertThat(matrixRoomClient.kickUserFromRoom(ROOM_ID, USER_ID, ACCESS_TOKEN)).isFalse();
+      assertThat(matrixRoomClient.getRoomMembership(ROOM_ID, USER_ID, ACCESS_TOKEN)).isEmpty();
+      assertThat(matrixRoomClient.clearUserPowerLevel(ROOM_ID, USER_ID, ACCESS_TOKEN)).isFalse();
+      assertThat(logs.messages(ch.qos.logback.classic.Level.WARN))
+          .hasSize(3)
+          .allSatisfy(message -> assertThat(message).doesNotContain(USER_ID));
+    }
+  }
+
   @Test
   void createRoom_ShouldSendPrivateRoomCreationRequest() throws Exception {
     var responseBody = new MatrixCreateRoomResponseDTO();
@@ -285,6 +312,56 @@ class MatrixRoomClientTest {
   }
 
   @Test
+  void inviteUserToRoomOnce_ShouldReportUncappedServerDelayWithoutRetrying() {
+    when(restTemplate.postForEntity(
+            eq(uri(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/invite")),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(MatrixInviteUserResponseDTO.class)))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.TOO_MANY_REQUESTS,
+                "Too Many Requests",
+                null,
+                "{\"errcode\":\"M_LIMIT_EXCEEDED\",\"retry_after_ms\":600000}"
+                    .getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8));
+
+    long started = System.nanoTime();
+    assertThatThrownBy(() -> matrixRoomClient.inviteUserToRoomOnce(ROOM_ID, USER_ID, ACCESS_TOKEN))
+        .isInstanceOfSatisfying(
+            de.caritas.cob.userservice.api.exception.matrix.MatrixInviteRateLimitedException.class,
+            ex -> assertThat(ex.getRetryAfterMs()).isEqualTo(600000L));
+    long waitedMs = java.time.Duration.ofNanos(System.nanoTime() - started).toMillis();
+
+    // The request thread must not sleep: the delay is handed back, not waited for.
+    assertThat(waitedMs).isLessThan(MatrixRoomClient.MAX_INVITE_RETRY_DELAY_MS);
+    verify(restTemplate, times(1))
+        .postForEntity(
+            eq(uri(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/invite")),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(MatrixInviteUserResponseDTO.class));
+  }
+
+  @Test
+  void inviteUserToRoomOnce_ShouldThrowPlainInviteException_WhenForbidden() {
+    when(restTemplate.postForEntity(
+            eq(uri(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/invite")),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(MatrixInviteUserResponseDTO.class)))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.FORBIDDEN,
+                "Forbidden",
+                null,
+                "{\"errcode\":\"M_FORBIDDEN\"}".getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8));
+
+    assertThatThrownBy(() -> matrixRoomClient.inviteUserToRoomOnce(ROOM_ID, USER_ID, ACCESS_TOKEN))
+        .isExactlyInstanceOf(
+            de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException.class);
+  }
+
+  @Test
   void inviteUserToRoom_ShouldThrowMatrixInviteUserException_WhenUnexpectedErrorOccurs() {
     when(restTemplate.postForEntity(
             eq(uri(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/invite")),
@@ -418,6 +495,38 @@ class MatrixRoomClientTest {
                         + "/state/m.room.power_levels")),
             mapRequestCaptor.capture());
     assertThat(mapRequestCaptor.getValue().getBody().get("users")).isEqualTo(Map.of(USER_ID, 50));
+  }
+
+  @Test
+  void getPowerLevels_ShouldReturnTheRoomContentReadWithTheGivenToken() {
+    var content = new HashMap<String, Object>(Map.of("events_default", 0));
+    when(restTemplate.exchange(
+            eq(
+                uri(
+                    API_URL
+                        + "/_matrix/client/r0/rooms/"
+                        + ENCODED_ROOM_ID
+                        + "/state/m.room.power_levels")),
+            eq(HttpMethod.GET),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(content));
+
+    assertThat(matrixRoomClient.getPowerLevels(ROOM_ID, ACCESS_TOKEN)).contains(content);
+  }
+
+  @Test
+  void getPowerLevels_ShouldBeEmpty_WhenMatrixRefusesOrAnswersNothing() {
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.any(java.net.URI.class),
+            eq(HttpMethod.GET),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(null))
+        .thenThrow(new RuntimeException("refused"));
+
+    assertThat(matrixRoomClient.getPowerLevels(ROOM_ID, ACCESS_TOKEN)).isEmpty();
+    assertThat(matrixRoomClient.getPowerLevels(ROOM_ID, ACCESS_TOKEN)).isEmpty();
   }
 
   @Test
@@ -790,5 +899,100 @@ class MatrixRoomClientTest {
         .thenReturn(ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of()));
 
     assertThat(matrixRoomClient.banUserFromRoom(ROOM_ID, USER_ID, ACCESS_TOKEN)).isFalse();
+  }
+
+  // ── forceJoinUser / makeRoomAdmin (Synapse admin API, #1422) ────────────────
+
+  private static final String ADMIN_TOKEN = "admin-token";
+
+  @Test
+  void forceJoinUser_ShouldPostUserIdToTheAdminJoinEndpointWithTheAdminToken() {
+    when(restTemplate.postForEntity(
+            eq(uri(API_URL + "/_synapse/admin/v1/join/" + ENCODED_ROOM_ID)),
+            mapRequestCaptor.capture(),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("room_id", ROOM_ID)));
+
+    assertThat(matrixRoomClient.forceJoinUser(ROOM_ID, USER_ID, ADMIN_TOKEN)).isTrue();
+
+    assertThat(mapRequestCaptor.getValue().getHeaders().getFirst("Authorization"))
+        .isEqualTo("Bearer " + ADMIN_TOKEN);
+    assertThat(mapRequestCaptor.getValue().getBody()).isEqualTo(Map.of("user_id", USER_ID));
+  }
+
+  @Test
+  void forceJoinUser_ShouldReturnFalse_WhenSynapseRefusesTheJoin() {
+    doThrow(
+            HttpClientErrorException.create(
+                HttpStatus.FORBIDDEN,
+                "Forbidden",
+                null,
+                "{\"error\":\"not in room\"}".getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8))
+        .when(restTemplate)
+        .postForEntity(
+            eq(uri(API_URL + "/_synapse/admin/v1/join/" + ENCODED_ROOM_ID)),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class));
+
+    assertThat(matrixRoomClient.forceJoinUser(ROOM_ID, USER_ID, ADMIN_TOKEN)).isFalse();
+  }
+
+  @Test
+  void forceJoinUser_ShouldReturnFalse_WhenSynapseIsUnreachable() {
+    doThrow(new RuntimeException("synapse down"))
+        .when(restTemplate)
+        .postForEntity(
+            eq(uri(API_URL + "/_synapse/admin/v1/join/" + ENCODED_ROOM_ID)),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class));
+
+    assertThat(matrixRoomClient.forceJoinUser(ROOM_ID, USER_ID, ADMIN_TOKEN)).isFalse();
+  }
+
+  @Test
+  void makeRoomAdmin_ShouldPostUserIdToTheMakeRoomAdminEndpointWithTheAdminToken() {
+    when(restTemplate.postForEntity(
+            eq(uri(API_URL + "/_synapse/admin/v1/rooms/" + ENCODED_ROOM_ID + "/make_room_admin")),
+            mapRequestCaptor.capture(),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of()));
+
+    assertThat(matrixRoomClient.makeRoomAdmin(ROOM_ID, USER_ID, ADMIN_TOKEN)).isTrue();
+
+    assertThat(mapRequestCaptor.getValue().getHeaders().getFirst("Authorization"))
+        .isEqualTo("Bearer " + ADMIN_TOKEN);
+    assertThat(mapRequestCaptor.getValue().getBody()).isEqualTo(Map.of("user_id", USER_ID));
+  }
+
+  @Test
+  void makeRoomAdmin_ShouldReturnFalse_WhenNoLocalMemberCanChangePowerLevels() {
+    doThrow(
+            HttpClientErrorException.create(
+                HttpStatus.BAD_REQUEST,
+                "Bad Request",
+                null,
+                "{\"error\":\"No local admin user in room with power to update power levels.\"}"
+                    .getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8))
+        .when(restTemplate)
+        .postForEntity(
+            eq(uri(API_URL + "/_synapse/admin/v1/rooms/" + ENCODED_ROOM_ID + "/make_room_admin")),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class));
+
+    assertThat(matrixRoomClient.makeRoomAdmin(ROOM_ID, USER_ID, ADMIN_TOKEN)).isFalse();
+  }
+
+  @Test
+  void makeRoomAdmin_ShouldReturnFalse_WhenSynapseIsUnreachable() {
+    doThrow(new RuntimeException("synapse down"))
+        .when(restTemplate)
+        .postForEntity(
+            eq(uri(API_URL + "/_synapse/admin/v1/rooms/" + ENCODED_ROOM_ID + "/make_room_admin")),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(Map.class));
+
+    assertThat(matrixRoomClient.makeRoomAdmin(ROOM_ID, USER_ID, ADMIN_TOKEN)).isFalse();
   }
 }

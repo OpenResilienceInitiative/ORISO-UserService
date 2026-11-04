@@ -66,6 +66,7 @@ import org.springframework.transaction.support.TransactionTemplate;
   MatrixCallBindingWriter.class,
   MatrixCallNotificationIT.ActiveAccountFixture.class,
   MatrixCallLifecycleService.class,
+  MatrixCallGuestService.class,
   MatrixCallConversationResolver.class,
   MatrixCallStateService.class,
   MatrixCallInviteNotificationService.class
@@ -90,6 +91,7 @@ class MatrixCallTenantIT {
   @Autowired private MatrixCallBindingRepository bindings;
   @Autowired private MatrixCallInviteNotificationService invites;
   @Autowired private MatrixCallStateService callStates;
+  @Autowired private MatrixCallGuestService callGuests;
   @Autowired private EventNotificationService notificationService;
   @Autowired private PlatformTransactionManager transactionManager;
   @MockitoBean private MatrixSynapseService matrix;
@@ -317,7 +319,8 @@ class MatrixCallTenantIT {
       actor.setTenantId(7L);
       for (int reload = 0; reload < 2; reload++) {
         var mvc =
-            MockMvcBuilders.standaloneSetup(new MatrixCallStateController(callStates, actor))
+            MockMvcBuilders.standaloneSetup(
+                    new MatrixCallStateController(callStates, callGuests, actor))
                 .build();
         mvc.perform(
                 get("/matrix/calls/state")
@@ -337,7 +340,7 @@ class MatrixCallTenantIT {
       TenantContext.setCurrentTenant(8L);
       actor.setUserId("tenant-outsider");
       actor.setTenantId(8L);
-      MockMvcBuilders.standaloneSetup(new MatrixCallStateController(callStates, actor))
+      MockMvcBuilders.standaloneSetup(new MatrixCallStateController(callStates, callGuests, actor))
           .build()
           .perform(
               get("/matrix/calls/state")

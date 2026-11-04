@@ -51,6 +51,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityReactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
+import de.caritas.cob.userservice.api.port.out.IdentityTenantUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -110,6 +111,7 @@ public class KeycloakService
         IdentityPasswordChangeRequirement,
         IdentityProfileLookup,
         IdentityProfileUpdater,
+        IdentityTenantUpdater,
         IdentityReactivator,
         IdentityRoleLookup,
         IdentityRoleUpdater,
@@ -230,6 +232,51 @@ public class KeycloakService
   }
 
   /**
+   * Sets only the {@code tenantId} attribute: unlike {@link #updateProfile} it neither touches the
+   * enabled flag nor any other attribute, so a deactivated account stays deactivated.
+   */
+  @Override
+  public void updateTenant(final String userId, final Long tenantId) {
+    if (tenantId == null) {
+      throw new IllegalArgumentException("A tenant id is required");
+    }
+    try {
+      updateTenantOnce(userId, tenantId);
+    } catch (NotAuthorizedException unauthorized) {
+      log.warn(
+          "Keycloak admin session was unauthorized while changing the tenant, forcing token"
+              + " refresh and retrying once");
+      keycloakClient.refreshAdminSession();
+      updateTenantOnce(userId, tenantId);
+    }
+  }
+
+  private void updateTenantOnce(String userId, Long tenantId) {
+    var userResource = keycloakClient.getUsersResource().get(userId);
+    var representation = userResource.toRepresentation();
+    Map<String, List<String>> attributes =
+        representation.getAttributes() == null
+            ? new LinkedHashMap<>()
+            : new LinkedHashMap<>(representation.getAttributes());
+    attributes.put(TENANT_ID_ATTRIBUTE, Collections.singletonList(tenantId.toString()));
+    representation.setAttributes(attributes);
+    userResource.update(representation);
+  }
+
+  @Override
+  public void endSessions(final String userId) {
+    try {
+      keycloakClient.getUsersResource().get(userId).logout();
+    } catch (NotAuthorizedException unauthorized) {
+      log.warn(
+          "Keycloak admin session was unauthorized while ending sessions, forcing token refresh"
+              + " and retrying once");
+      keycloakClient.refreshAdminSession();
+      keycloakClient.getUsersResource().get(userId).logout();
+    }
+  }
+
+  /**
    * Updates the email address of user with given id in keycloak.
    *
    * @param emailAddress the email address to set
@@ -336,6 +383,27 @@ public class KeycloakService
     } catch (RestClientException exception) {
       return IdentityEmailVerificationStart.failure(
           "Identity provider answered: " + exception.getMessage());
+    }
+  }
+
+  @Override
+  public java.util.List<String> emailVerificationAddresses(String userId) {
+    try {
+      var addresses = new java.util.ArrayList<String>();
+      for (var credential : keycloakClient.getUsersResource().get(userId).credentials()) {
+        if (!"MAIL_OTP_CM".equals(credential.getType())) continue;
+        var data =
+            new com.fasterxml.jackson.databind.ObjectMapper()
+                .readTree(credential.getCredentialData());
+        var email = data.get("email");
+        if (email == null || !email.isTextual() || email.asText().isBlank()) {
+          throw new IllegalStateException("Invalid mail OTP metadata");
+        }
+        addresses.add(email.asText());
+      }
+      return java.util.List.copyOf(addresses);
+    } catch (RuntimeException | java.io.IOException unavailable) {
+      throw new ServiceUnavailableException("Pending email verification metadata unavailable");
     }
   }
 
@@ -1183,6 +1251,15 @@ public class KeycloakService
     var userResource = keycloakClient.getUsersResource().get(userId);
     var userRepresentation = userResource.toRepresentation();
     userRepresentation.setEnabled(false);
+    userResource.update(userRepresentation);
+  }
+
+  @Override
+  public void activateUser(String userId) {
+    var userResource = keycloakClient.getUsersResource().get(userId);
+    var userRepresentation = userResource.toRepresentation();
+    // Only the enabled flag: no password reset, no credential change, no required action removed.
+    userRepresentation.setEnabled(true);
     userResource.update(userRepresentation);
   }
 

@@ -17,18 +17,25 @@ public final class AskerNotificationChannelPolicy {
         : ConversationType.AGENCY_COUNSELLING;
   }
 
+  public static boolean isLiveChat(Session session) {
+    return conversationType(session) == ConversationType.LIVE_CHAT;
+  }
+
   public static boolean emailAllowed(Session session, Settings settings) {
+    return emailAllowed(conversationType(session), settings);
+  }
+
+  /** For mails without a session, e.g. self-help appointments addressed per group. */
+  public static boolean emailAllowed(ConversationType conversationType, Settings settings) {
     if (settings != null && Boolean.FALSE.equals(settings.getFeatureAskerEmailEnabled()))
       return false;
-    return switch (conversationType(session)) {
+    return switch (conversationType) {
       case AGENCY_COUNSELLING ->
           settings == null
               || !Boolean.FALSE.equals(settings.getFeatureAskerEmailAgencyCounsellingEnabled());
-      case LIVE_CHAT ->
-          settings != null && Boolean.TRUE.equals(settings.getFeatureAskerEmailLiveChatEnabled());
       case SELF_HELP ->
           settings == null || !Boolean.FALSE.equals(settings.getFeatureAskerEmailSelfHelpEnabled());
-      case INTERNAL_GROUP -> false;
+      case LIVE_CHAT, INTERNAL_GROUP -> false;
     };
   }
 }

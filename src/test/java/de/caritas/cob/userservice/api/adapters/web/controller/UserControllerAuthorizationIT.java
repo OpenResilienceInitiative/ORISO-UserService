@@ -93,6 +93,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityReactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
+import de.caritas.cob.userservice.api.port.out.IdentityTenantUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
@@ -119,6 +120,8 @@ import java.util.UUID;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
@@ -167,6 +170,10 @@ class UserControllerAuthorizationIT {
 
   @Autowired private MockMvc mvc;
 
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.session.DeletedAskerSessionService
+      deletedAskerSessionService;
+
   @MockitoBean private UserService userService;
   @MockitoBean private SessionService sessionService;
   @MockitoBean private SessionRepository sessionRepository;
@@ -196,6 +203,7 @@ class UserControllerAuthorizationIT {
         IdentityRoleLookup.class,
         IdentityRoleUpdater.class,
         IdentitySecondFactor.class,
+        IdentityTenantUpdater.class,
         IdentityUsernameAvailability.class
       })
   private IdentityClient identityClient;
@@ -215,6 +223,12 @@ class UserControllerAuthorizationIT {
   @MockitoBean private UserAccountService userAccountService;
   @MockitoBean private SessionDataService sessionDataService;
   @MockitoBean private SessionArchiveService sessionArchiveService;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.furthercounselling
+          .FurtherCounsellingRecommendationService
+      furtherCounsellingRecommendationService;
+
   @MockitoBean private SessionConsentService sessionConsentService;
   @MockitoBean private RequestedContactSheetService requestedContactSheetService;
   @MockitoBean private ConsultantUpdateService consultantUpdateService;
@@ -649,6 +663,42 @@ class UserControllerAuthorizationIT {
         .andExpect(status().isForbidden());
 
     verifyNoMoreInteractions(consultantDataFacade, logService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/sessions/consultants/deleted-askers",
+        "/service/users/sessions/consultants/deleted-askers"
+      })
+  void deletedAskerSessionsRequireAuthentication(String path) throws Exception {
+    mvc.perform(get(path)).andExpect(status().isUnauthorized());
+    verifyNoMoreInteractions(deletedAskerSessionService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/sessions/consultants/deleted-askers",
+        "/service/users/sessions/consultants/deleted-askers"
+      })
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void deletedAskerSessionsRejectAskers(String path) throws Exception {
+    mvc.perform(get(path)).andExpect(status().isForbidden());
+    verifyNoMoreInteractions(deletedAskerSessionService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/sessions/consultants/deleted-askers",
+        "/service/users/sessions/consultants/deleted-askers"
+      })
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void deletedAskerSessionsReturnOnlyCallingCounsellorsData(String path) throws Exception {
+    when(authenticatedUser.getUserId()).thenReturn("consultant-1");
+    mvc.perform(get(path)).andExpect(status().isOk());
+    verify(deletedAskerSessionService).findForConsultant("consultant-1");
   }
 
   /** GET on /users/sessions/consultants (role: consultants) */
@@ -2200,6 +2250,22 @@ class UserControllerAuthorizationIT {
   }
 
   @Test
+  @WithMockUser(authorities = {AuthorityValue.ANONYMOUS_DEFAULT})
+  void updateSessionDataAllowsAnonymousAuthorityBeforeOwningServiceChecks() throws Exception {
+    mvc.perform(
+            put(PATH_PUT_UPDATE_SESSION_DATA)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    new ObjectMapper()
+                        .writeValueAsString(new SessionDataDTO().displayName("katze_mika_1234"))))
+        .andExpect(status().isOk());
+    verify(sessionDataService)
+        .saveSessionData(org.mockito.ArgumentMatchers.anyLong(), any(SessionDataDTO.class));
+  }
+
+  @Test
   @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT})
   void updateSessionData_Should_ReturnOK_When_ProperlyAuthorizedWithUserAuthority()
       throws Exception {
@@ -2455,6 +2521,92 @@ class UserControllerAuthorizationIT {
                 .header(CSRF_HEADER, CSRF_VALUE))
         .andExpect(status().isUnauthorized());
     verifyNoMoreInteractions(requestedContactSheetService);
+  }
+
+  // ── FE#1876 ─────────────────────────────────────────────────────────────
+
+  private static final String PATH_RECOMMEND_FURTHER_COUNSELLING =
+      "/users/sessions/123/further-counselling-recommendation";
+  private static final String PATH_END_TOPIC_DUPLICATE = "/users/askers/sessions/123/end-duplicate";
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
+  void recommendFurtherCounselling_Should_ReturnNoContent_ForAConsultant() throws Exception {
+    mvc.perform(
+            post(PATH_RECOMMEND_FURTHER_COUNSELLING)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"topicId\":3,\"note\":\"Bitte melden\"}"))
+        .andExpect(status().isNoContent());
+
+    verify(furtherCounsellingRecommendationService).recommend(123L, 3L, "Bitte melden");
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
+  void recommendFurtherCounselling_Should_ReturnBadRequest_WithoutTopic() throws Exception {
+    mvc.perform(
+            post(PATH_RECOMMEND_FURTHER_COUNSELLING)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"note\":\"x\"}"))
+        .andExpect(status().isBadRequest());
+
+    verifyNoMoreInteractions(furtherCounsellingRecommendationService);
+  }
+
+  @Test
+  @WithMockUser(
+      authorities = {
+        AuthorityValue.USER_DEFAULT,
+        AuthorityValue.ANONYMOUS_DEFAULT,
+        AuthorityValue.TECHNICAL_DEFAULT,
+        AuthorityValue.USER_ADMIN
+      })
+  void recommendFurtherCounselling_Should_ReturnForbidden_ForEveryoneButConsultants()
+      throws Exception {
+    mvc.perform(
+            post(PATH_RECOMMEND_FURTHER_COUNSELLING)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"topicId\":3}"))
+        .andExpect(status().isForbidden());
+
+    verifyNoMoreInteractions(furtherCounsellingRecommendationService);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT})
+  void endTopicDuplicate_Should_ReturnNoContent_ForAnAsker() throws Exception {
+    mvc.perform(put(PATH_END_TOPIC_DUPLICATE).cookie(CSRF_COOKIE).header(CSRF_HEADER, CSRF_VALUE))
+        .andExpect(status().isNoContent());
+
+    verify(sessionArchiveService).endTopicDuplicate(123L);
+  }
+
+  @Test
+  @WithMockUser(
+      authorities = {
+        AuthorityValue.CONSULTANT_DEFAULT,
+        AuthorityValue.ANONYMOUS_DEFAULT,
+        AuthorityValue.TECHNICAL_DEFAULT
+      })
+  void endTopicDuplicate_Should_ReturnForbidden_ForEveryoneButAskers() throws Exception {
+    mvc.perform(put(PATH_END_TOPIC_DUPLICATE).cookie(CSRF_COOKIE).header(CSRF_HEADER, CSRF_VALUE))
+        .andExpect(status().isForbidden());
+
+    verifyNoMoreInteractions(sessionArchiveService);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT})
+  void endTopicDuplicate_Should_ReturnForbidden_WithoutCsrfToken() throws Exception {
+    mvc.perform(put(PATH_END_TOPIC_DUPLICATE)).andExpect(status().isForbidden());
+
+    verifyNoMoreInteractions(sessionArchiveService);
   }
 
   @Test

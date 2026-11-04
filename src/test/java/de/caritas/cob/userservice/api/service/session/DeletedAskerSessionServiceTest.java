@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.DeletedAskerSession;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.DeletedAskerSessionRepository;
+import de.caritas.cob.userservice.api.port.out.EventNotificationRepository;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -37,6 +38,7 @@ class DeletedAskerSessionServiceTest {
 
   @InjectMocks private DeletedAskerSessionService underTest;
   @Mock private DeletedAskerSessionRepository repository;
+  @Mock private EventNotificationRepository notifications;
   @Mock private EventNotificationService eventNotificationService;
   @Mock private PlatformTransactionManager transactionManager;
 
@@ -187,7 +189,7 @@ class DeletedAskerSessionServiceTest {
     setField(underTest, "retentionDays", 0);
 
     assertThat(underTest.purgeExpired()).isZero();
-    verifyNoInteractions(repository);
+    verifyNoInteractions(repository, notifications);
   }
 
   @Test
@@ -198,5 +200,31 @@ class DeletedAskerSessionServiceTest {
     assertThat(underTest.purgeExpired()).isEqualTo(2);
     var expected = LocalDateTime.now(ZoneOffset.UTC).minusDays(30);
     assertThat(cutoff.getValue()).isBetween(expected.minusMinutes(1), expected.plusMinutes(1));
+    var eventCutoff = ArgumentCaptor.forClass(LocalDateTime.class);
+    verify(notifications)
+        .deleteByEventTypeCreatedBefore(eq("session.asker_deleted"), eventCutoff.capture());
+    var localExpected = LocalDateTime.now().minusDays(30);
+    assertThat(eventCutoff.getValue())
+        .isBetween(localExpected.minusMinutes(1), localExpected.plusMinutes(1));
+  }
+
+  @Test
+  void purgeExpiredUsesUtcForPlaceholdersAndLocalClockForEvents() {
+    var original = java.util.TimeZone.getDefault();
+    try {
+      java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Asia/Tokyo"));
+      var placeholderCutoff = ArgumentCaptor.forClass(LocalDateTime.class);
+      var eventCutoff = ArgumentCaptor.forClass(LocalDateTime.class);
+      underTest.purgeExpired();
+      verify(repository).deleteDeletedBefore(placeholderCutoff.capture());
+      verify(notifications)
+          .deleteByEventTypeCreatedBefore(eq("session.asker_deleted"), eventCutoff.capture());
+      assertThat(
+              java.time.Duration.between(placeholderCutoff.getValue(), eventCutoff.getValue())
+                  .toHours())
+          .isEqualTo(9);
+    } finally {
+      java.util.TimeZone.setDefault(original);
+    }
   }
 }

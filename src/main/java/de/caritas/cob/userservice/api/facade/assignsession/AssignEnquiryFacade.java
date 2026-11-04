@@ -77,6 +77,10 @@ public class AssignEnquiryFacade {
           .InquiryAcceptanceNoticeDelivery
       acceptanceDelivery;
 
+  private final @NonNull de.caritas.cob.userservice.api.service.furthercounselling
+          .TopicDuplicateService
+      topicDuplicateService;
+
   /**
    * Assigns the given {@link Session} to the given {@link Consultant} and removes consultants who
    * no longer have permission from its Matrix room.
@@ -103,6 +107,7 @@ public class AssignEnquiryFacade {
       acceptanceNotices
           .recordSuccessfulInitialAcceptance(session)
           .ifPresent(this::dispatchAcceptanceAfterCommit);
+      noticeTopicDuplicateAfterCommit(session.getId());
     }
     // The case is now committed to this counsellor (assignEnquiry rolls back and rethrows on any
     // failure), so it is safe to layer standing supervision on top. This call never throws.
@@ -111,6 +116,7 @@ public class AssignEnquiryFacade {
     // accepted. Best-effort by the same contract — never blocks the acceptance.
     teamDiscussionFacade.archiveDiscussionIfPresent(session);
     eventNotificationService.createInquiryAcceptedNotification(session, consultant);
+    retireOpenEnquiryNotificationsAfterCommit(session, consultant.getId());
     var event =
         new AssignSessionStatisticsEvent(consultant.getId(), UserRole.CONSULTANT, session.getId());
     event.setRequestUri(requestURI);
@@ -136,6 +142,67 @@ public class AssignEnquiryFacade {
   }
 
   /**
+   * ORISO-Frontend#1472: removes the other consultants' "New client request" entries only once the
+   * acceptance has committed, in its own transaction. Running it inside the acceptance transaction
+   * would let a failed cleanup mark that transaction rollback-only and undo the acceptance.
+   */
+  private void retireOpenEnquiryNotificationsAfterCommit(Session session, String consultantId) {
+    Runnable retire =
+        () -> {
+          try {
+            eventNotificationService.retireOpenEnquiryNotifications(session, consultantId);
+          } catch (RuntimeException ex) {
+            log.warn(
+                "Could not retire open enquiry notifications for session {}", session.getId(), ex);
+          }
+        };
+    if (!org.springframework.transaction.support.TransactionSynchronizationManager
+        .isSynchronizationActive()) {
+      retire.run();
+      return;
+    }
+    org.springframework.transaction.support.TransactionSynchronizationManager
+        .registerSynchronization(
+            new org.springframework.transaction.support.TransactionSynchronization() {
+              @Override
+              public void afterCommit() {
+                retire.run();
+              }
+            });
+  }
+
+  /**
+   * FE#1876 S5: once the acceptance is committed, tell the asker's older same-topic conversations.
+   * Best-effort — a failed notice never rolls the acceptance back.
+   */
+  private void noticeTopicDuplicateAfterCommit(Long sessionId) {
+    Runnable notice =
+        () -> {
+          try {
+            topicDuplicateService.notifyDuplicateStarted(sessionId);
+          } catch (RuntimeException exception) {
+            log.warn(
+                "Topic duplicate notice for accepted session {} failed ({})",
+                sessionId,
+                exception.getClass().getSimpleName());
+          }
+        };
+    if (!org.springframework.transaction.support.TransactionSynchronizationManager
+        .isSynchronizationActive()) {
+      notice.run();
+      return;
+    }
+    org.springframework.transaction.support.TransactionSynchronizationManager
+        .registerSynchronization(
+            new org.springframework.transaction.support.TransactionSynchronization() {
+              @Override
+              public void afterCommit() {
+                notice.run();
+              }
+            });
+  }
+
+  /**
    * Assigns the given {@link Session} session to the given {@link Consultant} and provisions the
    * Matrix room.
    *
@@ -151,6 +218,7 @@ public class AssignEnquiryFacade {
     assignment lock. */
     assignEnquiry(session, consultant, false, true);
     eventNotificationService.createInquiryAcceptedNotification(session, consultant);
+    retireOpenEnquiryNotificationsAfterCommit(session, consultant.getId());
   }
 
   private void assignEnquiry(Session session, Consultant consultant) {

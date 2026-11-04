@@ -120,6 +120,10 @@ public class CreateSessionFacade {
             consultant, user, extendedConsultingTypeResponseDTO.getId());
     if (existingSession.isPresent()) {
       var session = existingSession.get();
+      // An earlier visit may have failed to provision the room; provisioning is idempotent.
+      if (session.getMatrixRoomId() == null || session.getMatrixRoomId().isBlank()) {
+        directSessionMatrixRoomService.provisionRoomForDirectSession(session, consultant);
+      }
       return new NewRegistrationResponseDto()
           .sessionId(session.getId())
           .matrixRoomId(session.getMatrixRoomId())
@@ -140,14 +144,17 @@ public class CreateSessionFacade {
     var session =
         sessionService.initializeDirectSession(
             consultant, user, userDTO, agencyDTO.getTeamAgency());
-    sessionDataService.saveSessionData(session, fromUserDTO(userDTO));
+    sessionDataService.saveInitialSessionData(session, user, fromUserDTO(userDTO));
     session.setConsultant(consultant);
     session.setStatus(SessionStatus.IN_PROGRESS);
     session = sessionService.saveSession(session);
 
     directSessionMatrixRoomService.provisionRoomForDirectSession(session, consultant);
 
-    return new NewRegistrationResponseDto().sessionId(session.getId()).status(HttpStatus.CREATED);
+    return new NewRegistrationResponseDto()
+        .sessionId(session.getId())
+        .matrixRoomId(session.getMatrixRoomId())
+        .status(HttpStatus.CREATED);
   }
 
   private Session initializeSession(UserDTO userDTO, User user, AgencyDTO agencyDTO) {
@@ -160,7 +167,7 @@ public class CreateSessionFacade {
       var session = sessionService.initializeSession(user, userDTO, isTeaming);
       initialized = nonNull(session) && nonNull(session.getId());
       sessionId = initialized ? session.getId() : null;
-      sessionDataService.saveSessionData(session, sessionData);
+      sessionDataService.saveInitialSessionData(session, user, sessionData);
 
       return session;
     } catch (Exception ex) {

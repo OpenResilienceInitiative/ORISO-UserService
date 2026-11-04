@@ -523,7 +523,14 @@ class ManagedAccountStatusControllerTest {
             mock(AgencyService.class),
             provisioning,
             mock(AdminScope.class),
-            tenants);
+            tenants,
+            mock(
+                de.caritas.cob.userservice.api.service.temporaryaccount
+                    .TemporaryAccountSettingsService.class),
+            mock(de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitePolicy.class),
+            mock(
+                de.caritas.cob.userservice.api.service.agencyinvitelink.CallShareLinkService
+                    .class));
     var mvc =
         MockMvcBuilders.standaloneSetup(new AgencyInviteLinkController(links, topic))
             .setControllerAdvice(new ApiResponseEntityExceptionHandler())

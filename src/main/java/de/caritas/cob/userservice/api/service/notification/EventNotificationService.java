@@ -35,6 +35,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Slf4j
@@ -86,6 +87,64 @@ public class EventNotificationService {
         buildSessionActionPath(session),
         session.getId(),
         session.getTenantId());
+  }
+
+  /** FE#1876: bell type for the existing counsellor when a same-topic conversation starts. */
+  public static final String TOPIC_DUPLICATE_STARTED_EVENT = "topic_duplicate.started";
+
+  /**
+   * FE#1876: bell entry for the existing conversation's counsellor, at most once per (existing,
+   * new) pair. The params carry ids only; the new centre is not named.
+   *
+   * @return true only when this call persisted the entry; false when it already existed or there is
+   *     no counsellor to notify
+   */
+  public boolean createTopicDuplicateStartedNotification(Session existing, Long newSessionId) {
+    if (existing == null
+        || existing.getId() == null
+        || newSessionId == null
+        || existing.getConsultant() == null
+        || existing.getConsultant().getId() == null
+        || existing.getConsultant().getId().isBlank()) {
+      return false;
+    }
+    String recipientId = existing.getConsultant().getId();
+    String key = topicDuplicateStartedKey(existing, newSessionId);
+    Map<String, Object> params = baseParams(existing);
+    params.put("topicId", existing.getMainTopicId());
+    return persistOnce(
+        key,
+        recipientId,
+        TOPIC_DUPLICATE_STARTED_EVENT,
+        CATEGORY_SYSTEM,
+        "Another counselling on the same topic",
+        String.format(
+            "Another counselling on the topic of chat #%s has started.", existing.getId()),
+        serializeParams(params),
+        buildSessionActionPath(existing),
+        existing.getId(),
+        existing.getTenantId());
+  }
+
+  /**
+   * FE#1876: releases the once-per-pair marker when the room notice was not delivered, so a later
+   * acceptance run can deliver it. Commits on its own, like the write.
+   */
+  public void removeTopicDuplicateStartedNotification(Session existing, Long newSessionId) {
+    if (existing == null
+        || existing.getId() == null
+        || newSessionId == null
+        || existing.getConsultant() == null
+        || existing.getConsultant().getId() == null
+        || existing.getConsultant().getId().isBlank()) {
+      return;
+    }
+    deduplicationWriter.deleteInNewTransaction(
+        existing.getConsultant().getId(), topicDuplicateStartedKey(existing, newSessionId));
+  }
+
+  private static String topicDuplicateStartedKey(Session existing, Long newSessionId) {
+    return TOPIC_DUPLICATE_STARTED_EVENT + ":" + existing.getId() + ":" + newSessionId;
   }
 
   @Transactional
@@ -290,6 +349,43 @@ public class EventNotificationService {
             });
   }
 
+  /** Enquiry events that announce an open request to every eligible consultant. */
+  static final Set<String> OPEN_ENQUIRY_EVENT_TYPES =
+      Set.of("request.new", "waiting_room.client.joined");
+
+  /**
+   * ORISO-Frontend#1472: once a consultant has accepted an enquiry, the "New client request" and
+   * "Client joined the waiting room" entries of the other consultants are stale — opening them only
+   * tells the colleague that someone else took the case. Remove them and nudge those clients to
+   * refresh their feed. The accepting consultant keeps their own entry; it leads into their case.
+   *
+   * <p>Best-effort: cleaning up the timeline must never fail the acceptance. Callers run it after
+   * the acceptance has committed; it always opens its own transaction so it never joins (and can
+   * never mark rollback-only) the caller's.
+   */
+  @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+  public void retireOpenEnquiryNotifications(Session session, String acceptingConsultantId) {
+    if (session == null
+        || session.getId() == null
+        || acceptingConsultantId == null
+        || acceptingConsultantId.isBlank()) {
+      return;
+    }
+    try {
+      List<String> otherRecipients =
+          eventNotificationRepository.findOtherRecipientsOfSessionEvents(
+              session.getId(), OPEN_ENQUIRY_EVENT_TYPES, acceptingConsultantId);
+      if (otherRecipients.isEmpty()) {
+        return;
+      }
+      eventNotificationRepository.deleteOpenEnquiryEvents(
+          session.getId(), OPEN_ENQUIRY_EVENT_TYPES, acceptingConsultantId);
+      otherRecipients.forEach(this::signalFeedUpdatedSafely);
+    } catch (RuntimeException ex) {
+      log.warn("Could not retire open enquiry notifications for session {}", session.getId(), ex);
+    }
+  }
+
   /**
    * WP-06 Slice 3 (Tier 3): persist a {@code waiting_room.client.joined} timeline event for each
    * eligible consultant when a client enters the anonymous live-chat waiting room (a new anonymous
@@ -331,6 +427,58 @@ public class EventNotificationService {
                     ex);
               }
             });
+  }
+
+  /** ORISO-Frontend#1952: bell type for a knock on a direct-link call. */
+  public static final String CALL_KNOCK_REQUESTED_EVENT = "call.knock.requested";
+
+  /**
+   * ORISO-Frontend#1952: someone opened the counsellor's audio or video direct link and knocks on
+   * the call in their conversation. Without this the counsellor heard nothing: the knock only sat
+   * in a list read inside a running call. The entry goes to the counsellor of the conversation (the
+   * link owner, ADR-029 §2), plays the calls-family tone, and one click starts (or rejoins) the
+   * call in that conversation, where the counsellor lets the person in. The roomRef param names
+   * that conversation's room; the action path is the fallback that opens it.
+   *
+   * <p>Once per knock (the knock id is the deduplication key), written in its own transaction like
+   * every once-only entry, so it is in the feed when the feed-update signal reaches the client. The
+   * params carry the medium and the conversation, never who knocks. Best-effort: a failed entry
+   * never fails the knock. REQUIRES_NEW: the caller runs this in afterCommit, where the knock's
+   * finished transaction is still bound and a joined transaction would never commit.
+   */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public void createCallKnockRequestedNotification(
+      Session session, de.caritas.cob.userservice.api.model.GroupChatJoinRequest knock) {
+    if (session == null
+        || session.getId() == null
+        || knock == null
+        || knock.getId() == null
+        || session.getConsultant() == null
+        || session.getConsultant().getId() == null
+        || session.getConsultant().getId().isBlank()) {
+      return;
+    }
+    Map<String, Object> params = baseParams(session);
+    putIfPresent(params, "medium", knock.getMedium());
+    try {
+      createEventOnce(
+          CALL_KNOCK_REQUESTED_EVENT + ":" + knock.getId(),
+          session.getConsultant().getId(),
+          CALL_KNOCK_REQUESTED_EVENT,
+          CATEGORY_SYSTEM,
+          "Someone is knocking",
+          "Someone wants to join your call.",
+          serializeParams(params),
+          buildSessionActionPath(session, null, true),
+          session.getId(),
+          session.getTenantId());
+    } catch (RuntimeException ex) {
+      log.warn(
+          "Could not persist call.knock.requested notification for knock {} (session {})",
+          knock.getId(),
+          session.getId(),
+          ex);
+    }
   }
 
   private String buildNewClientRequestParams(Session session) {
@@ -664,6 +812,80 @@ public class EventNotificationService {
     }
   }
 
+  /**
+   * ORISO-UserService#1510: the row of each counsellor @-mentioned in this message says so. It is
+   * the same message row, under the same key, so a person never gets two rows for one message. Call
+   * this before the ordinary fan-out, which then finds the row written. Where the Matrix listener
+   * won the race, the row it wrote is marked instead. A mentioned colleague is not always the
+   * conversation's counsellor, so the link always opens the counsellor view.
+   */
+  @Transactional
+  public void createMentionNotifications(
+      String roomId,
+      String senderUserId,
+      String threadRootId,
+      PrivacyEnvelope envelope,
+      Set<String> recipientUserIds) {
+    String matrixEventId = envelope != null ? envelope.getMessageId() : null;
+    if (roomId == null || roomId.isBlank() || matrixEventId == null || matrixEventId.isBlank()) {
+      return;
+    }
+    Session session = sessionRepository.findByMatrixRoomId(roomId).orElse(null);
+    if (session == null) {
+      return;
+    }
+    boolean threadReply = threadRootId != null && !threadRootId.isBlank();
+    String eventType = threadReply ? "thread.reply.new" : "message.new";
+    String deduplicationKey = eventType + ":" + matrixEventId;
+    if (deduplicationKey.length() > MAX_DEDUPLICATION_KEY_LENGTH) {
+      return;
+    }
+    String senderLabel = resolveSenderName(senderUserId);
+    String text =
+        threadReply
+            ? buildThreadReplyNotificationText(senderLabel, envelope)
+            : buildMessageNotificationText(senderLabel, envelope);
+    for (String recipientUserId : recipientUserIds) {
+      if (shouldSuppressMention(recipientUserId, roomId, threadRootId)) {
+        continue;
+      }
+      boolean written =
+          persistOnce(
+              deduplicationKey,
+              recipientUserId,
+              eventType,
+              CATEGORY_MESSAGE,
+              threadReply ? "New thread reply" : "New message",
+              text,
+              buildMentionParams(
+                  session, senderLabel, envelope.getContentClass(), threadRootId, matrixEventId),
+              buildSessionActionPath(session, threadRootId, true),
+              session.getId(),
+              session.getTenantId());
+      if (!written
+          && deduplicationWriter.markMentionedInNewTransaction(
+              recipientUserId, deduplicationKey, session.getId())) {
+        signalFeedUpdatedSafely(recipientUserId);
+      }
+    }
+  }
+
+  private String buildMentionParams(
+      Session session,
+      String senderName,
+      String contentClass,
+      String threadRootId,
+      String matrixEventId) {
+    Map<String, Object> params = baseParams(session);
+    putIfPresent(params, "senderName", senderName);
+    putIfPresent(params, "contentClass", contentClass);
+    putIfPresent(params, "threadRootId", threadRootId);
+    putIfPresent(params, "recipientRole", "consultant");
+    putIfPresent(params, "matrixEventId", matrixEventId);
+    params.put("mentioned", true);
+    return serializeParams(params);
+  }
+
   @Transactional(readOnly = true)
   public NotificationFeedResponse getFeed(String recipientUserId, int page, int perPage) {
     return getFeed(recipientUserId, page, perPage, Set.of());
@@ -769,6 +991,15 @@ public class EventNotificationService {
   }
 
   public void updateActiveView(String userId, String roomId, String threadRootId, boolean active) {
+    updateActiveView(userId, roomId, threadRootId, active, false);
+  }
+
+  /**
+   * @param mainChatHidden a side panel fills the screen instead of the room's main chat (phone
+   *     layout), so a mention in that chat is not seen
+   */
+  public void updateActiveView(
+      String userId, String roomId, String threadRootId, boolean active, boolean mainChatHidden) {
     if (userId == null || userId.isBlank()) {
       return;
     }
@@ -781,7 +1012,8 @@ public class EventNotificationService {
       return;
     }
     activeViewByUserId.put(
-        userId, new ActiveViewState(roomId, threadRootId, monotonicNanos.getAsLong()));
+        userId,
+        new ActiveViewState(roomId, threadRootId, mainChatHidden, monotonicNanos.getAsLong()));
   }
 
   void setMonotonicNanosForTesting(LongSupplier monotonicNanos) {
@@ -1038,13 +1270,38 @@ public class EventNotificationService {
       String actionPath,
       Long sourceSessionId,
       Long tenantId) {
+    persistOnce(
+        deduplicationKey,
+        recipientUserId,
+        eventType,
+        category,
+        title,
+        text,
+        params,
+        actionPath,
+        sourceSessionId,
+        tenantId);
+  }
+
+  /** Same as {@link #createEventOnce}; true only when this call persisted the event. */
+  private boolean persistOnce(
+      String deduplicationKey,
+      String recipientUserId,
+      String eventType,
+      String category,
+      String title,
+      String text,
+      String params,
+      String actionPath,
+      Long sourceSessionId,
+      Long tenantId) {
     if (recipientUserId == null
         || recipientUserId.isBlank()
         || deduplicationKey == null
         || deduplicationKey.isBlank()
         || eventNotificationRepository.existsByRecipientUserIdAndDeduplicationKey(
             recipientUserId, deduplicationKey)) {
-      return;
+      return false;
     }
 
     try {
@@ -1062,10 +1319,12 @@ public class EventNotificationService {
               deduplicationKey));
       // Only nudge on a genuine first persist — a duplicate-key race (below) already delivered.
       signalFeedUpdatedSafely(recipientUserId);
+      return true;
     } catch (DataIntegrityViolationException duplicate) {
       // Another scheduler replica won the unique-key race. The desired event already exists.
       log.debug(
           "Notification {} already persisted for recipient {}", deduplicationKey, recipientUserId);
+      return false;
     }
   }
 
@@ -1253,6 +1512,20 @@ public class EventNotificationService {
     return shouldSuppressNotification(recipientUserId, roomId, null);
   }
 
+  /** Only a mention breaks through a hidden main chat; plain messages stay as quiet as before. */
+  private boolean shouldSuppressMention(
+      String recipientUserId, String roomId, String threadRootId) {
+    ActiveViewState activeView = activeViewByUserId.get(recipientUserId);
+    boolean mainChatMention = threadRootId == null || threadRootId.isBlank();
+    if (mainChatMention
+        && activeView != null
+        && activeView.mainChatHidden
+        && roomId.equals(activeView.roomId)) {
+      return false;
+    }
+    return shouldSuppressNotification(recipientUserId, roomId, threadRootId);
+  }
+
   private boolean shouldSuppressNotification(
       String recipientUserId, String roomId, String threadRootId) {
     while (true) {
@@ -1403,11 +1676,14 @@ public class EventNotificationService {
   private static class ActiveViewState {
     private final String roomId;
     private final String threadRootId;
+    private final boolean mainChatHidden;
     private final long lastHeartbeatNanos;
 
-    private ActiveViewState(String roomId, String threadRootId, long lastHeartbeatNanos) {
+    private ActiveViewState(
+        String roomId, String threadRootId, boolean mainChatHidden, long lastHeartbeatNanos) {
       this.roomId = roomId;
       this.threadRootId = threadRootId;
+      this.mainChatHidden = mainChatHidden;
       this.lastHeartbeatNanos = lastHeartbeatNanos;
     }
   }

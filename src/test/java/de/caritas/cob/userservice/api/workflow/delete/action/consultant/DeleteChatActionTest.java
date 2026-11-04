@@ -42,6 +42,10 @@ public class DeleteChatActionTest {
 
   @Mock private ChatRepository chatRepository;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.matrixgroup.GroupMatrixLifecycleCleanup
+      participationHistory;
+
   @Mock private MatrixSynapseService matrixSynapseService;
 
   @BeforeEach
