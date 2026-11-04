@@ -4,5 +4,7 @@ package de.caritas.cob.userservice.api.service;
 public enum CaseHandoverMatrixRepairAction {
   JOIN,
   REMOVE,
-  POWER_RESTORE
+  POWER_RESTORE,
+  /** Retry the owner power raise of a takeover whose new owner could not post without it. */
+  POWER_RAISE
 }

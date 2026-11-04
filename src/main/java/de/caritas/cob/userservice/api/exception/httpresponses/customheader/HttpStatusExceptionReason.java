@@ -44,6 +44,11 @@ public enum HttpStatusExceptionReason {
   INVITE_BUSY,
   /** The invite changed while the invitee filled in the wizard; reload the link. */
   INVITE_CHANGED,
+  /**
+   * A case takeover would leave the new owner unable to write in the Matrix room: they are
+   * read-only and no room member is left who could restore their right to write.
+   */
+  CASE_HANDOVER_REQUESTER_CANNOT_WRITE,
   /** An internal chat to selected colleagues was asked without any colleague besides the caller. */
   INTERNAL_CHAT_RECIPIENTS_REQUIRED,
   /** A selected colleague the caller may pick has no chat identity and cannot join a room. */

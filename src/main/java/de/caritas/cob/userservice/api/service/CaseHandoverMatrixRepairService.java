@@ -120,6 +120,51 @@ public class CaseHandoverMatrixRepairService {
         requesterConsultantId);
   }
 
+  /** Identifies a staged repair row so the caller can complete exactly that generation. */
+  public record StagedRepair(Long id, long generation) {}
+
+  /**
+   * Persists the owner power raise retry in the CALLER's transaction, so it commits atomically with
+   * the takeover (and disappears with it on a rollback). A failure here must propagate: it is the
+   * only durable compensation for a new owner left read-only. The retry gives up once another
+   * counsellor owns the case.
+   */
+  public StagedRepair stagePowerRaise(
+      String roomId, String memberId, Long sessionId, String requesterConsultantId) {
+    var existing =
+        repository.findExistingForUpdate(
+            CaseHandoverMatrixRepairAction.POWER_RAISE, roomId, memberId);
+    CaseHandoverMatrixRepairTask task;
+    if (existing.isPresent()) {
+      task = existing.get();
+      task.setSessionId(sessionId);
+      task.setRequesterConsultantId(requesterConsultantId);
+      task.setAttemptCount(0);
+      task.setLastAttemptAt(null);
+      task.setCreateDate(LocalDateTime.now(clock));
+      task.setGeneration(task.getGeneration() + 1);
+    } else {
+      task =
+          CaseHandoverMatrixRepairTask.builder()
+              .action(CaseHandoverMatrixRepairAction.POWER_RAISE)
+              .roomId(roomId)
+              .memberId(memberId)
+              .sessionId(sessionId)
+              .requesterConsultantId(requesterConsultantId)
+              .createDate(LocalDateTime.now(clock))
+              .build();
+    }
+    task = repository.saveAndFlush(task);
+    return new StagedRepair(task.getId(), task.getGeneration());
+  }
+
+  /** Removes a staged repair after its raise succeeded; a newer generation is left untouched. */
+  public void completeStagedRepair(StagedRepair staged) {
+    if (staged != null && staged.id() != null) {
+      recordResult(staged.id(), staged.generation(), true);
+    }
+  }
+
   /** Restore a pre-existing member only when their grant transaction actually rolls back. */
   public void registerPowerRollback(
       String roomId,
@@ -317,6 +362,9 @@ public class CaseHandoverMatrixRepairService {
       if (task.getAction() == CaseHandoverMatrixRepairAction.POWER_RESTORE) {
         return restorePowerUnlessSuperseded(task);
       }
+      if (task.getAction() == CaseHandoverMatrixRepairAction.POWER_RAISE) {
+        return raisePowerWhileStillOwner(task);
+      }
       boolean activeAccess = hasActiveAccess(task);
       if (task.getAction() == CaseHandoverMatrixRepairAction.REMOVE
           && (activeAccess || supervisorIsActiveAgain(task))) {
@@ -344,6 +392,7 @@ public class CaseHandoverMatrixRepairService {
         case REMOVE -> removeThenRestoreIfReAdded(task, token);
         case POWER_RESTORE ->
             throw new IllegalStateException("Power restore uses the session lock");
+        case POWER_RAISE -> throw new IllegalStateException("Power raise is handled above");
       };
     } catch (RuntimeException exception) {
       log.warn(
@@ -352,6 +401,18 @@ public class CaseHandoverMatrixRepairService {
           exception.getClass().getSimpleName());
       return false;
     }
+  }
+
+  /**
+   * Ownership check and raise share {@link SessionOwnerLock} with the initial after-commit raise.
+   */
+  private boolean raisePowerWhileStillOwner(CaseHandoverMatrixRepairTask task) {
+    return SessionOwnerLock.runWhileStillOwner(
+        transactionManager,
+        sessionRepository,
+        task.getSessionId(),
+        task.getRequesterConsultantId(),
+        () -> matrixSynapseService.makeRoomAdmin(task.getRoomId(), task.getMemberId()));
   }
 
   private boolean reconcileJoin(
