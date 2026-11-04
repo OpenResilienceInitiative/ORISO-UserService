@@ -179,6 +179,50 @@ public class UserAccountServiceTest {
     verifyNoInteractions(identityEmailAddressUpdater, appointmentService);
   }
 
+  private de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfContactEmailMaintenance
+      givenScopedContactEmailOwner() {
+    var owner =
+        mock(
+            de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.SelfContactEmailMaintenance
+                .class);
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        accountProvider, "selfContactEmailMaintenance", owner);
+    when(identityClientConfig.isFiveActorMode()).thenReturn(true);
+    when(authenticatedUser.getUserId()).thenReturn("user");
+    return owner;
+  }
+
+  @Test
+  void scopedEmailChangeRefusesAnonymousAccountsBeforeTheNativeWrite() {
+    var owner = givenScopedContactEmailOwner();
+    when(authenticatedUser.isAnonymous()).thenReturn(true);
+    when(userService.getUser("user")).thenReturn(Optional.empty());
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> accountProvider.changeUserAccountEmailAddress(Optional.of("new@example.org")))
+        .isInstanceOf(ForbiddenException.class);
+    verifyNoInteractions(owner, appointmentService, supervisorAddedEmailNotificationService);
+  }
+
+  @Test
+  void scopedEmailChangeEnforcesCollectionProhibitionBeforeTheNativeWrite() {
+    var owner = givenScopedContactEmailOwner();
+    var user = EASY_RANDOM.nextObject(User.class);
+    user.setTenantId(42L);
+    user.setEmail("old@example.org");
+    when(userService.getUser("user")).thenReturn(Optional.of(user));
+    when(tenantService.getRestrictedTenantDataFresh(42L))
+        .thenReturn(
+            new de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO()
+                .id(42L)
+                .settings(
+                    new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
+                        .featureAskerEmailEnabled(false)));
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> accountProvider.changeUserAccountEmailAddress(Optional.of("new@example.org")))
+        .isInstanceOf(ForbiddenException.class);
+    verifyNoInteractions(owner, appointmentService, supervisorAddedEmailNotificationService);
+  }
+
   @Test
   public void findUserByEmail_Should_CallUserService() {
     // given

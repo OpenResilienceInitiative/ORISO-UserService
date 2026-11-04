@@ -196,18 +196,11 @@ public class UserAccountService {
       return;
     }
     ensureCurrentAccountIsWritable();
-    if (optionalEmail.isPresent() && authenticatedUser.isAnonymous()) {
-      throw new ForbiddenException("Anonymous live-chat accounts cannot add an email address");
-    }
     var userId = authenticatedUser.getUserId();
     var email = optionalEmail.orElseGet(() -> userHelper.getDummyEmail(userId));
     Optional<Consultant> consultantOpt = consultantService.getConsultant(userId);
     Optional<User> userOpt = userService.getUser(userId);
-    if (optionalEmail.isPresent()
-        && userOpt.isPresent()
-        && !AskerEmailCollectionPolicy.sameAddress(userOpt.get().getEmail(), optionalEmail.get())) {
-      emailCollectionPolicy.requireForAccount(userOpt.get());
-    }
+    requireEmailCollectionAllowed(optionalEmail, userOpt);
     LanguageCode notificationLanguage =
         userOpt
             .map(User::getLanguageCode)
@@ -270,6 +263,7 @@ public class UserAccountService {
       throw new de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException(
           "Scoped contact-email owner is unavailable");
     String id = authenticatedUser.getUserId();
+    requireEmailCollectionAllowed(optionalEmail, userService.getUser(id));
     String email = optionalEmail.orElseGet(() -> userHelper.getDummyEmail(id));
     boolean completed =
         selfContactEmailMaintenance.change(
@@ -303,6 +297,20 @@ public class UserAccountService {
         TenantContext.getCurrentTenantData(),
         authenticatedUser.getAccessToken(),
         language);
+  }
+
+  /** Applies to every contact-email route, so a scoped identity write cannot skip the policy. */
+  private void requireEmailCollectionAllowed(Optional<String> optionalEmail, Optional<User> user) {
+    if (optionalEmail.isEmpty()) {
+      return;
+    }
+    if (authenticatedUser.isAnonymous()) {
+      throw new ForbiddenException("Anonymous live-chat accounts cannot add an email address");
+    }
+    if (user.isPresent()
+        && !AskerEmailCollectionPolicy.sameAddress(user.get().getEmail(), optionalEmail.get())) {
+      emailCollectionPolicy.requireForAccount(user.get());
+    }
   }
 
   private void setInitialEmailNotificationsSettingsForNewEmailAddress(User user, String email) {
