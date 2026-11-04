@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatMatrixCleanupTaskRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -48,9 +49,11 @@ public class GroupChatMatrixCleanupService {
   /** Writers and retry workers acquire this stable existing row before any chat/task lock. */
   @Transactional(propagation = Propagation.MANDATORY)
   public void lockOwner(Consultant expected) {
+    // A group participant may be in another Träger. Cross tenants only for this exact owner
+    // row lock; keep the caller's context for authorization and all other work.
     var current =
-        consultants
-            .findPictureOwnerForUpdate(expected.getId())
+        TenantContext.supplyAcrossTenants(
+                () -> consultants.findPictureOwnerForUpdate(expected.getId()))
             .orElseThrow(() -> new ConflictException("Group owner no longer exists"));
     if (!Objects.equals(current.getTenantId(), expected.getTenantId()))
       throw new ConflictException("Group owner changed tenant");

@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.model.*;
 import de.caritas.cob.userservice.api.model.GroupChatMatrixCleanupTask.Action;
 import de.caritas.cob.userservice.api.port.out.*;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.*;
 import java.util.*;
 import org.junit.jupiter.api.*;
@@ -60,6 +61,52 @@ class GroupChatMatrixCleanupServiceTest {
     when(tasks.findById(1L)).thenReturn(Optional.of(task));
     when(tasks.findByIdForUpdate(1L)).thenReturn(Optional.of(task));
     when(consultants.findPictureOwnerForUpdate("owner")).thenReturn(Optional.of(owner));
+  }
+
+  @Test
+  void ownerLockUsesTechnicalTenantOnlyForLookupAndRestoresCaller() {
+    TenantContext.setCurrentTenant(7L);
+    TenantContext.setCurrentSubdomain("caller");
+    var previous = TenantContext.getCurrentTenantData();
+    try {
+      when(consultants.findPictureOwnerForUpdate("owner"))
+          .thenAnswer(
+              invocation -> {
+                assertThat(TenantContext.getCurrentTenant())
+                    .isEqualTo(TenantContext.TECHNICAL_TENANT_ID);
+                return Optional.of(owner);
+              });
+      service.lockOwner(owner);
+      assertThat(TenantContext.getCurrentTenantData()).isSameAs(previous);
+      assertThat(TenantContext.getCurrentTenant()).isEqualTo(7L);
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Test
+  void failedOwnerLockRestoresCallerContext() {
+    TenantContext.setCurrentTenant(7L);
+    var previous = TenantContext.getCurrentTenantData();
+    try {
+      when(consultants.findPictureOwnerForUpdate("owner"))
+          .thenThrow(new IllegalStateException("synthetic"));
+      org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.lockOwner(owner))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(TenantContext.getCurrentTenantData()).isSameAs(previous);
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Test
+  void ownerLockStillRejectsAnUnexpectedOwnerTenant() {
+    var expected = new Consultant();
+    expected.setId("owner");
+    expected.setTenantId(99L);
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.lockOwner(expected))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
   }
 
   @Test
