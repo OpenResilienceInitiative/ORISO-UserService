@@ -3,19 +3,25 @@ package de.caritas.cob.userservice.api.facade;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.InternalChatRecipientAgencyDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.InternalChatRecipientDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.InternalSubsetChatDTO;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.helper.UserHelper;
+import de.caritas.cob.userservice.api.model.Admin.AdminType;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConversationType;
+import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
+import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatFeatureGate;
 import de.caritas.cob.userservice.api.service.chat.InternalGroupChatRecipientScope;
 import de.caritas.cob.userservice.api.service.chat.InternalGroupChatRecipientScopeResolver;
@@ -23,10 +29,12 @@ import de.caritas.cob.userservice.api.service.chat.MemberSetLock;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import lombok.NonNull;
@@ -55,11 +63,15 @@ public class InternalSubsetChatFacade {
   private final @NonNull GroupChatFeatureGate featureGate;
   private final @NonNull InternalGroupChatRecipientScopeResolver recipientScopes;
   private final @NonNull ConsultantRepository consultantRepository;
+  private final @NonNull AdminRepository adminRepository;
   private final @NonNull ChatRepository chatRepository;
   private final @NonNull GroupChatParticipantRepository participantRepository;
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull MemberSetLock memberSetLock;
   private final @NonNull CreateChatFacade createChatFacade;
+
+  private final @NonNull AgencyService agencyService;
+  private final @NonNull TenantService tenantService;
 
   @Value("${multitenancy.enabled:true}")
   private boolean multitenancy;
@@ -97,6 +109,99 @@ public class InternalSubsetChatFacade {
               .build();
       var created = createChatFacade.createMembersOnlyChat(chatDto, creator, colleagues);
       return new OpenedRoom(created.response().getMatrixRoomId(), created.chatId(), true);
+    }
+  }
+
+  public List<InternalChatRecipientDTO> recipients(Consultant creator, Long agencyId) {
+    requireEncryption();
+    requireAgency(creator, agencyId);
+    featureGate.requireEnabled(creator, ChatDTO.builder().agencyId(agencyId).build());
+    var scope = recipientScopes.resolve(creator.getTenantId());
+    var candidates =
+        TenantContext.supplyAcrossTenants(
+            consultantRepository
+                ::findByDeleteDateIsNullAndManagedPausedFalseAndMatrixUserIdIsNotNull);
+    var eligible =
+        candidates.stream()
+            .filter(candidate -> !candidate.getId().equals(creator.getId()))
+            .filter(candidate -> MatrixIds.isUserId(candidate.getMatrixUserId()))
+            .filter(candidate -> permits(creator, candidate, scope, agencyId))
+            .sorted(
+                Comparator.comparing(
+                        InternalSubsetChatFacade::nameOf, String.CASE_INSENSITIVE_ORDER)
+                    .thenComparing(Consultant::getId))
+            .toList();
+    var centreIdsByTenant = new HashMap<Long, Set<Long>>();
+    for (var candidate : eligible) {
+      var centreIds =
+          centreIdsByTenant.computeIfAbsent(
+              candidate.getTenantId(), ignored -> new LinkedHashSet<>());
+      candidate.getConsultantAgencies().forEach(relation -> centreIds.add(relation.getAgencyId()));
+    }
+    var centres = new HashMap<Long, InternalChatRecipientAgencyDTO>();
+    var tenants = new HashMap<Long, String>();
+    centreIdsByTenant.forEach(
+        (tenantId, centreIds) -> {
+          if (!centreIds.isEmpty()) {
+            agencyService
+                .getPublicAgenciesForTenant(tenantId, List.copyOf(centreIds))
+                .forEach(
+                    centre ->
+                        centres.put(
+                            centre.getId(),
+                            new InternalChatRecipientAgencyDTO()
+                                .id(centre.getId())
+                                .name(centre.getName())));
+          }
+          var tenant =
+              tenantId == null
+                  ? (!multitenancy ? tenantService.getSingleTenancyTenantDataFresh() : null)
+                  : tenantService.getRestrictedTenantData(tenantId);
+          tenants.put(tenantId, tenant == null ? null : tenant.getName());
+        });
+    return eligible.stream()
+        .map(
+            candidate ->
+                new InternalChatRecipientDTO()
+                    .consultantId(candidate.getId())
+                    .displayName(nameOf(candidate))
+                    .tenantName(tenants.get(candidate.getTenantId()))
+                    .agencies(
+                        candidate.getConsultantAgencies().stream()
+                            .map(relation -> centres.get(relation.getAgencyId()))
+                            .filter(Objects::nonNull)
+                            .sorted(Comparator.comparing(InternalChatRecipientAgencyDTO::getId))
+                            .toList()))
+        .toList();
+  }
+
+  private boolean permits(
+      Consultant creator,
+      Consultant colleague,
+      InternalGroupChatRecipientScope scope,
+      Long agencyId) {
+    if (colleague == null || colleague.isManagedPaused()) {
+      return false;
+    }
+    if (colleague.getTenantId() == null
+        && TenantContext.supplyAcrossTenants(
+            () ->
+                adminRepository.existsByIdAndTenantIdIsNullAndTypeAndManagedPausedFalse(
+                    colleague.getId(), AdminType.SUPER))) {
+      return true;
+    }
+    if (!scope.permits(creator, colleague, agencyId, multitenancy)) {
+      return false;
+    }
+    return scope != InternalGroupChatRecipientScope.PLATFORM
+        || Objects.equals(creator.getTenantId(), colleague.getTenantId())
+        || recipientScopes.resolve(colleague.getTenantId())
+            == InternalGroupChatRecipientScope.PLATFORM;
+  }
+
+  private static void requireAgency(Consultant creator, Long agencyId) {
+    if (agencyId == null || !creator.isInAgency(agencyId)) {
+      throw new ForbiddenException("The caller is not a counsellor of this counselling centre");
     }
   }
 
@@ -140,9 +245,7 @@ public class InternalSubsetChatFacade {
       Map<String, Consultant> looked,
       InternalGroupChatRecipientScope scope) {
     if (request.getAgencyId() != null) {
-      if (!creator.isInAgency(request.getAgencyId())) {
-        throw new ForbiddenException("The caller is not a counsellor of this counselling centre");
-      }
+      requireAgency(creator, request.getAgencyId());
       return request.getAgencyId();
     }
     var centres =
@@ -158,9 +261,7 @@ public class InternalSubsetChatFacade {
     }
     return centres.stream()
         .filter(
-            centre ->
-                looked.values().stream()
-                    .allMatch(c -> c != null && scope.permits(creator, c, centre, multitenancy)))
+            centre -> looked.values().stream().allMatch(c -> permits(creator, c, scope, centre)))
         .findFirst()
         .orElse(centres.get(0));
   }
@@ -190,7 +291,7 @@ public class InternalSubsetChatFacade {
       Long agencyId) {
     looked.forEach(
         (id, colleague) -> {
-          if (colleague == null || !scope.permits(creator, colleague, agencyId, multitenancy)) {
+          if (!permits(creator, colleague, scope, agencyId)) {
             log.info("A selected colleague is outside the recipient scope {}", scope);
             throw new CustomValidationHttpStatusException(
                 HttpStatusExceptionReason.INTERNAL_CHAT_RECIPIENT_OUT_OF_SCOPE,
