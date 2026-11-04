@@ -157,6 +157,7 @@ public class Messenger implements Messaging {
       LocalDateTime beforeDate,
       Long beforeId) {
     // Public topic queues are shared across Träger. Leave the legacy agency/no-topic lookup local.
+    Long queueAgencyId = mainTopicId == null ? agencyId : null;
     java.util.function.Supplier<Long> count =
         () ->
             sessionRepository.countPendingEnquiriesAheadOf(
@@ -165,12 +166,10 @@ public class Messenger implements Messaging {
                 beforeId,
                 consultingTypeId,
                 mainTopicId,
-                agencyId,
+                queueAgencyId,
                 liveChatQueueCutoff(),
                 RegistrationType.ANONYMOUS);
-    return mainTopicId != null && agencyId == null
-        ? TenantContext.supplyAcrossTenants(count)
-        : count.get();
+    return mainTopicId != null ? TenantContext.supplyAcrossTenants(count) : count.get();
   }
 
   @Override

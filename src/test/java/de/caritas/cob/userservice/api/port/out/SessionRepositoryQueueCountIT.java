@@ -38,6 +38,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional
 class SessionRepositoryQueueCountIT {
 
+  private static final int OTHER_CONSULTING_TYPE_ID = CONSULTING_TYPE_ID_OFFENDER + 1;
+
   @Autowired private SessionRepository sessionRepository;
 
   @Autowired private UserRepository userRepository;
@@ -214,6 +216,61 @@ class SessionRepositoryQueueCountIT {
     first.setStatus(Session.SessionStatus.IN_PROGRESS);
     sessionRepository.save(first);
     messenger.requireFirstLiveChatEnquiry(later);
+  }
+
+  /** Consultants see one topic queue, whatever consulting type or agency a guest arrived with. */
+  @Test
+  void laterGuestWaitsForEarlierGuestsOfTheSameTopicAcrossConsultingTypesAndAgencies() {
+    var moment = nowInUtc().minusMinutes(2).truncatedTo(ChronoUnit.SECONDS);
+    long topic = 15004L;
+    var otherType =
+        saveSession(
+            session -> {
+              session.setMainTopicId(topic);
+              session.setConsultingTypeId(OTHER_CONSULTING_TYPE_ID);
+              session.setCreateDate(moment.minusSeconds(20));
+            });
+    var otherAgency =
+        saveSession(
+            session -> {
+              session.setMainTopicId(topic);
+              session.setAgencyId(1L);
+              session.setCreateDate(moment.minusSeconds(10));
+            });
+    var later =
+        saveSession(
+            session -> {
+              session.setMainTopicId(topic);
+              session.setAgencyId(2L);
+              session.setCreateDate(moment);
+            });
+
+    assertThat(
+        messenger.countPendingEnquiriesAheadOf(
+            later.getAgencyId(), later.getConsultingTypeId(), topic, moment, later.getId()),
+        is(2L));
+    var refused =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            CustomValidationHttpStatusException.class,
+            () -> messenger.requireFirstLiveChatEnquiry(later));
+    assertThat(refused.getHttpStatus(), is(HttpStatus.CONFLICT));
+
+    messenger.requireFirstLiveChatEnquiry(otherType);
+    otherType.setStatus(Session.SessionStatus.IN_PROGRESS);
+    otherAgency.setStatus(Session.SessionStatus.IN_PROGRESS);
+    sessionRepository.saveAll(java.util.List.of(otherType, otherAgency));
+    messenger.requireFirstLiveChatEnquiry(later);
+  }
+
+  @Test
+  void noTopicLookupStaysWithinItsConsultingType() {
+    saveSession(session -> session.setConsultingTypeId(OTHER_CONSULTING_TYPE_ID));
+
+    long count =
+        messenger.countPendingEnquiriesAheadOf(
+            null, CONSULTING_TYPE_ID_OFFENDER, null, referenceCreateDate, 0L);
+
+    assertThat(count, is(0L));
   }
 
   private Session saveSession(java.util.function.Consumer<Session> customizer) {

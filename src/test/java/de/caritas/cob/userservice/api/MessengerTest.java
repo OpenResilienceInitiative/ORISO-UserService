@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -134,6 +136,22 @@ class MessengerTest {
     the guard that does not depend on the host's zone. */
     assertThat(minUpdateDate.getValue())
         .isCloseTo(nowInUtc().minusMinutes(5), within(2, ChronoUnit.SECONDS));
+  }
+
+  @Test
+  void countPendingEnquiriesAheadOf_Should_DropAgencyFilter_When_TopicQueue() {
+    messenger.countPendingEnquiriesAheadOf(10L, 2, 3L, LocalDateTime.now(), 4L);
+
+    verify(sessionRepository)
+        .countPendingEnquiriesAheadOf(any(), any(), any(), any(), eq(3L), isNull(), any(), any());
+  }
+
+  @Test
+  void countPendingEnquiriesAheadOf_Should_KeepAgencyFilter_When_NoTopic() {
+    messenger.countPendingEnquiriesAheadOf(10L, 2, null, LocalDateTime.now(), 4L);
+
+    verify(sessionRepository)
+        .countPendingEnquiriesAheadOf(any(), any(), any(), any(), isNull(), eq(10L), any(), any());
   }
 
   // ── touchLiveChatQueueHeartbeat ───────────────────────────────────────────

@@ -421,8 +421,9 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
       " FROM Session s JOIN s.user u"
           + " WHERE s.status = :sessionStatus AND s.consultant IS NULL"
           + " AND (s.createDate < :beforeDate OR (s.createDate = :beforeDate AND s.id < :beforeId))"
-          + " AND s.consultingTypeId = :consultingTypeId"
-          + " AND ((:mainTopicId IS NULL AND s.mainTopicId IS NULL) OR s.mainTopicId = :mainTopicId)"
+          // A topic queue is topic-only, as in the consultant's list; only no-topic stays typed.
+          + " AND ((:mainTopicId IS NULL AND s.mainTopicId IS NULL"
+          + " AND s.consultingTypeId = :consultingTypeId) OR s.mainTopicId = :mainTopicId)"
           + " AND s.updateDate >= :minUpdateDate"
           + LIVE_CHAT_MODALITY
           + " AND (:agencyId IS NULL OR s.agencyId = :agencyId)";
