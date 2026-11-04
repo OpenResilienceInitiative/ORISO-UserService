@@ -203,6 +203,20 @@ public class ConsultantAgencyServiceTest {
     assertThat(consultants, hasSize(6));
   }
 
+  @Test
+  public void getConsultantsOfAgency_Should_CarryTheMatrixUserId_ForMentionsOutsideTheRoom() {
+    var consultantAgency = new EasyRandom().nextObject(ConsultantAgency.class);
+    consultantAgency.getConsultant().setDeleteDate(null);
+    consultantAgency.getConsultant().setMatrixUserId("@max.mustermann:example.org");
+    when(consultantAgencyRepository.findByAgencyIdAndDeleteDateIsNullOrderByConsultantFirstNameAsc(
+            any()))
+        .thenReturn(List.of(consultantAgency));
+
+    var consultants = consultantAgencyService.getConsultantsOfAgency(0L);
+
+    assertEquals("@max.mustermann:example.org", consultants.get(0).getMatrixUserId());
+  }
+
   private void removeDeletionFlagForConsultantAtIndex(
       List<ConsultantAgency> consultantAgencies, int... indexRange) {
     Arrays.stream(indexRange)

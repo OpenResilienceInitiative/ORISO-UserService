@@ -182,6 +182,7 @@ public class ConsultantAgencyService {
             .firstName(consultant.getFirstName())
             .lastName(consultant.getLastName())
             .username(consultant.getUsername())
+            .matrixUserId(consultant.getMatrixUserId())
             .isSupervisor(consultant.isSupervisor());
 
     accountManager

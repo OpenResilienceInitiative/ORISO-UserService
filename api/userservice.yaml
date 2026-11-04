@@ -4903,6 +4903,14 @@ components:
             so dropping it would degrade that case to a raw id. It is populated only on the two
             authenticated list endpoints; the unauthenticated public-data endpoint leaves it unset.
             Removing it is a cross-repo change - retire the frontend fallback first.
+        matrixUserId:
+          type: string
+          example: '@max.mustermann:example.org'
+          description: >-
+            Populated only on the agency roster (/users/consultants), so a colleague who is not in
+            a team discussion's room yet can be mentioned by their exact id (ORISO-Frontend#1998).
+            It repeats the username that roster already carries. Left unset everywhere else, above
+            all on the unauthenticated public-data endpoint.
         isSupervisor:
           type: boolean
           example: true
