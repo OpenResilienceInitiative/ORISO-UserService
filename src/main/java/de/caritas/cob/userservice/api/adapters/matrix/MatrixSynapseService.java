@@ -823,13 +823,35 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
           "Matrix browser device login failed for user {}: {}",
           redactor.pseudonym(matrixUserId),
           ex instanceof HttpStatusCodeException httpError
-              ? httpError.getStatusCode()
+              ? httpError.getStatusCode() + " errcode=" + browserLoginErrorCode(httpError)
               : ex.getClass().getSimpleName());
       // The token endpoint translates a failed login to 503.
       return null;
     } finally {
       browserLoginLock.unlock();
     }
+  }
+
+  private static String browserLoginErrorCode(HttpStatusCodeException error) {
+    var code = errcodeOf(error);
+    // The upstream response is untrusted. Keep the diagnostic to known Matrix error codes.
+    return switch (code) {
+      case "M_BAD_JSON",
+              "M_FORBIDDEN",
+              "M_INVALID_PARAM",
+              "M_LIMIT_EXCEEDED",
+              "M_MISSING_PARAM",
+              "M_MISSING_TOKEN",
+              "M_NOT_FOUND",
+              "M_NOT_JSON",
+              "M_UNKNOWN",
+              "M_UNKNOWN_TOKEN",
+              "M_UNRECOGNIZED",
+              "M_USER_DEACTIVATED",
+              "M_USER_LOCKED" ->
+          code;
+      default -> "unknown";
+    };
   }
 
   private static OptionalInt browserLoginRetryAfterSeconds(
