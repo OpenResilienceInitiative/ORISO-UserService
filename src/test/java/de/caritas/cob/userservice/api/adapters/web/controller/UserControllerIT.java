@@ -74,6 +74,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityReactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
+import de.caritas.cob.userservice.api.port.out.IdentityTenantUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.*;
 import de.caritas.cob.userservice.api.service.AgencyAdminContactService;
@@ -341,6 +342,7 @@ class UserControllerIT {
         IdentityRoleLookup.class,
         IdentityRoleUpdater.class,
         IdentitySecondFactor.class,
+        IdentityTenantUpdater.class,
         IdentityUsernameAvailability.class
       })
   private IdentityClient identityClient;

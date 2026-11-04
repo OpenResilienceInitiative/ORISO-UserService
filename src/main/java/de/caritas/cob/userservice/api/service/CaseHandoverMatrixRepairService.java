@@ -9,10 +9,14 @@ import de.caritas.cob.userservice.api.port.out.CaseHandoverMatrixRepairTaskRepos
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.UUID;
 import lombok.NonNull;
@@ -35,6 +39,16 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Slf4j
 public class CaseHandoverMatrixRepairService {
 
+  /** Counts revocations the repair queue gave up on; alert on any increase. */
+  static final String LEAVE_EXHAUSTED_METRIC = "userservice.matrix.leave.exhausted";
+
+  /**
+   * Counts every attempt of a LEAVE that could not first hand the room's owner power to the
+   * technical admin; the counsellor stays in the room meanwhile. Alert on a sustained rate.
+   */
+  static final String LEAVE_ADMIN_POWER_FAILED_METRIC =
+      "userservice.matrix.leave.admin_power.failed";
+
   private final @NonNull CaseHandoverMatrixRepairTaskRepository repository;
   private final @NonNull CaseHandoverRequestRepository handoverRequestRepository;
   private final @NonNull MatrixSynapseService matrixSynapseService;
@@ -42,6 +56,7 @@ public class CaseHandoverMatrixRepairService {
   private final @NonNull SessionSupervisorRepository sessionSupervisorRepository;
   private final @NonNull Clock clock;
   private final @NonNull PlatformTransactionManager transactionManager;
+  private final @NonNull MeterRegistry meterRegistry;
 
   /** Not a consultant id: a supervision kick is never cancelled by a Case Handover grant. */
   public static final String SUPERVISION_REMOVAL_REQUESTER = "supervision-removal";
@@ -65,6 +80,66 @@ public class CaseHandoverMatrixRepairService {
         operatorId,
         sessionId,
         requesterConsultantId);
+  }
+
+  /** A case's Matrix room, as the repair queue needs it. */
+  public record RoomRef(Long sessionId, String roomId) {}
+
+  /**
+   * Queues that {@code memberMatrixId} leaves the given rooms. Joins the caller's transaction on
+   * purpose: when the change that makes the member leave is rolled back, so are the tasks.
+   *
+   * @return the number of distinct rooms queued
+   */
+  @Transactional
+  public int enqueueLeaves(String memberMatrixId, String memberConsultantId, List<RoomRef> rooms) {
+    var now = LocalDateTime.now(clock);
+    var existingByRoom = new HashMap<String, CaseHandoverMatrixRepairTask>();
+    repository
+        .findByActionAndMemberId(CaseHandoverMatrixRepairAction.LEAVE, memberMatrixId)
+        .forEach(task -> existingByRoom.put(task.getRoomId(), task));
+    var queuedRooms = new LinkedHashSet<String>();
+    var created = new ArrayList<CaseHandoverMatrixRepairTask>();
+    for (var room : rooms) {
+      if (room.roomId() == null || room.roomId().isBlank() || !queuedRooms.add(room.roomId())) {
+        continue;
+      }
+      var existing = existingByRoom.get(room.roomId());
+      if (existing != null) {
+        // A task of an earlier move (possibly exhausted): start it over for this one.
+        existing.setSessionId(room.sessionId());
+        existing.setRequesterConsultantId(memberConsultantId);
+        existing.setAttemptCount(0);
+        existing.setLastAttemptAt(null);
+        existing.setCreateDate(now);
+        existing.setGeneration(existing.getGeneration() + 1);
+        repository.save(existing);
+      } else {
+        created.add(
+            CaseHandoverMatrixRepairTask.builder()
+                .action(CaseHandoverMatrixRepairAction.LEAVE)
+                .roomId(room.roomId())
+                .memberId(memberMatrixId)
+                .sessionId(room.sessionId())
+                .requesterConsultantId(memberConsultantId)
+                .createDate(now)
+                .build());
+      }
+    }
+    if (!created.isEmpty()) {
+      repository.saveAll(created);
+    }
+    return queuedRooms.size();
+  }
+
+  /**
+   * Forgets the pending leaves of {@code memberMatrixId} for the cases of {@code tenantId}, e.g.
+   * when the counsellor moves back before the rooms were left.
+   */
+  @Transactional
+  public void cancelPendingLeavesInTenant(String memberMatrixId, Long tenantId) {
+    repository.deleteByActionAndMemberIdInTenant(
+        CaseHandoverMatrixRepairAction.LEAVE, memberMatrixId, tenantId);
   }
 
   /**
@@ -365,13 +440,16 @@ public class CaseHandoverMatrixRepairService {
       if (task.getAction() == CaseHandoverMatrixRepairAction.POWER_RAISE) {
         return raisePowerWhileStillOwner(task);
       }
-      boolean activeAccess = hasActiveAccess(task);
+      // A LEAVE ends the counsellor's own access; a co-access grant of an earlier time is no
+      // reason to keep them in the room of a Träger they left.
+      boolean leave = task.getAction() == CaseHandoverMatrixRepairAction.LEAVE;
+      boolean activeAccess = !leave && hasActiveAccess(task);
       if (task.getAction() == CaseHandoverMatrixRepairAction.REMOVE
           && (activeAccess || supervisorIsActiveAgain(task))) {
         return true;
       }
       String loginId =
-          task.getAction() == CaseHandoverMatrixRepairAction.JOIN
+          task.getAction() == CaseHandoverMatrixRepairAction.JOIN || leave
               ? task.getMemberId()
               : task.getOperatorId();
       String token = isBlank(loginId) ? null : matrixSynapseService.loginAsUserAccessToken(loginId);
@@ -390,6 +468,7 @@ public class CaseHandoverMatrixRepairService {
       return switch (task.getAction()) {
         case JOIN -> reconcileJoin(task, token, activeAccess);
         case REMOVE -> removeThenRestoreIfReAdded(task, token);
+        case LEAVE -> handOverPowerThenLeave(task, token);
         case POWER_RESTORE ->
             throw new IllegalStateException("Power restore uses the session lock");
         case POWER_RAISE -> throw new IllegalStateException("Power raise is handled above");
@@ -426,6 +505,30 @@ public class CaseHandoverMatrixRepairService {
     // Access can expire or be revoked while the technical login/JOIN request is in flight. Never
     // retain a membership based only on the pre-I/O check.
     return hasActiveAccess(task) || leaveOrConfirmAbsent(task, memberToken);
+  }
+
+  /**
+   * The counsellor is the room's owner and the agency account is gone, so once they left nobody
+   * could raise the colleague who takes the case over (#1421). Before leaving, they therefore make
+   * the technical admin a power holder; a failure keeps them in the room until a retry succeeds.
+   */
+  private boolean handOverPowerThenLeave(CaseHandoverMatrixRepairTask task, String memberToken) {
+    var members = matrixSynapseService.getRoomMembers(task.getRoomId());
+    if (members.isPresent() && !members.get().contains(task.getMemberId())) {
+      return true;
+    }
+    if (!matrixSynapseService.ensureAdminHoldsRoomPower(
+        task.getRoomId(), task.getMemberId(), memberToken)) {
+      meterRegistry.counter(LEAVE_ADMIN_POWER_FAILED_METRIC).increment();
+      log.warn(
+          "Chat room power could not be handed to the technical admin before a counsellor who"
+              + " changed the Träger leaves session {} (attempt {}); they stay in the room until"
+              + " a retry succeeds",
+          task.getSessionId(),
+          task.getAttemptCount() + 1);
+      return false;
+    }
+    return leaveOrConfirmAbsent(task, memberToken);
   }
 
   private boolean leaveOrConfirmAbsent(CaseHandoverMatrixRepairTask task, String memberToken) {
@@ -583,10 +686,29 @@ public class CaseHandoverMatrixRepairService {
                       task.setAttemptCount(task.getAttemptCount() + 1);
                       task.setLastAttemptAt(LocalDateTime.now(clock));
                       repository.save(task);
+                      reportExhaustedLeave(task);
                     }
                   });
           return null;
         });
+  }
+
+  /**
+   * A LEAVE that is given up leaves the counsellor in a room of a Träger they no longer belong to
+   * (#1421). That must not pass unseen: a WARN without ids of people or rooms, and a counter an
+   * alert can watch.
+   */
+  private void reportExhaustedLeave(CaseHandoverMatrixRepairTask task) {
+    if (task.getAction() != CaseHandoverMatrixRepairAction.LEAVE
+        || task.getAttemptCount() != maxAttempts) {
+      return;
+    }
+    meterRegistry.counter(LEAVE_EXHAUSTED_METRIC).increment();
+    log.warn(
+        "Chat room membership of a counsellor who changed the Träger could not be revoked for"
+            + " session {} after {} attempts; the repair queue gave up on it",
+        task.getSessionId(),
+        task.getAttemptCount());
   }
 
   private <T> T inNewTransaction(java.util.function.Supplier<T> action) {
