@@ -221,28 +221,31 @@ public class AccountInviteService {
       InviteTarget target,
       TopicPermission topicPermission,
       LocalDateTime now) {
-    return AccountInvite.builder()
-        .targetRole(command.targetRole())
-        .tenantId(target.tenantId())
-        .recipientEmail(command.recipientEmail().trim())
-        .activeRecipientKey(normalizeEmail(command.recipientEmail()))
-        .firstName(trimToNull(command.firstName()))
-        .lastName(trimToNull(command.lastName()))
-        .agencyId(target.agencyId())
-        .departmentId(target.departmentId())
-        .tenantIdAllocationMode(command.tenantIdAllocationMode())
-        .agencyIdAllocationMode(command.agencyIdAllocationMode())
-        .alsoCounsellor(alsoCounsellorOf(command))
-        .topicPermission(topicPermission)
-        .status(AccountInviteStatus.DRAFT)
-        .provisioningStatus(AccountInviteProvisioningStatus.PENDING)
-        .emailVerificationStatus(EmailVerificationStatus.PENDING)
-        .twoFactorStatus(defaultTwoFactorStatus(command.targetRole()))
-        .createdByUserId(authenticatedUser.getUserId())
-        .createdByUsername(authenticatedUser.getUsername())
-        .createDate(now)
-        .updateDate(now)
-        .build();
+    AccountInvite invite =
+        AccountInvite.builder()
+            .targetRole(command.targetRole())
+            .tenantId(target.tenantId())
+            .recipientEmail(command.recipientEmail().trim())
+            .activeRecipientKey(normalizeEmail(command.recipientEmail()))
+            .firstName(trimToNull(command.firstName()))
+            .lastName(trimToNull(command.lastName()))
+            .agencyId(target.agencyId())
+            .departmentId(target.departmentId())
+            .tenantIdAllocationMode(command.tenantIdAllocationMode())
+            .agencyIdAllocationMode(command.agencyIdAllocationMode())
+            .alsoCounsellor(alsoCounsellorOf(command))
+            .topicPermission(topicPermission)
+            .status(AccountInviteStatus.DRAFT)
+            .provisioningStatus(AccountInviteProvisioningStatus.PENDING)
+            .emailVerificationStatus(EmailVerificationStatus.PENDING)
+            .twoFactorStatus(defaultTwoFactorStatus(command.targetRole()))
+            .createdByUserId(authenticatedUser.getUserId())
+            .createdByUsername(authenticatedUser.getUsername())
+            .createDate(now)
+            .updateDate(now)
+            .build();
+    command.suggestion().applyTo(invite);
+    return invite;
   }
 
   private AccountInvite save(AccountInvite invite) {
@@ -570,6 +573,9 @@ public class AccountInviteService {
                       .agencyIdAllocationMode(oldInvite.getAgencyIdAllocationMode())
                       .alsoCounsellor(oldInvite.getAlsoCounsellor())
                       .topicPermission(oldInvite.getTopicPermission())
+                      .suggestedAvatarKind(oldInvite.getSuggestedAvatarKind())
+                      .suggestedAvatarId(oldInvite.getSuggestedAvatarId())
+                      .suggestedDisplayName(oldInvite.getSuggestedDisplayName())
                       .unitCreatedAt(oldInvite.getUnitCreatedAt())
                       .tokenHash(prepared.tokenHash())
                       .expiresAt(resolveExpiry(now, DEFAULT_EXPIRY_DAYS))
@@ -1197,7 +1203,44 @@ public class AccountInviteService {
       /** AGENCY_ADMIN only; null = true. Any other role must leave it null. */
       Boolean alsoCounsellor,
       /** The admin's choice; null = SELECT_EXISTING (TopicPermissionPolicy). */
-      TopicPermission topicPermission) {
+      TopicPermission topicPermission,
+      /** Optional avatar and display-name suggestion for the invitee (ORISO-Admin#1274). */
+      InviteAvatarSuggestion suggestion) {
+
+    public CreateAccountInviteCommand {
+      if (suggestion == null) {
+        suggestion = InviteAvatarSuggestion.NONE;
+      }
+    }
+
+    public CreateAccountInviteCommand(
+        AccountInviteTargetRole targetRole,
+        Long tenantId,
+        String recipientEmail,
+        String firstName,
+        String lastName,
+        Long agencyId,
+        Long departmentId,
+        Long expiresInDays,
+        IdAllocationMode tenantIdAllocationMode,
+        IdAllocationMode agencyIdAllocationMode,
+        Boolean alsoCounsellor,
+        TopicPermission topicPermission) {
+      this(
+          targetRole,
+          tenantId,
+          recipientEmail,
+          firstName,
+          lastName,
+          agencyId,
+          departmentId,
+          expiresInDays,
+          tenantIdAllocationMode,
+          agencyIdAllocationMode,
+          alsoCounsellor,
+          topicPermission,
+          InviteAvatarSuggestion.NONE);
+    }
 
     public CreateAccountInviteCommand(
         AccountInviteTargetRole targetRole,
@@ -1264,7 +1307,8 @@ public class AccountInviteService {
           tenantIdAllocationMode,
           agencyIdAllocationMode,
           alsoCounsellor,
-          topicPermission);
+          topicPermission,
+          suggestion);
     }
 
     public CreateAccountInviteCommand withDepartmentId(Long newDepartmentId) {
@@ -1280,7 +1324,8 @@ public class AccountInviteService {
           tenantIdAllocationMode,
           agencyIdAllocationMode,
           alsoCounsellor,
-          topicPermission);
+          topicPermission,
+          suggestion);
     }
 
     /** Convenience for callers without ID-allocation semantics (no reservation modes). */

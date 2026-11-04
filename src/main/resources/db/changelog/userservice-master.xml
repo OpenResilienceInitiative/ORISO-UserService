@@ -266,4 +266,5 @@
   <include file="db/changelog/changeset/20261103_statistics_retention_1561/changeSet.xml"/>
   <include file="db/changelog/changeset/20261102_session_appointment_1960/changeSet.xml"/>
   <include file="db/changelog/changeset/20261016_consultant_tenant_change_audit/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261031_invite_avatar_name_1274/changeSet.xml"/>
 </databaseChangeLog>

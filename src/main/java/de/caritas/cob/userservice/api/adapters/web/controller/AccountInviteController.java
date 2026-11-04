@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProv
 import de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupIssuer;
 import de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupService;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteAccountRoles;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteAvatarSuggestion;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteBoard;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailDeliveryStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailPreviewService;
@@ -98,7 +99,8 @@ public class AccountInviteController {
             parseOptionalEnum(
                 IdAllocationMode.class, safe.agencyIdAllocationMode, "agencyIdAllocationMode"),
             safe.alsoCounsellor,
-            TopicPermission.fromWire(safe.topicPermission));
+            TopicPermission.fromWire(safe.topicPermission),
+            InviteAvatarSuggestion.of(safe.avatarKind, safe.avatarId, safe.displayName));
 
     if (safe.templateId != null) {
       InviteSendResult result = accountInviteService.createAndSendInvite(command, safe.templateId);
@@ -543,6 +545,18 @@ public class AccountInviteController {
 
     /** Object, not enum: the CSV import sends true/false. Omitted = SELECT_EXISTING. */
     public Object topicPermission;
+
+    /**
+     * Optional suggestion for the invitee (ORISO-Admin#1274): ICON, INITIALS or PICTURE (400 for
+     * anything else). The invitee sees it prefilled and may change it.
+     */
+    public String avatarKind;
+
+    /** Motif id for {@code avatarKind = ICON}; dropped for the other kinds. */
+    public String avatarId;
+
+    /** The suggested public display name, at most 100 characters. */
+    public String displayName;
   }
 
   public static class TopicPermissionRequestDTO {
@@ -652,6 +666,12 @@ public class AccountInviteController {
 
     /** AGENCY_ADMIN invites: whether the person also counsels; null for every other role. */
     public Boolean alsoCounsellor;
+
+    /** The inviter's avatar / display-name suggestion; null when none was made. */
+    public String avatarKind;
+
+    public String avatarId;
+    public String displayName;
 
     /** AGENCY or TENANT while WAITING_FOR_UNIT: that unit does not exist yet. */
     public String waitingForUnit;
@@ -779,6 +799,10 @@ public class AccountInviteController {
               ? null
               : invite.getAgencyIdAllocationMode().name();
       dto.alsoCounsellor = invite.getAlsoCounsellor();
+      dto.avatarKind =
+          invite.getSuggestedAvatarKind() == null ? null : invite.getSuggestedAvatarKind().name();
+      dto.avatarId = invite.getSuggestedAvatarId();
+      dto.displayName = invite.getSuggestedDisplayName();
       dto.waitingForUnit =
           invite.getWaitingForUnit() == null ? null : invite.getWaitingForUnit().name();
       dto.provisioningStatus =
