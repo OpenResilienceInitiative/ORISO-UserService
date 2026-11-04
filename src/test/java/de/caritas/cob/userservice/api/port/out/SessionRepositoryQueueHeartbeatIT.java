@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.UserServiceApplication;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.testConfig.ConsultingTypeManagerTestConfig;
+import jakarta.persistence.EntityManager;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -40,6 +41,7 @@ class SessionRepositoryQueueHeartbeatIT {
   @Autowired private UserRepository users;
   @Autowired private ConsultantRepository consultants;
   @Autowired private Messaging messenger;
+  @Autowired private EntityManager entityManager;
   @Autowired private PlatformTransactionManager transactionManager;
 
   private Long sessionId;
@@ -139,6 +141,7 @@ class SessionRepositoryQueueHeartbeatIT {
                         var entry = sessions.findByIdForUpdate(sessionId).orElseThrow();
                         messenger.requireFirstLiveChatEnquiry(entry);
                         entry.setStatus(IN_PROGRESS);
+                        entityManager.flush();
                         olderIsAssigning.countDown();
                         await(commitOlder);
                       }));

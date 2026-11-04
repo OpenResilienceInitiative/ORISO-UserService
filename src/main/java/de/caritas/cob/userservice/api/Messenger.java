@@ -145,6 +145,17 @@ public class Messenger implements Messaging {
       diagnosticMetrics.recordInvalidQueueRequest();
       return 0L;
     }
+    long depth = queryEarlierPending(agencyId, consultingTypeId, mainTopicId, beforeDate, beforeId);
+    diagnosticMetrics.recordQueueDepth(depth);
+    return depth;
+  }
+
+  private long queryEarlierPending(
+      Long agencyId,
+      Integer consultingTypeId,
+      Long mainTopicId,
+      LocalDateTime beforeDate,
+      Long beforeId) {
     // Public topic queues are shared across Träger. Leave the legacy agency/no-topic lookup local.
     java.util.function.Supplier<Long> count =
         () ->
@@ -157,12 +168,9 @@ public class Messenger implements Messaging {
                 agencyId,
                 liveChatQueueCutoff(),
                 RegistrationType.ANONYMOUS);
-    long depth =
-        mainTopicId != null && agencyId == null
-            ? TenantContext.supplyAcrossTenants(count)
-            : count.get();
-    diagnosticMetrics.recordQueueDepth(depth);
-    return depth;
+    return mainTopicId != null && agencyId == null
+        ? TenantContext.supplyAcrossTenants(count)
+        : count.get();
   }
 
   @Override
@@ -179,7 +187,7 @@ public class Messenger implements Messaging {
     // The accept transactions use READ_COMMITTED. An older assignment that has not committed
     // is still waiting for this read. A locking scan would contend with both target-row locks.
     var earlier =
-        countPendingEnquiriesAheadOf(
+        queryEarlierPending(
             session.getAgencyId(),
             session.getConsultingTypeId(),
             session.getMainTopicId(),
