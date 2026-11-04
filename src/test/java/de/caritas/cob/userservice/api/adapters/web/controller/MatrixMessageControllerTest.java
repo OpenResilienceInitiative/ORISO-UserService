@@ -410,6 +410,8 @@ class MatrixMessageControllerTest {
         Arguments.of("17", "null", "17"),
         Arguments.of("0", "0", null),
         Arguments.of(null, "-10", null),
+        Arguments.of(null, "90000, \"retry_after_ms\": 1000", null),
+        Arguments.of(null, "21037} {\"unexpected\": true", null),
         Arguments.of(null, "\"16006\"", null),
         Arguments.of(null, "16006.5", null),
         Arguments.of("2147483648", "2147483647001", null),
