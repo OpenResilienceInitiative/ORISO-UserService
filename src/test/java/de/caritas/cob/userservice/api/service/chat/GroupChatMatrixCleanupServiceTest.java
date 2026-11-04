@@ -103,6 +103,31 @@ class GroupChatMatrixCleanupServiceTest {
   }
 
   @Test
+  void reservedRoomWithDifferentTenantRetainsTaskWithoutPurge() {
+    when(chats.findByIdForUpdate(7L)).thenReturn(Optional.of(chat(7L)));
+    when(roomHistory.findByRoomIdForUpdate("!new:matrix"))
+        .thenReturn(Optional.of(new ChatMatrixRoom("!new:matrix", chat(7L), 1, 99L)));
+
+    service.retry(1L);
+
+    verify(tasks).save(task);
+    verify(tasks, never()).delete(any());
+    verifyNoInteractions(matrix, membership);
+  }
+
+  @Test
+  void reservedRoomWithoutSeriesRetainsTaskWithoutPurge() {
+    when(roomHistory.findByRoomIdForUpdate("!new:matrix"))
+        .thenReturn(Optional.of(new ChatMatrixRoom("!new:matrix", chat(7L), 1, 41L)));
+
+    service.retry(1L);
+
+    verify(tasks).save(task);
+    verify(tasks, never()).delete(any());
+    verifyNoInteractions(matrix, membership);
+  }
+
+  @Test
   void provenanceLockFailureDoesNotPurgeOrDropTask() {
     when(roomHistory.findByRoomIdForUpdate("!new:matrix"))
         .thenThrow(new org.springframework.dao.CannotAcquireLockException("synthetic contention"));
