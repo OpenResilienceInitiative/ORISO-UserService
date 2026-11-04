@@ -36,6 +36,7 @@ import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantTenantChangeAuditRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityTenantUpdater;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
@@ -84,6 +85,7 @@ class ConsultantTenantChangeServiceTest {
   @Mock private SessionSupervisorRepository sessionSupervisorRepository;
   @Mock private IdentityTenantUpdater identityTenantUpdater;
   @Mock private IdentityRoleUpdater identityRoleUpdater;
+  @Mock private IdentityClientConfig identityClientConfig;
   @Mock private AdminRepository adminRepository;
   @Mock private ConsultantTenantChangeAuditRepository auditRepository;
 
@@ -106,6 +108,7 @@ class ConsultantTenantChangeServiceTest {
             matrixRepairService,
             identityTenantUpdater,
             identityRoleUpdater,
+            identityClientConfig,
             adminRepository,
             auditRepository,
             meterRegistry,
@@ -147,6 +150,22 @@ class ConsultantTenantChangeServiceTest {
         .satisfies(refusal(HttpStatus.BAD_REQUEST, "TENANT_CHANGE_MULTITENANCY_OFF"));
 
     verifyNoInteractions(identityTenantUpdater, consultantAgencyAdminService, auditRepository);
+  }
+
+  @Test
+  void refusesToMoveInFiveActorModeBeforeAnythingChanges() {
+    when(identityClientConfig.isFiveActorMode()).thenReturn(true);
+
+    assertThatThrownBy(() -> move(NEW_TENANT, 800L))
+        .isInstanceOf(ServiceUnavailableException.class);
+
+    verifyNoInteractions(
+        consultantRepository,
+        matrixRepairService,
+        identityTenantUpdater,
+        identityRoleUpdater,
+        consultantAgencyAdminService,
+        auditRepository);
   }
 
   @Test

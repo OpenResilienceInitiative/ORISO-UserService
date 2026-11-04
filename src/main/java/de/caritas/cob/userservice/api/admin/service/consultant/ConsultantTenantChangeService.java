@@ -22,6 +22,7 @@ import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantTenantChangeAuditRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityTenantUpdater;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
@@ -93,6 +94,7 @@ public class ConsultantTenantChangeService {
   private final @NonNull CaseHandoverMatrixRepairService matrixRepairService;
   private final @NonNull IdentityTenantUpdater identityTenantUpdater;
   private final @NonNull IdentityRoleUpdater identityRoleUpdater;
+  private final @NonNull IdentityClientConfig identityClientConfig;
   private final @NonNull AdminRepository adminRepository;
   private final @NonNull ConsultantTenantChangeAuditRepository auditRepository;
   private final @NonNull MeterRegistry meterRegistry;
@@ -120,8 +122,9 @@ public class ConsultantTenantChangeService {
    *     (400 or 409) on every refusal: multi-tenancy off, same Träger, unknown centre, centre of
    *     another Träger, topics not covered, last counsellor of a centre, admin identity
    * @throws NotFoundException if the counsellor does not exist
-   * @throws ServiceUnavailableException if the identity provider could not switch the tenant; the
-   *     whole move is rolled back
+   * @throws ServiceUnavailableException if the identity provider could not switch the tenant, the
+   *     whole move is rolled back; or in five-actor mode, which has no scoped owner for this move
+   *     yet, before anything changed
    */
   @Transactional
   public Result changeTenant(
@@ -135,6 +138,10 @@ public class ConsultantTenantChangeService {
           HttpStatus.BAD_REQUEST,
           HttpStatusExceptionReason.TENANT_CHANGE_MULTITENANCY_OFF,
           "multi-tenancy is off");
+    }
+    if (identityClientConfig.isFiveActorMode()) {
+      // The tenant, session and role writes below use the legacy identity client.
+      throw new ServiceUnavailableException("Scoped tenant-change owner is unavailable");
     }
     var consultant =
         consultantRepository
