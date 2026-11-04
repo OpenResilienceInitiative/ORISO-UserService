@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.helper.UserVerifier;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Chat;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
@@ -31,9 +32,11 @@ import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
+import de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy;
 import de.caritas.cob.userservice.api.service.AskerIdentityPolicy;
 import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService;
 import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService.RecoveryPolicySnapshot;
+import de.caritas.cob.userservice.api.service.SessionDataService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkKind;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
@@ -95,6 +98,8 @@ public class CreateUserFacade {
   private final @NonNull ApplicationSettingsService applicationSettingsService;
 
   private final @NonNull GroupInviteRegistration groupInviteRegistration;
+  private final @NonNull AskerEmailCollectionPolicy emailCollectionPolicy;
+  private final @NonNull SessionDataService sessionDataService;
 
   private final @NonNull de.caritas.cob.userservice.api.service.agencyinvitelink
           .TemporaryAccountLinkResolver
@@ -149,6 +154,23 @@ public class CreateUserFacade {
         dpaPolicy.requireForAgency(userDTO.getAgencyId());
       }
       Optional<Chat> invitedGroup = groupInviteRegistration.resolveInvitedGroup(userDTO);
+      var registrationType =
+          invitedGroup.isPresent()
+              ? ConversationType.SELF_HELP
+              : ConversationType.AGENCY_COUNSELLING;
+      Long tenantId = TenantContext.getCurrentTenant();
+      if (userDTO.getEmail() != null && !userDTO.getEmail().isBlank()) {
+        emailCollectionPolicy.requireForRegistration(tenantId, registrationType);
+      }
+      var displayName =
+          sessionDataService.validateRegistrationNames(
+              userDTO.getUsername(), userDTO.getDisplayName(), tenantId, registrationType);
+      if (invitedGroup.isEmpty() && directLink.isEmpty()) {
+        userDTO.setDisplayName(displayName);
+      } else {
+        // Group/direct-link signup creates no personal Session here; no shared/global alias.
+        userDTO.setDisplayName(null);
+      }
       if (userDTO.isTemporary() && invitedGroup.isEmpty() && directLink.isEmpty()) {
         // The deletion job removes temporary accounts; only a valid group invite or direct link
         // may ask for one.

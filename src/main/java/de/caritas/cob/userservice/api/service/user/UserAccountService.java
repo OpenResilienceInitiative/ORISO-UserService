@@ -2,7 +2,6 @@ package de.caritas.cob.userservice.api.service.user;
 
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.NotificationsSettingsDTO;
-import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -14,7 +13,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
-import de.caritas.cob.userservice.api.service.AskerIdentityPolicy;
+import de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
@@ -25,7 +24,6 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import java.time.LocalDateTime;
-import java.util.Objects;
 import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -40,7 +38,7 @@ import org.springframework.stereotype.Service;
 public class UserAccountService {
 
   private final @NonNull UserService userService;
-  private final @NonNull TenantService tenantService;
+  private final @NonNull AskerEmailCollectionPolicy emailCollectionPolicy;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull AppointmentService appointmentService;
   private final @NonNull AuthenticatedUser authenticatedUser;
@@ -139,14 +137,17 @@ public class UserAccountService {
    */
   public void changeUserAccountEmailAddress(Optional<String> optionalEmail) {
     ensureCurrentAccountIsWritable();
+    if (optionalEmail.isPresent() && authenticatedUser.isAnonymous()) {
+      throw new ForbiddenException("Anonymous live-chat accounts cannot add an email address");
+    }
     var userId = authenticatedUser.getUserId();
     var email = optionalEmail.orElseGet(() -> userHelper.getDummyEmail(userId));
     Optional<Consultant> consultantOpt = consultantService.getConsultant(userId);
     Optional<User> userOpt = userService.getUser(userId);
     if (optionalEmail.isPresent()
         && userOpt.isPresent()
-        && !optionalEmail.get().equalsIgnoreCase(Objects.toString(userOpt.get().getEmail(), ""))) {
-      AskerIdentityPolicy.requireEmailCollectionAllowed(tenantService, userOpt.get().getTenantId());
+        && !AskerEmailCollectionPolicy.sameAddress(userOpt.get().getEmail(), optionalEmail.get())) {
+      emailCollectionPolicy.requireForAccount(userOpt.get());
     }
     LanguageCode notificationLanguage =
         userOpt

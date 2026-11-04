@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionDataDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.SessionDataProvider;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.SessionDataRepository;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -24,6 +25,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 public class SessionDataServiceTest {
 
+  @Mock private org.springframework.transaction.PlatformTransactionManager transactionManager;
   @InjectMocks private SessionDataService sessionDataService;
   @Mock private SessionDataRepository sessionDataRepository;
   @Mock private SessionDataProvider sessionDataProvider;
@@ -136,6 +138,7 @@ public class SessionDataServiceTest {
   public void saveSessionDataForSessionId_Should_SaveSessionData() {
     SessionDataDTO sessionData = easyRandom.nextObject(SessionDataDTO.class);
     Session session = easyRandom.nextObject(Session.class);
+    session.setConversationType(ConversationType.AGENCY_COUNSELLING);
     session.getUser().setUserId("asker");
     session.setTenantId(42L);
     when(sessionService.assertAskerHasAccess(any(), any())).thenReturn(session);
@@ -150,6 +153,7 @@ public class SessionDataServiceTest {
   public void saveSessionDataForSessionId_Should_RefuseTheSessionOfAMembersOnlyChat() {
     SessionDataDTO sessionData = easyRandom.nextObject(SessionDataDTO.class);
     Session session = easyRandom.nextObject(Session.class);
+    session.setConversationType(ConversationType.AGENCY_COUNSELLING);
     session.getUser().setUserId("asker");
     session.setTenantId(42L);
     when(sessionService.assertAskerHasAccess(any(), any())).thenReturn(session);
@@ -169,6 +173,7 @@ public class SessionDataServiceTest {
   public void saveSessionData_Should_SaveValidatedSessionData() {
     SessionDataDTO sessionData = easyRandom.nextObject(SessionDataDTO.class);
     Session session = easyRandom.nextObject(Session.class);
+    session.setConversationType(ConversationType.AGENCY_COUNSELLING);
     session.getUser().setUserId("asker");
     session.setTenantId(42L);
     when(sessionService.assertAskerHasAccess(any(), any())).thenReturn(session);
@@ -185,6 +190,32 @@ public class SessionDataServiceTest {
     when(tenantService.getRestrictedTenantDataFresh(42L)).thenReturn(tenant(false));
     sessionDataService.saveSessionData(
         session, new SessionDataDTO().displayName("katze_mika_1234"));
+    verify(sessionDataRepository).saveAll(any());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+  void liveChatAliasUsesItsOwnTypingRuleRatherThanCounselling(boolean editable) {
+    var session = aliasSession();
+    session.setRegistrationType(Session.RegistrationType.ANONYMOUS);
+    var policy = tenant(true);
+    policy
+        .getSettings()
+        .featureDisplayNameEditableAgencyCounsellingEnabled(!editable)
+        .featureDisplayNameEditableLiveChatEnabled(editable);
+    when(tenantService.getRestrictedTenantDataFresh(42L)).thenReturn(policy);
+    var typed = new SessionDataDTO().displayName("Freely typed name");
+
+    if (editable) {
+      sessionDataService.saveSessionData(session, typed);
+    } else {
+      org.assertj.core.api.Assertions.assertThatThrownBy(
+              () -> sessionDataService.saveSessionData(session, typed))
+          .isInstanceOf(
+              de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+      sessionDataService.saveSessionData(
+          session, new SessionDataDTO().displayName("ruhiges Pferd Jules"));
+    }
     verify(sessionDataRepository).saveAll(any());
   }
 
@@ -249,6 +280,63 @@ public class SessionDataServiceTest {
     verify(tenantService).getSingleTenancyTenantDataFresh();
     org.mockito.Mockito.verify(tenantService, org.mockito.Mockito.never())
         .getRestrictedTenantDataFresh(any());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"", "   ", "\u2003"})
+  void blankInitialAliasIsOmittedWithoutARequiredPolicyLookup(String alias) {
+    org.assertj.core.api.Assertions.assertThat(sessionDataService.validateInitialAlias(alias, 42L))
+        .isNull();
+    org.mockito.Mockito.verifyNoInteractions(tenantService, sessionDataRepository);
+  }
+
+  @Test
+  void initialAliasRejectsTooLongValueBeforeAnyPolicyOrPersistenceEffect() {
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> sessionDataService.validateInitialAlias("Ж".repeat(256), 42L))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException.class);
+    org.mockito.Mockito.verifyNoInteractions(tenantService, sessionDataRepository);
+  }
+
+  @Test
+  void trustedInitialWriteRechecksPersistedOwnerBeforeSaving() {
+    var supplied = aliasSession();
+    supplied.setId(11L);
+    var stored = aliasSession();
+    stored.setId(11L);
+    stored.getUser().setUserId("another-person");
+    when(transactionManager.getTransaction(any()))
+        .thenReturn(
+            org.mockito.Mockito.mock(org.springframework.transaction.TransactionStatus.class));
+    when(sessionService.getSession(11L)).thenReturn(Optional.of(stored));
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () ->
+                sessionDataService.saveInitialSessionData(
+                    supplied, supplied.getUser(), new SessionDataDTO().displayName("chosen name")))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    org.mockito.Mockito.verifyNoInteractions(sessionDataRepository);
+  }
+
+  @Test
+  void trustedInitialWriteRechecksPersistedTenantBeforeSaving() {
+    var supplied = aliasSession();
+    supplied.setId(11L);
+    var stored = aliasSession();
+    stored.setId(11L);
+    stored.setTenantId(99L);
+    when(transactionManager.getTransaction(any()))
+        .thenReturn(
+            org.mockito.Mockito.mock(org.springframework.transaction.TransactionStatus.class));
+    when(sessionService.getSession(11L)).thenReturn(Optional.of(stored));
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () ->
+                sessionDataService.saveInitialSessionData(
+                    supplied, supplied.getUser(), new SessionDataDTO().displayName("chosen name")))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    org.mockito.Mockito.verifyNoInteractions(sessionDataRepository);
   }
 
   private Session aliasSession() {

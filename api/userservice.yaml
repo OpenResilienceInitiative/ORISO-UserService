@@ -3571,6 +3571,12 @@ components:
           enum: [PARTICIPANT, CO_MODERATOR]
           default: PARTICIPANT
     UserDTO:
+      description: >-
+        Registration data. An optional displayName is attached only to the new ordinary personal
+        session; omitted or blank keeps the existing login username fallback. When the resolved
+        conversation type requires generated names, the submitted login username and any supplied
+        alias must match the generated vocabulary. Self-help and direct-link registrations do
+        not attach the alias to a shared room or a global profile.
       allOf:
         - $ref: '#/components/schemas/SessionDataDTO'
       type: object
@@ -4553,6 +4559,14 @@ components:
         userName:
           type: string
           example: max.muster
+        isAskerEmailCollectionAllowed:
+          type: boolean
+          readOnly: true
+          description: >-
+            Current account email collection capability for the authenticated asker. The account
+            master must allow collection, and the asker must own an eligible agency counselling
+            session or belong to an eligible self-help group. False while current policy or
+            context cannot be established. Absent for consultants.
         displayName:
           type: string
           example: Max M.
