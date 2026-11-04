@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatRoleService;
 import de.caritas.cob.userservice.api.service.chat.GroupCounsellingDpaPolicy;
+import de.caritas.cob.userservice.api.service.chat.RecurringGroupStopCoordinator;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import java.util.Optional;
@@ -43,6 +44,7 @@ public class JoinAndLeaveChatFacade {
   private final GroupChatRoleService groupChatRoleService;
   private final GroupCounsellingDpaPolicy groupCounsellingDpaPolicy;
   private final MatrixSynapseService matrixSynapseService;
+  private final RecurringGroupStopCoordinator recurringStops;
 
   /**
    * Join a chat.
@@ -53,7 +55,21 @@ public class JoinAndLeaveChatFacade {
   public void joinChat(Long chatId, AuthenticatedUser authenticatedUser) {
     Chat chat = getChat(chatId);
     this.chatPermissionVerifier.verifyPermissionForChat(chat);
+    if (chat.isRepetitive()
+        && ChatConverter.conversationTypeOf(chat) == ConversationType.SELF_HELP) {
+      recurringStops.withLockedOccurrence(
+          chat,
+          locked -> {
+            this.chatPermissionVerifier.verifyPermissionForChat(locked);
+            joinCurrentOccurrence(locked, authenticatedUser);
+            return null;
+          });
+      return;
+    }
+    joinCurrentOccurrence(chat, authenticatedUser);
+  }
 
+  private void joinCurrentOccurrence(Chat chat, AuthenticatedUser authenticatedUser) {
     requireMatrixRoom(chat);
     String matrixUserId = retrieveMatrixUserId(authenticatedUser);
     if (!isBlank(matrixUserId)
@@ -117,7 +133,38 @@ public class JoinAndLeaveChatFacade {
     Chat chat = getChat(chatId);
     this.chatPermissionVerifier.verifyPermissionForChat(chat);
     requireMatrixRoom(chat);
+    if (chat.isRepetitive()
+        && ChatConverter.conversationTypeOf(chat) == ConversationType.SELF_HELP) {
+      LastDeparture last =
+          recurringStops.withLockedOccurrence(
+              chat,
+              locked -> {
+                this.chatPermissionVerifier.verifyPermissionForChat(locked);
+                requireMatrixRoom(locked);
+                var leaver = leaveAndFindLast(locked, authenticatedUser);
+                return leaver == null ? null : new LastDeparture(locked, leaver);
+              });
+      if (last != null) {
+        if (last.chat().nextStart() != null) {
+          recurringStops.stopAfterLastLeave(last.chat(), last.matrixUserId());
+        } else {
+          recurringStops.withLockedOccurrence(
+              last.chat(),
+              locked -> {
+                if (!groupChatMembershipService.hasRemainingHumanMembers(
+                    locked, last.matrixUserId())) finishLastLeave(locked);
+                return null;
+              });
+        }
+      }
+      return;
+    }
+    if (leaveAndFindLast(chat, authenticatedUser) != null) finishLastLeave(chat);
+  }
 
+  private record LastDeparture(Chat chat, String matrixUserId) {}
+
+  private String leaveAndFindLast(Chat chat, AuthenticatedUser authenticatedUser) {
     Optional<Consultant> leavingConsultant =
         consultantService.getConsultantViaAuthenticatedUser(authenticatedUser);
     Optional<User> leavingUser =
@@ -140,10 +187,12 @@ public class JoinAndLeaveChatFacade {
       leavingUser.ifPresent(leaver -> chatService.deleteUserChatRelation(chat, leaver));
     }
 
-    if (groupChatMembershipService.hasRemainingHumanMembers(chat, leavingMatrixUserId)) {
-      return;
-    }
+    return groupChatMembershipService.hasRemainingHumanMembers(chat, leavingMatrixUserId)
+        ? null
+        : leavingMatrixUserId;
+  }
 
+  private void finishLastLeave(Chat chat) {
     if (chat.isRepetitive()) {
       if (chat.nextStart() != null) {
         var matrixRoomId = chatReCreator.recreateMessengerChat(chat);

@@ -7,9 +7,12 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
+import de.caritas.cob.userservice.api.facade.ChatConverter;
 import de.caritas.cob.userservice.api.model.Chat;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
+import de.caritas.cob.userservice.api.service.chat.GroupChatMatrixCleanupService;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.matrixgroup.ChatMatrixRoomHistory;
 import de.caritas.cob.userservice.api.service.matrixgroup.MatrixGroupParticipationHistory;
@@ -18,6 +21,7 @@ import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -44,6 +48,7 @@ public class ChatReCreator {
   private final MatrixChatShutdownService matrixChatShutdownService;
   private final GroupChatMembershipService groupChatMembershipService;
   private final SessionRepository sessionRepository;
+  private final GroupChatMatrixCleanupService matrixCleanup;
 
   /**
    * Resets the given chat to its next occurrence: the new Matrix room id becomes the canonical room
@@ -88,7 +93,9 @@ public class ChatReCreator {
       // A stop that purged the old room and then failed in the database leaves the chat on a room
       // that no longer exists. Everyone was carried over before that purge: go on with their room.
       var carriedOver = roomHistory.preparedNextRoom(chat);
-      if (carriedOver.isPresent() && matrixSynapseService.isRoomConfirmedGone(oldRoomId)) {
+      if (carriedOver.isPresent()
+          && roomHistory.membersWereCarried(chat, carriedOver.get())
+          && matrixSynapseService.isRoomConfirmedGone(oldRoomId)) {
         return carriedOver.get();
       }
       throw new InternalServerErrorException(
@@ -124,10 +131,46 @@ public class ChatReCreator {
                 member.matrixUserId(), chat.getId()));
       }
     }
+    if (ChatConverter.conversationTypeOf(chat) == ConversationType.SELF_HELP) {
+      roomHistory.markMembersCarried(
+          chat.getId(),
+          chat.getChatOwner().getTenantId(),
+          chat.getCurrentOccurrenceIndex() + 1,
+          newRoomId);
+    }
     participationHistory.snapshotRoom(oldRoomId);
     matrixChatShutdownService.shutdownRoom(chat);
 
     return newRoomId;
+  }
+
+  /** Prepare a future self-help room while the caller holds owner and chat locks. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void prepareLockedNextRoom(Chat chat) {
+    if (roomHistory.preparedNextRoom(chat).isPresent()) return;
+    var oldRoomId = groupChatMembershipService.resolveMatrixRoomId(chat);
+    if (groupChatMembershipService.resolveHumanMembers(oldRoomId).isEmpty()) {
+      throw new InternalServerErrorException(
+          String.format(
+              "Could not resolve members of repetitive group chat %s before re-creating room",
+              chat.getId()));
+    }
+    var candidate = createMatrixRoom(chat);
+    Long taskId;
+    try {
+      taskId =
+          matrixCleanup.recordRoom(
+              new GroupChatMatrixCleanupService.GroupOwner(
+                  chat.getId(), chat.getChatOwner().getId(), chat.getChatOwner().getTenantId()),
+              candidate);
+    } catch (RuntimeException failure) {
+      matrixSynapseService.purgeRoom(candidate);
+      throw failure;
+    }
+    // On rollback the independently committed intent remains; the worker waits for the owner
+    // lock, then purges only if no room provenance was committed.
+    roomHistory.recordRotation(chat, candidate);
+    matrixCleanup.clear(taskId);
   }
 
   private String createMatrixRoom(Chat chat) {

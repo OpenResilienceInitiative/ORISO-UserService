@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.service.chat.GroupChatPermissionService;
+import de.caritas.cob.userservice.api.service.chat.RecurringGroupStopCoordinator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -34,6 +35,8 @@ class StopChatFacadeTest {
   @Mock private GroupChatPermissionService groupChatPermissionService;
 
   @Mock private ActionsRegistry actionsRegistry;
+
+  @Mock private RecurringGroupStopCoordinator recurringStops;
 
   private final ActionCommandMockProvider mockProvider = new ActionCommandMockProvider();
 

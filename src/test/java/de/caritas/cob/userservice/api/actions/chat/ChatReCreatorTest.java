@@ -231,10 +231,21 @@ class ChatReCreatorTest {
    * reserved room instead of failing for ever.
    */
   @Test
+  void uncarriedPreparedRoomCannotReplaceAnExternallyDeletedOldRoom() {
+    var chat = buildRepetitiveChat(OWNER_MATRIX_USER_ID);
+    when(groupChatMembershipService.resolveHumanMembers(OLD_MATRIX_ROOM_ID)).thenReturn(List.of());
+    when(roomHistory.preparedNextRoom(chat)).thenReturn(Optional.of(NEW_MATRIX_ROOM_ID));
+    assertThrows(
+        InternalServerErrorException.class, () -> chatReCreator.recreateMessengerChat(chat));
+    verify(matrixChatShutdownService, never()).shutdownRoom(chat);
+  }
+
+  @Test
   void recreateShouldContinueWithThePreparedRoomWhenTheOldRoomIsConfirmedGone() {
     var chat = buildRepetitiveChat(OWNER_MATRIX_USER_ID);
     when(groupChatMembershipService.resolveHumanMembers(OLD_MATRIX_ROOM_ID)).thenReturn(List.of());
     when(roomHistory.preparedNextRoom(chat)).thenReturn(Optional.of(NEW_MATRIX_ROOM_ID));
+    when(roomHistory.membersWereCarried(chat, NEW_MATRIX_ROOM_ID)).thenReturn(true);
     when(matrixSynapseService.isRoomConfirmedGone(OLD_MATRIX_ROOM_ID)).thenReturn(true);
 
     assertEquals(NEW_MATRIX_ROOM_ID, chatReCreator.recreateMessengerChat(chat));
@@ -248,6 +259,7 @@ class ChatReCreatorTest {
     var chat = buildRepetitiveChat(OWNER_MATRIX_USER_ID);
     when(groupChatMembershipService.resolveHumanMembers(OLD_MATRIX_ROOM_ID)).thenReturn(List.of());
     when(roomHistory.preparedNextRoom(chat)).thenReturn(Optional.of(NEW_MATRIX_ROOM_ID));
+    when(roomHistory.membersWereCarried(chat, NEW_MATRIX_ROOM_ID)).thenReturn(true);
     when(matrixSynapseService.isRoomConfirmedGone(OLD_MATRIX_ROOM_ID)).thenReturn(false);
 
     assertThrows(
