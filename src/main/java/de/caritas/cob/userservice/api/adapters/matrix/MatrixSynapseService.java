@@ -2,6 +2,10 @@ package de.caritas.cob.userservice.api.adapters.matrix;
 
 import static java.util.Objects.nonNull;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectReader;
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserRequestDTO;
@@ -11,6 +15,7 @@ import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixLoginRequestDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixPasswordUpdateRequestDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixReactivateUserRequestDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixBrowserLoginRateLimitedException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
@@ -21,6 +26,7 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
+import java.util.OptionalInt;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import lombok.extern.slf4j.Slf4j;
@@ -29,6 +35,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
@@ -52,6 +59,13 @@ import org.springframework.web.util.UriUtils;
 @Slf4j
 @Service
 public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembershipLookup {
+
+  private static final ObjectReader MATRIX_LOGIN_ERROR_READER =
+      new ObjectMapper()
+          .reader()
+          .with(
+              DeserializationFeature.FAIL_ON_TRAILING_TOKENS,
+              DeserializationFeature.FAIL_ON_READING_DUP_TREE_KEY);
 
   private static final long SERVER_OPERATION_TOKEN_TTL_MS = 10 * 60 * 1000L;
   private static final String ENDPOINT_REGISTER_USER = "/_synapse/admin/v1/register";
@@ -733,6 +747,7 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
    * @param matrixUserId full local Matrix user ID
    * @param deviceId stable browser device ID
    * @return standard Matrix login response, or {@code null} when the login cannot be created
+   * @throws MatrixBrowserLoginRateLimitedException if Synapse throttles the browser device login
    */
   public java.util.Map<String, Object> loginBrowserDevice(String matrixUserId, String deviceId) {
     if (matrixUserId == null || matrixUserId.isBlank() || !MatrixIds.isDeviceId(deviceId)) {
@@ -774,31 +789,112 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
       loginBody.setDeviceId(deviceId);
       loginBody.setInitialDeviceDisplayName("ORISO Web");
 
-      var response =
-          restTemplate.postForEntity(
-              matrixConfig.getApiUrl(ENDPOINT_LOGIN),
-              new HttpEntity<>(loginBody, loginHeaders),
-              java.util.Map.class);
-      if (response.getBody() == null
-          || response.getBody().get("access_token") == null
-          || response.getBody().get("device_id") == null) {
-        return null;
-      }
+      try {
+        var response =
+            restTemplate.postForEntity(
+                matrixConfig.getApiUrl(ENDPOINT_LOGIN),
+                new HttpEntity<>(loginBody, loginHeaders),
+                java.util.Map.class);
+        if (response.getBody() == null
+            || response.getBody().get("access_token") == null
+            || response.getBody().get("device_id") == null) {
+          return null;
+        }
 
-      @SuppressWarnings("unchecked")
-      var responseBody =
-          new java.util.HashMap<>((java.util.Map<String, Object>) response.getBody());
-      responseBody.put("interactive_auth_password", browserCredential);
-      return responseBody;
+        @SuppressWarnings("unchecked")
+        var responseBody =
+            new java.util.HashMap<>((java.util.Map<String, Object>) response.getBody());
+        responseBody.put("interactive_auth_password", browserCredential);
+        return responseBody;
+      } catch (HttpClientErrorException ex) {
+        if (ex.getStatusCode() != HttpStatus.TOO_MANY_REQUESTS) {
+          throw ex;
+        }
+        throw new MatrixBrowserLoginRateLimitedException(
+            browserLoginRetryAfterSeconds(ex, nowSupplier.getAsLong()));
+      }
+    } catch (MatrixBrowserLoginRateLimitedException ex) {
+      log.warn(
+          "Matrix browser device login was rate limited for user {}",
+          redactor.pseudonym(matrixUserId));
+      throw ex;
     } catch (Exception ex) {
       log.error(
-          "Matrix browser device login failed for user {} and device {}: {}",
+          "Matrix browser device login failed for user {}: {}",
           redactor.pseudonym(matrixUserId),
-          deviceId,
-          redactor.scrub(ex.getMessage()));
+          ex instanceof HttpStatusCodeException httpError
+              ? httpError.getStatusCode() + " errcode=" + browserLoginErrorCode(httpError)
+              : ex.getClass().getSimpleName());
+      // The token endpoint translates a failed login to 503.
       return null;
     } finally {
       browserLoginLock.unlock();
+    }
+  }
+
+  private static String browserLoginErrorCode(HttpStatusCodeException error) {
+    var code = errcodeOf(error);
+    // The upstream response is untrusted. Keep the diagnostic to known Matrix error codes.
+    return switch (code) {
+      case "M_BAD_JSON",
+              "M_FORBIDDEN",
+              "M_INVALID_PARAM",
+              "M_LIMIT_EXCEEDED",
+              "M_MISSING_PARAM",
+              "M_MISSING_TOKEN",
+              "M_NOT_FOUND",
+              "M_NOT_JSON",
+              "M_UNKNOWN",
+              "M_UNKNOWN_TOKEN",
+              "M_UNRECOGNIZED",
+              "M_USER_DEACTIVATED",
+              "M_USER_LOCKED" ->
+          code;
+      default -> "unknown";
+    };
+  }
+
+  private static OptionalInt browserLoginRetryAfterSeconds(
+      HttpClientErrorException ex, long nowMillis) {
+    long headerSeconds = retryAfterHeaderSeconds(ex.getResponseHeaders(), nowMillis);
+    long bodySeconds = retryAfterBodySeconds(ex.getResponseBodyAsString());
+    // Honor both upstream hints. Omit delays we cannot represent instead of shortening them.
+    long delay = Math.max(headerSeconds, bodySeconds);
+    return delay > 0 && delay <= Integer.MAX_VALUE
+        ? OptionalInt.of((int) delay)
+        : OptionalInt.empty();
+  }
+
+  private static long retryAfterHeaderSeconds(HttpHeaders headers, long nowMillis) {
+    String value = headers == null ? null : headers.getFirst(HttpHeaders.RETRY_AFTER);
+    if (value == null) {
+      return 0;
+    }
+    if (value.trim().matches("[0-9]+")) {
+      try {
+        return Long.parseLong(value.trim());
+      } catch (NumberFormatException ignored) {
+        return Long.MAX_VALUE;
+      }
+    }
+    try {
+      long deadline = headers.getFirstDate(HttpHeaders.RETRY_AFTER);
+      return deadline > nowMillis ? Math.ceilDiv(deadline - nowMillis, 1000) : 0;
+    } catch (IllegalArgumentException ignored) {
+      return 0;
+    }
+  }
+
+  private static long retryAfterBodySeconds(String body) {
+    try {
+      var millis = MATRIX_LOGIN_ERROR_READER.readTree(body).path("retry_after_ms");
+      if (!millis.isIntegralNumber() || millis.bigIntegerValue().signum() <= 0) {
+        return 0;
+      }
+      return millis.canConvertToLong() ? Math.ceilDiv(millis.longValue(), 1000) : Long.MAX_VALUE;
+    } catch (JsonProcessingException ignored) {
+      // The upstream error body is untrusted and may contain credentials.
+      return 0;
     }
   }
 

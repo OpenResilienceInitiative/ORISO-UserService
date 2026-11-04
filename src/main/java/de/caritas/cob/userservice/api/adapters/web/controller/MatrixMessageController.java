@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixMediaClient;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.web.dto.MatrixBrowserTokenResponseDTO;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixBrowserLoginRateLimitedException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.ChatPermissionVerifier;
 import de.caritas.cob.userservice.api.helper.MatrixIds;
@@ -23,6 +24,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.CacheControl;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -83,6 +85,13 @@ public class MatrixMessageController {
               MATRIX_BROWSER_TOKEN_TTL_MS);
 
       return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(response);
+    } catch (MatrixBrowserLoginRateLimitedException ex) {
+      var response =
+          ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).cacheControl(CacheControl.noStore());
+      ex.getRetryAfterSeconds()
+          .ifPresent(
+              seconds -> response.header(HttpHeaders.RETRY_AFTER, Integer.toString(seconds)));
+      return response.body(Map.of("error", "Matrix token unavailable"));
     } catch (Exception ex) {
       log.error("Could not create Matrix token for current user", ex);
       return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
