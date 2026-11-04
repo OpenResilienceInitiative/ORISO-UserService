@@ -5,8 +5,11 @@ import static java.util.Objects.isNull;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
@@ -20,6 +23,7 @@ import de.caritas.cob.userservice.api.service.availability.ConsultantActivityReg
 import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService.ResolvedRoomMember;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -28,7 +32,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @Slf4j
@@ -130,26 +136,74 @@ public class Messenger implements Messaging {
 
   @Override
   public long countPendingEnquiriesAheadOf(
-      Long agencyId, Integer consultingTypeId, Long mainTopicId, LocalDateTime beforeDate) {
-    if (beforeDate == null || consultingTypeId == null) {
+      Long agencyId,
+      Integer consultingTypeId,
+      Long mainTopicId,
+      LocalDateTime beforeDate,
+      Long beforeId) {
+    if (beforeDate == null || beforeId == null || consultingTypeId == null) {
       diagnosticMetrics.recordInvalidQueueRequest();
       return 0L;
     }
-    /* Sessions store their dates in UTC (CustomLocalDateTime.nowInUtc), so the cutoff has to be
-    computed in UTC too. With the old six-hour window a server running in a non-UTC zone still
-    produced roughly the right answer; at five minutes the offset would empty the queue. */
-    var minUpdateDate = nowInUtc().minusMinutes(liveChatQueueActivePeriodMinutes);
-    var queueDepth =
-        sessionRepository.countPendingEnquiriesAheadOf(
-            SessionStatus.NEW,
-            beforeDate,
-            consultingTypeId,
-            mainTopicId,
-            agencyId,
-            minUpdateDate,
-            RegistrationType.ANONYMOUS);
-    diagnosticMetrics.recordQueueDepth(queueDepth);
-    return queueDepth;
+    // Public topic queues are shared across Träger. Leave the legacy agency/no-topic lookup local.
+    java.util.function.Supplier<Long> count =
+        () ->
+            sessionRepository.countPendingEnquiriesAheadOf(
+                SessionStatus.NEW,
+                beforeDate,
+                beforeId,
+                consultingTypeId,
+                mainTopicId,
+                agencyId,
+                liveChatQueueCutoff(),
+                RegistrationType.ANONYMOUS);
+    long depth =
+        mainTopicId != null && agencyId == null
+            ? TenantContext.supplyAcrossTenants(count)
+            : count.get();
+    diagnosticMetrics.recordQueueDepth(depth);
+    return depth;
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public void requireFirstLiveChatEnquiry(Session session) {
+    if (session.getStatus() != SessionStatus.NEW
+        || session.getConsultant() != null
+        || session.getMainTopicId() == null
+        || session.getCreateDate() == null
+        || session.getId() == null
+        || !isTopicLiveChat(session)) {
+      return;
+    }
+    // The accept transactions use READ_COMMITTED. An older assignment that has not committed
+    // is still waiting for this read. A locking scan would contend with both target-row locks.
+    var earlier =
+        countPendingEnquiriesAheadOf(
+            session.getAgencyId(),
+            session.getConsultingTypeId(),
+            session.getMainTopicId(),
+            session.getCreateDate(),
+            session.getId());
+    if (earlier > 0) {
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.LIVE_CHAT_QUEUE_NOT_FIRST, HttpStatus.CONFLICT);
+    }
+  }
+
+  private static boolean isTopicLiveChat(Session session) {
+    if (session.getConversationType() != null) {
+      return session.getConversationType() == ConversationType.LIVE_CHAT;
+    }
+    return session.getRegistrationType() == RegistrationType.ANONYMOUS
+        || "00000".equals(session.getPostcode())
+        || (session.getUser() != null
+            && StringUtils.startsWith(session.getUser().getUsername(), "Anonymous-"));
+  }
+
+  private LocalDateTime liveChatQueueCutoff() {
+    // Session timestamps are stored in UTC, independently of the server's local time zone.
+    return nowInUtc().minusMinutes(liveChatQueueActivePeriodMinutes);
   }
 
   /**

@@ -18,6 +18,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
@@ -80,6 +81,7 @@ public class AssignEnquiryFacade {
   private final @NonNull de.caritas.cob.userservice.api.service.furthercounselling
           .TopicDuplicateService
       topicDuplicateService;
+  private final @NonNull Messaging messaging;
 
   /**
    * Assigns the given {@link Session} to the given {@link Consultant} and removes consultants who
@@ -244,6 +246,7 @@ public class AssignEnquiryFacade {
     }
     sessionToConsultantVerifier.verifyPreconditionsForAssignment(
         consultantSessionDTO, skipConsultantAssignmentAndSessionInProgressChecks);
+    messaging.requireFirstLiveChatEnquiry(session);
 
     // ADR-022 decision 1 / ADR-003: a topic-based anonymous enquiry carries no agency until it is
     // accepted. Bind the accepting counsellor's department here, before the assignment save, so

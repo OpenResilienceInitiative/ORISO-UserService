@@ -110,6 +110,69 @@ class SessionRepositoryQueueHeartbeatIT {
   }
 
   @Test
+  void concurrentAcceptanceDoesNotPassAnEarlierUncommittedAssignment() throws Exception {
+    long topicId = 15003L;
+    var oldest = sessions.findById(sessionId).orElseThrow();
+    oldest.setMainTopicId(topicId);
+    sessions.save(oldest);
+    var newer =
+        new Session(oldest.getUser(), CONSULTING_TYPE_ID_OFFENDER, "12345", null, NEW, false);
+    newer.setMainTopicId(topicId);
+    newer.setRegistrationType(ANONYMOUS);
+    newer.setIsConsultantDirectlySet(false);
+    newer.setLanguageCode(de);
+    newer.setCreateDate(oldest.getCreateDate().plusSeconds(1));
+    newer.setUpdateDate(nowInUtc());
+    var newerId = sessions.save(newer).getId();
+    var olderIsAssigning = new CountDownLatch(1);
+    var commitOlder = new CountDownLatch(1);
+    var workers = Executors.newFixedThreadPool(2);
+    var acceptTx = new TransactionTemplate(transactionManager);
+    acceptTx.setIsolationLevel(
+        org.springframework.transaction.TransactionDefinition.ISOLATION_READ_COMMITTED);
+    try {
+      var first =
+          workers.submit(
+              () ->
+                  acceptTx.executeWithoutResult(
+                      ignored -> {
+                        var entry = sessions.findByIdForUpdate(sessionId).orElseThrow();
+                        messenger.requireFirstLiveChatEnquiry(entry);
+                        entry.setStatus(IN_PROGRESS);
+                        olderIsAssigning.countDown();
+                        await(commitOlder);
+                      }));
+      await(olderIsAssigning);
+      Runnable acceptNewer =
+          () ->
+              acceptTx.executeWithoutResult(
+                  ignored -> {
+                    var entry = sessions.findByIdForUpdate(newerId).orElseThrow();
+                    messenger.requireFirstLiveChatEnquiry(entry);
+                    entry.setStatus(IN_PROGRESS);
+                  });
+      var second = workers.submit(acceptNewer);
+      var refusal =
+          assertThrows(
+              java.util.concurrent.ExecutionException.class, () -> second.get(3, TimeUnit.SECONDS));
+      assertThat(refusal.getCause())
+          .isInstanceOf(
+              de.caritas.cob.userservice.api.exception.httpresponses
+                  .CustomValidationHttpStatusException.class);
+      assertThat(sessions.findById(newerId).orElseThrow().getStatus()).isEqualTo(NEW);
+      commitOlder.countDown();
+      first.get(5, TimeUnit.SECONDS);
+      acceptNewer.run();
+      assertThat(sessions.findById(newerId).orElseThrow().getStatus()).isEqualTo(IN_PROGRESS);
+    } finally {
+      commitOlder.countDown();
+      workers.shutdownNow();
+      assertTrue(workers.awaitTermination(5, TimeUnit.SECONDS));
+      sessions.deleteById(newerId);
+    }
+  }
+
+  @Test
   void concurrentHeartbeatsRefreshOnlyOnceWithinTheThrottleWindow() throws Exception {
     var now = nowInUtc().withNano(0);
     var ready = new CountDownLatch(2);
