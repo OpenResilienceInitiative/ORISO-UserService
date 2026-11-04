@@ -168,7 +168,7 @@ public class ChatMatrixRoomHistory {
   }
 
   private void record(Chat chat, String room, int occurrence) {
-    var existing = rooms.findById(room);
+    var existing = rooms.findByRoomIdForUpdate(room);
     if (existing.isPresent()) {
       var bound = existing.get();
       if (!room.equals(bound.getRoomId())

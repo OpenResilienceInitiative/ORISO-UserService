@@ -1346,6 +1346,39 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
   }
 
   /**
+   * Whether Synapse itself says that the room does not exist. Any other outcome, including a failed
+   * lookup, is not proof that the room is gone.
+   *
+   * @param matrixRoomId the Matrix room ID
+   * @return {@code true} only on a 404 from Synapse
+   */
+  public boolean isRoomConfirmedGone(String matrixRoomId) {
+    try {
+      String adminToken = getAdminToken();
+      if (adminToken == null) {
+        return false;
+      }
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_ROOM_MEMBERS, java.util.Map.of("roomId", matrixRoomId));
+      restTemplate.exchange(
+          url,
+          org.springframework.http.HttpMethod.GET,
+          new HttpEntity<>(getClientHttpHeaders(adminToken)),
+          String.class);
+      return false;
+    } catch (HttpClientErrorException.NotFound ex) {
+      return true;
+    } catch (Exception ex) {
+      log.warn(
+          "Could not check whether Matrix room {} exists: {}",
+          matrixRoomId,
+          redactor.scrub(ex.getMessage()));
+      return false;
+    }
+  }
+
+  /**
    * Obtains a short-lived Matrix access token for {@code matrixUserId} via the Synapse admin API,
    * without requiring knowledge of the user's password.
    *
