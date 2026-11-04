@@ -23,11 +23,14 @@ import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Chat.ChatInterval;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConversationType;
+import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService.ResolvedRoomMember;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -60,6 +63,8 @@ class ChatReCreatorTest {
   @Mock private MatrixChatShutdownService matrixChatShutdownService;
 
   @Mock private GroupChatMembershipService groupChatMembershipService;
+
+  @Mock private SessionRepository sessionRepository;
 
   @BeforeEach
   void resolveRoomIdFromChatFixture() {
@@ -218,6 +223,51 @@ class ChatReCreatorTest {
     assertNotNull(chat.getUpdateDate());
     assertEquals(ConversationType.SELF_HELP, chat.getConversationType());
     verify(chatService).saveChat(chat);
+  }
+
+  /**
+   * A stop that purged the old room and then failed in the database leaves the chat on a room that
+   * no longer exists. The members were carried over before that purge, so a repeat goes on with the
+   * reserved room instead of failing for ever.
+   */
+  @Test
+  void recreateShouldContinueWithThePreparedRoomWhenTheOldRoomIsConfirmedGone() {
+    var chat = buildRepetitiveChat(OWNER_MATRIX_USER_ID);
+    when(groupChatMembershipService.resolveHumanMembers(OLD_MATRIX_ROOM_ID)).thenReturn(List.of());
+    when(roomHistory.preparedNextRoom(chat)).thenReturn(Optional.of(NEW_MATRIX_ROOM_ID));
+    when(matrixSynapseService.isRoomConfirmedGone(OLD_MATRIX_ROOM_ID)).thenReturn(true);
+
+    assertEquals(NEW_MATRIX_ROOM_ID, chatReCreator.recreateMessengerChat(chat));
+
+    verify(matrixChatShutdownService, never()).shutdownRoom(chat);
+  }
+
+  /** Unknown is not gone: an unreadable room may still hold members that were not carried over. */
+  @Test
+  void recreateShouldFailWhenMembersAreUnreadableAndTheOldRoomIsNotConfirmedGone() {
+    var chat = buildRepetitiveChat(OWNER_MATRIX_USER_ID);
+    when(groupChatMembershipService.resolveHumanMembers(OLD_MATRIX_ROOM_ID)).thenReturn(List.of());
+    when(roomHistory.preparedNextRoom(chat)).thenReturn(Optional.of(NEW_MATRIX_ROOM_ID));
+    when(matrixSynapseService.isRoomConfirmedGone(OLD_MATRIX_ROOM_ID)).thenReturn(false);
+
+    assertThrows(
+        InternalServerErrorException.class, () -> chatReCreator.recreateMessengerChat(chat));
+
+    verify(matrixChatShutdownService, never()).shutdownRoom(chat);
+  }
+
+  /** The case list pairs a group's session and chat by room: both must move together. */
+  @Test
+  void updateAsNextChatShouldMoveTheGroupSessionToTheNewRoom() {
+    var chat = buildRepetitiveChat(OWNER_MATRIX_USER_ID);
+    var session = new Session();
+    session.setMatrixRoomId(OLD_MATRIX_ROOM_ID);
+    when(sessionRepository.findByMatrixRoomId(OLD_MATRIX_ROOM_ID)).thenReturn(Optional.of(session));
+
+    chatReCreator.updateAsNextChat(chat, NEW_MATRIX_ROOM_ID);
+
+    assertEquals(NEW_MATRIX_ROOM_ID, session.getMatrixRoomId());
+    verify(sessionRepository).save(session);
   }
 
   private Chat buildRepetitiveChat(String ownerMatrixUserId) {

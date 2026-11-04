@@ -411,6 +411,26 @@ class MatrixSynapseServiceTest {
         .isEqualTo(MatrixSynapseService.RoomPurgeOutcome.FAILED);
   }
 
+  @Test
+  void isRoomConfirmedGoneShouldBeTrueOnlyWhenSynapseReturnsNotFound() {
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            eq(
+                URI.create(
+                    "https://matrix.example.com/_synapse/admin/v1/rooms/%21room%3Amatrix.example.com/members")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            eq(String.class)))
+        .thenThrow(
+            HttpClientErrorException.create(HttpStatus.NOT_FOUND, "Not Found", null, null, null))
+        .thenThrow(new HttpServerErrorException(HttpStatus.SERVICE_UNAVAILABLE))
+        .thenReturn(org.springframework.http.ResponseEntity.ok("{\"members\":[]}"));
+
+    assertThat(matrixSynapseService().isRoomConfirmedGone(MATRIX_ROOM_ID)).isTrue();
+    assertThat(matrixSynapseService().isRoomConfirmedGone(MATRIX_ROOM_ID)).isFalse();
+    assertThat(matrixSynapseService().isRoomConfirmedGone(MATRIX_ROOM_ID)).isFalse();
+  }
+
   private void stubAdminLogin() {
     matrixConfig.setAdminUsername("admin");
     matrixConfig.setAdminPassword("admin-password");

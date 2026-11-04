@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.model.Chat;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.matrixgroup.ChatMatrixRoomHistory;
@@ -42,6 +43,7 @@ public class ChatReCreator {
   private final MatrixSynapseService matrixSynapseService;
   private final MatrixChatShutdownService matrixChatShutdownService;
   private final GroupChatMembershipService groupChatMembershipService;
+  private final SessionRepository sessionRepository;
 
   /**
    * Resets the given chat to its next occurrence: the new Matrix room id becomes the canonical room
@@ -53,6 +55,14 @@ public class ChatReCreator {
   @Transactional
   public void updateAsNextChat(Chat chat, String matrixRoomId) {
     roomHistory.recordRotation(chat, matrixRoomId);
+    // The case list pairs a group's session and chat by this room id.
+    sessionRepository
+        .findByMatrixRoomId(chat.getMatrixRoomId())
+        .ifPresent(
+            session -> {
+              session.setMatrixRoomId(matrixRoomId);
+              sessionRepository.save(session);
+            });
     var nextStart = chat.nextStart();
     chat.setMatrixRoomId(matrixRoomId);
     chat.setStartDate(nextStart);
@@ -75,6 +85,12 @@ public class ChatReCreator {
     var oldRoomId = groupChatMembershipService.resolveMatrixRoomId(chat);
     var humanMembers = groupChatMembershipService.resolveHumanMembers(oldRoomId);
     if (humanMembers.isEmpty()) {
+      // A stop that purged the old room and then failed in the database leaves the chat on a room
+      // that no longer exists. Everyone was carried over before that purge: go on with their room.
+      var carriedOver = roomHistory.preparedNextRoom(chat);
+      if (carriedOver.isPresent() && matrixSynapseService.isRoomConfirmedGone(oldRoomId)) {
+        return carriedOver.get();
+      }
       throw new InternalServerErrorException(
           String.format(
               "Could not resolve members of repetitive group chat %s before re-creating room",
