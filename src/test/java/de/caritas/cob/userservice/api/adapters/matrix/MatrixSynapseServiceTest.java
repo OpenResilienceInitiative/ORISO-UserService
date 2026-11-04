@@ -1148,7 +1148,9 @@ class MatrixSynapseServiceTest {
           .anySatisfy(message -> assertThat(message).contains("403", "errcode=" + expectedCode))
           .noneSatisfy(
               message ->
-                  assertThat(message).containsAnyOf("PRIVATE_RESPONSE_TEXT", "M_PRIVATE_VALUE"));
+                  assertThat(message)
+                      .containsAnyOf("PRIVATE_RESPONSE_TEXT", "M_PRIVATE_VALUE", MATRIX_USER_ID));
+      assertThat(appender.list).allSatisfy(event -> assertThat(event.getThrowableProxy()).isNull());
     } finally {
       logger.detachAppender(appender);
       appender.stop();
