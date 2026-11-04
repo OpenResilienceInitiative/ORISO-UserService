@@ -3563,8 +3563,7 @@ class PublicPreDeletionJpaTest {
     var service =
         new UserAccountService(
             userService,
-            org.mockito.Mockito.mock(
-                de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class),
+            mock(de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy.class),
             new ConsultantService(consultants, mock(ConsultantMobileTokenRepository.class)),
             mock(AppointmentService.class),
             actor,

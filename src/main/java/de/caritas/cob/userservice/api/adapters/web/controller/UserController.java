@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestAdmit
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestStatusDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionListResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.InternalChatRecipientDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.InternalSubsetChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.InternalSubsetChatResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageResponseDTO;
@@ -669,6 +670,12 @@ public class UserController implements UsersApi {
    * @param request {@link InternalSubsetChatDTO} (required)
    * @return {@link ResponseEntity} containing {@link InternalSubsetChatResponseDTO}
    */
+  @Override
+  public ResponseEntity<List<InternalChatRecipientDTO>> listInternalSubsetChatRecipients(
+      Long agencyId) {
+    return userChatControllerDelegate.listInternalSubsetChatRecipients(agencyId);
+  }
+
   @Override
   public ResponseEntity<InternalSubsetChatResponseDTO> openInternalSubsetChat(
       @RequestBody InternalSubsetChatDTO request) {

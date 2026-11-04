@@ -601,7 +601,8 @@ class UserSelfPasswordScenarioCBoundaryTest {
               mock(VideoChatConfig.class),
               mock(KeycloakUserDataProvider.class),
               mock(AgencyAdminDataProvider.class),
-              new UsernameTranscoder());
+              new UsernameTranscoder(),
+              mock(de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy.class));
       delegate.setPasswordIdentityConfig(mode);
       if (installed) {
         maintenance =

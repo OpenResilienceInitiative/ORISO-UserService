@@ -486,7 +486,8 @@ class UserSelfLocaleScenarioCBoundaryTest {
               mock(VideoChatConfig.class),
               mock(KeycloakUserDataProvider.class),
               mock(AgencyAdminDataProvider.class),
-              transcoder);
+              transcoder,
+              mock(de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy.class));
       ReflectionTestUtils.setField(controller, "userAccountControllerDelegate", delegate);
       installOwner();
     }

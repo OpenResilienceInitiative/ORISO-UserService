@@ -262,7 +262,9 @@ public class ConsultantAgencyRelationCreatorService {
         .validateCurrentTopicsAgainstAssignedAndAdditionalAgencies(
             consultant.getId(), input.getAdditionalAgencyIds(), consultant.getTenantId());
 
-    ensureConsultingTypeRoles(input, agency);
+    if (!input.defersIdentityRoles()) {
+      ensureConsultingTypeRoles(input, agency);
+    }
     return consultantAgencyService.saveConsultantAgency(
         buildConsultantAgency(consultant, agency.getId()));
   }
@@ -309,22 +311,39 @@ public class ConsultantAgencyRelationCreatorService {
         new ConsultantJoinedAgencyEvent(consultant.getId(), agency.getId()));
   }
 
+  /**
+   * The identity roles the consulting type of the centre gives for the requested role sets.
+   *
+   * @param input the centre assignment
+   * @return the role names; empty when the consulting type configures none
+   */
+  public Set<String> identityRolesOf(ConsultantAgencyCreationInput input) {
+    return requestedIdentityRoles(input, retrieveAgency(input.getAgencyId()));
+  }
+
   private void ensureConsultingTypeRoles(ConsultantAgencyCreationInput input, AgencyDTO agency) {
+    var requestedRoles = requestedIdentityRoles(input, agency);
+    if (de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.PendingCreationRoles.active()) {
+      var consultant = retrieveConsultant(input.getConsultantId());
+      de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.PendingCreationRoles.authorize(
+          input.getConsultantId(), consultant.getTenantId(), requestedRoles);
+    } else if (!requestedRoles.isEmpty()) {
+      identityRoleUpdater.ensureRoles(input.getConsultantId(), requestedRoles);
+    }
+  }
+
+  private Set<String> requestedIdentityRoles(
+      ConsultantAgencyCreationInput input, AgencyDTO agency) {
     var roles =
         consultingTypeManager.getConsultingTypeSettings(agency.getConsultingType()).getRoles();
+    var requestedRoles = new LinkedHashSet<String>();
     if (nonNull(roles) && nonNull(roles.getConsultant())) {
       var roleSets = roles.getConsultant().getRoleSets();
-      var requestedRoles = new LinkedHashSet<String>();
       for (var roleSetName : input.getRoleSetNames()) {
         requestedRoles.addAll(roleSets.getOrDefault(roleSetName, Collections.emptyList()));
       }
-      if (de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.PendingCreationRoles
-          .active()) {
-        var consultant = retrieveConsultant(input.getConsultantId());
-        de.caritas.cob.userservice.api.adapters.keycloak.lifecycle.PendingCreationRoles.authorize(
-            input.getConsultantId(), consultant.getTenantId(), requestedRoles);
-      } else identityRoleUpdater.ensureRoles(input.getConsultantId(), requestedRoles);
     }
+    return requestedRoles;
   }
 
   private Consultant retrieveConsultant(String consultantId) {

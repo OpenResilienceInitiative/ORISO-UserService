@@ -497,7 +497,8 @@ class UserSelfAppOtpNativePairProof {
               mock(VideoChatConfig.class),
               mock(KeycloakUserDataProvider.class),
               mock(AgencyAdminDataProvider.class),
-              new UsernameTranscoder());
+              new UsernameTranscoder(),
+              mock(de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy.class));
       readDelegate.setSelfAppOtpMaintenance(owner);
       ReflectionTestUtils.setField(controller, "userAccountControllerDelegate", readDelegate);
       String mutationPath = request.getRequestURI();

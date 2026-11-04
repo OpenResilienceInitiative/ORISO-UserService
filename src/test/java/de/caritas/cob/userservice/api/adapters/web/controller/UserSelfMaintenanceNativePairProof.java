@@ -704,8 +704,7 @@ class UserSelfMaintenanceNativePairProof {
       contactService =
           new UserAccountService(
               contactUsers,
-              org.mockito.Mockito.mock(
-                  de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class),
+              mock(de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy.class),
               consultantService,
               contactAppointments,
               human,
@@ -758,7 +757,8 @@ class UserSelfMaintenanceNativePairProof {
             mock(VideoChatConfig.class),
             mock(KeycloakUserDataProvider.class),
             mock(AgencyAdminDataProvider.class),
-            new UsernameTranscoder());
+            new UsernameTranscoder(),
+            mock(de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy.class));
     delegate.setPasswordIdentityConfig(mode);
     delegate.setSelfPasswordMaintenance(
         new SelfPasswordMaintenance(
