@@ -92,8 +92,9 @@ def render_markdown(failed: list[FailedTest]) -> str:
         "| --- | --- | --- |",
     ]
     for test in sorted(failed, key=lambda item: (item.class_name, item.name)):
+        test_name = escape(f"{test.simple_class_name}.{test.name}")
         lines.append(
-            f"| `{test.simple_class_name}.{test.name}` | {test.outcome} | "
+            f"| `{test_name}` | {test.outcome} | "
             f"{escape(test.message)} |"
         )
 
