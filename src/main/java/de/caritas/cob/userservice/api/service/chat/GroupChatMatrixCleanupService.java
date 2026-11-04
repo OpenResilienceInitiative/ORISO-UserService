@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.GroupChatMatrixCleanupTask;
 import de.caritas.cob.userservice.api.model.GroupChatMatrixCleanupTask.Action;
+import de.caritas.cob.userservice.api.port.out.ChatMatrixRoomRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatMatrixCleanupTaskRepository;
@@ -35,6 +36,7 @@ public class GroupChatMatrixCleanupService {
   private final GroupChatMatrixCleanupTaskRepository tasks;
   private final ConsultantRepository consultants;
   private final ChatRepository chats;
+  private final ChatMatrixRoomRepository roomHistory;
   private final GroupChatParticipantRepository participants;
   private final MatrixSynapseService matrix;
   private final GroupChatMembershipService membership;
@@ -169,6 +171,22 @@ public class GroupChatMatrixCleanupService {
               .isPresent()) {
         tasks.delete(pending);
         return; // Committed legitimate ownership/participation supersedes cleanup.
+      }
+    }
+    if (pending.getAction() == Action.PURGE_ROOM) {
+      // A next-occurrence room may already be durably reserved while Chat still points at the
+      // previous occurrence. A current locking read is required under repeatable read.
+      var reserved = roomHistory.findByRoomIdForUpdate(pending.getRoomId());
+      if (reserved.isPresent()) {
+        var history = reserved.get();
+        if (Objects.equals(history.getSeries().getId(), pending.getSeriesId())
+            && Objects.equals(history.getOwnerTenantId(), pending.getTenantId())
+            && series.isPresent()) {
+          tasks.delete(pending);
+        } else {
+          defer(pending);
+        }
+        return;
       }
     }
     try {

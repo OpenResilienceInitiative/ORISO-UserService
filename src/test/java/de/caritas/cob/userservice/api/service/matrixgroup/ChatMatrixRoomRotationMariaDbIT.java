@@ -37,7 +37,6 @@ import org.testcontainers.containers.MariaDBContainer;
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 class ChatMatrixRoomRotationMariaDbIT {
   private static final long TENANT = 1L;
-  private static final String STORED_ROOM = "!synthetic-stored:synthetic.oriso.test";
   private static final String NEXT_ROOM = "!synthetic-next:synthetic.oriso.test";
   private static final MariaDBContainer<?> DATABASE =
       new MariaDBContainer<>("mariadb:10.11").withDatabaseName("userservice");
@@ -64,6 +63,16 @@ class ChatMatrixRoomRotationMariaDbIT {
   }
 
   @Autowired private ChatMatrixRoomHistory history;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.service.chat.GroupChatMatrixCleanupService cleanup;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.port.out.GroupChatMatrixCleanupTaskRepository tasks;
+
+  @org.springframework.test.context.bean.override.mockito.MockitoBean
+  private de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService matrix;
+
   @Autowired private ChatRepository chats;
   @Autowired private ConsultantRepository consultants;
   @Autowired private JdbcTemplate jdbc;
@@ -100,6 +109,80 @@ class ChatMatrixRoomRotationMariaDbIT {
         .isEqualTo(2);
   }
 
+  @Test
+  void cleanupNeverPurgesACommittedNextRoomBeforeTheChatAdvances() {
+    var chat = recurringChat();
+    var nextRoom = "!cleanup-next:synthetic.oriso.test";
+    var owner =
+        new de.caritas.cob.userservice.api.service.chat.GroupChatMatrixCleanupService.GroupOwner(
+            chat.getId(), chat.getChatOwner().getId(), TENANT);
+    var cleanupId = cleanup.recordRoom(owner, nextRoom);
+    assertThat(history.reserveNextRoom(chat, nextRoom)).isEqualTo(nextRoom);
+
+    cleanup.retry(cleanupId);
+
+    org.mockito.Mockito.verify(matrix, org.mockito.Mockito.never())
+        .purgeRoomOrConfirmGone(nextRoom);
+    assertThat(tasks.findById(cleanupId)).isEmpty();
+  }
+
+  @Test
+  void cleanupWaitingForOwnerSeesReservationCommittedAfterItsSnapshot() throws Exception {
+    var chat = recurringChat();
+    var nextRoom = "!concurrent-next:synthetic.oriso.test";
+    var owner =
+        new de.caritas.cob.userservice.api.service.chat.GroupChatMatrixCleanupService.GroupOwner(
+            chat.getId(), chat.getChatOwner().getId(), TENANT);
+    var cleanupId = cleanup.recordRoom(owner, nextRoom);
+    var workerStarted = new java.util.concurrent.CountDownLatch(1);
+    var executor = java.util.concurrent.Executors.newSingleThreadExecutor();
+    var worker = new java.util.concurrent.atomic.AtomicReference<java.util.concurrent.Future<?>>();
+    try {
+      new TransactionTemplate(transactions)
+          .executeWithoutResult(
+              status -> {
+                cleanup.lockOwner(chat.getChatOwner());
+                worker.set(
+                    executor.submit(
+                        () -> {
+                          TenantContext.setCurrentTenant(TENANT);
+                          try {
+                            workerStarted.countDown();
+                            cleanup.retry(cleanupId);
+                          } finally {
+                            TenantContext.clear();
+                          }
+                        }));
+                try {
+                  assertThat(workerStarted.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                      .isTrue();
+                  var deadline =
+                      System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+                  long waiting = 0;
+                  while (System.nanoTime() < deadline && waiting == 0) {
+                    waiting =
+                        jdbc.queryForObject(
+                            "SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE ID<>CONNECTION_ID() AND INFO LIKE 'select % from consultant % for update'",
+                            Long.class);
+                    if (waiting == 0) Thread.sleep(10);
+                  }
+                  assertThat(waiting).as("cleanup worker waits for the owner lock").isPositive();
+                  assertThat(history.reserveNextRoom(chat, nextRoom)).isEqualTo(nextRoom);
+                } catch (InterruptedException failure) {
+                  Thread.currentThread().interrupt();
+                  throw new IllegalStateException(failure);
+                }
+              });
+      worker.get().get(10, java.util.concurrent.TimeUnit.SECONDS);
+      org.mockito.Mockito.verify(matrix, org.mockito.Mockito.never())
+          .purgeRoomOrConfirmGone(nextRoom);
+      assertThat(tasks.findById(cleanupId)).isEmpty();
+    } finally {
+      executor.shutdownNow();
+      assertThat(executor.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+    }
+  }
+
   private Chat recurringChat() {
     var start = LocalDateTime.of(2999, 1, 1, 12, 0);
     return chats.save(
@@ -116,7 +199,7 @@ class ChatMatrixRoomRotationMariaDbIT {
             .repeatCount(3)
             .chatInterval(Chat.ChatInterval.WEEKLY)
             .conversationType(ConversationType.SELF_HELP)
-            .matrixRoomId(STORED_ROOM)
+            .matrixRoomId("!stored-" + UUID.randomUUID() + ":synthetic.oriso.test")
             .active(true)
             .build());
   }
