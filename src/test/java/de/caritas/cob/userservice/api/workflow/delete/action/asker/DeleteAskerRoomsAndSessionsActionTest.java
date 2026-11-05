@@ -361,5 +361,10 @@ class DeleteAskerRoomsAndSessionsActionTest {
         workflowErrors.get(0).getReason(), is("Unable to delete team discussion for session"));
     assertThat(workflowErrors.get(0).getTimestamp(), notNullValue());
     verify(this.sessionRepository).delete(session);
+    verify(this.deletedAskerSessionService)
+        .recordDeletionAfterCommit(
+            de.caritas.cob.userservice.api.service.session.DeletedAskerSessionService.Placeholder
+                .of(session)
+                .orElseThrow());
   }
 }

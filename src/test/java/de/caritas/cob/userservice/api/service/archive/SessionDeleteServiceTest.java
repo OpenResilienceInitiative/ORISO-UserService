@@ -151,7 +151,11 @@ class SessionDeleteServiceTest {
 
     sessionDeleteService.deleteSession(sessionId);
 
-    verify(deletedAskerSessionService).recordDeletionAfterCommit(any());
+    verify(deletedAskerSessionService)
+        .recordDeletionAfterCommit(
+            de.caritas.cob.userservice.api.service.session.DeletedAskerSessionService.Placeholder
+                .of(sessionService.getSession(sessionId).orElseThrow())
+                .orElseThrow());
   }
 
   @Test
@@ -162,7 +166,11 @@ class SessionDeleteServiceTest {
 
     sessionDeleteService.deleteSession(sessionId);
 
-    verify(deletedAskerSessionService).recordDeletionAfterCommit(any());
+    verify(deletedAskerSessionService)
+        .recordDeletionAfterCommit(
+            de.caritas.cob.userservice.api.service.session.DeletedAskerSessionService.Placeholder
+                .of(sessionService.getSession(sessionId).orElseThrow())
+                .orElseThrow());
   }
 
   @Test
@@ -175,7 +183,16 @@ class SessionDeleteServiceTest {
 
     sessionDeleteService.deleteSession(sessionId);
 
-    verify(actionsRegistry).buildContainerForType(SessionDeletionWorkflowDTO.class);
+    verify(statisticsService).fireEvent(any(ArchiveOrDeleteSessionStatisticsEvent.class));
+  }
+
+  @Test
+  void deleteSession_doesNotRecordPlaceholderWithoutConsultant() {
+    var sessionId = givenAPresentSession(false);
+    sessionService.getSession(sessionId).orElseThrow().setConsultant(null);
+    givenActionRegistryDeletesSession();
+    sessionDeleteService.deleteSession(sessionId);
+    org.mockito.Mockito.verifyNoInteractions(deletedAskerSessionService);
   }
 
   private long givenAPresentSession(boolean isOnlySession) {

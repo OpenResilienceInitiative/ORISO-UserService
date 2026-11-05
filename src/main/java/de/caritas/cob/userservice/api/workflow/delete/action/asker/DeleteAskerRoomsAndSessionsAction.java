@@ -57,9 +57,7 @@ public class DeleteAskerRoomsAndSessionsAction extends DeleteRoomsAndSessionActi
               // ORISO-Frontend#1159: capture what the counsellor's placeholder needs while the
               // session still exists, and record it only if the session really was deleted.
               var placeholder = DeletedAskerSessionService.Placeholder.of(session);
-              var errorsBefore = actionTarget.getDeletionWorkflowErrors().size();
-              performSessionDeletion(session, actionTarget.getDeletionWorkflowErrors());
-              if (actionTarget.getDeletionWorkflowErrors().size() == errorsBefore) {
+              if (performSessionDeletion(session, actionTarget.getDeletionWorkflowErrors())) {
                 placeholder.ifPresent(this::recordPlaceholder);
               }
             });

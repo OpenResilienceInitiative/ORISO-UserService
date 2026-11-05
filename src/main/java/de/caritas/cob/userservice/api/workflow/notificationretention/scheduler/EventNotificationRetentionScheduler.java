@@ -33,12 +33,22 @@ public class EventNotificationRetentionScheduler {
       return;
     }
     tenantContextProvider.setTechnicalContextIfMultiTenancyIsEnabled();
+    RuntimeException notificationFailure = null;
     try {
       this.eventNotificationRetentionService.purgeExpiredNotifications();
-    } finally {
-      // ORISO-Frontend#1159: deleted-asker placeholders age out on the same nightly run, even
-      // when the notification purge fails.
+    } catch (RuntimeException ex) {
+      notificationFailure = ex;
+    }
+    try {
       this.deletedAskerSessionService.purgeExpired();
+    } catch (RuntimeException ex) {
+      if (notificationFailure == null) {
+        throw ex;
+      }
+      notificationFailure.addSuppressed(ex);
+    }
+    if (notificationFailure != null) {
+      throw notificationFailure;
     }
   }
 }

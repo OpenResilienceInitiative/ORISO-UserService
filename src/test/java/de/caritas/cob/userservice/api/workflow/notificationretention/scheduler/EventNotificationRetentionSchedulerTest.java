@@ -64,6 +64,26 @@ class EventNotificationRetentionSchedulerTest {
     verify(deletedAskerSessionService).purgeExpired();
   }
 
+  @Test
+  void purgeExpiredNotifications_preservesBothFailures() {
+    when(taskClaimService.tryClaim("event-notification-retention", Duration.ofHours(12)))
+        .thenReturn(true);
+    var first = new RuntimeException("notifications");
+    var second = new RuntimeException("placeholders");
+    org.mockito.Mockito.doThrow(first)
+        .when(eventNotificationRetentionService)
+        .purgeExpiredNotifications();
+    org.mockito.Mockito.doThrow(second).when(deletedAskerSessionService).purgeExpired();
+
+    var thrown =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            RuntimeException.class,
+            () -> eventNotificationRetentionScheduler.purgeExpiredNotifications());
+    org.junit.jupiter.api.Assertions.assertSame(first, thrown);
+    org.junit.jupiter.api.Assertions.assertArrayEquals(
+        new Throwable[] {second}, thrown.getSuppressed());
+  }
+
   /** Every replica runs the same cron, so exactly one of them may do the deleting. */
   @Test
   void purgeExpiredNotifications_skipsAllDownstreamCalls_When_claimIsLost() {

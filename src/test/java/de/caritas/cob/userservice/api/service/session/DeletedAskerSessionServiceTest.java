@@ -119,6 +119,7 @@ class DeletedAskerSessionServiceTest {
         .thenThrow(new RuntimeException("db down"));
 
     assertDoesNotThrow(() -> underTest.recordDeletion(placeholder()));
+    assertIndependentTransactions();
     verify(eventNotificationService)
         .createEventOnce(any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
   }
@@ -130,7 +131,20 @@ class DeletedAskerSessionServiceTest {
         .createEventOnce(any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
 
     assertDoesNotThrow(() -> underTest.recordDeletion(placeholder()));
+    assertIndependentTransactions();
     verify(repository).save(any());
+  }
+
+  private void assertIndependentTransactions() {
+    var definitions =
+        ArgumentCaptor.forClass(org.springframework.transaction.TransactionDefinition.class);
+    verify(transactionManager, org.mockito.Mockito.times(2)).getTransaction(definitions.capture());
+    assertThat(definitions.getAllValues())
+        .allMatch(
+            definition ->
+                definition.getPropagationBehavior()
+                    == org.springframework.transaction.TransactionDefinition
+                        .PROPAGATION_REQUIRES_NEW);
   }
 
   @Test
