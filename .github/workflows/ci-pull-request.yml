@@ -5,6 +5,9 @@ on:
   merge_group:
     types: [checks_requested]
 
+permissions:
+  contents: read
+
 env:
   REGISTRY: ghcr.io
   ORG: openresilienceinitiative
@@ -52,6 +55,8 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v6
+      with:
+        persist-credentials: false
 
     - name: Set up JDK and Maven
       uses: actions/setup-java@v5
@@ -87,6 +92,8 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v6
+      with:
+        persist-credentials: false
 
     - name: Run deterministic integration contract
       uses: ./.github/actions/maven-verify-required
@@ -174,12 +181,15 @@ jobs:
     steps:
     - name: Checkout PR head
       uses: actions/checkout@v6
+      with:
+        persist-credentials: false
 
     - name: Checkout base branch
       uses: actions/checkout@v6
       with:
         ref: ${{ github.base_ref }}
         path: .base
+        persist-credentials: false
 
     - name: Diff own OpenAPI specs against base (oasdiff breaking)
       shell: bash
