@@ -180,6 +180,9 @@ public class JoinAndLeaveChatFacade {
       throw new InternalServerErrorException(
           String.format("User with id %s has no Matrix user ID.", authenticatedUser.getUserId()));
     }
+    if (chat.isRepetitive()) {
+      chatReCreator.removeFromPreparedRoom(chat, leavingMatrixUserId);
+    }
     if (leavingConsultant.isPresent()) {
       groupChatRoleService.leaveSeries(chat, leavingConsultant.get());
     } else {

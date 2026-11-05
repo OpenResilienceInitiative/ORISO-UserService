@@ -87,6 +87,7 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
       "{\"types\":[\"m.room.message\",\"m.room.encrypted\",\"m.sticker\"]}";
   private static final String ENDPOINT_PURGE_ROOM = "/_synapse/admin/v2/rooms/{roomId}";
   private static final String ENDPOINT_ROOM_MEMBERS = "/_synapse/admin/v1/rooms/{roomId}/members";
+  private static final String ENDPOINT_ROOM_ALIAS = "/_matrix/client/v3/directory/room/{roomAlias}";
   private static final String ENDPOINT_ROOM_STATE = "/_synapse/admin/v1/rooms/{roomId}/state";
   private static final String ENDPOINT_JOINED_ROOMS = "/_matrix/client/r0/joined_rooms";
   private static final String ENDPOINT_PRESENCE = "/_matrix/client/r0/presence/{userId}/status";
@@ -1342,6 +1343,41 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
     } catch (Exception ex) {
       log.warn("Failed to purge Matrix room {}: {}", matrixRoomId, redactor.scrub(ex.getMessage()));
       return RoomPurgeOutcome.FAILED;
+    }
+  }
+
+  /** {@code known} is false when the lookup failed; a known lookup without a room id is a 404. */
+  public record RoomAliasLookup(boolean known, String roomId) {}
+
+  /**
+   * Resolves a full room alias ({@code #name:server}). Only a 404 from Synapse proves that no room
+   * carries the alias; any other failure is reported as unknown.
+   */
+  public RoomAliasLookup resolveRoomAlias(String roomAlias) {
+    try {
+      String adminToken = getAdminToken();
+      if (adminToken == null) {
+        return new RoomAliasLookup(false, null);
+      }
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_ROOM_ALIAS, java.util.Map.of("roomAlias", roomAlias));
+      var body =
+          restTemplate
+              .exchange(
+                  url,
+                  org.springframework.http.HttpMethod.GET,
+                  new HttpEntity<>(getClientHttpHeaders(adminToken)),
+                  java.util.Map.class)
+              .getBody();
+      return body != null && body.get("room_id") instanceof String roomId && !roomId.isBlank()
+          ? new RoomAliasLookup(true, roomId)
+          : new RoomAliasLookup(false, null);
+    } catch (HttpClientErrorException.NotFound ex) {
+      return new RoomAliasLookup(true, null);
+    } catch (Exception ex) {
+      log.warn("Could not resolve a Matrix room alias: {}", redactor.scrub(ex.getMessage()));
+      return new RoomAliasLookup(false, null);
     }
   }
 

@@ -281,4 +281,59 @@ class GroupChatMatrixCleanupServiceTest {
     chat.setMatrixRoomId("!new:matrix");
     return chat;
   }
+
+  private void aliasTask(Duration age) {
+    task.setAction(Action.PURGE_ALIAS);
+    task.setRoomId("#group_chat_7_1:matrix");
+    task.setCreatedAt(LocalDateTime.now(Clock.systemUTC()).minus(age));
+  }
+
+  /** The writer may still be between its intent and its room. */
+  @Test
+  void youngAliasIntentIsLeftAloneWithoutAskingMatrix() {
+    aliasTask(Duration.ofMinutes(1));
+    service.retry(1L);
+    verify(tasks).save(task);
+    verify(tasks, never()).delete(any());
+    verifyNoInteractions(matrix, membership);
+  }
+
+  @Test
+  void oldAliasIntentWithoutARoomIsDropped() {
+    aliasTask(Duration.ofMinutes(11));
+    when(matrix.resolveRoomAlias("#group_chat_7_1:matrix"))
+        .thenReturn(new MatrixSynapseService.RoomAliasLookup(true, null));
+    service.retry(1L);
+    verify(tasks).delete(task);
+    verify(tasks, never()).save(any());
+    verify(matrix, never()).purgeRoomOrConfirmGone(any());
+  }
+
+  /** The writer died after Matrix created the room: hand it to the guarded room purge. */
+  @Test
+  void oldAliasIntentWithARoomBecomesARoomIntent() {
+    aliasTask(Duration.ofMinutes(11));
+    when(matrix.resolveRoomAlias("#group_chat_7_1:matrix"))
+        .thenReturn(new MatrixSynapseService.RoomAliasLookup(true, "!orphan:matrix"));
+    service.retry(1L);
+    var saved = ArgumentCaptor.forClass(GroupChatMatrixCleanupTask.class);
+    verify(tasks).save(saved.capture());
+    assertThat(saved.getValue().getAction()).isEqualTo(Action.PURGE_ROOM);
+    assertThat(saved.getValue().getRoomId()).isEqualTo("!orphan:matrix");
+    assertThat(saved.getValue().getSeriesId()).isEqualTo(7L);
+    assertThat(saved.getValue().getOwnerId()).isEqualTo("owner");
+    assertThat(saved.getValue().getTenantId()).isEqualTo(41L);
+    verify(tasks).delete(task);
+    verify(matrix, never()).purgeRoomOrConfirmGone(any());
+  }
+
+  @Test
+  void unresolvableAliasIntentIsRetained() {
+    aliasTask(Duration.ofMinutes(11));
+    when(matrix.resolveRoomAlias("#group_chat_7_1:matrix"))
+        .thenReturn(new MatrixSynapseService.RoomAliasLookup(false, null));
+    service.retry(1L);
+    verify(tasks).save(task);
+    verify(tasks, never()).delete(any());
+  }
 }

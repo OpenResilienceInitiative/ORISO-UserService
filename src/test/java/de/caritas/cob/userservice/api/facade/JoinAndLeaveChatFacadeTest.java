@@ -248,6 +248,9 @@ class JoinAndLeaveChatFacadeTest {
 
     facade.leaveChat(CHAT_ID, authenticatedUser);
 
+    var order = org.mockito.Mockito.inOrder(chatReCreator, groupChatMembershipService);
+    order.verify(chatReCreator).removeFromPreparedRoom(chat, MATRIX_USER_ID);
+    order.verify(groupChatMembershipService).removeLeavingMemberFromRoom(chat, MATRIX_USER_ID);
     verify(recurringStops).stopAfterLastLeave(chat, MATRIX_USER_ID);
     verify(chatService, never()).deleteChat(chat);
   }

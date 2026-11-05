@@ -46,6 +46,10 @@ public class GroupChatMatrixCleanupService {
   @Value("${group.chat.matrix-cleanup.retry-backoff:PT1M}")
   private Duration retryBackoff;
 
+  // Longer than any room creation can take: a younger alias intent may still get its room.
+  @Value("${group.chat.matrix-cleanup.alias-grace:PT10M}")
+  private Duration aliasGrace = Duration.ofMinutes(10);
+
   /** Writers and retry workers acquire this stable existing row before any chat/task lock. */
   @Transactional(propagation = Propagation.MANDATORY)
   public void lockOwner(Consultant expected) {
@@ -78,6 +82,26 @@ public class GroupChatMatrixCleanupService {
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public Long recordRoom(GroupOwner owner, String roomId) {
     return record(Action.PURGE_ROOM, owner, null, roomId, null);
+  }
+
+  /** Commit before creating the room, so a crash right after creation stays recoverable. */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public Long recordAlias(GroupOwner owner, String roomAlias) {
+    return record(Action.PURGE_ALIAS, owner, null, roomAlias, null);
+  }
+
+  /** The room now exists: replace its alias intent with an ordinary room intent. */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public Long bindRoom(Long aliasTaskId, GroupOwner owner, String roomId) {
+    var id = record(Action.PURGE_ROOM, owner, null, roomId, null);
+    if (aliasTaskId != null) tasks.discard(aliasTaskId);
+    return id;
+  }
+
+  /** The room was durably adopted without a room intent; its alias intent is no longer needed. */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public void discard(Long id) {
+    if (id != null) tasks.discard(id);
   }
 
   @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -161,6 +185,10 @@ public class GroupChatMatrixCleanupService {
       defer(pending);
       return;
     }
+    if (pending.getAction() == Action.PURGE_ALIAS) {
+      retryAlias(pending);
+      return;
+    }
     var roomOwner = chats.findByMatrixRoomIdForUpdate(pending.getRoomId());
     if (roomOwner.isPresent()) {
       if (!Objects.equals(roomOwner.get().getId(), pending.getSeriesId())) {
@@ -201,6 +229,34 @@ public class GroupChatMatrixCleanupService {
       log.warn("Group Matrix cleanup {} failed ({})", id, failure.getClass().getSimpleName());
     }
     defer(pending);
+  }
+
+  /**
+   * An alias intent that outlived its writer: either no room was created, or the writer died before
+   * recording the room. The room intent written here passes every adoption guard above.
+   */
+  private void retryAlias(GroupChatMatrixCleanupTask pending) {
+    if (pending.getCreatedAt().isAfter(LocalDateTime.now(clock).minus(aliasGrace))) {
+      defer(pending);
+      return;
+    }
+    var lookup = matrix.resolveRoomAlias(pending.getRoomId());
+    if (lookup == null || !lookup.known()) {
+      defer(pending);
+      return;
+    }
+    if (lookup.roomId() != null) {
+      tasks.save(
+          GroupChatMatrixCleanupTask.builder()
+              .action(Action.PURGE_ROOM)
+              .seriesId(pending.getSeriesId())
+              .ownerId(pending.getOwnerId())
+              .tenantId(pending.getTenantId())
+              .roomId(lookup.roomId())
+              .createdAt(LocalDateTime.now(clock))
+              .build());
+    }
+    tasks.delete(pending);
   }
 
   private boolean attempt(GroupChatMatrixCleanupTask task) {

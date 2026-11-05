@@ -111,6 +111,8 @@ class ChatMatrixRoomRotationMariaDbIT {
   @org.springframework.test.context.bean.override.mockito.MockitoBean
   private de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService matrix;
 
+  private static final String STALE_MEMBER = "@stale:synthetic.oriso.test";
+
   @Autowired private ChatRepository chats;
   @Autowired private ConsultantRepository consultants;
   @Autowired private JdbcTemplate jdbc;
@@ -119,6 +121,21 @@ class ChatMatrixRoomRotationMariaDbIT {
   @BeforeEach
   void inTenant() {
     TenantContext.setCurrentTenant(TENANT);
+    // Every room but a fixture's current one is a next room. It reports one stale member, so each
+    // transfer also exercises the eviction of someone who is no longer in the current room.
+    org.mockito.Mockito.when(
+            members.resolveHumanMembers(
+                org.mockito.ArgumentMatchers.argThat(
+                    room -> room != null && !room.startsWith("!stored-"))))
+        .thenReturn(
+            java.util.List.of(
+                new de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService
+                    .ResolvedRoomMember(
+                    STALE_MEMBER, "stale", "stale", "Stale", false, null, null)));
+    org.mockito.Mockito.when(
+            members.removeMemberFromRoomAndConfirm(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(true);
   }
 
   @AfterEach
