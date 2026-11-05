@@ -122,4 +122,11 @@ public interface EventNotificationRepository extends JpaRepository<EventNotifica
   @Modifying(flushAutomatically = true, clearAutomatically = true)
   @Query("delete from EventNotification e where e.createDate < :cutoff")
   int deleteCreatedBefore(@Param("cutoff") LocalDateTime cutoff);
+
+  /** Deletes one notification type after its own retention period, irrespective of read state. */
+  @Modifying(flushAutomatically = true, clearAutomatically = true)
+  @Query(
+      "delete from EventNotification e where e.eventType = :eventType and e.createDate < :cutoff")
+  int deleteByEventTypeCreatedBefore(
+      @Param("eventType") String eventType, @Param("cutoff") LocalDateTime cutoff);
 }

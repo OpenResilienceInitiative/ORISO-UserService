@@ -119,6 +119,8 @@ import java.util.UUID;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
@@ -166,6 +168,10 @@ class UserControllerAuthorizationIT {
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
 
   @Autowired private MockMvc mvc;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.session.DeletedAskerSessionService
+      deletedAskerSessionService;
 
   @MockitoBean private UserService userService;
   @MockitoBean private SessionService sessionService;
@@ -652,6 +658,42 @@ class UserControllerAuthorizationIT {
         .andExpect(status().isForbidden());
 
     verifyNoMoreInteractions(consultantDataFacade, logService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/sessions/consultants/deleted-askers",
+        "/service/users/sessions/consultants/deleted-askers"
+      })
+  void deletedAskerSessionsRequireAuthentication(String path) throws Exception {
+    mvc.perform(get(path)).andExpect(status().isUnauthorized());
+    verifyNoMoreInteractions(deletedAskerSessionService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/sessions/consultants/deleted-askers",
+        "/service/users/sessions/consultants/deleted-askers"
+      })
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void deletedAskerSessionsRejectAskers(String path) throws Exception {
+    mvc.perform(get(path)).andExpect(status().isForbidden());
+    verifyNoMoreInteractions(deletedAskerSessionService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/sessions/consultants/deleted-askers",
+        "/service/users/sessions/consultants/deleted-askers"
+      })
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void deletedAskerSessionsReturnOnlyCallingCounsellorsData(String path) throws Exception {
+    when(authenticatedUser.getUserId()).thenReturn("consultant-1");
+    mvc.perform(get(path)).andExpect(status().isOk());
+    verify(deletedAskerSessionService).findForConsultant("consultant-1");
   }
 
   /** GET on /users/sessions/consultants (role: consultants) */
