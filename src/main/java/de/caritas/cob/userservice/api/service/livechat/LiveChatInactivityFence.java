@@ -41,7 +41,7 @@ public class LiveChatInactivityFence {
   public void requireActive(String userId) {
     List<String> statuses = lockIfPresent(userId);
     if (statuses.size() != 1 || !"ACTIVE".equals(statuses.getFirst())) {
-      throw new ConflictException("Account lifecycle action prevents conversion");
+      throw new ConflictException("Account lifecycle action prevents this change");
     }
   }
 }

@@ -65,7 +65,14 @@ class LiveChatPromotionMigrationIT {
         reset(c);
         update(c, "src/test/resources/migration-history/new");
         execute(c, "ALTER TABLE live_chat_account_claim MODIFY finished_origin " + definition);
-        assertThatThrownBy(() -> update(c, "src/main/resources")).isInstanceOf(Exception.class);
+        assertThatThrownBy(() -> update(c, "src/main/resources"))
+            .isInstanceOf(liquibase.exception.CommandExecutionException.class)
+            .hasStackTraceContaining("finished-origin-validate");
+        assertThat(
+                value(
+                    c,
+                    "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID='20261105-live-chat-finished-origin-validate'"))
+            .isEqualTo("0");
       }
     }
   }

@@ -32,6 +32,16 @@ class LiveChatInactivityFenceTest {
   }
 
   @Test
+  void pureAskerIsAccepted() {
+    when(effects.currentRoles("guest"))
+        .thenReturn(
+            java.util.Set.of(
+                de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityEffects
+                    .Role.ASKER));
+    fence.requirePureAsker("guest");
+  }
+
+  @Test
   void onlyExistingActiveLifecycleIsAccepted() {
     when(jdbc.query(anyString(), any(RowMapper.class), eq("guest")))
         .thenReturn(List.of("ACTIVE"), List.of(), List.of("SUSPENDING"), List.of("DELETING"));

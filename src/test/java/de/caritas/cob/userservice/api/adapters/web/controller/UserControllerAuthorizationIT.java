@@ -708,6 +708,22 @@ class UserControllerAuthorizationIT {
                 .value("intent"));
   }
 
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void liveChatConversionStatusExposesFinishedOrigin() throws Exception {
+    when(authenticatedUser.getUsername()).thenReturn("guest-name");
+    when(liveChatAccountConversionService.status())
+        .thenReturn(
+            new de.caritas.cob.userservice.api.service.livechat.LiveChatAccountClaimService.Status(
+                "guest-id", "PROMOTION_PENDING", "intent", true));
+    mvc.perform(get("/users/live-chat-account/conversion"))
+        .andExpect(status().isOk())
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath(
+                    "$.finishedOrigin")
+                .value(true));
+  }
+
   @ParameterizedTest
   @ValueSource(
       strings = {

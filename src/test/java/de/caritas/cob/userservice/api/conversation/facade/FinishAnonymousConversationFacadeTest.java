@@ -63,6 +63,7 @@ class FinishAnonymousConversationFacadeTest {
         .thenReturn(actionCommandMockProvider.getActionContainer(Session.class));
     finishAnonymousConversationFacade.finishConversation(session.getId());
     verify(actionsRegistry, org.mockito.Mockito.never()).buildContainerForType(User.class);
+    verify(finishExecutor, org.mockito.Mockito.never()).disableAndMarkFinished(any());
     verify(actionCommandMockProvider.getActionMock(DeactivateSessionActionCommand.class))
         .execute(session);
   }

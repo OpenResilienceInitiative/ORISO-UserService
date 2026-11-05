@@ -84,6 +84,24 @@ class AccountInactivityServiceTest {
   }
 
   @Test
+  void inactivitySuspensionRefusesPendingGuestFinish() {
+    var service = createService(new Effects());
+    var jdbc =
+        new JdbcTemplate(
+            new DriverManagerDataSource("jdbc:h2:mem:lifecycle;DB_CLOSE_DELAY=-1", "sa", ""));
+    service.assignAtCreation("guest", 1L, 12, 0, Instant.now());
+    jdbc.update("INSERT INTO `user`(user_id) VALUES (?)", "guest");
+    jdbc.update(
+        "INSERT INTO live_chat_account_claim(user_id,lifecycle) VALUES (?,?)",
+        "guest",
+        "FINISH_PENDING");
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.suspend("guest"))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(service.snapshot("guest").orElseThrow().status())
+        .isEqualTo(AccountInactivityService.Status.ACTIVE);
+  }
+
+  @Test
   void disappearingCandidateDoesNotAbortOtherTenants() {
     var captured = Instant.parse("2023-01-01T00:00:00Z");
     var owner = new java.util.concurrent.atomic.AtomicReference<AccountInactivityService>();

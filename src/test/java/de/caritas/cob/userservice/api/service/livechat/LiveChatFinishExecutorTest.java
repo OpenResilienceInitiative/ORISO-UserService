@@ -35,4 +35,64 @@ class LiveChatFinishExecutorTest {
     executor.disableAndMarkFinished("guest");
     verify(identities, times(2)).deactivateUser("guest");
   }
+
+  @Test
+  void missingUserOrClaimCannotDisableIdentity() {
+    when(users.findByUserIdForUpdate("guest"))
+        .thenReturn(Optional.empty(), Optional.of(new User()));
+    when(records.findForUpdate("guest")).thenReturn(Optional.empty());
+    assertThatThrownBy(() -> executor.disableAndMarkFinished("guest"))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
+    assertThatThrownBy(() -> executor.disableAndMarkFinished("guest"))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
+    verifyNoInteractions(identities);
+    verify(records, never()).save(any());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = LiveChatAccountLifecycle.class,
+      names = {"CLEANUP_STARTED", "PROMOTED"})
+  void otherClaimStatesCannotDisableIdentity(LiveChatAccountLifecycle state) {
+    when(users.findByUserIdForUpdate("guest")).thenReturn(Optional.of(new User()));
+    when(records.findForUpdate("guest"))
+        .thenReturn(Optional.of(new LiveChatAccountClaim("guest", state)));
+    assertThatThrownBy(() -> executor.disableAndMarkFinished("guest"))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
+    verifyNoInteractions(identities);
+    verify(records, never()).save(any());
+  }
+
+  @Test
+  void inactiveFenceCannotDisableIdentity() {
+    doThrow(new IllegalStateException("inactive")).when(inactivity).requireActive("guest");
+    assertThatThrownBy(() -> executor.disableAndMarkFinished("guest"))
+        .isInstanceOf(IllegalStateException.class);
+    verifyNoInteractions(identities, users, records);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"deleteDate", "lifecycle", "reactivation"})
+  void intentionalDeletionOrReactivationCannotDisableIdentity(String condition) {
+    var user = new User();
+    switch (condition) {
+      case "deleteDate" -> user.setDeleteDate(java.time.LocalDateTime.now());
+      case "lifecycle" ->
+          user.setDeletionLifecycleState(
+              de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState
+                  .READ_ONLY_SAFEGUARD);
+      case "reactivation" -> user.setReactivationOperationId("operation");
+      default -> throw new AssertionError(condition);
+    }
+    when(users.findByUserIdForUpdate("guest")).thenReturn(Optional.of(user));
+    assertThatThrownBy(() -> executor.disableAndMarkFinished("guest"))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
+    verifyNoInteractions(identities);
+    verify(records, never()).save(any());
+  }
 }
