@@ -75,7 +75,6 @@ import de.caritas.cob.userservice.api.helper.ChatPermissionVerifier;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
-import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
@@ -238,11 +237,7 @@ class UserControllerAuthorizationIT {
 
   @MockitoBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
 
-  @MockitoBean
-  @SuppressWarnings("unused")
-  private Messaging messenger;
-
-  @MockitoBean
+  @MockitoBean(name = "messenger")
   @SuppressWarnings("unused")
   private Messenger concreteMessenger;
 

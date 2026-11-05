@@ -88,6 +88,10 @@ public interface ChatRepository extends CrudRepository<Chat, Long> {
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   List<Chat> findAllByActiveIsTrue();
 
+  /** Candidate discovery only; each chat is locked and revalidated before it is stopped. */
+  @Query("select c from Chat c where c.active = true")
+  List<Chat> findActiveDeactivationCandidates();
+
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("select chat from Chat chat where chat.id = :seriesId")
   Optional<Chat> findSeriesForAppointmentMailUpdate(@Param("seriesId") Long seriesId);

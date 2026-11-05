@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
+import de.caritas.cob.userservice.api.service.chat.RecurringGroupStopCoordinator;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.function.Predicate;
@@ -25,6 +26,7 @@ public class DeactivateGroupChatService {
   private final @NonNull ChatRepository chatRepository;
   private final @NonNull ActionsRegistry actionsRegistry;
   private final @NonNull PlatformTransactionManager transactionManager;
+  private final @NonNull RecurringGroupStopCoordinator recurringStops;
 
   @Value("${group.chat.deactivateworkflow.periodMinutes}")
   private long deactivatePeriodMinutes;
@@ -44,7 +46,7 @@ public class DeactivateGroupChatService {
     List<Long> candidates =
         transaction.execute(
             status ->
-                this.chatRepository.findAllByActiveIsTrue().stream()
+                this.chatRepository.findActiveDeactivationCandidates().stream()
                     .filter(isStale(deactivationTime))
                     .map(Chat::getId)
                     .toList());
@@ -84,6 +86,12 @@ public class DeactivateGroupChatService {
   private void deactivateStaleActiveChat(
       TransactionTemplate transaction, Long chatId, LocalDateTime deactivationTime) {
     try {
+      var observed =
+          transaction.execute(status -> this.chatRepository.findById(chatId).orElse(null));
+      if (observed != null && RecurringGroupStopCoordinator.applies(observed)) {
+        recurringStops.stop(observed, null, deactivationTime);
+        return;
+      }
       transaction.executeWithoutResult(
           status ->
               this.chatRepository

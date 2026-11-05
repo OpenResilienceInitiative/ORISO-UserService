@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.model.*;
 import de.caritas.cob.userservice.api.model.GroupChatMatrixCleanupTask.Action;
 import de.caritas.cob.userservice.api.port.out.*;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.*;
 import java.util.*;
 import org.junit.jupiter.api.*;
@@ -24,6 +25,7 @@ class GroupChatMatrixCleanupServiceTest {
   @Mock GroupChatMatrixCleanupTaskRepository tasks;
   @Mock ConsultantRepository consultants;
   @Mock ChatRepository chats;
+  @Mock de.caritas.cob.userservice.api.port.out.ChatMatrixRoomRepository roomHistory;
   @Mock GroupChatParticipantRepository participants;
   @Mock MatrixSynapseService matrix;
   @Mock GroupChatMembershipService membership;
@@ -35,7 +37,14 @@ class GroupChatMatrixCleanupServiceTest {
   void setup() {
     service =
         new GroupChatMatrixCleanupService(
-            tasks, consultants, chats, participants, matrix, membership, Clock.systemUTC());
+            tasks,
+            consultants,
+            chats,
+            roomHistory,
+            participants,
+            matrix,
+            membership,
+            Clock.systemUTC());
     owner = new Consultant();
     owner.setId("owner");
     owner.setTenantId(41L);
@@ -52,6 +61,52 @@ class GroupChatMatrixCleanupServiceTest {
     when(tasks.findById(1L)).thenReturn(Optional.of(task));
     when(tasks.findByIdForUpdate(1L)).thenReturn(Optional.of(task));
     when(consultants.findPictureOwnerForUpdate("owner")).thenReturn(Optional.of(owner));
+  }
+
+  @Test
+  void ownerLockUsesTechnicalTenantOnlyForLookupAndRestoresCaller() {
+    TenantContext.setCurrentTenant(7L);
+    TenantContext.setCurrentSubdomain("caller");
+    var previous = TenantContext.getCurrentTenantData();
+    try {
+      when(consultants.findPictureOwnerForUpdate("owner"))
+          .thenAnswer(
+              invocation -> {
+                assertThat(TenantContext.getCurrentTenant())
+                    .isEqualTo(TenantContext.TECHNICAL_TENANT_ID);
+                return Optional.of(owner);
+              });
+      service.lockOwner(owner);
+      assertThat(TenantContext.getCurrentTenantData()).isSameAs(previous);
+      assertThat(TenantContext.getCurrentTenant()).isEqualTo(7L);
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Test
+  void failedOwnerLockRestoresCallerContext() {
+    TenantContext.setCurrentTenant(7L);
+    var previous = TenantContext.getCurrentTenantData();
+    try {
+      when(consultants.findPictureOwnerForUpdate("owner"))
+          .thenThrow(new IllegalStateException("synthetic"));
+      org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.lockOwner(owner))
+          .isInstanceOf(IllegalStateException.class);
+      assertThat(TenantContext.getCurrentTenantData()).isSameAs(previous);
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Test
+  void ownerLockStillRejectsAnUnexpectedOwnerTenant() {
+    var expected = new Consultant();
+    expected.setId("owner");
+    expected.setTenantId(99L);
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.lockOwner(expected))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
   }
 
   @Test
@@ -79,6 +134,53 @@ class GroupChatMatrixCleanupServiceTest {
     when(chats.findByMatrixRoomIdForUpdate("!new:matrix")).thenReturn(Optional.of(chat));
     service.retry(1L);
     verify(tasks).delete(task);
+    verifyNoInteractions(matrix, membership);
+  }
+
+  @Test
+  void foreignRoomProvenanceRetainsTaskWithoutPurge() {
+    when(roomHistory.findByRoomIdForUpdate("!new:matrix"))
+        .thenReturn(
+            Optional.of(
+                new de.caritas.cob.userservice.api.model.ChatMatrixRoom(
+                    "!new:matrix", chat(8L), 1, 41L)));
+    service.retry(1L);
+    verify(tasks).save(task);
+    verifyNoInteractions(matrix, membership);
+  }
+
+  @Test
+  void reservedRoomWithDifferentTenantRetainsTaskWithoutPurge() {
+    when(chats.findByIdForUpdate(7L)).thenReturn(Optional.of(chat(7L)));
+    when(roomHistory.findByRoomIdForUpdate("!new:matrix"))
+        .thenReturn(Optional.of(new ChatMatrixRoom("!new:matrix", chat(7L), 1, 99L)));
+
+    service.retry(1L);
+
+    verify(tasks).save(task);
+    verify(tasks, never()).delete(any());
+    verifyNoInteractions(matrix, membership);
+  }
+
+  @Test
+  void reservedRoomWithoutSeriesRetainsTaskWithoutPurge() {
+    when(roomHistory.findByRoomIdForUpdate("!new:matrix"))
+        .thenReturn(Optional.of(new ChatMatrixRoom("!new:matrix", chat(7L), 1, 41L)));
+
+    service.retry(1L);
+
+    verify(tasks).save(task);
+    verify(tasks, never()).delete(any());
+    verifyNoInteractions(matrix, membership);
+  }
+
+  @Test
+  void provenanceLockFailureDoesNotPurgeOrDropTask() {
+    when(roomHistory.findByRoomIdForUpdate("!new:matrix"))
+        .thenThrow(new org.springframework.dao.CannotAcquireLockException("synthetic contention"));
+    org.junit.jupiter.api.Assertions.assertThrows(
+        org.springframework.dao.CannotAcquireLockException.class, () -> service.retry(1L));
+    verify(tasks, never()).delete(any());
     verifyNoInteractions(matrix, membership);
   }
 
@@ -178,5 +280,60 @@ class GroupChatMatrixCleanupServiceTest {
     chat.setChatOwner(owner);
     chat.setMatrixRoomId("!new:matrix");
     return chat;
+  }
+
+  private void aliasTask(Duration age) {
+    task.setAction(Action.PURGE_ALIAS);
+    task.setRoomId("#group_chat_7_1:matrix");
+    task.setCreatedAt(LocalDateTime.now(Clock.systemUTC()).minus(age));
+  }
+
+  /** The writer may still be between its intent and its room. */
+  @Test
+  void youngAliasIntentIsLeftAloneWithoutAskingMatrix() {
+    aliasTask(Duration.ofMinutes(1));
+    service.retry(1L);
+    verify(tasks).save(task);
+    verify(tasks, never()).delete(any());
+    verifyNoInteractions(matrix, membership);
+  }
+
+  @Test
+  void oldAliasIntentWithoutARoomIsDropped() {
+    aliasTask(Duration.ofMinutes(11));
+    when(matrix.resolveRoomAlias("#group_chat_7_1:matrix"))
+        .thenReturn(new MatrixSynapseService.RoomAliasLookup(true, null));
+    service.retry(1L);
+    verify(tasks).delete(task);
+    verify(tasks, never()).save(any());
+    verify(matrix, never()).purgeRoomOrConfirmGone(any());
+  }
+
+  /** The writer died after Matrix created the room: hand it to the guarded room purge. */
+  @Test
+  void oldAliasIntentWithARoomBecomesARoomIntent() {
+    aliasTask(Duration.ofMinutes(11));
+    when(matrix.resolveRoomAlias("#group_chat_7_1:matrix"))
+        .thenReturn(new MatrixSynapseService.RoomAliasLookup(true, "!orphan:matrix"));
+    service.retry(1L);
+    var saved = ArgumentCaptor.forClass(GroupChatMatrixCleanupTask.class);
+    verify(tasks).save(saved.capture());
+    assertThat(saved.getValue().getAction()).isEqualTo(Action.PURGE_ROOM);
+    assertThat(saved.getValue().getRoomId()).isEqualTo("!orphan:matrix");
+    assertThat(saved.getValue().getSeriesId()).isEqualTo(7L);
+    assertThat(saved.getValue().getOwnerId()).isEqualTo("owner");
+    assertThat(saved.getValue().getTenantId()).isEqualTo(41L);
+    verify(tasks).delete(task);
+    verify(matrix, never()).purgeRoomOrConfirmGone(any());
+  }
+
+  @Test
+  void unresolvableAliasIntentIsRetained() {
+    aliasTask(Duration.ofMinutes(11));
+    when(matrix.resolveRoomAlias("#group_chat_7_1:matrix"))
+        .thenReturn(new MatrixSynapseService.RoomAliasLookup(false, null));
+    service.retry(1L);
+    verify(tasks).save(task);
+    verify(tasks, never()).delete(any());
   }
 }
