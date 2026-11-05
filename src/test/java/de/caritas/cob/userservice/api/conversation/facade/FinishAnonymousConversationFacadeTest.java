@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.actions.ActionCommandMockProvider;
 import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
 import de.caritas.cob.userservice.api.actions.session.DeactivateSessionActionCommand;
 import de.caritas.cob.userservice.api.actions.session.SendFinishedAnonymousConversationEventActionCommand;
+import de.caritas.cob.userservice.api.actions.user.DeactivateKeycloakUserActionCommand;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -58,6 +59,41 @@ class FinishAnonymousConversationFacadeTest {
         .thenReturn(
             de.caritas.cob.userservice.api.service.livechat.LiveChatAccountClaimService.FinishMode
                 .KEEP_IDENTITY);
+    when(actionsRegistry.buildContainerForType(Session.class))
+        .thenReturn(actionCommandMockProvider.getActionContainer(Session.class));
+    finishAnonymousConversationFacade.finishConversation(session.getId());
+    verify(actionsRegistry, org.mockito.Mockito.never()).buildContainerForType(User.class);
+    verify(actionCommandMockProvider.getActionMock(DeactivateSessionActionCommand.class))
+        .execute(session);
+  }
+
+  @Test
+  void legacyFinishDisablesIdentityAndStillFinishesSession() {
+    var session = anonymousSession();
+    mockAskerOwnsSession(session);
+    when(sessionService.getSession(any())).thenReturn(Optional.of(session));
+    when(claims.claimNormalFinish(session.getUser().getUserId()))
+        .thenReturn(
+            de.caritas.cob.userservice.api.service.livechat.LiveChatAccountClaimService.FinishMode
+                .LEGACY_DISABLE);
+    givenActionContainers();
+    finishAnonymousConversationFacade.finishConversation(session.getId());
+    verify(actionCommandMockProvider.getActionMock(DeactivateKeycloakUserActionCommand.class))
+        .execute(session.getUser());
+    verify(actionCommandMockProvider.getActionMock(DeactivateSessionActionCommand.class))
+        .execute(session);
+    verify(finishExecutor, org.mockito.Mockito.never()).disableAndMarkFinished(any());
+  }
+
+  @Test
+  void refusedLegacyStyleIdentityDisableStillFinishesSession() {
+    var session = anonymousSession();
+    session.setRegistrationType(Session.RegistrationType.REGISTERED);
+    session.setPostcode("00000");
+    mockAskerOwnsSession(session);
+    when(sessionService.getSession(any())).thenReturn(Optional.of(session));
+    when(sessionService.isAnonymousStyleRegistration(session)).thenReturn(true);
+    when(claims.claimIdentityDeactivation(session.getUser().getUserId())).thenReturn(false);
     when(actionsRegistry.buildContainerForType(Session.class))
         .thenReturn(actionCommandMockProvider.getActionContainer(Session.class));
     finishAnonymousConversationFacade.finishConversation(session.getId());
