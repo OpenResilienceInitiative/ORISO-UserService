@@ -771,6 +771,52 @@ class GroupChatMembershipServiceTest {
     assertNoMatrixUserIdLogged();
   }
 
+  /** Joined, power unknown, and the admin cannot raise it either: never assume the power. */
+  @Test
+  void ensureOwnerCanInvite_Should_Fail_When_PowerLevelsAreUnreadable() {
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(List.of(CONSULTANT_MATRIX_ID)));
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MATRIX_ID)).thenReturn("token");
+    when(matrixSynapseService.getPowerLevels(MATRIX_ROOM_ID, "token")).thenReturn(Optional.empty());
+
+    assertFalse(
+        groupChatMembershipService.ensureOwnerCanInvite(MATRIX_ROOM_ID, CONSULTANT_MATRIX_ID));
+  }
+
+  /** The owner's own join is refused after the raise: the admin's force-join takes over. */
+  @Test
+  void ensureOwnerCanInvite_Should_ForceJoinTheOwner_When_TheirOwnJoinFails() {
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(List.of(LEAVER_MATRIX_ID)));
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MATRIX_ID)).thenReturn("token");
+    when(matrixSynapseService.makeRoomAdmin(MATRIX_ROOM_ID, CONSULTANT_MATRIX_ID)).thenReturn(true);
+    when(matrixSynapseService.joinRoom(MATRIX_ROOM_ID, "token")).thenReturn(false);
+    when(matrixSynapseService.forceJoinUserToRoom(
+            MATRIX_ROOM_ID, CONSULTANT_MATRIX_ID, List.of(LEAVER_MATRIX_ID)))
+        .thenReturn(true);
+    when(matrixSynapseService.getPowerLevels(MATRIX_ROOM_ID, "token"))
+        .thenReturn(
+            Optional.of(powerLevels(Map.of(LEAVER_MATRIX_ID, 100, CONSULTANT_MATRIX_ID, 100))));
+
+    assertTrue(
+        groupChatMembershipService.ensureOwnerCanInvite(MATRIX_ROOM_ID, CONSULTANT_MATRIX_ID));
+
+    verify(matrixSynapseService)
+        .forceJoinUserToRoom(MATRIX_ROOM_ID, CONSULTANT_MATRIX_ID, List.of(LEAVER_MATRIX_ID));
+  }
+
+  @Test
+  void ensureOwnerCanInvite_Should_Fail_When_NoOwnerTokenCanBeMinted() {
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(Optional.of(List.of(CONSULTANT_MATRIX_ID)));
+    when(matrixSynapseService.loginAsUserAccessToken(CONSULTANT_MATRIX_ID)).thenReturn(" ");
+
+    assertFalse(
+        groupChatMembershipService.ensureOwnerCanInvite(MATRIX_ROOM_ID, CONSULTANT_MATRIX_ID));
+
+    verify(matrixSynapseService, never()).makeRoomAdmin(anyString(), anyString());
+  }
+
   @Test
   void ensureOwnerCanInvite_Should_Fail_When_RoomMembersAreUnreadable() {
     when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID)).thenReturn(Optional.empty());

@@ -165,7 +165,8 @@ public class ChatReCreator {
     if (!groupChatMembershipService.ensureOwnerCanInvite(newRoomId, owner)) {
       throw new InternalServerErrorException(
           String.format(
-              "Could not make the owner a member of the next occurrence of group chat %s",
+              "Could not settle the owner (membership and invite power) in the next occurrence"
+                  + " of group chat %s",
               chat.getId()));
     }
     var carried = new HashSet<String>();
