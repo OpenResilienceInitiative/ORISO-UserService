@@ -47,6 +47,7 @@ jobs:
         GUEST_PROMOTION_TEST_DB_USER: root
         GUEST_PROMOTION_TEST_DB_PASSWORD: root
       run: |
+        rm -f target/surefire-reports/TEST-de.caritas.cob.userservice.api.LiveChatPromotionMigrationIT.xml
         ./mvnw -B -Dskip.unit-tests=true -Dtest=LiveChatPromotionMigrationIT integration-test
         python3 - <<'PYCODE'
         import xml.etree.ElementTree as ET
