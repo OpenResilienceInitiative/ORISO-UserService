@@ -23,6 +23,13 @@ import org.springframework.transaction.annotation.Transactional;
 
 public interface SessionRepository extends CrudRepository<Session, Long> {
 
+  // A known modality is authoritative; the older markers only identify pre-modality rows.
+  String LIVE_CHAT_MODALITY =
+      " AND (s.conversationType = de.caritas.cob.userservice.api.model.ConversationType.LIVE_CHAT"
+          + " OR (s.conversationType IS NULL"
+          + " AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000'"
+          + " OR u.username LIKE 'Anonymous-%')))";
+
   interface AgencyConsultingTypeProjection {
 
     Long getAgencyId();
@@ -375,9 +382,8 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
           + "AND s.status = :sessionStatus "
           + "AND s.consultant IS NULL "
           + "AND s.updateDate >= :minUpdateDate "
-          + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000' "
-          + "     OR u.username LIKE 'Anonymous-%') "
-          + "ORDER BY s.createDate DESC")
+          + LIVE_CHAT_MODALITY
+          + " ORDER BY s.createDate ASC, s.id ASC")
   Page<Session> findAnonymousEnquiriesVisibleForConsultantsByTopicsOnly(
       @Param("topicIds") Set<Long> topicIds,
       @Param("sessionStatus") SessionStatus sessionStatus,
@@ -403,35 +409,30 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
           + "AND s.mainTopicId IN :topicIds "
           + "AND s.status = :sessionStatus "
           + "AND s.consultant IS NULL "
-          + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000' "
-          + "     OR u.username LIKE 'Anonymous-%') ")
+          + LIVE_CHAT_MODALITY)
   List<Session> findVisibleAnonymousLiveChatEnquiriesForConsultantByIds(
       @Param("sessionIds") Set<Long> sessionIds,
       @Param("topicIds") Set<Long> topicIds,
       @Param("sessionStatus") SessionStatus sessionStatus,
       @Param("anonymousRegistrationType") RegistrationType anonymousRegistrationType);
 
-  /**
-   * Count live-chat enquiries that are visible in the consultant queue and were created before the
-   * reference session — i.e. people genuinely ahead of the asker. Matches the same visibility rules
-   * as {@code SessionService#isVisibleRegisteredEnquiryForConsultant}: anonymous-style session,
-   * privacy confirmed, unassigned, same consulting type and topic.
-   */
-  @Query(
-      "SELECT COUNT(s) FROM Session s "
-          + "JOIN s.user u "
-          + "WHERE s.status = :sessionStatus "
-          + "AND s.consultant IS NULL "
-          + "AND s.createDate < :beforeDate "
-          + "AND s.consultingTypeId = :consultingTypeId "
-          + "AND ((:mainTopicId IS NULL AND s.mainTopicId IS NULL) OR s.mainTopicId = :mainTopicId) "
-          + "AND s.updateDate >= :minUpdateDate "
-          + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000' "
-          + "     OR u.username LIKE 'Anonymous-%') "
-          + "AND (:agencyId IS NULL OR s.agencyId = :agencyId)")
+  // Keep the guest's position and the assignment guard on the same queue and ordering key.
+  String EARLIER_LIVE_CHAT =
+      " FROM Session s JOIN s.user u"
+          + " WHERE s.status = :sessionStatus AND s.consultant IS NULL"
+          + " AND (s.createDate < :beforeDate OR (s.createDate = :beforeDate AND s.id < :beforeId))"
+          // A topic queue is topic-only, as in the consultant's list; only no-topic stays typed.
+          + " AND ((:mainTopicId IS NULL AND s.mainTopicId IS NULL"
+          + " AND s.consultingTypeId = :consultingTypeId) OR s.mainTopicId = :mainTopicId)"
+          + " AND s.updateDate >= :minUpdateDate"
+          + LIVE_CHAT_MODALITY
+          + " AND (:agencyId IS NULL OR s.agencyId = :agencyId)";
+
+  @Query("SELECT COUNT(s)" + EARLIER_LIVE_CHAT)
   long countPendingEnquiriesAheadOf(
       @Param("sessionStatus") SessionStatus sessionStatus,
       @Param("beforeDate") LocalDateTime beforeDate,
+      @Param("beforeId") Long beforeId,
       @Param("consultingTypeId") Integer consultingTypeId,
       @Param("mainTopicId") Long mainTopicId,
       @Param("agencyId") Long agencyId,

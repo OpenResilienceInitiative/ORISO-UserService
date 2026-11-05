@@ -95,5 +95,7 @@ public enum HttpStatusExceptionReason {
    * An admin switched this feature off for the Träger or Beratungsstelle (#1564), or the switch
    * cannot be read. The counselling app hides the button; this is the server refusing the action.
    */
-  FEATURE_DISABLED
+  FEATURE_DISABLED,
+  /** A guest who arrived earlier is still waiting in the same live-chat queue. */
+  LIVE_CHAT_QUEUE_NOT_FIRST
 }
