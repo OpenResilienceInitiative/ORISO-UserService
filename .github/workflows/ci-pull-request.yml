@@ -2,6 +2,8 @@ name: UserService PR Validation
 
 on:
   pull_request:
+  merge_group:
+    types: [checks_requested]
 
 env:
   REGISTRY: ghcr.io
@@ -164,6 +166,7 @@ jobs:
   # for now; flip to blocking once the process around intentional breaking
   # changes (version bump / consumer sign-off) is agreed.
   api-contract-diff:
+    if: github.event_name == 'pull_request'
     name: api-contract-diff (non-blocking)
     runs-on: ubuntu-latest
     continue-on-error: true
