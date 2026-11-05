@@ -269,4 +269,5 @@
   <include file="db/changelog/changeset/20261031_invite_avatar_name_1274/changeSet.xml"/>
   <include file="db/changelog/changeset/20261104_chat_carried_marker/changeSet.xml"/>
   <include file="db/changelog/changeset/20261029_deleted_asker_session_1159/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261105_live_chat_account_promotion/changeSet.xml"/>
 </databaseChangeLog>

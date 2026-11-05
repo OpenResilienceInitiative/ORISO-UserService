@@ -2,15 +2,19 @@ package de.caritas.cob.userservice.api.workflow.delete.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNoException;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.service.livechat.LiveChatAccountClaimService;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
 import java.util.List;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -27,6 +31,20 @@ class AnonymousUserDeletionBatchTest {
   @Mock private AnonymousUserDeletionCandidates deletionCandidates;
 
   @Mock private AnonymousUserDeletionUnit deletionUnit;
+  @Mock private LiveChatAccountClaimService claims;
+
+  @BeforeEach
+  void allowOrdinaryCleanup() {
+    lenient().when(claims.claimCleanup(anyString())).thenReturn(true);
+  }
+
+  @Test
+  void skipsStaleCandidateWhenPromotionHasClaimedTheAccount() {
+    when(deletionCandidates.findOverdueAnonymousUserIds()).thenReturn(List.of("promoted"));
+    when(claims.claimCleanup("promoted")).thenReturn(false);
+    assertThat(deletionBatch.deleteOverdueUsers()).isEmpty();
+    verifyNoInteractions(deletionUnit);
+  }
 
   @Test
   void deleteOverdueUsers_Should_notDeleteAnything_When_thereAreNoCandidates() {

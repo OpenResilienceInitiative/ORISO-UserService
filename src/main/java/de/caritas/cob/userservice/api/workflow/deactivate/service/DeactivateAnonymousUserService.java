@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.actions.user.DeactivateKeycloakUserActionC
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.service.livechat.LiveChatAccountClaimService;
 import jakarta.transaction.Transactional;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -30,6 +31,7 @@ public class DeactivateAnonymousUserService {
 
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull ActionsRegistry actionsRegistry;
+  private final @NonNull LiveChatAccountClaimService claims;
 
   @Value("${user.anonymous.deactivateworkflow.periodMinutes}")
   private long deactivatePeriodMinutes;
@@ -46,6 +48,15 @@ public class DeactivateAnonymousUserService {
             .filter(isSessionOutsideOfDeactivationTime(deactivationTime))
             .collect(Collectors.toSet());
 
+    var claimedUsers =
+        staleAnonymousSessions.stream()
+            .map(Session::getUser)
+            .map(User::getUserId)
+            .distinct()
+            .filter(claims::claimCleanup)
+            .collect(Collectors.toSet());
+    staleAnonymousSessions.removeIf(
+        session -> !claimedUsers.contains(session.getUser().getUserId()));
     deactivateAnonymousUsersAndSessions(staleAnonymousSessions);
   }
 

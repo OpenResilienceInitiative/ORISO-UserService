@@ -399,6 +399,11 @@ public class SecurityConfig {
                     USER_DEFAULT,
                     CONSULTANT_DEFAULT,
                     RESTRICTED_AGENCY_ADMIN)
+                // Only the authenticated advice seeker may promote their own Live Chat account.
+                .requestMatchers(
+                    "/users/live-chat-account/conversion",
+                    "/service/users/live-chat-account/conversion")
+                .hasAuthority(USER_DEFAULT)
                 // The caller's own direct-link temporary account (#1476).
                 .requestMatchers(
                     "/users/temporary-account",

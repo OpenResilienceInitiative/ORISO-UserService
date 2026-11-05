@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.workflow.delete.service;
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType.ASKER;
 
+import de.caritas.cob.userservice.api.service.livechat.LiveChatAccountClaimService;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
 import java.util.ArrayList;
@@ -26,6 +27,7 @@ public class AnonymousUserDeletionBatch {
 
   private final @NonNull AnonymousUserDeletionCandidates deletionCandidates;
   private final @NonNull AnonymousUserDeletionUnit deletionUnit;
+  private final @NonNull LiveChatAccountClaimService claims;
 
   /** Deletes anonymous users whose sessions are done and overdue. */
   public List<DeletionWorkflowError> deleteOverdueUsers() {
@@ -47,7 +49,7 @@ public class AnonymousUserDeletionBatch {
    */
   private List<DeletionWorkflowError> deleteIsolated(String userId) {
     try {
-      return deletionUnit.deleteUser(userId);
+      return claims.claimCleanup(userId) ? deletionUnit.deleteUser(userId) : List.of();
     } catch (RuntimeException exception) {
       log.error(
           "Anonymous deletion failed for one user and was isolated from the rest of the batch. "
