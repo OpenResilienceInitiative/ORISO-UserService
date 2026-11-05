@@ -5,9 +5,12 @@ import static org.apache.commons.lang3.BooleanUtils.isFalse;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatMemberResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatMembersResponseDTO;
+import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.ChatPermissionVerifier;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Chat;
@@ -30,12 +33,17 @@ public class GetChatMembersFacade {
   private final @NonNull ChatPermissionVerifier chatPermissionVerifier;
   private final @NonNull GroupChatMembershipService groupChatMembershipService;
   private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
+  private final @NonNull AuthenticatedUser authenticatedUser;
 
   /**
    * Get a filtered list of the members of a chat (without technical/system user).
    *
    * <p>Members come from the Matrix room state. Each Matrix member is mapped back to its
-   * application account so the UI keeps showing usernames and display names.
+   * application account so the UI keeps showing usernames, display names and each member's role
+   * (OBP 2.1 #107: everyone in the chat sees everyone's role).
+   *
+   * <p>An advice seeker may read the list only while she is herself in the room: sharing the
+   * Beratungsstelle opens a V1 group to join, not its member list.
    *
    * @param chatId chat ID
    * @return {@link ChatMembersResponseDTO}
@@ -52,9 +60,30 @@ public class GetChatMembersFacade {
     verifyMatrixRoom(chat);
 
     var matrixRoomId = groupChatMembershipService.resolveMatrixRoomId(chat);
-    return convertResolvedMembersToChatMemberResponseDTO(
+    var members =
         membersOnlyChatAccess.readingAcrossTraeger(
-            chat, () -> groupChatMembershipService.resolveHumanMembers(matrixRoomId)));
+            chat, () -> groupChatMembershipService.resolveHumanMembers(matrixRoomId));
+    verifyAdviceSeekerIsMember(chat, members);
+    return convertResolvedMembersToChatMemberResponseDTO(members);
+  }
+
+  private void verifyAdviceSeekerIsMember(Chat chat, List<ResolvedRoomMember> members) {
+    var roles = authenticatedUser.getRoles();
+    if (roles == null
+        || !roles.contains(UserRole.USER.getValue())
+        || roles.contains(UserRole.CONSULTANT.getValue())) {
+      return;
+    }
+    var userId = authenticatedUser.getUserId();
+    // Unknown room state yields no members: fail closed.
+    var isMember =
+        members.stream()
+            .anyMatch(member -> !member.consultant() && member.accountId().equals(userId));
+    if (!isMember) {
+      throw new ForbiddenException(
+          String.format(
+              "User with id %s is not a member of chat with id %s", userId, chat.getId()));
+    }
   }
 
   private void verifyActiveStatus(Chat chat) {
@@ -88,6 +117,10 @@ public class GetChatMembersFacade {
                             .displayName(member.displayName())
                             .avatarKind(member.avatarKind())
                             .avatarId(member.avatarId())
+                            .role(
+                                member.consultant()
+                                    ? ChatMemberResponseDTO.RoleEnum.CONSULTANT
+                                    : ChatMemberResponseDTO.RoleEnum.ADVICE_SEEKER)
                             .utcOffset(null))
                 .collect(Collectors.toList()));
   }

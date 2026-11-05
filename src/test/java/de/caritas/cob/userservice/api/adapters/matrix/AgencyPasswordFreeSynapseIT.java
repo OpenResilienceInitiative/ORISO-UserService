@@ -32,9 +32,11 @@ import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
+import de.caritas.cob.userservice.api.service.session.AgencyDepartmentMembershipBackfill;
 import de.caritas.cob.userservice.api.service.session.AgencyLateJoinerMembershipService;
 import de.caritas.cob.userservice.api.service.session.AgencyPreAssignmentRoomService;
 import de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService;
+import de.caritas.cob.userservice.api.service.session.MatrixRateLimitPause;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionCreationWriter;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate;
@@ -302,6 +304,9 @@ class AgencyPasswordFreeSynapseIT {
             mock(UserService.class),
             identities,
             mock(ChatPermissionVerifier.class),
+            mock(
+                de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeatureGate
+                    .class),
             Optional.empty());
     var response = controller.getMessages(42L);
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -414,7 +419,8 @@ class AgencyPasswordFreeSynapseIT {
                     .class),
             mock(
                 de.caritas.cob.userservice.api.service.furthercounselling.TopicDuplicateService
-                    .class));
+                    .class),
+            mock(de.caritas.cob.userservice.api.port.in.Messaging.class));
     facade.assignRegisteredEnquiry(session, consultant);
     assertThat(session.getMatrixRoomId()).isEqualTo(originalRoom);
     var token = matrix.loginAsUserAccessToken(consultant.getMatrixUserId());
@@ -432,7 +438,21 @@ class AgencyPasswordFreeSynapseIT {
   }
 
   private void holdingRoom() {
-    new AgencyPreAssignmentRoomService(identities, gateway, sessions, silentMembership)
+    var pause = new MatrixRateLimitPause();
+    new AgencyPreAssignmentRoomService(
+            identities,
+            gateway,
+            sessions,
+            silentMembership,
+            new AgencyDepartmentMembershipBackfill(
+                silentMembership,
+                gateway,
+                pause,
+                Runnable::run,
+                consultants,
+                mock(ConsultantAgencyRepository.class),
+                sessionRepository),
+            pause)
         .ensureHoldingRoom(session, session.getUser());
     assertThat(session.getMatrixRoomId()).isNotBlank();
   }

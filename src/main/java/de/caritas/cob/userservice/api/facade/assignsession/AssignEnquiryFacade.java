@@ -18,6 +18,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
@@ -80,6 +81,7 @@ public class AssignEnquiryFacade {
   private final @NonNull de.caritas.cob.userservice.api.service.furthercounselling
           .TopicDuplicateService
       topicDuplicateService;
+  private final @NonNull Messaging messaging;
 
   /**
    * Assigns the given {@link Session} to the given {@link Consultant} and removes consultants who
@@ -116,6 +118,7 @@ public class AssignEnquiryFacade {
     // accepted. Best-effort by the same contract — never blocks the acceptance.
     teamDiscussionFacade.archiveDiscussionIfPresent(session);
     eventNotificationService.createInquiryAcceptedNotification(session, consultant);
+    retireOpenEnquiryNotificationsAfterCommit(session, consultant.getId());
     var event =
         new AssignSessionStatisticsEvent(consultant.getId(), UserRole.CONSULTANT, session.getId());
     event.setRequestUri(requestURI);
@@ -136,6 +139,36 @@ public class AssignEnquiryFacade {
               @Override
               public void afterCommit() {
                 acceptanceDelivery.dispatchSafely(sessionId);
+              }
+            });
+  }
+
+  /**
+   * ORISO-Frontend#1472: removes the other consultants' "New client request" entries only once the
+   * acceptance has committed, in its own transaction. Running it inside the acceptance transaction
+   * would let a failed cleanup mark that transaction rollback-only and undo the acceptance.
+   */
+  private void retireOpenEnquiryNotificationsAfterCommit(Session session, String consultantId) {
+    Runnable retire =
+        () -> {
+          try {
+            eventNotificationService.retireOpenEnquiryNotifications(session, consultantId);
+          } catch (RuntimeException ex) {
+            log.warn(
+                "Could not retire open enquiry notifications for session {}", session.getId(), ex);
+          }
+        };
+    if (!org.springframework.transaction.support.TransactionSynchronizationManager
+        .isSynchronizationActive()) {
+      retire.run();
+      return;
+    }
+    org.springframework.transaction.support.TransactionSynchronizationManager
+        .registerSynchronization(
+            new org.springframework.transaction.support.TransactionSynchronization() {
+              @Override
+              public void afterCommit() {
+                retire.run();
               }
             });
   }
@@ -187,6 +220,7 @@ public class AssignEnquiryFacade {
     assignment lock. */
     assignEnquiry(session, consultant, false, true);
     eventNotificationService.createInquiryAcceptedNotification(session, consultant);
+    retireOpenEnquiryNotificationsAfterCommit(session, consultant.getId());
   }
 
   private void assignEnquiry(Session session, Consultant consultant) {
@@ -212,6 +246,7 @@ public class AssignEnquiryFacade {
     }
     sessionToConsultantVerifier.verifyPreconditionsForAssignment(
         consultantSessionDTO, skipConsultantAssignmentAndSessionInProgressChecks);
+    messaging.requireFirstLiveChatEnquiry(session);
 
     // ADR-022 decision 1 / ADR-003: a topic-based anonymous enquiry carries no agency until it is
     // accepted. Bind the accepting counsellor's department here, before the assignment save, so

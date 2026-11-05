@@ -52,7 +52,10 @@ public class HttpTenantFilter extends OncePerRequestFilter {
               "(/service)?/users/invitelinks/[^/]+/(context|redeem)",
               "(/service)?/users/identity-suggestions",
               // TenantService's callback; DpaSignedNoticeService takes the tenant from the path.
-              "(/service)?/users/tenants/[^/]+/dpa-signed-notices")
+              "(/service)?/users/tenants/[^/]+/dpa-signed-notices",
+              // A Träger admin reports the deletion of its own Träger after it is gone, so its
+              // tenant can no longer be admitted. The controller checks tenant and scope itself.
+              "(/service)?/users/deletion-audit-logs")
           .map(Pattern::compile)
           .toList();
 

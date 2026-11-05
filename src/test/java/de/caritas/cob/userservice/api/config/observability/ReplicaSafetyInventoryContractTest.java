@@ -66,10 +66,15 @@ class ReplicaSafetyInventoryContractTest {
           "handshake-expiry-scheduler",
           "support-room-expiry-scheduler",
           "reply-email-delivery-scheduler",
+          "reply-email-tenant-rotation",
           "event-notification-retention-scheduler",
+          "statistics-feature-gate-cache",
+          "statistics-retention-scheduler",
           "team-discussion-retention-scheduler",
           "team-discussion-orphan-cleanup-scheduler",
-          "team-discussion-access-repair");
+          "agency-deletion-audit-pull-scheduler",
+          "team-discussion-access-repair",
+          "statistics-dashboard-snapshot-scheduler");
 
   @Test
   void shouldInventoryEveryKnownReplicaLocalComponentWithAnActionableSignal() throws Exception {

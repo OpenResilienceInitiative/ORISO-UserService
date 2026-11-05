@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
+import de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
@@ -37,6 +38,7 @@ import org.springframework.stereotype.Service;
 public class UserAccountService {
 
   private final @NonNull UserService userService;
+  private final @NonNull AskerEmailCollectionPolicy emailCollectionPolicy;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull AppointmentService appointmentService;
   private final @NonNull AuthenticatedUser authenticatedUser;
@@ -135,10 +137,18 @@ public class UserAccountService {
    */
   public void changeUserAccountEmailAddress(Optional<String> optionalEmail) {
     ensureCurrentAccountIsWritable();
+    if (optionalEmail.isPresent() && authenticatedUser.isAnonymous()) {
+      throw new ForbiddenException("Anonymous live-chat accounts cannot add an email address");
+    }
     var userId = authenticatedUser.getUserId();
     var email = optionalEmail.orElseGet(() -> userHelper.getDummyEmail(userId));
     Optional<Consultant> consultantOpt = consultantService.getConsultant(userId);
     Optional<User> userOpt = userService.getUser(userId);
+    if (optionalEmail.isPresent()
+        && userOpt.isPresent()
+        && !AskerEmailCollectionPolicy.sameAddress(userOpt.get().getEmail(), optionalEmail.get())) {
+      emailCollectionPolicy.requireForAccount(userOpt.get());
+    }
     LanguageCode notificationLanguage =
         userOpt
             .map(User::getLanguageCode)
@@ -278,28 +288,34 @@ public class UserAccountService {
         .getUser(userId)
         .or(() -> this.userService.findDeletedById(userId))
         .ifPresent(this::assertWritable);
-    this.consultantService.getConsultant(userId).ifPresent(this::assertWritable);
+    // Same reasoning as for the user above: getConsultant filters deleteDate IS NULL, so the
+    // consultant in the safeguard window is only found by the lookup that includes deleted ones.
+    this.consultantService
+        .getConsultant(userId)
+        .or(() -> this.consultantService.findConsultantIncludingDeleted(userId))
+        .ifPresent(this::assertWritable);
   }
 
   private void assertWritable(User user) {
-    if (user.getDeleteDate() == null) {
-      return;
-    }
-    if (user.getDeletionLifecycleState() == DeletionLifecycleState.READ_ONLY_SAFEGUARD
-        || user.getDeletionLifecycleState() == DeletionLifecycleState.REACTIVATION_IN_PROGRESS
-        || user.getDeletionLifecycleState() == DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED
-        || user.getDeletionLifecycleState() == DeletionLifecycleState.HARD_DELETE_IN_PROGRESS
-        || user.getDeletionLifecycleState() == DeletionLifecycleState.HARD_DELETE_PARTIAL_FAILURE) {
+    if (user.getDeleteDate() != null && isFrozen(user.getDeletionLifecycleState())) {
       throw new ForbiddenException("Account is in read-only safeguard mode.");
     }
   }
 
+  // The same frozen states as for an asker: a consultant claimed by the nightly purge
+  // (HARD_DELETE_IN_PROGRESS, then HARD_DELETE_PARTIAL_FAILURE on a failed run) must not write
+  // either.
   private void assertWritable(Consultant consultant) {
-    if (consultant.getDeleteDate() == null) {
-      return;
-    }
-    if (consultant.getDeletionLifecycleState() == DeletionLifecycleState.READ_ONLY_SAFEGUARD) {
+    if (consultant.getDeleteDate() != null && isFrozen(consultant.getDeletionLifecycleState())) {
       throw new ForbiddenException("Account is in read-only safeguard mode.");
     }
+  }
+
+  private static boolean isFrozen(DeletionLifecycleState state) {
+    return state == DeletionLifecycleState.READ_ONLY_SAFEGUARD
+        || state == DeletionLifecycleState.REACTIVATION_IN_PROGRESS
+        || state == DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED
+        || state == DeletionLifecycleState.HARD_DELETE_IN_PROGRESS
+        || state == DeletionLifecycleState.HARD_DELETE_PARTIAL_FAILURE;
   }
 }

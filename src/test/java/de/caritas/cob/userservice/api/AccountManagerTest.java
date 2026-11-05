@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -18,6 +19,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
+import de.caritas.cob.userservice.api.service.matrix.ConsultantRenameSystemMessageService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.util.HashMap;
@@ -167,6 +169,10 @@ class AccountManagerTest {
   @Mock AuthenticatedUser authenticatedUser;
   @Mock AppointmentService appointmentService;
   @Mock PatchConsultantSaga patchConsultantSaga;
+  @Mock ConsultantRenameSystemMessageService consultantRenameSystemMessageService;
+
+  @org.mockito.Spy
+  ConsultantDisplayNameResolver consultantDisplayNameResolver = new ConsultantDisplayNameResolver();
 
   // findConsultant
 
@@ -355,6 +361,81 @@ class AccountManagerTest {
 
     assertThat(accountManager.patchUser(patch)).isPresent();
     Mockito.verify(patchConsultantSaga).executeTransactional(patched, patch);
+  }
+
+  // OBP 2.1 #119 / ORISO-UserService#1533: a self-service rename (PATCH /users/data) is
+  // announced in the chats with the published names before and after the change.
+
+  @Test
+  void patchUser_Should_postTheRenameNotice_When_TheConsultantChangesTheDisplayName() {
+    var consultant = consultantNamed("Frau Alt.");
+    var patch = displayNamePatch("Frau Neu.");
+    givenThePatchIsApplied(consultant, patch);
+
+    accountManager.patchUser(patch);
+
+    Mockito.verify(consultantRenameSystemMessageService)
+        .postRenameMessagesAfterCommit(consultant, "Frau Alt.", "Frau Neu.");
+  }
+
+  @Test
+  void patchUser_Should_notPostARenameNotice_When_TheDisplayNameIsNotPatched() {
+    var consultant = consultantNamed("Frau Alt.");
+    Map<String, Object> patch = new HashMap<>();
+    patch.put("id", "c-1");
+    patch.put("walkThroughEnabled", false);
+    givenThePatchIsApplied(consultant, patch);
+
+    accountManager.patchUser(patch);
+
+    Mockito.verifyNoInteractions(consultantRenameSystemMessageService);
+  }
+
+  @Test
+  void patchUser_Should_notPostARenameNotice_When_TheSagaFails() {
+    var consultant = consultantNamed("Frau Alt.");
+    var patch = displayNamePatch("Frau Neu.");
+    givenThePatchIsApplied(consultant, patch);
+    Mockito.when(patchConsultantSaga.executeTransactional(consultant, patch))
+        .thenThrow(new IllegalStateException("appointment service down"));
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        IllegalStateException.class, () -> accountManager.patchUser(patch));
+
+    Mockito.verifyNoInteractions(consultantRenameSystemMessageService);
+  }
+
+  private Consultant consultantNamed(String displayName) {
+    var consultant = new Consultant();
+    consultant.setId("c-1");
+    consultant.setUsername("beraterin1");
+    consultant.setDisplayName(displayName);
+    return consultant;
+  }
+
+  private Map<String, Object> displayNamePatch(String displayName) {
+    Map<String, Object> patch = new HashMap<>();
+    patch.put("id", "c-1");
+    patch.put("displayName", displayName);
+    return patch;
+  }
+
+  /** Mirrors the real mapper: it mutates and returns the very entity it was given. */
+  private void givenThePatchIsApplied(Consultant consultant, Map<String, Object> patch) {
+    Mockito.when(userRepository.findByUserIdAndDeleteDateIsNull("c-1"))
+        .thenReturn(Optional.empty());
+    Mockito.when(consultantRepository.findByIdAndDeleteDateIsNull("c-1"))
+        .thenReturn(Optional.of(consultant));
+    Mockito.when(userServiceMapper.consultantOf(consultant, patch))
+        .thenAnswer(
+            invocation -> {
+              if (patch.containsKey("displayName")) {
+                consultant.setDisplayName((String) patch.get("displayName"));
+              }
+              return consultant;
+            });
+    Mockito.when(patchConsultantSaga.executeTransactional(consultant, patch))
+        .thenReturn(Map.of("id", "c-1"));
   }
 
   @Test

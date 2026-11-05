@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.conversation.facade.CreateAnonymousEnquiryFacade;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -64,6 +65,8 @@ public class AgencyInviteLinkService {
           .TemporaryAccountSettingsService
       temporaryAccountSettings;
 
+  private final @NonNull DirectInvitePolicy directInvitePolicy;
+
   /** Call share links (#1487) in the public context; not {@code @NonNull} for older test wiring. */
   private final CallShareLinkService callShareLinkService;
 
@@ -74,6 +77,7 @@ public class AgencyInviteLinkService {
     }
     applyDefaults(cmd);
     validateEnums(cmd);
+    requireLiveChatLinkWriter(cmd.getLinkKind(), cmd.getChatType());
     if (InviteLinkKind.CALL.name().equals(cmd.getLinkKind())) {
       // Only a counsellor in a running call creates its share link (#1487).
       throw new BadRequestException("Call share links are created from the call");
@@ -84,10 +88,7 @@ public class AgencyInviteLinkService {
       throw new BadRequestException("consultantId is required when linkKind = COUNSELLOR");
     }
 
-    Long callerTenantId = resolveCallerTenantId();
-    if (callerTenantId == null) {
-      throw new ForbiddenException("No tenant context — caller must be tenant-scoped");
-    }
+    Long callerTenantId = requireCallerTenantId();
 
     Integer consultingTypeId = null;
     if (cmd.getAgencyId() != null) {
@@ -192,6 +193,92 @@ public class AgencyInviteLinkService {
   }
 
   /**
+   * Switch an active link off (status {@code DISABLED}); the public context and redeem routes
+   * already refuse such a link. A link of another tenant, or a call share link, reads as not found;
+   * an agency admin is held to the agencies they manage, as when creating.
+   */
+  @Transactional
+  public AgencyInviteLink deactivate(Long linkId) {
+    Long callerTenantId = resolveCallerTenantId();
+    AgencyInviteLink link =
+        repository
+            .findById(linkId)
+            .filter(l -> Objects.equals(l.getTenantId(), callerTenantId))
+            .filter(l -> !InviteLinkKind.CALL.name().equals(l.getLinkKind()))
+            .orElseThrow(() -> new NotFoundException("Invite link %s not found", linkId));
+    assertMayWriteLink(link);
+
+    if (InviteLinkStatus.DISABLED.name().equals(link.getStatus())) {
+      return link;
+    }
+    if (!InviteLinkStatus.ACTIVE.name().equals(link.getStatus())) {
+      throw new ConflictException("Only an active invite link can be deactivated");
+    }
+    link.setStatus(InviteLinkStatus.DISABLED.name());
+    link.setUpdateDate(LocalDateTime.now());
+    return repository.save(link);
+  }
+
+  /**
+   * Switch a disabled external link back on. Only {@code EXTERNAL_INBOUND} links of the caller's
+   * Träger exist for this route; any other link reads as not found. A link whose {@code expiresAt}
+   * has passed stays dead (the list and redeem routes derive EXPIRED from it), so it is refused
+   * even while its stored status still says ACTIVE or DISABLED.
+   */
+  @Transactional
+  public AgencyInviteLink reactivate(Long linkId) {
+    AgencyInviteLink link = findExternalLinkOfCallerTenant(linkId);
+    assertMayWriteLink(link);
+
+    if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now())) {
+      throw new ConflictException("An expired invite link cannot be reactivated");
+    }
+    if (InviteLinkStatus.ACTIVE.name().equals(link.getStatus())) {
+      return link;
+    }
+    if (!InviteLinkStatus.DISABLED.name().equals(link.getStatus())) {
+      throw new ConflictException("Only a deactivated invite link can be reactivated");
+    }
+    link.setStatus(InviteLinkStatus.ACTIVE.name());
+    link.setUpdateDate(LocalDateTime.now());
+    return repository.save(link);
+  }
+
+  /**
+   * Hard-delete an external link of any status. Nothing references such a row by foreign key, and
+   * no code reads it again for a conversation that started from it (redeem of a live-chat link
+   * creates its own session and stores no link id).
+   */
+  @Transactional
+  public void delete(Long linkId) {
+    AgencyInviteLink link = findExternalLinkOfCallerTenant(linkId);
+    assertMayWriteLink(link);
+    repository.delete(link);
+  }
+
+  private void assertMayWriteLink(AgencyInviteLink link) {
+    requireLiveChatLinkWriter(link.getLinkKind(), link.getChatType());
+    adminScope.assertMay(Target.placedIn(link.getTenantId(), link.getAgencyId()));
+  }
+
+  private void requireLiveChatLinkWriter(String kind, String chatType) {
+    if (InviteLinkKind.EXTERNAL_INBOUND.name().equals(kind)
+        && InviteLinkChatType.LIVE_CHAT.name().equals(chatType)
+        && !authenticatedUser.isPlatformAdmin()) {
+      throw new ForbiddenException("Only platform admins can manage external live-chat links");
+    }
+  }
+
+  private AgencyInviteLink findExternalLinkOfCallerTenant(Long linkId) {
+    Long callerTenantId = requireCallerTenantId();
+    return repository
+        .findById(linkId)
+        .filter(l -> Objects.equals(l.getTenantId(), callerTenantId))
+        .filter(l -> InviteLinkKind.EXTERNAL_INBOUND.name().equals(l.getLinkKind()))
+        .orElseThrow(() -> new NotFoundException("Invite link %s not found", linkId));
+  }
+
+  /**
    * Public entry metadata of any link (the {@code /context} route): a call share link (#1487) has
    * its own, smaller shape.
    */
@@ -219,17 +306,39 @@ public class AgencyInviteLinkService {
     return contextOf(link);
   }
 
-  private InvitationContext contextOf(AgencyInviteLink link) {
-    if (InviteLinkStatus.DISABLED.name().equals(link.getStatus())
-        && InviteLinkChatType.isDirectMedium(link.getChatType())) {
+  /**
+   * An admin who withdrew "Direkteinladung erlauben" stops the links that already exist, on every
+   * route a person uses to open one (context and redeem): 410, so the page says "no longer active".
+   */
+  private void requireDirectInviteAllowed(AgencyInviteLink link) {
+    if (InviteLinkChatType.isDirectMedium(link.getChatType())
+        && !directInvitePolicy.allows(
+            link.getTenantId(),
+            link.getAgencyId(),
+            InviteLinkChatType.valueOf(link.getChatType()))) {
       throw new DirectLinkInactiveException();
     }
+  }
+
+  private static void rejectPausedLink(AgencyInviteLink link) {
+    if (!InviteLinkStatus.DISABLED.name().equals(link.getStatus())) return;
+    if (InviteLinkChatType.isDirectMedium(link.getChatType())) {
+      throw new DirectLinkInactiveException();
+    }
+    if (!InviteLinkKind.CALL.name().equals(link.getLinkKind())) {
+      throw new InviteLinkPausedException();
+    }
+  }
+
+  private InvitationContext contextOf(AgencyInviteLink link) {
+    rejectPausedLink(link);
     if (!InviteLinkStatus.ACTIVE.name().equals(link.getStatus())) {
       throw new BadRequestException("Invite link is not active");
     }
     if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now())) {
       throw new BadRequestException("Invite link expired");
     }
+    requireDirectInviteAllowed(link);
     TenantData previousTenant = TenantContext.getCurrentTenantData();
     try {
       TenantContext.setCurrentTenantData(new TenantData(link.getTenantId(), null));
@@ -272,16 +381,32 @@ public class AgencyInviteLinkService {
    * about the call or its conversation is exposed.
    */
   private CallShareContext callShareContext(AgencyInviteLink link) {
-    callShareLinkService.requireUsable(link);
-    return new CallShareContext(
-        link.getTenantId(),
-        link.getAgencyId(),
-        link.getConsultingTypeId(),
-        link.getTopicId(),
-        link.getChatType(),
-        link.isTemporaryAccount() && callShareLinkService.temporaryAccountAllowed(link),
-        (link.isKnock() ? InviteLinkAdmission.KNOCK : InviteLinkAdmission.DIRECT).name(),
-        InviteLinkKind.CALL.name());
+    TenantData previousTenant = TenantContext.getCurrentTenantData();
+    try {
+      TenantContext.setCurrentTenantData(new TenantData(link.getTenantId(), null));
+      callShareLinkService.requireUsable(link);
+      callShareLinkService.requireDirectInviteAllowed(link);
+      boolean temporary =
+          link.isTemporaryAccount() && callShareLinkService.temporaryAccountAllowed(link);
+      var settings = temporary ? temporaryAccountSettings.current() : null;
+      return new CallShareContext(
+          link.getTenantId(),
+          link.getAgencyId(),
+          link.getConsultingTypeId(),
+          link.getTopicId(),
+          link.getChatType(),
+          temporary,
+          (link.isKnock() ? InviteLinkAdmission.KNOCK : InviteLinkAdmission.DIRECT).name(),
+          InviteLinkKind.CALL.name(),
+          settings == null ? null : settings.hidePasswordField(),
+          settings == null ? null : settings.messageRetention().name());
+    } finally {
+      if (previousTenant == null) {
+        TenantContext.clear();
+      } else {
+        TenantContext.setCurrentTenantData(previousTenant);
+      }
+    }
   }
 
   /** Public context of a call share link (#1487). */
@@ -293,7 +418,9 @@ public class AgencyInviteLinkService {
       String chatType,
       boolean temporaryAccount,
       String admission,
-      String linkKind) {}
+      String linkKind,
+      @JsonInclude(JsonInclude.Include.NON_NULL) Boolean hidePasswordField,
+      @JsonInclude(JsonInclude.Include.NON_NULL) String messageRetention) {}
 
   /**
    * Public context deliberately excludes credentials and invitation administration data, including
@@ -321,6 +448,13 @@ public class AgencyInviteLinkService {
 
   @Transactional
   RedeemContext redeem(String token) {
+    // The remote policy reads must not run while the row lock below is held. Read the token
+    // unlocked first; status, expiry and the other checks still decide on the locked row.
+    repository
+        .findByToken(token)
+        .filter(unlocked -> InviteLinkStatus.ACTIVE.name().equals(unlocked.getStatus()))
+        .filter(unlocked -> !InviteLinkKind.CALL.name().equals(unlocked.getLinkKind()))
+        .ifPresent(this::requireDirectInviteAllowed);
     AgencyInviteLink link =
         repository
             .findByTokenAndStatus(token, InviteLinkStatus.ACTIVE.name())
@@ -334,10 +468,7 @@ public class AgencyInviteLinkService {
       if (InviteLinkStatus.USED.name().equals(existing.getStatus())) {
         throw new BadRequestException("Invite link already used");
       }
-      if (InviteLinkStatus.DISABLED.name().equals(existing.getStatus())
-          && InviteLinkChatType.isDirectMedium(existing.getChatType())) {
-        throw new DirectLinkInactiveException();
-      }
+      rejectPausedLink(existing);
       throw new BadRequestException("Invite link is not active");
     }
 
@@ -475,6 +606,14 @@ public class AgencyInviteLinkService {
     return link;
   }
 
+  private Long requireCallerTenantId() {
+    Long callerTenantId = resolveCallerTenantId();
+    if (callerTenantId == null) {
+      throw new ForbiddenException("No tenant context — caller must be tenant-scoped");
+    }
+    return callerTenantId;
+  }
+
   /** The platform picks the Träger with the X-Tenant-Id header; everybody else has their own. */
   private Long resolveCallerTenantId() {
     var reach = adminScope.current();
@@ -489,7 +628,8 @@ public class AgencyInviteLinkService {
       HttpServletRequest request = attrs.getRequest();
       String header = request.getHeader("X-Tenant-Id");
       if (header == null || header.isBlank()) return null;
-      return Long.parseLong(header.trim());
+      long tenantId = Long.parseLong(header.trim());
+      return tenantId > 0 ? tenantId : null;
     } catch (Exception ex) {
       return null;
     }

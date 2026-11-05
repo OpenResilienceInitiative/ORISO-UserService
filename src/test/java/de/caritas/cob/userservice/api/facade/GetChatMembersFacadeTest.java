@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ChatMembersResponseDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.ChatPermissionVerifier;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.service.ChatService;
@@ -28,6 +29,7 @@ import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService.ResolvedRoomMember;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -53,6 +55,8 @@ public class GetChatMembersFacadeTest {
 
   @Mock
   private de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyChatAccess;
+
+  @Mock private AuthenticatedUser authenticatedUser;
 
   @org.junit.jupiter.api.BeforeEach
   void readsRunDirectly() {
@@ -218,5 +222,95 @@ public class GetChatMembersFacadeTest {
     ChatMembersResponseDTO response = getChatMembersFacade.getChatMembers(CHAT_ID);
 
     assertThat(response.getMembers().get(0).getUsername(), is("plainUsername"));
+  }
+
+  private static ResolvedRoomMember consultantMember() {
+    return new ResolvedRoomMember(
+        "@consultant:matrix.example.org",
+        "consultant-id",
+        "consultantUsername",
+        "Consultant Name",
+        true,
+        null,
+        null);
+  }
+
+  private static ResolvedRoomMember askerMember(String accountId) {
+    return new ResolvedRoomMember(
+        "@" + accountId + ":matrix.example.org",
+        accountId,
+        accountId,
+        accountId,
+        false,
+        null,
+        null);
+  }
+
+  private void roomWith(ResolvedRoomMember... members) {
+    var chat = matrixChat();
+    when(chatService.getChat(CHAT_ID)).thenReturn(Optional.of(chat));
+    when(groupChatMembershipService.resolveMatrixRoomId(chat)).thenReturn(MATRIX_ROOM_ID);
+    when(groupChatMembershipService.resolveHumanMembers(MATRIX_ROOM_ID))
+        .thenReturn(List.of(members));
+  }
+
+  // OBP 2.1 #107: everyone in the chat sees each participant's role.
+  @Test
+  public void getChatMembers_Should_NameEachMembersRole() throws Exception {
+    when(authenticatedUser.getRoles()).thenReturn(Set.of("consultant"));
+    roomWith(consultantMember(), askerMember("asker-id"));
+
+    var response = getChatMembersFacade.getChatMembers(CHAT_ID);
+
+    var mapper = new de.caritas.cob.userservice.api.config.AppConfig().objectMapper();
+    var json = mapper.readTree(mapper.writeValueAsString(response));
+    assertThat(json.path("members").get(0).path("role").asText(), is("CONSULTANT"));
+    assertThat(json.path("members").get(1).path("role").asText(), is("ADVICE_SEEKER"));
+  }
+
+  // The roles are personal data of the members: an advice seeker of the same Beratungsstelle who
+  // is not in the room must not read who is.
+  @Test
+  public void getChatMembers_Should_ForbidAdviceSeeker_WhoIsNotInTheRoom() {
+    when(authenticatedUser.getRoles()).thenReturn(Set.of("user"));
+    when(authenticatedUser.getUserId()).thenReturn("outsider-id");
+    roomWith(consultantMember(), askerMember("asker-id"));
+
+    try {
+      getChatMembersFacade.getChatMembers(CHAT_ID);
+      fail("Expected exception: ForbiddenException");
+    } catch (ForbiddenException expected) {
+      assertTrue(true, "Expected ForbiddenException thrown");
+    }
+  }
+
+  // Unknown room state must not open the list to an advice seeker either.
+  @Test
+  public void getChatMembers_Should_ForbidAdviceSeeker_When_RoomStateUnknown() {
+    when(authenticatedUser.getRoles()).thenReturn(Set.of("user"));
+    when(authenticatedUser.getUserId()).thenReturn("asker-id");
+    roomWith();
+
+    try {
+      getChatMembersFacade.getChatMembers(CHAT_ID);
+      fail("Expected exception: ForbiddenException");
+    } catch (ForbiddenException expected) {
+      assertTrue(true, "Expected ForbiddenException thrown");
+    }
+  }
+
+  @Test
+  public void getChatMembers_Should_ReturnMembersWithRoles_ToAdviceSeekerInTheRoom() {
+    when(authenticatedUser.getRoles()).thenReturn(Set.of("user"));
+    when(authenticatedUser.getUserId()).thenReturn("asker-id");
+    roomWith(consultantMember(), askerMember("asker-id"));
+
+    var response = getChatMembersFacade.getChatMembers(CHAT_ID);
+
+    var roles =
+        response.getMembers().stream()
+            .map(member -> String.valueOf(member.getRole()))
+            .collect(Collectors.toList());
+    assertThat(roles, contains("CONSULTANT", "ADVICE_SEEKER"));
   }
 }

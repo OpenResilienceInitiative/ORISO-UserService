@@ -36,7 +36,9 @@ public class ReplyEmailDelivery {
     SENT,
     REJECTED,
     RESOLVED,
-    UNCERTAIN
+    UNCERTAIN,
+    /** Set aside after too many preflight retries; an operator requeues it once fixed. */
+    QUARANTINED
   }
 
   @Id

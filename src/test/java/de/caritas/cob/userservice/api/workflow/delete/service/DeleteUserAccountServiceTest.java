@@ -54,6 +54,8 @@ public class DeleteUserAccountServiceTest {
 
   @Mock private UserHardDeleteClaimService userHardDeleteClaimService;
 
+  @Mock private ConsultantHardDeleteClaimService consultantHardDeleteClaimService;
+
   private final ActionCommandMockProvider commandMockProvider = new ActionCommandMockProvider();
 
   @BeforeEach
@@ -131,11 +133,11 @@ public class DeleteUserAccountServiceTest {
   public void
       deleteUserAccounts_Should_performConsultantDeletion_When_consultantIsMarkedAsDeleted() {
     Consultant consultant = new Consultant();
+    consultant.setId("deleted-consultant");
     when(this.consultantRepository.findAllByDeleteDateNotNull())
         .thenReturn(singletonList(consultant));
-    when(this.deletionLifecycleService.normalizeConsultantLifecycle(consultant))
-        .thenReturn(consultant);
-    when(this.deletionLifecycleService.isReadyForHardDelete(consultant)).thenReturn(true);
+    when(consultantHardDeleteClaimService.claim("deleted-consultant"))
+        .thenReturn(Optional.of(consultant));
     when(this.actionsRegistry.buildContainerForType(ConsultantDeletionWorkflowDTO.class))
         .thenReturn(
             this.commandMockProvider.getActionContainer(ConsultantDeletionWorkflowDTO.class));
@@ -156,7 +158,24 @@ public class DeleteUserAccountServiceTest {
             this.commandMockProvider.getActionMock(DeleteConsultantEventNotificationsAction.class),
             times(1))
         .execute(new ConsultantDeletionWorkflowDTO(consultant, emptyList()));
+    verify(consultantHardDeleteClaimService).release("deleted-consultant");
     verifyNoMoreInteractions(this.workflowErrorMailService);
+  }
+
+  @Test
+  void deleteUserAccounts_Should_skipConsultantDeletion_When_hardDeleteClaimIsLost() {
+    // #123: an admin cancel committed first, or the window is not over yet. The stale row from
+    // the list must not reach Keycloak, Matrix or the database.
+    Consultant consultant = new Consultant();
+    consultant.setId("cancelled-consultant");
+    when(consultantRepository.findAllByDeleteDateNotNull()).thenReturn(singletonList(consultant));
+    when(consultantHardDeleteClaimService.claim("cancelled-consultant"))
+        .thenReturn(Optional.empty());
+
+    deleteUserAccountService.deleteUserAccounts();
+
+    verify(consultantHardDeleteClaimService).claim("cancelled-consultant");
+    verifyNoMoreInteractions(actionsRegistry, consultantHardDeleteClaimService);
   }
 
   @Test

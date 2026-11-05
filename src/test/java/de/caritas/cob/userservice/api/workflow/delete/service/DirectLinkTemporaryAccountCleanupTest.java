@@ -12,11 +12,13 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.model.MatrixCallBinding;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.TemporaryAccountSnapshot;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.MatrixCallBindingRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
@@ -31,7 +33,9 @@ import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
@@ -51,20 +55,14 @@ class DirectLinkTemporaryAccountCleanupTest {
   @Mock private MatrixSynapseService matrix;
   @Mock private IdentityAccountRemover identityAccountRemover;
 
-  private DirectLinkTemporaryAccountCleanup cleanup;
+  @Mock private AgencyInviteLinkRepository links;
+  @Spy private TemporaryAccountExpiryPolicy expiryPolicy = new TemporaryAccountExpiryPolicy();
+  @InjectMocks private DirectLinkTemporaryAccountCleanup cleanup;
   private User user;
   private Session session;
 
   @BeforeEach
   void setUp() {
-    cleanup =
-        new DirectLinkTemporaryAccountCleanup(
-            userRepository,
-            sessionRepository,
-            callBindings,
-            matrix,
-            identityAccountRemover,
-            new TemporaryAccountExpiryPolicy());
     user = new User();
     user.setUserId(USER_ID);
     user.setMatrixUserId(MATRIX_ID);
@@ -91,6 +89,60 @@ class DirectLinkTemporaryAccountCleanupTest {
 
   private static long utcMillis(LocalDateTime time) {
     return time.toInstant(ZoneOffset.UTC).toEpochMilli();
+  }
+
+  @Test
+  void expiresASharedCallAccountAfterHangUpEvenIfItNeverJoined() {
+    user.setCreateDate(NOW.minusHours(1));
+    when(sessionRepository.findByUser(user)).thenReturn(List.of());
+    sharedCallEndingAt(NOW.minusMinutes(14));
+
+    assertThat(cleanup.dueAccountIds(NOW)).isEmpty();
+
+    sharedCallEndingAt(NOW.minusMinutes(15));
+    assertThat(cleanup.dueAccountIds(NOW)).containsExactly(USER_ID);
+  }
+
+  @Test
+  void redactsOnlyTheSharedCallRoomForASharedCallGuest() {
+    user.setCreateDate(NOW.minusHours(1));
+    sharedCallEndingAt(NOW.minusMinutes(16));
+
+    assertThat(cleanup.delete(USER_ID, NOW)).isEmpty();
+
+    verify(matrix).submitRedaction(MATRIX_ID, List.of("!call:matrix.oriso.org"));
+    assertThat(user.getTemporaryAccountSnapshot().getDeletedAt()).isEqualTo(NOW);
+  }
+
+  @Test
+  void cleanupNeverRedactsTheSourceRoomOfAFallbackCall() {
+    user.setCreateDate(NOW.minusHours(1));
+    sharedCallEndingAt(NOW.minusMinutes(16), ROOM);
+
+    assertThat(cleanup.delete(USER_ID, NOW)).isEmpty();
+
+    verify(matrix, never()).submitRedaction(anyString(), anyList());
+    assertThat(user.getTemporaryAccountSnapshot().getDeletedAt()).isEqualTo(NOW);
+  }
+
+  private void sharedCallEndingAt(LocalDateTime ended) {
+    sharedCallEndingAt(ended, "!call:matrix.oriso.org");
+  }
+
+  private void sharedCallEndingAt(LocalDateTime ended, String mediaRoom) {
+    user.setTenantId(5L);
+    user.setTemporaryAccountSnapshot(snapshot("VIDEO", MessageRetentionMode.ALWAYS_TEMPORARY));
+    user.getTemporaryAccountSnapshot().setInviteLinkId(9L);
+    var link = AgencyInviteLink.builder().tenantId(5L).linkKind("CALL").callBindingId(8L).build();
+    var binding =
+        MatrixCallBinding.builder()
+            .tenantId(5L)
+            .sourceRoomId(ROOM)
+            .mediaRoomId(mediaRoom)
+            .endedAt(utcMillis(ended))
+            .build();
+    when(links.findById(9L)).thenReturn(Optional.of(link));
+    when(callBindings.findById(8L)).thenReturn(Optional.of(binding));
   }
 
   /** Messages go through Matrix and never touch the session row; Matrix tells the last one. */

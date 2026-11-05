@@ -138,6 +138,19 @@ public class SessionService {
     return session;
   }
 
+  /** Session-data edits by an asker also support the anonymous live-chat owner. */
+  public Session assertAskerHasAccess(Long sessionId, AuthenticatedUser authenticatedUser) {
+    Session session =
+        getSession(sessionId)
+            .orElseThrow(() -> new NotFoundException("Session with id %s not found.", sessionId));
+    if (session.getUser() == null || authenticatedUser.getUserId() == null) {
+      throw new ForbiddenException("The session has no accessible asker owner");
+    }
+    var roles = Optional.ofNullable(authenticatedUser.getRoles()).orElse(emptySet());
+    checkAskerPermissionForSession(session, authenticatedUser.getUserId(), roles);
+    return session;
+  }
+
   private Optional<Session> participantSessionAcrossTenants(
       Long sessionId, String userId, Set<String> roles) {
     if (!roles.contains(UserRole.CONSULTANT.getValue()) || userId == null) {
