@@ -136,6 +136,10 @@ class ChatMatrixRoomRotationMariaDbIT {
             members.removeMemberFromRoomAndConfirm(
                 org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
         .thenReturn(true);
+    org.mockito.Mockito.when(
+            members.ensureOwnerCanInvite(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(true);
   }
 
   @AfterEach
