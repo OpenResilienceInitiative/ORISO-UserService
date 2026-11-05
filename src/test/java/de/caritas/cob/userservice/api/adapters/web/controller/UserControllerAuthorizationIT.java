@@ -697,7 +697,7 @@ class UserControllerAuthorizationIT {
     when(liveChatAccountConversionService.status())
         .thenReturn(
             new de.caritas.cob.userservice.api.service.livechat.LiveChatAccountClaimService.Status(
-                "guest-id", "PROMOTION_PENDING", "intent"));
+                "guest-id", "PROMOTION_PENDING", "intent", false));
     mvc.perform(get(path))
         .andExpect(status().isOk())
         .andExpect(
@@ -782,6 +782,44 @@ class UserControllerAuthorizationIT {
                 .content(
                     "{\"expectedUserId\":\"guest-id\",\"intentId\":\"123e4567-e89b-12d3-a456-426614174000\",\"password\":\"chosen-password-123\",\"recoveryKeySaved\":false}"))
         .andExpect(status().isBadRequest());
+    verifyNoInteractions(liveChatAccountConversionService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/live-chat-account/conversion",
+        "/service/users/live-chat-account/conversion"
+      })
+  @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT, AuthorityValue.CONSULTANT_DEFAULT})
+  void mixedUserAndConsultantCannotConvert(String path) throws Exception {
+    mvc.perform(
+            post(path)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"expectedUserId\":\"guest-id\",\"intentId\":\"123e4567-e89b-12d3-a456-426614174000\",\"password\":\"chosen-password-123\",\"recoveryKeySaved\":true}"))
+        .andExpect(status().isForbidden());
+    verifyNoInteractions(liveChatAccountConversionService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/live-chat-account/conversion",
+        "/service/users/live-chat-account/conversion"
+      })
+  @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT, AuthorityValue.USER_ADMIN})
+  void mixedUserAndAdminCannotConvert(String path) throws Exception {
+    mvc.perform(
+            post(path)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"expectedUserId\":\"guest-id\",\"intentId\":\"123e4567-e89b-12d3-a456-426614174000\",\"password\":\"chosen-password-123\",\"recoveryKeySaved\":true}"))
+        .andExpect(status().isForbidden());
     verifyNoInteractions(liveChatAccountConversionService);
   }
 

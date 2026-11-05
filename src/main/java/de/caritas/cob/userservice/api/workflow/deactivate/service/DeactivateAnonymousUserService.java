@@ -21,12 +21,14 @@ import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /** Service to trigger deletion of anonymous users. */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class DeactivateAnonymousUserService {
 
   private final @NonNull SessionRepository sessionRepository;
@@ -53,11 +55,22 @@ public class DeactivateAnonymousUserService {
             .map(Session::getUser)
             .map(User::getUserId)
             .distinct()
-            .filter(claims::claimCleanup)
+            .filter(this::tryClaimCleanup)
             .collect(Collectors.toSet());
     staleAnonymousSessions.removeIf(
         session -> !claimedUsers.contains(session.getUser().getUserId()));
     deactivateAnonymousUsersAndSessions(staleAnonymousSessions);
+  }
+
+  private boolean tryClaimCleanup(String userId) {
+    try {
+      return claims.claimCleanup(userId);
+    } catch (RuntimeException exception) {
+      log.warn(
+          "Cleanup claim failed; user skipped. Failure type: {}",
+          exception.getClass().getSimpleName());
+      return false;
+    }
   }
 
   private Predicate<Session> isSessionOutsideOfDeactivationTime(LocalDateTime deactivationTime) {

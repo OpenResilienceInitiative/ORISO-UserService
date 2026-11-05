@@ -31,7 +31,8 @@ public class LiveChatAccountConversionController {
 
   public record Result(String username) {}
 
-  public record StatusResult(String userId, String username, String state, String intentId) {}
+  public record StatusResult(
+      String userId, String username, String state, String intentId, boolean finishedOrigin) {}
 
   @GetMapping("/conversion")
   public ResponseEntity<StatusResult> status() {
@@ -40,7 +41,11 @@ public class LiveChatAccountConversionController {
         .cacheControl(CacheControl.noStore())
         .body(
             new StatusResult(
-                status.userId(), authenticated.getUsername(), status.state(), status.intentId()));
+                status.userId(),
+                authenticated.getUsername(),
+                status.state(),
+                status.intentId(),
+                status.finishedOrigin()));
   }
 
   @PostMapping("/conversion")

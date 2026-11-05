@@ -144,6 +144,9 @@ import org.springframework.test.web.servlet.MockMvc;
       "user.username.invalid.length=Please provide a username with at least 5 and at most 20 characters"
     })
 class UserControllerIT {
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.livechat.LiveChatAccountConversionService
+      liveChatAccountConversionService;
 
   /** The agencyId carried by PATH_GET_CONSULTANTS_FOR_AGENCY. */
   private static final long REQUESTED_AGENCY_ID = 10L;

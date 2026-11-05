@@ -286,8 +286,9 @@ paths:
                 properties:
                   userId: {type: string}
                   username: {type: string}
-                  state: {type: string, enum: [ELIGIBLE, ALREADY_REGISTERED, NOT_ELIGIBLE, PROMOTION_PENDING, PROMOTED, CLEANUP_STARTED]}
+                  state: {type: string, enum: [ELIGIBLE, ALREADY_REGISTERED, NOT_ELIGIBLE, FINISH_PENDING, ANONYMOUS_FINISHED, PROMOTION_PENDING, PROMOTED, CLEANUP_STARTED]}
                   intentId: {type: string, nullable: true}
+                  finishedOrigin: {type: boolean}
         '401': {description: Missing or invalid authentication}
         '403': {description: Not an advice seeker}
     post:

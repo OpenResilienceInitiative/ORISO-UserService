@@ -128,6 +128,7 @@ public class UserController implements UsersApi {
             de.caritas.cob.userservice.api.adapters.web.dto.GetOwnLiveChatConversion200Response
                 .StateEnum.fromValue(status.state()));
     body.intentId(status.intentId());
+    body.setFinishedOrigin(status.finishedOrigin());
     body.setUserId(status.userId());
     return ResponseEntity.ok()
         .cacheControl(org.springframework.http.CacheControl.noStore())

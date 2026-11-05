@@ -33,7 +33,12 @@ import org.testcontainers.containers.MariaDBContainer;
 @DataJpaTest
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({LiveChatAccountClaimService.class, LiveChatAccountConversionExecutor.class})
+@Import({
+  LiveChatInactivityFence.class,
+  LiveChatFinishExecutor.class,
+  LiveChatAccountClaimService.class,
+  LiveChatAccountConversionExecutor.class
+})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class LiveChatAccountClaimsMariaDbIT {
   private static final MariaDBContainer<?> DATABASE =
@@ -65,15 +70,29 @@ class LiveChatAccountClaimsMariaDbIT {
   @Autowired private LiveChatAccountClaimRepository records;
   @Autowired private LiveChatAccountConversionExecutor executor;
   @MockitoBean private de.caritas.cob.userservice.api.port.out.IdentityClient identities;
+  @MockitoBean private de.caritas.cob.userservice.api.port.out.IdentityReactivator reactivator;
+  @MockitoBean private de.caritas.cob.userservice.api.port.out.IdentityDeactivator deactivator;
+  @Autowired private LiveChatFinishExecutor finishExecutor;
 
   @MockitoBean
   private de.caritas.cob.userservice.api.port.out.IdentityAuthentication authentication;
 
   @Autowired private PlatformTransactionManager transactions;
+  @Autowired private org.springframework.jdbc.core.JdbcTemplate jdbc;
   @MockitoBean private SessionRepository sessions;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityEffects
+      effects;
 
   @BeforeEach
   void setup() {
+    when(effects.currentRoles(any()))
+        .thenReturn(
+            java.util.Set.of(
+                de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityEffects
+                    .Role.ASKER));
+    jdbc.update("DELETE FROM account_inactivity WHERE identity_id=?", "synthetic-claim-guest");
     users.deleteById("synthetic-claim-guest");
     var user = new User();
     user.setUserId("synthetic-claim-guest");
@@ -85,6 +104,16 @@ class LiveChatAccountClaimsMariaDbIT {
     user.setCreateDate(java.time.LocalDateTime.now());
     user.setUpdateDate(java.time.LocalDateTime.now());
     users.save(user);
+    jdbc.update(
+        "INSERT INTO account_inactivity(identity_id, tenant_id, assigned_months, revision, last_activity, due_at, status, attempts) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "synthetic-claim-guest",
+        1L,
+        24,
+        0L,
+        java.time.LocalDateTime.now(),
+        java.time.LocalDateTime.now().plusDays(365),
+        "ACTIVE",
+        0);
     var anonymous = new Session();
     anonymous.setRegistrationType(Session.RegistrationType.ANONYMOUS);
     when(sessions.findByUser(any())).thenReturn(List.of(anonymous));
@@ -112,6 +141,224 @@ class LiveChatAccountClaimsMariaDbIT {
   }
 
   @Test
+  void finishClaimWinningPreventsPromotionBeforeDisableCompletes() throws Exception {
+    assertRace(
+        LiveChatAccountLifecycle.FINISH_PENDING,
+        () ->
+            assertThatThrownBy(
+                    () ->
+                        claims.claimConversion(
+                            "synthetic-claim-guest",
+                            "123e4567-e89b-12d3-a456-426614174000",
+                            "chosen-password-123"))
+                .isInstanceOf(
+                    de.caritas.cob.userservice.api.exception.httpresponses.ConflictException
+                        .class));
+  }
+
+  @Test
+  void promotionClaimWinningPreventsNormalFinishFromDisablingIdentity() throws Exception {
+    assertRace(
+        LiveChatAccountLifecycle.PROMOTION_PENDING,
+        () ->
+            assertThat(claims.claimNormalFinish("synthetic-claim-guest"))
+                .isEqualTo(LiveChatAccountClaimService.FinishMode.KEEP_IDENTITY));
+  }
+
+  @Test
+  void promotionWinnerPreventsConcurrentRoleAddition() throws Exception {
+    var service =
+        new de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService(
+            jdbc, transactions, java.time.Clock.systemUTC(), effects);
+    var changed = new java.util.concurrent.atomic.AtomicBoolean();
+    assertRace(
+        LiveChatAccountLifecycle.PROMOTION_PENDING,
+        () ->
+            assertThatThrownBy(
+                    () ->
+                        service.withRoleMutation("synthetic-claim-guest", () -> changed.set(true)))
+                .isInstanceOf(IllegalStateException.class));
+    assertThat(changed).isFalse();
+  }
+
+  @Test
+  void roleAdditionWinnerMakesStaleAskerTokenPromotionRefuse() throws Exception {
+    var id = "synthetic-claim-guest";
+    var roles =
+        new java.util.concurrent.atomic.AtomicReference<>(
+            java.util.Set.of(
+                de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityEffects
+                    .Role.ASKER));
+    when(effects.currentRoles(id)).thenAnswer(invocation -> roles.get());
+    var service =
+        new de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService(
+            jdbc, transactions, java.time.Clock.systemUTC(), effects);
+    var entered = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    try (var pool = Executors.newFixedThreadPool(2)) {
+      var roleChange =
+          pool.submit(
+              () ->
+                  service.withRoleMutation(
+                      id,
+                      () -> {
+                        entered.countDown();
+                        try {
+                          if (!release.await(15, TimeUnit.SECONDS))
+                            throw new IllegalStateException("timeout");
+                        } catch (InterruptedException e) {
+                          Thread.currentThread().interrupt();
+                          throw new IllegalStateException(e);
+                        }
+                        roles.set(
+                            java.util.Set.of(
+                                de.caritas.cob.userservice.api.workflow.accountinactivity
+                                    .AccountInactivityEffects.Role.ASKER,
+                                de.caritas.cob.userservice.api.workflow.accountinactivity
+                                    .AccountInactivityEffects.Role.CONSULTANT));
+                      }));
+      assertThat(entered.await(15, TimeUnit.SECONDS)).isTrue();
+      var promotion =
+          pool.submit(
+              () ->
+                  claims.claimConversion(
+                      id, "123e4567-e89b-12d3-a456-426614174000", "chosen-password-123"));
+      try {
+        assertThatThrownBy(() -> promotion.get(300, TimeUnit.MILLISECONDS))
+            .isInstanceOf(java.util.concurrent.TimeoutException.class);
+      } finally {
+        release.countDown();
+      }
+      roleChange.get(15, TimeUnit.SECONDS);
+      assertThatThrownBy(() -> promotion.get(15, TimeUnit.SECONDS))
+          .isInstanceOf(java.util.concurrent.ExecutionException.class);
+      assertThat(records.findById(id)).isEmpty();
+    }
+  }
+
+  @Test
+  void inactivityWinnerMakesPromotionWaitThenRefuse() throws Exception {
+    var id = "synthetic-claim-guest";
+    var entered = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    try (var pool = Executors.newFixedThreadPool(2)) {
+      var inactivity =
+          pool.submit(
+              () ->
+                  new TransactionTemplate(transactions)
+                      .executeWithoutResult(
+                          status -> {
+                            jdbc.queryForObject(
+                                "SELECT status FROM account_inactivity WHERE identity_id=? FOR UPDATE",
+                                String.class,
+                                id);
+                            jdbc.update(
+                                "UPDATE account_inactivity SET status='SUSPENDING' WHERE identity_id=?",
+                                id);
+                            entered.countDown();
+                            try {
+                              if (!release.await(15, TimeUnit.SECONDS))
+                                throw new IllegalStateException("timeout");
+                            } catch (InterruptedException e) {
+                              Thread.currentThread().interrupt();
+                              throw new IllegalStateException(e);
+                            }
+                          }));
+      assertThat(entered.await(15, TimeUnit.SECONDS)).isTrue();
+      var promotion =
+          pool.submit(
+              () ->
+                  claims.claimConversion(
+                      id, "123e4567-e89b-12d3-a456-426614174000", "chosen-password-123"));
+      try {
+        assertThatThrownBy(() -> promotion.get(300, TimeUnit.MILLISECONDS))
+            .isInstanceOf(java.util.concurrent.TimeoutException.class);
+      } finally {
+        release.countDown();
+      }
+      inactivity.get(15, TimeUnit.SECONDS);
+      assertThatThrownBy(() -> promotion.get(15, TimeUnit.SECONDS))
+          .isInstanceOf(java.util.concurrent.ExecutionException.class);
+      assertThat(records.findById(id)).isEmpty();
+    }
+  }
+
+  @Test
+  void promotionWinnerMakesInactivityWaitThenRefuse() throws Exception {
+    var id = "synthetic-claim-guest";
+    var service =
+        new de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService(
+            jdbc, transactions, java.time.Clock.systemUTC(), effects);
+    var entered = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    try (var pool = Executors.newFixedThreadPool(2)) {
+      var promotion =
+          pool.submit(
+              () ->
+                  new TransactionTemplate(transactions)
+                      .executeWithoutResult(
+                          status -> {
+                            jdbc.queryForObject(
+                                "SELECT status FROM account_inactivity WHERE identity_id=? FOR UPDATE",
+                                String.class,
+                                id);
+                            users.findByUserIdForUpdate(id).orElseThrow();
+                            records.save(
+                                new LiveChatAccountClaim(
+                                    id, LiveChatAccountLifecycle.PROMOTION_PENDING));
+                            entered.countDown();
+                            try {
+                              if (!release.await(15, TimeUnit.SECONDS))
+                                throw new IllegalStateException("timeout");
+                            } catch (InterruptedException e) {
+                              Thread.currentThread().interrupt();
+                              throw new IllegalStateException(e);
+                            }
+                          }));
+      assertThat(entered.await(15, TimeUnit.SECONDS)).isTrue();
+      var suspension = pool.submit(() -> service.suspend(id));
+      try {
+        assertThatThrownBy(() -> suspension.get(300, TimeUnit.MILLISECONDS))
+            .isInstanceOf(java.util.concurrent.TimeoutException.class);
+      } finally {
+        release.countDown();
+      }
+      promotion.get(15, TimeUnit.SECONDS);
+      assertThatThrownBy(() -> suspension.get(15, TimeUnit.SECONDS))
+          .isInstanceOf(java.util.concurrent.ExecutionException.class);
+      assertThat(service.snapshot(id).orElseThrow().status())
+          .isEqualTo(
+              de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+                  .Status.ACTIVE);
+    }
+  }
+
+  @Test
+  void intentionalDeletionWinnerPreventsSubsequentPromotion() {
+    var id = "synthetic-claim-guest";
+    claims.claimIntentionalDeletion(id);
+    assertThatThrownBy(
+            () ->
+                claims.claimConversion(
+                    id, "123e4567-e89b-12d3-a456-426614174000", "chosen-password-123"))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
+    assertThat(records.findById(id).orElseThrow().getLifecycle())
+        .isEqualTo(LiveChatAccountLifecycle.CLEANUP_STARTED);
+  }
+
+  @Test
+  void explicitDeletionLosingToPromotionFailsClosed() throws Exception {
+    assertRace(
+        LiveChatAccountLifecycle.PROMOTION_PENDING,
+        () ->
+            assertThatThrownBy(() -> claims.claimIntentionalDeletion("synthetic-claim-guest"))
+                .isInstanceOf(
+                    de.caritas.cob.userservice.api.exception.httpresponses.ConflictException
+                        .class));
+  }
+
+  @Test
   void concurrentDifferentPasswordCannotOverwriteSuccessfulConversion() throws Exception {
     var id = "synthetic-claim-guest";
     var intent = "123e4567-e89b-12d3-a456-426614174000";
@@ -119,6 +366,9 @@ class LiveChatAccountClaimsMariaDbIT {
     claims.claimConversion(id, intent, password);
     var entered = new CountDownLatch(1);
     var release = new CountDownLatch(1);
+    when(authentication.verifyPasswordIgnoringSecondFactor(
+            any(), org.mockito.ArgumentMatchers.eq(password)))
+        .thenReturn(false, true);
     when(identities.changePassword(id, password))
         .thenAnswer(
             invocation -> {
@@ -149,6 +399,100 @@ class LiveChatAccountClaimsMariaDbIT {
           .changePassword(any(), any());
       assertThat(records.findById(id).orElseThrow().getLifecycle())
           .isEqualTo(LiveChatAccountLifecycle.PROMOTED);
+    }
+  }
+
+  @Test
+  void dueCleanupRecoversFinishCrashAfterExternalDisableBeforeMarkerCommit() {
+    var id = "synthetic-claim-guest";
+    assertThat(claims.claimNormalFinish(id))
+        .isEqualTo(LiveChatAccountClaimService.FinishMode.CONVERTIBLE_FINISH);
+    var disabled = new java.util.concurrent.atomic.AtomicBoolean();
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              disabled.set(true);
+              throw new IllegalStateException("crash after disable");
+            })
+        .when(deactivator)
+        .deactivateUser(id);
+    assertThatThrownBy(() -> finishExecutor.disableAndMarkFinished(id))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(disabled).isTrue();
+    assertThat(records.findById(id).orElseThrow().getLifecycle())
+        .isEqualTo(LiveChatAccountLifecycle.FINISH_PENDING);
+    // Caller is the existing overdue scheduler/batch; this claim does not select candidates itself.
+    assertThat(claims.claimCleanup(id)).isTrue();
+    assertThat(records.findById(id).orElseThrow().getLifecycle())
+        .isEqualTo(LiveChatAccountLifecycle.CLEANUP_STARTED);
+    assertThatThrownBy(
+            () ->
+                claims.claimConversion(
+                    id, "123e4567-e89b-12d3-a456-426614174000", "chosen-password-123"))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
+  }
+
+  @Test
+  void missingInactivityRowCleanupRacesEnrollmentAndPromotionWithoutLosingDeletionClaim()
+      throws Exception {
+    var id = "synthetic-claim-guest";
+    jdbc.update("DELETE FROM account_inactivity WHERE identity_id=?", id);
+    var cleanupLocked = new CountDownLatch(1);
+    var releaseCleanup = new CountDownLatch(1);
+    var fence = new LiveChatInactivityFence(jdbc, effects);
+    try (var pool = Executors.newFixedThreadPool(3)) {
+      var cleanup =
+          pool.submit(
+              () ->
+                  new TransactionTemplate(transactions)
+                      .executeWithoutResult(
+                          status -> {
+                            assertThat(fence.lockIfPresent(id)).isEmpty();
+                            users.findByUserIdForUpdate(id).orElseThrow();
+                            records.save(
+                                new LiveChatAccountClaim(
+                                    id, LiveChatAccountLifecycle.CLEANUP_STARTED));
+                            cleanupLocked.countDown();
+                            try {
+                              if (!releaseCleanup.await(15, TimeUnit.SECONDS))
+                                throw new IllegalStateException("release timed out");
+                            } catch (InterruptedException e) {
+                              Thread.currentThread().interrupt();
+                              throw new IllegalStateException(e);
+                            }
+                          }));
+      assertThat(cleanupLocked.await(15, TimeUnit.SECONDS)).isTrue();
+      var enrollment =
+          pool.submit(
+              () ->
+                  jdbc.update(
+                      "INSERT INTO account_inactivity(identity_id, tenant_id, assigned_months, revision, last_activity, due_at, status, attempts) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                      id,
+                      1L,
+                      24,
+                      0L,
+                      java.time.LocalDateTime.now(),
+                      java.time.LocalDateTime.now().plusDays(365),
+                      "ACTIVE",
+                      0));
+      var promotion =
+          pool.submit(
+              () ->
+                  claims.claimConversion(
+                      id, "123e4567-e89b-12d3-a456-426614174000", "chosen-password-123"));
+      releaseCleanup.countDown();
+      cleanup.get(15, TimeUnit.SECONDS);
+      enrollment.get(15, TimeUnit.SECONDS);
+      assertThatThrownBy(() -> promotion.get(15, TimeUnit.SECONDS))
+          .isInstanceOf(java.util.concurrent.ExecutionException.class);
+      assertThatThrownBy(
+              () ->
+                  claims.claimConversion(
+                      id, "123e4567-e89b-12d3-a456-426614174000", "chosen-password-123"))
+          .isInstanceOf(
+              de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
+      assertThat(records.findById(id).orElseThrow().getLifecycle())
+          .isEqualTo(LiveChatAccountLifecycle.CLEANUP_STARTED);
     }
   }
 

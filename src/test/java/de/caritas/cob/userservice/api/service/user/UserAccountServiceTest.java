@@ -57,6 +57,11 @@ public class UserAccountServiceTest {
   private de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy emailCollectionPolicy;
 
   @InjectMocks private UserAccountService accountProvider;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.livechat.LiveChatAccountClaimService
+      liveChatClaims;
+
   @Mock private UserService userService;
   @Mock private de.caritas.cob.userservice.api.port.out.SessionRepository sessions;
   @Mock private de.caritas.cob.userservice.api.admin.service.tenant.TenantService tenantService;
@@ -571,6 +576,21 @@ public class UserAccountServiceTest {
     accountProvider.deactivateAndFlagUserAccountForDeletion();
 
     verify(userService).saveUser(USER);
+  }
+
+  @Test
+  public void selfDeletionDoesNotDisableIdentityWhenConversionIsPending() {
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(userService.getUser(USER_ID)).thenReturn(Optional.of(USER));
+    Mockito.doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException("pending"))
+        .when(liveChatClaims)
+        .claimIntentionalDeletion(USER.getUserId());
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class,
+        () -> accountProvider.deactivateAndFlagUserAccountForDeletion());
+    verify(identityDeactivator, never()).deactivateUser(any());
+    verify(userService, never()).saveUser(any());
   }
 
   @Test

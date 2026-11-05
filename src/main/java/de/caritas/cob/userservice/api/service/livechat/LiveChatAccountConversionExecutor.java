@@ -16,20 +16,30 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @RequiredArgsConstructor
 public class LiveChatAccountConversionExecutor {
+  private final @NonNull LiveChatInactivityFence inactivity;
   private final @NonNull UserRepository users;
   private final @NonNull LiveChatAccountClaimRepository records;
   private final @NonNull IdentityClient identities;
+  private final @NonNull de.caritas.cob.userservice.api.port.out.IdentityReactivator reactivator;
   private final @NonNull IdentityAuthentication authentication;
 
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public void execute(String userId, String username, String intentId, String password) {
-    users
-        .findByUserIdForUpdate(userId)
-        .orElseThrow(() -> new ConflictException("Account no longer exists"));
+    inactivity.requireActive(userId);
+    var user =
+        users
+            .findByUserIdForUpdate(userId)
+            .orElseThrow(() -> new ConflictException("Account no longer exists"));
+    if (user.getDeleteDate() != null
+        || user.getDeletionLifecycleState()
+            != de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState.ACTIVE
+        || user.getReactivationOperationId() != null)
+      throw new ConflictException("Account lifecycle action prevents conversion");
     var claim =
         records
             .findForUpdate(userId)
             .orElseThrow(() -> new ConflictException("No conversion claim"));
+    inactivity.requirePureAsker(userId);
     if (!intentId.equals(claim.getIntentId()))
       throw new ConflictException("Another conversion was started");
     if (claim.getLifecycle() == LiveChatAccountLifecycle.PROMOTED) {
@@ -43,9 +53,23 @@ public class LiveChatAccountConversionExecutor {
         || !ConversionCredentialVerifier.matches(password, claim.getCredentialVerifier()))
       throw new ConflictException("Conversion credentials differ");
     var encodedUsername = new UsernameTranscoder().encodeUsername(username);
-    if (!authentication.verifyPasswordIgnoringSecondFactor(encodedUsername, password)
-        && !identities.changePassword(userId, password))
-      throw new InternalServerErrorException("Unable to establish account credentials");
+    if (!authentication.verifyPasswordIgnoringSecondFactor(encodedUsername, password)) {
+      if (claim.isFinishedOrigin()) {
+        if (user.getUsername() == null || user.getEmail() == null || user.getTenantId() == null)
+          throw new ConflictException("Account identity cannot be verified");
+        reactivator.reactivateUser(
+            userId,
+            new UsernameTranscoder().decodeUsername(user.getUsername()),
+            user.getEmail(),
+            user.getTenantId(),
+            password);
+      } else if (!identities.changePassword(userId, password)) {
+        throw new InternalServerErrorException("Unable to establish account credentials");
+      }
+    }
+    // A password update can succeed while Keycloak remains disabled; never report success then.
+    if (!authentication.verifyPasswordIgnoringSecondFactor(encodedUsername, password))
+      throw new InternalServerErrorException("Account credentials could not be verified");
     claim.setLifecycle(LiveChatAccountLifecycle.PROMOTED);
     claim.setCredentialVerifier(null);
     records.save(claim);

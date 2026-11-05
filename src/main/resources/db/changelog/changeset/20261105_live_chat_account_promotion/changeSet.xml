@@ -6,6 +6,7 @@
     <createTable tableName="live_chat_account_claim">
       <column name="user_id" type="varchar(36) CHARACTER SET utf8 COLLATE utf8_unicode_ci"><constraints primaryKey="true" nullable="false"/></column>
       <column name="lifecycle" type="varchar(32)"><constraints nullable="false"/></column>
+      <column name="finished_origin" type="boolean" defaultValueBoolean="false"><constraints nullable="false"/></column>
       <column name="intent_id" type="varchar(36)"/>
       <column name="credential_verifier" type="varchar(128)"/>
     </createTable>

@@ -30,6 +30,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Slf4j
 public class SessionDeleteService {
 
+  private final @NonNull de.caritas.cob.userservice.api.service.livechat.LiveChatAccountClaimService
+      claims;
   private final @NotNull ActionsRegistry actionsRegistry;
 
   private final @NotNull SessionService sessionService;
@@ -73,7 +75,7 @@ public class SessionDeleteService {
     }
 
     var user = session.getUser();
-    if (user.getSessions().size() == 1) {
+    if (user.getSessions().size() == 1 && claims.claimIdentityDeactivation(user.getUserId())) {
       actionsRegistry
           .buildContainerForType(User.class)
           .addActionToExecute(DeactivateKeycloakUserActionCommand.class)

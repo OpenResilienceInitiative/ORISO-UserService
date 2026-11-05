@@ -25,6 +25,9 @@ public class LiveChatAccountClaim {
   @Column(nullable = false, length = 32)
   private LiveChatAccountLifecycle lifecycle;
 
+  @Column(name = "finished_origin", nullable = false)
+  private boolean finishedOrigin;
+
   @Column(name = "intent_id", length = 36)
   private String intentId;
 

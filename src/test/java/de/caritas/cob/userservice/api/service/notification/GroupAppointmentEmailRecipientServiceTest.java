@@ -54,6 +54,10 @@ class GroupAppointmentEmailRecipientServiceTest {
             "jdbc:h2:mem:group-mail-recipient-lifecycle;DB_CLOSE_DELAY=-1", "sa", "");
     lifecycleDatabase = new JdbcTemplate(dataSource);
     lifecycleDatabase.execute(
+        "CREATE TABLE IF NOT EXISTS `user` (user_id VARCHAR(36) PRIMARY KEY)");
+    lifecycleDatabase.execute(
+        "CREATE TABLE IF NOT EXISTS live_chat_account_claim (user_id VARCHAR(36) PRIMARY KEY, lifecycle VARCHAR(32) NOT NULL)");
+    lifecycleDatabase.execute(
         "CREATE TABLE account_inactivity(identity_id VARCHAR(36) PRIMARY KEY,tenant_id"
             + " BIGINT,assigned_months INT NOT NULL,revision BIGINT NOT NULL,last_activity"
             + " TIMESTAMP(6) NOT NULL,due_at TIMESTAMP(6) NOT NULL,status VARCHAR(20) NOT"

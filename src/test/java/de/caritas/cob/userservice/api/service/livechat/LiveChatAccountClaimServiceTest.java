@@ -18,7 +18,8 @@ class LiveChatAccountClaimServiceTest {
   private final SessionRepository sessions = mock(SessionRepository.class);
   private final LiveChatAccountClaimRepository records = mock(LiveChatAccountClaimRepository.class);
   private final LiveChatAccountClaimService claims =
-      new LiveChatAccountClaimService(users, sessions, records);
+      new LiveChatAccountClaimService(
+          mock(LiveChatInactivityFence.class), users, sessions, records);
   private static final String INTENT = "123e4567-e89b-12d3-a456-426614174000";
 
   @Test
@@ -31,13 +32,80 @@ class LiveChatAccountClaimServiceTest {
     assertThat(claims.claimCleanup("guest")).isFalse();
     claims.claimConversion("guest", INTENT, "chosen-password-123");
     assertThatThrownBy(() -> claims.claimConversion("guest", INTENT, "different-password-123"))
-        .isInstanceOf(RuntimeException.class);
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
     assertThatThrownBy(
             () ->
                 claims.claimConversion(
                     "guest", "123e4567-e89b-12d3-a456-426614174001", "chosen-password-123"))
-        .isInstanceOf(RuntimeException.class);
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
     verify(users, never()).save(user);
+  }
+
+  @Test
+  void directDeactivationRefusesPromotedAccountEvenAfterItsLiveChatIsGone() {
+    var user = guest();
+    when(sessions.findByUser(user)).thenReturn(List.of());
+    when(records.findForUpdate("guest"))
+        .thenReturn(
+            Optional.of(new LiveChatAccountClaim("guest", LiveChatAccountLifecycle.PROMOTED)));
+    assertThat(claims.claimIdentityDeactivation("guest")).isFalse();
+  }
+
+  @Test
+  void directDeactivationDoesNotMarkOrdinaryRegisteredAccountsAsGuestCleanup() {
+    var user = guest();
+    when(sessions.findByUser(user)).thenReturn(List.of());
+    when(records.findForUpdate("guest")).thenReturn(Optional.empty());
+    assertThat(claims.claimIdentityDeactivation("guest")).isTrue();
+    verify(records, never()).save(any());
+  }
+
+  @Test
+  void finishedGuestCanClaimConversionAndKeepsItsProvenOrigin() {
+    guest();
+    var claim = new LiveChatAccountClaim("guest", LiveChatAccountLifecycle.ANONYMOUS_FINISHED);
+    when(records.findForUpdate("guest")).thenReturn(Optional.of(claim));
+    var result = claims.claimConversion("guest", INTENT, "chosen-password-123");
+    assertThat(result.getLifecycle()).isEqualTo(LiveChatAccountLifecycle.PROMOTION_PENDING);
+    assertThat(result.isFinishedOrigin()).isTrue();
+    assertThat(result.getCredentialVerifier()).isNotBlank();
+  }
+
+  @Test
+  void unfinishedDisableDoesNotAllowPromotion() {
+    guest();
+    when(records.findForUpdate("guest"))
+        .thenReturn(
+            Optional.of(
+                new LiveChatAccountClaim("guest", LiveChatAccountLifecycle.FINISH_PENDING)));
+    assertThatThrownBy(() -> claims.claimConversion("guest", INTENT, "chosen-password-123"))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
+  }
+
+  @Test
+  void explicitDeletionMayFollowPromotionAndPreventsAnyLaterConversion() {
+    guest();
+    var claim = new LiveChatAccountClaim("guest", LiveChatAccountLifecycle.PROMOTED);
+    when(records.findForUpdate("guest")).thenReturn(Optional.of(claim));
+    claims.claimIntentionalDeletion("guest");
+    assertThat(claim.getLifecycle()).isEqualTo(LiveChatAccountLifecycle.CLEANUP_STARTED);
+    assertThatThrownBy(() -> claims.claimConversion("guest", INTENT, "chosen-password-123"))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
+  }
+
+  @Test
+  void missingInactivityRowKeepsLegacyFinishDisableButProvidesNoReactivationProof() {
+    guest();
+    when(records.findForUpdate("guest")).thenReturn(Optional.empty());
+    assertThat(claims.claimNormalFinish("guest"))
+        .isEqualTo(LiveChatAccountClaimService.FinishMode.LEGACY_DISABLE);
+    var saved = org.mockito.ArgumentCaptor.forClass(LiveChatAccountClaim.class);
+    verify(records).save(saved.capture());
+    assertThat(saved.getValue().getLifecycle()).isEqualTo(LiveChatAccountLifecycle.CLEANUP_STARTED);
   }
 
   @Test
@@ -50,7 +118,8 @@ class LiveChatAccountClaimServiceTest {
     verify(records).save(saved.capture());
     when(records.findForUpdate("guest")).thenReturn(Optional.of(saved.getValue()));
     assertThatThrownBy(() -> claims.claimConversion("guest", INTENT, "chosen-password-123"))
-        .isInstanceOf(RuntimeException.class);
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
   }
 
   @Test
@@ -58,7 +127,8 @@ class LiveChatAccountClaimServiceTest {
     var user = guest();
     user.setTemporaryAccount(true);
     assertThatThrownBy(() -> claims.claimConversion("guest", INTENT, "chosen-password-123"))
-        .isInstanceOf(RuntimeException.class);
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException.class);
     verifyNoInteractions(records);
   }
 

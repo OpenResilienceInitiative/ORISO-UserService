@@ -18,20 +18,67 @@ class LiveChatAccountConversionExecutorTest {
   private final UserRepository users = mock(UserRepository.class);
   private final LiveChatAccountClaimRepository records = mock(LiveChatAccountClaimRepository.class);
   private final IdentityClient identities = mock(IdentityClient.class);
+  private final de.caritas.cob.userservice.api.port.out.IdentityReactivator reactivator =
+      mock(de.caritas.cob.userservice.api.port.out.IdentityReactivator.class);
   private final IdentityAuthentication authentication = mock(IdentityAuthentication.class);
   private final LiveChatAccountConversionExecutor executor =
-      new LiveChatAccountConversionExecutor(users, records, identities, authentication);
+      new LiveChatAccountConversionExecutor(
+          mock(LiveChatInactivityFence.class),
+          users,
+          records,
+          identities,
+          reactivator,
+          authentication);
 
   @Test
   void failedIdentityUpdateLeavesPendingClaimAndVerifierForSameRetry() {
     var claim = pending();
     when(identities.changePassword("guest", PASSWORD)).thenReturn(false, true);
+    when(authentication.verifyPasswordIgnoringSecondFactor(anyString(), eq(PASSWORD)))
+        .thenReturn(false, false, true);
     assertThatThrownBy(() -> executor.execute("guest", "guest-name", INTENT, PASSWORD))
-        .isInstanceOf(RuntimeException.class);
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException
+                .class);
     assertThat(claim.getLifecycle()).isEqualTo(LiveChatAccountLifecycle.PROMOTION_PENDING);
     executor.execute("guest", "guest-name", INTENT, PASSWORD);
     assertThat(claim.getLifecycle()).isEqualTo(LiveChatAccountLifecycle.PROMOTED);
     assertThat(claim.getCredentialVerifier()).isNull();
+  }
+
+  @Test
+  void finishedOriginReactivatesOnlyExactIdentityAndRetainsPendingOnFailure() {
+    var claim = pending();
+    claim.setFinishedOrigin(true);
+    var user = new User();
+    user.setUsername("guest-name");
+    user.setEmail("guest@example.invalid");
+    user.setTenantId(1L);
+    when(users.findByUserIdForUpdate("guest")).thenReturn(Optional.of(user));
+    when(authentication.verifyPasswordIgnoringSecondFactor(anyString(), eq(PASSWORD)))
+        .thenReturn(false, false, true);
+    doThrow(new IllegalStateException("identity failed"))
+        .doNothing()
+        .when(reactivator)
+        .reactivateUser("guest", "guest-name", "guest@example.invalid", 1L, PASSWORD);
+    assertThatThrownBy(() -> executor.execute("guest", "guest-name", INTENT, PASSWORD))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(claim.getLifecycle()).isEqualTo(LiveChatAccountLifecycle.PROMOTION_PENDING);
+    executor.execute("guest", "guest-name", INTENT, PASSWORD);
+    assertThat(claim.getLifecycle()).isEqualTo(LiveChatAccountLifecycle.PROMOTED);
+    verifyNoInteractions(identities);
+  }
+
+  @Test
+  void passwordUpdateCannotReportSuccessWhileIdentityRemainsDisabled() {
+    var claim = pending();
+    when(identities.changePassword("guest", PASSWORD)).thenReturn(true);
+    assertThatThrownBy(() -> executor.execute("guest", "guest-name", INTENT, PASSWORD))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException
+                .class);
+    assertThat(claim.getLifecycle()).isEqualTo(LiveChatAccountLifecycle.PROMOTION_PENDING);
+    verifyNoInteractions(reactivator);
   }
 
   @Test
@@ -57,7 +104,8 @@ class LiveChatAccountConversionExecutorTest {
     executor.execute("guest", "guest-name", INTENT, PASSWORD);
     assertThatThrownBy(
             () -> executor.execute("guest", "guest-name", INTENT, "different-password-123"))
-        .isInstanceOf(RuntimeException.class);
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
     verifyNoInteractions(identities);
   }
 
@@ -66,7 +114,8 @@ class LiveChatAccountConversionExecutorTest {
     pending();
     assertThatThrownBy(
             () -> executor.execute("guest", "guest-name", INTENT, "different-password-123"))
-        .isInstanceOf(RuntimeException.class);
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
     verifyNoInteractions(identities);
   }
 
