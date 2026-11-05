@@ -110,6 +110,32 @@ public class ChatMatrixRoomHistory {
     return Optional.of(room);
   }
 
+  /** Unknown or legacy reservations are not evidence that members were carried over. */
+  @Transactional(readOnly = true)
+  public boolean membersWereCarried(Chat chat, String roomId) {
+    return rooms
+        .findById(roomId)
+        .filter(room -> room.getSeries().getId().equals(chat.getId()))
+        .filter(room -> room.getOwnerTenantId().equals(chat.getChatOwner().getTenantId()))
+        .filter(room -> room.getOccurrenceIndex() == chat.getCurrentOccurrenceIndex() + 1)
+        .map(ChatMatrixRoom::isMembersCarried)
+        .orElse(false);
+  }
+
+  /** Commit only after every transfer succeeded, before shutting down the old room. */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public void markMembersCarried(Long seriesId, Long tenantId, int nextIndex, String roomId) {
+    var room =
+        rooms
+            .findByRoomIdForUpdate(roomId)
+            .orElseThrow(MatrixGroupParticipationHistory::unavailable);
+    if (!room.getSeries().getId().equals(seriesId)
+        || !room.getOwnerTenantId().equals(tenantId)
+        || room.getOccurrenceIndex() != nextIndex) throw unavailable();
+    room.markMembersCarried();
+    rooms.save(room);
+  }
+
   /** Commit provenance before an ordinary native JOIN can occur in the prepared room. */
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public String reserveNextRoom(Chat snapshot, String candidate) {

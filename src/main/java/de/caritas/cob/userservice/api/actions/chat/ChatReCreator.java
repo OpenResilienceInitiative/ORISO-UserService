@@ -5,19 +5,30 @@ import static java.util.Objects.isNull;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
+import de.caritas.cob.userservice.api.facade.ChatConverter;
 import de.caritas.cob.userservice.api.model.Chat;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
+import de.caritas.cob.userservice.api.service.chat.GroupChatMatrixCleanupService;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
+import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService.ResolvedRoomMember;
 import de.caritas.cob.userservice.api.service.matrixgroup.ChatMatrixRoomHistory;
 import de.caritas.cob.userservice.api.service.matrixgroup.MatrixGroupParticipationHistory;
 import java.time.Instant;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Objects;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -36,6 +47,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class ChatReCreator {
 
   private static final String ROOM_ALIAS_PREFIX = "group_chat_";
+  private static final int MAX_RECONCILE_PASSES = 3;
 
   private final ChatService chatService;
   private final MatrixGroupParticipationHistory participationHistory;
@@ -44,6 +56,7 @@ public class ChatReCreator {
   private final MatrixChatShutdownService matrixChatShutdownService;
   private final GroupChatMembershipService groupChatMembershipService;
   private final SessionRepository sessionRepository;
+  private final GroupChatMatrixCleanupService matrixCleanup;
 
   /**
    * Resets the given chat to its next occurrence: the new Matrix room id becomes the canonical room
@@ -88,7 +101,9 @@ public class ChatReCreator {
       // A stop that purged the old room and then failed in the database leaves the chat on a room
       // that no longer exists. Everyone was carried over before that purge: go on with their room.
       var carriedOver = roomHistory.preparedNextRoom(chat);
-      if (carriedOver.isPresent() && matrixSynapseService.isRoomConfirmedGone(oldRoomId)) {
+      if (carriedOver.isPresent()
+          && roomHistory.membersWereCarried(chat, carriedOver.get())
+          && matrixSynapseService.isRoomConfirmedGone(oldRoomId)) {
         return carriedOver.get();
       }
       throw new InternalServerErrorException(
@@ -102,27 +117,30 @@ public class ChatReCreator {
     if (prepared.isPresent()) {
       newRoomId = prepared.get();
     } else {
-      var candidate = createMatrixRoom(chat);
+      var roomAlias = nextRoomAlias(chat);
+      // Not every caller holds the group locks here, so only the alias is journaled: the worker
+      // leaves it alone for a grace period and then purges the room unless it was adopted.
+      var aliasIntent = matrixCleanup.recordAlias(ownerOf(chat), fullAlias(chat, roomAlias));
+      var candidate = createMatrixRoom(chat, roomAlias);
       try {
         newRoomId = roomHistory.reserveNextRoom(chat, candidate);
       } catch (RuntimeException failure) {
         matrixSynapseService.purgeRoom(candidate);
         throw failure;
       }
-      if (!candidate.equals(newRoomId)) matrixSynapseService.purgeRoom(candidate);
+      if (candidate.equals(newRoomId)) {
+        matrixCleanup.discard(aliasIntent);
+      } else {
+        matrixSynapseService.purgeRoom(candidate);
+      }
     }
-    var ownerMatrixUserId = chat.getChatOwner().getMatrixUserId();
-    for (var member : humanMembers) {
-      if (Objects.equals(ownerMatrixUserId, member.matrixUserId())) {
-        continue;
-      }
-      if (!groupChatMembershipService.addMemberToRoom(
-          newRoomId, ownerMatrixUserId, member.matrixUserId())) {
-        throw new InternalServerErrorException(
-            String.format(
-                "Could not carry member %s into next occurrence of group chat %s",
-                member.matrixUserId(), chat.getId()));
-      }
+    reconcileNextRoom(chat, oldRoomId, newRoomId, humanMembers);
+    if (ChatConverter.conversationTypeOf(chat) == ConversationType.SELF_HELP) {
+      roomHistory.markMembersCarried(
+          chat.getId(),
+          chat.getChatOwner().getTenantId(),
+          chat.getCurrentOccurrenceIndex() + 1,
+          newRoomId);
     }
     participationHistory.snapshotRoom(oldRoomId);
     matrixChatShutdownService.shutdownRoom(chat);
@@ -130,7 +148,128 @@ public class ChatReCreator {
     return newRoomId;
   }
 
-  private String createMatrixRoom(Chat chat) {
+  /**
+   * Makes the next room hold exactly the people of the current one. A departure or join that did
+   * not take the group lock (a native Matrix client, or a leave after a failed transfer) is picked
+   * up here: the current room is read again until it has stopped changing.
+   */
+  private void reconcileNextRoom(
+      Chat chat, String oldRoomId, String newRoomId, List<ResolvedRoomMember> current) {
+    var owner = chat.getChatOwner().getMatrixUserId();
+    var carried = new HashSet<String>();
+    for (int pass = 0; pass < MAX_RECONCILE_PASSES; pass++) {
+      var expected =
+          current.stream().map(ResolvedRoomMember::matrixUserId).collect(Collectors.toSet());
+      for (var member : expected) {
+        if (Objects.equals(owner, member) || carried.contains(member)) {
+          continue;
+        }
+        if (!groupChatMembershipService.addMemberToRoom(newRoomId, owner, member)) {
+          throw new InternalServerErrorException(
+              String.format(
+                  "Could not carry member %s into next occurrence of group chat %s",
+                  member, chat.getId()));
+        }
+        carried.add(member);
+      }
+      // The owner created the next room, so an empty answer means it could not be read.
+      var present = groupChatMembershipService.resolveHumanMembers(newRoomId);
+      if (present.isEmpty()) {
+        throw new InternalServerErrorException(
+            String.format(
+                "Could not read members of the next occurrence of group chat %s", chat.getId()));
+      }
+      for (var member : present) {
+        var id = member.matrixUserId();
+        if (Objects.equals(owner, id) || expected.contains(id)) {
+          continue;
+        }
+        if (!groupChatMembershipService.removeMemberFromRoomAndConfirm(newRoomId, id)) {
+          throw new InternalServerErrorException(
+              String.format(
+                  "Could not remove departed member %s from next occurrence of group chat %s",
+                  id, chat.getId()));
+        }
+        carried.remove(id);
+      }
+      var latest = groupChatMembershipService.resolveHumanMembers(oldRoomId);
+      if (latest.isEmpty()) {
+        throw new InternalServerErrorException(
+            String.format(
+                "Could not resolve members of repetitive group chat %s before re-creating room",
+                chat.getId()));
+      }
+      if (latest.stream()
+          .map(ResolvedRoomMember::matrixUserId)
+          .collect(Collectors.toSet())
+          .equals(expected)) {
+        return;
+      }
+      current = latest;
+    }
+    throw new InternalServerErrorException(
+        String.format(
+            "Members of group chat %s kept changing while preparing its next occurrence",
+            chat.getId()));
+  }
+
+  /**
+   * A leaver must not stay in a room that is already prepared for the next occurrence. Call before
+   * the leave itself: when Matrix cannot confirm the removal nothing has changed yet, and the leave
+   * can simply be repeated.
+   */
+  public void removeFromPreparedRoom(Chat chat, String matrixUserId) {
+    if (chat.getChatOwner() != null
+        && Objects.equals(chat.getChatOwner().getMatrixUserId(), matrixUserId)) {
+      return; // The owner holds the prepared room; a departed owner is evicted at the transfer.
+    }
+    roomHistory
+        .preparedNextRoom(chat)
+        .ifPresent(
+            room -> {
+              if (!groupChatMembershipService.removeMemberFromRoomAndConfirm(room, matrixUserId)) {
+                throw new CustomValidationHttpStatusException(
+                    HttpStatusExceptionReason.INTERNAL_CHAT_MEMBERSHIP_FAILED,
+                    HttpStatus.BAD_GATEWAY);
+              }
+            });
+  }
+
+  /** Prepare a future self-help room while the caller holds owner and chat locks. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void prepareLockedNextRoom(Chat chat) {
+    if (roomHistory.preparedNextRoom(chat).isPresent()) return;
+    var oldRoomId = groupChatMembershipService.resolveMatrixRoomId(chat);
+    if (groupChatMembershipService.resolveHumanMembers(oldRoomId).isEmpty()) {
+      throw new InternalServerErrorException(
+          String.format(
+              "Could not resolve members of repetitive group chat %s before re-creating room",
+              chat.getId()));
+    }
+    var roomAlias = nextRoomAlias(chat);
+    // Committed before the room exists: a process that dies right after creating it leaves an
+    // intent the worker resolves through the alias.
+    var aliasIntent = matrixCleanup.recordAlias(ownerOf(chat), fullAlias(chat, roomAlias));
+    var candidate = createMatrixRoom(chat, roomAlias);
+    Long taskId;
+    try {
+      taskId = matrixCleanup.bindRoom(aliasIntent, ownerOf(chat), candidate);
+    } catch (RuntimeException failure) {
+      matrixSynapseService.purgeRoom(candidate);
+      throw failure;
+    }
+    // On rollback the independently committed intent remains; the worker waits for the owner
+    // lock, then purges only if no room provenance was committed.
+    roomHistory.recordRotation(chat, candidate);
+    matrixCleanup.clear(taskId);
+  }
+
+  private GroupChatMatrixCleanupService.GroupOwner ownerOf(Chat chat) {
+    return new GroupChatMatrixCleanupService.GroupOwner(
+        chat.getId(), chat.getChatOwner().getId(), chat.getChatOwner().getTenantId());
+  }
+
+  private String nextRoomAlias(Chat chat) {
     var chatOwner = chat.getChatOwner();
     if (isNull(chatOwner) || isBlank(chatOwner.getMatrixUserId())) {
       throw new InternalServerErrorException(
@@ -138,8 +277,17 @@ public class ChatReCreator {
               "Chat owner of repetitive group chat %s has no Matrix user; cannot re-create room",
               chat.getId()));
     }
+    return ROOM_ALIAS_PREFIX + chat.getId() + "_" + Instant.now().toEpochMilli();
+  }
 
-    var roomAlias = ROOM_ALIAS_PREFIX + chat.getId() + "_" + Instant.now().toEpochMilli();
+  /** The room is created on the owner's homeserver, which is the server part of their user id. */
+  private String fullAlias(Chat chat, String roomAlias) {
+    var owner = chat.getChatOwner().getMatrixUserId();
+    return "#" + roomAlias + ":" + owner.substring(owner.indexOf(':') + 1);
+  }
+
+  private String createMatrixRoom(Chat chat, String roomAlias) {
+    var chatOwner = chat.getChatOwner();
     try {
       var response =
           matrixSynapseService.createRoomAsMatrixUser(

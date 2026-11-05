@@ -5,8 +5,10 @@ import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.facade.ChatConverter;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
@@ -14,8 +16,11 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
 import jakarta.transaction.Transactional;
 import java.util.List;
+import java.util.Objects;
 import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -29,6 +34,8 @@ public class GroupChatRoleService {
   private final ConsultantRepository consultantRepository;
   private final GroupChatMembershipService groupChatMembershipService;
   private final MembersOnlyRevocation revocation;
+  private final GroupChatMatrixCleanupService matrixCleanup;
+  private final EntityManager entityManager;
 
   @Transactional
   public void changeRole(
@@ -36,6 +43,7 @@ public class GroupChatRoleService {
       String actingConsultantId,
       String targetConsultantId,
       ParticipantRole newRole) {
+    lockRecurringSeries(chatRepository.findById(seriesId).orElse(null));
     var participants = participantRepository.findBySeriesIdForUpdate(seriesId);
     var actor =
         requireParticipant(
@@ -73,6 +81,7 @@ public class GroupChatRoleService {
   @Transactional
   public void transferPrimaryOwnership(
       Long seriesId, String actingOwnerId, String targetConsultantId) {
+    lockRecurringSeries(chatRepository.findById(seriesId).orElse(null));
     var participants = participantRepository.findBySeriesIdForUpdate(seriesId);
     var actor =
         requireParticipant(
@@ -105,6 +114,7 @@ public class GroupChatRoleService {
   @Transactional
   public void removeParticipant(
       Long seriesId, String actingConsultantId, String targetConsultantId) {
+    lockRecurringSeries(chatRepository.findById(seriesId).orElse(null));
     var participants = participantRepository.findBySeriesIdForUpdate(seriesId);
     var actor =
         requireParticipant(
@@ -145,6 +155,7 @@ public class GroupChatRoleService {
       return;
     }
 
+    series = lockRecurringSeries(series);
     var participants = participantRepository.findBySeriesIdForUpdate(series.getId());
     var participation =
         participants.stream()
@@ -168,6 +179,33 @@ public class GroupChatRoleService {
     }
 
     groupChatMembershipService.removeParticipantFromRoom(series, consultant.getMatrixUserId());
+  }
+
+  private Chat lockRecurringSeries(Chat observed) {
+    if (observed == null
+        || !observed.isRepetitive()
+        || ChatConverter.conversationTypeOf(observed) != ConversationType.SELF_HELP)
+      return observed;
+    var ownerId = observed.getChatOwner().getId();
+    var tenantId = observed.getChatOwner().getTenantId();
+    var occurrence = observed.getCurrentOccurrenceIndex();
+    var room = observed.getMatrixRoomId();
+    matrixCleanup.lockOwner(observed.getChatOwner());
+    var locked =
+        chatRepository
+            .findByIdForUpdate(observed.getId())
+            .orElseThrow(() -> new ConflictException("Group no longer exists"));
+    // The snapshot may already be managed in this transaction. A locking query alone need not
+    // overwrite that instance with the latest committed values.
+    entityManager.refresh(locked, LockModeType.PESSIMISTIC_WRITE);
+    if (!Objects.equals(ownerId, locked.getChatOwner().getId())
+        || !Objects.equals(tenantId, locked.getChatOwner().getTenantId())
+        || occurrence != locked.getCurrentOccurrenceIndex()
+        || !Objects.equals(room, locked.getMatrixRoomId())
+        || !locked.isRepetitive()
+        || ChatConverter.conversationTypeOf(locked) != ConversationType.SELF_HELP)
+      throw new ConflictException("Group changed before updating participants");
+    return locked;
   }
 
   private GroupChatParticipant requireParticipant(

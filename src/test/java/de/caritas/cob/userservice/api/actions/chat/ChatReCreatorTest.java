@@ -62,6 +62,9 @@ class ChatReCreatorTest {
 
   @Mock private MatrixChatShutdownService matrixChatShutdownService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.chat.GroupChatMatrixCleanupService matrixCleanup;
+
   @Mock private GroupChatMembershipService groupChatMembershipService;
 
   @Mock private SessionRepository sessionRepository;
@@ -71,6 +74,11 @@ class ChatReCreatorTest {
     lenient()
         .when(roomHistory.reserveNextRoom(any(Chat.class), anyString()))
         .thenAnswer(i -> i.getArgument(1));
+
+    // The owner created the next room and is its only member until others are carried over.
+    lenient()
+        .when(groupChatMembershipService.resolveHumanMembers(NEW_MATRIX_ROOM_ID))
+        .thenReturn(List.of(member(OWNER_MATRIX_USER_ID)));
 
     lenient()
         .when(groupChatMembershipService.resolveMatrixRoomId(any(Chat.class)))
@@ -231,10 +239,21 @@ class ChatReCreatorTest {
    * reserved room instead of failing for ever.
    */
   @Test
+  void uncarriedPreparedRoomCannotReplaceAnExternallyDeletedOldRoom() {
+    var chat = buildRepetitiveChat(OWNER_MATRIX_USER_ID);
+    when(groupChatMembershipService.resolveHumanMembers(OLD_MATRIX_ROOM_ID)).thenReturn(List.of());
+    when(roomHistory.preparedNextRoom(chat)).thenReturn(Optional.of(NEW_MATRIX_ROOM_ID));
+    assertThrows(
+        InternalServerErrorException.class, () -> chatReCreator.recreateMessengerChat(chat));
+    verify(matrixChatShutdownService, never()).shutdownRoom(chat);
+  }
+
+  @Test
   void recreateShouldContinueWithThePreparedRoomWhenTheOldRoomIsConfirmedGone() {
     var chat = buildRepetitiveChat(OWNER_MATRIX_USER_ID);
     when(groupChatMembershipService.resolveHumanMembers(OLD_MATRIX_ROOM_ID)).thenReturn(List.of());
     when(roomHistory.preparedNextRoom(chat)).thenReturn(Optional.of(NEW_MATRIX_ROOM_ID));
+    when(roomHistory.membersWereCarried(chat, NEW_MATRIX_ROOM_ID)).thenReturn(true);
     when(matrixSynapseService.isRoomConfirmedGone(OLD_MATRIX_ROOM_ID)).thenReturn(true);
 
     assertEquals(NEW_MATRIX_ROOM_ID, chatReCreator.recreateMessengerChat(chat));
@@ -248,6 +267,7 @@ class ChatReCreatorTest {
     var chat = buildRepetitiveChat(OWNER_MATRIX_USER_ID);
     when(groupChatMembershipService.resolveHumanMembers(OLD_MATRIX_ROOM_ID)).thenReturn(List.of());
     when(roomHistory.preparedNextRoom(chat)).thenReturn(Optional.of(NEW_MATRIX_ROOM_ID));
+    when(roomHistory.membersWereCarried(chat, NEW_MATRIX_ROOM_ID)).thenReturn(true);
     when(matrixSynapseService.isRoomConfirmedGone(OLD_MATRIX_ROOM_ID)).thenReturn(false);
 
     assertThrows(
@@ -303,5 +323,183 @@ class ChatReCreatorTest {
     return List.of(
         new ResolvedRoomMember(
             OWNER_MATRIX_USER_ID, "owner-id", "owner", "Owner Owner", true, null, null));
+  }
+
+  private static ResolvedRoomMember member(String matrixUserId) {
+    return new ResolvedRoomMember(matrixUserId, matrixUserId, "name", "Name", false, null, null);
+  }
+
+  /** Someone who left after a failed transfer is still in the prepared room: take them out. */
+  @Test
+  void recreateShouldRemoveFromThePreparedRoomWhoeverIsNoLongerInTheCurrentRoom() {
+    var chat = buildRepetitiveChat(OWNER_MATRIX_USER_ID);
+    var staying = "@staying:matrix.local";
+    var departed = "@departed:matrix.local";
+    when(roomHistory.preparedNextRoom(chat)).thenReturn(Optional.of(NEW_MATRIX_ROOM_ID));
+    when(groupChatMembershipService.resolveHumanMembers(OLD_MATRIX_ROOM_ID))
+        .thenReturn(List.of(member(OWNER_MATRIX_USER_ID), member(staying)));
+    when(groupChatMembershipService.resolveHumanMembers(NEW_MATRIX_ROOM_ID))
+        .thenReturn(List.of(member(OWNER_MATRIX_USER_ID), member(staying), member(departed)));
+    when(groupChatMembershipService.addMemberToRoom(
+            NEW_MATRIX_ROOM_ID, OWNER_MATRIX_USER_ID, staying))
+        .thenReturn(true);
+    when(groupChatMembershipService.removeMemberFromRoomAndConfirm(NEW_MATRIX_ROOM_ID, departed))
+        .thenReturn(true);
+
+    assertEquals(NEW_MATRIX_ROOM_ID, chatReCreator.recreateMessengerChat(chat));
+
+    var order = inOrder(groupChatMembershipService, matrixChatShutdownService);
+    order
+        .verify(groupChatMembershipService)
+        .removeMemberFromRoomAndConfirm(NEW_MATRIX_ROOM_ID, departed);
+    order.verify(matrixChatShutdownService).shutdownRoom(chat);
+  }
+
+  @Test
+  void recreateShouldKeepTheOldRoomWhenADepartedMemberCannotBeRemovedFromThePreparedRoom() {
+    var chat = buildRepetitiveChat(OWNER_MATRIX_USER_ID);
+    var departed = "@departed:matrix.local";
+    when(roomHistory.preparedNextRoom(chat)).thenReturn(Optional.of(NEW_MATRIX_ROOM_ID));
+    when(groupChatMembershipService.resolveHumanMembers(OLD_MATRIX_ROOM_ID))
+        .thenReturn(List.of(member(OWNER_MATRIX_USER_ID)));
+    when(groupChatMembershipService.resolveHumanMembers(NEW_MATRIX_ROOM_ID))
+        .thenReturn(List.of(member(OWNER_MATRIX_USER_ID), member(departed)));
+
+    assertThrows(
+        InternalServerErrorException.class, () -> chatReCreator.recreateMessengerChat(chat));
+
+    verify(roomHistory, never())
+        .markMembersCarried(any(), any(), org.mockito.ArgumentMatchers.anyInt(), anyString());
+    verify(matrixChatShutdownService, never()).shutdownRoom(chat);
+  }
+
+  @Test
+  void recreateShouldFailClosedWhenTheNextRoomCannotBeRead() {
+    var chat = buildRepetitiveChat(OWNER_MATRIX_USER_ID);
+    when(roomHistory.preparedNextRoom(chat)).thenReturn(Optional.of(NEW_MATRIX_ROOM_ID));
+    when(groupChatMembershipService.resolveHumanMembers(OLD_MATRIX_ROOM_ID))
+        .thenReturn(List.of(member(OWNER_MATRIX_USER_ID)));
+    when(groupChatMembershipService.resolveHumanMembers(NEW_MATRIX_ROOM_ID)).thenReturn(List.of());
+
+    assertThrows(
+        InternalServerErrorException.class, () -> chatReCreator.recreateMessengerChat(chat));
+
+    verify(matrixChatShutdownService, never()).shutdownRoom(chat);
+  }
+
+  /** A join made in a Matrix client while members were being carried must not be lost. */
+  @Test
+  void recreateShouldCarryAMemberWhoJoinedTheCurrentRoomDuringTheTransfer() {
+    var chat = buildRepetitiveChat(OWNER_MATRIX_USER_ID);
+    var early = "@early:matrix.local";
+    var late = "@late:matrix.local";
+    when(roomHistory.preparedNextRoom(chat)).thenReturn(Optional.of(NEW_MATRIX_ROOM_ID));
+    when(groupChatMembershipService.resolveHumanMembers(OLD_MATRIX_ROOM_ID))
+        .thenReturn(List.of(member(OWNER_MATRIX_USER_ID), member(early)))
+        .thenReturn(List.of(member(OWNER_MATRIX_USER_ID), member(early), member(late)));
+    when(groupChatMembershipService.addMemberToRoom(
+            eq(NEW_MATRIX_ROOM_ID), eq(OWNER_MATRIX_USER_ID), anyString()))
+        .thenReturn(true);
+
+    assertEquals(NEW_MATRIX_ROOM_ID, chatReCreator.recreateMessengerChat(chat));
+
+    verify(groupChatMembershipService, org.mockito.Mockito.times(1))
+        .addMemberToRoom(NEW_MATRIX_ROOM_ID, OWNER_MATRIX_USER_ID, early);
+    verify(groupChatMembershipService)
+        .addMemberToRoom(NEW_MATRIX_ROOM_ID, OWNER_MATRIX_USER_ID, late);
+    verify(matrixChatShutdownService).shutdownRoom(chat);
+  }
+
+  @Test
+  void recreateShouldGiveUpWhenTheCurrentRoomKeepsChanging() {
+    var chat = buildRepetitiveChat(OWNER_MATRIX_USER_ID);
+    when(roomHistory.preparedNextRoom(chat)).thenReturn(Optional.of(NEW_MATRIX_ROOM_ID));
+    when(groupChatMembershipService.resolveHumanMembers(OLD_MATRIX_ROOM_ID))
+        .thenReturn(List.of(member(OWNER_MATRIX_USER_ID), member("@a:matrix.local")))
+        .thenReturn(List.of(member(OWNER_MATRIX_USER_ID), member("@b:matrix.local")))
+        .thenReturn(List.of(member(OWNER_MATRIX_USER_ID), member("@c:matrix.local")))
+        .thenReturn(List.of(member(OWNER_MATRIX_USER_ID), member("@d:matrix.local")));
+    when(groupChatMembershipService.addMemberToRoom(
+            eq(NEW_MATRIX_ROOM_ID), eq(OWNER_MATRIX_USER_ID), anyString()))
+        .thenReturn(true);
+
+    assertThrows(
+        InternalServerErrorException.class, () -> chatReCreator.recreateMessengerChat(chat));
+
+    verify(matrixChatShutdownService, never()).shutdownRoom(chat);
+  }
+
+  /** The intent must be durable before Matrix is asked for a room. */
+  @Test
+  void recreateShouldJournalTheRoomAliasBeforeCreatingTheRoom() throws MatrixCreateRoomException {
+    var chat = buildRepetitiveChat(OWNER_MATRIX_USER_ID);
+    var response = new MatrixCreateRoomResponseDTO();
+    response.setRoomId(NEW_MATRIX_ROOM_ID);
+    when(matrixSynapseService.createRoomAsMatrixUser(
+            eq("topic"), startsWith("group_chat_"), eq(OWNER_MATRIX_USER_ID)))
+        .thenReturn(ResponseEntity.ok(response));
+    when(groupChatMembershipService.resolveHumanMembers(OLD_MATRIX_ROOM_ID))
+        .thenReturn(List.of(member(OWNER_MATRIX_USER_ID)));
+    when(matrixCleanup.recordAlias(any(), anyString())).thenReturn(77L);
+
+    chatReCreator.recreateMessengerChat(chat);
+
+    var alias = org.mockito.ArgumentCaptor.forClass(String.class);
+    var created = org.mockito.ArgumentCaptor.forClass(String.class);
+    var order = inOrder(matrixCleanup, matrixSynapseService);
+    order.verify(matrixCleanup).recordAlias(any(), alias.capture());
+    order
+        .verify(matrixSynapseService)
+        .createRoomAsMatrixUser(eq("topic"), created.capture(), eq(OWNER_MATRIX_USER_ID));
+    order.verify(matrixCleanup).discard(77L);
+    assertEquals("#" + created.getValue() + ":matrix.local", alias.getValue());
+  }
+
+  @Test
+  void aFailedRoomCreationKeepsTheAliasIntentForTheWorker() throws MatrixCreateRoomException {
+    var chat = buildRepetitiveChat(OWNER_MATRIX_USER_ID);
+    when(groupChatMembershipService.resolveHumanMembers(OLD_MATRIX_ROOM_ID))
+        .thenReturn(List.of(member(OWNER_MATRIX_USER_ID)));
+    when(matrixSynapseService.createRoomAsMatrixUser(anyString(), anyString(), anyString()))
+        .thenThrow(new MatrixCreateRoomException("timeout"));
+
+    assertThrows(
+        InternalServerErrorException.class, () -> chatReCreator.recreateMessengerChat(chat));
+
+    verify(matrixCleanup).recordAlias(any(), anyString());
+    verify(matrixCleanup, never()).discard(any());
+  }
+
+  @Test
+  void aLeaverIsRemovedFromThePreparedRoom() {
+    var chat = buildRepetitiveChat(OWNER_MATRIX_USER_ID);
+    var leaver = "@leaver:matrix.local";
+    when(roomHistory.preparedNextRoom(chat)).thenReturn(Optional.of(NEW_MATRIX_ROOM_ID));
+    when(groupChatMembershipService.removeMemberFromRoomAndConfirm(NEW_MATRIX_ROOM_ID, leaver))
+        .thenReturn(true);
+
+    chatReCreator.removeFromPreparedRoom(chat, leaver);
+
+    verify(groupChatMembershipService).removeMemberFromRoomAndConfirm(NEW_MATRIX_ROOM_ID, leaver);
+  }
+
+  @Test
+  void aLeaveIsRefusedWhileTheLeaverCannotBeRemovedFromThePreparedRoom() {
+    var chat = buildRepetitiveChat(OWNER_MATRIX_USER_ID);
+    when(roomHistory.preparedNextRoom(chat)).thenReturn(Optional.of(NEW_MATRIX_ROOM_ID));
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException
+            .class,
+        () -> chatReCreator.removeFromPreparedRoom(chat, "@leaver:matrix.local"));
+  }
+
+  @Test
+  void theOwnerStaysInThePreparedRoom() {
+    var chat = buildRepetitiveChat(OWNER_MATRIX_USER_ID);
+
+    chatReCreator.removeFromPreparedRoom(chat, OWNER_MATRIX_USER_ID);
+
+    verifyNoInteractions(roomHistory);
   }
 }
