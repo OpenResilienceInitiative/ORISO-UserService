@@ -83,6 +83,7 @@ class AssignEnquiryFacadeTest {
 
   @Mock private ConsultantDisplayNameResolver consultantDisplayNameResolver;
   @Mock AnonymousEnquiryDepartmentResolver anonymousEnquiryDepartmentResolver;
+  @Mock de.caritas.cob.userservice.api.port.in.Messaging messaging;
 
   @Mock
   de.caritas.cob.userservice.api.service.matrix.InquiryAcceptanceNoticeStore acceptanceNotices;
@@ -127,7 +128,8 @@ class AssignEnquiryFacadeTest {
             teamDiscussionFacade,
             acceptanceNotices,
             acceptanceDelivery,
-            topicDuplicateService);
+            topicDuplicateService,
+            messaging);
     CONSULTANT_WITH_AGENCY.setTenantId(41L);
     // ADR-002 §2: the display name comes from the resolver, never from the real name.
     lenient()
@@ -301,6 +303,25 @@ class AssignEnquiryFacadeTest {
   // ---------------------------------------------------------------------------
   // assignAnonymousEnquiry — department binding (ADR-022 decision 1, ADR-003)
   // ---------------------------------------------------------------------------
+
+  @Test
+  void anonymousQueueRefusalDoesNotAssignOrCreateAMatrixRoom() {
+    var session = unboundTopicBasedAnonymousEnquiry();
+    var blocked =
+        new de.caritas.cob.userservice.api.exception.httpresponses
+            .CustomValidationHttpStatusException(
+            de.caritas.cob.userservice.api.exception.httpresponses.customheader
+                .HttpStatusExceptionReason.LIVE_CHAT_QUEUE_NOT_FIRST,
+            org.springframework.http.HttpStatus.CONFLICT);
+    org.mockito.Mockito.doThrow(blocked).when(messaging).requireFirstLiveChatEnquiry(session);
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> assignEnquiryFacade.assignAnonymousEnquiry(session, CONSULTANT_WITH_AGENCY))
+        .isSameAs(blocked);
+    verify(sessionService, never()).updateConsultantAndStatusForSession(any(), any(), any());
+    org.mockito.Mockito.verifyNoInteractions(
+        sessionRoomGateway, anonymousEnquiryDepartmentResolver);
+  }
 
   @Test
   void assignAnonymousEnquiry_Should_bindTheAcceptingConsultantsDepartment_inTheSameSave() {

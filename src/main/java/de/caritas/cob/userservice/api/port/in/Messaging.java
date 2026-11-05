@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.port.in;
 
 import de.caritas.cob.userservice.api.model.Chat;
+import de.caritas.cob.userservice.api.model.Session;
 import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.Optional;
@@ -24,7 +25,13 @@ public interface Messaging {
   boolean getAvailability(String consultantId);
 
   long countPendingEnquiriesAheadOf(
-      Long agencyId, Integer consultingTypeId, Long mainTopicId, LocalDateTime beforeDate);
+      Long agencyId,
+      Integer consultingTypeId,
+      Long mainTopicId,
+      LocalDateTime beforeDate,
+      Long beforeId);
+
+  void requireFirstLiveChatEnquiry(Session session);
 
   void touchLiveChatQueueHeartbeat(Long sessionId);
 }

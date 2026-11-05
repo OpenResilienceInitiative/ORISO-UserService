@@ -5,10 +5,11 @@ import de.caritas.cob.userservice.api.facade.assignsession.AssignEnquiryFacade;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
-import jakarta.transaction.Transactional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Transactional;
 
 /** Facade to encapsulate necessary steps to accept an anonymous enquiry. */
 @Service
@@ -34,7 +35,7 @@ public class AcceptAnonymousEnquiryFacade {
    *
    * @param sessionId the id of the anonymous session
    */
-  @Transactional
+  @Transactional(isolation = Isolation.READ_COMMITTED)
   public void acceptAnonymousEnquiry(Long sessionId) {
     var callerTenant = TenantContext.getCurrentTenant();
     try {
