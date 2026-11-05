@@ -24,6 +24,7 @@ class GroupChatMatrixCleanupServiceTest {
   @Mock GroupChatMatrixCleanupTaskRepository tasks;
   @Mock ConsultantRepository consultants;
   @Mock ChatRepository chats;
+  @Mock de.caritas.cob.userservice.api.port.out.ChatMatrixRoomRepository roomHistory;
   @Mock GroupChatParticipantRepository participants;
   @Mock MatrixSynapseService matrix;
   @Mock GroupChatMembershipService membership;
@@ -35,7 +36,14 @@ class GroupChatMatrixCleanupServiceTest {
   void setup() {
     service =
         new GroupChatMatrixCleanupService(
-            tasks, consultants, chats, participants, matrix, membership, Clock.systemUTC());
+            tasks,
+            consultants,
+            chats,
+            roomHistory,
+            participants,
+            matrix,
+            membership,
+            Clock.systemUTC());
     owner = new Consultant();
     owner.setId("owner");
     owner.setTenantId(41L);
@@ -79,6 +87,53 @@ class GroupChatMatrixCleanupServiceTest {
     when(chats.findByMatrixRoomIdForUpdate("!new:matrix")).thenReturn(Optional.of(chat));
     service.retry(1L);
     verify(tasks).delete(task);
+    verifyNoInteractions(matrix, membership);
+  }
+
+  @Test
+  void foreignRoomProvenanceRetainsTaskWithoutPurge() {
+    when(roomHistory.findByRoomIdForUpdate("!new:matrix"))
+        .thenReturn(
+            Optional.of(
+                new de.caritas.cob.userservice.api.model.ChatMatrixRoom(
+                    "!new:matrix", chat(8L), 1, 41L)));
+    service.retry(1L);
+    verify(tasks).save(task);
+    verifyNoInteractions(matrix, membership);
+  }
+
+  @Test
+  void reservedRoomWithDifferentTenantRetainsTaskWithoutPurge() {
+    when(chats.findByIdForUpdate(7L)).thenReturn(Optional.of(chat(7L)));
+    when(roomHistory.findByRoomIdForUpdate("!new:matrix"))
+        .thenReturn(Optional.of(new ChatMatrixRoom("!new:matrix", chat(7L), 1, 99L)));
+
+    service.retry(1L);
+
+    verify(tasks).save(task);
+    verify(tasks, never()).delete(any());
+    verifyNoInteractions(matrix, membership);
+  }
+
+  @Test
+  void reservedRoomWithoutSeriesRetainsTaskWithoutPurge() {
+    when(roomHistory.findByRoomIdForUpdate("!new:matrix"))
+        .thenReturn(Optional.of(new ChatMatrixRoom("!new:matrix", chat(7L), 1, 41L)));
+
+    service.retry(1L);
+
+    verify(tasks).save(task);
+    verify(tasks, never()).delete(any());
+    verifyNoInteractions(matrix, membership);
+  }
+
+  @Test
+  void provenanceLockFailureDoesNotPurgeOrDropTask() {
+    when(roomHistory.findByRoomIdForUpdate("!new:matrix"))
+        .thenThrow(new org.springframework.dao.CannotAcquireLockException("synthetic contention"));
+    org.junit.jupiter.api.Assertions.assertThrows(
+        org.springframework.dao.CannotAcquireLockException.class, () -> service.retry(1L));
+    verify(tasks, never()).delete(any());
     verifyNoInteractions(matrix, membership);
   }
 
