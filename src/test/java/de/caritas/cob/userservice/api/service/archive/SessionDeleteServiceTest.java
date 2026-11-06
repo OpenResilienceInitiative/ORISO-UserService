@@ -34,6 +34,23 @@ class SessionDeleteServiceTest {
   @InjectMocks SessionDeleteService sessionDeleteService;
 
   @Mock ActionsRegistry actionsRegistry;
+  @Mock de.caritas.cob.userservice.api.service.livechat.LiveChatAccountClaimService claims;
+
+  @org.junit.jupiter.api.BeforeEach
+  void allowUnclaimedIdentityDeactivation() {
+    org.mockito.Mockito.lenient().when(claims.claimIdentityDeactivation(any())).thenReturn(true);
+  }
+
+  @Test
+  void deletingLastSessionKeepsPromotedIdentityActive() {
+    var sessionId = givenAPresentSession(true);
+    var session = sessionService.getSession(sessionId).orElseThrow();
+    when(claims.claimIdentityDeactivation(session.getUser().getUserId())).thenReturn(false);
+    var delete = givenActionRegistryDeletesSession();
+    sessionDeleteService.deleteSession(sessionId);
+    verify(delete).executeActions(any(SessionDeletionWorkflowDTO.class));
+    verify(actionsRegistry, org.mockito.Mockito.never()).buildContainerForType(User.class);
+  }
 
   @Mock StatisticsService statisticsService;
 

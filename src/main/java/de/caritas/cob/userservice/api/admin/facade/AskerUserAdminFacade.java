@@ -26,6 +26,8 @@ import org.springframework.stereotype.Service;
 @Service
 @RequiredArgsConstructor
 public class AskerUserAdminFacade {
+  private final @NonNull de.caritas.cob.userservice.api.service.livechat.LiveChatAccountClaimService
+      liveChatClaims;
 
   private final @NonNull IdentityDeactivator identityDeactivator;
   private final @NonNull IdentityReactivationSagaStore identityReactivationSagaStore;
@@ -52,6 +54,7 @@ public class AskerUserAdminFacade {
           String.format("Asker with id %s is already marked for deletion", userId));
     }
 
+    liveChatClaims.claimIntentionalDeletion(userId);
     this.identityDeactivator.deactivateUser(userId);
     this.deletionLifecycleService.beginUserDeletion(user, null);
     this.userService.saveUser(user);

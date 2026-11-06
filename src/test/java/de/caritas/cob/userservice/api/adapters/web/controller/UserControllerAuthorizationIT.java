@@ -173,6 +173,10 @@ class UserControllerAuthorizationIT {
   private de.caritas.cob.userservice.api.service.session.DeletedAskerSessionService
       deletedAskerSessionService;
 
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.livechat.LiveChatAccountConversionService
+      liveChatAccountConversionService;
+
   @MockitoBean private UserService userService;
   @MockitoBean private SessionService sessionService;
   @MockitoBean private SessionRepository sessionRepository;
@@ -658,6 +662,181 @@ class UserControllerAuthorizationIT {
         .andExpect(status().isForbidden());
 
     verifyNoMoreInteractions(consultantDataFacade, logService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/live-chat-account/conversion",
+        "/service/users/live-chat-account/conversion"
+      })
+  void liveChatConversionStatusRequiresAuthentication(String path) throws Exception {
+    mvc.perform(get(path)).andExpect(status().isUnauthorized());
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/live-chat-account/conversion",
+        "/service/users/live-chat-account/conversion"
+      })
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void liveChatConversionStatusRejectsCounsellors(String path) throws Exception {
+    mvc.perform(get(path)).andExpect(status().isForbidden());
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/live-chat-account/conversion",
+        "/service/users/live-chat-account/conversion"
+      })
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void liveChatConversionStatusReturnsOnlyOwnState(String path) throws Exception {
+    when(authenticatedUser.getUsername()).thenReturn("guest-name");
+    when(liveChatAccountConversionService.status())
+        .thenReturn(
+            new de.caritas.cob.userservice.api.service.livechat.LiveChatAccountClaimService.Status(
+                "guest-id", "PROMOTION_PENDING", "intent", false));
+    mvc.perform(get(path))
+        .andExpect(status().isOk())
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.state")
+                .value("PROMOTION_PENDING"))
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.intentId")
+                .value("intent"));
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void liveChatConversionStatusExposesFinishedOrigin() throws Exception {
+    when(authenticatedUser.getUsername()).thenReturn("guest-name");
+    when(liveChatAccountConversionService.status())
+        .thenReturn(
+            new de.caritas.cob.userservice.api.service.livechat.LiveChatAccountClaimService.Status(
+                "guest-id", "PROMOTION_PENDING", "intent", true));
+    mvc.perform(get("/users/live-chat-account/conversion"))
+        .andExpect(status().isOk())
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath(
+                    "$.finishedOrigin")
+                .value(true));
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/live-chat-account/conversion",
+        "/service/users/live-chat-account/conversion"
+      })
+  void liveChatConversionRequiresAuthentication(String path) throws Exception {
+    mvc.perform(
+            post(path)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"expectedUserId\":\"guest-id\",\"intentId\":\"123e4567-e89b-12d3-a456-426614174000\",\"password\":\"chosen-password-123\",\"recoveryKeySaved\":true}"))
+        .andExpect(status().isUnauthorized());
+    verifyNoMoreInteractions(liveChatAccountConversionService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/live-chat-account/conversion",
+        "/service/users/live-chat-account/conversion"
+      })
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void liveChatConversionRejectsCounsellors(String path) throws Exception {
+    mvc.perform(
+            post(path)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"expectedUserId\":\"guest-id\",\"intentId\":\"123e4567-e89b-12d3-a456-426614174000\",\"password\":\"chosen-password-123\",\"recoveryKeySaved\":true}"))
+        .andExpect(status().isForbidden());
+    verifyNoMoreInteractions(liveChatAccountConversionService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/live-chat-account/conversion",
+        "/service/users/live-chat-account/conversion"
+      })
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void liveChatConversionAllowsTheAuthenticatedAsker(String path) throws Exception {
+    when(authenticatedUser.getUsername()).thenReturn("synthetic-guest");
+    mvc.perform(
+            post(path)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"expectedUserId\":\"guest-id\",\"intentId\":\"123e4567-e89b-12d3-a456-426614174000\",\"password\":\"chosen-password-123\",\"recoveryKeySaved\":true}"))
+        .andExpect(status().isOk());
+    verify(liveChatAccountConversionService)
+        .convert("guest-id", "123e4567-e89b-12d3-a456-426614174000", "chosen-password-123");
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/live-chat-account/conversion",
+        "/service/users/live-chat-account/conversion"
+      })
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void liveChatConversionRejectsUnconfirmedRecoveryKey(String path) throws Exception {
+    mvc.perform(
+            post(path)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"expectedUserId\":\"guest-id\",\"intentId\":\"123e4567-e89b-12d3-a456-426614174000\",\"password\":\"chosen-password-123\",\"recoveryKeySaved\":false}"))
+        .andExpect(status().isBadRequest());
+    verifyNoInteractions(liveChatAccountConversionService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/live-chat-account/conversion",
+        "/service/users/live-chat-account/conversion"
+      })
+  @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT, AuthorityValue.CONSULTANT_DEFAULT})
+  void mixedUserAndConsultantCannotConvert(String path) throws Exception {
+    mvc.perform(
+            post(path)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"expectedUserId\":\"guest-id\",\"intentId\":\"123e4567-e89b-12d3-a456-426614174000\",\"password\":\"chosen-password-123\",\"recoveryKeySaved\":true}"))
+        .andExpect(status().isForbidden());
+    verifyNoInteractions(liveChatAccountConversionService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/live-chat-account/conversion",
+        "/service/users/live-chat-account/conversion"
+      })
+  @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT, AuthorityValue.USER_ADMIN})
+  void mixedUserAndAdminCannotConvert(String path) throws Exception {
+    mvc.perform(
+            post(path)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"expectedUserId\":\"guest-id\",\"intentId\":\"123e4567-e89b-12d3-a456-426614174000\",\"password\":\"chosen-password-123\",\"recoveryKeySaved\":true}"))
+        .andExpect(status().isForbidden());
+    verifyNoInteractions(liveChatAccountConversionService);
   }
 
   @ParameterizedTest

@@ -399,6 +399,11 @@ public class SecurityConfig {
                     USER_DEFAULT,
                     CONSULTANT_DEFAULT,
                     RESTRICTED_AGENCY_ADMIN)
+                // Only the authenticated advice seeker may promote their own Live Chat account.
+                .requestMatchers(
+                    "/users/live-chat-account/conversion",
+                    "/service/users/live-chat-account/conversion")
+                .access(this::isUnprivilegedLiveChatUser)
                 // The caller's own direct-link temporary account (#1476).
                 .requestMatchers(
                     "/users/temporary-account",
@@ -894,6 +899,29 @@ public class SecurityConfig {
     return new AuthorizationDecision(
         KeycloakRoles.of(jwtAuthentication.getToken().getClaims())
             .contains(UserRole.AGENCY_ADMIN.getValue()));
+  }
+
+  private AuthorizationDecision isUnprivilegedLiveChatUser(
+      Supplier<? extends Authentication> supplier, RequestAuthorizationContext context) {
+    var auth = supplier.get();
+    if (auth == null || !auth.isAuthenticated()) return new AuthorizationDecision(false);
+    var authorities =
+        auth.getAuthorities().stream()
+            .map(GrantedAuthority::getAuthority)
+            .collect(Collectors.toSet());
+    return new AuthorizationDecision(
+        authorities.contains(USER_DEFAULT)
+            && java.util.Collections.disjoint(
+                authorities,
+                Set.of(
+                    CONSULTANT_DEFAULT,
+                    USER_ADMIN,
+                    SINGLE_TENANT_ADMIN,
+                    TENANT_ADMIN,
+                    RESTRICTED_AGENCY_ADMIN,
+                    GLOBAL_SUPPORT_ADMIN,
+                    TECHNICAL_DEFAULT,
+                    NOTIFICATIONS_TECHNICAL)));
   }
 
   private AuthorizationDecision isPlatformAdmin(

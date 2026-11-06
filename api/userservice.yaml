@@ -268,6 +268,62 @@ paths:
               schema: {$ref: '#/components/schemas/CallKnockDTO'}
         '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
         '404': {description: No own knock with this id}
+  /users/live-chat-account/conversion:
+    get:
+      tags: [live-chat-conversion-controller]
+      operationId: getOwnLiveChatConversion
+      summary: 'Read the caller’s Live Chat conversion state [Authorization: Role: user]'
+      security:
+        - Bearer: []
+      responses:
+        '200':
+          description: The caller’s conversion state and pending intent; no credential verifier is exposed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [userId, username, state]
+                properties:
+                  userId: {type: string}
+                  username: {type: string}
+                  state: {type: string, enum: [ELIGIBLE, ALREADY_REGISTERED, NOT_ELIGIBLE, FINISH_PENDING, ANONYMOUS_FINISHED, PROMOTION_PENDING, PROMOTED, CLEANUP_STARTED]}
+                  intentId: {type: string, nullable: true}
+                  finishedOrigin: {type: boolean}
+        '401': {description: Missing or invalid authentication}
+        '403': {description: Not an advice seeker}
+    post:
+      tags: [live-chat-conversion-controller]
+      operationId: convertOwnLiveChatAccount
+      summary: 'Establish durable credentials for the caller’s anonymous Live Chat identity [Authorization: Role: user]'
+      security:
+        - Bearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedUserId, intentId, password, recoveryKeySaved]
+              properties:
+                expectedUserId: {type: string}
+                intentId: {type: string, format: uuid}
+                password: {type: string, format: password, minLength: 16, writeOnly: true}
+                recoveryKeySaved: {type: boolean, enum: [true], description: User confirms that the existing recovery key has been saved}
+      responses:
+        '200':
+          description: The account was promoted; its login name is returned without changing its identity
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [username]
+                properties:
+                  username: {type: string}
+        '400': {description: Invalid request or no anonymous Live Chat}
+        '401': {description: Missing or invalid authentication}
+        '403': {description: Not an advice seeker}
+        '409': {description: Cleanup started or conversion intent conflicts}
+        '500': {description: Identity service failure; the pending claim remains protected for retry}
   /users/temporary-account:
     get:
       tags: [direct-link-controller]
