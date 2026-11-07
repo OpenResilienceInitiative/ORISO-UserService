@@ -257,6 +257,38 @@ public class CreateUserFacadeTest {
   }
 
   @Test
+  void signupAliasContainingThePasswordIsRefusedBeforeIdentityOrAccountEffects() {
+    var password = "Sichere-Passphrase9!";
+    var alias = "Name " + password;
+    var dto =
+        UserDTO.builder()
+            .username("new-login")
+            .password(password)
+            .postcode("12345")
+            .agencyId(700L)
+            .consultingType("1")
+            .termsAccepted("true")
+            .displayName(alias)
+            .build();
+    var names = mock(de.caritas.cob.userservice.api.service.SessionDataService.class);
+    when(names.validateRegistrationNames(
+            "new-login", alias, 42L, ConversationType.AGENCY_COUNSELLING))
+        .thenReturn(alias);
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        createUserFacade, "sessionDataService", names);
+    TenantContext.setCurrentTenant(42L);
+    try {
+      assertThrows(
+          BadRequestException.class,
+          () -> createUserFacade.createUserAccountWithInitializedConsultingType(dto));
+    } finally {
+      TenantContext.clear();
+    }
+    org.mockito.Mockito.verifyNoInteractions(
+        identityClient, matrixSynapseService, userService, createNewSessionFacade);
+  }
+
+  @Test
   void customSignupAliasIsRefusedBeforeIdentityOrAccountEffectsWhenTypingIsDisabled() {
     var dto =
         UserDTO.builder()
