@@ -134,14 +134,31 @@ class TopicServiceTest {
 
   @Test
   void managementTopicNames_includeInactiveTopicsFromTheSelectedTenant() {
+    var headers = new HttpHeaders();
+    headers.setBearerAuth("test-token");
+    headers.set("X-CSRF-Token", "test-csrf");
+    when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders()).thenReturn(headers);
     when(topicServiceApiControllerFactory.createScopedControllerApi()).thenReturn(controllerApi);
-    when(controllerApi.getAllTopics())
-        .thenReturn(List.of(new TopicDTO().id(99L).name("Schuldenberatung")));
+    var topic = new TopicDTO().id(99L).name("Schuldenberatung");
+    when(controllerApi.getAllTopics()).thenReturn(List.of(topic));
 
-    assertThat(service.getTopicNamesForTenant(2L)).containsOnlyKeys(99L);
+    assertThat(service.getTopicNamesForTenant(2L)).containsExactlyEntriesOf(Map.of(99L, topic));
     verify(apiClient).addDefaultHeader("tenantId", "2");
+    verify(apiClient).addDefaultHeader(HttpHeaders.AUTHORIZATION, "Bearer test-token");
+    verify(apiClient).addDefaultHeader("X-CSRF-Token", "test-csrf");
+    verify(apiClient).addDefaultHeader(HttpHeaders.COOKIE, "lang=de");
+    verify(topicServiceApiControllerFactory, never()).createControllerApi();
     verify(controllerApi, never()).getAllActiveTopics();
     verify(tenantHeaderSupplier, never()).addTenantHeader(any());
+  }
+
+  @Test
+  void managementTopicNames_returnsAnEmptyMapWhenScopedApiReturnsNoBody() {
+    when(topicServiceApiControllerFactory.createScopedControllerApi()).thenReturn(controllerApi);
+    when(controllerApi.getAllTopics()).thenReturn(null);
+
+    assertThat(service.getTopicNamesForTenant(2L)).isEmpty();
+    verify(topicServiceApiControllerFactory, never()).createControllerApi();
   }
 
   @Test

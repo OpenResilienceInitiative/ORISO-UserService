@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryResponseDTO;
@@ -161,6 +162,47 @@ class AgencyInviteLinkControllerTest {
   }
 
   @Test
+  void list_keepsRowsAndResolvesTopicLabelsOncePerTenantWhenOneLookupFails() {
+    var secondLink = sampleLink();
+    secondLink.setId(2L);
+    var otherTenantLink = sampleLink();
+    otherTenantLink.setTenantId(8L);
+    var legacyLink = sampleLink();
+    legacyLink.setLinkKind("TENANT");
+    var linkWithoutTopic = sampleLink();
+    linkWithoutTopic.setTopicId(null);
+    linkWithoutTopic.setTenantId(9L);
+    when(agencyInviteLinkService.list(null, null, null, null, 0, 20))
+        .thenReturn(
+            new PageImpl<>(
+                List.of(sampleLink(), secondLink, otherTenantLink, legacyLink, linkWithoutTopic)));
+    when(topicService.getTopicNamesForTenant(7L))
+        .thenThrow(new ResourceAccessException("TopicService unavailable for this tenant"));
+    when(topicService.getTopicNamesForTenant(8L))
+        .thenReturn(Map.of(99L, new TopicDTO().name("Selected tenant topic")));
+    when(topicService.getAllTopicsMap())
+        .thenReturn(Map.of(99L, new TopicDTO().name("Legacy topic")));
+
+    var response = controller.list(null, null, null, null, 0, 20);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    var body =
+        assertInstanceOf(
+            AgencyInviteLinkController.PagedInviteLinksResponseDTO.class, response.getBody());
+    assertEquals(5, body.getContent().size());
+    assertEquals(99L, body.getContent().get(0).getTopicId());
+    assertNull(body.getContent().get(0).getTopicName());
+    assertNull(body.getContent().get(1).getTopicName());
+    assertEquals("Selected tenant topic", body.getContent().get(2).getTopicName());
+    assertEquals("Legacy topic", body.getContent().get(3).getTopicName());
+    assertNull(body.getContent().get(4).getTopicName());
+    verify(topicService).getTopicNamesForTenant(7L);
+    verify(topicService).getTopicNamesForTenant(8L);
+    verify(topicService).getAllTopicsMap();
+    verifyNoMoreInteractions(topicService);
+  }
+
+  @Test
   void redeem_existingTokenWithSession_returnsSessionAndMetadata() {
     // Business reason: redeem flow must return immediate session credentials when provisioned by
     // backend.
@@ -197,12 +239,16 @@ class AgencyInviteLinkControllerTest {
   }
 
   @Test
-  void createAndList_havePreAuthorizeAnnotation() throws Exception {
+  void createListAndTopicPicker_havePreAuthorizeAnnotation() throws Exception {
     // Business reason: invite link administration endpoints must remain restricted to admin
     // authorities.
     assertHasPreAuthorize("create", AgencyInviteLinkController.CreateInviteLinkRequestDTO.class);
     assertHasPreAuthorize(
         "list", String.class, Long.class, String.class, String.class, Integer.class, Integer.class);
+    var picker = AgencyInviteLinkController.class.getMethod("liveChatTopics");
+    assertEquals(
+        "hasAuthority('AUTHORIZATION_USER_ADMIN')",
+        picker.getAnnotation(PreAuthorize.class).value());
   }
 
   @Test

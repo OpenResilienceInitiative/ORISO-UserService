@@ -182,6 +182,28 @@ class AgencyInviteLinkServiceTest {
   }
 
   @Test
+  void topicPicker_readsTopicsOfThePlatformSelectedTenant() {
+    selectManagementTenant(2L);
+    when(tenantService.getRestrictedTenantDataFresh(2L))
+        .thenReturn(new RestrictedTenantDTO().id(2L));
+    var topic = new TopicDTO().id(99L).name("Schuldenberatung");
+    when(topicService.getActiveTopicsForTenant(2L)).thenReturn(List.of(topic));
+
+    assertThat(service.getLiveChatLinkTopics()).containsExactly(topic);
+    verify(topicService).getActiveTopicsForTenant(2L);
+  }
+
+  @Test
+  void topicPicker_rejectsPlatformAdminWithoutTenantSelection() {
+    when(adminScope.current()).thenReturn(new AdminScope.Platform());
+    RequestContextHolder.setRequestAttributes(
+        new ServletRequestAttributes(new MockHttpServletRequest()));
+
+    assertThatThrownBy(service::getLiveChatLinkTopics).isInstanceOf(ForbiddenException.class);
+    verifyNoInteractions(tenantService, topicService);
+  }
+
+  @Test
   void create_Should_ThrowBadRequest_When_LinkKindIsCounsellorButNoConsultantId() {
     CreateInviteLinkCommand cmd = new CreateInviteLinkCommand();
     cmd.setLinkKind(InviteLinkKind.COUNSELLOR.name());

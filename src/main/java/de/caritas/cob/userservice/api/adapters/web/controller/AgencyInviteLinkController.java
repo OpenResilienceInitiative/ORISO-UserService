@@ -52,24 +52,21 @@ public class AgencyInviteLinkController {
     if (link.getTopicId() != null) {
       names =
           AgencyInviteLinkService.isExternalLiveChat(link.getLinkKind(), link.getChatType())
-              ? scopedTopics.computeIfAbsent(
-                  link.getTenantId(), topicService::getTopicNamesForTenant)
+              ? scopedTopics.computeIfAbsent(link.getTenantId(), this::getScopedTopicNames)
               : topicService.getAllTopicsMap();
     }
     return AgencyInviteLinkResponseDTO.from(link, names);
   }
 
-  private AgencyInviteLinkResponseDTO toMutationResponse(AgencyInviteLink link) {
-    if (AgencyInviteLinkService.isExternalLiveChat(link.getLinkKind(), link.getChatType())) {
-      try {
-        return toResponse(link, new HashMap<>());
-      } catch (RestClientException | ServiceUnavailableException unavailable) {
-        // The write has already succeeded. An optional display label must not invite a retry.
-        log.warn("Could not resolve the topic name for invite link {}", link.getId());
-        return AgencyInviteLinkResponseDTO.from(link, Map.of());
-      }
+  private Map<Long, TopicDTO> getScopedTopicNames(Long tenantId) {
+    try {
+      return topicService.getTopicNamesForTenant(tenantId);
+    } catch (RestClientException | ServiceUnavailableException unavailable) {
+      // Display names are optional and resolving them must not turn a committed write into an
+      // error.
+      log.warn("Could not resolve topic names for tenant {}", tenantId);
+      return Map.of();
     }
-    return toResponse(link, new HashMap<>());
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -93,7 +90,7 @@ public class AgencyInviteLinkController {
       cmd.setExpiresInDays(request.getExpiresInDays());
     }
     AgencyInviteLink link = agencyInviteLinkService.create(cmd);
-    return new ResponseEntity<>(toMutationResponse(link), HttpStatus.CREATED);
+    return new ResponseEntity<>(toResponse(link, new HashMap<>()), HttpStatus.CREATED);
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -150,7 +147,7 @@ public class AgencyInviteLinkController {
   @PostMapping("/useradmin/invitelinks/{linkId}/deactivate")
   public ResponseEntity<AgencyInviteLinkResponseDTO> deactivate(@PathVariable Long linkId) {
     AgencyInviteLink link = agencyInviteLinkService.deactivate(linkId);
-    return ResponseEntity.ok(toMutationResponse(link));
+    return ResponseEntity.ok(toResponse(link, new HashMap<>()));
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -162,7 +159,7 @@ public class AgencyInviteLinkController {
   @PostMapping("/useradmin/invitelinks/{linkId}/reactivate")
   public ResponseEntity<AgencyInviteLinkResponseDTO> reactivate(@PathVariable Long linkId) {
     AgencyInviteLink link = agencyInviteLinkService.reactivate(linkId);
-    return ResponseEntity.ok(toMutationResponse(link));
+    return ResponseEntity.ok(toResponse(link, new HashMap<>()));
   }
 
   // ---------------------------------------------------------------------------------------------
