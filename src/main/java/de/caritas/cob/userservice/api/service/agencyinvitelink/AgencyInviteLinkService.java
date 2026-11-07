@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
@@ -36,6 +37,8 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
@@ -89,6 +92,10 @@ public class AgencyInviteLinkService {
     }
 
     Long callerTenantId = requireCallerTenantId();
+    if (isExternalLiveChat(cmd.getLinkKind(), cmd.getChatType())
+        && adminScope.current() instanceof AdminScope.Platform) {
+      requireExistingLiveChatManagementTenant(callerTenantId);
+    }
 
     Integer consultingTypeId = null;
     if (cmd.getAgencyId() != null) {
@@ -176,6 +183,11 @@ public class AgencyInviteLinkService {
     }
 
     var reach = adminScope.current();
+    if (reach instanceof AdminScope.Platform
+        && InviteLinkKind.EXTERNAL_INBOUND.name().equals(linkKind)
+        && (chatType == null || InviteLinkChatType.LIVE_CHAT.name().equals(chatType))) {
+      requireExistingLiveChatManagementTenant(callerTenantId);
+    }
     Page<AgencyInviteLink> result;
     if (reach instanceof AdminScope.Agencies agencies) {
       if (agencies.ids().isEmpty()) {
@@ -270,7 +282,24 @@ public class AgencyInviteLinkService {
   public List<TopicDTO> getLiveChatLinkTopics() {
     requireLiveChatLinkWriter(
         InviteLinkKind.EXTERNAL_INBOUND.name(), InviteLinkChatType.LIVE_CHAT.name());
-    return topicService.getActiveTopicsForTenant(requireCallerTenantId());
+    Long tenantId = requireCallerTenantId();
+    requireExistingLiveChatManagementTenant(tenantId);
+    return topicService.getActiveTopicsForTenant(tenantId);
+  }
+
+  private void requireExistingLiveChatManagementTenant(Long tenantId) {
+    try {
+      var tenant = tenantService.getRestrictedTenantDataFresh(tenantId);
+      if (tenant == null || !Objects.equals(tenantId, tenant.getId())) {
+        throw new NotFoundException("Tenant %s not found", tenantId);
+      }
+    } catch (RestClientException unavailable) {
+      if (unavailable instanceof RestClientResponseException response
+          && response.getStatusCode().value() == 404) {
+        throw new NotFoundException("Tenant %s not found", tenantId);
+      }
+      throw new ServiceUnavailableException("Selected tenant could not be verified");
+    }
   }
 
   public static boolean isExternalLiveChat(String kind, String chatType) {

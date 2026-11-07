@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryResponseDTO;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.AgencyInviteLinkService;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.AgencyInviteLinkService.CreateInviteLinkCommand;
@@ -13,6 +14,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -24,9 +26,11 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.client.RestClientException;
 
 @RestController
 @RequiredArgsConstructor
+@Slf4j
 public class AgencyInviteLinkController {
 
   private final @NonNull AgencyInviteLinkService agencyInviteLinkService;
@@ -55,6 +59,19 @@ public class AgencyInviteLinkController {
     return AgencyInviteLinkResponseDTO.from(link, names);
   }
 
+  private AgencyInviteLinkResponseDTO toMutationResponse(AgencyInviteLink link) {
+    if (AgencyInviteLinkService.isExternalLiveChat(link.getLinkKind(), link.getChatType())) {
+      try {
+        return toResponse(link, new HashMap<>());
+      } catch (RestClientException | ServiceUnavailableException unavailable) {
+        // The write has already succeeded. An optional display label must not invite a retry.
+        log.warn("Could not resolve the topic name for invite link {}", link.getId());
+        return AgencyInviteLinkResponseDTO.from(link, Map.of());
+      }
+    }
+    return toResponse(link, new HashMap<>());
+  }
+
   // ---------------------------------------------------------------------------------------------
   // POST /useradmin/invitelinks — create a new topic-based invite link.
   // ---------------------------------------------------------------------------------------------
@@ -76,7 +93,7 @@ public class AgencyInviteLinkController {
       cmd.setExpiresInDays(request.getExpiresInDays());
     }
     AgencyInviteLink link = agencyInviteLinkService.create(cmd);
-    return new ResponseEntity<>(toResponse(link, new HashMap<>()), HttpStatus.CREATED);
+    return new ResponseEntity<>(toMutationResponse(link), HttpStatus.CREATED);
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -133,7 +150,7 @@ public class AgencyInviteLinkController {
   @PostMapping("/useradmin/invitelinks/{linkId}/deactivate")
   public ResponseEntity<AgencyInviteLinkResponseDTO> deactivate(@PathVariable Long linkId) {
     AgencyInviteLink link = agencyInviteLinkService.deactivate(linkId);
-    return ResponseEntity.ok(toResponse(link, new HashMap<>()));
+    return ResponseEntity.ok(toMutationResponse(link));
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -145,7 +162,7 @@ public class AgencyInviteLinkController {
   @PostMapping("/useradmin/invitelinks/{linkId}/reactivate")
   public ResponseEntity<AgencyInviteLinkResponseDTO> reactivate(@PathVariable Long linkId) {
     AgencyInviteLink link = agencyInviteLinkService.reactivate(linkId);
-    return ResponseEntity.ok(toResponse(link, new HashMap<>()));
+    return ResponseEntity.ok(toMutationResponse(link));
   }
 
   // ---------------------------------------------------------------------------------------------

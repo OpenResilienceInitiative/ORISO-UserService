@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
@@ -27,6 +28,7 @@ import de.caritas.cob.userservice.api.service.agencyinvitelink.AgencyInviteLinkS
 import de.caritas.cob.userservice.api.service.agencyinvitelink.AgencyInviteLinkService.RedeemContext;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -41,7 +43,9 @@ import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
@@ -120,6 +124,8 @@ class AgencyInviteLinkServiceTest {
   @Test
   void createLiveChatLink_checksTopicInSelectedTenantNotInHostTenant() {
     selectManagementTenant(2L);
+    when(tenantService.getRestrictedTenantDataFresh(2L))
+        .thenReturn(new RestrictedTenantDTO().id(2L));
     var cmd = new CreateInviteLinkCommand();
     cmd.setLinkKind("EXTERNAL_INBOUND");
     cmd.setChatType("LIVE_CHAT");
@@ -138,6 +144,8 @@ class AgencyInviteLinkServiceTest {
   @Test
   void createLiveChatLink_rejectsTopicAbsentFromTheSelectedTenant() {
     selectManagementTenant(2L);
+    when(tenantService.getRestrictedTenantDataFresh(2L))
+        .thenReturn(new RestrictedTenantDTO().id(2L));
     var cmd = new CreateInviteLinkCommand();
     cmd.setLinkKind("EXTERNAL_INBOUND");
     cmd.setChatType("LIVE_CHAT");
@@ -146,6 +154,22 @@ class AgencyInviteLinkServiceTest {
 
     assertThatThrownBy(() -> service.create(cmd)).isInstanceOf(NotFoundException.class);
     verify(repository, Mockito.never()).save(any());
+  }
+
+  @Test
+  void liveChatManagement_rejectsUnknownPlatformTenantBeforeReadingTopicsOrLinks() {
+    selectManagementTenant(999L);
+    when(tenantService.getRestrictedTenantDataFresh(999L))
+        .thenThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND));
+    var cmd = new CreateInviteLinkCommand();
+    cmd.setTopicId(99L);
+
+    assertThatThrownBy(service::getLiveChatLinkTopics).isInstanceOf(NotFoundException.class);
+    assertThatThrownBy(() -> service.create(cmd)).isInstanceOf(NotFoundException.class);
+    assertThatThrownBy(() -> service.list("EXTERNAL_INBOUND", null, null, null, 0, 20))
+        .isInstanceOf(NotFoundException.class);
+
+    verifyNoInteractions(topicService, repository);
   }
 
   @Test

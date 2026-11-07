@@ -1160,6 +1160,8 @@ class UserAdminAgencyScopeIT {
         UserRole.AGENCY_ADMIN,
         UserRole.USER_ADMIN);
 
+    when(tenantService.getRestrictedTenantDataFresh(OWN_TENANT))
+        .thenReturn(new RestrictedTenantDTO().id(OWN_TENANT));
     assertStatus(
         mockMvc.perform(createInviteLink("{}").header("X-Tenant-Id", OWN_TENANT)).andReturn(), 201);
     var link = agencyInviteLinkRepository.findAll().iterator().next();

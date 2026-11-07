@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -11,6 +12,7 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryResponseDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.AgencyInviteLinkService;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.AgencyInviteLinkService.CreateInviteLinkCommand;
@@ -29,6 +31,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.client.ResourceAccessException;
 
 @ExtendWith(MockitoExtension.class)
 class AgencyInviteLinkControllerTest {
@@ -65,6 +68,47 @@ class AgencyInviteLinkControllerTest {
     verify(agencyInviteLinkService).create(captor.capture());
     assertEquals(9L, captor.getValue().getAgencyId());
     assertEquals(99L, captor.getValue().getTopicId());
+  }
+
+  @Test
+  void create_keepsSuccessWhenScopedTopicNameCannotBeRead() {
+    when(agencyInviteLinkService.create(any())).thenReturn(sampleLink());
+    when(topicService.getTopicNamesForTenant(7L))
+        .thenThrow(new ResourceAccessException("TopicService unavailable"));
+
+    var response = controller.create(new AgencyInviteLinkController.CreateInviteLinkRequestDTO());
+
+    assertEquals(HttpStatus.CREATED, response.getStatusCode());
+    assertEquals(99L, response.getBody().getTopicId());
+    assertNull(response.getBody().getTopicName());
+  }
+
+  @Test
+  void deactivate_keepsSuccessWhenScopedTopicNameCannotBeRead() {
+    var link = sampleLink();
+    link.setStatus("DISABLED");
+    when(agencyInviteLinkService.deactivate(5L)).thenReturn(link);
+    when(topicService.getTopicNamesForTenant(7L))
+        .thenThrow(new ResourceAccessException("TopicService unavailable"));
+
+    var response = controller.deactivate(5L);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertEquals("DISABLED", response.getBody().getStatus());
+    assertNull(response.getBody().getTopicName());
+  }
+
+  @Test
+  void reactivate_keepsSuccessWhenScopedTopicNameCannotBeRead() {
+    when(agencyInviteLinkService.reactivate(5L)).thenReturn(sampleLink());
+    when(topicService.getTopicNamesForTenant(7L))
+        .thenThrow(new ServiceUnavailableException("Scoped topic lookup is not configured"));
+
+    var response = controller.reactivate(5L);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertEquals("ACTIVE", response.getBody().getStatus());
+    assertNull(response.getBody().getTopicName());
   }
 
   @Test
