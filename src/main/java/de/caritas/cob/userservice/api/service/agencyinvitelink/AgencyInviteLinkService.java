@@ -103,7 +103,13 @@ public class AgencyInviteLinkService {
     }
 
     if (cmd.getTopicId() != null) {
-      TopicDTO topic = topicService.getTopicById(cmd.getTopicId());
+      TopicDTO topic =
+          isExternalLiveChat(cmd.getLinkKind(), cmd.getChatType())
+              ? topicService.getActiveTopicsForTenant(callerTenantId).stream()
+                  .filter(candidate -> Objects.equals(candidate.getId(), cmd.getTopicId()))
+                  .findFirst()
+                  .orElse(null)
+              : topicService.getTopicById(cmd.getTopicId());
       if (topic == null) {
         throw new NotFoundException("Topic %s not found", cmd.getTopicId());
       }
@@ -261,10 +267,19 @@ public class AgencyInviteLinkService {
     adminScope.assertMay(Target.placedIn(link.getTenantId(), link.getAgencyId()));
   }
 
+  public List<TopicDTO> getLiveChatLinkTopics() {
+    requireLiveChatLinkWriter(
+        InviteLinkKind.EXTERNAL_INBOUND.name(), InviteLinkChatType.LIVE_CHAT.name());
+    return topicService.getActiveTopicsForTenant(requireCallerTenantId());
+  }
+
+  public static boolean isExternalLiveChat(String kind, String chatType) {
+    return InviteLinkKind.EXTERNAL_INBOUND.name().equals(kind)
+        && InviteLinkChatType.LIVE_CHAT.name().equals(chatType);
+  }
+
   private void requireLiveChatLinkWriter(String kind, String chatType) {
-    if (InviteLinkKind.EXTERNAL_INBOUND.name().equals(kind)
-        && InviteLinkChatType.LIVE_CHAT.name().equals(chatType)
-        && !authenticatedUser.isPlatformAdmin()) {
+    if (isExternalLiveChat(kind, chatType) && !authenticatedUser.isPlatformAdmin()) {
       throw new ForbiddenException("Only platform admins can manage external live-chat links");
     }
   }

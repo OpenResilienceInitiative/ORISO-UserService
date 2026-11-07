@@ -118,6 +118,33 @@ class TopicServiceTest {
   }
 
   @Test
+  void activeManagementTopics_useTheExplicitTenantAndPublicLanguage() {
+    when(topicServiceApiControllerFactory.createScopedControllerApi()).thenReturn(controllerApi);
+    var request = new MockHttpServletRequest();
+    request.addHeader(HttpHeaders.ACCEPT_LANGUAGE, "en");
+    RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
+
+    service.getActiveTopicsForTenant(2L);
+
+    verify(apiClient).addDefaultHeader("tenantId", "2");
+    verify(apiClient).addDefaultHeader(HttpHeaders.COOKIE, "lang=en");
+    verify(tenantHeaderSupplier, never()).addTenantHeader(any());
+    verify(securityHeaderSupplier, never()).getKeycloakAndCsrfHttpHeaders();
+  }
+
+  @Test
+  void managementTopicNames_includeInactiveTopicsFromTheSelectedTenant() {
+    when(topicServiceApiControllerFactory.createScopedControllerApi()).thenReturn(controllerApi);
+    when(controllerApi.getAllTopics())
+        .thenReturn(List.of(new TopicDTO().id(99L).name("Schuldenberatung")));
+
+    assertThat(service.getTopicNamesForTenant(2L)).containsOnlyKeys(99L);
+    verify(apiClient).addDefaultHeader("tenantId", "2");
+    verify(controllerApi, never()).getAllActiveTopics();
+    verify(tenantHeaderSupplier, never()).addTenantHeader(any());
+  }
+
+  @Test
   void getAllTopics_Should_NotAddPublicLanguageCookieToAuthenticatedLookup() {
     service.getAllTopics();
 

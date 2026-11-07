@@ -27,6 +27,7 @@ import de.caritas.cob.userservice.api.service.agencyinvitelink.AgencyInviteLinkS
 import de.caritas.cob.userservice.api.service.agencyinvitelink.AgencyInviteLinkService.RedeemContext;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -40,6 +41,9 @@ import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -75,6 +79,7 @@ class AgencyInviteLinkServiceTest {
   @AfterEach
   void clearTenantContext() {
     TenantContext.clear();
+    RequestContextHolder.resetRequestAttributes();
   }
 
   // --- create ---
@@ -103,6 +108,53 @@ class AgencyInviteLinkServiceTest {
 
     assertThat(result).isNotNull();
     verify(repository).save(any(AgencyInviteLink.class));
+  }
+
+  private void selectManagementTenant(long tenantId) {
+    when(adminScope.current()).thenReturn(new AdminScope.Platform());
+    var request = new MockHttpServletRequest();
+    request.addHeader("X-Tenant-Id", String.valueOf(tenantId));
+    RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
+  }
+
+  @Test
+  void createLiveChatLink_checksTopicInSelectedTenantNotInHostTenant() {
+    selectManagementTenant(2L);
+    var cmd = new CreateInviteLinkCommand();
+    cmd.setLinkKind("EXTERNAL_INBOUND");
+    cmd.setChatType("LIVE_CHAT");
+    cmd.setTopicId(99L);
+    when(topicService.getActiveTopicsForTenant(2L))
+        .thenReturn(List.of(new TopicDTO().id(99L).name("Moabit")));
+    when(repository.save(any())).thenAnswer(call -> call.getArgument(0));
+
+    var link = service.create(cmd);
+
+    assertThat(link.getTenantId()).isEqualTo(2L);
+    assertThat(link.getTopicId()).isEqualTo(99L);
+    verify(topicService, Mockito.never()).getTopicById(any());
+  }
+
+  @Test
+  void createLiveChatLink_rejectsTopicAbsentFromTheSelectedTenant() {
+    selectManagementTenant(2L);
+    var cmd = new CreateInviteLinkCommand();
+    cmd.setLinkKind("EXTERNAL_INBOUND");
+    cmd.setChatType("LIVE_CHAT");
+    cmd.setTopicId(99L);
+    when(topicService.getActiveTopicsForTenant(2L)).thenReturn(List.of());
+
+    assertThatThrownBy(() -> service.create(cmd)).isInstanceOf(NotFoundException.class);
+    verify(repository, Mockito.never()).save(any());
+  }
+
+  @Test
+  void topicPicker_rejectsTenantAdminWithoutReadingTopics() {
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
+
+    assertThatThrownBy(() -> service.getLiveChatLinkTopics())
+        .isInstanceOf(ForbiddenException.class);
+    verify(topicService, Mockito.never()).getActiveTopicsForTenant(any());
   }
 
   @Test
