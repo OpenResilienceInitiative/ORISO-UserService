@@ -54,7 +54,7 @@ class AgencyInviteLinkControllerTest {
 
     var topic = mock(TopicDTO.class);
     when(topic.getName()).thenReturn("Crisis Support");
-    when(topicService.getAllTopicsMap()).thenReturn(Map.of(99L, topic));
+    when(topicService.getTopicNamesForTenant(7L)).thenReturn(Map.of(99L, topic));
     when(agencyInviteLinkService.create(any())).thenReturn(sampleLink());
 
     var response = controller.create(request);
@@ -65,6 +65,16 @@ class AgencyInviteLinkControllerTest {
     verify(agencyInviteLinkService).create(captor.capture());
     assertEquals(9L, captor.getValue().getAgencyId());
     assertEquals(99L, captor.getValue().getTopicId());
+  }
+
+  @Test
+  void liveChatTopics_returnsOnlyTopicIdentityAndName() {
+    when(agencyInviteLinkService.getLiveChatLinkTopics())
+        .thenReturn(List.of(new TopicDTO().id(99L).name("Schuldenberatung")));
+
+    assertEquals(
+        List.of(new AgencyInviteLinkController.LiveChatTopic(99L, "Schuldenberatung")),
+        controller.liveChatTopics());
   }
 
   @Test
@@ -82,7 +92,7 @@ class AgencyInviteLinkControllerTest {
     // sent.
     var topic = mock(TopicDTO.class);
     when(topic.getName()).thenReturn("Topic");
-    when(topicService.getAllTopicsMap()).thenReturn(Map.of(99L, topic));
+    when(topicService.getTopicNamesForTenant(7L)).thenReturn(Map.of(99L, topic));
     when(agencyInviteLinkService.list(null, null, null, null, 0, 20))
         .thenReturn(new PageImpl<>(List.of(sampleLink())));
 
@@ -95,7 +105,7 @@ class AgencyInviteLinkControllerTest {
   @Test
   void list_withPagination_returnsPagedWrapper() {
     // Business reason: new frontend needs pagination metadata for incremental table loading.
-    when(topicService.getAllTopicsMap()).thenReturn(Map.of());
+    when(topicService.getTopicNamesForTenant(7L)).thenReturn(Map.of());
     when(agencyInviteLinkService.list(null, null, null, null, 1, 5))
         .thenReturn(new PageImpl<>(List.of(sampleLink())));
 
@@ -157,7 +167,7 @@ class AgencyInviteLinkControllerTest {
     var link = sampleLink();
     link.setStatus("DISABLED");
     when(agencyInviteLinkService.deactivate(5L)).thenReturn(link);
-    when(topicService.getAllTopicsMap()).thenReturn(Map.of());
+    when(topicService.getTopicNamesForTenant(7L)).thenReturn(Map.of());
 
     var response = controller.deactivate(5L);
 
@@ -197,7 +207,7 @@ class AgencyInviteLinkControllerTest {
 
   @Test
   void reactivate_returnsOkWithLink() {
-    when(topicService.getAllTopicsMap()).thenReturn(Map.of());
+    when(topicService.getTopicNamesForTenant(7L)).thenReturn(Map.of());
     when(agencyInviteLinkService.reactivate(5L)).thenReturn(sampleLink());
 
     var response = controller.reactivate(5L);

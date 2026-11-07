@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.service.agencyinvitelink.AgencyInviteLinkS
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -31,6 +32,29 @@ public class AgencyInviteLinkController {
   private final @NonNull AgencyInviteLinkService agencyInviteLinkService;
   private final @NonNull TopicService topicService;
 
+  @PreAuthorize("hasAuthority('AUTHORIZATION_USER_ADMIN')")
+  @GetMapping("/useradmin/invitelinks/topics")
+  public List<LiveChatTopic> liveChatTopics() {
+    return agencyInviteLinkService.getLiveChatLinkTopics().stream()
+        .map(topic -> new LiveChatTopic(topic.getId(), topic.getName()))
+        .toList();
+  }
+
+  public record LiveChatTopic(Long id, String name) {}
+
+  private AgencyInviteLinkResponseDTO toResponse(
+      AgencyInviteLink link, Map<Long, Map<Long, TopicDTO>> scopedTopics) {
+    Map<Long, TopicDTO> names = Map.of();
+    if (link.getTopicId() != null) {
+      names =
+          AgencyInviteLinkService.isExternalLiveChat(link.getLinkKind(), link.getChatType())
+              ? scopedTopics.computeIfAbsent(
+                  link.getTenantId(), topicService::getTopicNamesForTenant)
+              : topicService.getAllTopicsMap();
+    }
+    return AgencyInviteLinkResponseDTO.from(link, names);
+  }
+
   // ---------------------------------------------------------------------------------------------
   // POST /useradmin/invitelinks — create a new topic-based invite link.
   // ---------------------------------------------------------------------------------------------
@@ -52,9 +76,7 @@ public class AgencyInviteLinkController {
       cmd.setExpiresInDays(request.getExpiresInDays());
     }
     AgencyInviteLink link = agencyInviteLinkService.create(cmd);
-    Map<Long, TopicDTO> topicsMap = topicService.getAllTopicsMap();
-    return new ResponseEntity<>(
-        AgencyInviteLinkResponseDTO.from(link, topicsMap), HttpStatus.CREATED);
+    return new ResponseEntity<>(toResponse(link, new HashMap<>()), HttpStatus.CREATED);
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -81,10 +103,10 @@ public class AgencyInviteLinkController {
 
     Page<AgencyInviteLink> result =
         agencyInviteLinkService.list(linkKind, topicId, chatType, status, pageNum, sizeNum);
-    Map<Long, TopicDTO> topicsMap = topicService.getAllTopicsMap();
+    Map<Long, Map<Long, TopicDTO>> scopedTopics = new HashMap<>();
     List<AgencyInviteLinkResponseDTO> content =
         result.getContent().stream()
-            .map(link -> AgencyInviteLinkResponseDTO.from(link, topicsMap))
+            .map(link -> toResponse(link, scopedTopics))
             .collect(Collectors.toList());
 
     // Old frontend: no pagination params → return plain array (same as the original API)
@@ -111,8 +133,7 @@ public class AgencyInviteLinkController {
   @PostMapping("/useradmin/invitelinks/{linkId}/deactivate")
   public ResponseEntity<AgencyInviteLinkResponseDTO> deactivate(@PathVariable Long linkId) {
     AgencyInviteLink link = agencyInviteLinkService.deactivate(linkId);
-    return ResponseEntity.ok(
-        AgencyInviteLinkResponseDTO.from(link, topicService.getAllTopicsMap()));
+    return ResponseEntity.ok(toResponse(link, new HashMap<>()));
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -124,8 +145,7 @@ public class AgencyInviteLinkController {
   @PostMapping("/useradmin/invitelinks/{linkId}/reactivate")
   public ResponseEntity<AgencyInviteLinkResponseDTO> reactivate(@PathVariable Long linkId) {
     AgencyInviteLink link = agencyInviteLinkService.reactivate(linkId);
-    return ResponseEntity.ok(
-        AgencyInviteLinkResponseDTO.from(link, topicService.getAllTopicsMap()));
+    return ResponseEntity.ok(toResponse(link, new HashMap<>()));
   }
 
   // ---------------------------------------------------------------------------------------------
