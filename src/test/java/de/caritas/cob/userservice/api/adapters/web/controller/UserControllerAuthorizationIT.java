@@ -34,6 +34,8 @@ import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_PUT_U
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_RECORD_SESSION_CONSENT;
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_UPDATE_KEY;
 import static de.caritas.cob.userservice.api.testHelper.RequestBodyConstants.VALID_UPDATE_CHAT_BODY;
+import static de.caritas.cob.userservice.api.testHelper.TestConstants.CHAT_ID;
+import static de.caritas.cob.userservice.api.testHelper.TestConstants.MATRIX_ROOM_ID;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -52,6 +54,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.IdentityManager;
 import de.caritas.cob.userservice.api.Messenger;
+import de.caritas.cob.userservice.api.adapters.web.dto.ChatInfoResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ChatInfoResponseDTO.CallerBanStateEnum;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MobileTokenDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.OneTimePasswordDTO;
@@ -1680,6 +1684,36 @@ class UserControllerAuthorizationIT {
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT})
+  void getChatSerializesOptedInOwnBanStateAndPreservesPlainPollResponse() throws Exception {
+    var ordinaryChat =
+        new ChatInfoResponseDTO().id(CHAT_ID).matrixRoomId(MATRIX_ROOM_ID).active(true);
+    var checkedChat =
+        new ChatInfoResponseDTO()
+            .id(CHAT_ID)
+            .matrixRoomId(MATRIX_ROOM_ID)
+            .active(true)
+            .callerBanState(CallerBanStateEnum.BANNED);
+    when(getChatFacade.getChat(CHAT_ID, null)).thenReturn(ordinaryChat);
+    when(getChatFacade.getChat(CHAT_ID, true)).thenReturn(checkedChat);
+
+    mvc.perform(get(PATH_GET_CHAT).queryParam("includeCallerBan", "true"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.callerBanState").value("BANNED"));
+    mvc.perform(get(PATH_GET_CHAT))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.callerBanState").doesNotHaveJsonPath());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.ANONYMOUS_DEFAULT})
+  void anonymousAccountCannotOptIntoCallerBanLookup() throws Exception {
+    mvc.perform(get(PATH_GET_CHAT).queryParam("includeCallerBan", "true"))
+        .andExpect(status().isForbidden());
+    verifyNoMoreInteractions(getChatFacade);
   }
 
   /** PUT on /users/chat/{chatId}/stop */
