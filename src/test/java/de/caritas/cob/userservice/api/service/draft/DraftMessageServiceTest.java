@@ -1,7 +1,9 @@
 package de.caritas.cob.userservice.api.service.draft;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -9,6 +11,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.model.DraftMessage;
 import de.caritas.cob.userservice.api.port.out.DraftMessageRepository;
 import de.caritas.cob.userservice.api.service.draft.DraftMessageService.DraftFeedResponse;
@@ -124,6 +127,24 @@ class DraftMessageServiceTest {
   }
 
   // #983: an E2EE draft is opaque ciphertext without markup and must never be treated as empty.
+  @Test
+  void legacyWritesRetainTheTextLimitInUtf8Bytes() {
+    String withinLimit = "é".repeat(32_767) + "a";
+    when(draftMessageRepository.findForUpdateByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(
+            USER_ID, SCOPE_KEY))
+        .thenReturn(Optional.empty());
+
+    assertThatThrownBy(
+            () ->
+                draftMessageService.upsertDraft(
+                    USER_ID, SCOPE_KEY, upsertRequest(withinLimit + "a"), TENANT_ID))
+        .isInstanceOf(BadRequestException.class);
+    verifyNoInteractions(draftMessageRepository);
+
+    draftMessageService.upsertDraft(USER_ID, SCOPE_KEY, upsertRequest(withinLimit), TENANT_ID);
+    verify(draftMessageRepository).save(argThat(draft -> withinLimit.equals(draft.getText())));
+  }
+
   @Test
   void upsertDraft_encryptedDraft_isPersisted() {
     when(draftMessageRepository.findForUpdateByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(
@@ -307,7 +328,7 @@ class DraftMessageServiceTest {
             .text("feed item")
             .updateDate(LocalDateTime.of(2024, 3, 1, 8, 0))
             .build();
-    when(draftMessageRepository.findByUserIdOrderByUpdateDateDescIdDesc(
+    when(draftMessageRepository.findByUserIdAndProtectedScopeKeyIsNullOrderByUpdateDateDescIdDesc(
             eq(USER_ID), any(Pageable.class)))
         .thenReturn(List.of(draft));
 
@@ -321,7 +342,7 @@ class DraftMessageServiceTest {
 
   @Test
   void getDrafts_negativePage_clampsPageToZero() {
-    when(draftMessageRepository.findByUserIdOrderByUpdateDateDescIdDesc(
+    when(draftMessageRepository.findByUserIdAndProtectedScopeKeyIsNullOrderByUpdateDateDescIdDesc(
             eq(USER_ID), any(Pageable.class)))
         .thenReturn(List.of());
 
@@ -333,7 +354,7 @@ class DraftMessageServiceTest {
 
   @Test
   void getDrafts_zeroPerPage_clampsPerPageToOne() {
-    when(draftMessageRepository.findByUserIdOrderByUpdateDateDescIdDesc(
+    when(draftMessageRepository.findByUserIdAndProtectedScopeKeyIsNullOrderByUpdateDateDescIdDesc(
             eq(USER_ID), any(Pageable.class)))
         .thenReturn(List.of());
 
@@ -345,7 +366,7 @@ class DraftMessageServiceTest {
 
   @Test
   void getDrafts_perPageAboveMax_clampsPerPageToTwoHundred() {
-    when(draftMessageRepository.findByUserIdOrderByUpdateDateDescIdDesc(
+    when(draftMessageRepository.findByUserIdAndProtectedScopeKeyIsNullOrderByUpdateDateDescIdDesc(
             eq(USER_ID), any(Pageable.class)))
         .thenReturn(List.of());
 
@@ -356,7 +377,7 @@ class DraftMessageServiceTest {
 
   @Test
   void getDrafts_perPageWithinRange_keepsPerPageUnchanged() {
-    when(draftMessageRepository.findByUserIdOrderByUpdateDateDescIdDesc(
+    when(draftMessageRepository.findByUserIdAndProtectedScopeKeyIsNullOrderByUpdateDateDescIdDesc(
             eq(USER_ID), any(Pageable.class)))
         .thenReturn(List.of());
 
@@ -367,7 +388,7 @@ class DraftMessageServiceTest {
 
   @Test
   void getDrafts_validPagination_forwardsClampedPageRequestToRepository() {
-    when(draftMessageRepository.findByUserIdOrderByUpdateDateDescIdDesc(
+    when(draftMessageRepository.findByUserIdAndProtectedScopeKeyIsNullOrderByUpdateDateDescIdDesc(
             eq(USER_ID), any(Pageable.class)))
         .thenReturn(List.of());
 
@@ -375,7 +396,8 @@ class DraftMessageServiceTest {
 
     ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
     verify(draftMessageRepository)
-        .findByUserIdOrderByUpdateDateDescIdDesc(eq(USER_ID), pageableCaptor.capture());
+        .findByUserIdAndProtectedScopeKeyIsNullOrderByUpdateDateDescIdDesc(
+            eq(USER_ID), pageableCaptor.capture());
     Pageable pageable = pageableCaptor.getValue();
     assertThat(pageable).isEqualTo(PageRequest.of(0, 200));
   }

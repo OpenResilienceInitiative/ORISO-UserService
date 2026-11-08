@@ -44,6 +44,17 @@ public class DraftMessageController {
         .body(draftMessageService.getDrafts(authenticatedUser.getUserId(), page, perPage));
   }
 
+  @GetMapping("/protected")
+  public ResponseEntity<DraftMessageService.DraftFeedResponse> getProtectedDrafts(
+      @RequestParam(defaultValue = "0") @Min(0) int page,
+      @RequestParam(defaultValue = "12") @Min(1) int perPage) {
+    return ResponseEntity.ok()
+        .cacheControl(CacheControl.noStore())
+        .body(
+            draftMessageService.getProtectedDrafts(
+                authenticatedUser.getUserId(), TenantContext.getCurrentTenant(), page, perPage));
+  }
+
   @GetMapping("/single")
   public ResponseEntity<DraftMessageService.DraftMessageItem> getDraft(
       @RequestParam @NotBlank String scopeKey) {
@@ -54,7 +65,7 @@ public class DraftMessageController {
                 userId, scopeKey, TenantContext.getCurrentTenant())
             : draftMessageService.getDraft(userId, scopeKey);
     if (item == null) {
-      return new ResponseEntity<>(HttpStatus.NO_CONTENT);
+      return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
     }
     return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(item);
   }
@@ -69,9 +80,8 @@ public class DraftMessageController {
       draftMessageService.upsertDraft(
           authenticatedUser.getUserId(), scopeKey, request, TenantContext.getCurrentTenant());
     } catch (org.springframework.dao.DataAccessException e) {
-      // Concurrent autosaves race on the unique (user_id, scope_key) constraint. A lost race
-      // means another request already persisted this draft, so treat it as success rather than
-      // surfacing a 409 that breaks the chat. Non-critical: the next keystroke re-saves.
+      // Legacy clients treat autosave as best-effort and re-save on the next keystroke.
+      // The protected write endpoint reports conflicts instead.
       log.warn("Draft upsert conflict for scopeKey {}: {}", scopeKey, e.getMessage());
     }
     return new ResponseEntity<>(HttpStatus.NO_CONTENT);
@@ -100,8 +110,12 @@ public class DraftMessageController {
 
   @DeleteMapping("/protected")
   public ResponseEntity<Void> deleteProtectedDraft(@RequestParam @NotBlank String scopeKey) {
-    draftMessageService.deleteProtectedDraft(
-        authenticatedUser.getUserId(), scopeKey, TenantContext.getCurrentTenant());
+    try {
+      draftMessageService.deleteProtectedDraft(
+          authenticatedUser.getUserId(), scopeKey, TenantContext.getCurrentTenant());
+    } catch (PessimisticLockingFailureException exception) {
+      throw new ConflictException("Protected draft changed concurrently");
+    }
     return ResponseEntity.noContent().build();
   }
 

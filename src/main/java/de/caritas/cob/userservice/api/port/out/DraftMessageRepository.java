@@ -54,7 +54,20 @@ public interface DraftMessageRepository extends JpaRepository<DraftMessage, Long
       @Param("scopeKey") String scopeKey,
       @Param("tenantId") Long tenantId);
 
-  List<DraftMessage> findByUserIdOrderByUpdateDateDescIdDesc(String userId, Pageable pageable);
+  List<DraftMessage> findByUserIdAndProtectedScopeKeyIsNullOrderByUpdateDateDescIdDesc(
+      String userId, Pageable pageable);
+
+  @Query(
+      """
+      select draft from DraftMessage draft
+      where draft.userId = :userId
+        and (draft.tenantId = :tenantId
+             or (draft.tenantId is null and
+                 (:tenantId is null or (:tenantId = 1 and draft.protectedScopeKey is null))))
+      order by draft.updateDate desc, draft.id desc
+      """)
+  List<DraftMessage> findForProtectedFeed(
+      @Param("userId") String userId, @Param("tenantId") Long tenantId, Pageable pageable);
 
   void deleteByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(String userId, String scopeKey);
 

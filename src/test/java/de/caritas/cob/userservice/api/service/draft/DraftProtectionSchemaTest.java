@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Test;
 class DraftProtectionSchemaTest {
 
   @Test
-  void upgradeAndReapplyPreserveLegacyDuplicatesAndLargeCiphertext() throws Exception {
+  void upgradeAndReapplyPreserveLegacyDuplicatesAndEnforceProtectedUniqueness() throws Exception {
     try (var connection =
             DriverManager.getConnection(
                 "jdbc:h2:mem:drafts-" + UUID.randomUUID() + ";MODE=MariaDB");
@@ -56,7 +56,7 @@ class DraftProtectionSchemaTest {
                 """)) {
           insert.setString(1, protectedScope);
           insert.setString(2, protectedScope);
-          insert.setString(3, "c".repeat(90_000));
+          insert.setString(3, "ciphertext");
           assertThat(insert.executeUpdate()).isOne();
           connection.commit();
           assertThatThrownBy(insert::executeUpdate).isInstanceOf(SQLException.class);
@@ -70,7 +70,7 @@ class DraftProtectionSchemaTest {
           assertThat(rows.next()).isTrue();
           assertThat(rows.getInt(1)).isEqualTo(6);
           assertThat(rows.next()).isTrue();
-          assertThat(rows.getInt(1)).isEqualTo(90_000);
+          assertThat(rows.getInt(1)).isEqualTo("ciphertext".length());
           assertThat(rows.next()).isFalse();
         }
       }

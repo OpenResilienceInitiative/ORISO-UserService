@@ -12,12 +12,18 @@ import de.caritas.cob.userservice.api.service.draft.DraftMessageService.DraftMes
 import de.caritas.cob.userservice.api.service.draft.DraftMessageService.MigrateDraftRequest;
 import de.caritas.cob.userservice.api.service.draft.DraftMessageService.UpsertDraftRequest;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -62,7 +68,7 @@ class DraftMessageMigrationIT {
     assertThat(target.getSourceSessionId()).isNull();
     assertThat(target.getRoomRef()).isNull();
     assertThat(target.getThreadRootId()).isNull();
-    assertThat(service.getDrafts(owner, 0, 200).getItems())
+    assertThat(service.getProtectedDrafts(owner, TENANT, 0, 200).getItems())
         .extracting(DraftMessageItem::getRevision)
         .containsExactlyInAnyOrder(legacy.getRevision(), target.getRevision());
 
@@ -132,6 +138,7 @@ class DraftMessageMigrationIT {
                     owner, TENANT, migration(changedLegacy, TARGET, LARGE_ENVELOPE)))
         .isInstanceOf(ConflictException.class);
     assertThat(service.getProtectedDraft(owner, TARGET, TENANT + 1)).isNull();
+    assertThat(service.getProtectedDraft(owner, TARGET, null)).isNull();
     assertThat(service.getProtectedDraft(owner, TARGET, TENANT).getText()).isEqualTo(ENVELOPE);
 
     service.upsertProtectedDraft(owner, TARGET, payload(LARGE_ENVELOPE), TENANT);
@@ -174,6 +181,67 @@ class DraftMessageMigrationIT {
     assertThat(repository.findById(changedTarget.getId())).isPresent();
   }
 
+  @ParameterizedTest
+  @NullSource
+  @ValueSource(longs = 1L)
+  void standaloneAndTenantOneMayMigrateTheirPreTenancyDraft(Long requestTenant) {
+    String owner = UUID.randomUUID().toString();
+    var legacy = legacy(owner, "scope:historic|thread:main", null);
+    assertThatThrownBy(
+            () -> service.migrateDraft(owner, TENANT, migration(legacy, TARGET, ENVELOPE)))
+        .isInstanceOf(NotFoundException.class);
+
+    service.migrateDraft(owner, requestTenant, migration(legacy, TARGET, ENVELOPE));
+    var target = service.getProtectedDraft(owner, TARGET, requestTenant);
+    assertThat(target.getText()).isEqualTo(ENVELOPE);
+    assertThat(service.getProtectedDraft(owner, TARGET, TENANT)).isNull();
+    assertThatThrownBy(
+            () ->
+                service.retireLegacyDraft(
+                    owner,
+                    TENANT,
+                    legacy.getId(),
+                    legacy.getRevision(),
+                    TARGET,
+                    target.getRevision()))
+        .isInstanceOf(NotFoundException.class);
+    assertThat(repository.findById(legacy.getId())).isPresent();
+
+    service.retireLegacyDraft(
+        owner, requestTenant, legacy.getId(), legacy.getRevision(), TARGET, target.getRevision());
+    assertThat(repository.findById(legacy.getId())).isEmpty();
+  }
+
+  @Test
+  void protectedFeedIsBoundedAndStableAcrossPagesWhileLegacyFeedExcludesCiphertext() {
+    String owner = UUID.randomUUID().toString();
+    var source = legacy(owner, "scope:source|thread:main", TENANT);
+    var expected = new ArrayList<Long>();
+    expected.add(source.getId());
+    for (int i = 0; i < 12; i++) {
+      expected.add(legacy(owner, "scope:case-" + i + "|thread:main", TENANT).getId());
+    }
+    legacy(owner, "scope:other-tenant|thread:main", TENANT + 1);
+    legacy("different-owner", "scope:other-owner|thread:main", TENANT);
+    service.migrateDraft(owner, TENANT, migration(source, TARGET, ENVELOPE));
+    var target = service.getProtectedDraft(owner, TARGET, TENANT);
+    expected.add(target.getId());
+    Collections.reverse(expected);
+
+    var first = service.getProtectedDrafts(owner, TENANT, 0, 200);
+    var second = service.getProtectedDrafts(owner, TENANT, 1, 200);
+    assertThat(first.getPerPage()).isEqualTo(12);
+    assertThat(first.getItems()).hasSize(12);
+    assertThat(second.getPerPage()).isEqualTo(12);
+    assertThat(second.getPage()).isEqualTo(1);
+    List<DraftMessageItem> paged = new ArrayList<>(first.getItems());
+    paged.addAll(second.getItems());
+    assertThat(paged).extracting(DraftMessageItem::getId).containsExactlyElementsOf(expected);
+    assertThat(service.getDrafts(owner, 0, 200).getItems())
+        .extracting(DraftMessageItem::getScopeKey)
+        .doesNotContain(TARGET);
+  }
+
   @Test
   void twoConcurrentMigrationsCannotCreateOrOverwriteTheSameProtectedScope() throws Exception {
     String owner = UUID.randomUUID().toString();
@@ -195,7 +263,7 @@ class DraftMessageMigrationIT {
       assertThat(service.getProtectedDraft(owner, TARGET, TENANT).getText())
           .isEqualTo(firstWon ? ENVELOPE : LARGE_ENVELOPE);
     }
-    assertThat(service.getDrafts(owner, 0, 200).getItems()).hasSize(3);
+    assertThat(service.getProtectedDrafts(owner, TENANT, 0, 200).getItems()).hasSize(3);
     assertThat(repository.findById(first.getId())).isPresent();
     assertThat(repository.findById(second.getId())).isPresent();
   }

@@ -6,11 +6,11 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.DraftMessage;
 import de.caritas.cob.userservice.api.port.out.DraftMessageRepository;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
-import java.util.stream.Collectors;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NonNull;
@@ -26,6 +26,9 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class DraftMessageService {
 
+  private static final int MAX_LEGACY_DRAFT_BYTES = 65_535;
+  private static final int MAX_PROTECTED_FEED_ROWS = 12;
+
   private final @NonNull DraftMessageRepository draftMessageRepository;
 
   @Transactional(isolation = Isolation.READ_COMMITTED)
@@ -36,6 +39,10 @@ public class DraftMessageService {
     }
 
     String text = request != null && request.getText() != null ? request.getText() : "";
+    if (text.length() > MAX_LEGACY_DRAFT_BYTES
+        || text.getBytes(StandardCharsets.UTF_8).length > MAX_LEGACY_DRAFT_BYTES) {
+      throw new BadRequestException("Legacy draft exceeds 65535 UTF-8 bytes");
+    }
     // #983: the API must not depend on every client behaving. A draft that carries no content —
     // including TipTap's empty document, which is markup rather than an empty string — deletes the
     // row instead of persisting one nothing can ever clear.
@@ -264,15 +271,32 @@ public class DraftMessageService {
   public DraftFeedResponse getDrafts(String userId, int page, int perPage) {
     int safePage = Math.max(0, page);
     int safePerPage = Math.max(1, Math.min(perPage, 200));
+    return feed(
+        draftMessageRepository.findByUserIdAndProtectedScopeKeyIsNullOrderByUpdateDateDescIdDesc(
+            userId, PageRequest.of(safePage, safePerPage)),
+        safePage,
+        safePerPage);
+  }
 
-    List<DraftMessageItem> items =
-        draftMessageRepository
-            .findByUserIdOrderByUpdateDateDescIdDesc(userId, PageRequest.of(safePage, safePerPage))
-            .stream()
-            .map(this::toItem)
-            .collect(Collectors.toList());
+  @Transactional(readOnly = true)
+  public DraftFeedResponse getProtectedDrafts(String userId, Long tenantId, int page, int perPage) {
+    requireDraftOwner(userId, tenantId);
+    int safePage = Math.max(0, page);
+    int safePerPage = Math.max(1, Math.min(perPage, MAX_PROTECTED_FEED_ROWS));
+    // Protected envelopes can be larger than legacy TEXT rows. Limit before materializing them.
+    return feed(
+        draftMessageRepository.findForProtectedFeed(
+            userId, tenantId, PageRequest.of(safePage, safePerPage)),
+        safePage,
+        safePerPage);
+  }
 
-    return DraftFeedResponse.builder().items(items).page(safePage).perPage(safePerPage).build();
+  private DraftFeedResponse feed(List<DraftMessage> drafts, int page, int perPage) {
+    return DraftFeedResponse.builder()
+        .items(drafts.stream().map(this::toItem).toList())
+        .page(page)
+        .perPage(perPage)
+        .build();
   }
 
   @Transactional

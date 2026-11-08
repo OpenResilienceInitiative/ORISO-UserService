@@ -10,8 +10,11 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
@@ -29,11 +32,15 @@ import jakarta.validation.constraints.NotBlank;
 import java.lang.reflect.Method;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.PessimisticLockingFailureException;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -268,6 +275,92 @@ class DraftMessageControllerTest {
                   .content(body))
           .andExpect(status().isBadRequest());
       mvc.perform(delete(path).param("scopeKey", legacyScope)).andExpect(status().isBadRequest());
+      verify(draftMessageService, never()).upsertDraft(any(), any(), any(), any());
+      verify(draftMessageService, never()).deleteDraft(any(), any());
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Test
+  void protectedSingleAndFeedUseNoStoreAndKeepReadsScoped() throws Exception {
+    var mvc =
+        MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(new ApiResponseEntityExceptionHandler())
+            .build();
+    when(authenticatedUser.getUserId()).thenReturn("owned-user");
+    var scope = "draft.v1." + "a".repeat(43);
+    var item = DraftMessageItem.builder().scopeKey(scope).text("ciphertext").build();
+    when(draftMessageService.getProtectedDraft("owned-user", scope, 9L))
+        .thenReturn(item, (DraftMessageItem) null);
+    when(draftMessageService.getDrafts("owned-user", 0, 200))
+        .thenReturn(DraftFeedResponse.builder().page(0).perPage(200).build());
+
+    TenantContext.setCurrentTenant(9L);
+    try {
+      mvc.perform(get("/users/drafts/single").param("scopeKey", scope))
+          .andExpect(status().isOk())
+          .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"));
+      mvc.perform(get("/users/drafts/single").param("scopeKey", scope))
+          .andExpect(status().isNoContent())
+          .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"));
+      mvc.perform(get("/users/drafts"))
+          .andExpect(status().isOk())
+          .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"));
+      verify(draftMessageService, never()).getDraft(any(), any());
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Test
+  void protectedFeedPassesOwnerTenantAndPaginationAndReportsTheAppliedLimit() throws Exception {
+    var mvc =
+        MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(new ApiResponseEntityExceptionHandler())
+            .build();
+    when(authenticatedUser.getUserId()).thenReturn("owned-user");
+    when(draftMessageService.getProtectedDrafts("owned-user", 9L, 1, 200))
+        .thenReturn(DraftFeedResponse.builder().page(1).perPage(12).build());
+
+    TenantContext.setCurrentTenant(9L);
+    try {
+      mvc.perform(get("/users/drafts/protected").param("page", "1").param("perPage", "200"))
+          .andExpect(status().isOk())
+          .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"))
+          .andExpect(jsonPath("$.page").value(1))
+          .andExpect(jsonPath("$.perPage").value(12));
+      verify(draftMessageService, never()).getDrafts(any(), eq(1), eq(200));
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"/users/drafts", "/users/drafts/protected"})
+  void protectedWriteContentionReturnsConflictWithoutLegacyFallback(String path) throws Exception {
+    var mvc =
+        MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(new ApiResponseEntityExceptionHandler())
+            .build();
+    when(authenticatedUser.getUserId()).thenReturn("owned-user");
+    var scope = "draft.v1." + "a".repeat(43);
+    doThrow(new DataIntegrityViolationException("concurrent protected insert"))
+        .when(draftMessageService)
+        .upsertProtectedDraft(eq("owned-user"), eq(scope), any(), eq(9L));
+    doThrow(new PessimisticLockingFailureException("protected row locked"))
+        .when(draftMessageService)
+        .deleteProtectedDraft("owned-user", scope, 9L);
+
+    TenantContext.setCurrentTenant(9L);
+    try {
+      mvc.perform(
+              patch(path)
+                  .param("scopeKey", scope)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content("{}"))
+          .andExpect(status().isConflict());
+      mvc.perform(delete(path).param("scopeKey", scope)).andExpect(status().isConflict());
       verify(draftMessageService, never()).upsertDraft(any(), any(), any(), any());
       verify(draftMessageService, never()).deleteDraft(any(), any());
     } finally {

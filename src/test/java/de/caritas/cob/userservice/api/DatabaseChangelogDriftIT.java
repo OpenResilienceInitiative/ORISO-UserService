@@ -2,7 +2,10 @@ package de.caritas.cob.userservice.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import de.caritas.cob.userservice.api.model.DraftMessage;
 import jakarta.persistence.EntityManager;
+import java.time.LocalDateTime;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -77,5 +80,37 @@ class DatabaseChangelogDriftIT {
     assertThat(changesets.longValue())
         .as("number of applied Liquibase changesets")
         .isGreaterThanOrEqualTo(59);
+  }
+
+  @Test
+  void migratedMariaDbColumnStoresProtectedCiphertextBeyondTheLegacyTextLimit() {
+    Object type =
+        entityManager
+            .createNativeQuery(
+                """
+                SELECT DATA_TYPE FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'draft_message' AND COLUMN_NAME = 'text'
+                """)
+            .getSingleResult();
+    assertThat(type).isEqualTo("mediumtext");
+
+    String scope = "draft.v1." + "a".repeat(43);
+    String ciphertext = "draft.v1." + "b".repeat(16) + "." + "c".repeat(90_000);
+    var now = LocalDateTime.now();
+    var row =
+        DraftMessage.builder()
+            .userId(UUID.randomUUID().toString())
+            .scopeKey(scope)
+            .protectedScopeKey(scope)
+            .text(ciphertext)
+            .createDate(now)
+            .updateDate(now)
+            .build();
+    entityManager.persist(row);
+    entityManager.flush();
+    entityManager.clear();
+
+    assertThat(entityManager.find(DraftMessage.class, row.getId()).getText()).isEqualTo(ciphertext);
   }
 }
