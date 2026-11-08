@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.accountinvite;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -102,9 +103,14 @@ class DpaInviteReconciliationTest {
     reconciliation.reconcile();
     reconciliation.reconcile();
 
-    verify(dpaOwner, times(2)).read(2L);
-    verify(invites).reconcileDpaSigned(lastId + 1, 3L, "existing-tenant-admin", SIGNED_AT);
-    verify(invites).reconcileDpaSigned(1L, 2L, "existing-tenant-admin", SIGNED_AT);
+    var passes = inOrder(invites, dpaOwner);
+    passes.verify(invites).findDpaReconciliationCandidates(0L, lastId + 1, batch);
+    passes.verify(dpaOwner).read(2L);
+    passes.verify(invites).findDpaReconciliationCandidates(lastId, lastId + 1, batch);
+    passes.verify(invites).reconcileDpaSigned(lastId + 1, 3L, "existing-tenant-admin", SIGNED_AT);
+    passes.verify(invites).findDpaReconciliationCandidates(0L, 100L, batch);
+    passes.verify(dpaOwner).read(2L);
+    passes.verify(invites).reconcileDpaSigned(1L, 2L, "existing-tenant-admin", SIGNED_AT);
   }
 
   private ClaimLease claim() {

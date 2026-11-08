@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.dpa;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
@@ -66,8 +67,27 @@ class TenantDpaGateReadClientTest {
                 """,
                 MediaType.APPLICATION_JSON));
 
+    owner
+        .expect(requestTo("http://synthetic-owner.test/tenantadmin/4/dpa/gate"))
+        .andRespond(
+            withSuccess(
+                """
+                {"dpaPublished":true,"dpaSigned":true,"dpaSignedAt":1785751872}
+                """,
+                MediaType.APPLICATION_JSON));
+    owner
+        .expect(requestTo("http://synthetic-owner.test/tenantadmin/5/dpa/gate"))
+        .andRespond(
+            withSuccess(
+                """
+                {"dpaPublished":true,"dpaSigned":true,"dpaSignedAt":null}
+                """,
+                MediaType.APPLICATION_JSON));
+
     assertEquals("2026-08-03T10:11:12Z", client.read(2L).getDpaSignedAt());
     assertNull(client.read(3L).getDpaSignedAt());
+    assertThrows(IllegalStateException.class, () -> client.read(4L));
+    assertNull(client.read(5L).getDpaSignedAt());
     owner.verify();
   }
 }

@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetR
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteProgress;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -207,40 +208,79 @@ class AccountInviteRepositoryIT {
     var conflict =
         reconciliationInvite(42L, owner.getId(), foreign.getId(), AccountInviteStatus.ACCEPTED);
     var setup = reconciliationInvite(43L, null, foreign.getId(), AccountInviteStatus.ACCEPTED);
-    assertEquals(
-        setup.getId(), accountInviteRepository.findDpaReconciliationUpperBound().orElseThrow());
+    var stamped = reconciliationInvite(42L, owner.getId(), null, AccountInviteStatus.ACCEPTED);
+    stamped.setDpaSignedAt(SIGNED_AT.minusDays(2));
+    accountInviteRepository.saveAndFlush(stamped);
+    Admin invalidOwner = persistedAdmin(0L, AdminType.TENANT);
+    var invalidTenant =
+        reconciliationInvite(0L, invalidOwner.getId(), null, AccountInviteStatus.ACCEPTED);
+    long upperBound =
+        TenantContext.supplyAcrossTenants(accountInviteRepository::findDpaReconciliationUpperBound)
+            .orElseThrow();
+    assertEquals(invalidTenant.getId(), upperBound);
     var first =
-        accountInviteRepository.findDpaReconciliationCandidates(
-            0L, setup.getId(), PageRequest.of(0, 1));
+        TenantContext.supplyAcrossTenants(
+            () ->
+                accountInviteRepository.findDpaReconciliationCandidates(
+                    0L, upperBound, PageRequest.of(0, 1)));
     var next =
-        accountInviteRepository.findDpaReconciliationCandidates(
-            target.getId(), setup.getId(), PageRequest.of(0, 1));
+        TenantContext.supplyAcrossTenants(
+            () ->
+                accountInviteRepository.findDpaReconciliationCandidates(
+                    target.getId(), upperBound, PageRequest.of(0, 10)));
 
     assertEquals(target.getId(), first.getFirst().getInviteId());
     assertEquals(owner.getId(), first.getFirst().getActorId());
-    assertEquals(setup.getId(), next.getFirst().getInviteId());
+    assertEquals(
+        List.of(setup.getId()), next.stream().map(candidate -> candidate.getInviteId()).toList());
     assertEquals(foreign.getId(), next.getFirst().getActorId());
-    assertEquals(
-        0,
-        accountInviteRepository.reconcileDpaSigned(target.getId(), 43L, owner.getId(), SIGNED_AT));
-    assertEquals(
-        0,
-        accountInviteRepository.reconcileDpaSigned(
-            target.getId(), 42L, foreign.getId(), SIGNED_AT));
-    for (AccountInvite unrelated : List.of(wrongTenant, agencyAdmin, notAccepted, conflict)) {
-      assertEquals(
-          0,
-          accountInviteRepository.reconcileDpaSigned(
-              unrelated.getId(), 42L, unrelated.getAcceptedByUserId(), SIGNED_AT));
-    }
+    TenantContext.runIn(
+        42L,
+        () -> {
+          assertEquals(
+              0,
+              accountInviteRepository.reconcileDpaSigned(
+                  target.getId(), 43L, owner.getId(), SIGNED_AT));
+          assertEquals(
+              0,
+              accountInviteRepository.reconcileDpaSigned(
+                  target.getId(), 42L, foreign.getId(), SIGNED_AT));
+          for (AccountInvite unrelated : List.of(wrongTenant, agencyAdmin, notAccepted, conflict)) {
+            assertEquals(
+                0,
+                accountInviteRepository.reconcileDpaSigned(
+                    unrelated.getId(), 42L, unrelated.getAcceptedByUserId(), SIGNED_AT));
+          }
 
-    assertEquals(
-        1,
-        accountInviteRepository.reconcileDpaSigned(target.getId(), 42L, owner.getId(), SIGNED_AT));
-    assertEquals(
-        0,
-        accountInviteRepository.reconcileDpaSigned(
-            target.getId(), 42L, owner.getId(), SIGNED_AT.plusDays(1)));
+          assertEquals(
+              1,
+              accountInviteRepository.reconcileDpaSigned(
+                  target.getId(), 42L, owner.getId(), SIGNED_AT));
+          assertEquals(
+              0,
+              accountInviteRepository.reconcileDpaSigned(
+                  target.getId(), 42L, owner.getId(), SIGNED_AT.plusDays(1)));
+          assertEquals(
+              0,
+              accountInviteRepository.reconcileDpaSigned(
+                  stamped.getId(), 42L, owner.getId(), SIGNED_AT));
+        });
+    TenantContext.runIn(
+        43L,
+        () ->
+            assertEquals(
+                1,
+                accountInviteRepository.reconcileDpaSigned(
+                    setup.getId(), 43L, foreign.getId(), SIGNED_AT)));
+    TenantContext.runIn(
+        0L,
+        () ->
+            assertEquals(
+                0,
+                accountInviteRepository.reconcileDpaSigned(
+                    invalidTenant.getId(), 0L, invalidOwner.getId(), SIGNED_AT)));
+    assertEquals(SIGNED_AT, reload(setup).getDpaSignedAt());
+    assertEquals(SIGNED_AT.minusDays(2), reload(stamped).getDpaSignedAt());
     var reconciled = reload(target);
     assertEquals(SIGNED_AT, reconciled.getDpaSignedAt());
     var tracker = InviteProgress.of(reconciled, null, null, SIGNED_AT.plusDays(1));

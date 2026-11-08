@@ -19,7 +19,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-/** Repairs the invite tracker from the DPA owner's record, independently of signature receipts. */
+/** Mirrors TenantService's verified AVV milestone on the tenant's accepted invitations. */
 @Component
 @Profile("!testing")
 @RequiredArgsConstructor
@@ -39,7 +39,7 @@ class DpaInviteReconciliation {
   private long throughInviteId;
 
   @Scheduled(fixedDelayString = "${account-invite.dpa-reconciliation.delay-ms:60000}")
-  void reconcile() {
+  synchronized void reconcile() {
     var claim = claims.tryClaimLease(TASK_NAME, CLAIM_DURATION);
     if (claim.isEmpty()) {
       return;
@@ -88,8 +88,9 @@ class DpaInviteReconciliation {
                                 signedAt)));
       } catch (RuntimeException exception) {
         log.warn(
-            "Could not reconcile DPA milestone for invite {} ({})",
+            "Could not reconcile DPA milestone for invite {} in tenant {} ({})",
             candidate.getInviteId(),
+            tenantId,
             exception.getClass().getSimpleName());
       }
       // Unsigned tenants and failures must not hold up later rows in this pass.

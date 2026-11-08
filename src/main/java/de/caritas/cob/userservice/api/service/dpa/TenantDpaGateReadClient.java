@@ -66,7 +66,8 @@ public class TenantDpaGateReadClient {
         throw new IllegalStateException("Invalid AVV contract type");
       }
     }
-    for (var key : java.util.List.of("dpaStatus", "currentDpaVersion", "signingDeadlineAt")) {
+    for (var key :
+        java.util.List.of("dpaStatus", "currentDpaVersion", "signingDeadlineAt", "dpaSignedAt")) {
       if (data.get(key) != null && !(data.get(key) instanceof String)) {
         throw new IllegalStateException("Invalid AVV contract type");
       }
@@ -89,7 +90,7 @@ public class TenantDpaGateReadClient {
     return new DpaGateStatusDTO()
         .dpaPublished((Boolean) data.get("dpaPublished"))
         .dpaSigned((Boolean) data.get("dpaSigned"))
-        .dpaSignedAt(data.get("dpaSignedAt") instanceof String signedAt ? signedAt : null)
+        .dpaSignedAt((String) data.get("dpaSignedAt"))
         .dpaStatus((String) data.get("dpaStatus"))
         .currentDpaVersion((String) data.get("currentDpaVersion"))
         .signingDeadlineAt((String) data.get("signingDeadlineAt"))
