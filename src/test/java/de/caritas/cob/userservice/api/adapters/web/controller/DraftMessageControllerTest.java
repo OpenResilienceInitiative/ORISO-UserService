@@ -320,8 +320,10 @@ class DraftMessageControllerTest {
             .setControllerAdvice(new ApiResponseEntityExceptionHandler())
             .build();
     when(authenticatedUser.getUserId()).thenReturn("owned-user");
-    when(draftMessageService.getProtectedDrafts("owned-user", 9L, 1, 200))
+    when(draftMessageService.getProtectedDrafts("owned-user", 9L, 1, 200, false))
         .thenReturn(DraftFeedResponse.builder().page(1).perPage(12).build());
+    when(draftMessageService.getProtectedDrafts("owned-user", 9L, 1, 200, true))
+        .thenReturn(DraftFeedResponse.builder().page(1).perPage(50).build());
 
     TenantContext.setCurrentTenant(9L);
     try {
@@ -330,6 +332,15 @@ class DraftMessageControllerTest {
           .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"))
           .andExpect(jsonPath("$.page").value(1))
           .andExpect(jsonPath("$.perPage").value(12));
+      mvc.perform(
+              get("/users/drafts/protected")
+                  .param("page", "1")
+                  .param("perPage", "200")
+                  .param("legacyOnly", "true"))
+          .andExpect(status().isOk())
+          .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"))
+          .andExpect(jsonPath("$.page").value(1))
+          .andExpect(jsonPath("$.perPage").value(50));
       verify(draftMessageService, never()).getDrafts(any(), eq(1), eq(200));
     } finally {
       TenantContext.clear();

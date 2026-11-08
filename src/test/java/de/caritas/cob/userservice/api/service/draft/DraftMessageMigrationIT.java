@@ -68,7 +68,7 @@ class DraftMessageMigrationIT {
     assertThat(target.getSourceSessionId()).isNull();
     assertThat(target.getRoomRef()).isNull();
     assertThat(target.getThreadRootId()).isNull();
-    assertThat(service.getProtectedDrafts(owner, TENANT, 0, 200).getItems())
+    assertThat(service.getProtectedDrafts(owner, TENANT, 0, 200, false).getItems())
         .extracting(DraftMessageItem::getRevision)
         .containsExactlyInAnyOrder(legacy.getRevision(), target.getRevision());
 
@@ -228,8 +228,8 @@ class DraftMessageMigrationIT {
     expected.add(target.getId());
     Collections.reverse(expected);
 
-    var first = service.getProtectedDrafts(owner, TENANT, 0, 200);
-    var second = service.getProtectedDrafts(owner, TENANT, 1, 200);
+    var first = service.getProtectedDrafts(owner, TENANT, 0, 200, false);
+    var second = service.getProtectedDrafts(owner, TENANT, 1, 200, false);
     assertThat(first.getPerPage()).isEqualTo(12);
     assertThat(first.getItems()).hasSize(12);
     assertThat(second.getPerPage()).isEqualTo(12);
@@ -240,6 +240,34 @@ class DraftMessageMigrationIT {
     assertThat(service.getDrafts(owner, 0, 200).getItems())
         .extracting(DraftMessageItem::getScopeKey)
         .doesNotContain(TARGET);
+  }
+
+  @Test
+  void legacyOnlyScanPaginatesFiftyRowsWithinTheSameOwnerAndTenant() {
+    String owner = UUID.randomUUID().toString();
+    var expected = new ArrayList<Long>();
+    for (int i = 0; i < 51; i++) {
+      expected.add(legacy(owner, "legacy-scan:" + i, TENANT).getId());
+    }
+    legacy(owner, "legacy-scan:other-tenant", TENANT + 1);
+    legacy("different-owner", "legacy-scan:other-owner", TENANT);
+    service.upsertProtectedDraft(owner, TARGET, payload(ENVELOPE), TENANT);
+    Collections.reverse(expected);
+
+    var first = service.getProtectedDrafts(owner, TENANT, 0, 200, true);
+    var second = service.getProtectedDrafts(owner, TENANT, 1, 50, true);
+
+    assertThat(first.getPerPage()).isEqualTo(50);
+    assertThat(first.getItems())
+        .extracting(DraftMessageItem::getId)
+        .containsExactlyElementsOf(expected.subList(0, 50));
+    assertThat(second.getPage()).isEqualTo(1);
+    assertThat(second.getItems())
+        .extracting(DraftMessageItem::getId)
+        .containsExactly(expected.get(50));
+    assertThat(service.getProtectedDrafts(owner, TENANT, 0, 200, false).getItems())
+        .extracting(DraftMessageItem::getScopeKey)
+        .contains(TARGET);
   }
 
   @Test
@@ -263,7 +291,7 @@ class DraftMessageMigrationIT {
       assertThat(service.getProtectedDraft(owner, TARGET, TENANT).getText())
           .isEqualTo(firstWon ? ENVELOPE : LARGE_ENVELOPE);
     }
-    assertThat(service.getProtectedDrafts(owner, TENANT, 0, 200).getItems()).hasSize(3);
+    assertThat(service.getProtectedDrafts(owner, TENANT, 0, 200, false).getItems()).hasSize(3);
     assertThat(repository.findById(first.getId())).isPresent();
     assertThat(repository.findById(second.getId())).isPresent();
   }

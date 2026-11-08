@@ -27,6 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class DraftMessageService {
 
   private static final int MAX_LEGACY_DRAFT_BYTES = 65_535;
+  private static final int MAX_LEGACY_SCAN_ROWS = 50;
   private static final int MAX_PROTECTED_FEED_ROWS = 12;
 
   private final @NonNull DraftMessageRepository draftMessageRepository;
@@ -279,14 +280,16 @@ public class DraftMessageService {
   }
 
   @Transactional(readOnly = true)
-  public DraftFeedResponse getProtectedDrafts(String userId, Long tenantId, int page, int perPage) {
+  public DraftFeedResponse getProtectedDrafts(
+      String userId, Long tenantId, int page, int perPage, boolean legacyOnly) {
     requireDraftOwner(userId, tenantId);
     int safePage = Math.max(0, page);
-    int safePerPage = Math.max(1, Math.min(perPage, MAX_PROTECTED_FEED_ROWS));
-    // Protected envelopes can be larger than legacy TEXT rows. Limit before materializing them.
+    int rowLimit = legacyOnly ? MAX_LEGACY_SCAN_ROWS : MAX_PROTECTED_FEED_ROWS;
+    int safePerPage = Math.max(1, Math.min(perPage, rowLimit));
+    // Filter and limit in SQL before materializing the potentially larger protected envelopes.
     return feed(
         draftMessageRepository.findForProtectedFeed(
-            userId, tenantId, PageRequest.of(safePage, safePerPage)),
+            userId, tenantId, legacyOnly, PageRequest.of(safePage, safePerPage)),
         safePage,
         safePerPage);
   }

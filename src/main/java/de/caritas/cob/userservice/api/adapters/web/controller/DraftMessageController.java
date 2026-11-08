@@ -47,12 +47,17 @@ public class DraftMessageController {
   @GetMapping("/protected")
   public ResponseEntity<DraftMessageService.DraftFeedResponse> getProtectedDrafts(
       @RequestParam(defaultValue = "0") @Min(0) int page,
-      @RequestParam(defaultValue = "12") @Min(1) int perPage) {
+      @RequestParam(defaultValue = "12") @Min(1) int perPage,
+      @RequestParam(defaultValue = "false") boolean legacyOnly) {
     return ResponseEntity.ok()
         .cacheControl(CacheControl.noStore())
         .body(
             draftMessageService.getProtectedDrafts(
-                authenticatedUser.getUserId(), TenantContext.getCurrentTenant(), page, perPage));
+                authenticatedUser.getUserId(),
+                TenantContext.getCurrentTenant(),
+                page,
+                perPage,
+                legacyOnly));
   }
 
   @GetMapping("/single")

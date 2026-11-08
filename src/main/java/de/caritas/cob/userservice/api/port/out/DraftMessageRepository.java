@@ -61,13 +61,17 @@ public interface DraftMessageRepository extends JpaRepository<DraftMessage, Long
       """
       select draft from DraftMessage draft
       where draft.userId = :userId
+        and (:legacyOnly = false or draft.protectedScopeKey is null)
         and (draft.tenantId = :tenantId
              or (draft.tenantId is null and
                  (:tenantId is null or (:tenantId = 1 and draft.protectedScopeKey is null))))
       order by draft.updateDate desc, draft.id desc
       """)
   List<DraftMessage> findForProtectedFeed(
-      @Param("userId") String userId, @Param("tenantId") Long tenantId, Pageable pageable);
+      @Param("userId") String userId,
+      @Param("tenantId") Long tenantId,
+      @Param("legacyOnly") boolean legacyOnly,
+      Pageable pageable);
 
   void deleteByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(String userId, String scopeKey);
 
