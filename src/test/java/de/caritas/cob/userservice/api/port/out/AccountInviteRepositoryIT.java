@@ -5,11 +5,15 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 import de.caritas.cob.userservice.api.config.JpaAuditingConfiguration;
 import de.caritas.cob.userservice.api.model.AccountInvite;
+import de.caritas.cob.userservice.api.model.Admin;
+import de.caritas.cob.userservice.api.model.Admin.AdminType;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteProvisioningStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteProgress;
+import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -40,6 +44,7 @@ class AccountInviteRepositoryIT {
       LocalDateTime.of(2026, 8, 14, 9, 15).truncatedTo(ChronoUnit.SECONDS);
 
   @Autowired private AccountInviteRepository accountInviteRepository;
+  @Autowired private AdminRepository adminRepository;
 
   @Test
   void existingAccountSetupClaimIsSingleUseAndCompletionErasesVerifier() {
@@ -182,6 +187,88 @@ class AccountInviteRepositoryIT {
 
     assertEquals(0, stamped);
     assertEquals(SIGNED_AT.minusDays(1), reload(alreadyStamped).getDpaSignedAt());
+  }
+
+  @Test
+  void reconciliationRequiresTheCurrentTenantAdminAndPreservesExistingStamp() {
+    Admin owner = persistedAdmin(42L, AdminType.TENANT);
+    Admin foreign = persistedAdmin(43L, AdminType.TENANT);
+    Admin wrongRole = persistedAdmin(42L, AdminType.AGENCY);
+    var target = reconciliationInvite(42L, owner.getId(), null, AccountInviteStatus.ACCEPTED);
+    target.setTwoFactorStatus(TwoFactorGateStatus.ACTIVE);
+    target.setTwoFactorActivatedAt(SIGNED_AT.minusDays(1));
+    accountInviteRepository.saveAndFlush(target);
+    var wrongTenant =
+        reconciliationInvite(42L, foreign.getId(), null, AccountInviteStatus.ACCEPTED);
+    var agencyAdmin =
+        reconciliationInvite(42L, wrongRole.getId(), null, AccountInviteStatus.ACCEPTED);
+    var notAccepted =
+        reconciliationInvite(42L, owner.getId(), null, AccountInviteStatus.EMAIL_SENT);
+    var conflict =
+        reconciliationInvite(42L, owner.getId(), foreign.getId(), AccountInviteStatus.ACCEPTED);
+    var setup = reconciliationInvite(43L, null, foreign.getId(), AccountInviteStatus.ACCEPTED);
+    assertEquals(
+        setup.getId(), accountInviteRepository.findDpaReconciliationUpperBound().orElseThrow());
+    var first =
+        accountInviteRepository.findDpaReconciliationCandidates(
+            0L, setup.getId(), PageRequest.of(0, 1));
+    var next =
+        accountInviteRepository.findDpaReconciliationCandidates(
+            target.getId(), setup.getId(), PageRequest.of(0, 1));
+
+    assertEquals(target.getId(), first.getFirst().getInviteId());
+    assertEquals(owner.getId(), first.getFirst().getActorId());
+    assertEquals(setup.getId(), next.getFirst().getInviteId());
+    assertEquals(foreign.getId(), next.getFirst().getActorId());
+    assertEquals(
+        0,
+        accountInviteRepository.reconcileDpaSigned(target.getId(), 43L, owner.getId(), SIGNED_AT));
+    assertEquals(
+        0,
+        accountInviteRepository.reconcileDpaSigned(
+            target.getId(), 42L, foreign.getId(), SIGNED_AT));
+    for (AccountInvite unrelated : List.of(wrongTenant, agencyAdmin, notAccepted, conflict)) {
+      assertEquals(
+          0,
+          accountInviteRepository.reconcileDpaSigned(
+              unrelated.getId(), 42L, unrelated.getAcceptedByUserId(), SIGNED_AT));
+    }
+
+    assertEquals(
+        1,
+        accountInviteRepository.reconcileDpaSigned(target.getId(), 42L, owner.getId(), SIGNED_AT));
+    assertEquals(
+        0,
+        accountInviteRepository.reconcileDpaSigned(
+            target.getId(), 42L, owner.getId(), SIGNED_AT.plusDays(1)));
+    var reconciled = reload(target);
+    assertEquals(SIGNED_AT, reconciled.getDpaSignedAt());
+    var tracker = InviteProgress.of(reconciled, null, null, SIGNED_AT.plusDays(1));
+    assertEquals(InviteProgress.Phase.DONE, tracker.phase());
+    assertEquals(SIGNED_AT, tracker.completedAt());
+  }
+
+  private Admin persistedAdmin(Long tenantId, AdminType role) {
+    String id = UUID.randomUUID().toString();
+    return adminRepository.saveAndFlush(
+        Admin.builder()
+            .id(id)
+            .tenantId(tenantId)
+            .username(id)
+            .firstName("Synthetic")
+            .lastName("Admin")
+            .email(id + "@example.org")
+            .type(role)
+            .build());
+  }
+
+  private AccountInvite reconciliationInvite(
+      Long tenantId, String acceptedBy, String provisioned, AccountInviteStatus status) {
+    var invite = persistedInvite(tenantId, AccountInviteTargetRole.TENANT_ADMIN, null);
+    invite.setStatus(status);
+    invite.setAcceptedByUserId(acceptedBy);
+    invite.setProvisionedUserId(provisioned);
+    return accountInviteRepository.saveAndFlush(invite);
   }
 
   /**

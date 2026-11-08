@@ -89,6 +89,7 @@ public class TenantDpaGateReadClient {
     return new DpaGateStatusDTO()
         .dpaPublished((Boolean) data.get("dpaPublished"))
         .dpaSigned((Boolean) data.get("dpaSigned"))
+        .dpaSignedAt(data.get("dpaSignedAt") instanceof String signedAt ? signedAt : null)
         .dpaStatus((String) data.get("dpaStatus"))
         .currentDpaVersion((String) data.get("currentDpaVersion"))
         .signingDeadlineAt((String) data.get("signingDeadlineAt"))

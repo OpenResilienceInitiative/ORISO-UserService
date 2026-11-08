@@ -1203,6 +1203,9 @@ components:
           type: boolean
         dpaSigned:
           type: boolean
+        dpaSignedAt:
+          type: string
+          description: 'Authoritative UTC instant of the signature of the current valid AVV version, when known.'
         dpaForwardPending:
           type: boolean
           description: 'True while the governing DPA version is not signed but at least one
