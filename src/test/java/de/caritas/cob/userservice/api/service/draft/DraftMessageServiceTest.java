@@ -76,7 +76,8 @@ class DraftMessageServiceTest {
   void upsertDraft_nullRequest_deletesExistingDraft() {
     draftMessageService.upsertDraft(USER_ID, SCOPE_KEY, null, TENANT_ID);
 
-    verify(draftMessageRepository).deleteByUserIdAndScopeKey(USER_ID, SCOPE_KEY);
+    verify(draftMessageRepository)
+        .deleteByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(USER_ID, SCOPE_KEY);
     verify(draftMessageRepository, never()).save(any());
   }
 
@@ -87,7 +88,8 @@ class DraftMessageServiceTest {
 
     draftMessageService.upsertDraft(USER_ID, SCOPE_KEY, request, TENANT_ID);
 
-    verify(draftMessageRepository).deleteByUserIdAndScopeKey(USER_ID, SCOPE_KEY);
+    verify(draftMessageRepository)
+        .deleteByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(USER_ID, SCOPE_KEY);
     verify(draftMessageRepository, never()).save(any());
   }
 
@@ -95,7 +97,8 @@ class DraftMessageServiceTest {
   void upsertDraft_blankText_deletesExistingDraft() {
     draftMessageService.upsertDraft(USER_ID, SCOPE_KEY, upsertRequest("  "), TENANT_ID);
 
-    verify(draftMessageRepository).deleteByUserIdAndScopeKey(USER_ID, SCOPE_KEY);
+    verify(draftMessageRepository)
+        .deleteByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(USER_ID, SCOPE_KEY);
     verify(draftMessageRepository, never()).save(any());
   }
 
@@ -105,7 +108,8 @@ class DraftMessageServiceTest {
   void upsertDraft_emptyTipTapDocument_deletesExistingDraft() {
     draftMessageService.upsertDraft(USER_ID, SCOPE_KEY, upsertRequest("<p></p>"), TENANT_ID);
 
-    verify(draftMessageRepository).deleteByUserIdAndScopeKey(USER_ID, SCOPE_KEY);
+    verify(draftMessageRepository)
+        .deleteByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(USER_ID, SCOPE_KEY);
     verify(draftMessageRepository, never()).save(any());
   }
 
@@ -114,14 +118,16 @@ class DraftMessageServiceTest {
     draftMessageService.upsertDraft(
         USER_ID, SCOPE_KEY, upsertRequest("<p><br></p><p>&nbsp;</p>"), TENANT_ID);
 
-    verify(draftMessageRepository).deleteByUserIdAndScopeKey(USER_ID, SCOPE_KEY);
+    verify(draftMessageRepository)
+        .deleteByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(USER_ID, SCOPE_KEY);
     verify(draftMessageRepository, never()).save(any());
   }
 
   // #983: an E2EE draft is opaque ciphertext without markup and must never be treated as empty.
   @Test
   void upsertDraft_encryptedDraft_isPersisted() {
-    when(draftMessageRepository.findByUserIdAndScopeKey(USER_ID, SCOPE_KEY))
+    when(draftMessageRepository.findForUpdateByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(
+            USER_ID, SCOPE_KEY))
         .thenReturn(Optional.empty());
 
     draftMessageService.upsertDraft(
@@ -130,13 +136,15 @@ class DraftMessageServiceTest {
     ArgumentCaptor<DraftMessage> captor = ArgumentCaptor.forClass(DraftMessage.class);
     verify(draftMessageRepository).save(captor.capture());
     assertThat(captor.getValue().getText()).isEqualTo("AwgBmE3yLpFhZ0uK+ciphertext==");
-    verify(draftMessageRepository, never()).deleteByUserIdAndScopeKey(any(), any());
+    verify(draftMessageRepository, never())
+        .deleteByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(any(), any());
   }
 
   // First keystroke for a scope creates a new draft row with tenant attribution.
   @Test
   void upsertDraft_noExistingDraft_savesNewDraftWithAllFields() {
-    when(draftMessageRepository.findByUserIdAndScopeKey(USER_ID, SCOPE_KEY))
+    when(draftMessageRepository.findForUpdateByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(
+            USER_ID, SCOPE_KEY))
         .thenReturn(Optional.empty());
 
     UpsertDraftRequest request = fullUpsertRequest("Hello draft");
@@ -179,7 +187,8 @@ class DraftMessageServiceTest {
             .updateDate(originalCreateDate)
             .tenantId(TENANT_ID)
             .build();
-    when(draftMessageRepository.findByUserIdAndScopeKey(USER_ID, SCOPE_KEY))
+    when(draftMessageRepository.findForUpdateByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(
+            USER_ID, SCOPE_KEY))
         .thenReturn(Optional.of(existing));
 
     UpsertDraftRequest request = fullUpsertRequest("updated text");
@@ -215,12 +224,14 @@ class DraftMessageServiceTest {
             .threadRootId("thread")
             .updateDate(updateDate)
             .build();
-    when(draftMessageRepository.findByUserIdAndScopeKey(USER_ID, SCOPE_KEY))
+    when(draftMessageRepository.findByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(
+            USER_ID, SCOPE_KEY))
         .thenReturn(Optional.of(draft));
 
     DraftMessageItem item = draftMessageService.getDraft(USER_ID, SCOPE_KEY);
 
     assertThat(item.getId()).isEqualTo(10L);
+    assertThat(item).extracting("revision").asString().matches("[A-Za-z0-9_-]{43}");
     assertThat(item.getScopeKey()).isEqualTo(SCOPE_KEY);
     assertThat(item.getText()).isEqualTo("draft text");
     assertThat(item.getActionPath()).isEqualTo("/path");
@@ -233,7 +244,8 @@ class DraftMessageServiceTest {
 
   @Test
   void getDraft_noDraft_returnsNull() {
-    when(draftMessageRepository.findByUserIdAndScopeKey(USER_ID, SCOPE_KEY))
+    when(draftMessageRepository.findByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(
+            USER_ID, SCOPE_KEY))
         .thenReturn(Optional.empty());
 
     assertThat(draftMessageService.getDraft(USER_ID, SCOPE_KEY)).isNull();
@@ -266,7 +278,8 @@ class DraftMessageServiceTest {
   // Duplicate rows must not break chat loading when the unique index is missing.
   @Test
   void getDraft_repositoryThrowsException_returnsNull() {
-    when(draftMessageRepository.findByUserIdAndScopeKey(USER_ID, SCOPE_KEY))
+    when(draftMessageRepository.findByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(
+            USER_ID, SCOPE_KEY))
         .thenThrow(new org.springframework.dao.IncorrectResultSizeDataAccessException(2));
 
     assertThat(draftMessageService.getDraft(USER_ID, SCOPE_KEY)).isNull();
@@ -276,7 +289,8 @@ class DraftMessageServiceTest {
   void getDraft_nullUpdateDate_mapsUpdatedAtAsNull() {
     DraftMessage draft =
         DraftMessage.builder().id(1L).scopeKey(SCOPE_KEY).text("x").updateDate(null).build();
-    when(draftMessageRepository.findByUserIdAndScopeKey(USER_ID, SCOPE_KEY))
+    when(draftMessageRepository.findByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(
+            USER_ID, SCOPE_KEY))
         .thenReturn(Optional.of(draft));
 
     DraftMessageItem item = draftMessageService.getDraft(USER_ID, SCOPE_KEY);
@@ -293,7 +307,8 @@ class DraftMessageServiceTest {
             .text("feed item")
             .updateDate(LocalDateTime.of(2024, 3, 1, 8, 0))
             .build();
-    when(draftMessageRepository.findByUserIdOrderByUpdateDateDesc(eq(USER_ID), any(Pageable.class)))
+    when(draftMessageRepository.findByUserIdOrderByUpdateDateDescIdDesc(
+            eq(USER_ID), any(Pageable.class)))
         .thenReturn(List.of(draft));
 
     DraftFeedResponse response = draftMessageService.getDrafts(USER_ID, 1, 50);
@@ -306,7 +321,8 @@ class DraftMessageServiceTest {
 
   @Test
   void getDrafts_negativePage_clampsPageToZero() {
-    when(draftMessageRepository.findByUserIdOrderByUpdateDateDesc(eq(USER_ID), any(Pageable.class)))
+    when(draftMessageRepository.findByUserIdOrderByUpdateDateDescIdDesc(
+            eq(USER_ID), any(Pageable.class)))
         .thenReturn(List.of());
 
     DraftFeedResponse response = draftMessageService.getDrafts(USER_ID, -5, 10);
@@ -317,7 +333,8 @@ class DraftMessageServiceTest {
 
   @Test
   void getDrafts_zeroPerPage_clampsPerPageToOne() {
-    when(draftMessageRepository.findByUserIdOrderByUpdateDateDesc(eq(USER_ID), any(Pageable.class)))
+    when(draftMessageRepository.findByUserIdOrderByUpdateDateDescIdDesc(
+            eq(USER_ID), any(Pageable.class)))
         .thenReturn(List.of());
 
     DraftFeedResponse response = draftMessageService.getDrafts(USER_ID, 0, 0);
@@ -328,7 +345,8 @@ class DraftMessageServiceTest {
 
   @Test
   void getDrafts_perPageAboveMax_clampsPerPageToTwoHundred() {
-    when(draftMessageRepository.findByUserIdOrderByUpdateDateDesc(eq(USER_ID), any(Pageable.class)))
+    when(draftMessageRepository.findByUserIdOrderByUpdateDateDescIdDesc(
+            eq(USER_ID), any(Pageable.class)))
         .thenReturn(List.of());
 
     DraftFeedResponse response = draftMessageService.getDrafts(USER_ID, 0, 500);
@@ -338,7 +356,8 @@ class DraftMessageServiceTest {
 
   @Test
   void getDrafts_perPageWithinRange_keepsPerPageUnchanged() {
-    when(draftMessageRepository.findByUserIdOrderByUpdateDateDesc(eq(USER_ID), any(Pageable.class)))
+    when(draftMessageRepository.findByUserIdOrderByUpdateDateDescIdDesc(
+            eq(USER_ID), any(Pageable.class)))
         .thenReturn(List.of());
 
     DraftFeedResponse response = draftMessageService.getDrafts(USER_ID, 0, 100);
@@ -348,14 +367,15 @@ class DraftMessageServiceTest {
 
   @Test
   void getDrafts_validPagination_forwardsClampedPageRequestToRepository() {
-    when(draftMessageRepository.findByUserIdOrderByUpdateDateDesc(eq(USER_ID), any(Pageable.class)))
+    when(draftMessageRepository.findByUserIdOrderByUpdateDateDescIdDesc(
+            eq(USER_ID), any(Pageable.class)))
         .thenReturn(List.of());
 
     draftMessageService.getDrafts(USER_ID, -5, 500);
 
     ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
     verify(draftMessageRepository)
-        .findByUserIdOrderByUpdateDateDesc(eq(USER_ID), pageableCaptor.capture());
+        .findByUserIdOrderByUpdateDateDescIdDesc(eq(USER_ID), pageableCaptor.capture());
     Pageable pageable = pageableCaptor.getValue();
     assertThat(pageable).isEqualTo(PageRequest.of(0, 200));
   }
@@ -364,7 +384,8 @@ class DraftMessageServiceTest {
   void deleteDraft_validInput_deletesOnce() {
     draftMessageService.deleteDraft(USER_ID, SCOPE_KEY);
 
-    verify(draftMessageRepository, times(1)).deleteByUserIdAndScopeKey(USER_ID, SCOPE_KEY);
+    verify(draftMessageRepository, times(1))
+        .deleteByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(USER_ID, SCOPE_KEY);
   }
 
   @Test
@@ -396,7 +417,8 @@ class DraftMessageServiceTest {
   @Test
   void upsertDraft_concurrentInsertRace_dataIntegrityViolationBubblesOut() throws Exception {
     UpsertDraftRequest request = upsertRequest("concurrent text");
-    when(draftMessageRepository.findByUserIdAndScopeKey(USER_ID, SCOPE_KEY))
+    when(draftMessageRepository.findForUpdateByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(
+            USER_ID, SCOPE_KEY))
         .thenReturn(Optional.empty());
 
     AtomicInteger saveAttempts = new AtomicInteger();

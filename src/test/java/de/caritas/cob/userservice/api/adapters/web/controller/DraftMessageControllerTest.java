@@ -7,12 +7,19 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
+import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.service.draft.DraftMessageService;
 import de.caritas.cob.userservice.api.service.draft.DraftMessageService.DraftFeedResponse;
 import de.caritas.cob.userservice.api.service.draft.DraftMessageService.DraftMessageItem;
+import de.caritas.cob.userservice.api.service.draft.DraftMessageService.MigrateDraftRequest;
 import de.caritas.cob.userservice.api.service.draft.DraftMessageService.UpsertDraftRequest;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import java.lang.reflect.Method;
@@ -24,6 +31,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 @ExtendWith(MockitoExtension.class)
 class DraftMessageControllerTest {
@@ -150,5 +159,66 @@ class DraftMessageControllerTest {
     Method method = DraftMessageController.class.getMethod("deleteDraft", String.class);
 
     assertTrue(method.getParameters()[0].isAnnotationPresent(NotBlank.class));
+  }
+
+  @Test
+  void migrationAndRetirementUseTheExactOpaqueWireContract() throws Exception {
+    var mvc =
+        MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(new ApiResponseEntityExceptionHandler())
+            .build();
+    when(authenticatedUser.getUserId()).thenReturn("owned-user");
+    String legacyRevision = "a".repeat(43);
+    String targetRevision = "b".repeat(43);
+    String scope = "draft.v1." + "c".repeat(43);
+    String text = "draft.v1." + "d".repeat(16) + "." + "e".repeat(32);
+    var request = new MigrateDraftRequest(71L, legacyRevision, scope, text);
+    TenantContext.setCurrentTenant(9L);
+    try {
+      mvc.perform(
+              post("/users/drafts/migrate")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(
+                      """
+                      {"legacyId":71,"legacyRevision":"%s","targetScopeKey":"%s","text":"%s"}
+                      """
+                          .formatted(legacyRevision, scope, text)))
+          .andExpect(status().isNoContent());
+      verify(draftMessageService).migrateDraft("owned-user", 9L, request);
+
+      mvc.perform(
+              delete("/users/drafts/legacy/{id}", 71)
+                  .param("revision", legacyRevision)
+                  .param("targetScopeKey", scope)
+                  .param("targetRevision", targetRevision))
+          .andExpect(status().isNoContent());
+      verify(draftMessageService)
+          .retireLegacyDraft("owned-user", 9L, 71L, legacyRevision, scope, targetRevision);
+
+      doThrow(new DataIntegrityViolationException("concurrent insert"))
+          .when(draftMessageService)
+          .migrateDraft("owned-user", 9L, request);
+      mvc.perform(
+              post("/users/drafts/migrate")
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(
+                      """
+                      {"legacyId":71,"legacyRevision":"%s","targetScopeKey":"%s","text":"%s"}
+                      """
+                          .formatted(legacyRevision, scope, text)))
+          .andExpect(status().isConflict());
+
+      doThrow(new NotFoundException("Legacy draft not found"))
+          .when(draftMessageService)
+          .retireLegacyDraft("owned-user", 9L, 71L, legacyRevision, scope, targetRevision);
+      mvc.perform(
+              delete("/users/drafts/legacy/{id}", 71)
+                  .param("revision", legacyRevision)
+                  .param("targetScopeKey", scope)
+                  .param("targetRevision", targetRevision))
+          .andExpect(status().isNotFound());
+    } finally {
+      TenantContext.clear();
+    }
   }
 }
