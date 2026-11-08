@@ -63,13 +63,7 @@ public class DraftMessageController {
   public ResponseEntity<Void> upsertDraft(
       @RequestParam @NotBlank String scopeKey, @RequestBody UpsertDraftRequest request) {
     if (DraftMessageService.usesProtectedNamespace(scopeKey)) {
-      try {
-        draftMessageService.upsertProtectedDraft(
-            authenticatedUser.getUserId(), scopeKey, request, TenantContext.getCurrentTenant());
-      } catch (DataIntegrityViolationException | PessimisticLockingFailureException exception) {
-        throw new ConflictException("Protected draft changed concurrently");
-      }
-      return ResponseEntity.noContent().build();
+      return upsertProtectedDraft(scopeKey, request);
     }
     try {
       draftMessageService.upsertDraft(
@@ -83,15 +77,32 @@ public class DraftMessageController {
     return new ResponseEntity<>(HttpStatus.NO_CONTENT);
   }
 
+  @PatchMapping("/protected")
+  public ResponseEntity<Void> upsertProtectedDraft(
+      @RequestParam @NotBlank String scopeKey, @RequestBody UpsertDraftRequest request) {
+    try {
+      draftMessageService.upsertProtectedDraft(
+          authenticatedUser.getUserId(), scopeKey, request, TenantContext.getCurrentTenant());
+    } catch (DataIntegrityViolationException | PessimisticLockingFailureException exception) {
+      throw new ConflictException("Protected draft changed concurrently");
+    }
+    return ResponseEntity.noContent().build();
+  }
+
   @DeleteMapping
   public ResponseEntity<Void> deleteDraft(@RequestParam @NotBlank String scopeKey) {
     if (DraftMessageService.usesProtectedNamespace(scopeKey)) {
-      draftMessageService.deleteProtectedDraft(
-          authenticatedUser.getUserId(), scopeKey, TenantContext.getCurrentTenant());
-    } else {
-      draftMessageService.deleteDraft(authenticatedUser.getUserId(), scopeKey);
+      return deleteProtectedDraft(scopeKey);
     }
-    return new ResponseEntity<>(HttpStatus.NO_CONTENT);
+    draftMessageService.deleteDraft(authenticatedUser.getUserId(), scopeKey);
+    return ResponseEntity.noContent().build();
+  }
+
+  @DeleteMapping("/protected")
+  public ResponseEntity<Void> deleteProtectedDraft(@RequestParam @NotBlank String scopeKey) {
+    draftMessageService.deleteProtectedDraft(
+        authenticatedUser.getUserId(), scopeKey, TenantContext.getCurrentTenant());
+    return ResponseEntity.noContent().build();
   }
 
   @PostMapping("/migrate")

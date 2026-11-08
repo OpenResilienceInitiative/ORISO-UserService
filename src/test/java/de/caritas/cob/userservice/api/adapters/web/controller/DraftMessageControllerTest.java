@@ -3,15 +3,19 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.service.draft.DraftMessageService;
@@ -217,6 +221,55 @@ class DraftMessageControllerTest {
                   .param("targetScopeKey", scope)
                   .param("targetRevision", targetRevision))
           .andExpect(status().isNotFound());
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Test
+  void protectedRoutesDelegateOnlyToTheStrictDraftService() throws Exception {
+    var mvc =
+        MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(new ApiResponseEntityExceptionHandler())
+            .build();
+    when(authenticatedUser.getUserId()).thenReturn("owned-user");
+    String path = "/users/drafts/protected";
+    String scope = "draft.v1." + "a".repeat(43);
+    String ciphertext = "draft.v1." + "b".repeat(16) + "." + "c".repeat(32);
+    String legacyScope = "scope:room|thread:main";
+    String body = "{\"text\":\"" + ciphertext + "\"}";
+    TenantContext.setCurrentTenant(9L);
+    try {
+      mvc.perform(
+              patch(path)
+                  .param("scopeKey", scope)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(body))
+          .andExpect(status().isNoContent());
+      verify(draftMessageService)
+          .upsertProtectedDraft(
+              eq("owned-user"), eq(scope),
+              argThat(request -> ciphertext.equals(request.getText())), eq(9L));
+
+      mvc.perform(delete(path).param("scopeKey", scope)).andExpect(status().isNoContent());
+      verify(draftMessageService).deleteProtectedDraft("owned-user", scope, 9L);
+
+      doThrow(new BadRequestException("Invalid protected draft scope"))
+          .when(draftMessageService)
+          .upsertProtectedDraft(eq("owned-user"), eq(legacyScope), any(), eq(9L));
+      doThrow(new BadRequestException("Invalid protected draft scope"))
+          .when(draftMessageService)
+          .deleteProtectedDraft("owned-user", legacyScope, 9L);
+
+      mvc.perform(
+              patch(path)
+                  .param("scopeKey", legacyScope)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(body))
+          .andExpect(status().isBadRequest());
+      mvc.perform(delete(path).param("scopeKey", legacyScope)).andExpect(status().isBadRequest());
+      verify(draftMessageService, never()).upsertDraft(any(), any(), any(), any());
+      verify(draftMessageService, never()).deleteDraft(any(), any());
     } finally {
       TenantContext.clear();
     }
