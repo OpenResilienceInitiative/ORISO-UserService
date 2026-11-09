@@ -47,6 +47,7 @@ run_maven() {
 mariadb_owned_tests=(
   LiveChatPromotionMigrationIT
   DatabaseChangelogDriftIT
+  DraftMessageLegacyMariaDbIT
   EnquiryRejectionMariaDbIT
   ConsultantTopicUniqueKeyMariaDbIT
   ConsultantPictureDatabaseIT
