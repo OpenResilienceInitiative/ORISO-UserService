@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -20,11 +21,6 @@ import de.caritas.cob.userservice.api.service.draft.DraftMessageService.UpsertDr
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -43,6 +39,7 @@ class DraftMessageServiceTest {
   private static final Long TENANT_ID = 5L;
 
   @Mock private DraftMessageRepository draftMessageRepository;
+  @Mock private LegacyDraftWriteLock legacyDraftWriteLock;
 
   @InjectMocks private DraftMessageService draftMessageService;
 
@@ -130,8 +127,9 @@ class DraftMessageServiceTest {
   @Test
   void legacyWritesRetainTheTextLimitInUtf8Bytes() {
     String withinLimit = "é".repeat(32_767) + "a";
-    when(draftMessageRepository.findForUpdateByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(
-            USER_ID, SCOPE_KEY))
+    when(draftMessageRepository
+            .findFirstForUpdateByUserIdAndScopeKeyAndProtectedScopeKeyIsNullOrderByUpdateDateDescIdDesc(
+                USER_ID, SCOPE_KEY))
         .thenReturn(Optional.empty());
 
     assertThatThrownBy(
@@ -147,8 +145,9 @@ class DraftMessageServiceTest {
 
   @Test
   void upsertDraft_encryptedDraft_isPersisted() {
-    when(draftMessageRepository.findForUpdateByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(
-            USER_ID, SCOPE_KEY))
+    when(draftMessageRepository
+            .findFirstForUpdateByUserIdAndScopeKeyAndProtectedScopeKeyIsNullOrderByUpdateDateDescIdDesc(
+                USER_ID, SCOPE_KEY))
         .thenReturn(Optional.empty());
 
     draftMessageService.upsertDraft(
@@ -164,8 +163,9 @@ class DraftMessageServiceTest {
   // First keystroke for a scope creates a new draft row with tenant attribution.
   @Test
   void upsertDraft_noExistingDraft_savesNewDraftWithAllFields() {
-    when(draftMessageRepository.findForUpdateByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(
-            USER_ID, SCOPE_KEY))
+    when(draftMessageRepository
+            .findFirstForUpdateByUserIdAndScopeKeyAndProtectedScopeKeyIsNullOrderByUpdateDateDescIdDesc(
+                USER_ID, SCOPE_KEY))
         .thenReturn(Optional.empty());
 
     UpsertDraftRequest request = fullUpsertRequest("Hello draft");
@@ -174,6 +174,16 @@ class DraftMessageServiceTest {
     ArgumentCaptor<DraftMessage> captor = ArgumentCaptor.forClass(DraftMessage.class);
     verify(draftMessageRepository).save(captor.capture());
     DraftMessage saved = captor.getValue();
+    var readsAndLock = inOrder(draftMessageRepository, legacyDraftWriteLock);
+    readsAndLock
+        .verify(draftMessageRepository)
+        .findFirstForUpdateByUserIdAndScopeKeyAndProtectedScopeKeyIsNullOrderByUpdateDateDescIdDesc(
+            USER_ID, SCOPE_KEY);
+    readsAndLock.verify(legacyDraftWriteLock).acquireForCurrentTransaction(USER_ID);
+    readsAndLock
+        .verify(draftMessageRepository)
+        .findFirstForUpdateByUserIdAndScopeKeyAndProtectedScopeKeyIsNullOrderByUpdateDateDescIdDesc(
+            USER_ID, SCOPE_KEY);
 
     assertThat(saved.getUserId()).isEqualTo(USER_ID);
     assertThat(saved.getScopeKey()).isEqualTo(SCOPE_KEY);
@@ -208,8 +218,9 @@ class DraftMessageServiceTest {
             .updateDate(originalCreateDate)
             .tenantId(TENANT_ID)
             .build();
-    when(draftMessageRepository.findForUpdateByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(
-            USER_ID, SCOPE_KEY))
+    when(draftMessageRepository
+            .findFirstForUpdateByUserIdAndScopeKeyAndProtectedScopeKeyIsNullOrderByUpdateDateDescIdDesc(
+                USER_ID, SCOPE_KEY))
         .thenReturn(Optional.of(existing));
 
     UpsertDraftRequest request = fullUpsertRequest("updated text");
@@ -219,6 +230,7 @@ class DraftMessageServiceTest {
     verify(draftMessageRepository).save(captor.capture());
     DraftMessage saved = captor.getValue();
 
+    verifyNoInteractions(legacyDraftWriteLock);
     assertThat(saved).isSameAs(existing);
     assertThat(saved.getText()).isEqualTo("updated text");
     assertThat(saved.getActionPath()).isEqualTo("/action");
@@ -245,8 +257,9 @@ class DraftMessageServiceTest {
             .threadRootId("thread")
             .updateDate(updateDate)
             .build();
-    when(draftMessageRepository.findByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(
-            USER_ID, SCOPE_KEY))
+    when(draftMessageRepository
+            .findFirstByUserIdAndScopeKeyAndProtectedScopeKeyIsNullOrderByUpdateDateDescIdDesc(
+                USER_ID, SCOPE_KEY))
         .thenReturn(Optional.of(draft));
 
     DraftMessageItem item = draftMessageService.getDraft(USER_ID, SCOPE_KEY);
@@ -265,8 +278,9 @@ class DraftMessageServiceTest {
 
   @Test
   void getDraft_noDraft_returnsNull() {
-    when(draftMessageRepository.findByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(
-            USER_ID, SCOPE_KEY))
+    when(draftMessageRepository
+            .findFirstByUserIdAndScopeKeyAndProtectedScopeKeyIsNullOrderByUpdateDateDescIdDesc(
+                USER_ID, SCOPE_KEY))
         .thenReturn(Optional.empty());
 
     assertThat(draftMessageService.getDraft(USER_ID, SCOPE_KEY)).isNull();
@@ -299,8 +313,9 @@ class DraftMessageServiceTest {
   // Duplicate rows must not break chat loading when the unique index is missing.
   @Test
   void getDraft_repositoryThrowsException_returnsNull() {
-    when(draftMessageRepository.findByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(
-            USER_ID, SCOPE_KEY))
+    when(draftMessageRepository
+            .findFirstByUserIdAndScopeKeyAndProtectedScopeKeyIsNullOrderByUpdateDateDescIdDesc(
+                USER_ID, SCOPE_KEY))
         .thenThrow(new org.springframework.dao.IncorrectResultSizeDataAccessException(2));
 
     assertThat(draftMessageService.getDraft(USER_ID, SCOPE_KEY)).isNull();
@@ -310,8 +325,9 @@ class DraftMessageServiceTest {
   void getDraft_nullUpdateDate_mapsUpdatedAtAsNull() {
     DraftMessage draft =
         DraftMessage.builder().id(1L).scopeKey(SCOPE_KEY).text("x").updateDate(null).build();
-    when(draftMessageRepository.findByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(
-            USER_ID, SCOPE_KEY))
+    when(draftMessageRepository
+            .findFirstByUserIdAndScopeKeyAndProtectedScopeKeyIsNullOrderByUpdateDateDescIdDesc(
+                USER_ID, SCOPE_KEY))
         .thenReturn(Optional.of(draft));
 
     DraftMessageItem item = draftMessageService.getDraft(USER_ID, SCOPE_KEY);
@@ -434,74 +450,16 @@ class DraftMessageServiceTest {
     verifyNoInteractions(draftMessageRepository);
   }
 
-  // Race on first insert is handled in the controller; the service itself still propagates DB
-  // errors.
   @Test
-  void upsertDraft_concurrentInsertRace_dataIntegrityViolationBubblesOut() throws Exception {
-    UpsertDraftRequest request = upsertRequest("concurrent text");
-    when(draftMessageRepository.findForUpdateByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(
-            USER_ID, SCOPE_KEY))
-        .thenReturn(Optional.empty());
-
-    AtomicInteger saveAttempts = new AtomicInteger();
+  void upsertDraft_databaseWriteFailureBubblesOut() {
     when(draftMessageRepository.save(any(DraftMessage.class)))
-        .thenAnswer(
-            invocation -> {
-              if (saveAttempts.incrementAndGet() > 1) {
-                throw new DataIntegrityViolationException("duplicate user_id + scope_key");
-              }
-              return invocation.getArgument(0);
-            });
+        .thenThrow(new DataIntegrityViolationException("simulated write failure"));
 
-    CountDownLatch threadsReady = new CountDownLatch(2);
-    CountDownLatch releaseThreads = new CountDownLatch(1);
-    ExecutorService executor = Executors.newFixedThreadPool(2);
-
-    try {
-      var first =
-          executor.submit(
-              () -> {
-                threadsReady.countDown();
-                try {
-                  releaseThreads.await(5, TimeUnit.SECONDS);
-                  draftMessageService.upsertDraft(USER_ID, SCOPE_KEY, request, TENANT_ID);
-                } catch (InterruptedException e) {
-                  Thread.currentThread().interrupt();
-                  throw new RuntimeException(e);
-                }
-              });
-      var second =
-          executor.submit(
-              () -> {
-                threadsReady.countDown();
-                try {
-                  releaseThreads.await(5, TimeUnit.SECONDS);
-                  draftMessageService.upsertDraft(USER_ID, SCOPE_KEY, request, TENANT_ID);
-                } catch (InterruptedException e) {
-                  Thread.currentThread().interrupt();
-                  throw new RuntimeException(e);
-                }
-              });
-
-      threadsReady.await(5, TimeUnit.SECONDS);
-      releaseThreads.countDown();
-
-      int failures = 0;
-      for (var future : List.of(first, second)) {
-        try {
-          future.get(5, TimeUnit.SECONDS);
-        } catch (java.util.concurrent.ExecutionException e) {
-          assertThat(e.getCause()).isInstanceOf(DataIntegrityViolationException.class);
-          failures++;
-        }
-      }
-      assertThat(failures).isEqualTo(1);
-    } finally {
-      executor.shutdownNow();
-    }
-
-    // Known gap: DraftMessageController catches DataAccessException; service has no local handler.
-    verify(draftMessageRepository, times(2)).save(any(DraftMessage.class));
+    assertThatThrownBy(
+            () ->
+                draftMessageService.upsertDraft(
+                    USER_ID, SCOPE_KEY, upsertRequest("synthetic draft"), TENANT_ID))
+        .isInstanceOf(DataIntegrityViolationException.class);
   }
 
   private static UpsertDraftRequest upsertRequest(String text) {

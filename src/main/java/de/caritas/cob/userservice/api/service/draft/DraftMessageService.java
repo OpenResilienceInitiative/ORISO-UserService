@@ -31,6 +31,7 @@ public class DraftMessageService {
   private static final int MAX_PROTECTED_FEED_ROWS = 12;
 
   private final @NonNull DraftMessageRepository draftMessageRepository;
+  private final @NonNull LegacyDraftWriteLock legacyDraftWriteLock;
 
   @Transactional(isolation = Isolation.READ_COMMITTED)
   public void upsertDraft(
@@ -52,39 +53,37 @@ public class DraftMessageService {
       return;
     }
 
-    var now = LocalDateTime.now();
-    // Serialize edits to legacy rows with retirement. After retirement, an older client
-    // can still create a new legacy row rather than dropping an edit to a removed entity.
-    var draft =
+    var existing =
         draftMessageRepository
-            .findForUpdateByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(userId, scopeKey)
-            .map(
-                existing -> {
-                  existing.setText(text);
-                  existing.setActionPath(request != null ? request.getActionPath() : null);
-                  existing.setTitle(request != null ? request.getTitle() : null);
-                  existing.setSourceSessionId(
-                      request != null ? request.getSourceSessionId() : null);
-                  existing.setRoomRef(request != null ? request.getRoomRef() : null);
-                  existing.setThreadRootId(request != null ? request.getThreadRootId() : null);
-                  existing.setUpdateDate(now);
-                  return existing;
-                })
-            .orElse(
+            .findFirstForUpdateByUserIdAndScopeKeyAndProtectedScopeKeyIsNullOrderByUpdateDateDescIdDesc(
+                userId, scopeKey);
+    if (existing.isEmpty()) {
+      // The row lock coordinates edits with retirement but cannot protect an absent scope.
+      legacyDraftWriteLock.acquireForCurrentTransaction(userId);
+      existing =
+          draftMessageRepository
+              .findFirstForUpdateByUserIdAndScopeKeyAndProtectedScopeKeyIsNullOrderByUpdateDateDescIdDesc(
+                  userId, scopeKey);
+    }
+    var now = LocalDateTime.now();
+    var draft =
+        existing.orElseGet(
+            () ->
                 DraftMessage.builder()
                     .userId(userId)
                     .scopeKey(scopeKey)
-                    .text(text)
-                    .actionPath(request != null ? request.getActionPath() : null)
-                    .title(request != null ? request.getTitle() : null)
-                    .sourceSessionId(request != null ? request.getSourceSessionId() : null)
-                    .roomRef(request != null ? request.getRoomRef() : null)
-                    .threadRootId(request != null ? request.getThreadRootId() : null)
                     .createDate(now)
-                    .updateDate(now)
                     .tenantId(tenantId)
                     .build());
-
+    draft.setText(text);
+    draft.setActionPath(request.getActionPath());
+    draft.setTitle(request.getTitle());
+    draft.setSourceSessionId(request.getSourceSessionId());
+    draft.setRoomRef(request.getRoomRef());
+    draft.setThreadRootId(request.getThreadRootId());
+    if (draft.getUpdateDate() == null || now.isAfter(draft.getUpdateDate())) {
+      draft.setUpdateDate(now);
+    }
     draftMessageRepository.save(draft);
   }
 
@@ -257,13 +256,13 @@ public class DraftMessageService {
     }
     try {
       return draftMessageRepository
-          .findByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(userId, scopeKey)
+          .findFirstByUserIdAndScopeKeyAndProtectedScopeKeyIsNullOrderByUpdateDateDescIdDesc(
+              userId, scopeKey)
           .map(this::toItem)
           .orElse(null);
     } catch (Exception e) {
-      // Never let a non-critical draft lookup break the chat (e.g. duplicate rows when no
-      // unique constraint exists on user_id + scope_key -> NonUniqueResultException).
-      log.warn("Could not load draft for scopeKey {}: {}", scopeKey, e.getMessage());
+      // A non-critical legacy lookup must not break the chat.
+      log.warn("Could not load legacy draft: {}", e.getClass().getSimpleName());
       return null;
     }
   }

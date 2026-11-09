@@ -38,7 +38,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @DataJpaTest
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import(DraftMessageService.class)
+@Import({DraftMessageService.class, LegacyDraftWriteLock.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class DraftMessageMigrationIT {
 
@@ -271,6 +271,50 @@ class DraftMessageMigrationIT {
   }
 
   @Test
+  void firstLegacyAutosaveCreatesOneRowAndCanBeUpdated() {
+    String owner = UUID.randomUUID().toString();
+    String scope = "scope:first-legacy-autosave";
+
+    service.upsertDraft(owner, scope, payload("First synthetic autosave"), TENANT);
+    var created = service.getDraft(owner, scope);
+    service.upsertDraft(owner, scope, payload("Revised synthetic autosave"), TENANT);
+
+    assertThat(service.getDrafts(owner, 0, 200).getItems())
+        .singleElement()
+        .satisfies(
+            draft -> {
+              assertThat(draft.getId()).isEqualTo(created.getId());
+              assertThat(draft.getText()).isEqualTo("Revised synthetic autosave");
+            });
+  }
+
+  @Test
+  void legacyAutosaveUpdatesTheLatestDuplicateAndRetainsOlderRows() {
+    String owner = UUID.randomUUID().toString();
+    String scope = "scope:duplicate|thread:main";
+    LocalDateTime sameTime = LocalDateTime.of(2026, 1, 1, 0, 0);
+    var older = historicalDraft(owner, scope, TENANT, "Retain earlier draft", sameTime);
+    var canonical = historicalDraft(owner, scope, TENANT, "Newest by ID", sameTime);
+    var staleWithHigherId =
+        historicalDraft(owner, scope, TENANT, "Retain stale draft", sameTime.minusDays(1));
+
+    assertThat(service.getDraft(owner, scope)).isNotNull();
+    assertThat(service.getDraft(owner, scope).getId()).isEqualTo(canonical.getId());
+    service.upsertDraft(owner, scope, payload("Normal edit on the newest draft"), TENANT);
+
+    assertThat(service.getDraft(owner, scope).getId()).isEqualTo(canonical.getId());
+    assertThat(service.getDraft(owner, scope).getText())
+        .isEqualTo("Normal edit on the newest draft");
+    assertThat(service.getDrafts(owner, 0, 200).getItems())
+        .extracting(DraftMessageItem::getId)
+        .containsExactly(canonical.getId(), older.getId(), staleWithHigherId.getId());
+    assertThat(repository.findById(older.getId()).orElseThrow().getText())
+        .isEqualTo("Retain earlier draft");
+    assertThat(repository.findById(staleWithHigherId.getId()).orElseThrow().getText())
+        .isEqualTo("Retain stale draft");
+  }
+
+  @Test
   void twoConcurrentMigrationsCannotCreateOrOverwriteTheSameProtectedScope() throws Exception {
     String owner = UUID.randomUUID().toString();
     var first = legacy(owner, "scope:first|thread:main", TENANT);
@@ -383,6 +427,19 @@ class DraftMessageMigrationIT {
                 .updateDate(LocalDateTime.of(2026, 1, 1, 0, 0))
                 .build());
     return service.getDraft(owner, row.getScopeKey());
+  }
+
+  private DraftMessage historicalDraft(
+      String owner, String scope, Long tenant, String text, LocalDateTime updateTime) {
+    return repository.saveAndFlush(
+        DraftMessage.builder()
+            .userId(owner)
+            .tenantId(tenant)
+            .scopeKey(scope)
+            .text(text)
+            .createDate(updateTime)
+            .updateDate(updateTime)
+            .build());
   }
 
   private boolean compete(

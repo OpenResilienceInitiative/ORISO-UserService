@@ -13,12 +13,14 @@ import org.springframework.transaction.annotation.Transactional;
 
 public interface DraftMessageRepository extends JpaRepository<DraftMessage, Long> {
 
-  Optional<DraftMessage> findByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(
-      String userId, String scopeKey);
+  Optional<DraftMessage>
+      findFirstByUserIdAndScopeKeyAndProtectedScopeKeyIsNullOrderByUpdateDateDescIdDesc(
+          String userId, String scopeKey);
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)
-  Optional<DraftMessage> findForUpdateByUserIdAndScopeKeyAndProtectedScopeKeyIsNull(
-      String userId, String scopeKey);
+  Optional<DraftMessage>
+      findFirstForUpdateByUserIdAndScopeKeyAndProtectedScopeKeyIsNullOrderByUpdateDateDescIdDesc(
+          String userId, String scopeKey);
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query(
