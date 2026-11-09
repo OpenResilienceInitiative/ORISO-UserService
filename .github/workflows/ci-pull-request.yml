@@ -29,6 +29,7 @@ jobs:
       uses: ./.github/actions/maven-build
       with:
         java_version: '21'
+        export_signoz_unit_report: 'true'
 
     - name: Docker image security gate without publishing
       uses: ./.github/actions/docker-build-push
