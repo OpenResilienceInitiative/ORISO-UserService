@@ -412,6 +412,50 @@ class DraftMessageMigrationIT {
     assertThat(service.getProtectedDraft(owner, TARGET, TENANT).getText()).isEqualTo(ENVELOPE);
   }
 
+  @Test
+  void protectedUpsertRejectsALegacyScopeWithoutCreatingARow() {
+    String owner = UUID.randomUUID().toString();
+    long rowsBefore = repository.count();
+
+    assertThatThrownBy(
+            () -> service.upsertProtectedDraft(owner, "scope:legacy", payload(ENVELOPE), TENANT))
+        .isInstanceOf(BadRequestException.class);
+
+    assertThat(repository.count()).isEqualTo(rowsBefore);
+  }
+
+  @Test
+  void protectedDeleteRemovesOnlyTheProtectedRowForTheAuthenticatedOwnerAndTenant() {
+    String owner = UUID.randomUUID().toString();
+    String otherOwner = UUID.randomUUID().toString();
+    var sameKeyLegacy = legacy(owner, TARGET, TENANT);
+    service.upsertProtectedDraft(owner, TARGET, payload(ENVELOPE), TENANT);
+    service.upsertProtectedDraft(otherOwner, TARGET, payload(ENVELOPE), TENANT);
+    var owned = service.getProtectedDraft(owner, TARGET, TENANT);
+    var foreignOwner = service.getProtectedDraft(otherOwner, TARGET, TENANT);
+
+    // The same protected key cannot coexist in two tenants for one owner. Probe the existing row
+    // from a different tenant first, then delete it with the correct owner and tenant.
+    service.deleteProtectedDraft(owner, TARGET, TENANT + 1);
+    assertThat(repository.findById(owned.getId()))
+        .hasValueSatisfying(
+            row -> assertThat(DraftMessageProtection.revision(row)).isEqualTo(owned.getRevision()));
+
+    service.deleteProtectedDraft(owner, TARGET, TENANT);
+
+    assertThat(repository.findById(owned.getId())).isEmpty();
+    assertThat(repository.findById(sameKeyLegacy.getId()))
+        .hasValueSatisfying(
+            row ->
+                assertThat(DraftMessageProtection.revision(row))
+                    .isEqualTo(sameKeyLegacy.getRevision()));
+    assertThat(repository.findById(foreignOwner.getId()))
+        .hasValueSatisfying(
+            row ->
+                assertThat(DraftMessageProtection.revision(row))
+                    .isEqualTo(foreignOwner.getRevision()));
+  }
+
   private DraftMessageItem legacy(String owner, String scope, Long tenant) {
     var row =
         repository.saveAndFlush(
