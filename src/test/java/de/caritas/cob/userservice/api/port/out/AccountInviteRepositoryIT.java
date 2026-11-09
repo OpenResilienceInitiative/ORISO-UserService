@@ -211,13 +211,16 @@ class AccountInviteRepositoryIT {
     var stamped = reconciliationInvite(42L, owner.getId(), null, AccountInviteStatus.ACCEPTED);
     stamped.setDpaSignedAt(SIGNED_AT.minusDays(2));
     accountInviteRepository.saveAndFlush(stamped);
-    Admin invalidOwner = persistedAdmin(0L, AdminType.TENANT);
-    var invalidTenant =
-        reconciliationInvite(0L, invalidOwner.getId(), null, AccountInviteStatus.ACCEPTED);
+    Admin zeroTenantOwner = persistedAdmin(0L, AdminType.TENANT);
+    var zeroTenant =
+        reconciliationInvite(0L, zeroTenantOwner.getId(), null, AccountInviteStatus.ACCEPTED);
+    Admin negativeTenantOwner = persistedAdmin(-1L, AdminType.TENANT);
+    var negativeTenant =
+        reconciliationInvite(-1L, negativeTenantOwner.getId(), null, AccountInviteStatus.ACCEPTED);
     long upperBound =
         TenantContext.supplyAcrossTenants(accountInviteRepository::findDpaReconciliationUpperBound)
             .orElseThrow();
-    assertEquals(invalidTenant.getId(), upperBound);
+    assertEquals(negativeTenant.getId(), upperBound);
     var first =
         TenantContext.supplyAcrossTenants(
             () ->
@@ -233,6 +236,7 @@ class AccountInviteRepositoryIT {
     assertEquals(owner.getId(), first.getFirst().getActorId());
     assertEquals(
         List.of(setup.getId()), next.stream().map(candidate -> candidate.getInviteId()).toList());
+    assertEquals(43L, next.getFirst().getTenantId());
     assertEquals(foreign.getId(), next.getFirst().getActorId());
     TenantContext.runIn(
         42L,
@@ -272,13 +276,19 @@ class AccountInviteRepositoryIT {
                 1,
                 accountInviteRepository.reconcileDpaSigned(
                     setup.getId(), 43L, foreign.getId(), SIGNED_AT)));
-    TenantContext.runIn(
-        0L,
-        () ->
-            assertEquals(
-                0,
-                accountInviteRepository.reconcileDpaSigned(
-                    invalidTenant.getId(), 0L, invalidOwner.getId(), SIGNED_AT)));
+    for (AccountInvite invalidTenant : List.of(zeroTenant, negativeTenant)) {
+      TenantContext.runIn(
+          invalidTenant.getTenantId(),
+          () ->
+              assertEquals(
+                  0,
+                  accountInviteRepository.reconcileDpaSigned(
+                      invalidTenant.getId(),
+                      invalidTenant.getTenantId(),
+                      invalidTenant.getAcceptedByUserId(),
+                      SIGNED_AT)));
+      assertNull(reload(invalidTenant).getDpaSignedAt());
+    }
     assertEquals(SIGNED_AT, reload(setup).getDpaSignedAt());
     assertEquals(SIGNED_AT.minusDays(2), reload(stamped).getDpaSignedAt());
     var reconciled = reload(target);
