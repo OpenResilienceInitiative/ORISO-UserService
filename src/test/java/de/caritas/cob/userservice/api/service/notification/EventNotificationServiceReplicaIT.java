@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.notification;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 
@@ -34,6 +35,7 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import javax.sql.DataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -54,7 +56,12 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 @SpringBootTest
 @ActiveProfiles("testing")
-@TestPropertySource(properties = "multitenancy.enabled=true")
+@TestPropertySource(
+    properties = {
+      "multitenancy.enabled=true",
+      "spring.datasource.hikari.maximum-pool-size=2",
+      "spring.datasource.hikari.connection-timeout=500"
+    })
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 class EventNotificationServiceReplicaIT {
 
@@ -67,7 +74,7 @@ class EventNotificationServiceReplicaIT {
   @Autowired private ConsultantRepository consultantRepository;
   @Autowired private IdentityTombstoneService identityTombstoneService;
   @MockitoSpyBean private EventNotificationDeduplicationWriter deduplicationWriter;
-  @Autowired private MatrixFeedUpdateSignalService feedUpdateSignalService;
+  @MockitoSpyBean private MatrixFeedUpdateSignalService feedUpdateSignalService;
   @Autowired private EventNotificationService notifications;
   @Autowired private GroupChatReminderService reminders;
   @Autowired private GroupChatNotificationRecipientService recipients;
@@ -77,6 +84,7 @@ class EventNotificationServiceReplicaIT {
   @Autowired private UserChatRepository userChats;
   @Autowired private AccountInactivityService accountLifecycle;
   @Autowired private JdbcTemplate jdbc;
+  @Autowired private DataSource dataSource;
   @Autowired private PlatformTransactionManager transactionManager;
   @MockitoBean private AccountInactivityEffects accountEffects;
 
@@ -192,6 +200,48 @@ class EventNotificationServiceReplicaIT {
   }
 
   @Test
+  void remindersCommitAndSignalBothRecipientsWithTwoConnections() {
+    var start = LocalDateTime.of(2090, 5, 1, 10, 0);
+    createProofSeries(start);
+    var first = addProofMember("limited-pool-first");
+    var second = addProofMember("limited-pool-second");
+    var recipientIds = List.of(first.getUserId(), second.getUserId());
+    var signaledRecipients = new ArrayList<String>();
+    var key = "group-chat:group_chat.reminder:" + proofSeries.getId() + ":0";
+    doAnswer(
+            invocation -> {
+              String recipient = invocation.getArgument(0);
+              try (var connection = dataSource.getConnection();
+                  var query =
+                      connection.prepareStatement(
+                          "SELECT COUNT(*) FROM event_notification "
+                              + "WHERE recipient_user_id = ? AND deduplication_key = ?")) {
+                query.setString(1, recipient);
+                query.setString(2, key);
+                try (var rows = query.executeQuery()) {
+                  assertThat(rows.next()).isTrue();
+                  assertThat(rows.getInt(1)).isEqualTo(1);
+                }
+              }
+              signaledRecipients.add(recipient);
+              return null;
+            })
+        .when(feedUpdateSignalService)
+        .signalFeedUpdated(argThat(recipientIds::contains));
+
+    reminders.publishUpcomingReminders(start.minusMinutes(60));
+    reminders.publishUpcomingReminders(start.minusMinutes(60));
+
+    for (String recipientId : recipientIds) {
+      assertThat(notifications.getFeed(recipientId, 0, 100).getItems())
+          .singleElement()
+          .extracting(item -> item.getEventType())
+          .isEqualTo(GroupChatLifecycleNotificationService.EVENT_GROUP_CHAT_REMINDER);
+    }
+    assertThat(signaledRecipients).containsExactlyInAnyOrderElementsOf(recipientIds);
+  }
+
+  @Test
   void reminderRecipientFailureDoesNotRollBackTheLockedSeriesTransaction() {
     var start = LocalDateTime.of(2090, 4, 1, 10, 0);
     createProofSeries(start);
@@ -199,7 +249,7 @@ class EventNotificationServiceReplicaIT {
     var successful = addProofMember("successful");
     doThrow(new IllegalStateException("Simulated reminder persistence failure"))
         .when(deduplicationWriter)
-        .persistInNewTransaction(
+        .persistIfAbsentInNewTransaction(
             argThat(
                 event -> event != null && failed.getUserId().equals(event.getRecipientUserId())));
 
