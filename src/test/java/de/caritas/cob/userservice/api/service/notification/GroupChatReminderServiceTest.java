@@ -14,6 +14,8 @@ import de.caritas.cob.userservice.api.model.ChatOccurrenceException;
 import de.caritas.cob.userservice.api.model.ChatOccurrenceException.ExceptionType;
 import de.caritas.cob.userservice.api.port.out.ChatOccurrenceExceptionRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -40,13 +42,16 @@ class GroupChatReminderServiceTest {
   @Mock private GroupChatLifecycleNotificationService lifecycleNotificationService;
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private PlatformTransactionManager transactionManager;
+  @Mock private MeterRegistry meterRegistry;
+  @Mock private Counter failedSeries;
   @InjectMocks private GroupChatReminderService service;
 
   @BeforeEach
   void configureWindow() {
     ReflectionTestUtils.setField(service, "leadMinutes", 60L);
     ReflectionTestUtils.setField(service, "windowMinutes", 5L);
-    when(transactionManager.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
+    when(transactionManager.getTransaction(any()))
+        .thenAnswer(ignored -> new SimpleTransactionStatus());
   }
 
   @Test
@@ -147,6 +152,24 @@ class GroupChatReminderServiceTest {
 
     verify(matrixSynapseService).isRoomConfirmedGone(series.getMatrixRoomId());
     verifyReminder(1, WINDOW_END, false);
+  }
+
+  @Test
+  void recordsAFailedSeriesAndContinuesWithTheNextCandidate() {
+    var series = series(WINDOW_END, 1, 0);
+    when(chatRepository.findInactiveReminderCandidateIds(WINDOW_START, WINDOW_END))
+        .thenReturn(List.of(41L, series.getId()));
+    when(chatRepository.findByIdForUpdate(41L)).thenThrow(new IllegalStateException());
+    when(chatRepository.findByIdForUpdate(series.getId())).thenReturn(Optional.of(series));
+    when(exceptionRepository.findBySeries_Id(series.getId())).thenReturn(List.of());
+    when(notificationRecipientService.resolveRecipientIds(series)).thenReturn(RECIPIENTS);
+    when(meterRegistry.counter("userservice.group.chat.reminder.series.failures"))
+        .thenReturn(failedSeries);
+
+    service.publishUpcomingReminders(WINDOW_END.minusHours(1));
+
+    verify(failedSeries).increment();
+    verifyReminder(0, WINDOW_END, false);
   }
 
   private static Chat series(LocalDateTime anchor, int count, int currentIndex) {

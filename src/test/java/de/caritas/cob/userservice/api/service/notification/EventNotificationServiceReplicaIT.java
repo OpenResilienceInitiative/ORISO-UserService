@@ -1,6 +1,8 @@
 package de.caritas.cob.userservice.api.service.notification;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 
 import com.neovisionaries.i18n.LanguageCode;
@@ -46,6 +48,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @SpringBootTest
 @ActiveProfiles("testing")
@@ -61,7 +66,7 @@ class EventNotificationServiceReplicaIT {
   @Autowired private UserRepository userRepository;
   @Autowired private ConsultantRepository consultantRepository;
   @Autowired private IdentityTombstoneService identityTombstoneService;
-  @Autowired private EventNotificationDeduplicationWriter deduplicationWriter;
+  @MockitoSpyBean private EventNotificationDeduplicationWriter deduplicationWriter;
   @Autowired private MatrixFeedUpdateSignalService feedUpdateSignalService;
   @Autowired private EventNotificationService notifications;
   @Autowired private GroupChatReminderService reminders;
@@ -72,6 +77,7 @@ class EventNotificationServiceReplicaIT {
   @Autowired private UserChatRepository userChats;
   @Autowired private AccountInactivityService accountLifecycle;
   @Autowired private JdbcTemplate jdbc;
+  @Autowired private PlatformTransactionManager transactionManager;
   @MockitoBean private AccountInactivityEffects accountEffects;
 
   private Chat proofSeries;
@@ -183,6 +189,43 @@ class EventNotificationServiceReplicaIT {
                 notifications.getFeed(proofOwner.getId(), 0, 100).getItems().size()))
         .as("soft-deleted asker and consultant feed sizes")
         .containsExactly(0, 0);
+  }
+
+  @Test
+  void reminderRecipientFailureDoesNotRollBackTheLockedSeriesTransaction() {
+    var start = LocalDateTime.of(2090, 4, 1, 10, 0);
+    createProofSeries(start);
+    var failed = addProofMember("failed");
+    var successful = addProofMember("successful");
+    doThrow(new IllegalStateException("Simulated reminder persistence failure"))
+        .when(deduplicationWriter)
+        .persistInNewTransaction(
+            argThat(
+                event -> event != null && failed.getUserId().equals(event.getRecipientUserId())));
+
+    var seriesId = proofSeries.getId();
+    var committedTopic = "Locked reminder transaction committed";
+    new TransactionTemplate(transactionManager)
+        .executeWithoutResult(
+            status -> {
+              var lockedSeries = chats.findByIdForUpdate(seriesId).orElseThrow();
+              lifecycleNotifications.createReminderNotifications(
+                  seriesId,
+                  0,
+                  start,
+                  lockedSeries.getMatrixRoomId(),
+                  null,
+                  false,
+                  List.of(failed.getUserId(), successful.getUserId()));
+              lockedSeries.setTopic(committedTopic);
+            });
+
+    assertThat(chats.findById(seriesId).orElseThrow().getTopic()).isEqualTo(committedTopic);
+    assertThat(notifications.getFeed(failed.getUserId(), 0, 100).getItems()).isEmpty();
+    assertThat(notifications.getFeed(successful.getUserId(), 0, 100).getItems())
+        .singleElement()
+        .extracting(item -> item.getEventType())
+        .isEqualTo(GroupChatLifecycleNotificationService.EVENT_GROUP_CHAT_REMINDER);
   }
 
   @ParameterizedTest

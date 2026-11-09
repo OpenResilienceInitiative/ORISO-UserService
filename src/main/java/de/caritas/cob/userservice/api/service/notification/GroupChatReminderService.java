@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.api.model.Chat.ChatModality;
 import de.caritas.cob.userservice.api.port.out.ChatOccurrenceExceptionRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.service.chat.ChatOccurrenceProjector;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.LocalDateTime;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -23,6 +24,7 @@ public class GroupChatReminderService {
   private final ChatOccurrenceExceptionRepository exceptionRepository;
   private final MatrixSynapseService matrixSynapseService;
   private final PlatformTransactionManager transactionManager;
+  private final MeterRegistry meterRegistry;
   private final ChatOccurrenceProjector projector = new ChatOccurrenceProjector();
   private final GroupChatNotificationRecipientService notificationRecipientService;
   private final GroupChatLifecycleNotificationService lifecycleNotificationService;
@@ -42,6 +44,7 @@ public class GroupChatReminderService {
         transaction.executeWithoutResult(
             status -> publishSeriesReminders(seriesId, windowStart, reminderAt));
       } catch (RuntimeException failure) {
+        meterRegistry.counter("userservice.group.chat.reminder.series.failures").increment();
         log.warn(
             "Could not publish reminders for group series {}: {}",
             seriesId,

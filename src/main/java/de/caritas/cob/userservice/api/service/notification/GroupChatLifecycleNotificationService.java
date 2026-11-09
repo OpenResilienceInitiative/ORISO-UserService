@@ -10,6 +10,8 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 /** Publishes privacy-safe timeline events for self-help group occurrences. */
 @Slf4j
@@ -43,6 +45,8 @@ public class GroupChatLifecycleNotificationService {
         recipientUserIds);
   }
 
+  /** The caller retains its suspended series lock while each recipient publishes independently. */
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
   public void createReminderNotifications(
       Long seriesId,
       Integer occurrenceIndex,
