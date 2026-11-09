@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryResponseDTO;
@@ -17,6 +18,7 @@ import de.caritas.cob.userservice.api.conversation.facade.CreateAnonymousEnquiry
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -29,7 +31,9 @@ import de.caritas.cob.userservice.api.service.agencyinvitelink.AgencyInviteLinkS
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -43,9 +47,12 @@ import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
@@ -169,6 +176,37 @@ class AgencyInviteLinkServiceTest {
     assertThatThrownBy(() -> service.list("EXTERNAL_INBOUND", null, null, null, 0, 20))
         .isInstanceOf(NotFoundException.class);
 
+    verifyNoInteractions(topicService, repository);
+  }
+
+  @Test
+  void liveChatManagement_distinguishesProviderFailuresWithoutLoggingTheirPayloads() {
+    selectManagementTenant(2L);
+    when(tenantService.getRestrictedTenantDataFresh(2L))
+        .thenThrow(new ResourceAccessException("synthetic-provider-transport-details"))
+        .thenThrow(
+            HttpServerErrorException.create(
+                HttpStatus.BAD_GATEWAY,
+                "Bad Gateway",
+                HttpHeaders.EMPTY,
+                "synthetic-provider-response-body".getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8));
+
+    try (var logs = LogbackCaptor.forClass(AgencyInviteLinkService.class)) {
+      assertThatThrownBy(service::getLiveChatLinkTopics)
+          .isInstanceOf(ServiceUnavailableException.class)
+          .hasNoCause();
+      assertThatThrownBy(service::getLiveChatLinkTopics)
+          .isInstanceOf(ServiceUnavailableException.class)
+          .hasNoCause();
+
+      assertThat(logs.messages(Level.WARN))
+          .hasSize(2)
+          .anySatisfy(message -> assertThat(message).contains("ResourceAccessException"))
+          .anySatisfy(message -> assertThat(message).contains("502"))
+          .allSatisfy(message -> assertThat(message).doesNotContain("synthetic-provider"));
+      assertThat(logs.events()).allSatisfy(event -> assertThat(event.getThrowableProxy()).isNull());
+    }
     verifyNoInteractions(topicService, repository);
   }
 

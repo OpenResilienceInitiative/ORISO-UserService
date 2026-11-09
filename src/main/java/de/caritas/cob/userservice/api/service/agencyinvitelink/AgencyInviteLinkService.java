@@ -32,6 +32,7 @@ import java.util.List;
 import java.util.Objects;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -49,6 +50,7 @@ import org.springframework.web.context.request.ServletRequestAttributes;
  */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class AgencyInviteLinkService {
 
   private static final int TOKEN_BYTES = 24;
@@ -294,8 +296,16 @@ public class AgencyInviteLinkService {
         throw new NotFoundException("Tenant %s not found", tenantId);
       }
     } catch (RestClientException unavailable) {
-      if (unavailable instanceof RestClientResponseException response
-          && response.getStatusCode().value() == 404) {
+      Integer status =
+          unavailable instanceof RestClientResponseException response
+              ? response.getStatusCode().value()
+              : null;
+      // The exception message and stack trace may include the provider's response body.
+      log.warn(
+          "Could not verify live-chat link tenant (provider error {}, HTTP status {})",
+          unavailable.getClass().getSimpleName(),
+          status);
+      if (Objects.equals(status, 404)) {
         throw new NotFoundException("Tenant %s not found", tenantId);
       }
       throw new ServiceUnavailableException("Selected tenant could not be verified");
