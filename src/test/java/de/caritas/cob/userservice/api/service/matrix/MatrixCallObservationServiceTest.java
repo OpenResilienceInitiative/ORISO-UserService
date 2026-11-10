@@ -14,9 +14,11 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService.CallRoomOrigin;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.model.MatrixCallBinding;
 import de.caritas.cob.userservice.api.model.MatrixCallObservation;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.MatrixCallBindingRepository;
 import de.caritas.cob.userservice.api.port.out.MatrixCallObservationRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService.Outcome;
@@ -34,6 +36,7 @@ class MatrixCallObservationServiceTest {
   private static final String OTHER = "@other:example";
 
   private final MatrixCallObservationRepository repo = mock(MatrixCallObservationRepository.class);
+  private final MatrixCallBindingRepository bindings = mock(MatrixCallBindingRepository.class);
   private final MatrixCallConversationResolver conversations =
       mock(MatrixCallConversationResolver.class);
   private final UserRepository users = mock(UserRepository.class);
@@ -49,7 +52,7 @@ class MatrixCallObservationServiceTest {
   void setUp() {
     service =
         new MatrixCallObservationService(
-            repo, conversations, users, consultants, matrix, notifications, lifecycle);
+            repo, bindings, conversations, users, consultants, matrix, notifications, lifecycle);
     actor = new AuthenticatedUser();
     actor.setUserId("creator");
     actor.setTenantId(7L);
@@ -94,6 +97,20 @@ class MatrixCallObservationServiceTest {
     verify(notifications, never())
         .createCallInvitationNotification(
             any(), eq("creator"), anyBoolean(), any(), any(), any(), anyBoolean());
+  }
+
+  @Test
+  void aCallThatAlreadyHasAnAuthoritativeBindingIsNotObserved() {
+    // Observation and binding notifications share one dedupe key per (room, call). A member
+    // must not be able to register a look-alike first and suppress the real call's entries.
+    when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call"))
+        .thenReturn(Optional.of(MatrixCallBinding.builder().sourceRoomId(SOURCE).build()));
+
+    assertThat(service.register(actor, SOURCE, "call", MEDIA, true)).isEqualTo(Outcome.NOT_FOUND);
+    verify(repo, never()).saveAndFlush(any());
+    verify(notifications, never())
+        .createCallInvitationNotification(
+            any(), any(), anyBoolean(), any(), any(), any(), anyBoolean());
   }
 
   @Test

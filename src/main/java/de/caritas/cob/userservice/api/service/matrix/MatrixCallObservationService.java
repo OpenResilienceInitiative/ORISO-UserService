@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.MatrixCallObservation;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.MatrixCallBindingRepository;
 import de.caritas.cob.userservice.api.port.out.MatrixCallObservationRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
@@ -31,6 +32,7 @@ public class MatrixCallObservationService {
   }
 
   private final MatrixCallObservationRepository observations;
+  private final MatrixCallBindingRepository bindings;
   private final MatrixCallConversationResolver conversations;
   private final UserRepository users;
   private final ConsultantRepository consultants;
@@ -54,6 +56,11 @@ public class MatrixCallObservationService {
         || conversation.getChatId() == null
         || actor.getTenantId() == null
         || !actor.getTenantId().equals(conversation.getTenantId())) {
+      return Outcome.NOT_FOUND;
+    }
+    // A readable invite already produced the authoritative binding; notifications of both paths
+    // share one dedupe key per (room, call), so an observation must never pre-empt that call.
+    if (bindings.findBySourceRoomIdAndCallId(sourceRoomId, callId).isPresent()) {
       return Outcome.NOT_FOUND;
     }
     String creator = matrixIdOf(actor, conversation.getTenantId()).orElse(null);

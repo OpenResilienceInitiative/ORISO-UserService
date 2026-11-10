@@ -1734,6 +1734,14 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
       }
       return java.util.Optional.of(new CallRoomOrigin(creator, bindingSender));
     } catch (HttpStatusCodeException response) {
+      if (response.getStatusCode().value() == 401) {
+        String code = errcodeOf(response);
+        // The state request uses the member's own token: a locked or deactivated account is a
+        // definitive denial (same rule as getCallRoomBinding), not an outage to retry.
+        if ("M_USER_LOCKED".equals(code) || "M_USER_DEACTIVATED".equals(code)) {
+          return java.util.Optional.empty();
+        }
+      }
       if (response.getStatusCode().value() == 401 || isRetryableCallLookupStatus(response)) {
         throw new CallLookupUnavailableException("call origin lookup unavailable", response);
       }
