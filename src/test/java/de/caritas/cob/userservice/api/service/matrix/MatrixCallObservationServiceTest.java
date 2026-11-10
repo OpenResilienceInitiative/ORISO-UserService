@@ -186,12 +186,26 @@ class MatrixCallObservationServiceTest {
   }
 
   @Test
+  void unknownAudienceDoesNotRecordTheEndSoARetryCanNotify() {
+    long now = System.currentTimeMillis();
+    var row = row(now - 1000, now + 60_000, null);
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    when(matrix.getCallRoomMembers(SOURCE)).thenReturn(Optional.empty());
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.end(actor, SOURCE, "call"))
+        .isInstanceOf(MatrixSynapseService.CallLookupUnavailableException.class);
+    assertThat(row.getEndedAt()).isNull();
+  }
+
+  @Test
   void endingTwiceNotifiesOnce() {
     long now = System.currentTimeMillis();
     var row = row(now - 1000, now + 60_000, null);
     when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
-    service.end(actor, SOURCE, "call");
-    service.end(actor, SOURCE, "call");
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
+    Long firstEnd = row.getEndedAt();
+    assertThat(firstEnd).isNotNull();
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
+    assertThat(row.getEndedAt()).isEqualTo(firstEnd);
     verify(notifications, org.mockito.Mockito.times(1))
         .createCallEndedNotification(
             any(), eq("other"), eq(false), eq("call"), eq(MEDIA), anyLong(), anyLong());
@@ -200,7 +214,8 @@ class MatrixCallObservationServiceTest {
   @Test
   void inactiveRecipientsGetNoInvitation() {
     when(lifecycle.isActiveRecipient("other")).thenReturn(false);
-    service.register(actor, SOURCE, "call", MEDIA, true);
+    assertThat(service.register(actor, SOURCE, "call", MEDIA, true)).isEqualTo(Outcome.OK);
+    verify(lifecycle).isActiveRecipient("other");
     verify(notifications, never())
         .createCallInvitationNotification(
             any(), anyString(), anyBoolean(), any(), any(), any(), anyBoolean());

@@ -57,8 +57,11 @@ class MatrixCallObservationIsolationTest {
       Class<?> type = Class.forName(candidate.getBeanClassName());
       String name = type.getSimpleName();
       // Production classes only: the scan also sees test classes on the classpath.
-      if (name.startsWith("MatrixCallObservation") || name.endsWith("IT") || name.endsWith("Test"))
-        continue;
+      if (type == MatrixCallObservationService.class
+          || type == MatrixCallObservation.class
+          || type == MatrixCallObservationRepository.class
+          || name.endsWith("IT")
+          || name.endsWith("Test")) continue;
       boolean holds =
           Stream.of(type.getDeclaredFields())
                   .anyMatch(f -> f.getType().getSimpleName().startsWith("MatrixCallObservation"))

@@ -143,10 +143,17 @@ public class MatrixCallObservationService {
       return Outcome.NOT_FOUND;
     }
     if (row.getEndedAt() == null) {
+      // Unknown audience: fail before recording the end, so a retry can still notify.
+      List<String> members =
+          matrix
+              .getCallRoomMembers(sourceRoomId)
+              .orElseThrow(
+                  () ->
+                      new MatrixSynapseService.CallLookupUnavailableException(
+                          "call audience unavailable"));
       long now = System.currentTimeMillis();
       row.finish(now);
       observations.save(row);
-      List<String> members = matrix.getCallRoomMembers(sourceRoomId).orElse(List.of());
       for (String member : members) {
         var recipient = identity(member, row.getTenantId()).orElse(null);
         if (recipient == null || !lifecycle.isActiveRecipient(recipient.id())) continue;
