@@ -136,6 +136,10 @@ class MatrixCallGuestRoomIT {
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private javax.sql.DataSource dataSource;
   @MockitoBean private MatrixSynapseService matrix;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService observations;
+
   @MockitoBean private MatrixFeedUpdateSignalService feedUpdateSignals;
   @MockitoBean private IdentityTombstoneService tombstones;
 
@@ -406,13 +410,7 @@ class MatrixCallGuestRoomIT {
 
   private MockMvc mvc(AuthenticatedUser actor) {
     return MockMvcBuilders.standaloneSetup(
-            new MatrixCallStateController(
-                callStates,
-                callGuests,
-                org.mockito.Mockito.mock(
-                    de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService
-                        .class),
-                actor))
+            new MatrixCallStateController(callStates, callGuests, observations, actor))
         .build();
   }
 

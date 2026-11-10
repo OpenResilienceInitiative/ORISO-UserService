@@ -95,6 +95,10 @@ class MatrixCallTenantIT {
   @Autowired private EventNotificationService notificationService;
   @Autowired private PlatformTransactionManager transactionManager;
   @MockitoBean private MatrixSynapseService matrix;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService observations;
+
   @MockitoBean private MatrixFeedUpdateSignalService feedUpdateSignals;
   @MockitoBean private IdentityTombstoneService tombstones;
 

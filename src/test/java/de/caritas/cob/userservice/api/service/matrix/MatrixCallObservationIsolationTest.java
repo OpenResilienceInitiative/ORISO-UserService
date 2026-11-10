@@ -46,12 +46,27 @@ class MatrixCallObservationIsolationTest {
   }
 
   @Test
-  void onlyStateReadingAndRegistrationUseTheObservationTable() throws Exception {
-    // The two permitted consumers; adding a third must be a conscious, reviewed change.
-    assertThat(
-            List.of(MatrixCallStateService.class, MatrixCallObservationService.class).stream()
-                .flatMap(c -> Stream.of(c.getDeclaredFields()))
-                .map(Field::getType))
-        .contains(MatrixCallObservationService.class, MatrixCallObservationRepository.class);
+  void onlyTheExpectedClassesHoldTheObservationTypes() throws Exception {
+    // Scans all production classes: a new holder must be a conscious, reviewed change here.
+    var scanner =
+        new org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider(
+            false);
+    scanner.addIncludeFilter((reader, factory) -> true);
+    var holders = new java.util.TreeSet<String>();
+    for (var candidate : scanner.findCandidateComponents("de.caritas.cob.userservice")) {
+      Class<?> type = Class.forName(candidate.getBeanClassName());
+      String name = type.getSimpleName();
+      // Production classes only: the scan also sees test classes on the classpath.
+      if (name.startsWith("MatrixCallObservation") || name.endsWith("IT") || name.endsWith("Test"))
+        continue;
+      boolean holds =
+          Stream.of(type.getDeclaredFields())
+                  .anyMatch(f -> f.getType().getSimpleName().startsWith("MatrixCallObservation"))
+              || Stream.of(type.getDeclaredConstructors())
+                  .flatMap(c -> Stream.of(c.getParameterTypes()))
+                  .anyMatch(t -> t.getSimpleName().startsWith("MatrixCallObservation"));
+      if (holds) holders.add(type.getSimpleName());
+    }
+    assertThat(holders).containsExactly("MatrixCallStateController", "MatrixCallStateService");
   }
 }

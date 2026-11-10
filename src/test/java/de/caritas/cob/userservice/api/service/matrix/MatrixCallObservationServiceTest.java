@@ -150,6 +150,63 @@ class MatrixCallObservationServiceTest {
   }
 
   @Test
+  void endedRegistrationCannotBeRevived() {
+    long now = System.currentTimeMillis();
+    var row = row(now - 1000, now + 60_000, now - 500);
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    assertThat(service.register(actor, SOURCE, "call", MEDIA, true)).isEqualTo(Outcome.NOT_FOUND);
+    assertThat(row.getExpiresAt()).isEqualTo(now + 60_000);
+  }
+
+  @Test
+  void liveRegistrationIsRenewedWithoutNewRowOrNotifications() {
+    long now = System.currentTimeMillis();
+    var row = row(now - 1000, now + 1_000, null);
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    assertThat(service.register(actor, SOURCE, "call", MEDIA, true)).isEqualTo(Outcome.OK);
+    assertThat(row.getExpiresAt()).isGreaterThan(now + 60_000);
+    verify(repo, never()).saveAndFlush(any());
+    verify(notifications, never())
+        .createCallInvitationNotification(
+            any(), anyString(), anyBoolean(), any(), any(), any(), anyBoolean());
+  }
+
+  @Test
+  void rejectedRegistrationsNeverSaveOrNotify() {
+    when(matrix.getCallRoomOrigin(MEDIA, CREATOR))
+        .thenReturn(Optional.of(new CallRoomOrigin(CREATOR, OTHER)));
+    service.register(actor, SOURCE, "call", MEDIA, true);
+    actor.setTenantId(8L);
+    service.register(actor, SOURCE, "call", MEDIA, true);
+    verify(repo, never()).saveAndFlush(any());
+    verify(repo, never()).save(any());
+    verify(notifications, never())
+        .createCallInvitationNotification(
+            any(), anyString(), anyBoolean(), any(), any(), any(), anyBoolean());
+  }
+
+  @Test
+  void endingTwiceNotifiesOnce() {
+    long now = System.currentTimeMillis();
+    var row = row(now - 1000, now + 60_000, null);
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    service.end(actor, SOURCE, "call");
+    service.end(actor, SOURCE, "call");
+    verify(notifications, org.mockito.Mockito.times(1))
+        .createCallEndedNotification(
+            any(), eq("other"), eq(false), eq("call"), eq(MEDIA), anyLong(), anyLong());
+  }
+
+  @Test
+  void inactiveRecipientsGetNoInvitation() {
+    when(lifecycle.isActiveRecipient("other")).thenReturn(false);
+    service.register(actor, SOURCE, "call", MEDIA, true);
+    verify(notifications, never())
+        .createCallInvitationNotification(
+            any(), anyString(), anyBoolean(), any(), any(), any(), anyBoolean());
+  }
+
+  @Test
   void expiredObservationReadsAsEndedNeverRunning() {
     when(repo.findBySourceRoomIdAndCallId(SOURCE, "call"))
         .thenReturn(Optional.of(row(1000, 2000, null)));

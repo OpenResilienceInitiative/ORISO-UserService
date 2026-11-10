@@ -82,13 +82,23 @@ public class MatrixCallStateController {
               Boolean.TRUE.equals(request.video())));
     } catch (MatrixSynapseService.CallLookupUnavailableException unavailable) {
       return unavailable();
+    } catch (org.springframework.dao.DataIntegrityViolationException
+        | org.springframework.dao.CannotAcquireLockException concurrent) {
+      // Two first registrations raced; a retry takes the renew path.
+      return ResponseEntity.status(HttpStatus.CONFLICT)
+          .cacheControl(CacheControl.noStore())
+          .body(java.util.Map.of("reason", "call_observation_conflict"));
     }
   }
 
   @PostMapping("/observations/end")
   public ResponseEntity<?> end(@RequestBody ObservationEndRequest request) {
-    return observationResponse(
-        observations.end(authenticatedUser, request.sourceRoomId(), request.callId()));
+    try {
+      return observationResponse(
+          observations.end(authenticatedUser, request.sourceRoomId(), request.callId()));
+    } catch (MatrixSynapseService.CallLookupUnavailableException unavailable) {
+      return unavailable();
+    }
   }
 
   private static ResponseEntity<?> observationResponse(
