@@ -512,6 +512,11 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/users/chat/room/{chatId:[0-9]+}")
                 .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
                 .requestMatchers(
+                    HttpMethod.GET,
+                    "/users/chat-series/{seriesId:[0-9]+}/occurrences",
+                    "/service/users/chat-series/{seriesId:[0-9]+}/occurrences")
+                .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
+                .requestMatchers(
                     "/users/sessions/open",
                     "/users/sessions/consultants/new",
                     "/users/sessions/new/{sessionId:[0-9]+}",
