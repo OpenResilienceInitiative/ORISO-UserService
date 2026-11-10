@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.admin.service.search.AccountSearch;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -23,6 +24,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
+import de.caritas.cob.userservice.api.service.matrix.ConsultantRenameSystemMessageService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -72,6 +74,10 @@ public class AccountManager implements AccountManaging {
   private final AppointmentService appointmentService;
 
   private final PatchConsultantSaga patchConsultantSaga;
+
+  private final ConsultantDisplayNameResolver consultantDisplayNameResolver;
+
+  private final ConsultantRenameSystemMessageService consultantRenameSystemMessageService;
 
   private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -242,8 +248,17 @@ public class AccountManager implements AccountManaging {
   }
 
   private Map<String, Object> patchConsultant(Consultant consultant, Map<String, Object> patchMap) {
+    // Captured before the mapper mutates the entity (OBP 2.1 #119 / ORISO-UserService#1533).
+    var previousPublishedName = consultantDisplayNameResolver.resolveMatrixDisplayName(consultant);
     var patchedConsultant = userServiceMapper.consultantOf(consultant, patchMap);
-    return patchConsultantSaga.executeTransactional(patchedConsultant, patchMap);
+    var patched = patchConsultantSaga.executeTransactional(patchedConsultant, patchMap);
+    if (patchMap.containsKey("displayName")) {
+      consultantRenameSystemMessageService.postRenameMessagesAfterCommit(
+          patchedConsultant,
+          previousPublishedName,
+          consultantDisplayNameResolver.resolveMatrixDisplayName(patchedConsultant));
+    }
+    return patched;
   }
 
   private Map<String, Object> findByDbConsultant(Consultant dbConsultant) {

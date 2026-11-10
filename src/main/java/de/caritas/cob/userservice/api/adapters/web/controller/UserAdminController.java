@@ -9,10 +9,12 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AgencyConsultantResponseD
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyTypeDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerReactivationRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ChangeConsultantTenantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAgencyResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSearchResultDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantTenantChangeResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminAgencyRelationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
@@ -39,7 +41,9 @@ import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsu
 import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPreferenceService;
 import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPreferenceService.ListSort;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.PasswordPolicy;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.SearchFilter;
@@ -169,7 +173,8 @@ public class UserAdminController implements UseradminApi {
     createConsultantDTO.setEmail(createConsultantDTO.getEmail().toLowerCase(Locale.ROOT));
     // #1144: the setup e-mail is the way in, so the first password is one nobody knows. It is
     // generated here, not in the saga, because the setup issuer below needs the same value. An
-    // empty or short password never gets here: the request validation (minLength 8) answers 400.
+    // empty password never gets here: the request validation answers 400.
+    requireMinimumPasswordLength(createConsultantDTO.getPassword());
     if (createConsultantDTO.getPassword() == null) {
       createConsultantDTO.setPassword(userHelper.getRandomPassword(SETUP_ONLY_PASSWORD_LENGTH));
     }
@@ -278,6 +283,19 @@ public class UserAdminController implements UseradminApi {
   }
 
   /**
+   * Moves a consultant to another Träger; their cases stay with the old one [platform admin only].
+   *
+   * @param consultantId Consultant Id (required)
+   * @param changeConsultantTenantDTO the new Träger, its centres and topics (required)
+   */
+  @Override
+  public ResponseEntity<ConsultantTenantChangeResultDTO> changeConsultantTenant(
+      @PathVariable String consultantId, ChangeConsultantTenantDTO changeConsultantTenantDTO) {
+    return ResponseEntity.ok(
+        consultantAdminFacade.changeConsultantTenant(consultantId, changeConsultantTenantDTO));
+  }
+
+  /**
    * Entry point to delete a consultant agency relation.
    *
    * @param consultantId Consultant Id (required)
@@ -320,6 +338,17 @@ public class UserAdminController implements UseradminApi {
         deletionPauseRequestDTO.getReason(),
         deletionPauseRequestDTO.getMonths(),
         authenticatedUser.getUserId());
+    return new ResponseEntity<>(HttpStatus.OK);
+  }
+
+  /** Cancels a consultant deletion while it is still within the safeguard window. */
+  @PostMapping(
+      value = {
+        "/useradmin/consultants/{consultantId}/deletion/cancel",
+        "/service/useradmin/consultants/{consultantId}/deletion/cancel"
+      })
+  public ResponseEntity<Void> cancelConsultantDeletion(@PathVariable String consultantId) {
+    this.consultantAdminFacade.cancelConsultantDeletion(consultantId);
     return new ResponseEntity<>(HttpStatus.OK);
   }
 
@@ -473,6 +502,7 @@ public class UserAdminController implements UseradminApi {
 
   @Override
   public ResponseEntity<AdminResponseDTO> createTenantAdmin(CreateAdminDTO createAgencyAdminDTO) {
+    requireMinimumPasswordLength(createAgencyAdminDTO.getPassword());
     createAgencyAdminDTO.setEmail(createAgencyAdminDTO.getEmail().toLowerCase(Locale.ROOT));
     var admin = adminUserFacade.createNewTenantAdmin(createAgencyAdminDTO);
 
@@ -484,6 +514,7 @@ public class UserAdminController implements UseradminApi {
     // Same normalisation as every sibling here. Without it this was the one account path
     // that stored the address as typed, so the same person could end up with two
     // differently-cased identities depending on which screen created them.
+    requireMinimumPasswordLength(createAdminDTO.getPassword());
     createAdminDTO.setEmail(createAdminDTO.getEmail().toLowerCase(Locale.ROOT));
     var admin = this.adminUserFacade.createNewAgencyAdmin(createAdminDTO);
     return ResponseEntity.ok(admin);
@@ -609,6 +640,17 @@ public class UserAdminController implements UseradminApi {
         adminDtoMapper.adminSearchResultOf(
             resultMap, query, page, perPage, field, order, filter, Admin.AdminType.TENANT);
     return ResponseEntity.ok(result);
+  }
+
+  /**
+   * The published contract still says minLength 8, because raising it is a breaking change for
+   * every generated client. The server enforces the one rule (16) here instead.
+   */
+  private static void requireMinimumPasswordLength(String password) {
+    if (password != null && !PasswordPolicy.isLongEnough(password)) {
+      throw new BadRequestException(
+          "The password must be at least " + PasswordPolicy.MIN_LENGTH + " characters long");
+    }
   }
 
   private String determineDecodedInfix(String query) {

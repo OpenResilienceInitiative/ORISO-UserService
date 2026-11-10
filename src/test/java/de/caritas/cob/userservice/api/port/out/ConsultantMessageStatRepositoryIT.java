@@ -41,6 +41,37 @@ class ConsultantMessageStatRepositoryIT {
     assertThat(count).isEqualTo(2L);
   }
 
+  @Test
+  void deleteBatchSentBeforeShouldRemoveOnlyRowsBeforeTheCutoff_AndNoMoreThanTheBatch() {
+    var cutoff = LocalDateTime.of(2026, 7, 1, 0, 0);
+    save(HMAC_A, 1L, cutoff.minusDays(3));
+    save(HMAC_B, 2L, cutoff.minusDays(2));
+    save(HMAC_A, 1L, cutoff.minusSeconds(1));
+    save(HMAC_A, 1L, cutoff); // on the cutoff: still inside the retention period
+    save(HMAC_A, 1L, cutoff.plusDays(1));
+
+    assertThat(underTest.deleteBatchSentBefore(cutoff, 2)).isEqualTo(2);
+    assertThat(underTest.count()).isEqualTo(3);
+    assertThat(underTest.deleteBatchSentBefore(cutoff, 2)).isEqualTo(1);
+    assertThat(underTest.deleteBatchSentBefore(cutoff, 2)).isZero();
+    assertThat(underTest.findAll())
+        .extracting(ConsultantMessageStat::getSentDate)
+        .containsExactlyInAnyOrder(cutoff, cutoff.plusDays(1));
+  }
+
+  @Test
+  void deleteByConsultantHmacShouldRemoveEveryRowOfThatConsultantInAllTenants() {
+    save(HMAC_A, 1L, LocalDateTime.of(2026, 7, 15, 10, 0));
+    save(HMAC_A, 2L, LocalDateTime.of(2026, 7, 16, 10, 0));
+    save(HMAC_B, 1L, LocalDateTime.of(2026, 7, 15, 10, 0));
+
+    assertThat(underTest.deleteByConsultantHmac(HMAC_A)).isEqualTo(2);
+
+    assertThat(underTest.findAll())
+        .extracting(ConsultantMessageStat::getConsultantHmac)
+        .containsExactly(HMAC_B);
+  }
+
   private void save(String hmac, Long tenantId, LocalDateTime sentDate) {
     underTest.save(
         ConsultantMessageStat.builder()

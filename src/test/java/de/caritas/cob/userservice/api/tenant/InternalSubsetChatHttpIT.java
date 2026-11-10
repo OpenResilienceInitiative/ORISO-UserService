@@ -136,6 +136,7 @@ class InternalSubsetChatHttpIT {
     signedIn.clear();
     matrixConfig.setEncryptionEnabled(true);
     theTraegerScopeIs("AGENCY");
+    recipientScopeOfTraeger.put(OTHER_TRAEGER, "PLATFORM");
     systemUserExisted41 = systemUserExists(TRAEGER);
     systemUserExisted42 = systemUserExists(OTHER_TRAEGER);
     creator = fixtures.consultant(TRAEGER, CENTRE);
@@ -314,6 +315,112 @@ class InternalSubsetChatHttpIT {
     assertThat(synapse.joined(field(acrossTraeger, "matrixRoomId")))
         .containsExactlyInAnyOrder(matrix(creator), matrix(otherTraeger));
     assertThatTheColleagueFindsAndOpens(otherTraeger, acrossTraeger);
+  }
+
+  @Test
+  void directoryListsExactlyTheEligibleColleaguesForEveryScope() throws Exception {
+    assertDirectoryContains(sameCentre, anotherSameCentre);
+    theTraegerScopeIs("TENANT");
+    assertDirectoryContains(sameCentre, anotherSameCentre, otherCentre);
+    theTraegerScopeIs("PLATFORM");
+    assertDirectoryContains(sameCentre, anotherSameCentre, otherCentre, otherTraeger);
+
+    var directory =
+        request("GET", "/users/chat/internal-subset/recipients?agencyId=" + CENTRE, creator, null);
+    assertThat(directory.body()).contains("Centre " + FOREIGN_CENTRE, "Traeger " + OTHER_TRAEGER);
+    assertThat(directory.body()).doesNotContain("email", "matrixUserId", "username");
+    for (Consultant colleague : List.of(sameCentre, anotherSameCentre, otherCentre, otherTraeger)) {
+      var opened = openRoom(creator, colleague);
+      assertThat(opened.statusCode()).as(opened.body()).isEqualTo(201);
+    }
+  }
+
+  @Test
+  void onlyAnActiveTenantlessPlatformAdminWithAChatIdentityIsAlwaysInvitable() throws Exception {
+    var adminId = sameCentre.getId();
+    Tenants.acrossAll(
+        () -> {
+          database.update(
+              "UPDATE consultant SET tenant_id = NULL WHERE consultant_id = ?", adminId);
+          database.update("DELETE FROM consultant_agency WHERE consultant_id = ?", adminId);
+          database.update(
+              """
+          INSERT INTO admin (admin_id, username, first_name, last_name, email, type, managed_paused)
+          VALUES (?, ?, 'Platform', 'Admin', ?, 'SUPER', false)
+          """,
+              adminId,
+              "platform-" + adminId,
+              adminId + "@synthetic.oriso.test");
+        });
+    try {
+      assertDirectoryContains(sameCentre, anotherSameCentre);
+      theTraegerScopeIs("TENANT");
+      assertDirectoryContains(sameCentre, anotherSameCentre, otherCentre);
+      theTraegerScopeIs("PLATFORM");
+      assertDirectoryContains(sameCentre, anotherSameCentre, otherCentre, otherTraeger);
+
+      theTraegerScopeIs("AGENCY");
+      var opened = openRoom(creator, sameCentre);
+      assertThat(opened.statusCode()).as(opened.body()).isEqualTo(201);
+      assertThat(synapse.joined(field(opened, "matrixRoomId")))
+          .containsExactlyInAnyOrder(matrix(creator), matrix(sameCentre));
+
+      signIn(sameCentre, 0L, List.of("agency-admin", "tenant-admin", "consultant"));
+      assertThatTheColleagueFindsAndOpens(sameCentre, opened);
+
+      database.update("UPDATE admin SET type = 'SUPPORT' WHERE admin_id = ?", adminId);
+      assertDirectoryContains(anotherSameCentre);
+      assertThat(openRoom(creator, sameCentre).statusCode()).isEqualTo(403);
+      database.update("UPDATE admin SET type = 'SUPER' WHERE admin_id = ?", adminId);
+      database.update(
+          "UPDATE consultant SET matrix_user_id = NULL WHERE consultant_id = ?", adminId);
+      assertDirectoryContains(anotherSameCentre);
+      assertThat(openRoom(creator, sameCentre).statusCode()).isEqualTo(400);
+    } finally {
+      database.update("DELETE FROM admin WHERE admin_id = ?", adminId);
+    }
+  }
+
+  @Test
+  void directoryReturnsNoContentWhenNoActiveColleagueCanJoin() throws Exception {
+    Tenants.acrossAll(
+        () -> {
+          database.update(
+              "UPDATE consultant SET managed_paused = true WHERE consultant_id = ?",
+              sameCentre.getId());
+          database.update(
+              "UPDATE consultant SET matrix_user_id = null WHERE consultant_id = ?",
+              anotherSameCentre.getId());
+          return null;
+        });
+    var response =
+        request("GET", "/users/chat/internal-subset/recipients?agencyId=" + CENTRE, creator, null);
+    assertThat(response.statusCode()).as(response.body()).isEqualTo(204);
+    assertThat(response.body()).isEmpty();
+  }
+
+  private void assertDirectoryContains(Consultant... colleagues) throws Exception {
+    var response =
+        request("GET", "/users/chat/internal-subset/recipients?agencyId=" + CENTRE, creator, null);
+    assertThat(response.statusCode()).as(response.body()).isEqualTo(200);
+    var expectedIds = java.util.Arrays.stream(colleagues).map(Consultant::getId).toList();
+    var recipients = new com.fasterxml.jackson.databind.ObjectMapper().readTree(response.body());
+    var ids = new ArrayList<String>();
+    recipients.forEach(recipient -> ids.add(recipient.get("consultantId").asText()));
+    assertThat(ids).containsExactlyInAnyOrderElementsOf(expectedIds);
+  }
+
+  @Test
+  void aPlatformScopeCannotInviteAColleagueWhoseTraegerHasNotOptedIn() throws Exception {
+    theTraegerScopeIs("PLATFORM");
+    recipientScopeOfTraeger.put(OTHER_TRAEGER, "TENANT");
+    assertDirectoryContains(sameCentre, anotherSameCentre, otherCentre);
+
+    var response = openRoom(creator, otherTraeger);
+
+    assertThat(response.statusCode()).as(response.body()).isEqualTo(403);
+    assertThat(reason(response)).isEqualTo("INTERNAL_CHAT_RECIPIENT_OUT_OF_SCOPE");
+    assertNothingWasCreated();
   }
 
   private void assertThatTheColleagueFindsAndOpens(Consultant colleague, HttpResponse<String> room)
@@ -1623,7 +1730,11 @@ class InternalSubsetChatHttpIT {
   private final Set<String> signedIn = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
   /** Stubbing the decoder is not thread-safe: do it once, before concurrent requests start. */
-  private synchronized void signIn(Consultant caller) {
+  private void signIn(Consultant caller) {
+    signIn(caller, caller.getTenantId(), List.of("consultant"));
+  }
+
+  private synchronized void signIn(Consultant caller, Long tenantId, List<String> roles) {
     if (!signedIn.add(caller.getId())) {
       return;
     }
@@ -1632,8 +1743,8 @@ class InternalSubsetChatHttpIT {
             .header("alg", "none")
             .subject(caller.getId())
             .claim("username", caller.getUsername())
-            .claim("tenantId", caller.getTenantId())
-            .claim("realm_access", Map.of("roles", List.of("consultant")))
+            .claim("tenantId", tenantId)
+            .claim("realm_access", Map.of("roles", roles))
             .build();
     when(jwtDecoder.decode("synthetic-token-" + caller.getId())).thenReturn(token);
   }
@@ -1647,7 +1758,11 @@ class InternalSubsetChatHttpIT {
             .header("Cookie", "CSRF-TOKEN=test")
             .header("X-CSRF-Token", "test")
             .header("Content-Type", "application/json")
-            .method(method, HttpRequest.BodyPublishers.ofString(body))
+            .method(
+                method,
+                body == null
+                    ? HttpRequest.BodyPublishers.noBody()
+                    : HttpRequest.BodyPublishers.ofString(body))
             .build();
     return HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
   }
@@ -1764,7 +1879,13 @@ class InternalSubsetChatHttpIT {
     }
     if (path.startsWith("/tenant/public/id/") || path.equals("/tenant/public/single")) {
       var id = path.endsWith("/42") ? 42 : 41;
-      return json(request, "{\"id\":" + id + ",\"settings\":{\"featureGroupChatV2Enabled\":true}}");
+      return json(
+          request,
+          "{\"id\":"
+              + id
+              + ",\"name\":\"Traeger "
+              + id
+              + "\",\"settings\":{\"featureGroupChatV2Enabled\":true}}");
     }
     if (path.startsWith("/tenantadmin/") && path.endsWith("/permission-policies")) {
       tenantPolicyReads.incrementAndGet();
@@ -1781,17 +1902,23 @@ class InternalSubsetChatHttpIT {
                   + "\",\"mode\":\"SUGGESTED\",\"inherited\":false}}}"
               : "{\"tenantId\":" + tenant + ",\"policies\":{}}");
     }
-    if (path.matches(".*/agencies/\\d+")) {
-      var agencyId = Long.parseLong(path.substring(path.lastIndexOf('/') + 1));
-      var tenant = agencyId == FOREIGN_CENTRE ? OTHER_TRAEGER : TRAEGER;
-      return json(
-          request,
-          "[{\"id\":"
-              + agencyId
-              + ",\"tenantId\":"
-              + tenant
-              + ",\"consultingType\":1,\"teamAgency\":false,\"topicIds\":[],\"settings\":"
-              + "{\"featureGroupChatV2Enabled\":true,\"featureInternalGroupChatEnabled\":true}}]");
+    if (path.matches(".*/agencies/[0-9,]+")) {
+      var ids = path.substring(path.lastIndexOf('/') + 1).split(",");
+      var agencies = new ArrayList<String>();
+      for (String id : ids) {
+        var agencyId = Long.parseLong(id);
+        var tenant = agencyId == FOREIGN_CENTRE ? OTHER_TRAEGER : TRAEGER;
+        agencies.add(
+            "{\"id\":"
+                + agencyId
+                + ",\"name\":\"Centre "
+                + agencyId
+                + "\",\"tenantId\":"
+                + tenant
+                + ",\"consultingType\":1,\"teamAgency\":false,\"topicIds\":[],\"settings\":"
+                + "{\"featureGroupChatV2Enabled\":true,\"featureInternalGroupChatEnabled\":true}}");
+      }
+      return json(request, "[" + String.join(",", agencies) + "]");
     }
     if (path.startsWith("/_matrix/") || path.startsWith("/_synapse/")) {
       var body = ((MockClientHttpRequest) request).getBodyAsString(StandardCharsets.UTF_8);

@@ -24,6 +24,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
+import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
 import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.model.TopicPermission;
@@ -324,6 +325,38 @@ class AccountInviteServiceTest {
     assertThat(result.invite().getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
     assertThat(result.invite().getSupersededByInviteId()).isNull();
     assertThat(result.invite().getRecipientEmail()).isEqualTo(oldInvite.getRecipientEmail());
+  }
+
+  @Test
+  void resendInvite_Should_NotCarryALegacyWaiverIntoTheReplacement() {
+    AccountInvite oldInvite =
+        AccountInvite.builder()
+            .id(10L)
+            .tenantId(7L)
+            .recipientEmail("counsellor@example.org")
+            .firstName("Grace")
+            .targetRole(AccountInviteTargetRole.COUNSELLOR)
+            .status(AccountInviteStatus.EMAIL_SENT)
+            .twoFactorStatus(TwoFactorGateStatus.WAIVED)
+            .build();
+    InviteEmailTemplate template =
+        InviteEmailTemplate.builder()
+            .id(20L)
+            .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+            .subject("Again")
+            .body("Use {{inviteLink}}")
+            .active(true)
+            .build();
+    when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(oldInvite));
+    when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
+    when(accountInviteRepository.saveAndFlush(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    givenSuccessfulDispatch();
+
+    var result = service.resendInvite(new SendInviteCommand(10L, 20L));
+
+    assertThat(result.invite().getTwoFactorStatus()).isEqualTo(TwoFactorGateStatus.PENDING_SETUP);
+    assertThat(oldInvite.getTwoFactorStatus()).isEqualTo(TwoFactorGateStatus.WAIVED);
   }
 
   @Test
@@ -769,7 +802,7 @@ class AccountInviteServiceTest {
   }
 
   @Test
-  void calculateAccessGate_Should_BlockRequiredTwoFactorUntilWaived() {
+  void calculateAccessGate_Should_BlockRequiredTwoFactorUntilActive() {
     AccountInvite invite =
         AccountInvite.builder()
             .id(1L)
@@ -781,13 +814,8 @@ class AccountInviteServiceTest {
     assertThat(service.calculateAccessGate(invite))
         .isEqualTo(AccountAccessGateStatus.BLOCKED_TWO_FACTOR);
 
-    doReturn(Optional.of(invite)).when(accountInviteRepository).findByIdForUpdate(1L);
-    when(authenticatedUser.getUserId()).thenReturn("admin-1");
-    service.waiveTwoFactor(invite, new WaiveTwoFactorCommand("Temporary migration waiver"));
+    invite.setTwoFactorStatus(TwoFactorGateStatus.ACTIVE);
 
-    assertThat(invite.getTwoFactorStatus()).isEqualTo(TwoFactorGateStatus.WAIVED);
-    assertThat(invite.getTwoFactorWaivedBy()).isEqualTo("admin-1");
-    assertThat(invite.getTwoFactorWaiverReason()).isEqualTo("Temporary migration waiver");
     assertThat(service.calculateAccessGate(invite)).isEqualTo(AccountAccessGateStatus.READY);
   }
 
@@ -813,6 +841,57 @@ class AccountInviteServiceTest {
     assertThat(invite.getEmailVerificationStatus()).isEqualTo(EmailVerificationStatus.PENDING);
     assertThat(invite.getTwoFactorStatus()).isEqualTo(TwoFactorGateStatus.PENDING_SETUP);
     assertThat(invite.getTokenHash()).isNull();
+  }
+
+  @Test
+  void createInvite_Should_StoreAvatarAndNameSuggestion() {
+    when(authenticatedUser.getUserId()).thenReturn("admin-1");
+    when(authenticatedUser.getUsername()).thenReturn("admin@example.org");
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    AccountInvite invite =
+        service.createInvite(
+            new CreateAccountInviteCommand(
+                AccountInviteTargetRole.COUNSELLOR,
+                7L,
+                "new@example.org",
+                "New",
+                "Counsellor",
+                null,
+                11L,
+                30L,
+                null,
+                null,
+                null,
+                null,
+                InviteAvatarSuggestion.of("ICON", "owl", "Maria B.")));
+
+    assertThat(invite.getSuggestedAvatarKind()).isEqualTo(ConsultantAvatarKind.ICON);
+    assertThat(invite.getSuggestedAvatarId()).isEqualTo("owl");
+    assertThat(invite.getSuggestedDisplayName()).isEqualTo("Maria B.");
+  }
+
+  @Test
+  void createInvite_Should_LeaveSuggestionEmpty_When_NoneGiven() {
+    when(authenticatedUser.getUserId()).thenReturn("admin-1");
+    when(authenticatedUser.getUsername()).thenReturn("admin@example.org");
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    AccountInvite invite =
+        service.createInvite(
+            new CreateAccountInviteCommand(
+                AccountInviteTargetRole.COUNSELLOR,
+                7L,
+                "new@example.org",
+                "New",
+                "Counsellor",
+                null,
+                11L,
+                30L));
+
+    assertThat(invite.getSuggestedAvatarKind()).isNull();
+    assertThat(invite.getSuggestedAvatarId()).isNull();
+    assertThat(invite.getSuggestedDisplayName()).isNull();
   }
 
   // ---------------------------------------------------------------------------
@@ -1977,40 +2056,32 @@ class AccountInviteServiceTest {
     verify(accountInviteRepository, never()).saveAll(any());
   }
 
+  // --- waiveTwoFactor is refused: every new staff account must set up 2FA ---
+
   @Test
-  void waiveTwoFactor_Should_persistWaivedInvite() {
+  void waiveTwoFactor_Should_refuseAndLeaveInviteUntouched_When_adminAsksForWaiver() {
     AccountInvite invite =
-        AccountInvite.builder().id(1L).twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP).build();
+        AccountInvite.builder()
+            .id(1L)
+            .purpose(AccountInvitePurpose.INVITE)
+            .twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP)
+            .build();
     doReturn(Optional.of(invite)).when(accountInviteRepository).findByIdForUpdate(1L);
-    when(authenticatedUser.getUserId()).thenReturn("admin-1");
 
-    service.waiveTwoFactor(invite, new WaiveTwoFactorCommand("four-eyes onboarding"));
+    assertThatThrownBy(
+            () -> service.waiveTwoFactor(invite, new WaiveTwoFactorCommand("four-eyes onboarding")))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessageContaining("cannot be waived");
 
-    verify(accountInviteRepository).save(invite);
+    assertThat(invite.getTwoFactorStatus()).isEqualTo(TwoFactorGateStatus.PENDING_SETUP);
+    assertThat(invite.getTwoFactorWaivedBy()).isNull();
+    verify(accountInviteRepository, never()).save(any());
   }
-
-  // --- waiveTwoFactor guards ---
 
   @Test
   void waiveTwoFactor_Should_throwBadRequest_When_inviteNull() {
     assertThatThrownBy(
             () -> service.waiveTwoFactor((AccountInvite) null, new WaiveTwoFactorCommand("reason")))
-        .isInstanceOf(BadRequestException.class);
-  }
-
-  @Test
-  void waiveTwoFactor_Should_throwBadRequest_When_commandNull() {
-    AccountInvite invite = AccountInvite.builder().build();
-
-    assertThatThrownBy(() -> service.waiveTwoFactor(invite, null))
-        .isInstanceOf(BadRequestException.class);
-  }
-
-  @Test
-  void waiveTwoFactor_Should_throwBadRequest_When_reasonBlank() {
-    AccountInvite invite = AccountInvite.builder().build();
-
-    assertThatThrownBy(() -> service.waiveTwoFactor(invite, new WaiveTwoFactorCommand("  ")))
         .isInstanceOf(BadRequestException.class);
   }
 

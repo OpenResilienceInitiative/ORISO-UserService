@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.matrix;
 
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixIdentifierRedactor;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
@@ -15,6 +16,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -48,6 +50,7 @@ public class GroupChatMembershipService {
   private final MatrixSynapseService matrixSynapseService;
   private final ConsultantRepository consultantRepository;
   private final UserRepository userRepository;
+  private final MatrixIdentifierRedactor redactor;
 
   /**
    * Best-effort removal of the leaving member from the chat's Matrix room. Failures are logged but
@@ -126,9 +129,9 @@ public class GroupChatMembershipService {
             || (!message.contains("already in the room") && !message.contains("already invited"))) {
           log.warn(
               "Could not invite member {} to Matrix room {}: {}",
-              memberMatrixUserId,
+              redactor.pseudonym(memberMatrixUserId),
               matrixRoomId,
-              message);
+              redactor.scrub(message));
           return false;
         }
       }
@@ -138,11 +141,87 @@ public class GroupChatMembershipService {
     } catch (Exception e) {
       log.warn(
           "Could not join member {} to Matrix room {}: {}",
-          memberMatrixUserId,
+          redactor.pseudonym(memberMatrixUserId),
           matrixRoomId,
-          e.getMessage());
+          redactor.scrub(e.getMessage()));
       return false;
     }
+  }
+
+  /**
+   * Makes sure the group's owner is joined to the room and may invite into it, before anyone is
+   * invited in the owner's name.
+   *
+   * <p>A room prepared for the next occurrence was created by whoever owned the group then. After
+   * an ownership change the current owner is an ordinary member of it, or not in it at all, and
+   * Matrix refuses their invites. The technical Matrix admin closes that gap: {@code
+   * make_room_admin} acts through the joined member who holds the most power (the former owner),
+   * gives the current owner the same power and invites them when they are not joined yet. Where no
+   * joined member holds power any more, a force-join is tried instead; the final power check then
+   * decides.
+   *
+   * <p>Never throws and logs no Matrix user ID.
+   *
+   * @return {@code true} only when the owner is joined and holds the power to invite
+   */
+  public boolean ensureOwnerCanInvite(String matrixRoomId, String ownerMatrixUserId) {
+    if (isBlank(matrixRoomId) || isBlank(ownerMatrixUserId)) {
+      return false;
+    }
+
+    try {
+      var members = matrixSynapseService.getRoomMembers(matrixRoomId);
+      if (members.isEmpty()) {
+        return false;
+      }
+      var ownerToken = matrixSynapseService.loginAsUserAccessToken(ownerMatrixUserId);
+      if (isBlank(ownerToken)) {
+        return false;
+      }
+      var joined = members.get().contains(ownerMatrixUserId);
+      if (joined && holdsInvitePower(matrixRoomId, ownerMatrixUserId, ownerToken)) {
+        return true;
+      }
+
+      var raised = matrixSynapseService.makeRoomAdmin(matrixRoomId, ownerMatrixUserId);
+      if (!joined
+          && !(raised && matrixSynapseService.joinRoom(matrixRoomId, ownerToken))
+          && !matrixSynapseService.forceJoinUserToRoom(
+              matrixRoomId, ownerMatrixUserId, members.get())) {
+        log.warn("Could not join the group owner to Matrix room {}", matrixRoomId);
+        return false;
+      }
+      if (!holdsInvitePower(matrixRoomId, ownerMatrixUserId, ownerToken)) {
+        log.warn("The group owner holds no power to invite into Matrix room {}", matrixRoomId);
+        return false;
+      }
+      return true;
+    } catch (Exception e) {
+      log.warn(
+          "Could not make the group owner a member of Matrix room {}: {}",
+          matrixRoomId,
+          redactor.scrub(e.getMessage()));
+      return false;
+    }
+  }
+
+  /** Unreadable power levels count as no power, so the caller repairs or fails closed. */
+  private boolean holdsInvitePower(String matrixRoomId, String matrixUserId, String token) {
+    var levels = matrixSynapseService.getPowerLevels(matrixRoomId, token);
+    if (levels.isEmpty()) {
+      return false;
+    }
+    var content = levels.get();
+    var power = content.get("users_default");
+    if (content.get("users") instanceof Map<?, ?> users && users.get(matrixUserId) != null) {
+      power = users.get(matrixUserId);
+    }
+    return level(power) >= level(content.get("invite"));
+  }
+
+  /** Matrix treats a missing power level as 0. */
+  private static long level(Object value) {
+    return value instanceof Number number ? number.longValue() : 0;
   }
 
   /**
@@ -207,22 +286,24 @@ public class GroupChatMembershipService {
       if (memberToken == null) {
         log.warn(
             "Could not mint Matrix token for {}; member stays in room {}",
-            memberMatrixUserId,
+            redactor.pseudonym(memberMatrixUserId),
             matrixRoomId);
         return false;
       }
       if (!matrixSynapseService.leaveRoom(matrixRoomId, memberToken)) {
         log.warn(
-            "Could not remove member {} from Matrix room {}", memberMatrixUserId, matrixRoomId);
+            "Could not remove member {} from Matrix room {}",
+            redactor.pseudonym(memberMatrixUserId),
+            matrixRoomId);
         return false;
       }
       return true;
     } catch (Exception e) {
       log.warn(
           "Matrix room leave failed for member {} in room {}: {}",
-          memberMatrixUserId,
+          redactor.pseudonym(memberMatrixUserId),
           matrixRoomId,
-          e.getMessage());
+          redactor.scrub(e.getMessage()));
       return false;
     }
   }
@@ -322,7 +403,23 @@ public class GroupChatMembershipService {
   }
 
   private ResolvedRoomMember resolveMember(String matrixUserId) {
+    // The caller already proved this exact MXID is in this room. Tenant filtering must not
+    // silently drop a legitimately invited external participant during rotation or retention.
+    try {
+      return TenantContext.supplyAcrossTenants(() -> resolveJoinedIdentity(matrixUserId));
+    } catch (RuntimeException ambiguousOrUnavailable) {
+      throw new CustomValidationHttpStatusException(
+          de.caritas.cob.userservice.api.exception.httpresponses.customheader
+              .HttpStatusExceptionReason.DPA_POLICY_UNAVAILABLE,
+          HttpStatus.BAD_GATEWAY);
+    }
+  }
+
+  private ResolvedRoomMember resolveJoinedIdentity(String matrixUserId) {
     var consultant = consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(matrixUserId);
+    var user = userRepository.findByMatrixUserIdAndDeleteDateIsNull(matrixUserId);
+    if (consultant.isPresent() && user.isPresent())
+      throw new IllegalStateException("Ambiguous room-member identity");
     if (consultant.isPresent()) {
       var c = consultant.get();
       return new ResolvedRoomMember(
@@ -335,7 +432,6 @@ public class GroupChatMembershipService {
           c.getAvatarId());
     }
 
-    var user = userRepository.findByMatrixUserIdAndDeleteDateIsNull(matrixUserId);
     if (user.isPresent() && !isGroupChatSystemUser(user.get())) {
       var u = user.get();
       return new ResolvedRoomMember(

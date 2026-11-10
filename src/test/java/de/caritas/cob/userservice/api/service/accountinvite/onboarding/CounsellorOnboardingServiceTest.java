@@ -174,7 +174,7 @@ class CounsellorOnboardingServiceTest {
   private static RegisterCounsellorCommand command() {
     return new RegisterCounsellorCommand(
         "lena.b",
-        "s3cretPassword",
+        "s3cretPassword-16ch",
         "counsellor_female",
         "Head of counselling centre",
         "Dipl.-Soz.Päd.",
@@ -361,7 +361,7 @@ class CounsellorOnboardingServiceTest {
         .acceptInvite(eq(RAW_TOKEN), captor.capture(), any());
     ProvisionCounsellorCommand provision = captor.getValue();
     assertEquals("lena.b", provision.username());
-    assertEquals("s3cretPassword", provision.password());
+    assertEquals("s3cretPassword-16ch", provision.password());
     assertEquals(Boolean.TRUE, provision.formalLanguage());
     assertNull(provision.acceptedByUserId());
     assertEquals("counsellor_female", provision.salutation());
@@ -396,7 +396,7 @@ class CounsellorOnboardingServiceTest {
         RAW_TOKEN,
         new RegisterCounsellorCommand(
             "lena.b",
-            "s3cretPassword",
+            "s3cretPassword-16ch",
             null,
             null,
             null,
@@ -534,7 +534,7 @@ class CounsellorOnboardingServiceTest {
   private static RegisterCounsellorCommand newAgencyCommand(String agencyName) {
     return new RegisterCounsellorCommand(
         "lena.b",
-        "s3cretPassword",
+        "s3cretPassword-16ch",
         null,
         null,
         null,
@@ -546,7 +546,7 @@ class CounsellorOnboardingServiceTest {
 
   private static RegisterCounsellorCommand topicSelection(List<Long> topicIds) {
     return new RegisterCounsellorCommand(
-        "lena.b", "s3cretPassword", null, null, null, null, null, topicIds);
+        "lena.b", "s3cretPassword-16ch", null, null, null, null, null, topicIds);
   }
 
   @Test
@@ -575,7 +575,16 @@ class CounsellorOnboardingServiceTest {
 
     RegisterCounsellorCommand outside =
         new RegisterCounsellorCommand(
-            "lena.b", "s3cretPassword", null, null, null, null, null, List.of(999L), null, null);
+            "lena.b",
+            "s3cretPassword-16ch",
+            null,
+            null,
+            null,
+            null,
+            null,
+            List.of(999L),
+            null,
+            null);
 
     assertThrows(BadRequestException.class, () -> service.registerCounsellor(RAW_TOKEN, outside));
     verify(counsellorInviteProvisioningService, never()).acceptInvite(anyString(), any(), any());
@@ -713,7 +722,7 @@ class CounsellorOnboardingServiceTest {
     RegisterCounsellorCommand added =
         new RegisterCounsellorCommand(
             "lena.b",
-            "s3cretPassword",
+            "s3cretPassword-16ch",
             null,
             null,
             null,
@@ -744,10 +753,29 @@ class CounsellorOnboardingServiceTest {
     when(topicService.getAllActiveTopicsMap()).thenReturn(Map.of());
     RegisterCounsellorCommand noTopics =
         new RegisterCounsellorCommand(
-            "lena.b", "s3cretPassword", null, null, null, null, null, List.of(), null, null);
+            "lena.b", "s3cretPassword-16ch", null, null, null, null, null, List.of(), null, null);
 
     assertThrows(BadRequestException.class, () -> service.registerCounsellor(RAW_TOKEN, noTopics));
     verify(counsellorInviteProvisioningService, never()).acceptInvite(anyString(), any(), any());
+  }
+
+  @Test
+  void registerCounsellor_fifteenCharacterPassword_isRejected() {
+    RegisterCounsellorCommand oneTooShort =
+        new RegisterCounsellorCommand(
+            "lena.b",
+            "123456789012345",
+            null,
+            null,
+            null,
+            null,
+            null,
+            List.of(DEPARTMENT_TOPIC_ID),
+            null,
+            null);
+
+    assertThrows(
+        BadRequestException.class, () -> service.registerCounsellor(RAW_TOKEN, oneTooShort));
   }
 
   @Test
@@ -1118,7 +1146,7 @@ class CounsellorOnboardingServiceTest {
     var commandWithAgencyTopic =
         new RegisterCounsellorCommand(
             "lena.b",
-            "s3cretPassword",
+            "s3cretPassword-16ch",
             null,
             null,
             null,
@@ -1141,7 +1169,16 @@ class CounsellorOnboardingServiceTest {
     agencyCoverageResolves();
     var commandWithForeignTopic =
         new RegisterCounsellorCommand(
-            "lena.b", "s3cretPassword", null, null, null, null, null, List.of(999L), null, null);
+            "lena.b",
+            "s3cretPassword-16ch",
+            null,
+            null,
+            null,
+            null,
+            null,
+            List.of(999L),
+            null,
+            null);
 
     assertThrows(
         BadRequestException.class,

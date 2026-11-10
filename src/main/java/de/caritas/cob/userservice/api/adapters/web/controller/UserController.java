@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AbsenceDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyAdminContactDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatInfoResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatMembersResponseDTO;
@@ -19,6 +20,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestAdmit
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestStatusDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionListResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.InternalChatRecipientDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.InternalSubsetChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.InternalSubsetChatResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageResponseDTO;
@@ -65,6 +67,7 @@ import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.SearchFilter;
+import de.caritas.cob.userservice.api.service.AgencyAdminContactService;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
@@ -107,8 +110,49 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 @Api(tags = "user-controller")
 public class UserController implements UsersApi {
+  private final @NonNull de.caritas.cob.userservice.api.service.livechat
+          .LiveChatAccountConversionService
+      liveChatConversionService;
   private final @NonNull de.caritas.cob.userservice.api.service.enquiry.EnquiryRejectionService
       enquiryRejectionService;
+
+  @Override
+  public ResponseEntity<
+          de.caritas.cob.userservice.api.adapters.web.dto.GetOwnLiveChatConversion200Response>
+      getOwnLiveChatConversion() {
+    var status = liveChatConversionService.status();
+    var body =
+        new de.caritas.cob.userservice.api.adapters.web.dto.GetOwnLiveChatConversion200Response(
+            status.userId(),
+            authenticatedUser.getUsername(),
+            de.caritas.cob.userservice.api.adapters.web.dto.GetOwnLiveChatConversion200Response
+                .StateEnum.fromValue(status.state()));
+    body.intentId(status.intentId());
+    body.setFinishedOrigin(status.finishedOrigin());
+    body.setUserId(status.userId());
+    return ResponseEntity.ok()
+        .cacheControl(org.springframework.http.CacheControl.noStore())
+        .body(body);
+  }
+
+  @Override
+  public ResponseEntity<
+          de.caritas.cob.userservice.api.adapters.web.dto.ConvertOwnLiveChatAccount200Response>
+      convertOwnLiveChatAccount(
+          de.caritas.cob.userservice.api.adapters.web.dto.ConvertOwnLiveChatAccountRequest
+              request) {
+    if (!Boolean.TRUE.equals(request.getRecoveryKeySaved())) {
+      throw new de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException(
+          "Recovery key confirmation is required");
+    }
+    liveChatConversionService.convert(
+        request.getExpectedUserId(), request.getIntentId().toString(), request.getPassword());
+    return ResponseEntity.ok()
+        .cacheControl(org.springframework.http.CacheControl.noStore())
+        .body(
+            new de.caritas.cob.userservice.api.adapters.web.dto
+                .ConvertOwnLiveChatAccount200Response(authenticatedUser.getUsername()));
+  }
 
   @Override
   public ResponseEntity<Void> rejectEnquiry(@PathVariable Long sessionId) {
@@ -181,6 +225,7 @@ public class UserController implements UsersApi {
   private final @NotNull GroupChatRoleService groupChatRoleService;
   private final @NotNull GroupChatJoinRequestControllerDelegate groupChatJoinRequestDelegate;
   private final @NotNull AuthenticatedUser authenticatedUser;
+  private final @NonNull AgencyAdminContactService agencyAdminContactService;
   private final @NonNull RequestedContactSheetService requestedContactSheetService;
   private final @NotNull IdentitySuggestionControllerDelegate identitySuggestionControllerDelegate;
   private final @NonNull DirectLinkControllerDelegate directLinkControllerDelegate;
@@ -664,9 +709,21 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity} containing {@link InternalSubsetChatResponseDTO}
    */
   @Override
+  public ResponseEntity<List<InternalChatRecipientDTO>> listInternalSubsetChatRecipients(
+      Long agencyId) {
+    return userChatControllerDelegate.listInternalSubsetChatRecipients(agencyId);
+  }
+
+  @Override
   public ResponseEntity<InternalSubsetChatResponseDTO> openInternalSubsetChat(
       @RequestBody InternalSubsetChatDTO request) {
     return userChatControllerDelegate.openInternalSubsetChat(request);
+  }
+
+  @Override
+  public ResponseEntity<List<AgencyAdminContactDTO>> getAgencyAdminContacts(Long agencyId) {
+    return ResponseEntity.ok(
+        agencyAdminContactService.contactsFor(authenticatedUser.getUserId(), agencyId));
   }
 
   @Override
@@ -800,8 +857,8 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity} containing {@link ChatInfoResponseDTO}
    */
   @Override
-  public ResponseEntity<ChatInfoResponseDTO> getChat(Long chatId) {
-    return userChatControllerDelegate.getChat(chatId);
+  public ResponseEntity<ChatInfoResponseDTO> getChat(Long chatId, Boolean includeCallerBan) {
+    return userChatControllerDelegate.getChat(chatId, includeCallerBan);
   }
 
   /**

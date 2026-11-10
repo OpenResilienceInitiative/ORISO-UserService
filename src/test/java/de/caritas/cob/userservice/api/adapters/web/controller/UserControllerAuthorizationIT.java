@@ -34,6 +34,8 @@ import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_PUT_U
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_RECORD_SESSION_CONSENT;
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_UPDATE_KEY;
 import static de.caritas.cob.userservice.api.testHelper.RequestBodyConstants.VALID_UPDATE_CHAT_BODY;
+import static de.caritas.cob.userservice.api.testHelper.TestConstants.CHAT_ID;
+import static de.caritas.cob.userservice.api.testHelper.TestConstants.MATRIX_ROOM_ID;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -52,6 +54,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.IdentityManager;
 import de.caritas.cob.userservice.api.Messenger;
+import de.caritas.cob.userservice.api.adapters.web.dto.ChatInfoResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ChatInfoResponseDTO.CallerBanStateEnum;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MobileTokenDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.OneTimePasswordDTO;
@@ -75,7 +79,6 @@ import de.caritas.cob.userservice.api.helper.ChatPermissionVerifier;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
-import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountStatusLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
@@ -93,6 +96,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityReactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
+import de.caritas.cob.userservice.api.port.out.IdentityTenantUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
@@ -119,6 +123,8 @@ import java.util.UUID;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
@@ -167,6 +173,14 @@ class UserControllerAuthorizationIT {
 
   @Autowired private MockMvc mvc;
 
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.session.DeletedAskerSessionService
+      deletedAskerSessionService;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.livechat.LiveChatAccountConversionService
+      liveChatAccountConversionService;
+
   @MockitoBean private UserService userService;
   @MockitoBean private SessionService sessionService;
   @MockitoBean private SessionRepository sessionRepository;
@@ -196,6 +210,7 @@ class UserControllerAuthorizationIT {
         IdentityRoleLookup.class,
         IdentityRoleUpdater.class,
         IdentitySecondFactor.class,
+        IdentityTenantUpdater.class,
         IdentityUsernameAvailability.class
       })
   private IdentityClient identityClient;
@@ -230,11 +245,7 @@ class UserControllerAuthorizationIT {
 
   @MockitoBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
 
-  @MockitoBean
-  @SuppressWarnings("unused")
-  private Messaging messenger;
-
-  @MockitoBean
+  @MockitoBean(name = "messenger")
   @SuppressWarnings("unused")
   private Messenger concreteMessenger;
 
@@ -655,6 +666,217 @@ class UserControllerAuthorizationIT {
         .andExpect(status().isForbidden());
 
     verifyNoMoreInteractions(consultantDataFacade, logService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/live-chat-account/conversion",
+        "/service/users/live-chat-account/conversion"
+      })
+  void liveChatConversionStatusRequiresAuthentication(String path) throws Exception {
+    mvc.perform(get(path)).andExpect(status().isUnauthorized());
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/live-chat-account/conversion",
+        "/service/users/live-chat-account/conversion"
+      })
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void liveChatConversionStatusRejectsCounsellors(String path) throws Exception {
+    mvc.perform(get(path)).andExpect(status().isForbidden());
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/live-chat-account/conversion",
+        "/service/users/live-chat-account/conversion"
+      })
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void liveChatConversionStatusReturnsOnlyOwnState(String path) throws Exception {
+    when(authenticatedUser.getUsername()).thenReturn("guest-name");
+    when(liveChatAccountConversionService.status())
+        .thenReturn(
+            new de.caritas.cob.userservice.api.service.livechat.LiveChatAccountClaimService.Status(
+                "guest-id", "PROMOTION_PENDING", "intent", false));
+    mvc.perform(get(path))
+        .andExpect(status().isOk())
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.state")
+                .value("PROMOTION_PENDING"))
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.intentId")
+                .value("intent"));
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void liveChatConversionStatusExposesFinishedOrigin() throws Exception {
+    when(authenticatedUser.getUsername()).thenReturn("guest-name");
+    when(liveChatAccountConversionService.status())
+        .thenReturn(
+            new de.caritas.cob.userservice.api.service.livechat.LiveChatAccountClaimService.Status(
+                "guest-id", "PROMOTION_PENDING", "intent", true));
+    mvc.perform(get("/users/live-chat-account/conversion"))
+        .andExpect(status().isOk())
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath(
+                    "$.finishedOrigin")
+                .value(true));
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/live-chat-account/conversion",
+        "/service/users/live-chat-account/conversion"
+      })
+  void liveChatConversionRequiresAuthentication(String path) throws Exception {
+    mvc.perform(
+            post(path)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"expectedUserId\":\"guest-id\",\"intentId\":\"123e4567-e89b-12d3-a456-426614174000\",\"password\":\"chosen-password-123\",\"recoveryKeySaved\":true}"))
+        .andExpect(status().isUnauthorized());
+    verifyNoMoreInteractions(liveChatAccountConversionService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/live-chat-account/conversion",
+        "/service/users/live-chat-account/conversion"
+      })
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void liveChatConversionRejectsCounsellors(String path) throws Exception {
+    mvc.perform(
+            post(path)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"expectedUserId\":\"guest-id\",\"intentId\":\"123e4567-e89b-12d3-a456-426614174000\",\"password\":\"chosen-password-123\",\"recoveryKeySaved\":true}"))
+        .andExpect(status().isForbidden());
+    verifyNoMoreInteractions(liveChatAccountConversionService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/live-chat-account/conversion",
+        "/service/users/live-chat-account/conversion"
+      })
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void liveChatConversionAllowsTheAuthenticatedAsker(String path) throws Exception {
+    when(authenticatedUser.getUsername()).thenReturn("synthetic-guest");
+    mvc.perform(
+            post(path)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"expectedUserId\":\"guest-id\",\"intentId\":\"123e4567-e89b-12d3-a456-426614174000\",\"password\":\"chosen-password-123\",\"recoveryKeySaved\":true}"))
+        .andExpect(status().isOk());
+    verify(liveChatAccountConversionService)
+        .convert("guest-id", "123e4567-e89b-12d3-a456-426614174000", "chosen-password-123");
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/live-chat-account/conversion",
+        "/service/users/live-chat-account/conversion"
+      })
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void liveChatConversionRejectsUnconfirmedRecoveryKey(String path) throws Exception {
+    mvc.perform(
+            post(path)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"expectedUserId\":\"guest-id\",\"intentId\":\"123e4567-e89b-12d3-a456-426614174000\",\"password\":\"chosen-password-123\",\"recoveryKeySaved\":false}"))
+        .andExpect(status().isBadRequest());
+    verifyNoInteractions(liveChatAccountConversionService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/live-chat-account/conversion",
+        "/service/users/live-chat-account/conversion"
+      })
+  @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT, AuthorityValue.CONSULTANT_DEFAULT})
+  void mixedUserAndConsultantCannotConvert(String path) throws Exception {
+    mvc.perform(
+            post(path)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"expectedUserId\":\"guest-id\",\"intentId\":\"123e4567-e89b-12d3-a456-426614174000\",\"password\":\"chosen-password-123\",\"recoveryKeySaved\":true}"))
+        .andExpect(status().isForbidden());
+    verifyNoInteractions(liveChatAccountConversionService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/live-chat-account/conversion",
+        "/service/users/live-chat-account/conversion"
+      })
+  @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT, AuthorityValue.USER_ADMIN})
+  void mixedUserAndAdminCannotConvert(String path) throws Exception {
+    mvc.perform(
+            post(path)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"expectedUserId\":\"guest-id\",\"intentId\":\"123e4567-e89b-12d3-a456-426614174000\",\"password\":\"chosen-password-123\",\"recoveryKeySaved\":true}"))
+        .andExpect(status().isForbidden());
+    verifyNoInteractions(liveChatAccountConversionService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/sessions/consultants/deleted-askers",
+        "/service/users/sessions/consultants/deleted-askers"
+      })
+  void deletedAskerSessionsRequireAuthentication(String path) throws Exception {
+    mvc.perform(get(path)).andExpect(status().isUnauthorized());
+    verifyNoMoreInteractions(deletedAskerSessionService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/sessions/consultants/deleted-askers",
+        "/service/users/sessions/consultants/deleted-askers"
+      })
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void deletedAskerSessionsRejectAskers(String path) throws Exception {
+    mvc.perform(get(path)).andExpect(status().isForbidden());
+    verifyNoMoreInteractions(deletedAskerSessionService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/sessions/consultants/deleted-askers",
+        "/service/users/sessions/consultants/deleted-askers"
+      })
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void deletedAskerSessionsReturnOnlyCallingCounsellorsData(String path) throws Exception {
+    when(authenticatedUser.getUserId()).thenReturn("consultant-1");
+    mvc.perform(get(path)).andExpect(status().isOk());
+    verify(deletedAskerSessionService).findForConsultant("consultant-1");
   }
 
   /** GET on /users/sessions/consultants (role: consultants) */
@@ -1464,6 +1686,36 @@ class UserControllerAuthorizationIT {
         .andExpect(status().isOk());
   }
 
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT})
+  void getChatSerializesOptedInOwnBanStateAndPreservesPlainPollResponse() throws Exception {
+    var ordinaryChat =
+        new ChatInfoResponseDTO().id(CHAT_ID).matrixRoomId(MATRIX_ROOM_ID).active(true);
+    var checkedChat =
+        new ChatInfoResponseDTO()
+            .id(CHAT_ID)
+            .matrixRoomId(MATRIX_ROOM_ID)
+            .active(true)
+            .callerBanState(CallerBanStateEnum.BANNED);
+    when(getChatFacade.getChat(CHAT_ID, null)).thenReturn(ordinaryChat);
+    when(getChatFacade.getChat(CHAT_ID, true)).thenReturn(checkedChat);
+
+    mvc.perform(get(PATH_GET_CHAT).queryParam("includeCallerBan", "true"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.callerBanState").value("BANNED"));
+    mvc.perform(get(PATH_GET_CHAT))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.callerBanState").doesNotHaveJsonPath());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.ANONYMOUS_DEFAULT})
+  void anonymousAccountCannotOptIntoCallerBanLookup() throws Exception {
+    mvc.perform(get(PATH_GET_CHAT).queryParam("includeCallerBan", "true"))
+        .andExpect(status().isForbidden());
+    verifyNoMoreInteractions(getChatFacade);
+  }
+
   /** PUT on /users/chat/{chatId}/stop */
   @Test
   void stopChat_Should_ReturnUnauthorizedAndCallNoMethods_WhenNoKeycloakAuthorization()
@@ -2203,6 +2455,22 @@ class UserControllerAuthorizationIT {
         .andExpect(status().isForbidden());
 
     verifyNoMoreInteractions(sessionDataService);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.ANONYMOUS_DEFAULT})
+  void updateSessionDataAllowsAnonymousAuthorityBeforeOwningServiceChecks() throws Exception {
+    mvc.perform(
+            put(PATH_PUT_UPDATE_SESSION_DATA)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    new ObjectMapper()
+                        .writeValueAsString(new SessionDataDTO().displayName("katze_mika_1234"))))
+        .andExpect(status().isOk());
+    verify(sessionDataService)
+        .saveSessionData(org.mockito.ArgumentMatchers.anyLong(), any(SessionDataDTO.class));
   }
 
   @Test

@@ -134,6 +134,17 @@ class RequestedContactSheetServiceTest {
   }
 
   @Test
+  void liveChatCannotSendAContactSheetEvenWhenTheOwnerHasAnAddress() {
+    var liveChat = session(user("asker", "asker@example.org"));
+    liveChat.setRegistrationType(Session.RegistrationType.ANONYMOUS);
+    when(sessions.findById(42L)).thenReturn(Optional.of(liveChat));
+
+    assertThatThrownBy(() -> service.send(42L, "asker")).isInstanceOf(ForbiddenException.class);
+
+    verifyNoInteractions(agencies, delivery);
+  }
+
+  @Test
   void missingAddressFailsBeforeAnyAgencyReadOrSmtpAttempt() {
     when(sessions.findById(42L)).thenReturn(Optional.of(session(user("asker", ""))));
 

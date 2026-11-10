@@ -38,10 +38,29 @@ jobs:
         distribution: temurin
         cache: maven
 
+    - name: Create isolated guest promotion migration database
+      run: docker exec "${{ job.services.mariadb.id }}" mariadb -uroot -proot -e 'CREATE DATABASE migration_guest CHARACTER SET utf8 COLLATE utf8_unicode_ci'
+
+    - name: Verify published guest promotion migration histories
+      env:
+        GUEST_PROMOTION_TEST_DB_URL: jdbc:mariadb://127.0.0.1:3306/migration_guest
+        GUEST_PROMOTION_TEST_DB_USER: root
+        GUEST_PROMOTION_TEST_DB_PASSWORD: root
+      run: |
+        rm -f target/surefire-reports/TEST-de.caritas.cob.userservice.api.LiveChatPromotionMigrationIT.xml
+        ./mvnw -B -Dskip.unit-tests=true -Dtest=LiveChatPromotionMigrationIT integration-test
+        python3 - <<'PYCODE'
+        import xml.etree.ElementTree as ET
+        report = ET.parse("target/surefire-reports/TEST-de.caritas.cob.userservice.api.LiveChatPromotionMigrationIT.xml").getroot()
+        if int(report.attrib["tests"]) != 2 or any(int(report.attrib[key]) != 0 for key in ("skipped", "failures", "errors")):
+            raise SystemExit("Guest promotion migration contract must run exactly two passing tests")
+        PYCODE
+
     - name: Verify real MariaDB schema contracts
       run: >-
         ./mvnw -B -Dskip.unit-tests=true
-        -Dtest=DatabaseChangelogDriftIT,EnquiryRejectionMariaDbIT,ConsultantTopicUniqueKeyMariaDbIT,ConsultantPictureDatabaseIT,SupportRoomMigrationConvergenceIT,AdminStatisticsRepositoryMariaDbIT,UserAdminSearchMariaDbIT,ProvisioningCompensationMariaDbIT,ScheduledTaskClaimMariaDbIT,TutorialProgressServiceMariaDbReplicaIT,OrganizerMariaDbReplicaIT,DeactivateGroupChatSchedulerMariaDbReplicaIT,DeleteUserAccountSchedulerMariaDbReplicaIT,DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT,AccountInviteRevokeAcceptRaceMariaDbIT,SessionOwnershipMariaDbIT,ChatMembersOnlyMariaDbIT,GroupChatMatrixCleanupAdoptionMariaDbIT,CaseHandoverStatusHttpMariaDbIT,IdentityReactivationSagaMariaDbIT,UserHardDeleteClaimMariaDbIT
+        -Dspring.test.context.cache.maxSize=8
+        -Dtest=DatabaseChangelogDriftIT,DraftMessageLegacyMariaDbIT,EnquiryRejectionMariaDbIT,ConsultantTopicUniqueKeyMariaDbIT,ConsultantPictureDatabaseIT,SupportRoomMigrationConvergenceIT,AdminStatisticsRepositoryMariaDbIT,UserAdminSearchMariaDbIT,StatisticsRetentionMariaDbIT,ProvisioningCompensationMariaDbIT,ScheduledTaskClaimMariaDbIT,TutorialProgressServiceMariaDbReplicaIT,OrganizerMariaDbReplicaIT,DeactivateGroupChatSchedulerMariaDbReplicaIT,DeleteUserAccountSchedulerMariaDbReplicaIT,DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT,AccountInviteRevokeAcceptRaceMariaDbIT,SessionOwnershipMariaDbIT,ChatMembersOnlyMariaDbIT,GroupChatMatrixCleanupAdoptionMariaDbIT,ConsultantTenantChangeMariaDbIT,CaseHandoverLeaveAdminPowerMariaDbIT,CaseHandoverTakeoverMatrixMariaDbIT,MoveThenTakeoverMatrixMariaDbIT,CaseHandoverStatusHttpMariaDbIT,IdentityReactivationSagaMariaDbIT,UserHardDeleteClaimMariaDbIT
         integration-test
 
     - name: Prove authenticated writes across two replicas

@@ -224,7 +224,11 @@ public class InviteRoleChange {
         invite.getTenantIdAllocationMode(),
         invite.getAgencyIdAllocationMode(),
         command.alsoCounsellor(),
-        null);
+        null,
+        new InviteAvatarSuggestion(
+            invite.getSuggestedAvatarKind(),
+            invite.getSuggestedAvatarId(),
+            invite.getSuggestedDisplayName()));
   }
 
   private Supplier<Optional<AgencyFacts.Agency>> oneLookupOf(AccountInvite invite) {
