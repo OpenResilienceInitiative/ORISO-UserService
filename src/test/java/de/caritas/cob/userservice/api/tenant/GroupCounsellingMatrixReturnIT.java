@@ -692,6 +692,41 @@ class GroupCounsellingMatrixReturnIT extends GroupCounsellingMatrixHistoryHttpFi
   }
 
   @Test
+  void aFreshChatDetailReportsTheRegisteredCallersOwnBanWithoutTryingToJoin() throws Exception {
+    Chat chat = activeChat();
+    User participant = assignedUser(chat);
+    String detailPath = "/users/chat/" + chat.getId();
+
+    var firstEntry = chatDetail(detailPath + "?includeCallerBan=true", participant);
+    assertEquals(200, firstEntry.statusCode(), firstEntry.body());
+    assertEquals("NOT_BANNED", json.readTree(firstEntry.body()).path("callerBanState").asText());
+
+    matrixMemberBanned = true;
+    var afterRemoval = chatDetail(detailPath + "?includeCallerBan=true", participant);
+    assertEquals(200, afterRemoval.statusCode(), afterRemoval.body());
+    var detail = json.readTree(afterRemoval.body());
+    assertEquals("BANNED", detail.path("callerBanState").asText());
+    assertEquals(chat.getMatrixRoomId(), detail.path("matrixRoomId").asText());
+    assertTrue(detail.path("bannedUsers").isEmpty());
+
+    var poll = chatDetail(detailPath, participant);
+    assertEquals(200, poll.statusCode(), poll.body());
+    assertFalse(json.readTree(poll.body()).has("callerBanState"));
+    assertEquals(0, matrixWrites.get());
+  }
+
+  private HttpResponse<String> chatDetail(String path, User participant) throws Exception {
+    return request(
+        "GET",
+        path,
+        participant.getUserId(),
+        participant.getUsername(),
+        "user",
+        participant.getTenantId(),
+        "");
+  }
+
+  @Test
   void aBannedMemberIsRefusedWithAReasonInsteadOfAServerError() throws Exception {
     Chat chat = activeChat();
     matrixInviteDenied = true;

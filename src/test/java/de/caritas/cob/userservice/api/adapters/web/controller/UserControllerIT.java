@@ -2082,7 +2082,7 @@ class UserControllerIT {
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk());
 
-    verify(getChatFacade, times(1)).getChat(Mockito.any());
+    verify(getChatFacade, times(1)).getChat(CHAT_ID, null);
   }
 
   @Test

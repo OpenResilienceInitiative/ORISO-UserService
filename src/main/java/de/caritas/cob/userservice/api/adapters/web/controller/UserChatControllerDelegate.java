@@ -104,8 +104,8 @@ class UserChatControllerDelegate {
     return new ResponseEntity<>(HttpStatus.OK);
   }
 
-  ResponseEntity<ChatInfoResponseDTO> getChat(Long chatId) {
-    var response = getChatFacade.getChat(chatId);
+  ResponseEntity<ChatInfoResponseDTO> getChat(Long chatId, Boolean includeCallerBan) {
+    var response = getChatFacade.getChat(chatId, includeCallerBan);
     return new ResponseEntity<>(response, HttpStatus.OK);
   }
 

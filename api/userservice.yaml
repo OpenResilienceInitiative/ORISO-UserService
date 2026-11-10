@@ -2167,6 +2167,11 @@ paths:
           schema:
             type: integer
             format: int64
+        - name: includeCallerBan
+          in: query
+          description: Resolve the authenticated registered participant's own ban state for the active self-help room.
+          schema:
+            type: boolean
       responses:
         200:
           description: OK - successful operation
@@ -5262,6 +5267,13 @@ components:
           description: usernames
           items:
             type: string
+        callerBanState:
+          type: string
+          description: >-
+            Present only when a registered advice seeker assigned to the active self-help room opts in.
+            UNKNOWN means the caller's Matrix membership could not be determined.
+          enum: [BANNED, NOT_BANNED, UNKNOWN]
+          x-field-extra-annotation: "@com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)"
 
     ChatMembersResponseDTO:
       type: object

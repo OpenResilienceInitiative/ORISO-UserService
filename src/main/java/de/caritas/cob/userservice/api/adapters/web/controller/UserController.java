@@ -857,8 +857,8 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity} containing {@link ChatInfoResponseDTO}
    */
   @Override
-  public ResponseEntity<ChatInfoResponseDTO> getChat(Long chatId) {
-    return userChatControllerDelegate.getChat(chatId);
+  public ResponseEntity<ChatInfoResponseDTO> getChat(Long chatId, Boolean includeCallerBan) {
+    return userChatControllerDelegate.getChat(chatId, includeCallerBan);
   }
 
   /**
