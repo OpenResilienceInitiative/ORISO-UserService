@@ -237,6 +237,25 @@ class AccountInviteRepositoryIT {
     assertEquals(Set.of(first.getId(), second.getId()), Set.copyOf(ids(result)));
   }
 
+  @Test
+  void searchWordsCanMatchDifferentFieldsAndMissingWordRejects() {
+    var target =
+        persistedInviteWithName(
+            1L, AccountInviteTargetRole.COUNSELLOR, "max@example.org", "Max", "Mustermann");
+    assertEquals(List.of(target.getId()), ids(search("Max Mustermann")));
+    assertEquals(List.of(), ids(search("Max absent")));
+  }
+
+  @Test
+  void searchWildcardsAreLiteral() {
+    var target =
+        persistedInviteWithName(
+            1L, AccountInviteTargetRole.COUNSELLOR, "percent@example.org", "100%", "Under_score");
+    persistedInviteWithName(
+        1L, AccountInviteTargetRole.COUNSELLOR, "other@example.org", "100x", "UnderXscore");
+    assertEquals(List.of(target.getId()), ids(search("100% Under_score")));
+  }
+
   private Page<AccountInvite> search(String search) {
     return accountInviteRepository.findAllByFilters(
         null, null, null, search, null, PageRequest.of(0, 20));
