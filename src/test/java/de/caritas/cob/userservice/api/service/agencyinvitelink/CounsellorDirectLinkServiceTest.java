@@ -370,6 +370,45 @@ class CounsellorDirectLinkServiceTest {
     }
   }
 
+  /**
+   * ORISO-Frontend#2170: the call of a direct-link conversation is called what the link is called,
+   * not "Group call for <room id>". The conversation keeps the link's name beside its medium, so a
+   * later rename or deletion of the link leaves it as it was.
+   */
+  @Test
+  void startConversation_Should_RecordTheLinkNameOnTheConversation() {
+    var link = publicLink("tok", "VIDEO", "ACTIVE");
+    link.setName("Flyer Schule");
+    when(createNewSessionFacade.initializeNewSession(any(), any(), anyList()))
+        .thenReturn(
+            new NewRegistrationResponseDto()
+                .matrixRoomId("!room:example")
+                .sessionId(506L)
+                .status(HttpStatus.CREATED));
+
+    service.startConversation("tok", asker("a"));
+
+    verify(sessionRepository).recordDirectLinkName(506L, "Flyer Schule");
+  }
+
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.NullAndEmptySource
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"   "})
+  void startConversation_Should_RecordNoName_When_TheLinkHasNone(String name) {
+    var link = publicLink("tok", "VIDEO", "ACTIVE");
+    link.setName(name);
+    when(createNewSessionFacade.initializeNewSession(any(), any(), anyList()))
+        .thenReturn(
+            new NewRegistrationResponseDto()
+                .matrixRoomId("!room:example")
+                .sessionId(507L)
+                .status(HttpStatus.CREATED));
+
+    service.startConversation("tok", asker("a"));
+
+    verify(sessionRepository, never()).recordDirectLinkName(any(), any());
+  }
+
   @Test
   void startConversation_Should_RecordNothing_When_TheRoomCouldNotBeProvisioned() {
     publicLink("tok", "VIDEO", "ACTIVE");

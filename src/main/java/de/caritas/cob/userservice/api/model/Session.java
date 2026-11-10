@@ -271,6 +271,16 @@ public class Session implements TenantAware {
   @Column(name = "direct_link_medium", length = 16, updatable = false)
   private String directLinkMedium;
 
+  /**
+   * ORISO-Frontend#2170: the name of the counsellor direct link this conversation was opened
+   * through ("Flyer Schule"), as the link had it then; null when there was none. The call of the
+   * conversation is called that. A snapshot, not a reference: the conversation survives a rename or
+   * deletion of the link, like {@link #directLinkMedium}. Written once, only by {@code
+   * SessionRepository#recordDirectLinkName}, so a stale entity save cannot erase it.
+   */
+  @Column(name = "direct_link_name", length = 100, updatable = false)
+  private String directLinkName;
+
   @OneToMany(
       targetEntity = SessionTopic.class,
       mappedBy = "session",
