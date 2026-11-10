@@ -48,27 +48,37 @@ class MatrixCallObservationIsolationTest {
   @Test
   void onlyTheExpectedClassesHoldTheObservationTypes() throws Exception {
     // Scans all production classes: a new holder must be a conscious, reviewed change here.
+    // Abstract and nested classes can hold the types too; the default scanner skips them.
     var scanner =
         new org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider(
-            false);
+            false) {
+          @Override
+          protected boolean isCandidateComponent(
+              org.springframework.beans.factory.annotation.AnnotatedBeanDefinition definition) {
+            return true;
+          }
+        };
     scanner.addIncludeFilter((reader, factory) -> true);
     var holders = new java.util.TreeSet<String>();
     for (var candidate : scanner.findCandidateComponents("de.caritas.cob.userservice")) {
       Class<?> type = Class.forName(candidate.getBeanClassName());
-      String name = type.getSimpleName();
+      String name = type.getName(); // binary name: also covers nested and anonymous classes
       // Production classes only: the scan also sees test classes on the classpath.
       if (type == MatrixCallObservationService.class
           || type == MatrixCallObservation.class
           || type == MatrixCallObservationRepository.class
-          || name.endsWith("IT")
-          || name.endsWith("Test")) continue;
-      boolean holds =
-          Stream.of(type.getDeclaredFields())
-                  .anyMatch(f -> f.getType().getSimpleName().startsWith("MatrixCallObservation"))
-              || Stream.of(type.getDeclaredConstructors())
-                  .flatMap(c -> Stream.of(c.getParameterTypes()))
-                  .anyMatch(t -> t.getSimpleName().startsWith("MatrixCallObservation"));
-      if (holds) holders.add(type.getSimpleName());
+          || name.matches(".*(IT|Test)(\\$.*)?")) continue;
+      boolean holds = false;
+      // Walk superclasses too: an abstract parent can carry the field for its subclasses.
+      for (Class<?> c = type; c != null && c != Object.class; c = c.getSuperclass()) {
+        holds |=
+            Stream.of(c.getDeclaredFields())
+                    .anyMatch(f -> f.getType().getSimpleName().startsWith("MatrixCallObservation"))
+                || Stream.of(c.getDeclaredConstructors())
+                    .flatMap(k -> Stream.of(k.getParameterTypes()))
+                    .anyMatch(t -> t.getSimpleName().startsWith("MatrixCallObservation"));
+      }
+      if (holds) holders.add(type.getName().substring(type.getName().lastIndexOf('.') + 1));
     }
     assertThat(holders).containsExactly("MatrixCallStateController", "MatrixCallStateService");
   }
