@@ -1683,6 +1683,68 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
     return joinRoom(roomId, adminToken);
   }
 
+  /**
+   * Reads who created a media room and who sent its call binding, with a joined member's authority.
+   * Both senders come from the full state events and cannot be edited by room members.
+   */
+  public java.util.Optional<CallRoomOrigin> getCallRoomOrigin(
+      String roomId, String memberMatrixUserId) {
+    if (roomId == null
+        || roomId.isBlank()
+        || memberMatrixUserId == null
+        || !getCallRoomMembers(roomId)
+            .map(members -> members.contains(memberMatrixUserId))
+            .orElse(false)) {
+      return java.util.Optional.empty();
+    }
+    String token = loginAsUserAccessTokenForCall(memberMatrixUserId);
+    if (token == null) return java.util.Optional.empty();
+    try {
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig,
+              "/_matrix/client/v3/rooms/{roomId}/state",
+              java.util.Map.of("roomId", roomId));
+      var state =
+          restTemplate
+              .exchange(
+                  url,
+                  org.springframework.http.HttpMethod.GET,
+                  new HttpEntity<>(getClientHttpHeaders(token)),
+                  new org.springframework.core.ParameterizedTypeReference<
+                      java.util.List<java.util.Map<String, Object>>>() {})
+              .getBody();
+      if (state == null) return java.util.Optional.empty();
+      String creator = null;
+      String bindingSender = null;
+      int creates = 0;
+      int bindings = 0;
+      for (var event : state) {
+        String type = String.valueOf(event.get("type"));
+        if ("m.room.create".equals(type) && "".equals(event.get("state_key"))) {
+          creates++;
+          creator = event.get("sender") instanceof String s ? s : null;
+        } else if ("org.oriso.call.binding".equals(type) && "".equals(event.get("state_key"))) {
+          bindings++;
+          bindingSender = event.get("sender") instanceof String s ? s : null;
+        }
+      }
+      if (creates != 1 || bindings != 1 || creator == null || bindingSender == null) {
+        return java.util.Optional.empty();
+      }
+      return java.util.Optional.of(new CallRoomOrigin(creator, bindingSender));
+    } catch (HttpStatusCodeException response) {
+      if (response.getStatusCode().value() == 401 || isRetryableCallLookupStatus(response)) {
+        throw new CallLookupUnavailableException("call origin lookup unavailable", response);
+      }
+      return java.util.Optional.empty();
+    } catch (org.springframework.web.client.RestClientException unavailable) {
+      throw new CallLookupUnavailableException("call origin lookup unavailable", unavailable);
+    }
+  }
+
+  public record CallRoomOrigin(String creatorMatrixId, String bindingSenderMatrixId) {}
+
   /** Reads the call binding with a currently joined caller's authority, without joining admin. */
   public java.util.Optional<java.util.Map<String, Object>> getCallRoomBinding(
       String roomId, String memberMatrixUserId) {

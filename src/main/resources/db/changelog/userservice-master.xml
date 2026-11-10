@@ -271,4 +271,5 @@
   <include file="db/changelog/changeset/20261029_deleted_asker_session_1159/changeSet.xml"/>
   <include file="db/changelog/changeset/20261105_live_chat_account_promotion/changeSet.xml"/>
   <include file="db/changelog/changeset/20261108_protected_draft_scope/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261110_call_observation_2166/changeSet.xml"/>
 </databaseChangeLog>

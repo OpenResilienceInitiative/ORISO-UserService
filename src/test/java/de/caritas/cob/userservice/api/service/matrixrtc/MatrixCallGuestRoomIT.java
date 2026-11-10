@@ -406,7 +406,13 @@ class MatrixCallGuestRoomIT {
 
   private MockMvc mvc(AuthenticatedUser actor) {
     return MockMvcBuilders.standaloneSetup(
-            new MatrixCallStateController(callStates, callGuests, actor))
+            new MatrixCallStateController(
+                callStates,
+                callGuests,
+                org.mockito.Mockito.mock(
+                    de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService
+                        .class),
+                actor))
         .build();
   }
 

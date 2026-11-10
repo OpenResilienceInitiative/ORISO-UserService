@@ -21,6 +21,8 @@ import org.springframework.web.bind.annotation.RestController;
 public class MatrixCallStateController {
   private final MatrixCallStateService states;
   private final MatrixCallGuestService guests;
+  private final de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService
+      observations;
   private final AuthenticatedUser authenticatedUser;
 
   @GetMapping("/state")
@@ -66,6 +68,41 @@ public class MatrixCallStateController {
       return unavailable();
     }
   }
+
+  /** Creator of an active encrypted internal-group call registers it for observation only. */
+  @PostMapping("/observations")
+  public ResponseEntity<?> register(@RequestBody ObservationRequest request) {
+    try {
+      return observationResponse(
+          observations.register(
+              authenticatedUser,
+              request.sourceRoomId(),
+              request.callId(),
+              request.callRoomId(),
+              Boolean.TRUE.equals(request.video())));
+    } catch (MatrixSynapseService.CallLookupUnavailableException unavailable) {
+      return unavailable();
+    }
+  }
+
+  @PostMapping("/observations/end")
+  public ResponseEntity<?> end(@RequestBody ObservationEndRequest request) {
+    return observationResponse(
+        observations.end(authenticatedUser, request.sourceRoomId(), request.callId()));
+  }
+
+  private static ResponseEntity<?> observationResponse(
+      de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService.Outcome outcome) {
+    return outcome
+            == de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService.Outcome.OK
+        ? ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build()
+        : ResponseEntity.notFound().build();
+  }
+
+  public record ObservationRequest(
+      String sourceRoomId, String callId, String callRoomId, Boolean video) {}
+
+  public record ObservationEndRequest(String sourceRoomId, String callId) {}
 
   private static ResponseEntity<?> unavailable() {
     return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
