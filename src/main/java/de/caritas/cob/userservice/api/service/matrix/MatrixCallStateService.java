@@ -20,6 +20,7 @@ public class MatrixCallStateService {
   private final ConsultantRepository consultants;
   private final MatrixSynapseService matrix;
   private final MatrixCallGuestService callGuests;
+  private final MatrixCallObservationService observations;
 
   @Transactional(readOnly = true)
   public Optional<CallState> read(AuthenticatedUser actor, String sourceRoomId, String callId) {
@@ -51,8 +52,13 @@ public class MatrixCallStateService {
             .getCallRoomMembers(sourceRoomId)
             .map(members -> members.contains(matrixId.get()))
             .orElse(false);
-    return bindings
-        .findBySourceRoomIdAndCallId(sourceRoomId, callId)
+    var bound = bindings.findBySourceRoomIdAndCallId(sourceRoomId, callId);
+    if (bound.isEmpty()) {
+      // #2166: encrypted internal-group call without a readable invite. Observation only, read by
+      // conversation members; never consulted for guests or any access decision.
+      return conversationMember ? observations.readState(conversation, callId) : Optional.empty();
+    }
+    return bound
         .filter(
             binding ->
                 Objects.equals(binding.getTenantId(), conversation.getTenantId())
