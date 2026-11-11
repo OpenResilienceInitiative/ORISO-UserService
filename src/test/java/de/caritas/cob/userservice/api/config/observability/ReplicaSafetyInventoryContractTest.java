@@ -71,6 +71,7 @@ class ReplicaSafetyInventoryContractTest {
           "statistics-feature-gate-cache",
           "statistics-retention-scheduler",
           "team-discussion-retention-scheduler",
+          "call-observation-retention-scheduler",
           "team-discussion-orphan-cleanup-scheduler",
           "agency-deletion-audit-pull-scheduler",
           "team-discussion-access-repair",
