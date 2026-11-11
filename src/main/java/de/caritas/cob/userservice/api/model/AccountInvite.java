@@ -218,11 +218,11 @@ public class AccountInvite {
   private int dpaForwardCount = 0;
 
   /**
-   * When the tenant's data processing agreement was signed, written back to the invite so the Admin
-   * invite progress board can prove its final "Vertrag unterschrieben" phase (ORISO-Admin#896, epic
-   * #725). Stamped by the DPA_SIGNED_NOTICE chain for forwarded signatures and by the onboarding
-   * registration for an own acceptance; the authoritative record stays TenantService's {@code
-   * tenant_dpa_signature} — this is the invite-side mirror, never cleared, never regressed.
+   * When the tenant's data processing agreement was signed. This tenant-wide milestone is mirrored
+   * on the invitation for the Admin progress board. TenantService owns the authoritative signature
+   * record, which can be verified during reconciliation or forwarded-signature notice processing.
+   * Onboarding registration can also stamp a recorded acceptance. An existing milestone is
+   * preserved.
    */
   @Column(name = "dpa_signed_at", columnDefinition = "datetime")
   private LocalDateTime dpaSignedAt;

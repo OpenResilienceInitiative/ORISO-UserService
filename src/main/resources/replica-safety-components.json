@@ -363,6 +363,22 @@
       "status": "safe"
     },
     {
+      "id": "account-invite-dpa-reconciliation-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/accountinvite/DpaInviteReconciliation.java",
+      "kind": "scheduler",
+      "owner": "agency-tenant",
+      "risk": "correctness",
+      "components": [
+        "reconcile"
+      ],
+      "decision": "Lease each bounded batch with ScheduledTaskClaimService. A replica-local cursor only determines the next batch; restarting or replaying a batch cannot overwrite an existing milestone because the update rechecks the exact tenant, actor and missing timestamp.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "safe"
+    },
+    {
       "id": "enquiry-notification-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/workflow/enquirynotification/scheduler/EnquiryNotificationScheduler.java",
       "kind": "scheduler",

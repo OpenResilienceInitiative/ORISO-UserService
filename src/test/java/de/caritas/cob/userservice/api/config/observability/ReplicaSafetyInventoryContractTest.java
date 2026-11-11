@@ -40,6 +40,7 @@ class ReplicaSafetyInventoryContractTest {
           "traeger-organisation-cache",
           "account-invite-reservation-release-scheduler",
           "account-invite-expiry-number-release-scheduler",
+          "account-invite-dpa-reconciliation-scheduler",
           "case-handover-policy-cache-refresh",
           "case-handover-co-access-expiry",
           "case-handover-matrix-repair",

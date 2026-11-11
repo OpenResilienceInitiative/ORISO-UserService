@@ -58,8 +58,8 @@ jobs:
       uses: actions/checkout@v6
       with:
         repository: OpenResilienceInitiative/ORISO-TenantService
-        # QA74 Tenant-owned collection policies (issue336), including current dev contracts.
-        ref: ${{ github.event_name != 'push' && 'fddad7325a2398c40536fb62a04010c663eda924' || 'dev' }}
+        # TenantService dev including #357 (current DPA signature time in the tenant gate).
+        ref: ${{ github.event_name != 'push' && '4ee2e71ccd1b821c6189791f43e3fa014501d052' || 'dev' }}
         path: .providers/tenant
         persist-credentials: false
 

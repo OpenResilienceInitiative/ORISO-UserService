@@ -78,6 +78,21 @@ class ReplicaSafetyMetricsTest {
                 .gauge()
                 .value())
         .isEqualTo(1);
+    assertThat(
+            registry
+                .get("userservice.scheduler.registered")
+                .tags(
+                    "task",
+                    "DpaInviteReconciliation.reconcile()",
+                    "owner",
+                    "agency-tenant",
+                    "risk",
+                    "correctness",
+                    "status",
+                    "safe")
+                .gauge()
+                .value())
+        .isEqualTo(1);
     assertThat(registry.getMeters())
         .allSatisfy(
             meter ->

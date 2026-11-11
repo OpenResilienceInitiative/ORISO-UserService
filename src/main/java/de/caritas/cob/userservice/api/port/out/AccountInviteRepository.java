@@ -22,6 +22,7 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 public interface AccountInviteRepository
     extends JpaRepository<AccountInvite, Long>, JpaSpecificationExecutor<AccountInvite> {
@@ -592,5 +593,56 @@ public interface AccountInviteRepository
   int markDpaSigned(
       @Param("tenantId") Long tenantId,
       @Param("targetRole") AccountInviteTargetRole targetRole,
+      @Param("signedAt") LocalDateTime signedAt);
+
+  // The same current account/tenant proof must hold when the candidate is selected and when the
+  // timestamp is written, as the authoritative owner read happens between those operations.
+  String DPA_RECONCILIATION_SCOPE =
+      """
+      i.status = ACCEPTED AND i.targetRole = TENANT_ADMIN
+      AND i.tenantId > 0 AND i.dpaSignedAt IS NULL
+      AND (i.acceptedByUserId IS NULL OR i.provisionedUserId IS NULL
+           OR i.acceptedByUserId = i.provisionedUserId)
+      AND EXISTS (
+        SELECT a.id FROM Admin a
+        WHERE a.id = COALESCE(i.provisionedUserId, i.acceptedByUserId)
+          AND a.tenantId = i.tenantId AND a.type = TENANT)
+      """;
+
+  interface DpaReconciliationCandidate {
+    Long getInviteId();
+
+    Long getTenantId();
+
+    String getActorId();
+  }
+
+  @Query("SELECT MAX(i.id) FROM AccountInvite i")
+  Optional<Long> findDpaReconciliationUpperBound();
+
+  @Query(
+      """
+      SELECT i.id AS inviteId, i.tenantId AS tenantId,
+             COALESCE(i.provisionedUserId, i.acceptedByUserId) AS actorId
+      FROM AccountInvite i WHERE i.id > :afterId AND i.id <= :throughId AND
+      """
+          + DPA_RECONCILIATION_SCOPE
+          + " ORDER BY i.id")
+  List<DpaReconciliationCandidate> findDpaReconciliationCandidates(
+      @Param("afterId") Long afterId, @Param("throughId") Long throughId, Pageable pageable);
+
+  @Transactional
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      """
+      UPDATE AccountInvite i SET i.dpaSignedAt = :signedAt
+      WHERE i.id = :inviteId AND i.tenantId = :tenantId
+        AND COALESCE(i.provisionedUserId, i.acceptedByUserId) = :actorId AND
+      """
+          + DPA_RECONCILIATION_SCOPE)
+  int reconcileDpaSigned(
+      @Param("inviteId") Long inviteId,
+      @Param("tenantId") Long tenantId,
+      @Param("actorId") String actorId,
       @Param("signedAt") LocalDateTime signedAt);
 }
