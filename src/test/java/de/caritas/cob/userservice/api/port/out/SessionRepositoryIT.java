@@ -94,6 +94,35 @@ class SessionRepositoryIT {
     session = finalState;
   }
 
+  /** ORISO-Frontend#2170: the name of the direct link is written once, like its medium. */
+  @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
+  void directLinkNameIsWrittenOnceAndSurvivesStaleSaves() {
+    givenAUser();
+    givenValidSession();
+    session = underTest.save(session);
+    Long id = session.getId();
+    Session stale;
+    try (var detachedReader = entityManagerFactory.createEntityManager()) {
+      stale = detachedReader.find(Session.class, id);
+    }
+    var version = stale.getRowVersion();
+
+    assertEquals(1, underTest.recordDirectLinkName(id, "Flyer Schule"));
+    // A later link of another name does not rename the conversation.
+    assertEquals(0, underTest.recordDirectLinkName(id, "Plakat Bahnhof"));
+    assertEquals("Flyer Schule", underTest.findById(id).orElseThrow().getDirectLinkName());
+    assertEquals(version, underTest.findById(id).orElseThrow().getRowVersion());
+
+    // A whole-entity save from before the write must not erase it.
+    stale.setPostcode("54321");
+    underTest.save(stale);
+    var finalState = underTest.findById(id).orElseThrow();
+    session = finalState;
+    assertEquals("Flyer Schule", finalState.getDirectLinkName());
+    assertEquals("54321", finalState.getPostcode());
+  }
+
   /** FE#1952: the medium of the direct link a conversation came from is written once. */
   @Test
   @Transactional(propagation = Propagation.NOT_SUPPORTED)

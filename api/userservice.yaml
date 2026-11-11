@@ -4017,6 +4017,16 @@ components:
             conversation was opened through; absent for every other conversation. A label for the
             list ("Videoanruf", "Audioanruf", "Direktlink" instead of "Mail"), not a modality:
             conversationType stays the ADR-006 value. Additive - older clients can ignore it.
+        directLinkName:
+          type: string
+          maxLength: 100
+          example: Flyer Schule
+          description: >-
+            ORISO-Frontend#2170 - the name of the counsellor direct link (#1475) this conversation
+            was opened through, as the link had it then; absent when there was none or for every
+            other conversation. The call of the conversation is called that ("Anruf" without it).
+            A snapshot: a later rename of the link does not change it. Additive - older clients can
+            ignore it.
         supervision:
           $ref: '#/components/schemas/SessionSupervisionDTO'
 

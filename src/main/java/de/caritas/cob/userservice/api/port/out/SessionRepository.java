@@ -64,6 +64,21 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
   int recordDirectLinkOrigin(@Param("sessionId") Long sessionId, @Param("medium") String medium);
 
   /**
+   * ORISO-Frontend#2170: remember the name of the direct link a conversation was opened through, so
+   * its call is called that. First name wins, like the medium above; a conversation opened before
+   * this existed has none and takes the next link's. Leaves ownership and the optimistic version
+   * alone.
+   *
+   * @return one if written, zero if the conversation is missing or already has a name
+   */
+  @Transactional
+  @Modifying(flushAutomatically = true)
+  @Query(
+      "UPDATE Session session SET session.directLinkName = :name"
+          + " WHERE session.id = :sessionId AND session.directLinkName IS NULL")
+  int recordDirectLinkName(@Param("sessionId") Long sessionId, @Param("name") String name);
+
+  /**
    * Write the independent standing preference without changing ownership or its optimistic version.
    * Callers must first lock the session and validate its owner, tenant and conversation scope.
    */

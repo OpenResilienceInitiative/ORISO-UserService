@@ -2345,6 +2345,9 @@ class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
     session.setPostcode("12345");
     session.setConsultingTypeId(1);
     session.setSessionTopics(Lists.newArrayList());
+    // EasyRandom fills every string up to 32 characters; these columns are shorter.
+    session.setDirectLinkMedium(null);
+    session.setDirectLinkName(null);
     return sessionRepository.save(session);
   }
 
