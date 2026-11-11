@@ -1,17 +1,20 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryResponseDTO;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.AgencyInviteLinkService;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.AgencyInviteLinkService.CreateInviteLinkCommand;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -23,13 +26,48 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.client.RestClientException;
 
 @RestController
 @RequiredArgsConstructor
+@Slf4j
 public class AgencyInviteLinkController {
 
   private final @NonNull AgencyInviteLinkService agencyInviteLinkService;
   private final @NonNull TopicService topicService;
+
+  @PreAuthorize("hasAuthority('AUTHORIZATION_USER_ADMIN')")
+  @GetMapping("/useradmin/invitelinks/topics")
+  public List<LiveChatTopic> liveChatTopics() {
+    return agencyInviteLinkService.getLiveChatLinkTopics().stream()
+        .map(topic -> new LiveChatTopic(topic.getId(), topic.getName()))
+        .toList();
+  }
+
+  public record LiveChatTopic(Long id, String name) {}
+
+  private AgencyInviteLinkResponseDTO toResponse(
+      AgencyInviteLink link, Map<Long, Map<Long, TopicDTO>> scopedTopics) {
+    Map<Long, TopicDTO> names = Map.of();
+    if (link.getTopicId() != null) {
+      names =
+          AgencyInviteLinkService.isExternalLiveChat(link.getLinkKind(), link.getChatType())
+              ? scopedTopics.computeIfAbsent(link.getTenantId(), this::getScopedTopicNames)
+              : topicService.getAllTopicsMap();
+    }
+    return AgencyInviteLinkResponseDTO.from(link, names);
+  }
+
+  private Map<Long, TopicDTO> getScopedTopicNames(Long tenantId) {
+    try {
+      return topicService.getTopicNamesForTenant(tenantId);
+    } catch (RestClientException | ServiceUnavailableException unavailable) {
+      // Display names are optional and resolving them must not turn a committed write into an
+      // error.
+      log.warn("Could not resolve topic names for tenant {}", tenantId);
+      return Map.of();
+    }
+  }
 
   // ---------------------------------------------------------------------------------------------
   // POST /useradmin/invitelinks — create a new topic-based invite link.
@@ -52,9 +90,7 @@ public class AgencyInviteLinkController {
       cmd.setExpiresInDays(request.getExpiresInDays());
     }
     AgencyInviteLink link = agencyInviteLinkService.create(cmd);
-    Map<Long, TopicDTO> topicsMap = topicService.getAllTopicsMap();
-    return new ResponseEntity<>(
-        AgencyInviteLinkResponseDTO.from(link, topicsMap), HttpStatus.CREATED);
+    return new ResponseEntity<>(toResponse(link, new HashMap<>()), HttpStatus.CREATED);
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -81,10 +117,10 @@ public class AgencyInviteLinkController {
 
     Page<AgencyInviteLink> result =
         agencyInviteLinkService.list(linkKind, topicId, chatType, status, pageNum, sizeNum);
-    Map<Long, TopicDTO> topicsMap = topicService.getAllTopicsMap();
+    Map<Long, Map<Long, TopicDTO>> scopedTopics = new HashMap<>();
     List<AgencyInviteLinkResponseDTO> content =
         result.getContent().stream()
-            .map(link -> AgencyInviteLinkResponseDTO.from(link, topicsMap))
+            .map(link -> toResponse(link, scopedTopics))
             .collect(Collectors.toList());
 
     // Old frontend: no pagination params → return plain array (same as the original API)
@@ -111,8 +147,7 @@ public class AgencyInviteLinkController {
   @PostMapping("/useradmin/invitelinks/{linkId}/deactivate")
   public ResponseEntity<AgencyInviteLinkResponseDTO> deactivate(@PathVariable Long linkId) {
     AgencyInviteLink link = agencyInviteLinkService.deactivate(linkId);
-    return ResponseEntity.ok(
-        AgencyInviteLinkResponseDTO.from(link, topicService.getAllTopicsMap()));
+    return ResponseEntity.ok(toResponse(link, new HashMap<>()));
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -124,8 +159,7 @@ public class AgencyInviteLinkController {
   @PostMapping("/useradmin/invitelinks/{linkId}/reactivate")
   public ResponseEntity<AgencyInviteLinkResponseDTO> reactivate(@PathVariable Long linkId) {
     AgencyInviteLink link = agencyInviteLinkService.reactivate(linkId);
-    return ResponseEntity.ok(
-        AgencyInviteLinkResponseDTO.from(link, topicService.getAllTopicsMap()));
+    return ResponseEntity.ok(toResponse(link, new HashMap<>()));
   }
 
   // ---------------------------------------------------------------------------------------------
