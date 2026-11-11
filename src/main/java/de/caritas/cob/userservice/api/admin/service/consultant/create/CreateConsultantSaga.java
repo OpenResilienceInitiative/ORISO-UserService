@@ -56,6 +56,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestClientException;
@@ -236,6 +237,7 @@ public class CreateConsultantSaga {
             consultantCreationInput.getTenantId(),
             de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group
                 .CONSULTANT);
+    refuseUsernameHeldByDeletion(consultantCreationInput);
     String keycloakUserId = createKeycloakUser(consultantCreationInput);
 
     String password = consultantCreationInput.getPassword();
@@ -437,6 +439,19 @@ public class CreateConsultantSaga {
     }
     if (isGlobalTenantContext()) {
       throw new BadRequestException("TenantId must be set if consultant is created by superadmin");
+    }
+  }
+
+  /**
+   * A counsellor in deletion keeps their username until the hard deletion has run after the
+   * read-only safeguard window (the deletion can still be cancelled until then). Say so instead of
+   * the plain "username taken" the identity provider or the unique key would answer (#1489).
+   */
+  private void refuseUsernameHeldByDeletion(ConsultantCreationInput consultantCreationInput) {
+    if (consultantService.isUsernameHeldByDeletedConsultant(
+        consultantCreationInput.getEncodedUsername())) {
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.USERNAME_IN_DELETION, HttpStatus.CONFLICT);
     }
   }
 

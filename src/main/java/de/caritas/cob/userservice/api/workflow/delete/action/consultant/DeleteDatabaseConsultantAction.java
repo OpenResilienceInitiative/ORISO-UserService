@@ -60,6 +60,8 @@ public class DeleteDatabaseConsultantAction
    */
   @Override
   public void execute(ConsultantDeletionWorkflowDTO actionTarget) {
+    releaseUsername(actionTarget);
+
     if (UserContentCleanup.failed(actionTarget.getDeletionWorkflowErrors())) {
       log.warn("Keeping consultant account row: unencrypted user content could not be deleted");
       return;
@@ -113,6 +115,32 @@ public class DeleteDatabaseConsultantAction
         actionTarget.getConsultant().getId(),
         actionTarget.getConsultant().getTenantId(),
         outcomeOf(actionTarget));
+  }
+
+  /**
+   * Frees the username before anything else, in its own transaction. {@code consultant.username} is
+   * unique: when the row delete below fails (a reference that blocks it, kept user content), the
+   * row used to keep the name, and nobody could create an account with it again (ORISO-Admin#1489).
+   * The hard deletion only runs after the read-only safeguard window, so the deletion can no longer
+   * be cancelled and the name is not needed any more. A failure here is recorded and the deletion
+   * goes on: the row may still be deleted, which frees the name as well.
+   */
+  private void releaseUsername(ConsultantDeletionWorkflowDTO actionTarget) {
+    var consultant = actionTarget.getConsultant();
+    if (!wentThroughDeletionLifecycle(consultant)) {
+      return;
+    }
+    try {
+      consultantRepository.releaseUsernameOfDeletedConsultant(
+          consultant.getId(), releasedUsernameOf(consultant.getId()));
+    } catch (Exception e) {
+      handleExceptionWithMessage(actionTarget, e, "Unable to release the consultant username");
+    }
+  }
+
+  /** Unique because the consultant id is; cannot be an encoded ("enc.") or valid plain username. */
+  static String releasedUsernameOf(String consultantId) {
+    return "deleted:" + consultantId;
   }
 
   /**

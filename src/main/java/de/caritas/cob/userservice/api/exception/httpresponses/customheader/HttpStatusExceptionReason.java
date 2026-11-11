@@ -4,6 +4,11 @@ public enum HttpStatusExceptionReason {
   ONE_TOPIC_PER_AGENCY,
   SETTINGS_UNAVAILABLE,
   USERNAME_NOT_AVAILABLE,
+  /**
+   * The username still belongs to a counsellor whose deletion is in progress. It becomes free once
+   * the hard deletion has run after the read-only safeguard window (#1489).
+   */
+  USERNAME_IN_DELETION,
   USERNAME_NOT_VALID,
   EMAIL_NOT_AVAILABLE,
   EMAIL_NOT_VALID,

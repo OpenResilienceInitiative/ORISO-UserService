@@ -56,6 +56,28 @@ public interface ConsultantRepository
 
   Optional<Consultant> findByUsernameAndDeleteDateIsNull(String username);
 
+  /** Whether a counsellor marked for deletion still holds this (encoded) username. */
+  boolean existsByUsernameAndDeleteDateIsNotNull(String username);
+
+  /**
+   * Frees the username of a counsellor that is being hard-deleted, so the name can be given to a
+   * new account even when the row itself cannot be removed yet (ORISO-Admin#1489). The column is
+   * unique, and the row of a counsellor whose hard deletion failed used to keep the name forever.
+   * Native and in its own transaction on purpose: the JPA mapping marks the column as not
+   * updatable, and the release must stay committed when the later row delete fails.
+   *
+   * @return the number of rows updated (0 or 1)
+   */
+  @Modifying
+  @Transactional
+  @Query(
+      value =
+          "UPDATE consultant SET username = :releasedUsername"
+              + " WHERE consultant_id = :id AND delete_date IS NOT NULL",
+      nativeQuery = true)
+  int releaseUsernameOfDeletedConsultant(
+      @Param("id") String id, @Param("releasedUsername") String releasedUsername);
+
   @EntityGraph(attributePaths = {"consultantAgencies", "languages"})
   Optional<Consultant> findByPublicSlugAndDeleteDateIsNull(String publicSlug);
 
