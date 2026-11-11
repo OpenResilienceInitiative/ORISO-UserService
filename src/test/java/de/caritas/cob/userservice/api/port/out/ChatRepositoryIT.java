@@ -5,11 +5,16 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import de.caritas.cob.userservice.api.model.Chat;
+import de.caritas.cob.userservice.api.model.Chat.ChatInterval;
+import de.caritas.cob.userservice.api.model.ChatOccurrenceException;
+import de.caritas.cob.userservice.api.model.ChatOccurrenceException.ExceptionType;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import jakarta.persistence.EntityManager;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -23,6 +28,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.jdbc.Sql;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -41,9 +47,13 @@ class ChatRepositoryIT {
 
   @Autowired private ConsultantRepository consultantRepository;
 
+  @Autowired private ChatOccurrenceExceptionRepository occurrenceExceptions;
+
   @Autowired private PlatformTransactionManager transactionManager;
 
   @Autowired private EntityManager entityManager;
+
+  @Autowired private JdbcTemplate jdbc;
 
   private Consultant consultant;
 
@@ -206,6 +216,116 @@ class ChatRepositoryIT {
       Thread.currentThread().interrupt();
       throw new IllegalStateException(interruptedException);
     }
+  }
+
+  @Test
+  void findsReminderCandidatesFromLegacyRecurrenceAndMovedOccurrences() {
+    givenAConsultant();
+    var windowEnd = LocalDateTime.parse("2026-08-03T18:00:00");
+    var windowStart = windowEnd.minusMinutes(5);
+    var ordinary = reminderCandidate(windowEnd, 1, false, 0);
+    var legacy = reminderCandidate(windowEnd.minusWeeks(1), 2, false, 0);
+    var moved = reminderCandidate(windowEnd.plusDays(2), 1, false, 0);
+    reminderCandidate(windowEnd.minusYears(1), 2, false, 0);
+    reminderCandidate(windowEnd, 1, true, 0);
+    reminderCandidate(windowEnd, 1, false, 1);
+    entityManager.persist(
+        ChatOccurrenceException.builder()
+            .series(moved)
+            .originalOccurrenceStartUtc(moved.getStartDate())
+            .overrideStartUtc(windowStart)
+            .exceptionType(ExceptionType.OVERRIDE)
+            .build());
+    entityManager.flush();
+
+    var ids = Set.copyOf(underTest.findInactiveReminderCandidateIds(windowStart, windowEnd));
+
+    assertEquals(Set.of(ordinary.getId(), legacy.getId(), moved.getId()), ids);
+  }
+
+  @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
+  void reminderLockWaitsForTheOccurrenceEditToCommit() throws Exception {
+    var transactions = new TransactionTemplate(transactionManager);
+    var start = LocalDateTime.parse("2026-08-03T18:00:00");
+    transactions.executeWithoutResult(
+        ignored -> {
+          givenAConsultant();
+          chat = reminderCandidate(start, 1, false, 0);
+        });
+    var seriesId = chat.getId();
+    var editingSession = new CompletableFuture<Integer>();
+    var reminderSession = new CompletableFuture<Integer>();
+    var releaseEdit = new CountDownLatch(1);
+    var executor = Executors.newFixedThreadPool(2);
+    try {
+      var editor =
+          executor.submit(
+              () ->
+                  transactions.executeWithoutResult(
+                      ignored -> {
+                        var series =
+                            underTest.findSeriesForAppointmentMailUpdate(seriesId).orElseThrow();
+                        occurrenceExceptions.save(ChatOccurrenceException.skip(series, start));
+                        editingSession.complete(
+                            jdbc.queryForObject("SELECT SESSION_ID()", Integer.class));
+                        await(releaseEdit);
+                      }));
+      int editorSessionId = editingSession.get(5, TimeUnit.SECONDS);
+
+      var reminder =
+          executor.submit(
+              () ->
+                  transactions.execute(
+                      ignored -> {
+                        reminderSession.complete(
+                            jdbc.queryForObject("SELECT SESSION_ID()", Integer.class));
+                        underTest.findByIdForUpdate(seriesId).orElseThrow();
+                        return occurrenceExceptions
+                            .findBySeries_IdAndOriginalOccurrenceStartUtc(seriesId, start)
+                            .orElseThrow()
+                            .getExceptionType();
+                      }));
+      int reminderSessionId = reminderSession.get(5, TimeUnit.SECONDS);
+      org.awaitility.Awaitility.await()
+          .pollDelay(Duration.ZERO)
+          .pollInterval(Duration.ofMillis(15))
+          .atMost(Duration.ofSeconds(2))
+          .untilAsserted(
+              () ->
+                  assertEquals(
+                      1,
+                      jdbc.queryForObject(
+                          "SELECT COUNT(*) FROM INFORMATION_SCHEMA.SESSIONS"
+                              + " WHERE SESSION_ID = ? AND BLOCKER_ID = ?",
+                          Integer.class,
+                          reminderSessionId,
+                          editorSessionId)));
+      releaseEdit.countDown();
+      editor.get(5, TimeUnit.SECONDS);
+      assertEquals(ExceptionType.SKIP, reminder.get(5, TimeUnit.SECONDS));
+    } finally {
+      releaseEdit.countDown();
+      executor.shutdownNow();
+      assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
+      occurrenceExceptions.deleteAll(occurrenceExceptions.findBySeries_Id(seriesId));
+    }
+  }
+
+  private Chat reminderCandidate(
+      LocalDateTime start, int repeatCount, boolean active, int currentOccurrenceIndex) {
+    givenAValidChat();
+    var candidate = chat;
+    chat = null;
+    candidate.setInitialStartDate(start);
+    candidate.setStartDate(start);
+    candidate.setDuration(30);
+    candidate.setRepeatCount(repeatCount);
+    candidate.setRepetitive(repeatCount > 1);
+    candidate.setChatInterval(repeatCount > 1 ? ChatInterval.WEEKLY : null);
+    candidate.setActive(active);
+    candidate.setCurrentOccurrenceIndex(currentOccurrenceIndex);
+    return underTest.save(candidate);
   }
 
   private void givenAValidChat() {

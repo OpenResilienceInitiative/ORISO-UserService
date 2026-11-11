@@ -2,16 +2,15 @@ package de.caritas.cob.userservice.api.service.notification;
 
 import static de.caritas.cob.userservice.api.service.notification.GroupChatLifecycleNotificationService.EVENT_GROUP_CHAT_CANCELLED;
 import static de.caritas.cob.userservice.api.service.notification.GroupChatLifecycleNotificationService.EVENT_GROUP_CHAT_OPENED;
-import static de.caritas.cob.userservice.api.service.notification.GroupChatLifecycleNotificationService.EVENT_GROUP_CHAT_REMINDER;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -98,17 +97,13 @@ class GroupChatLifecycleNotificationServiceTest {
         7L, 0, occurrenceStart, null, null, false, List.of("user-a"));
 
     verify(eventNotificationService)
-        .createEventOnce(
+        .createGroupReminderOnce(
             eq("group-chat:group_chat.reminder:7:0"),
             eq("user-a"),
-            eq(EVENT_GROUP_CHAT_REMINDER),
-            eq(EventNotificationService.CATEGORY_SYSTEM),
             eq("Group chat reminder"),
             eq("A group chat is scheduled soon."),
             anyString(),
-            isNull(),
-            eq(7L),
-            isNull());
+            eq(7L));
     verify(eventNotificationService)
         .createEventOnce(
             eq("group-chat:group_chat.cancelled:7:0"),
@@ -130,8 +125,7 @@ class GroupChatLifecycleNotificationServiceTest {
     service.createReminderNotifications(
         1L, 0, LocalDateTime.now(), "!room:matrix", null, null, null);
 
-    verify(eventNotificationService, never())
-        .createEventOnce(any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+    verifyNoInteractions(eventNotificationService);
   }
 
   @Test

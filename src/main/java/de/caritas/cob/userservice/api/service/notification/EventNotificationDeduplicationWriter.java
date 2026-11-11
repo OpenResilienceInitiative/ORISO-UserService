@@ -27,6 +27,17 @@ public class EventNotificationDeduplicationWriter {
     eventNotificationRepository.saveAndFlush(eventNotification);
   }
 
+  /** Uses one connection for both the duplicate check and an independently committed reminder. */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public boolean persistIfAbsentInNewTransaction(EventNotification event) {
+    if (eventNotificationRepository.existsByRecipientUserIdAndDeduplicationKey(
+        event.getRecipientUserId(), event.getDeduplicationKey())) {
+      return false;
+    }
+    eventNotificationRepository.saveAndFlush(event);
+    return true;
+  }
+
   /**
    * Marks an already written message row as a mention (ORISO-UserService#1510). The Matrix listener
    * often writes the row first and knows nothing of mentions: {@code m.mentions} sits inside the
