@@ -1,9 +1,11 @@
 package de.caritas.cob.userservice.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.SQLException;
 import java.util.UUID;
 import liquibase.Contexts;
 import liquibase.LabelExpression;
@@ -52,6 +54,20 @@ class SessionDirectLinkNameMigrationTest {
           c.commit();
         }
         assertThat(count(c, "CHAR_LENGTH(direct_link_name) = 100")).isEqualTo(1);
+        // One character more than NAME_MAX must be rejected, so the column is not wider than 100.
+        assertThatThrownBy(
+                () -> {
+                  try (var sql = c.createStatement()) {
+                    sql.execute(
+                        "INSERT INTO session (id, postcode, direct_link_name) VALUES (502, '1', '"
+                            + "x".repeat(101)
+                            + "')");
+                  }
+                })
+            .isInstanceOf(SQLException.class);
+        if (!c.getAutoCommit()) {
+          c.rollback();
+        }
 
         liquibase.rollback(1, (String) null);
         assertThat(count(c, "CHAR_LENGTH(direct_link_name) = 100"))
