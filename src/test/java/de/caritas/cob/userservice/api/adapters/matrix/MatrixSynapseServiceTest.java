@@ -1665,6 +1665,192 @@ class MatrixSynapseServiceTest {
   }
 
   // -------------------------------------------------------------------------
+  // getCallRoomOrigin: decides who may register a call for observation (#1624)
+  // -------------------------------------------------------------------------
+
+  private static final String CREATOR = "@creator:matrix.example.com";
+  private static final String ATTACKER = "@attacker:matrix.example.com";
+
+  private static Map<String, Object> stateEvent(String type, String stateKey, Object sender) {
+    var event = new java.util.HashMap<String, Object>();
+    event.put("type", type);
+    event.put("state_key", stateKey);
+    event.put("sender", sender);
+    return event;
+  }
+
+  private void stubOriginState(List<Map<String, Object>> state) {
+    stubCallBindingPrerequisites(CREATOR);
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.argThat(uri -> uri.toString().endsWith("/state")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            org.mockito.ArgumentMatchers
+                .<org.springframework.core.ParameterizedTypeReference<List<Map<String, Object>>>>
+                    any()))
+        .thenReturn(ResponseEntity.ok(state));
+  }
+
+  private void stubOriginStateFailure(RuntimeException failure) {
+    stubCallBindingPrerequisites(CREATOR);
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.argThat(uri -> uri.toString().endsWith("/state")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            org.mockito.ArgumentMatchers
+                .<org.springframework.core.ParameterizedTypeReference<List<Map<String, Object>>>>
+                    any()))
+        .thenThrow(failure);
+  }
+
+  @Test
+  void getCallRoomOrigin_returnsCreatorAndBindingSender() {
+    stubOriginState(
+        List.of(
+            stateEvent("m.room.create", "", CREATOR),
+            stateEvent("m.room.member", CREATOR, CREATOR),
+            stateEvent("org.oriso.call.binding", "", CREATOR)));
+
+    assertThat(matrixSynapseService().getCallRoomOrigin(MATRIX_ROOM_ID, CREATOR))
+        .contains(new MatrixSynapseService.CallRoomOrigin(CREATOR, CREATOR));
+  }
+
+  @Test
+  void getCallRoomOrigin_reportsADifferentBindingSenderSoTheCallerCanReject() {
+    stubOriginState(
+        List.of(
+            stateEvent("m.room.create", "", CREATOR),
+            stateEvent("org.oriso.call.binding", "", ATTACKER)));
+
+    assertThat(matrixSynapseService().getCallRoomOrigin(MATRIX_ROOM_ID, CREATOR))
+        .contains(new MatrixSynapseService.CallRoomOrigin(CREATOR, ATTACKER));
+  }
+
+  @Test
+  void getCallRoomOrigin_ignoresLookalikeEventsWithAStateKey() {
+    // A binding event under a non-empty state key is a different event, not a second binding.
+    stubOriginState(
+        List.of(
+            stateEvent("m.room.create", "", CREATOR),
+            stateEvent("org.oriso.call.binding", "", CREATOR),
+            stateEvent("org.oriso.call.binding", "forged", ATTACKER),
+            stateEvent("m.room.create", "forged", ATTACKER)));
+
+    assertThat(matrixSynapseService().getCallRoomOrigin(MATRIX_ROOM_ID, CREATOR))
+        .contains(new MatrixSynapseService.CallRoomOrigin(CREATOR, CREATOR));
+  }
+
+  static java.util.stream.Stream<List<Map<String, Object>>> unprovableRoomStates() {
+    return java.util.stream.Stream.of(
+        List.of(stateEvent("org.oriso.call.binding", "", CREATOR)),
+        List.of(
+            stateEvent("m.room.create", "", CREATOR),
+            stateEvent("m.room.create", "", ATTACKER),
+            stateEvent("org.oriso.call.binding", "", CREATOR)),
+        List.of(stateEvent("m.room.create", "", CREATOR)),
+        List.of(
+            stateEvent("m.room.create", "", CREATOR),
+            stateEvent("org.oriso.call.binding", "", CREATOR),
+            stateEvent("org.oriso.call.binding", "", ATTACKER)),
+        List.of(
+            stateEvent("m.room.create", "forged", CREATOR),
+            stateEvent("org.oriso.call.binding", "", CREATOR)),
+        List.of(
+            stateEvent("m.room.create", "", CREATOR),
+            stateEvent("org.oriso.call.binding", "forged", CREATOR)),
+        List.of(
+            stateEvent("m.room.create", "", 42), stateEvent("org.oriso.call.binding", "", CREATOR)),
+        List.of(
+            stateEvent("m.room.create", "", CREATOR),
+            stateEvent("org.oriso.call.binding", "", null)),
+        List.<Map<String, Object>>of());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.MethodSource("unprovableRoomStates")
+  void getCallRoomOrigin_stateThatDoesNotProveOneCreatorAndOneBindingIsEmpty(
+      List<Map<String, Object>> state) {
+    stubOriginState(state);
+
+    assertThat(matrixSynapseService().getCallRoomOrigin(MATRIX_ROOM_ID, CREATOR)).isEmpty();
+  }
+
+  @Test
+  void getCallRoomOrigin_emptyBodyIsEmpty() {
+    stubOriginState(null);
+
+    assertThat(matrixSynapseService().getCallRoomOrigin(MATRIX_ROOM_ID, CREATOR)).isEmpty();
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = HttpStatus.class,
+      names = {"UNAUTHORIZED", "INTERNAL_SERVER_ERROR", "SERVICE_UNAVAILABLE", "TOO_MANY_REQUESTS"})
+  void getCallRoomOrigin_retryableStatusesAreUnavailable(HttpStatus status) {
+    stubOriginStateFailure(
+        status.is5xxServerError()
+            ? new HttpServerErrorException(status)
+            : new HttpClientErrorException(status));
+
+    assertThatThrownBy(() -> matrixSynapseService().getCallRoomOrigin(MATRIX_ROOM_ID, CREATOR))
+        .isInstanceOf(MatrixSynapseService.CallLookupUnavailableException.class);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = HttpStatus.class,
+      names = {"FORBIDDEN", "NOT_FOUND"})
+  void getCallRoomOrigin_permanentDenialIsDefinitive(HttpStatus status) {
+    stubOriginStateFailure(new HttpClientErrorException(status));
+
+    assertThat(matrixSynapseService().getCallRoomOrigin(MATRIX_ROOM_ID, CREATOR)).isEmpty();
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"M_USER_LOCKED", "M_USER_DEACTIVATED"})
+  void getCallRoomOrigin_lockedMemberTokenIsADefinitiveDenial(String errcode) {
+    // Same rule as getCallRoomBinding: a locked or deactivated member is a denial, not an outage.
+    stubOriginStateFailure(
+        new HttpClientErrorException(
+            HttpStatus.UNAUTHORIZED,
+            "synthetic member denial",
+            org.springframework.http.HttpHeaders.EMPTY,
+            ("{\"errcode\":\"" + errcode + "\"}").getBytes(StandardCharsets.UTF_8),
+            StandardCharsets.UTF_8));
+
+    assertThat(matrixSynapseService().getCallRoomOrigin(MATRIX_ROOM_ID, CREATOR)).isEmpty();
+  }
+
+  @Test
+  void getCallRoomOrigin_transportFailureIsUnavailable() {
+    stubOriginStateFailure(new org.springframework.web.client.ResourceAccessException("timeout"));
+
+    assertThatThrownBy(() -> matrixSynapseService().getCallRoomOrigin(MATRIX_ROOM_ID, CREATOR))
+        .isInstanceOf(MatrixSynapseService.CallLookupUnavailableException.class);
+  }
+
+  @Test
+  void getCallRoomOrigin_nonMemberNeverReadsTheRoomState() {
+    stubAdminPasswordLoginOnly();
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.argThat(uri -> uri.toString().contains("/members")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("members", List.of(CREATOR))));
+
+    assertThat(matrixSynapseService().getCallRoomOrigin(MATRIX_ROOM_ID, ATTACKER)).isEmpty();
+    verify(restTemplate, never())
+        .exchange(
+            org.mockito.ArgumentMatchers.argThat(uri -> uri.toString().endsWith("/state")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            org.mockito.ArgumentMatchers
+                .<org.springframework.core.ParameterizedTypeReference<List<Map<String, Object>>>>
+                    any());
+  }
+
+  // -------------------------------------------------------------------------
   // sendMessage
   // -------------------------------------------------------------------------
 

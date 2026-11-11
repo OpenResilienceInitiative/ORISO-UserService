@@ -1683,6 +1683,71 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
     return joinRoom(roomId, adminToken);
   }
 
+  /**
+   * Reads who created a media room and who sent its call binding, with a joined member's authority.
+   * Both senders come from the full state events and cannot be edited by room members.
+   */
+  public java.util.Optional<CallRoomOrigin> getCallRoomOrigin(
+      String roomId, String memberMatrixUserId) {
+    if (roomId == null
+        || roomId.isBlank()
+        || memberMatrixUserId == null
+        || !getCallRoomMembers(roomId)
+            .map(members -> members.contains(memberMatrixUserId))
+            .orElse(false)) {
+      return java.util.Optional.empty();
+    }
+    String token = loginAsUserAccessTokenForCall(memberMatrixUserId);
+    if (token == null) return java.util.Optional.empty();
+    try {
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig,
+              "/_matrix/client/v3/rooms/{roomId}/state",
+              java.util.Map.of("roomId", roomId));
+      var state =
+          restTemplate
+              .exchange(
+                  url,
+                  org.springframework.http.HttpMethod.GET,
+                  new HttpEntity<>(getClientHttpHeaders(token)),
+                  new org.springframework.core.ParameterizedTypeReference<
+                      java.util.List<java.util.Map<String, Object>>>() {})
+              .getBody();
+      if (state == null) return java.util.Optional.empty();
+      String creator = null;
+      String bindingSender = null;
+      int creates = 0;
+      int bindings = 0;
+      for (var event : state) {
+        String type = String.valueOf(event.get("type"));
+        if ("m.room.create".equals(type) && "".equals(event.get("state_key"))) {
+          creates++;
+          creator = event.get("sender") instanceof String s ? s : null;
+        } else if ("org.oriso.call.binding".equals(type) && "".equals(event.get("state_key"))) {
+          bindings++;
+          bindingSender = event.get("sender") instanceof String s ? s : null;
+        }
+      }
+      if (creates != 1 || bindings != 1 || creator == null || bindingSender == null) {
+        return java.util.Optional.empty();
+      }
+      return java.util.Optional.of(new CallRoomOrigin(creator, bindingSender));
+    } catch (HttpStatusCodeException response) {
+      if (isDefinitiveMemberDenial(response)) {
+        return java.util.Optional.empty();
+      }
+      if (response.getStatusCode().value() == 401 || isRetryableCallLookupStatus(response)) {
+        throw new CallLookupUnavailableException("call origin lookup unavailable", response);
+      }
+      return java.util.Optional.empty();
+    } catch (org.springframework.web.client.RestClientException unavailable) {
+      throw new CallLookupUnavailableException("call origin lookup unavailable", unavailable);
+    }
+  }
+
+  public record CallRoomOrigin(String creatorMatrixId, String bindingSenderMatrixId) {}
+
   /** Reads the call binding with a currently joined caller's authority, without joining admin. */
   public java.util.Optional<java.util.Map<String, Object>> getCallRoomBinding(
       String roomId, String memberMatrixUserId) {
@@ -1711,12 +1776,8 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
                   java.util.Map<String, Object>>() {});
       return java.util.Optional.ofNullable(response.getBody());
     } catch (HttpStatusCodeException response) {
-      if (response.getStatusCode().value() == 401) {
-        String code = errcodeOf(response);
-        // This state request uses the member's token, not the administrative credentials.
-        if ("M_USER_LOCKED".equals(code) || "M_USER_DEACTIVATED".equals(code)) {
-          return java.util.Optional.empty();
-        }
+      if (isDefinitiveMemberDenial(response)) {
+        return java.util.Optional.empty();
       }
       if (response.getStatusCode().value() == 401 || isRetryableCallLookupStatus(response)) {
         throw new CallLookupUnavailableException("call binding lookup unavailable", response);
@@ -1992,6 +2053,16 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
           redactor.scrub(ex.getMessage()));
       return java.util.Optional.empty();
     }
+  }
+
+  /**
+   * A 401 on a request made with the member's own token for a locked or deactivated account is a
+   * definitive denial, not an outage to retry.
+   */
+  private static boolean isDefinitiveMemberDenial(HttpStatusCodeException response) {
+    if (response.getStatusCode().value() != 401) return false;
+    String code = errcodeOf(response);
+    return "M_USER_LOCKED".equals(code) || "M_USER_DEACTIVATED".equals(code);
   }
 
   private static boolean isRetryableCallLookupStatus(HttpStatusCodeException response) {
