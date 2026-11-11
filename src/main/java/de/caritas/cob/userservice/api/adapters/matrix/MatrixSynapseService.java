@@ -1734,13 +1734,8 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
       }
       return java.util.Optional.of(new CallRoomOrigin(creator, bindingSender));
     } catch (HttpStatusCodeException response) {
-      if (response.getStatusCode().value() == 401) {
-        String code = errcodeOf(response);
-        // The state request uses the member's own token: a locked or deactivated account is a
-        // definitive denial (same rule as getCallRoomBinding), not an outage to retry.
-        if ("M_USER_LOCKED".equals(code) || "M_USER_DEACTIVATED".equals(code)) {
-          return java.util.Optional.empty();
-        }
+      if (isDefinitiveMemberDenial(response)) {
+        return java.util.Optional.empty();
       }
       if (response.getStatusCode().value() == 401 || isRetryableCallLookupStatus(response)) {
         throw new CallLookupUnavailableException("call origin lookup unavailable", response);
@@ -1781,12 +1776,8 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
                   java.util.Map<String, Object>>() {});
       return java.util.Optional.ofNullable(response.getBody());
     } catch (HttpStatusCodeException response) {
-      if (response.getStatusCode().value() == 401) {
-        String code = errcodeOf(response);
-        // This state request uses the member's token, not the administrative credentials.
-        if ("M_USER_LOCKED".equals(code) || "M_USER_DEACTIVATED".equals(code)) {
-          return java.util.Optional.empty();
-        }
+      if (isDefinitiveMemberDenial(response)) {
+        return java.util.Optional.empty();
       }
       if (response.getStatusCode().value() == 401 || isRetryableCallLookupStatus(response)) {
         throw new CallLookupUnavailableException("call binding lookup unavailable", response);
@@ -2062,6 +2053,16 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
           redactor.scrub(ex.getMessage()));
       return java.util.Optional.empty();
     }
+  }
+
+  /**
+   * A 401 on a request made with the member's own token for a locked or deactivated account is a
+   * definitive denial, not an outage to retry.
+   */
+  private static boolean isDefinitiveMemberDenial(HttpStatusCodeException response) {
+    if (response.getStatusCode().value() != 401) return false;
+    String code = errcodeOf(response);
+    return "M_USER_LOCKED".equals(code) || "M_USER_DEACTIVATED".equals(code);
   }
 
   private static boolean isRetryableCallLookupStatus(HttpStatusCodeException response) {

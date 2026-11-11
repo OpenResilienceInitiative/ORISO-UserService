@@ -61,7 +61,8 @@ class MatrixCallObservationIsolationTest {
     scanner.addIncludeFilter((reader, factory) -> true);
     var holders = new java.util.TreeSet<String>();
     for (var candidate : scanner.findCandidateComponents("de.caritas.cob.userservice")) {
-      Class<?> type = Class.forName(candidate.getBeanClassName());
+      Class<?> type =
+          Class.forName(candidate.getBeanClassName(), false, getClass().getClassLoader());
       String name = type.getName(); // binary name: also covers nested and anonymous classes
       // Production classes only: the scan also sees test classes on the classpath.
       if (type == MatrixCallObservationService.class
