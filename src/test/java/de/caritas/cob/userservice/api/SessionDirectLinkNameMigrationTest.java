@@ -15,7 +15,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Runs the ORISO-Frontend#2170 changeset on session: existing conversations keep no link name, a
- * direct-link conversation can carry one, and the rollback removes the column.
+ * direct-link conversation can carry one, and a rollback keeps the column and its names, also when
+ * the column already existed and the changeset was only marked as ran.
  */
 class SessionDirectLinkNameMigrationTest {
 
@@ -23,7 +24,7 @@ class SessionDirectLinkNameMigrationTest {
       "db/changelog/changeset/20261110_session_direct_link_name_2170/changeSet.xml";
 
   @Test
-  void update_Should_AddANullableName_And_RollbackRemovesIt() throws Exception {
+  void update_Should_AddANullableName_And_RollbackKeepsTheNames() throws Exception {
     try (Connection c =
         DriverManager.getConnection(
             "jdbc:h2:mem:direct-link-name-" + UUID.randomUUID() + ";MODE=MariaDB", "sa", "")) {
@@ -53,14 +54,9 @@ class SessionDirectLinkNameMigrationTest {
         assertThat(count(c, "CHAR_LENGTH(direct_link_name) = 100")).isEqualTo(1);
 
         liquibase.rollback(1, (String) null);
-        try (var sql = c.createStatement();
-            var rs =
-                sql.executeQuery(
-                    "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'SESSION'"
-                        + " AND COLUMN_NAME = 'DIRECT_LINK_NAME'")) {
-          rs.next();
-          assertThat(rs.getInt(1)).isZero();
-        }
+        assertThat(count(c, "CHAR_LENGTH(direct_link_name) = 100"))
+            .as("the additive column and its names survive the rollback")
+            .isEqualTo(1);
         assertThat(count(c, "1 = 1")).as("conversations survive the rollback").isEqualTo(2);
       }
     }
@@ -93,6 +89,10 @@ class SessionDirectLinkNameMigrationTest {
           rs.next();
           assertThat(rs.getString(1)).isEqualTo("MARK_RAN");
         }
+
+        // Liquibase runs the rollback of a MARK_RAN changeset too; it must not drop the names.
+        liquibase.rollback(1, (String) null);
+        assertThat(count(c, "direct_link_name = 'Flyer'")).isEqualTo(1);
       }
     }
   }

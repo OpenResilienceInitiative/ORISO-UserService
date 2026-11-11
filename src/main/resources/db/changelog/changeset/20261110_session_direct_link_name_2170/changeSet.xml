@@ -16,8 +16,10 @@
     <addColumn tableName="session">
       <column name="direct_link_name" type="VARCHAR(100)"/>
     </addColumn>
-    <rollback>
-      <dropColumn tableName="session" columnName="direct_link_name"/>
-    </rollback>
+    <!-- Keep the column on rollback. Liquibase also runs this rollback when the changeset was
+         only MARK_RAN because the column already existed, and a drop would then erase names this
+         changeset never created. The column is nullable and additive, so an older application
+         simply ignores it (same rule as 20261108_protected_draft_scope). -->
+    <rollback><sql>SELECT 1</sql></rollback>
   </changeSet>
 </databaseChangeLog>
