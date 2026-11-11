@@ -16,6 +16,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -112,6 +113,31 @@ public class AgencyInviteLinkController {
     AgencyInviteLink link = agencyInviteLinkService.deactivate(linkId);
     return ResponseEntity.ok(
         AgencyInviteLinkResponseDTO.from(link, topicService.getAllTopicsMap()));
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // POST /useradmin/invitelinks/{linkId}/reactivate — switch a disabled external link back on.
+  // ---------------------------------------------------------------------------------------------
+  @PreAuthorize(
+      "hasAnyAuthority('AUTHORIZATION_TENANT_ADMIN', 'AUTHORIZATION_USER_ADMIN',"
+          + " 'AUTHORIZATION_RESTRICTED_AGENCY_ADMIN')")
+  @PostMapping("/useradmin/invitelinks/{linkId}/reactivate")
+  public ResponseEntity<AgencyInviteLinkResponseDTO> reactivate(@PathVariable Long linkId) {
+    AgencyInviteLink link = agencyInviteLinkService.reactivate(linkId);
+    return ResponseEntity.ok(
+        AgencyInviteLinkResponseDTO.from(link, topicService.getAllTopicsMap()));
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // DELETE /useradmin/invitelinks/{linkId} — hard-delete an external link of any status.
+  // ---------------------------------------------------------------------------------------------
+  @PreAuthorize(
+      "hasAnyAuthority('AUTHORIZATION_TENANT_ADMIN', 'AUTHORIZATION_USER_ADMIN',"
+          + " 'AUTHORIZATION_RESTRICTED_AGENCY_ADMIN')")
+  @DeleteMapping("/useradmin/invitelinks/{linkId}")
+  public ResponseEntity<Void> delete(@PathVariable Long linkId) {
+    agencyInviteLinkService.delete(linkId);
+    return ResponseEntity.noContent().build();
   }
 
   /** Public, read-only invitation metadata for selecting an identity before joining. */

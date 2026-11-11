@@ -35,6 +35,10 @@ class Suite:
         self.skipped += int(root.attrib.get("skipped", 0))
 
     @property
+    def executed(self) -> int:
+        return self.tests - self.skipped
+
+    @property
     def clean(self) -> bool:
         return self.failures == 0 and self.errors == 0
 
@@ -86,14 +90,14 @@ def render_markdown(unit: Suite, integration: Suite) -> str:
     lines.append("")
     if len(present) == 2:
         lines.append(
-            f"Primary inventory: {unit.tests:,} unit plus {integration.tests:,} "
-            f"integration executions, or {unit.tests + integration.tests:,}, "
+            f"Primary inventory: {unit.executed:,} unit plus {integration.executed:,} "
+            f"integration executions, or {unit.executed + integration.executed:,}, "
             f"across {unit.reports + integration.reports:,} reports."
         )
     else:
         suite = present[0][0]
         lines.append(
-            f"{suite.label} inventory: {suite.tests:,} executions across "
+            f"{suite.label} inventory: {suite.executed:,} executions across "
             f"{suite.reports:,} reports. The other half runs in its own job."
         )
     return "\n".join(lines)
@@ -110,7 +114,7 @@ def main() -> int:
     parser.add_argument(
         "--require",
         choices=["unit", "integration", "both"],
-        help="Fail when the named part of the inventory is empty or not clean",
+        help="Fail when a required suite ran no tests or reported failures or errors",
     )
     arguments = parser.parse_args()
 
@@ -131,8 +135,8 @@ def main() -> int:
     }[arguments.require]
 
     for suite in required:
-        if suite.tests == 0:
-            print(f"{suite.label} inventory is empty.", file=sys.stderr)
+        if suite.executed <= 0:
+            print(f"{suite.label} inventory: no tests ran.", file=sys.stderr)
             return 1
         if not suite.clean:
             print(f"{suite.label} inventory contains failures or errors.", file=sys.stderr)

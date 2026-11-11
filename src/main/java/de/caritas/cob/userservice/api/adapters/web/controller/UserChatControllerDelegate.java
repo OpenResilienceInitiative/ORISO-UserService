@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatInfoResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatMembersResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateChatResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.InternalChatRecipientDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.InternalSubsetChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.InternalSubsetChatResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateChatResponseDTO;
@@ -26,6 +27,7 @@ import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatFeatureGate;
 import de.caritas.cob.userservice.api.service.chat.GroupChatPermissionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
+import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -68,6 +70,14 @@ class UserChatControllerDelegate {
     return new ResponseEntity<>(response, HttpStatus.CREATED);
   }
 
+  ResponseEntity<List<InternalChatRecipientDTO>> listInternalSubsetChatRecipients(Long agencyId) {
+    var creator = userAccountProvider.retrieveValidatedConsultant();
+    var recipients = internalSubsetChatFacade.recipients(creator, agencyId);
+    return recipients.isEmpty()
+        ? ResponseEntity.noContent().build()
+        : ResponseEntity.ok(recipients);
+  }
+
   ResponseEntity<InternalSubsetChatResponseDTO> openInternalSubsetChat(
       InternalSubsetChatDTO request) {
     var callingConsultant = this.userAccountProvider.retrieveValidatedConsultant();
@@ -94,8 +104,8 @@ class UserChatControllerDelegate {
     return new ResponseEntity<>(HttpStatus.OK);
   }
 
-  ResponseEntity<ChatInfoResponseDTO> getChat(Long chatId) {
-    var response = getChatFacade.getChat(chatId);
+  ResponseEntity<ChatInfoResponseDTO> getChat(Long chatId, Boolean includeCallerBan) {
+    var response = getChatFacade.getChat(chatId, includeCallerBan);
     return new ResponseEntity<>(response, HttpStatus.OK);
   }
 

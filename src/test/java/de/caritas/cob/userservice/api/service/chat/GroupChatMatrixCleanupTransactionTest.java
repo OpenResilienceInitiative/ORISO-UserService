@@ -59,6 +59,7 @@ class GroupChatMatrixCleanupTransactionTest {
               repository,
               consultants,
               chats,
+              mock(de.caritas.cob.userservice.api.port.out.ChatMatrixRoomRepository.class),
               mock(GroupChatParticipantRepository.class),
               matrix,
               mock(GroupChatMembershipService.class),

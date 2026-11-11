@@ -651,6 +651,21 @@
       "status": "bounded"
     },
     {
+      "id": "reply-email-tenant-rotation",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/notification/ReplyEmailDeliveryWriter.java",
+      "kind": "local-state",
+      "owner": "notifications",
+      "risk": "performance",
+      "components": [
+        "resumeAfterTenant"
+      ],
+      "decision": "Retain locally: only the starting tenant of the next batch when more than 100 tenants are due. Another replica or a restart starts from the lowest tenant id, which delays but never skips or duplicates a mail; claims stay row-locked in the database.",
+      "signals": [
+        "userservice.replica.local_state"
+      ],
+      "status": "bounded"
+    },
+    {
       "id": "event-notification-retention-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/workflow/notificationretention/scheduler/EventNotificationRetentionScheduler.java",
       "kind": "scheduler",
@@ -660,6 +675,37 @@
         "purgeExpiredNotifications"
       ],
       "decision": "Leases the run through ScheduledTaskClaimService; the purge itself is an idempotent bulk delete of expired rows.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "statistics-feature-gate-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/statistics/StatisticsFeatureGate.java",
+      "kind": "local-state",
+      "owner": "statistics",
+      "risk": "correctness",
+      "components": [
+        "isEnabledForTenant"
+      ],
+      "decision": "Retain locally per tenant for one minute the organisation's statistics switch that gates message counting on the notification worker; a miss re-reads it from TenantService. A replica with an older copy counts up to one minute after an organisation switched statistics off. A failed read is kept for thirty seconds and is always the narrowest answer (not counting), so an outage never switches counting on. Cardinality is the number of tenants.",
+      "signals": [
+        "userservice.replica.local_state"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "statistics-retention-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/statisticsretention/scheduler/StatisticsRetentionScheduler.java",
+      "kind": "scheduler",
+      "owner": "statistics",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "purgeExpiredStatistics"
+      ],
+      "decision": "Leases the run through ScheduledTaskClaimService; the purge is an idempotent batched delete of expired message-count rows plus an idempotent blanking of the admin on old settings change lines, so a replayed run changes nothing.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"

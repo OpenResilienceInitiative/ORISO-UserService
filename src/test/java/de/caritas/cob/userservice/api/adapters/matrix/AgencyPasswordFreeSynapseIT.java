@@ -304,6 +304,9 @@ class AgencyPasswordFreeSynapseIT {
             mock(UserService.class),
             identities,
             mock(ChatPermissionVerifier.class),
+            mock(
+                de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeatureGate
+                    .class),
             Optional.empty());
     var response = controller.getMessages(42L);
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -416,7 +419,8 @@ class AgencyPasswordFreeSynapseIT {
                     .class),
             mock(
                 de.caritas.cob.userservice.api.service.furthercounselling.TopicDuplicateService
-                    .class));
+                    .class),
+            mock(de.caritas.cob.userservice.api.port.in.Messaging.class));
     facade.assignRegisteredEnquiry(session, consultant);
     assertThat(session.getMatrixRoomId()).isEqualTo(originalRoom);
     var token = matrix.loginAsUserAccessToken(consultant.getMatrixUserId());

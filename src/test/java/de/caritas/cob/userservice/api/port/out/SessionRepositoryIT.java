@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
@@ -41,6 +42,8 @@ class SessionRepositoryIT {
   @Autowired private SessionRepository underTest;
 
   @Autowired private UserRepository userRepository;
+
+  @Autowired private ConsultantRepository consultantRepository;
 
   @Autowired private EntityManager entityManager;
   @Autowired private EntityManagerFactory entityManagerFactory;
@@ -245,6 +248,44 @@ class SessionRepositoryIT {
     } finally {
       underTest.deleteAll(sessions);
     }
+  }
+
+  @Test
+  void countOpenCasesOfTenantCountsOnlyOpenCasesOfThatTenant() {
+    givenAUser();
+    var consultant = consultantRepository.findAll().iterator().next();
+    var id = consultant.getId();
+    var open = List.of(SessionStatus.NEW, SessionStatus.IN_PROGRESS);
+    // This consultant may already have seeded open cases, which count for tenant 1.
+    long seededInTenant1 = underTest.countOpenCasesOfTenant(id, open, 1L);
+    var sessions =
+        List.of(
+            sessionOf(consultant, SessionStatus.NEW, 11L),
+            sessionOf(consultant, SessionStatus.IN_PROGRESS, 11L),
+            sessionOf(consultant, SessionStatus.IN_PROGRESS, 22L),
+            sessionOf(consultant, SessionStatus.INITIAL, 11L),
+            sessionOf(consultant, SessionStatus.IN_PROGRESS, null));
+    underTest.saveAll(sessions);
+    entityManager.flush();
+
+    try {
+      assertEquals(2, underTest.countOpenCasesOfTenant(id, open, 11L));
+      assertEquals(1, underTest.countOpenCasesOfTenant(id, open, 22L));
+      assertEquals(0, underTest.countOpenCasesOfTenant(id, open, 33L));
+      // Cases without a tenant belong to the technical tenant 1, as in the room queries.
+      assertEquals(seededInTenant1 + 1, underTest.countOpenCasesOfTenant(id, open, 1L));
+      assertEquals(0, underTest.countOpenCasesOfTenant(id, open, null));
+    } finally {
+      underTest.deleteAll(sessions);
+    }
+  }
+
+  private Session sessionOf(Consultant consultant, SessionStatus status, Long tenantId) {
+    var result = validSession(null, 1);
+    result.setConsultant(consultant);
+    result.setStatus(status);
+    result.setTenantId(tenantId);
+    return result;
   }
 
   private void givenValidSession() {

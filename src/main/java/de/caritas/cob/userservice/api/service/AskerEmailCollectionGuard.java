@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.service;
 
-import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
@@ -18,35 +17,48 @@ import org.springframework.stereotype.Component;
 public class AskerEmailCollectionGuard {
   private final UserRepository users;
   private final AuthenticatedUser authenticatedUser;
-  private final TenantService tenants;
+  private final AskerEmailCollectionPolicy collectionPolicy;
   private final IdentitySecondFactor secondFactor;
 
   public void beforeStart(String address) {
+    requireRegisteredAccount();
     currentAsker().ifPresent(user -> requireChangeAllowed(user, address));
   }
 
   public void beforeFinish() {
+    requireRegisteredAccount();
     currentAsker()
         .ifPresent(
             user -> {
-              if (AskerIdentityPolicy.emailCollectionAllowed(tenants, user.getTenantId())) return;
-              // Read only credential metadata (email), never OTP secrets. A pending different
-              // target
-              // must not become a new account address after the tenant disabled collection.
-              var addresses = secondFactor.emailVerificationAddresses(user.getUserId());
-              if (addresses == null
-                  || addresses.isEmpty()
-                  || addresses.stream()
-                      .anyMatch(address -> !sameAddress(user.getEmail(), address))) {
-                throw new ForbiddenException(
-                    "Email collection is disabled for the pending verification");
+              ServiceUnavailableException unavailable = null;
+              try {
+                // A permitted account needs no extra credential-provider dependency.
+                if (collectionPolicy.allowedForAccount(user)) return;
+              } catch (ServiceUnavailableException policyUnavailable) {
+                unavailable = policyUnavailable;
               }
+              // Metadata can prove that no new address is collected even while collection is
+              // closed.
+              var addresses = secondFactor.emailVerificationAddresses(user.getUserId());
+              if (addresses != null
+                  && !addresses.isEmpty()
+                  && addresses.stream().allMatch(address -> sameAddress(user.getEmail(), address)))
+                return;
+              if (unavailable != null) throw unavailable;
+              throw new ForbiddenException(
+                  "Email collection is disabled for the pending verification");
             });
+  }
+
+  private void requireRegisteredAccount() {
+    if (authenticatedUser.isAnonymous()) {
+      throw new ForbiddenException("Anonymous live-chat accounts cannot verify an email address");
+    }
   }
 
   private void requireChangeAllowed(User user, String target) {
     if (!sameAddress(user.getEmail(), target)) {
-      AskerIdentityPolicy.requireEmailCollectionAllowed(tenants, user.getTenantId());
+      collectionPolicy.requireForAccount(user);
     }
   }
 
@@ -70,9 +82,6 @@ public class AskerEmailCollectionGuard {
   }
 
   private boolean sameAddress(String existing, String target) {
-    return existing != null
-        && !existing.isBlank()
-        && target != null
-        && existing.equalsIgnoreCase(target);
+    return AskerEmailCollectionPolicy.sameAddress(existing, target);
   }
 }

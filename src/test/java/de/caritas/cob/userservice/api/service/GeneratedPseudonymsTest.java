@@ -15,6 +15,8 @@ class GeneratedPseudonymsTest {
         new ObjectMapper()
             .readTree(getClass().getResourceAsStream("/identity/frontend-generated-handles.json"));
     var bases = vocabulary.handleBasesSnapshot();
+    assertThat(bases)
+        .allSatisfy(base -> assertThat(vocabulary.containsHandle(base + "_1000")).isTrue());
     assertThat(fixture.get("formatVersion").asInt()).isEqualTo(1);
     assertThat(bases.size()).isEqualTo(fixture.get("count").asInt());
     String canonical = String.join("\n", bases.stream().sorted().toList()) + "\n";
@@ -60,6 +62,7 @@ class GeneratedPseudonymsTest {
   void handlesMatchTheRegistrationUsernameFormatAndCannotCarryArbitraryText() {
     assertThat(vocabulary.contains("katze_mika_1234")).isTrue();
     assertThat(vocabulary.contains("oriso_9999")).isTrue();
+    assertThat(vocabulary.containsHandle("Behutsames Pferd Jules")).isFalse();
     for (var invalid :
         new String[] {
           "Dr Alice Personal",

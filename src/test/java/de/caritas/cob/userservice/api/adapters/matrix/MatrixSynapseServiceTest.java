@@ -411,6 +411,26 @@ class MatrixSynapseServiceTest {
         .isEqualTo(MatrixSynapseService.RoomPurgeOutcome.FAILED);
   }
 
+  @Test
+  void isRoomConfirmedGoneShouldBeTrueOnlyWhenSynapseReturnsNotFound() {
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            eq(
+                URI.create(
+                    "https://matrix.example.com/_synapse/admin/v1/rooms/%21room%3Amatrix.example.com/members")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            eq(String.class)))
+        .thenThrow(
+            HttpClientErrorException.create(HttpStatus.NOT_FOUND, "Not Found", null, null, null))
+        .thenThrow(new HttpServerErrorException(HttpStatus.SERVICE_UNAVAILABLE))
+        .thenReturn(org.springframework.http.ResponseEntity.ok("{\"members\":[]}"));
+
+    assertThat(matrixSynapseService().isRoomConfirmedGone(MATRIX_ROOM_ID)).isTrue();
+    assertThat(matrixSynapseService().isRoomConfirmedGone(MATRIX_ROOM_ID)).isFalse();
+    assertThat(matrixSynapseService().isRoomConfirmedGone(MATRIX_ROOM_ID)).isFalse();
+  }
+
   private void stubAdminLogin() {
     matrixConfig.setAdminUsername("admin");
     matrixConfig.setAdminPassword("admin-password");
@@ -667,6 +687,55 @@ class MatrixSynapseServiceTest {
         matrixMediaClient,
         REDACTOR,
         nowSupplier);
+  }
+
+  // -------------------------------------------------------------------------
+  // findJoinedRoomsForMatrixUser: a lookup that can tell "no rooms" from "could not ask"
+  // -------------------------------------------------------------------------
+
+  @Test
+  void findJoinedRoomsForMatrixUser_returnsTheRoomsTheUserSitsIn() {
+    var service = org.mockito.Mockito.spy(matrixSynapseService());
+    org.mockito.Mockito.doReturn("user-token").when(service).loginAsUserAccessToken(MATRIX_USER_ID);
+    when(restTemplate.exchange(
+            any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("joined_rooms", List.of("!a:x", "!b:x"))));
+
+    assertThat(service.findJoinedRoomsForMatrixUser(MATRIX_USER_ID))
+        .contains(List.of("!a:x", "!b:x"));
+  }
+
+  @Test
+  void findJoinedRoomsForMatrixUser_aUserInNoRoomIsAnEmptyListNotAFailure() {
+    var service = org.mockito.Mockito.spy(matrixSynapseService());
+    org.mockito.Mockito.doReturn("user-token").when(service).loginAsUserAccessToken(MATRIX_USER_ID);
+    when(restTemplate.exchange(
+            any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("joined_rooms", List.of())));
+
+    assertThat(service.findJoinedRoomsForMatrixUser(MATRIX_USER_ID)).contains(List.of());
+  }
+
+  @Test
+  void findJoinedRoomsForMatrixUser_isEmptyWhenNoTokenCouldBeCreated() {
+    var service = org.mockito.Mockito.spy(matrixSynapseService());
+    org.mockito.Mockito.doReturn(null).when(service).loginAsUserAccessToken(MATRIX_USER_ID);
+
+    assertThat(service.findJoinedRoomsForMatrixUser(MATRIX_USER_ID)).isEmpty();
+    verifyNoInteractions(restTemplate);
+  }
+
+  @Test
+  void findJoinedRoomsForMatrixUser_isEmptyWhenTheServerFailsOrAnswersWithoutTheList() {
+    var service = org.mockito.Mockito.spy(matrixSynapseService());
+    org.mockito.Mockito.doReturn("user-token").when(service).loginAsUserAccessToken(MATRIX_USER_ID);
+    when(restTemplate.exchange(
+            any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenThrow(new HttpServerErrorException(HttpStatus.BAD_GATEWAY))
+        .thenReturn(ResponseEntity.ok(Map.of()));
+
+    assertThat(service.findJoinedRoomsForMatrixUser(MATRIX_USER_ID)).isEmpty();
+    assertThat(service.findJoinedRoomsForMatrixUser(MATRIX_USER_ID)).isEmpty();
   }
 
   private MatrixSynapseService matrixSynapseService() {
@@ -1060,6 +1129,52 @@ class MatrixSynapseServiceTest {
     assertThat(browserLoginBody.getInitialDeviceDisplayName()).isEqualTo("ORISO Web");
     assertThat(browserLoginBody.getPassword()).isEqualTo(updateBody.getPassword());
     assertThat(result.get("interactive_auth_password")).isEqualTo(updateBody.getPassword());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "M_FORBIDDEN,M_FORBIDDEN",
+    "M_PRIVATE_VALUE,unknown"
+  })
+  void loginBrowserDevice_logsKnownMatrixCodeWithoutResponseDetails(
+      String upstreamCode, String expectedCode) {
+    matrixConfig.setApiUrl(MATRIX_BASE_URL);
+    matrixConfig.setAdminUsername("admin");
+    matrixConfig.setAdminPassword("admin-password");
+    var responseBody = "{\"errcode\":\"" + upstreamCode + "\",\"error\":\"PRIVATE_RESPONSE_TEXT\"}";
+    when(restTemplate.postForEntity(
+            eq(MATRIX_BASE_URL + "/_matrix/client/r0/login"), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("access_token", MATRIX_ADMIN_TOKEN)))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.FORBIDDEN,
+                "Forbidden",
+                null,
+                responseBody.getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8));
+
+    var logger =
+        (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(MatrixSynapseService.class);
+    var appender =
+        new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      assertThat(matrixSynapseService().loginBrowserDevice(MATRIX_USER_ID, "ORISO_WEB_DEVICE_ONE"))
+          .isNull();
+      assertThat(appender.list)
+          .extracting(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+          .anySatisfy(message -> assertThat(message).contains("403", "errcode=" + expectedCode))
+          .noneSatisfy(
+              message ->
+                  assertThat(message)
+                      .containsAnyOf("PRIVATE_RESPONSE_TEXT", "M_PRIVATE_VALUE", MATRIX_USER_ID));
+      assertThat(appender.list).allSatisfy(event -> assertThat(event.getThrowableProxy()).isNull());
+    } finally {
+      logger.detachAppender(appender);
+      appender.stop();
+    }
   }
 
   @Test
@@ -1844,6 +1959,110 @@ class MatrixSynapseServiceTest {
     org.mockito.Mockito.doReturn(null).when(service).getAdminToken();
 
     assertThat(service.ensureAdminInRoom(MATRIX_ROOM_ID, MATRIX_USER_ID)).isFalse();
+    verifyNoInteractions(matrixRoomClient);
+  }
+
+  // -------------------------------------------------------------------------
+  // forceJoinUserToRoom / makeRoomAdmin — takeover without the previous owner (#1422)
+  // -------------------------------------------------------------------------
+
+  private static final String COLLEAGUE_ID = "@colleague:matrix.example.com";
+
+  @Test
+  void forceJoinUserToRoom_shouldJoinWithTheAdminTokenAndNoUserImpersonation() throws Exception {
+    var service = ensureAdminServiceSpy();
+    when(matrixRoomClient.forceJoinUser(MATRIX_ROOM_ID, COLLEAGUE_ID, ADMIN_TOKEN))
+        .thenReturn(true);
+
+    assertThat(service.forceJoinUserToRoom(MATRIX_ROOM_ID, COLLEAGUE_ID, List.of(MATRIX_USER_ID)))
+        .isTrue();
+
+    verify(service, never()).loginAsUserAccessToken(any());
+    verify(matrixRoomClient, never()).inviteUserToRoom(any(), any(), any());
+  }
+
+  @Test
+  void forceJoinUserToRoom_shouldGetTheAdminIntoTheRoomViaAMemberAndRetry_whenTheAdminIsNotThere()
+      throws Exception {
+    var service = ensureAdminServiceSpy();
+    org.mockito.Mockito.doReturn(IMPERSONATION_TOKEN)
+        .when(service)
+        .loginAsUserAccessToken(MATRIX_USER_ID);
+    when(matrixRoomClient.forceJoinUser(MATRIX_ROOM_ID, COLLEAGUE_ID, ADMIN_TOKEN))
+        .thenReturn(false, true);
+    when(matrixRoomClient.joinRoom(MATRIX_ROOM_ID, ADMIN_TOKEN)).thenReturn(false, true);
+
+    assertThat(service.forceJoinUserToRoom(MATRIX_ROOM_ID, COLLEAGUE_ID, List.of(MATRIX_USER_ID)))
+        .isTrue();
+
+    verify(matrixRoomClient)
+        .inviteUserToRoom(
+            eq(MATRIX_ROOM_ID), eq("@matrixadm:matrix.example.com"), eq(IMPERSONATION_TOKEN));
+    verify(matrixRoomClient, times(2)).forceJoinUser(MATRIX_ROOM_ID, COLLEAGUE_ID, ADMIN_TOKEN);
+  }
+
+  @Test
+  void forceJoinUserToRoom_shouldTryTheNextMember_whenTheFirstCannotLetTheAdminIn()
+      throws Exception {
+    var service = ensureAdminServiceSpy();
+    String second = "@second:matrix.example.com";
+    org.mockito.Mockito.doReturn(null).when(service).loginAsUserAccessToken(MATRIX_USER_ID);
+    org.mockito.Mockito.doReturn(IMPERSONATION_TOKEN).when(service).loginAsUserAccessToken(second);
+    when(matrixRoomClient.forceJoinUser(MATRIX_ROOM_ID, COLLEAGUE_ID, ADMIN_TOKEN))
+        .thenReturn(false, true);
+    when(matrixRoomClient.joinRoom(MATRIX_ROOM_ID, ADMIN_TOKEN)).thenReturn(false, false, true);
+
+    assertThat(
+            service.forceJoinUserToRoom(
+                MATRIX_ROOM_ID, COLLEAGUE_ID, List.of(MATRIX_USER_ID, second)))
+        .isTrue();
+
+    verify(matrixRoomClient)
+        .inviteUserToRoom(
+            eq(MATRIX_ROOM_ID), eq("@matrixadm:matrix.example.com"), eq(IMPERSONATION_TOKEN));
+  }
+
+  @Test
+  void forceJoinUserToRoom_shouldFail_whenTheAdminCannotGetIntoTheRoomEither() {
+    var service = ensureAdminServiceSpy();
+    when(matrixRoomClient.forceJoinUser(MATRIX_ROOM_ID, COLLEAGUE_ID, ADMIN_TOKEN))
+        .thenReturn(false);
+    when(matrixRoomClient.joinRoom(MATRIX_ROOM_ID, ADMIN_TOKEN)).thenReturn(false);
+
+    assertThat(service.forceJoinUserToRoom(MATRIX_ROOM_ID, COLLEAGUE_ID, List.of())).isFalse();
+
+    verify(matrixRoomClient, times(1)).forceJoinUser(MATRIX_ROOM_ID, COLLEAGUE_ID, ADMIN_TOKEN);
+  }
+
+  @Test
+  void forceJoinUserToRoom_shouldReturnFalse_whenAdminTokenUnavailable() {
+    matrixConfig.setAdminUsername("matrixadm");
+    matrixConfig.setServerName("matrix.example.com");
+    var service = org.mockito.Mockito.spy(matrixSynapseService());
+    org.mockito.Mockito.doReturn(null).when(service).getAdminToken();
+
+    assertThat(service.forceJoinUserToRoom(MATRIX_ROOM_ID, COLLEAGUE_ID, List.of(MATRIX_USER_ID)))
+        .isFalse();
+    verifyNoInteractions(matrixRoomClient);
+  }
+
+  @Test
+  void makeRoomAdmin_shouldRaiseTheUserWithTheAdminToken() {
+    var service = ensureAdminServiceSpy();
+    when(matrixRoomClient.makeRoomAdmin(MATRIX_ROOM_ID, COLLEAGUE_ID, ADMIN_TOKEN))
+        .thenReturn(true);
+
+    assertThat(service.makeRoomAdmin(MATRIX_ROOM_ID, COLLEAGUE_ID)).isTrue();
+  }
+
+  @Test
+  void makeRoomAdmin_shouldReturnFalse_whenAdminTokenUnavailable() {
+    matrixConfig.setAdminUsername("matrixadm");
+    matrixConfig.setServerName("matrix.example.com");
+    var service = org.mockito.Mockito.spy(matrixSynapseService());
+    org.mockito.Mockito.doReturn(null).when(service).getAdminToken();
+
+    assertThat(service.makeRoomAdmin(MATRIX_ROOM_ID, COLLEAGUE_ID)).isFalse();
     verifyNoInteractions(matrixRoomClient);
   }
 }

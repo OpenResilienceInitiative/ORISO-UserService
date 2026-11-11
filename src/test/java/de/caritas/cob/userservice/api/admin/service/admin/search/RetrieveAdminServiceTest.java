@@ -20,6 +20,8 @@ class RetrieveAdminServiceTest {
 
   @Mock private AdminRepository adminRepository;
 
+  @Mock private de.caritas.cob.userservice.api.admin.service.search.AccountSearch accountSearch;
+
   @Mock private AdminAgencyRepository adminAgencyRepository;
 
   /**
@@ -44,13 +46,11 @@ class RetrieveAdminServiceTest {
   @Test
   void findAllByInfixScopedToTenant_Should_DelegateToRepository_WhenTenantIdIsPresent() {
     PageRequest pageRequest = PageRequest.of(0, 10);
-    Mockito.when(
-            adminRepository.findAllByInfixAndTenantId("*", Admin.AdminType.AGENCY, 9L, pageRequest))
+    Mockito.when(accountSearch.admins("*", Admin.AdminType.AGENCY, 9L, null, pageRequest))
         .thenReturn(org.springframework.data.domain.Page.empty(pageRequest));
 
     retrieveAdminService.findAllByInfixScopedToTenant("*", Admin.AdminType.AGENCY, 9L, pageRequest);
 
-    Mockito.verify(adminRepository)
-        .findAllByInfixAndTenantId("*", Admin.AdminType.AGENCY, 9L, pageRequest);
+    Mockito.verify(accountSearch).admins("*", Admin.AdminType.AGENCY, 9L, null, pageRequest);
   }
 }

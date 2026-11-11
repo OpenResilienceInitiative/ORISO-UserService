@@ -44,6 +44,30 @@ public enum HttpStatusExceptionReason {
   INVITE_BUSY,
   /** The invite changed while the invitee filled in the wizard; reload the link. */
   INVITE_CHANGED,
+  /**
+   * A case takeover would leave the new owner unable to write in the Matrix room: they are
+   * read-only and no room member is left who could restore their right to write.
+   */
+  CASE_HANDOVER_REQUESTER_CANNOT_WRITE,
+
+  // Moving a counsellor to another Träger (#1419, #1421). Stable codes: the Admin maps them.
+
+  /** 400 - multi-tenancy is off, so there is no other Träger to move to. */
+  TENANT_CHANGE_MULTITENANCY_OFF,
+  /** 400 - the counsellor already belongs to the requested Träger. */
+  TENANT_CHANGE_SAME_TENANT,
+  /** 400 - no centre was sent, or one entry has no centre id. */
+  TENANT_CHANGE_AGENCIES_REQUIRED,
+  /** 400 - a requested centre does not exist. */
+  TENANT_CHANGE_AGENCY_UNKNOWN,
+  /** 400 - a requested centre belongs to a Träger other than the new one. */
+  TENANT_CHANGE_AGENCY_OTHER_TENANT,
+  /** 400 - the requested topics are not offered by the requested centres. */
+  TENANT_CHANGE_TOPICS_NOT_COVERED,
+  /** 409 - the counsellor is the last one of a centre of the old Träger that still needs one. */
+  TENANT_CHANGE_LAST_COUNSELLOR,
+  /** 409 - the account also holds an admin identity, which would move with it. */
+  TENANT_CHANGE_ADMIN_IDENTITY,
   /** An internal chat to selected colleagues was asked without any colleague besides the caller. */
   INTERNAL_CHAT_RECIPIENTS_REQUIRED,
   /** A selected colleague the caller may pick has no chat identity and cannot join a room. */
@@ -66,5 +90,12 @@ public enum HttpStatusExceptionReason {
    * A self-help group invite link was refused: unknown or foreign group, not a self-help group, or
    * a wrong token. Says only that the link does not work, never whether the group exists (#1483).
    */
-  GROUP_INVITE_INVALID
+  GROUP_INVITE_INVALID,
+  /**
+   * An admin switched this feature off for the Träger or Beratungsstelle (#1564), or the switch
+   * cannot be read. The counselling app hides the button; this is the server refusing the action.
+   */
+  FEATURE_DISABLED,
+  /** A guest who arrived earlier is still waiting in the same live-chat queue. */
+  LIVE_CHAT_QUEUE_NOT_FIRST
 }

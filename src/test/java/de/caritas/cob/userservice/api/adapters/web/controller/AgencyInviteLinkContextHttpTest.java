@@ -1,7 +1,9 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
@@ -39,11 +41,15 @@ class AgencyInviteLinkContextHttpTest {
   private final de.caritas.cob.userservice.api.service.agencyinvitelink.CallShareLinkService
       callShareLinks =
           mock(de.caritas.cob.userservice.api.service.agencyinvitelink.CallShareLinkService.class);
+  private final de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitePolicy
+      directInvitePolicy =
+          mock(de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitePolicy.class);
   private MockMvc mvc;
 
   @BeforeEach
   void setup() {
     var topicService = mock(TopicService.class);
+    when(directInvitePolicy.allows(any(), any(), any())).thenReturn(true);
     var service =
         new AgencyInviteLinkService(
             repository,
@@ -56,6 +62,7 @@ class AgencyInviteLinkContextHttpTest {
             mock(de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class),
             mock(de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class),
             temporaryAccountSettings,
+            directInvitePolicy,
             callShareLinks);
     when(temporaryAccountSettings.current())
         .thenReturn(
@@ -76,7 +83,7 @@ class AgencyInviteLinkContextHttpTest {
 
   @AfterEach
   void noSideEffects() {
-    verify(repository).findByToken("token");
+    verify(repository, org.mockito.Mockito.atLeastOnce()).findByToken("token");
     verifyNoMoreInteractions(repository);
     verifyNoInteractions(facade);
     TenantContext.clear();
@@ -116,6 +123,37 @@ class AgencyInviteLinkContextHttpTest {
   }
 
   @Test
+  void publicCallContextUsesTheLinkTenantForPolicyAndRestoresTheRequestTenant() throws Exception {
+    var link = callLink();
+    TenantContext.setCurrentTenant(56L);
+    when(repository.findByToken("token")).thenReturn(Optional.of(link));
+    doAnswer(
+            invocation -> {
+              assertEquals(83L, TenantContext.getCurrentTenant());
+              return null;
+            })
+        .when(callShareLinks)
+        .requireUsable(link);
+
+    mvc.perform(get("/users/invitelinks/token/context")).andExpect(status().isOk());
+
+    assertEquals(56L, TenantContext.getCurrentTenant());
+  }
+
+  @Test
+  void temporaryCallContextIncludesPasswordAndRetentionSettings() throws Exception {
+    var link = callLink();
+    link.setTemporaryAccount(true);
+    when(repository.findByToken("token")).thenReturn(Optional.of(link));
+    when(callShareLinks.temporaryAccountAllowed(link)).thenReturn(true);
+
+    mvc.perform(get("/users/invitelinks/token/context"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.hidePasswordField").value(true))
+        .andExpect(jsonPath("$.messageRetention").value("ALWAYS_PERSISTENT"));
+  }
+
+  @Test
   void callShareLinkOfAnEndedCallReturns410() throws Exception {
     var link = callLink();
     when(repository.findByToken("token")).thenReturn(Optional.of(link));
@@ -127,6 +165,20 @@ class AgencyInviteLinkContextHttpTest {
     mvc.perform(get("/users/invitelinks/token/context"))
         .andExpect(status().isGone())
         .andExpect(content().json("{\"reason\":\"CALL_SHARE_LINK_ENDED\"}"));
+  }
+
+  @Test
+  void callShareLinkWhosePermissionWasWithdrawnReturns410() throws Exception {
+    var link = callLink();
+    when(repository.findByToken("token")).thenReturn(Optional.of(link));
+    doThrow(
+            new de.caritas.cob.userservice.api.service.agencyinvitelink
+                .DirectLinkInactiveException())
+        .when(callShareLinks)
+        .requireDirectInviteAllowed(link);
+    mvc.perform(get("/users/invitelinks/token/context"))
+        .andExpect(status().isGone())
+        .andExpect(content().json("{\"reason\":\"DIRECT_LINK_INACTIVE\"}"));
   }
 
   private static AgencyInviteLink callLink() {
@@ -169,6 +221,33 @@ class AgencyInviteLinkContextHttpTest {
     link.setExpiresAt(LocalDateTime.now().minusDays(1));
     when(repository.findByToken("token")).thenReturn(Optional.of(link));
     mvc.perform(get("/users/invitelinks/token/context")).andExpect(status().isBadRequest());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void pausedLiveChatContextReturns410WithReason(boolean signedIn) throws Exception {
+    var link = link();
+    link.setStatus("DISABLED");
+    when(repository.findByToken("token")).thenReturn(Optional.of(link));
+    var request = get("/users/invitelinks/token/context");
+    if (signedIn) request.principal(() -> "existing-user");
+    mvc.perform(request)
+        .andExpect(status().isGone())
+        .andExpect(content().json("{\"reason\":\"INVITE_LINK_PAUSED\"}"));
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void pausedLiveChatRedeemReturns410WithReason(boolean signedIn) throws Exception {
+    var link = link();
+    link.setStatus("DISABLED");
+    when(repository.findByToken("token")).thenReturn(Optional.of(link));
+    var request = post("/users/invitelinks/token/redeem");
+    if (signedIn) request.principal(() -> "existing-user");
+    mvc.perform(request)
+        .andExpect(status().isGone())
+        .andExpect(content().json("{\"reason\":\"INVITE_LINK_PAUSED\"}"));
+    verify(repository).findByTokenAndStatus("token", "ACTIVE");
   }
 
   @Test
@@ -230,6 +309,16 @@ class AgencyInviteLinkContextHttpTest {
     when(repository.findByToken("token")).thenReturn(Optional.of(directLink()));
     when(consultants.findByIdAndDeleteDateIsNull("private-consultant"))
         .thenReturn(Optional.empty());
+    mvc.perform(get("/users/invitelinks/token/context"))
+        .andExpect(status().isGone())
+        .andExpect(content().json("{\"reason\":\"DIRECT_LINK_INACTIVE\"}"));
+  }
+
+  @Test
+  void directLinkWhosePermissionWasWithdrawnReturns410() throws Exception {
+    when(repository.findByToken("token")).thenReturn(Optional.of(directLink()));
+    ownerServes(99L);
+    when(directInvitePolicy.allows(any(), any(), any())).thenReturn(false);
     mvc.perform(get("/users/invitelinks/token/context"))
         .andExpect(status().isGone())
         .andExpect(content().json("{\"reason\":\"DIRECT_LINK_INACTIVE\"}"));

@@ -7,7 +7,6 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
-import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.OnDelete;
@@ -23,7 +22,6 @@ import org.hibernate.annotations.OnDeleteAction;
             columnNames = {"series_id", "occurrence_index"}))
 @Getter
 @NoArgsConstructor
-@AllArgsConstructor
 public class ChatMatrixRoom {
   @Id
   @Column(name = "room_id", length = 512, nullable = false)
@@ -39,4 +37,18 @@ public class ChatMatrixRoom {
 
   @Column(name = "owner_tenant_id", nullable = false)
   private Long ownerTenantId;
+
+  @Column(name = "members_carried", nullable = false)
+  private boolean membersCarried;
+
+  public ChatMatrixRoom(String roomId, Chat series, int occurrenceIndex, Long ownerTenantId) {
+    this.roomId = roomId;
+    this.series = series;
+    this.occurrenceIndex = occurrenceIndex;
+    this.ownerTenantId = ownerTenantId;
+  }
+
+  public void markMembersCarried() {
+    this.membersCarried = true;
+  }
 }

@@ -54,8 +54,6 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetR
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.identity.UserIdentitiesService;
 import java.lang.reflect.Method;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -648,8 +646,8 @@ class UserAdminControllerTest {
   }
 
   @Test
-  void searchAgencyAdmins_Should_urlDecodeNonEmailQuery() {
-    String encoded = URLEncoder.encode("hello world", StandardCharsets.UTF_8);
+  void searchAgencyAdmins_Should_preserveBoundNonEmailQuery() {
+    String encoded = "hello world";
     when(adminDtoMapper.mappedFieldOf("name")).thenReturn("name");
     when(adminUserFacade.findAgencyAdminsByInfix(
             "hello world", SearchFilter.NONE, 0, 10, "name", true))

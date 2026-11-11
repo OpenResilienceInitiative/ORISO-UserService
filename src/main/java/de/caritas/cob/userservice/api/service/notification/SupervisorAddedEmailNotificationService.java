@@ -7,6 +7,7 @@ import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
@@ -58,6 +59,8 @@ public class SupervisorAddedEmailNotificationService {
       Long sessionId,
       TenantData tenantData,
       String accessToken) {
+    var session = loadEmailableSession(sessionId);
+    if (session == null) return;
     Long tenantId =
         tenantData != null ? tenantData.getTenantId() : resolveTenantId(sessionUser, supervisor);
     var route = resolveRoute(tenantId, TenantSystemEmailDelivery.Purpose.SUPERVISOR_ADDED);
@@ -68,7 +71,7 @@ public class SupervisorAddedEmailNotificationService {
     String consultantChatUrl = buildSessionUrl(appUrl, sessionId, true);
 
     User recipientUser = resolveUserWithEmail(sessionUser);
-    if (hasValidUserEmail(recipientUser) && traegerAllowsAdviceSeekerEmail(tenantId, sessionId)) {
+    if (hasValidUserEmail(recipientUser) && traegerAllowsAdviceSeekerEmail(tenantId, session)) {
       // Neither the case reference nor a session-specific route reaches the advice seeker's
       // copy: both name what happened as precisely as the anonymised statement text refuses to.
       renderAndSendTeamChange(
@@ -111,6 +114,8 @@ public class SupervisorAddedEmailNotificationService {
       Long sessionId,
       TenantData tenantData,
       String accessToken) {
+    var session = loadEmailableSession(sessionId);
+    if (session == null) return;
     Long tenantId =
         tenantData != null ? tenantData.getTenantId() : resolveTenantId(sessionUser, supervisor);
     var route = resolveRoute(tenantId, TenantSystemEmailDelivery.Purpose.SUPERVISOR_REMOVED);
@@ -121,7 +126,7 @@ public class SupervisorAddedEmailNotificationService {
     String consultantChatUrl = buildSessionUrl(appUrl, sessionId, true);
 
     User recipientUser = resolveUserWithEmail(sessionUser);
-    if (hasValidUserEmail(recipientUser) && traegerAllowsAdviceSeekerEmail(tenantId, sessionId)) {
+    if (hasValidUserEmail(recipientUser) && traegerAllowsAdviceSeekerEmail(tenantId, session)) {
       renderAndSendTeamChange(
           tenantId,
           route,
@@ -164,7 +169,9 @@ public class SupervisorAddedEmailNotificationService {
   @Async
   public void notifyTopicDuplicateStarted(
       Consultant counsellor, Long existingSessionId, TenantData tenantData) {
-    if (!hasValidConsultantEmail(counsellor) || !wantsChatMessageMails(counsellor)) {
+    if (loadEmailableSession(existingSessionId) == null
+        || !hasValidConsultantEmail(counsellor)
+        || !wantsChatMessageMails(counsellor)) {
       return;
     }
     Long tenantId = tenantData != null ? tenantData.getTenantId() : counsellor.getTenantId();
@@ -236,16 +243,28 @@ public class SupervisorAddedEmailNotificationService {
         renderEmailChanged(username, appUrl, tenantId, tone));
   }
 
+  private Session loadEmailableSession(Long sessionId) {
+    if (sessionId == null) return null;
+    try {
+      return sessions
+          .findById(sessionId)
+          .filter(session -> !AskerNotificationChannelPolicy.isLiveChat(session))
+          .orElse(null);
+    } catch (RuntimeException unavailable) {
+      log.warn(
+          "Team-change email session lookup failed ({})", unavailable.getClass().getSimpleName());
+      return null;
+    }
+  }
+
   /**
    * Frontend#1979 (PO decision 2026-11-01): the advice seeker's team-change copy follows Admin >
-   * Berechtigungen like every other advice-seeker mail. A policy or session that cannot be read
-   * means no mail to the advice seeker; the counsellor's copy is not affected.
+   * Berechtigungen like every other advice-seeker mail.
    */
-  private boolean traegerAllowsAdviceSeekerEmail(Long tenantId, Long sessionId) {
+  private boolean traegerAllowsAdviceSeekerEmail(Long tenantId, Session session) {
     try {
-      var session = sessionId == null ? null : sessions.findById(sessionId).orElse(null);
       var tenant = tenantPolicies.getRestrictedTenantDataFresh(tenantId);
-      if (session == null || tenant == null) {
+      if (tenant == null) {
         log.info("Team-change mail to the advice seeker skipped: e-mail policy unavailable");
         return false;
       }

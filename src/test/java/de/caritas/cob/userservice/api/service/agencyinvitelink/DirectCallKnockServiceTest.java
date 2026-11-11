@@ -60,6 +60,8 @@ class DirectCallKnockServiceTest {
   private de.caritas.cob.userservice.api.service.notification.EventNotificationService
       eventNotifications;
 
+  @org.mockito.Mock private DirectInvitePolicy directInvitePolicy;
+
   private DirectCallKnockService service;
   private Consultant counsellor;
   private User asker;
@@ -76,7 +78,8 @@ class DirectCallKnockServiceTest {
             callGuests,
             users,
             consultants,
-            eventNotifications);
+            eventNotifications,
+            directInvitePolicy);
     counsellor = consultant("counsellor-1");
     when(callBindings.findById(3L)).thenReturn(Optional.of(binding()));
     asker = new User();
@@ -347,6 +350,38 @@ class DirectCallKnockServiceTest {
         .containsExactly(Status.ADMITTED, Status.ADMITTED);
   }
 
+  /** "Direkteinladung erlauben" withdrawn: a queued knock cannot be admitted, only declined. */
+  @Test
+  void withdrawnPermission_Should_NotAdmitAQueuedKnock() {
+    var knock = pending(1L, LocalDateTime.now());
+    knock.setInviteLinkId(9L);
+    when(repository.findByIdForUpdate(1L)).thenReturn(Optional.of(knock));
+    when(inviteLinkRepository.findById(9L))
+        .thenReturn(
+            Optional.of(
+                de.caritas.cob.userservice.api.model.AgencyInviteLink.builder()
+                    .id(9L)
+                    .tenantId(TENANT)
+                    .agencyId(99L)
+                    .chatType("VIDEO")
+                    .build()));
+    when(directInvitePolicy.allows(TENANT, 99L, InviteLinkChatType.VIDEO)).thenReturn(false);
+    when(repository.findCallKnocksForConsultantForUpdate(
+            eq("counsellor-1"), eq(Via.DIRECT_LINK), eq(Status.PENDING), any(), eq(SESSION_ID)))
+        .thenReturn(List.of(knock));
+
+    assertThatThrownBy(() -> service.admit(1L, counsellor))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    assertThatThrownBy(() -> service.admitAll(counsellor, SESSION_ID, null))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    assertThat(knock.getStatus()).isEqualTo(Status.PENDING);
+    verify(repository, never()).save(any());
+
+    assertThat(service.decline(1L, counsellor).getStatus()).isEqualTo(Status.DECLINED);
+  }
+
   @Test
   void admitAll_Should_RefuseWithoutTheCurrentCall() {
     assertThatThrownBy(() -> service.admitAll(counsellor, null, null))
@@ -501,6 +536,29 @@ class DirectCallKnockServiceTest {
 
     assertThat(service.decline(1L, counsellor).getStatus()).isEqualTo(Status.DECLINED);
     verify(callGuests).revokeSeat(binding, "@asker:example", "@counsellor:example");
+  }
+
+  /** "Anklopfen" switched off lets everybody in: not while the permission is withdrawn. */
+  @Test
+  void admitWaitingOnCallLink_Should_Refuse_WhileTheMediumIsSwitchedOff_ButWaitingCanEnd() {
+    var waiting = callLinkKnock(1L, Status.PENDING);
+    when(repository.findByInviteLinkIdAndViaAndStatus(5L, Via.CALL_LINK, Status.PENDING))
+        .thenReturn(List.of(waiting));
+    var link = callLink("counsellor-1");
+    link.setAgencyId(99L);
+    link.setChatType("VIDEO");
+    when(inviteLinkRepository.findById(5L)).thenReturn(Optional.of(link));
+    when(directInvitePolicy.allows(TENANT, 99L, InviteLinkChatType.VIDEO)).thenReturn(false);
+
+    assertThatThrownBy(() -> service.admitWaitingOnCallLink(5L, "counsellor-1"))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    assertThat(waiting.getStatus()).isEqualTo(Status.PENDING);
+    verify(repository, never()).save(any());
+
+    // The call ending still closes the queue: no permission is needed to stop waiting.
+    service.cancelWaitingOnCallLink(5L);
+    assertThat(waiting.getStatus()).isEqualTo(Status.CANCELLED);
   }
 
   @Test

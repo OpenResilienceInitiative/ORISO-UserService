@@ -19,6 +19,7 @@ import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggle;
 import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggleService;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.api.service.helper.MailService;
+import de.caritas.cob.userservice.api.service.notification.AskerNotificationChannelPolicy;
 import de.caritas.cob.userservice.api.workflow.enquirynotification.model.EnquiriesNotificationMailContent;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailDTO;
@@ -96,6 +97,7 @@ public class EnquiryNotificationService {
 
   private Map<Long, List<Session>> findAgencyIdsWithOpenEnquiries(LocalDateTime generatedAt) {
     return sessionRepository.findByStatus(SessionStatus.NEW).stream()
+        .filter(session -> !AskerNotificationChannelPolicy.isLiveChat(session))
         .filter(session -> longerOpenThanCheckHours(session, generatedAt))
         .collect(Collectors.groupingBy(Session::getAgencyId));
   }

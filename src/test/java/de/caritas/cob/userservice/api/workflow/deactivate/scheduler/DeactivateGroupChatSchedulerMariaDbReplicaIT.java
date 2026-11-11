@@ -34,8 +34,6 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.support.TransactionTemplate;
 
 @SpringBootTest
 @ActiveProfiles("testing")
@@ -46,6 +44,7 @@ class DeactivateGroupChatSchedulerMariaDbReplicaIT {
   private static final LocalDateTime NOW = LocalDateTime.of(2026, 7, 26, 5, 0);
   private static final String CONSULTANT_ID = "group-chat-replica-proof";
   private static final String ROOM_ID = "!group-chat-replica:matrix.test";
+  private static final String STUCK_ROOM_ID = "!group-chat-replica-stuck:matrix.test";
 
   @DynamicPropertySource
   private static void databaseProperties(DynamicPropertyRegistry registry) {
@@ -74,7 +73,6 @@ class DeactivateGroupChatSchedulerMariaDbReplicaIT {
   @Autowired private ChatRepository chatRepository;
   @Autowired private ConsultantRepository consultantRepository;
   @Autowired private JdbcTemplate jdbcTemplate;
-  @Autowired private PlatformTransactionManager transactionManager;
   @MockitoBean private MatrixSynapseService matrixSynapseService;
 
   @BeforeEach
@@ -92,7 +90,7 @@ class DeactivateGroupChatSchedulerMariaDbReplicaIT {
 
   @Test
   void twoSchedulerInstancesShutdownOneExpiredMatrixChatExactlyOnce() throws Exception {
-    var persistedChat = chatRepository.save(createExpiredChat());
+    var persistedChat = chatRepository.save(createExpiredChat(ROOM_ID));
     var bothSchedulersEntered = new CountDownLatch(2);
     var firstMatrixShutdownEntered = new CountDownLatch(1);
     var releaseFirstMatrixShutdown = new CountDownLatch(1);
@@ -141,7 +139,32 @@ class DeactivateGroupChatSchedulerMariaDbReplicaIT {
     verify(tenantContextProvider, times(2)).setTechnicalContextIfMultiTenancyIsEnabled();
   }
 
-  private Chat createExpiredChat() {
+  /**
+   * ORISO-UserService#1524: each chat is stopped in its own transaction, so a room that cannot be
+   * purged rolls back only its own chat. It stays active for the next run, and the other chat of
+   * the same run is stopped and committed.
+   */
+  @Test
+  void aStuckRoomKeepsItsChatActive_WhileTheOtherChatOfTheRunIsStopped() {
+    var stuck = chatRepository.save(createExpiredChat(STUCK_ROOM_ID));
+    var other = chatRepository.save(createExpiredChat(ROOM_ID));
+    when(matrixSynapseService.purgeRoomOrConfirmGone(STUCK_ROOM_ID))
+        .thenReturn(MatrixSynapseService.RoomPurgeOutcome.FAILED);
+    when(matrixSynapseService.purgeRoomOrConfirmGone(ROOM_ID))
+        .thenReturn(MatrixSynapseService.RoomPurgeOutcome.PURGED);
+
+    new DeactivateGroupChatScheduler(deactivationService, mock(TenantContextProvider.class))
+        .performDeactivationWorkflow();
+
+    assertThat(chatRepository.findById(stuck.getId()))
+        .hasValueSatisfying(chat -> assertThat(chat.isActive()).isTrue());
+    assertThat(chatRepository.findById(other.getId())).isEmpty();
+    // The stuck chat stayed active because its purge failed, not because the run skipped it.
+    verify(matrixSynapseService).purgeRoomOrConfirmGone(STUCK_ROOM_ID);
+    verify(matrixSynapseService).purgeRoomOrConfirmGone(ROOM_ID);
+  }
+
+  private Chat createExpiredChat(String roomId) {
     var owner = consultantRepository.findById(CONSULTANT_ID).orElseThrow();
     var chat = new Chat();
     chat.setTopic("Replica-safe Matrix group chat");
@@ -156,7 +179,7 @@ class DeactivateGroupChatSchedulerMariaDbReplicaIT {
     chat.setChatModality(ChatModality.TEXT);
     chat.setConversationType(ConversationType.SELF_HELP);
     chat.setActive(true);
-    chat.setMatrixRoomId(ROOM_ID);
+    chat.setMatrixRoomId(roomId);
     chat.setChatOwner(owner);
     chat.setCreateDate(NOW.minusHours(2));
     chat.setUpdateDate(NOW.minusHours(2));
@@ -185,17 +208,14 @@ class DeactivateGroupChatSchedulerMariaDbReplicaIT {
 
   private void run(
       DeactivateGroupChatScheduler scheduler, CountDownLatch ready, CountDownLatch start) {
-    new TransactionTemplate(transactionManager)
-        .executeWithoutResult(
-            status -> {
-              ready.countDown();
-              await(start);
-              scheduler.performDeactivationWorkflow();
-            });
+    // No outer transaction: the real scheduler has none, so each chat runs in its own.
+    ready.countDown();
+    await(start);
+    scheduler.performDeactivationWorkflow();
   }
 
   private void deleteProofChat() {
-    jdbcTemplate.update("DELETE FROM chat WHERE matrix_room_id = ?", ROOM_ID);
+    jdbcTemplate.update("DELETE FROM chat WHERE matrix_room_id IN (?, ?)", ROOM_ID, STUCK_ROOM_ID);
   }
 
   private void await(CountDownLatch latch) {

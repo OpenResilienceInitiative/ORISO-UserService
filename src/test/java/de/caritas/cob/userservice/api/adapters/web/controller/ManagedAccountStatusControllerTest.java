@@ -527,6 +527,7 @@ class ManagedAccountStatusControllerTest {
             mock(
                 de.caritas.cob.userservice.api.service.temporaryaccount
                     .TemporaryAccountSettingsService.class),
+            mock(de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitePolicy.class),
             mock(
                 de.caritas.cob.userservice.api.service.agencyinvitelink.CallShareLinkService
                     .class));

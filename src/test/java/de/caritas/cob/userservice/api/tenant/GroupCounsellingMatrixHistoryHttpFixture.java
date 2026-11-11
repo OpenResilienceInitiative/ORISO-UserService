@@ -239,6 +239,12 @@ abstract class GroupCounsellingMatrixHistoryHttpFixture extends GroupCounselling
               MediaType.APPLICATION_JSON)
           .createResponse(request);
     }
+    if (path.endsWith("/state/m.room.power_levels")
+        && request.getMethod() == org.springframework.http.HttpMethod.GET) {
+      // The group owner created every synthetic room and so holds the power to invite into it.
+      return withSuccess("{\"users_default\":100,\"invite\":50}", MediaType.APPLICATION_JSON)
+          .createResponse(request);
+    }
     if (path.endsWith("/invite")
         || path.endsWith("/join")
         || path.contains("/join/")

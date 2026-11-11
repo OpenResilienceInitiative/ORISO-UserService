@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.service.chat.GroupChatPermissionService;
+import de.caritas.cob.userservice.api.service.chat.RecurringGroupStopCoordinator;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -19,6 +20,7 @@ public class StopChatFacade {
 
   private final @NonNull GroupChatPermissionService groupChatPermissionService;
   private final @NonNull ActionsRegistry actionsRegistry;
+  private final @NonNull RecurringGroupStopCoordinator recurringStops;
 
   /**
    * Stops the given {@link Chat} and resets or deletes it depending on if it's repetitive or not.
@@ -31,6 +33,10 @@ public class StopChatFacade {
   @Transactional
   public void stopChat(Chat chat, Consultant consultant) {
     groupChatPermissionService.requireCanModerate(chat, consultant);
+    if (RecurringGroupStopCoordinator.applies(chat)) {
+      recurringStops.stop(chat, consultant, null);
+      return;
+    }
 
     this.actionsRegistry
         .buildContainerForType(Chat.class)

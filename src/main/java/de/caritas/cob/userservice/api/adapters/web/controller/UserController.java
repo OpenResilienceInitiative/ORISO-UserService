@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestAdmit
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestStatusDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionListResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.InternalChatRecipientDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.InternalSubsetChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.InternalSubsetChatResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageResponseDTO;
@@ -109,8 +110,49 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 @Api(tags = "user-controller")
 public class UserController implements UsersApi {
+  private final @NonNull de.caritas.cob.userservice.api.service.livechat
+          .LiveChatAccountConversionService
+      liveChatConversionService;
   private final @NonNull de.caritas.cob.userservice.api.service.enquiry.EnquiryRejectionService
       enquiryRejectionService;
+
+  @Override
+  public ResponseEntity<
+          de.caritas.cob.userservice.api.adapters.web.dto.GetOwnLiveChatConversion200Response>
+      getOwnLiveChatConversion() {
+    var status = liveChatConversionService.status();
+    var body =
+        new de.caritas.cob.userservice.api.adapters.web.dto.GetOwnLiveChatConversion200Response(
+            status.userId(),
+            authenticatedUser.getUsername(),
+            de.caritas.cob.userservice.api.adapters.web.dto.GetOwnLiveChatConversion200Response
+                .StateEnum.fromValue(status.state()));
+    body.intentId(status.intentId());
+    body.setFinishedOrigin(status.finishedOrigin());
+    body.setUserId(status.userId());
+    return ResponseEntity.ok()
+        .cacheControl(org.springframework.http.CacheControl.noStore())
+        .body(body);
+  }
+
+  @Override
+  public ResponseEntity<
+          de.caritas.cob.userservice.api.adapters.web.dto.ConvertOwnLiveChatAccount200Response>
+      convertOwnLiveChatAccount(
+          de.caritas.cob.userservice.api.adapters.web.dto.ConvertOwnLiveChatAccountRequest
+              request) {
+    if (!Boolean.TRUE.equals(request.getRecoveryKeySaved())) {
+      throw new de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException(
+          "Recovery key confirmation is required");
+    }
+    liveChatConversionService.convert(
+        request.getExpectedUserId(), request.getIntentId().toString(), request.getPassword());
+    return ResponseEntity.ok()
+        .cacheControl(org.springframework.http.CacheControl.noStore())
+        .body(
+            new de.caritas.cob.userservice.api.adapters.web.dto
+                .ConvertOwnLiveChatAccount200Response(authenticatedUser.getUsername()));
+  }
 
   @Override
   public ResponseEntity<Void> rejectEnquiry(@PathVariable Long sessionId) {
@@ -667,6 +709,12 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity} containing {@link InternalSubsetChatResponseDTO}
    */
   @Override
+  public ResponseEntity<List<InternalChatRecipientDTO>> listInternalSubsetChatRecipients(
+      Long agencyId) {
+    return userChatControllerDelegate.listInternalSubsetChatRecipients(agencyId);
+  }
+
+  @Override
   public ResponseEntity<InternalSubsetChatResponseDTO> openInternalSubsetChat(
       @RequestBody InternalSubsetChatDTO request) {
     return userChatControllerDelegate.openInternalSubsetChat(request);
@@ -809,8 +857,8 @@ public class UserController implements UsersApi {
    * @return {@link ResponseEntity} containing {@link ChatInfoResponseDTO}
    */
   @Override
-  public ResponseEntity<ChatInfoResponseDTO> getChat(Long chatId) {
-    return userChatControllerDelegate.getChat(chatId);
+  public ResponseEntity<ChatInfoResponseDTO> getChat(Long chatId, Boolean includeCallerBan) {
+    return userChatControllerDelegate.getChat(chatId, includeCallerBan);
   }
 
   /**

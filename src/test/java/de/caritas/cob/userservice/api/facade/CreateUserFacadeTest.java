@@ -75,6 +75,8 @@ import java.util.Optional;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
@@ -142,8 +144,11 @@ public class CreateUserFacadeTest {
             agencyService,
             applicationSettingsService,
             groupInviteRegistration,
+            mock(de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy.class),
+            mock(de.caritas.cob.userservice.api.service.SessionDataService.class),
             temporaryAccountLinkResolver,
             temporaryAccountSettings);
+
     org.mockito.Mockito.lenient()
         .when(consultingTypeManager.getConsultingTypeSettings(org.mockito.ArgumentMatchers.any()))
         .thenReturn(new ExtendedConsultingTypeResponseDTO());
@@ -205,6 +210,223 @@ public class CreateUserFacadeTest {
   @Spy
   private ProvisioningCompensator provisioningCompensator =
       new ProvisioningCompensator(new SimpleMeterRegistry());
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+  void registrationCollectionUsesTheVerifiedPurposeBeforeAnyIdentityEffects(boolean groupSignup) {
+    var dto =
+        UserDTO.builder()
+            .username("new-login")
+            .password("pw")
+            .postcode("12345")
+            .agencyId(700L)
+            .consultingType("1")
+            .termsAccepted("true")
+            .email("new@example.org")
+            .build();
+    var settings =
+        new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
+            .featureAskerEmailEnabled(true)
+            .featureAskerEmailCollectionAgencyCounsellingEnabled(groupSignup)
+            .featureAskerEmailCollectionSelfHelpEnabled(!groupSignup);
+    when(tenantService.getRestrictedTenantDataFresh(42L))
+        .thenReturn(new RestrictedTenantDTO().id(42L).settings(settings));
+    var policy =
+        new de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy(
+            tenantService,
+            mock(de.caritas.cob.userservice.api.port.out.SessionRepository.class),
+            mock(de.caritas.cob.userservice.api.port.out.UserChatRepository.class),
+            mock(org.springframework.transaction.PlatformTransactionManager.class));
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        createUserFacade, "emailCollectionPolicy", policy);
+    if (groupSignup) {
+      var group = new Chat();
+      group.setConversationType(ConversationType.SELF_HELP);
+      when(groupInviteRegistration.resolveInvitedGroup(dto)).thenReturn(Optional.of(group));
+    }
+    TenantContext.setCurrentTenant(42L);
+    try {
+      assertThrows(
+          de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+          () -> createUserFacade.createUserAccountWithInitializedConsultingType(dto));
+    } finally {
+      TenantContext.clear();
+    }
+    org.mockito.Mockito.verifyNoInteractions(
+        identityClient, matrixSynapseService, userService, createNewSessionFacade);
+  }
+
+  @Test
+  void customSignupAliasIsRefusedBeforeIdentityOrAccountEffectsWhenTypingIsDisabled() {
+    var dto =
+        UserDTO.builder()
+            .username("new-login")
+            .password("pw")
+            .postcode("12345")
+            .agencyId(700L)
+            .consultingType("1")
+            .termsAccepted("true")
+            .displayName("Freely typed name")
+            .build();
+    when(tenantService.getRestrictedTenantDataFresh(42L))
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(42L)
+                .settings(
+                    new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
+                        .featureDisplayNameEditable(false)));
+    var names =
+        new de.caritas.cob.userservice.api.service.SessionDataService(
+            mock(de.caritas.cob.userservice.api.port.out.SessionDataRepository.class),
+            mock(de.caritas.cob.userservice.api.helper.SessionDataProvider.class),
+            sessionService,
+            mock(de.caritas.cob.userservice.api.helper.AuthenticatedUser.class),
+            tenantService,
+            new de.caritas.cob.userservice.api.service.GeneratedPseudonyms(),
+            mock(de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess.class),
+            mock(org.springframework.transaction.PlatformTransactionManager.class));
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        createUserFacade, "sessionDataService", names);
+    TenantContext.setCurrentTenant(42L);
+    try {
+      assertThrows(
+          de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+          () -> createUserFacade.createUserAccountWithInitializedConsultingType(dto));
+    } finally {
+      TenantContext.clear();
+    }
+    org.mockito.Mockito.verifyNoInteractions(
+        identityClient, matrixSynapseService, userService, createNewSessionFacade);
+  }
+
+  @Test
+  void legacyGroupSignupAliasIsIgnoredBeforeIdentityAndCannotRenameASharedRoom() {
+    var dto =
+        UserDTO.builder()
+            .username("new-login")
+            .password("pw")
+            .postcode("12345")
+            .agencyId(700L)
+            .consultingType("1")
+            .termsAccepted("true")
+            .displayName("legacy ignored alias")
+            .build();
+    var group = new Chat();
+    group.setConversationType(ConversationType.SELF_HELP);
+    when(groupInviteRegistration.resolveInvitedGroup(dto)).thenReturn(Optional.of(group));
+    when(identityClient.createUser(dto))
+        .thenAnswer(
+            call -> {
+              org.assertj.core.api.Assertions.assertThat(
+                      ((UserDTO) call.getArgument(0)).getDisplayName())
+                  .isNull();
+              throw new BadRequestException("test stops before external identity effects");
+            });
+    TenantContext.setCurrentTenant(42L);
+    try {
+      assertThrows(
+          BadRequestException.class,
+          () -> createUserFacade.createUserAccountWithInitializedConsultingType(dto));
+    } finally {
+      TenantContext.clear();
+    }
+    org.mockito.Mockito.verifyNoInteractions(
+        matrixSynapseService, userService, createNewSessionFacade);
+  }
+
+  @Test
+  void verifiedDirectLinkSignupKeepsItsNoSessionAliasBoundary() {
+    var dto =
+        UserDTO.builder()
+            .username("direct-login")
+            .password("pw")
+            .postcode("12345")
+            .agencyId(700L)
+            .consultingType("1")
+            .termsAccepted("true")
+            .directLinkToken("verified-fixture")
+            .displayName("legacy ignored alias")
+            .build();
+    var link =
+        de.caritas.cob.userservice.api.model.AgencyInviteLink.builder()
+            .id(77L)
+            .chatType("CHAT")
+            .temporaryAccount(false)
+            .build();
+    when(temporaryAccountLinkResolver.resolve(dto)).thenReturn(Optional.of(link));
+    var names = mock(de.caritas.cob.userservice.api.service.SessionDataService.class);
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        createUserFacade, "sessionDataService", names);
+    when(identityClient.createUser(dto))
+        .thenAnswer(
+            call -> {
+              org.assertj.core.api.Assertions.assertThat(
+                      ((UserDTO) call.getArgument(0)).getDisplayName())
+                  .isNull();
+              throw new BadRequestException("fixture stops before external effects");
+            });
+    TenantContext.setCurrentTenant(42L);
+    try {
+      assertThrows(
+          BadRequestException.class,
+          () -> createUserFacade.createUserAccountWithInitializedConsultingType(dto));
+    } finally {
+      TenantContext.clear();
+    }
+    verify(names)
+        .validateRegistrationNames(
+            "direct-login", "legacy ignored alias", 42L, ConversationType.AGENCY_COUNSELLING);
+    org.mockito.Mockito.verifyNoInteractions(
+        createNewSessionFacade, matrixSynapseService, userService);
+  }
+
+  @Test
+  void verifiedDirectLinkUsesRegisteredAgencyCollectionBeforeIdentityEffects() {
+    var dto =
+        UserDTO.builder()
+            .username("direct-login")
+            .password("pw")
+            .postcode("12345")
+            .agencyId(700L)
+            .consultingType("1")
+            .termsAccepted("true")
+            .directLinkToken("verified-fixture")
+            .email("new@example.org")
+            .build();
+    var link =
+        de.caritas.cob.userservice.api.model.AgencyInviteLink.builder()
+            .id(77L)
+            .chatType("VIDEO")
+            .temporaryAccount(false)
+            .build();
+    when(temporaryAccountLinkResolver.resolve(dto)).thenReturn(Optional.of(link));
+    when(tenantService.getRestrictedTenantDataFresh(42L))
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(42L)
+                .settings(
+                    new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
+                        .featureAskerEmailEnabled(true)
+                        .featureAskerEmailCollectionAgencyCounsellingEnabled(false)));
+    var policy =
+        new de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy(
+            tenantService,
+            mock(de.caritas.cob.userservice.api.port.out.SessionRepository.class),
+            mock(de.caritas.cob.userservice.api.port.out.UserChatRepository.class),
+            mock(org.springframework.transaction.PlatformTransactionManager.class));
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        createUserFacade, "emailCollectionPolicy", policy);
+    TenantContext.setCurrentTenant(42L);
+    try {
+      assertThrows(
+          de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+          () -> createUserFacade.createUserAccountWithInitializedConsultingType(dto));
+    } finally {
+      TenantContext.clear();
+    }
+    org.mockito.Mockito.verifyNoInteractions(
+        identityClient, createNewSessionFacade, matrixSynapseService, userService);
+  }
 
   @Test
   void disabledEmailCollectionStopsRegistrationBeforeIdentityProvisioning() {
@@ -659,10 +881,11 @@ public class CreateUserFacadeTest {
     verify(groupInviteRegistration).join(group, user);
   }
 
-  @Test
+  @ParameterizedTest
+  @ValueSource(strings = {"COUNSELLOR", "CALL"})
   void
-      createUserAccountWithInitializedConsultingType_Should_CopyTheLifetimesAndOpenNoEnquiry_When_RegisteringThroughADirectLink()
-          throws Exception {
+      createUserAccountWithInitializedConsultingType_Should_CopyTheLifetimesAndOpenNoEnquiry_When_RegisteringThroughADirectLink(
+          String linkKind) throws Exception {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
     when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
@@ -671,6 +894,7 @@ public class CreateUserFacadeTest {
     var link =
         de.caritas.cob.userservice.api.model.AgencyInviteLink.builder()
             .id(9L)
+            .linkKind(linkKind)
             .chatType("AUDIO")
             .temporaryAccount(true)
             .build();

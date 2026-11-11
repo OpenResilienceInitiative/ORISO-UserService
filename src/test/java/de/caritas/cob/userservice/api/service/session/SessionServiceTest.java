@@ -179,6 +179,7 @@ class SessionServiceTest {
           POSTCODE,
           AGENCY_ID,
           "XXX",
+          null,
           "x@y.de",
           null,
           null,
