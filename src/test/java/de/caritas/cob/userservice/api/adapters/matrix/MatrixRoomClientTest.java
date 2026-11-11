@@ -151,7 +151,17 @@ class MatrixRoomClientTest {
 
     var body = createRoomRequestCaptor.getValue().getBody();
     assertThat(body.getPowerLevelContentOverride()).isEqualTo(Map.of("invite", 100));
-    assertThat(body.getInitialState()).hasSize(1);
+    assertThat(body.getInitialState())
+        .extracting(MatrixCreateRoomRequestDTO.InitialStateEvent::getType)
+        .containsExactlyInAnyOrder("m.room.encryption", "m.room.history_visibility");
+    assertThat(body.getInitialState())
+        .filteredOn(event -> "m.room.history_visibility".equals(event.getType()))
+        .singleElement()
+        .satisfies(
+            event -> {
+              assertThat(event.getStateKey()).isEmpty();
+              assertThat(event.getContent()).isEqualTo(Map.of("history_visibility", "joined"));
+            });
   }
 
   @Test

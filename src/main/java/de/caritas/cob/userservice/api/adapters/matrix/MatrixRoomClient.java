@@ -338,7 +338,7 @@ public class MatrixRoomClient {
       roomCreateRequest.setPreset("private_chat");
       roomCreateRequest.setVisibility("private");
 
-      roomCreateRequest.setInitialState(buildInitialState(encryptionEnabled));
+      roomCreateRequest.setInitialState(buildInitialState(encryptionEnabled, membersOnly));
       if (membersOnly) {
         roomCreateRequest.setPowerLevelContentOverride(Map.of("invite", MEMBERS_ONLY_INVITE_LEVEL));
       }
@@ -381,16 +381,23 @@ public class MatrixRoomClient {
   }
 
   private java.util.List<MatrixCreateRoomRequestDTO.InitialStateEvent> buildInitialState(
-      boolean encryptionEnabled) {
-    if (!encryptionEnabled) {
-      return java.util.List.of();
+      boolean encryptionEnabled, boolean membersOnly) {
+    var events = new java.util.ArrayList<MatrixCreateRoomRequestDTO.InitialStateEvent>();
+    if (encryptionEnabled) {
+      var encryption = new MatrixCreateRoomRequestDTO.InitialStateEvent();
+      encryption.setType(ROOM_ENCRYPTION_EVENT_TYPE);
+      encryption.setStateKey("");
+      encryption.setContent(Map.of("algorithm", MEGOLM_ALGORITHM));
+      events.add(encryption);
     }
-
-    var encryptionEvent = new MatrixCreateRoomRequestDTO.InitialStateEvent();
-    encryptionEvent.setType(ROOM_ENCRYPTION_EVENT_TYPE);
-    encryptionEvent.setStateKey("");
-    encryptionEvent.setContent(Map.of("algorithm", MEGOLM_ALGORITHM));
-    return java.util.List.of(encryptionEvent);
+    if (membersOnly) {
+      var history = new MatrixCreateRoomRequestDTO.InitialStateEvent();
+      history.setType("m.room.history_visibility");
+      history.setStateKey("");
+      history.setContent(Map.of("history_visibility", "joined"));
+      events.add(history);
+    }
+    return events;
   }
 
   public ResponseEntity<MatrixInviteUserResponseDTO> inviteUserToRoom(
