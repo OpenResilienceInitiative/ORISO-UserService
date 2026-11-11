@@ -3,8 +3,7 @@
     "body": "Thank you for getting in touch. Your message has reached us."
   },
   "whoReadsAlong": {
-    "headline": "Who reads your message",
-    "body": "Only the trained staff of the responsible counselling centre read your message. Everyone there is bound by confidentiality."
+    "headline": "Who reads your message"
   },
   "responseDeadline": {
     "headline": "When you will get a reply",
@@ -20,6 +19,9 @@
   "emergencyNumbers": {
     "headline": "If it cannot wait",
     "body": "In an acute emergency you can reach Telefonseelsorge around the clock on 0800 111 0 111 or 0800 111 0 222, and the emergency services on 112."
+  },
+  "emergencyAddition": {
+    "headline": "Further emergency contacts"
   },
   "dataProtection": {
     "body": "How we handle your data is set out in the privacy policy."

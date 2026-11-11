@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.helper.UserVerifier;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Chat;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
@@ -31,9 +32,13 @@ import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
+import de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy;
+import de.caritas.cob.userservice.api.service.AskerIdentityPolicy;
 import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService;
 import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService.RecoveryPolicySnapshot;
+import de.caritas.cob.userservice.api.service.SessionDataService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkKind;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.service.email.WelcomeEmailService;
@@ -93,6 +98,8 @@ public class CreateUserFacade {
   private final @NonNull ApplicationSettingsService applicationSettingsService;
 
   private final @NonNull GroupInviteRegistration groupInviteRegistration;
+  private final @NonNull AskerEmailCollectionPolicy emailCollectionPolicy;
+  private final @NonNull SessionDataService sessionDataService;
 
   private final @NonNull de.caritas.cob.userservice.api.service.agencyinvitelink
           .TemporaryAccountLinkResolver
@@ -115,6 +122,10 @@ public class CreateUserFacade {
 
     initializeTenantContextForRegistration(userDTO);
     tenantService.requireOperationalTenant(TenantContext.getCurrentTenant());
+    if (userDTO.getEmail() != null && !userDTO.getEmail().isBlank()) {
+      AskerIdentityPolicy.requireEmailCollectionAllowed(
+          tenantService, TenantContext.getCurrentTenant());
+    }
 
     // MATRIX MIGRATION: Get plain credentials from ThreadLocal (captured during JSON
     // deserialization)
@@ -132,12 +143,34 @@ public class CreateUserFacade {
       userVerifier.checkIfUsernameIsAvailable(userDTO);
       agencyVerifier.checkIfConsultingTypeMatchesToAgency(userDTO);
       var consultingTypeSettings = obtainConsultingTypeSettings(userDTO);
-      if (consultingTypeSettings.getGroupChat() == null
+      var directLink = temporaryAccountLinkResolver.resolve(userDTO);
+      boolean callGuest =
+          directLink
+              .filter(link -> InviteLinkKind.CALL.name().equals(link.getLinkKind()))
+              .isPresent();
+      if (callGuest
+          || consultingTypeSettings.getGroupChat() == null
           || !isTrue(consultingTypeSettings.getGroupChat().getIsGroupChat())) {
         dpaPolicy.requireForAgency(userDTO.getAgencyId());
       }
       Optional<Chat> invitedGroup = groupInviteRegistration.resolveInvitedGroup(userDTO);
-      var directLink = temporaryAccountLinkResolver.resolve(userDTO);
+      var registrationType =
+          invitedGroup.isPresent()
+              ? ConversationType.SELF_HELP
+              : ConversationType.AGENCY_COUNSELLING;
+      Long tenantId = TenantContext.getCurrentTenant();
+      if (userDTO.getEmail() != null && !userDTO.getEmail().isBlank()) {
+        emailCollectionPolicy.requireForRegistration(tenantId, registrationType);
+      }
+      var displayName =
+          sessionDataService.validateRegistrationNames(
+              userDTO.getUsername(), userDTO.getDisplayName(), tenantId, registrationType);
+      if (invitedGroup.isEmpty() && directLink.isEmpty()) {
+        userDTO.setDisplayName(displayName);
+      } else {
+        // Group/direct-link signup creates no personal Session here; no shared/global alias.
+        userDTO.setDisplayName(null);
+      }
       if (userDTO.isTemporary() && invitedGroup.isEmpty() && directLink.isEmpty()) {
         // The deletion job removes temporary accounts; only a valid group invite or direct link
         // may ask for one.
@@ -175,7 +208,7 @@ public class CreateUserFacade {
       if (user != null) {
         user.setTemporaryAccount(userDTO.isTemporary());
         // ADR-029 §4: the account keeps the lifetimes valid at its creation (#1476).
-        if (directLink.isPresent() && directLink.get().isTemporaryAccount()) {
+        if (directLink.isPresent() && userDTO.isTemporary()) {
           var link = directLink.get();
           user.setTemporaryAccountSnapshot(
               temporaryAccountSettings.snapshotForNewAccount(
@@ -212,8 +245,7 @@ public class CreateUserFacade {
         groupInviteRegistration.join(group, user);
         sessionId = null;
       } else if (directLink.isPresent()) {
-        // Temporary or persistent: the conversation starts through the link afterwards (knock
-        // first for calls), never as an enquiry in Erstanfragen (ADR-029 §1).
+        // Link redemption handles admission. Registration itself never creates an enquiry.
         sessionId = null;
       } else {
         activeAttempt.register(
@@ -378,6 +410,11 @@ public class CreateUserFacade {
 
   private User updateIdentityAndCreateAccount(
       String userId, UserDTO userDTO, UserRole role, RecoveryPolicySnapshot snapshot) {
+
+    if (userDTO.getEmail() != null && !userDTO.getEmail().isBlank()) {
+      AskerIdentityPolicy.requireEmailCollectionAllowed(
+          tenantService, TenantContext.getCurrentTenant());
+    }
 
     try {
       updateKeycloakRoleAndPassword(userId, userDTO, role);

@@ -411,6 +411,48 @@ public class ConsultantAgencyRelationCreatorServiceTest {
     verify(consultantAgencyService).saveConsultantAgency(any(ConsultantAgency.class));
   }
 
+  /** #1421: a caller that writes the roles itself, after its own last refusable step. */
+  @Test
+  public void
+      prepareConsultantAgencyRelation_Should_notTouchTheIdentityProvider_When_rolesAreDeferred() {
+    var consultant = new Consultant();
+    consultant.setId("consultant Id");
+    consultant.setTenantId(1L);
+    when(consultantRepository.findByIdAndDeleteDateIsNull("consultant Id"))
+        .thenReturn(Optional.of(consultant));
+    when(agencyService.getAgency(15L)).thenReturn(new AgencyDTO().consultingType(0).id(15L));
+    when(consultingTypeManager.getConsultingTypeSettings(0))
+        .thenReturn(givenConsultingTypeWithRoles("main", List.of("consultant-role")));
+    var input =
+        new CreateConsultantAgencyDTOInputAdapter(
+            "consultant Id", new CreateConsultantAgencyDTO().roleSetKey("main").agencyId(15L)) {
+          @Override
+          public boolean defersIdentityRoles() {
+            return true;
+          }
+        };
+
+    consultantAgencyRelationCreatorService.prepareConsultantAgencyRelation(input);
+
+    verifyNoInteractions(identityRoleUpdater);
+    verify(consultantAgencyService).saveConsultantAgency(any(ConsultantAgency.class));
+    assertThat(consultantAgencyRelationCreatorService.identityRolesOf(input))
+        .containsExactlyInAnyOrder("consultant-role");
+  }
+
+  @Test
+  public void identityRolesOf_Should_beEmpty_When_theConsultingTypeHasNoRoles() {
+    when(agencyService.getAgency(15L)).thenReturn(new AgencyDTO().consultingType(0).id(15L));
+    when(consultingTypeManager.getConsultingTypeSettings(0))
+        .thenReturn(new ExtendedConsultingTypeResponseDTO());
+
+    assertThat(
+            consultantAgencyRelationCreatorService.identityRolesOf(
+                new CreateConsultantAgencyDTOInputAdapter(
+                    "consultant Id", new CreateConsultantAgencyDTO().agencyId(15L))))
+        .isEmpty();
+  }
+
   private ExtendedConsultingTypeResponseDTO givenConsultingTypeWithRoles(
       String roleSetName, List<String> roles) {
     var roleSets = new LinkedHashMap<String, List<String>>();

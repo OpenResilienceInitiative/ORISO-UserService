@@ -76,6 +76,13 @@ public class UserDataResponseDTO {
   private String displayName;
   private Boolean isDisplayNameEditable;
 
+  @com.fasterxml.jackson.annotation.JsonInclude(
+      com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+  @ApiModelProperty(readOnly = true)
+  @com.fasterxml.jackson.annotation.JsonProperty(
+      access = com.fasterxml.jackson.annotation.JsonProperty.Access.READ_ONLY)
+  private Boolean isAskerEmailCollectionAllowed;
+
   private String publicSlug;
 
   private String pendingPublicSlug;

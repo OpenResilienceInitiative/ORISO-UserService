@@ -45,6 +45,10 @@ class SessionDeleteServiceTest {
 
   @Mock de.caritas.cob.userservice.api.helper.AuthenticatedUser authenticatedUser;
 
+  @Mock
+  de.caritas.cob.userservice.api.service.session.DeletedAskerSessionService
+      deletedAskerSessionService;
+
   @Test
   void deleteSessionAndInactiveUser_Should_ReturnOK_When_SessionIdIsKnown() {
     var sessionId = givenAPresentSession(false);
@@ -137,6 +141,58 @@ class SessionDeleteServiceTest {
             any(Session.class),
             org.mockito.ArgumentMatchers.eq(
                 MatrixSessionSystemMessageService.EndedBy.ADVICE_SEEKER));
+  }
+
+  @Test
+  void deleteSession_Should_leaveThePlaceholder_When_theAskerDeletes() {
+    var sessionId = givenAPresentSession(false);
+    givenActionRegistryDeletesSession();
+    when(authenticatedUser.isConsultant()).thenReturn(false);
+
+    sessionDeleteService.deleteSession(sessionId);
+
+    verify(deletedAskerSessionService)
+        .recordDeletionAfterCommit(
+            de.caritas.cob.userservice.api.service.session.DeletedAskerSessionService.Placeholder
+                .of(sessionService.getSession(sessionId).orElseThrow())
+                .orElseThrow());
+  }
+
+  @Test
+  void deleteSession_Should_leaveThePlaceholder_When_aConsultantDeletes() {
+    var sessionId = givenAPresentSession(false);
+    givenActionRegistryDeletesSession();
+    when(authenticatedUser.isConsultant()).thenReturn(true);
+
+    sessionDeleteService.deleteSession(sessionId);
+
+    verify(deletedAskerSessionService)
+        .recordDeletionAfterCommit(
+            de.caritas.cob.userservice.api.service.session.DeletedAskerSessionService.Placeholder
+                .of(sessionService.getSession(sessionId).orElseThrow())
+                .orElseThrow());
+  }
+
+  @Test
+  void deleteSession_Should_stillDelete_When_recordingThePlaceholderFails() {
+    var sessionId = givenAPresentSession(false);
+    givenActionRegistryDeletesSession();
+    org.mockito.Mockito.doThrow(new RuntimeException("placeholder failed"))
+        .when(deletedAskerSessionService)
+        .recordDeletionAfterCommit(any());
+
+    sessionDeleteService.deleteSession(sessionId);
+
+    verify(statisticsService).fireEvent(any(ArchiveOrDeleteSessionStatisticsEvent.class));
+  }
+
+  @Test
+  void deleteSession_doesNotRecordPlaceholderWithoutConsultant() {
+    var sessionId = givenAPresentSession(false);
+    sessionService.getSession(sessionId).orElseThrow().setConsultant(null);
+    givenActionRegistryDeletesSession();
+    sessionDeleteService.deleteSession(sessionId);
+    org.mockito.Mockito.verifyNoInteractions(deletedAskerSessionService);
   }
 
   private long givenAPresentSession(boolean isOnlySession) {

@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -88,17 +90,17 @@ class MessengerTest {
 
   @Test
   void countPendingEnquiriesAheadOf_Should_ReturnZero_When_BeforeDateIsNull() {
-    long result = messenger.countPendingEnquiriesAheadOf(1L, 1, 1L, null);
+    long result = messenger.countPendingEnquiriesAheadOf(1L, 1, 1L, null, 4L);
 
     assertThat(result).isZero();
     verify(diagnosticMetrics).recordInvalidQueueRequest();
     verify(sessionRepository, never())
-        .countPendingEnquiriesAheadOf(any(), any(), any(), any(), any(), any(), any());
+        .countPendingEnquiriesAheadOf(any(), any(), any(), any(), any(), any(), any(), any());
   }
 
   @Test
   void countPendingEnquiriesAheadOf_Should_ReturnZero_When_ConsultingTypeIsNull() {
-    long result = messenger.countPendingEnquiriesAheadOf(1L, null, 1L, LocalDateTime.now());
+    long result = messenger.countPendingEnquiriesAheadOf(1L, null, 1L, LocalDateTime.now(), 4L);
 
     assertThat(result).isZero();
     verify(diagnosticMetrics).recordInvalidQueueRequest();
@@ -108,10 +110,10 @@ class MessengerTest {
   void countPendingEnquiriesAheadOf_Should_DelegateToRepository_When_ParamsValid() {
     LocalDateTime before = LocalDateTime.now();
     when(sessionRepository.countPendingEnquiriesAheadOf(
-            any(), any(), any(), any(), any(), any(), any()))
+            any(), any(), any(), any(), any(), any(), any(), any()))
         .thenReturn(5L);
 
-    long result = messenger.countPendingEnquiriesAheadOf(10L, 2, 3L, before);
+    long result = messenger.countPendingEnquiriesAheadOf(10L, 2, 3L, before, 4L);
 
     assertThat(result).isEqualTo(5L);
     verify(diagnosticMetrics).recordQueueDepth(5L);
@@ -122,11 +124,11 @@ class MessengerTest {
     LocalDateTime before = LocalDateTime.now();
     ArgumentCaptor<LocalDateTime> minUpdateDate = ArgumentCaptor.forClass(LocalDateTime.class);
 
-    messenger.countPendingEnquiriesAheadOf(10L, 2, 3L, before);
+    messenger.countPendingEnquiriesAheadOf(10L, 2, 3L, before, 4L);
 
     verify(sessionRepository)
         .countPendingEnquiriesAheadOf(
-            any(), any(), any(), any(), any(), minUpdateDate.capture(), any());
+            any(), any(), any(), any(), any(), any(), minUpdateDate.capture(), any());
     /* Sessions store UTC, so the cutoff must sit five minutes below UTC now — not below the
     server's local clock, which on a non-UTC host would be hours away and empty the queue.
     Note this assertion only bites where the two differ: on a host already running UTC it holds
@@ -134,6 +136,22 @@ class MessengerTest {
     the guard that does not depend on the host's zone. */
     assertThat(minUpdateDate.getValue())
         .isCloseTo(nowInUtc().minusMinutes(5), within(2, ChronoUnit.SECONDS));
+  }
+
+  @Test
+  void countPendingEnquiriesAheadOf_Should_DropAgencyFilter_When_TopicQueue() {
+    messenger.countPendingEnquiriesAheadOf(10L, 2, 3L, LocalDateTime.now(), 4L);
+
+    verify(sessionRepository)
+        .countPendingEnquiriesAheadOf(any(), any(), any(), any(), eq(3L), isNull(), any(), any());
+  }
+
+  @Test
+  void countPendingEnquiriesAheadOf_Should_KeepAgencyFilter_When_NoTopic() {
+    messenger.countPendingEnquiriesAheadOf(10L, 2, null, LocalDateTime.now(), 4L);
+
+    verify(sessionRepository)
+        .countPendingEnquiriesAheadOf(any(), any(), any(), any(), isNull(), eq(10L), any(), any());
   }
 
   // ── touchLiveChatQueueHeartbeat ───────────────────────────────────────────

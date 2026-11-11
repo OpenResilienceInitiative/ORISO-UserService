@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataFacade;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataProvider;
 import de.caritas.cob.userservice.api.facade.userdata.KeycloakUserDataProvider;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.PasswordPolicy;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -31,6 +32,7 @@ import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityPolicy;
 import de.caritas.cob.userservice.api.port.in.Messaging;
+import de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.DecryptionService;
 import de.caritas.cob.userservice.api.service.LogService;
@@ -69,6 +71,7 @@ class UserAccountControllerDelegate {
   private final @NonNull KeycloakUserDataProvider keycloakUserDataProvider;
   private final @NonNull AgencyAdminDataProvider agencyAdminDataProvider;
   private final @NonNull UsernameTranscoder usernameTranscoder;
+  private final @NonNull AskerEmailCollectionPolicy emailCollectionPolicy;
 
   ResponseEntity<Void> updateAbsence(AbsenceDTO absence) {
     var consultant = userAccountProvider.retrieveValidatedConsultant();
@@ -127,6 +130,8 @@ class UserAccountControllerDelegate {
     } else {
       var user = userAccountProvider.retrieveValidatedUser();
       partialUserData = askerDataProvider.retrieveData(user);
+      partialUserData.setIsAskerEmailCollectionAllowed(
+          !authenticatedUser.isAnonymous() && emailCollectionPolicy.capabilityForAccount(user));
     }
     var otpInfoDTO = retrieveOtpCredentialIfAllowed();
 
@@ -259,6 +264,10 @@ class UserAccountControllerDelegate {
   }
 
   ResponseEntity<Void> updatePassword(PasswordDTO passwordDTO) {
+    if (!PasswordPolicy.isLongEnough(passwordDTO.getNewPassword())) {
+      throw new BadRequestException(
+          "The new password must be at least " + PasswordPolicy.MIN_LENGTH + " characters long");
+    }
     // Re-submitting the current password changes nothing, yet it would clear the account-setup
     // requirement and leave the account on the password its administrator still knows.
     if (passwordDTO.getNewPassword() != null

@@ -56,6 +56,7 @@ public class CreateChatFacade {
   private final @NonNull AgencySilentMembershipService consultantMembership;
   private final @NonNull GroupCounsellingDpaPolicy groupCounsellingDpaPolicy;
   private final @NonNull GroupChatMatrixCleanupService matrixCleanup;
+  private final @NonNull org.springframework.transaction.PlatformTransactionManager transactions;
 
   /**
    * Creates a group chat in MariaDB and Matrix.
@@ -100,6 +101,77 @@ public class CreateChatFacade {
   public CreatedChat createMembersOnlyChat(
       ChatDTO chatDTO, Consultant creator, List<Consultant> colleagues) {
     return createMatrixGroupChat(chatDTO, creator, List.copyOf(colleagues));
+  }
+
+  private void inviteAfterCommit(Chat chat, List<Consultant> selected, String ownerToken) {
+    var ids = selected.stream().map(Consultant::getId).toList();
+    org.springframework.transaction.support.TransactionSynchronizationManager
+        .registerSynchronization(
+            new org.springframework.transaction.support.TransactionSynchronization() {
+              @Override
+              public void afterCommit() {
+                var transaction =
+                    new org.springframework.transaction.support.TransactionTemplate(transactions);
+                transaction.setPropagationBehavior(
+                    org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+                for (var id : ids) {
+                  try {
+                    transaction.executeWithoutResult(
+                        status -> {
+                          // afterCommit still binds the completed transaction: use a real new
+                          // transaction
+                          // for fresh identity/role reads and any newly provisioned Matrix mapping.
+                          var current =
+                              chatService
+                                  .getChat(chat.getId())
+                                  .orElseThrow(
+                                      () ->
+                                          new BadRequestException(
+                                              "Created group is no longer available"));
+                          if (!Objects.equals(current.getMatrixRoomId(), chat.getMatrixRoomId())
+                              || !Objects.equals(
+                                  current.getChatOwner().getId(), chat.getChatOwner().getId())
+                              || !Objects.equals(
+                                  current.getChatOwner().getTenantId(),
+                                  chat.getChatOwner().getTenantId()))
+                            throw new BadRequestException("Created group ownership changed");
+                          var actor =
+                              consultantRepository
+                                  .findByIdAndDeleteDateIsNull(id)
+                                  .orElseThrow(
+                                      () ->
+                                          new BadRequestException(
+                                              "Selected consultant is no longer active"));
+                          if (!Objects.equals(
+                                  current.getChatOwner().getTenantId(), actor.getTenantId())
+                              || groupChatParticipantRepository
+                                  .findBySeriesId(current.getId())
+                                  .stream()
+                                  .noneMatch(
+                                      p ->
+                                          id.equals(p.getConsultantId())
+                                              && p.getRole()
+                                                  == GroupChatParticipant.ParticipantRole
+                                                      .CO_MODERATOR))
+                            throw new BadRequestException(
+                                "Selected consultant no longer has this assignment");
+                          groupCounsellingDpaPolicy.requireNewEnrolment(current);
+                          if (!consultantMembership.inviteConsultantIntoRoom(
+                              actor, current.getMatrixRoomId(), ownerToken))
+                            log.warn(
+                                "Self-help group invitation remains pending: failure=InvitationUnavailable");
+                        });
+                  } catch (Exception failure) {
+                    // Metadata/assignment committed; never claim a JOIN or purge this existing
+                    // group.
+                    // Its normal public JOIN path retries invitation after AVV/provider recovery.
+                    log.warn(
+                        "Self-help group invitation remains pending: failure={}",
+                        failure.getClass().getSimpleName());
+                  }
+                }
+              }
+            });
   }
 
   private void createChatAgencyRelation(Chat chat, Long agencyId) {
@@ -267,7 +339,7 @@ public class CreateChatFacade {
       groupChatParticipantRepository.save(creatorParticipant);
       log.info("Added creator consultant {} to group_chat_participant", consultant.getId());
 
-      int joinedParticipants = 1;
+      int assignedParticipants = 1;
       if (membersOnly) {
         for (Consultant colleague : membersOnlyColleagues) {
           addColleagueStrictly(matrixRoomId, consultantToken, colleague);
@@ -277,14 +349,24 @@ public class CreateChatFacade {
           member.setRole(GroupChatParticipant.ParticipantRole.CO_MODERATOR);
           member.setConsultantId(colleague.getId());
           groupChatParticipantRepository.save(member);
-          joinedParticipants++;
+          assignedParticipants++;
         }
       }
 
-      // Invite and auto-join all selected consultants
+      boolean selfHelp = ChatConverter.conversationTypeOf(chat) == ConversationType.SELF_HELP;
+      // Administrative selection is not commencement. Self-help invitations follow the commit;
+      // first participation uses the ordinary, freshly authorized public/native JOIN routes.
       for (Consultant participant : membersOnly ? List.<Consultant>of() : participants) {
-        if (!consultantMembership.joinConsultantIntoRoom(
-            participant, matrixRoomId, consultantToken)) {
+        if (selfHelp) {
+          groupCounsellingDpaPolicy.requireNewEnrolment(chat);
+          var selectedMatrixId = consultantMembership.ensureMatrixAccount(participant);
+          if (selectedMatrixId == null || selectedMatrixId.isBlank())
+            throw new CustomValidationHttpStatusException(
+                HttpStatusExceptionReason.DPA_POLICY_UNAVAILABLE, HttpStatus.BAD_GATEWAY);
+        }
+        if (!selfHelp
+            && !consultantMembership.joinConsultantIntoRoom(
+                participant, matrixRoomId, consultantToken)) {
           throw new InternalServerErrorException(
               "Selected consultant could not join the group chat");
         }
@@ -294,9 +376,11 @@ public class CreateChatFacade {
         gcp.setRole(GroupChatParticipant.ParticipantRole.CO_MODERATOR);
         gcp.setConsultantId(participant.getId());
         groupChatParticipantRepository.save(gcp);
-        joinedParticipants++;
+        assignedParticipants++;
       }
 
+      if (selfHelp && !participants.isEmpty())
+        inviteAfterCommit(chat, participants, consultantToken);
       appointmentEvents.recordCreated(chat);
 
       log.info(
@@ -305,7 +389,7 @@ public class CreateChatFacade {
           sessionId,
           chatId,
           matrixRoomId,
-          joinedParticipants);
+          assignedParticipants);
 
       matrixCleanup.clear(cleanupTaskId);
       return new CreatedChat(

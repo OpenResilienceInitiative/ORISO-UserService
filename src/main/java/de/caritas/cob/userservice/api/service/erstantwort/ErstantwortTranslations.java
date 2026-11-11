@@ -1,7 +1,5 @@
 package de.caritas.cob.userservice.api.service.erstantwort;
 
-import static org.apache.commons.lang3.StringUtils.isNotBlank;
-
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
@@ -21,6 +19,37 @@ public final class ErstantwortTranslations {
    */
   public static String validLocale(String locale) {
     return locale != null && LOCALES.contains(locale) ? locale : null;
+  }
+
+  /**
+   * The platform's own plain texts for the Träger editor, so an admin sees what is sent when the
+   * field stays empty. {@code de} with {@code informal} selects the {@code de@informal} variant.
+   * {@code whoReadsAlong} is deliberately absent: it has no platform wording, because the platform
+   * cannot know who reads along at a given centre (ORISO-UserService#1565).
+   *
+   * @throws IllegalArgumentException for a locale outside the whitelist
+   */
+  public static Map<String, Object> platformDefaults(String locale, boolean informal) {
+    var valid = validLocale(locale == null || locale.isBlank() ? "de" : locale);
+    if (valid == null) throw new IllegalArgumentException("Unsupported Erstantwort locale");
+    if (valid.equals("de") && informal) valid = "de@informal";
+    var catalogue = catalogue(valid);
+    var result = new java.util.LinkedHashMap<String, Object>();
+    result.put("locale", valid);
+    for (var id : List.of("greeting", "closing", "emergencyNumbers")) {
+      result.put(id, catalogue.path(id).path("body").asText(""));
+    }
+    result.put(
+        "responseDeadline",
+        catalogue
+            .path("responseDeadline")
+            .path("body")
+            .asText("")
+            .replace(
+                "{{deadlineDays}}",
+                String.valueOf(ErstantwortPayloadBuilder.DEFAULT_RESPONSE_DEADLINE_DAYS)));
+    result.put("responseDeadlineDays", ErstantwortPayloadBuilder.DEFAULT_RESPONSE_DEADLINE_DAYS);
+    return result;
   }
 
   static void localizePlatformDefaults(
@@ -74,27 +103,23 @@ public final class ErstantwortTranslations {
   private static boolean hasAuthoredBody(String id, ErstantwortContext context) {
     return switch (id) {
       case "greeting" ->
-          any(
+          ErstantwortText.anyText(
               context.getGreetingByTopic(),
               context.getGreetingByAgency(),
               context.getGreetingByTenant());
       case "whoReadsAlong" ->
-          any(
+          ErstantwortText.anyText(
               context.getWhoReadsAlongByTopic(),
               context.getWhoReadsAlongByAgency(),
               context.getWhoReadsAlongByTenant());
+      case "emergencyAddition" -> true;
       case "closing" ->
-          any(
+          ErstantwortText.anyText(
               context.getClosingByTopic(),
               context.getClosingByAgency(),
               context.getClosingByTenant());
       default -> false;
     };
-  }
-
-  private static boolean any(String... values) {
-    for (var value : values) if (isNotBlank(value)) return true;
-    return false;
   }
 
   private static JsonNode catalogue(String locale) {

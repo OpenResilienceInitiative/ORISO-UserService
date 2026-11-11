@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.agencyinvitelink;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -34,6 +35,7 @@ class TemporaryAccountLinkResolverTest {
   @Mock private AgencyInviteLinkRepository repository;
   @Mock private ConsultantRepository consultantRepository;
   @Mock private DirectInvitePolicy directInvitePolicy;
+  @Mock private CallShareLinkService callShareLinks;
   @InjectMocks private TemporaryAccountLinkResolver resolver;
 
   private AgencyInviteLink link;
@@ -68,7 +70,7 @@ class TemporaryAccountLinkResolverTest {
     when(directInvitePolicy.allows(5L, 99L, InviteLinkChatType.VIDEO)).thenReturn(false);
 
     assertThatThrownBy(() -> resolver.resolve(registration("tok", true)))
-        .isInstanceOf(ForbiddenException.class);
+        .isInstanceOf(DirectLinkInactiveException.class);
   }
 
   @AfterEach
@@ -92,6 +94,62 @@ class TemporaryAccountLinkResolverTest {
   @Test
   void resolve_Should_ReturnTheLink_When_ItCreatesTemporaryAccounts() {
     assertThat(resolver.resolve(registration("tok", true))).contains(link);
+  }
+
+  @Test
+  void acceptsRegistrationForTheLiveSharedCall() {
+    var registration = callRegistration(true);
+
+    assertThat(resolver.resolve(registration)).contains(link);
+  }
+
+  @Test
+  void rejectsRegistrationIfTheSharedCallEnded() {
+    var registration = callRegistration(true);
+    doThrow(new CallShareLinkEndedException()).when(callShareLinks).requireUsable(link);
+
+    assertThatThrownBy(() -> resolver.resolve(registration))
+        .isInstanceOf(CallShareLinkEndedException.class);
+  }
+
+  @Test
+  void rejectsRegistrationWithAnotherAgencysConsentContext() {
+    var registration = callRegistration(true);
+    registration.setAgencyId(100L);
+
+    assertThatThrownBy(() -> resolver.resolve(registration)).isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void refusesTemporaryRegistrationAfterPermissionWasWithdrawn() {
+    var registration = callRegistration(true);
+    when(callShareLinks.temporaryAccountAllowed(link)).thenReturn(false);
+
+    assertThatThrownBy(() -> resolver.resolve(registration))
+        .isInstanceOf(BadRequestException.class);
+  }
+
+  @Test
+  void rejectsCallRegistrationWithoutTermsAcceptance() {
+    var registration = callRegistration(true);
+    registration.setTermsAccepted(null);
+
+    assertThatThrownBy(() -> resolver.resolve(registration))
+        .isInstanceOf(BadRequestException.class);
+  }
+
+  private UserDTO callRegistration(boolean temporary) {
+    link.setLinkKind("CALL");
+    link.setCallBindingId(11L);
+    link.setConsultingTypeId(2);
+    link.setTopicId(3L);
+    when(callShareLinks.temporaryAccountAllowed(link)).thenReturn(true);
+    var registration = registration("tok", temporary);
+    registration.setAgencyId(99L);
+    registration.setConsultingType("2");
+    registration.setTermsAccepted("true");
+    registration.setMainTopicId(3L);
+    return registration;
   }
 
   @Test

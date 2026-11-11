@@ -121,7 +121,7 @@ public class ConsultantTopicAgencyCompatibilityValidator {
           var uncovered =
               target.get(agency.getId()).stream().filter(id -> !offered.contains(id)).toList();
           if (!uncovered.isEmpty()) {
-            throw new BadRequestException(
+            throw new TopicsNotCoveredException(
                 String.format(
                     "Consultant topic ids %s are not offered by agency %s (coverage: %s)",
                     uncovered, agency.getId(), offered));
@@ -164,7 +164,7 @@ public class ConsultantTopicAgencyCompatibilityValidator {
       if (selectedTopicIds.isEmpty()) {
         return List.of();
       }
-      throw new BadRequestException(
+      throw new TopicsNotCoveredException(
           String.format(
               "Consultant topic ids %s are not covered by any selected agency", selectedTopicIds));
     }
@@ -194,7 +194,7 @@ public class ConsultantTopicAgencyCompatibilityValidator {
             .collect(Collectors.toList());
 
     if (!uncoveredTopicIds.isEmpty()) {
-      throw new BadRequestException(
+      throw new TopicsNotCoveredException(
           String.format(
               "Consultant topic ids %s are not covered by selected/assigned agencies %s (coverage: %s)",
               uncoveredTopicIds, selectedAgencyIds, describeCoverage(agencies)));
@@ -258,7 +258,7 @@ public class ConsultantTopicAgencyCompatibilityValidator {
             .filter(agencyId -> !resolvedAgencyIds.contains(agencyId))
             .collect(Collectors.toList());
     if (!missingAgencyIds.isEmpty()) {
-      throw new BadRequestException(
+      throw new UnknownAgencyException(
           String.format("Agency ids %s are not valid agencies", missingAgencyIds));
     }
   }
@@ -273,7 +273,7 @@ public class ConsultantTopicAgencyCompatibilityValidator {
             .map(AgencyDTO::getId)
             .collect(Collectors.toList());
     if (!mismatchingAgencyIds.isEmpty()) {
-      throw new BadRequestException(
+      throw new AgencyOutsideTenantException(
           String.format(
               "Selected agency ids %s do not belong to consultant tenant %s",
               mismatchingAgencyIds, tenantId));

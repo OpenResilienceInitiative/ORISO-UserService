@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.model.GroupChatJoinRequest;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import java.security.SecureRandom;
@@ -52,6 +53,7 @@ public class CounsellorDirectLinkService {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull TenantService tenantService;
   private final @NonNull DirectCallKnockService directCallKnockService;
+  private final @NonNull SessionRepository sessionRepository;
 
   public List<AgencyInviteLink> listOwn(Consultant owner) {
     return repository.findAllByConsultantIdAndLinkKindAndChatTypeInOrderByCreateDateDesc(
@@ -126,7 +128,10 @@ public class CounsellorDirectLinkService {
     return repository.save(link);
   }
 
-  /** Conversations started through the link carry no reference to it and stay. */
+  /**
+   * Conversations started through the link carry no reference to it and stay; they keep only the
+   * link's medium (FE#1952).
+   */
   public void delete(Consultant owner, Long linkId) {
     repository.delete(requireOwn(owner, linkId));
   }
@@ -162,8 +167,9 @@ public class CounsellorDirectLinkService {
     }
     tenantService.requireOperationalTenant(link.getTenantId());
     var medium = InviteLinkChatType.valueOf(link.getChatType());
+    // A withdrawn "Direkteinladung erlauben" reads as a link that is no longer active (410).
     if (!directInvitePolicy.allows(link.getTenantId(), link.getAgencyId(), medium)) {
-      throw new ForbiddenException("Direct invitations are not allowed here");
+      throw new DirectLinkInactiveException();
     }
     DirectLinkOwner.requireStillServing(consultantRepository, link);
 
@@ -183,6 +189,9 @@ public class CounsellorDirectLinkService {
       throw new org.springframework.web.server.ResponseStatusException(
           HttpStatus.BAD_GATEWAY, "conversation_room_unavailable");
     }
+    // FE#1952: the counsellor's list names the link's medium instead of "Mail". First link wins;
+    // a conversation that already has an origin keeps it.
+    sessionRepository.recordDirectLinkOrigin(response.getSessionId(), medium.name());
     // Calls never reach the room on their own: every visit knocks (ADR-029 §2).
     var knock =
         medium.admission() == InviteLinkAdmission.KNOCK
