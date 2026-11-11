@@ -14,4 +14,20 @@ public interface MatrixCallObservationRepository
       String sourceRoomId, String callId);
 
   Optional<MatrixCallObservation> findByMediaRoomId(String mediaRoomId);
+
+  /**
+   * Retention purge: removes observations whose lease and end are both older than the cutoff. A
+   * live or recently ended call is never touched.
+   *
+   * @param cutoffMillis epoch milliseconds
+   * @return number of deleted rows
+   */
+  @org.springframework.data.jpa.repository.Modifying(
+      flushAutomatically = true,
+      clearAutomatically = true)
+  @org.springframework.data.jpa.repository.Query(
+      "delete from MatrixCallObservation o where o.expiresAt < :cutoff "
+          + "and (o.endedAt is null or o.endedAt < :cutoff)")
+  int deleteFinishedBefore(
+      @org.springframework.data.repository.query.Param("cutoff") long cutoffMillis);
 }

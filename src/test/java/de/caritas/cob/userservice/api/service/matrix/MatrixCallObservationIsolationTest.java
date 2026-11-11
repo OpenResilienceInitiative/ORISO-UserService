@@ -81,6 +81,11 @@ class MatrixCallObservationIsolationTest {
       }
       if (holds) holders.add(type.getName().substring(type.getName().lastIndexOf('.') + 1));
     }
-    assertThat(holders).containsExactly("MatrixCallStateController", "MatrixCallStateService");
+    // The retention service only deletes expired rows; it neither reads nor grants anything.
+    assertThat(holders)
+        .containsExactly(
+            "CallObservationRetentionService",
+            "MatrixCallStateController",
+            "MatrixCallStateService");
   }
 }
