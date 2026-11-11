@@ -52,6 +52,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityReactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
+import de.caritas.cob.userservice.api.port.out.IdentityTenantUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -151,6 +152,7 @@ class UserAdminAgencyScopeIT {
         IdentityRoleLookup.class,
         IdentityRoleUpdater.class,
         IdentitySecondFactor.class,
+        IdentityTenantUpdater.class,
         IdentityUsernameAvailability.class
       })
   IdentityClient identityClient;
@@ -1071,7 +1073,9 @@ class UserAdminAgencyScopeIT {
 
     var result =
         mockMvc
-            .perform(createInviteLink("{\"agencyId\":" + OTHER_AGENCY_OF_OWN_TENANT + "}"))
+            .perform(
+                createInviteLink(
+                    "{\"linkKind\":\"TENANT\",\"agencyId\":" + OTHER_AGENCY_OF_OWN_TENANT + "}"))
             .andReturn();
 
     assertThat(inviteLinksOf(OTHER_AGENCY_OF_OWN_TENANT)).isEmpty();
@@ -1084,7 +1088,7 @@ class UserAdminAgencyScopeIT {
       throws Exception {
     actAsAgencyAdmin();
 
-    var result = mockMvc.perform(createInviteLink("{}")).andReturn();
+    var result = mockMvc.perform(createInviteLink("{\"linkKind\":\"TENANT\"}")).andReturn();
 
     assertThat(agencyInviteLinkRepository.findAll()).isEmpty();
     assertStatus(result, 403);
@@ -1113,13 +1117,108 @@ class UserAdminAgencyScopeIT {
 
   @Test
   @AsAgencyAdmin
-  void createInviteLink_Should_Succeed_When_AgencyAdminNamesOwnAgency() throws Exception {
+  void tenantInviteRemainsWritableByTheAdminOfItsAgency() throws Exception {
     actAsAgencyAdmin();
 
-    var result = mockMvc.perform(createInviteLink("{\"agencyId\":" + OWN_AGENCY + "}")).andReturn();
+    var result =
+        mockMvc
+            .perform(createInviteLink("{\"linkKind\":\"TENANT\",\"agencyId\":" + OWN_AGENCY + "}"))
+            .andReturn();
 
     assertStatus(result, 201);
-    assertThat(inviteLinksOf(OWN_AGENCY)).hasSize(1);
+    var link = inviteLinksOf(OWN_AGENCY).getFirst();
+    assertThat(link.getLinkKind()).isEqualTo("TENANT");
+    assertStatus(
+        mockMvc
+            .perform(withCsrf(post("/useradmin/invitelinks/{id}/deactivate", link.getId())))
+            .andReturn(),
+        200);
+  }
+
+  @Test
+  @AsTenantAdmin
+  void tenantAdminCannotMutateLiveChatLinksThroughTheApi() throws Exception {
+    actAsTenantAdmin();
+    assertLiveChatWritesRefused();
+  }
+
+  @Test
+  @AsAgencyAdmin
+  void agencyAdminCannotMutateLiveChatLinksEvenForTheirOwnAgency() throws Exception {
+    actAsAgencyAdmin();
+    assertLiveChatWritesRefused();
+  }
+
+  @Test
+  @AsTenantAdmin
+  void platformAdminCanManageLiveChatLinksInTheSelectedTenant() throws Exception {
+    Tenants.actAs(
+        caller,
+        "platform-admin",
+        0L,
+        UserRole.TENANT_ADMIN,
+        UserRole.AGENCY_ADMIN,
+        UserRole.USER_ADMIN);
+
+    when(tenantService.getRestrictedTenantDataFresh(OWN_TENANT))
+        .thenReturn(new RestrictedTenantDTO().id(OWN_TENANT));
+    assertStatus(
+        mockMvc.perform(createInviteLink("{}").header("X-Tenant-Id", OWN_TENANT)).andReturn(), 201);
+    var link = agencyInviteLinkRepository.findAll().iterator().next();
+    assertThat(link.getTenantId()).isEqualTo(OWN_TENANT);
+    assertThat(link.getChatType()).isEqualTo("LIVE_CHAT");
+
+    assertStatus(
+        mockMvc
+            .perform(
+                withCsrf(
+                    post("/useradmin/invitelinks/{id}/deactivate", link.getId())
+                        .header("X-Tenant-Id", OWN_TENANT)))
+            .andReturn(),
+        200);
+    assertStatus(
+        mockMvc
+            .perform(
+                withCsrf(
+                    post("/useradmin/invitelinks/{id}/reactivate", link.getId())
+                        .header("X-Tenant-Id", OWN_TENANT)))
+            .andReturn(),
+        200);
+    assertStatus(
+        mockMvc
+            .perform(
+                withCsrf(
+                    delete("/useradmin/invitelinks/{id}", link.getId())
+                        .header("X-Tenant-Id", OWN_TENANT)))
+            .andReturn(),
+        204);
+    assertThat(agencyInviteLinkRepository.findById(link.getId())).isEmpty();
+  }
+
+  private void assertLiveChatWritesRefused() throws Exception {
+    var link = persistInviteLink(OWN_AGENCY, "EXTERNAL_INBOUND");
+    var list = mockMvc.perform(get("/useradmin/invitelinks")).andReturn();
+    assertStatus(list, 200);
+    assertThat(list.getResponse().getContentAsString()).contains(link.getToken());
+
+    var create = mockMvc.perform(createInviteLink("{\"agencyId\":" + OWN_AGENCY + "}")).andReturn();
+    var pause =
+        mockMvc
+            .perform(withCsrf(post("/useradmin/invitelinks/{id}/deactivate", link.getId())))
+            .andReturn();
+    var reactivate =
+        mockMvc
+            .perform(withCsrf(post("/useradmin/invitelinks/{id}/reactivate", link.getId())))
+            .andReturn();
+    var remove =
+        mockMvc.perform(withCsrf(delete("/useradmin/invitelinks/{id}", link.getId()))).andReturn();
+
+    assertThat(List.of(create, pause, reactivate, remove))
+        .extracting(result -> result.getResponse().getStatus())
+        .containsExactly(403, 403, 403, 403);
+    assertThat(inviteLinksOf(OWN_AGENCY))
+        .singleElement()
+        .satisfies(existing -> assertThat(existing.getStatus()).isEqualTo("ACTIVE"));
   }
 
   @Test
@@ -1312,12 +1411,16 @@ class UserAdminAgencyScopeIT {
   }
 
   private AgencyInviteLink persistInviteLink(long agencyId) {
+    return persistInviteLink(agencyId, "TENANT");
+  }
+
+  private AgencyInviteLink persistInviteLink(long agencyId, String kind) {
     return agencyInviteLinkRepository.save(
         AgencyInviteLink.builder()
             .token("scope-link-" + UUID.randomUUID())
             .tenantId(OWN_TENANT)
             .agencyId(agencyId)
-            .linkKind("TENANT")
+            .linkKind(kind)
             .chatType("LIVE_CHAT")
             .anonymity("FULL")
             .createdByUserId("tenant-admin-1")

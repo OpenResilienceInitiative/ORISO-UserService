@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
+import de.caritas.cob.userservice.api.service.session.DeletedAskerSessionService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.ArchiveOrDeleteSessionStatisticsEvent;
@@ -29,6 +30,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Slf4j
 public class SessionDeleteService {
 
+  private final @NonNull de.caritas.cob.userservice.api.service.livechat.LiveChatAccountClaimService
+      claims;
   private final @NotNull ActionsRegistry actionsRegistry;
 
   private final @NotNull SessionService sessionService;
@@ -40,6 +43,7 @@ public class SessionDeleteService {
   private final @NonNull MembersOnlyChatAccess membersOnlyChatAccess;
 
   private final @NonNull AuthenticatedUser authenticatedUser;
+  private final @NonNull DeletedAskerSessionService deletedAskerSessionService;
 
   @Transactional
   public void deleteSession(Long sessionId) {
@@ -71,18 +75,29 @@ public class SessionDeleteService {
     }
 
     var user = session.getUser();
-    if (user.getSessions().size() == 1) {
+    if (user.getSessions().size() == 1 && claims.claimIdentityDeactivation(user.getUserId())) {
       actionsRegistry
           .buildContainerForType(User.class)
           .addActionToExecute(DeactivateKeycloakUserActionCommand.class)
           .executeActions(user);
     }
 
+    // ORISO-Frontend#1159: the assigned counsellor keeps a placeholder whoever deletes the chat —
+    // the advice seeker, a colleague or the counsellor themselves (product decision 29 Oct).
+    // Captured now, recorded only once the deletion below has committed.
+    var placeholder = DeletedAskerSessionService.Placeholder.of(session);
+
     var deleteSession = new SessionDeletionWorkflowDTO(session, null);
     actionsRegistry
         .buildContainerForType(SessionDeletionWorkflowDTO.class)
         .addActionToExecute(DeleteSingleRoomAndSessionAction.class)
         .executeActions(deleteSession);
+
+    try {
+      placeholder.ifPresent(deletedAskerSessionService::recordDeletionAfterCommit);
+    } catch (RuntimeException e) {
+      log.warn("Could not record deleted-asker placeholder for session {}", sessionId, e);
+    }
 
     fireArchiveOrDeleteSessionEvent(session);
     log.info("Session with id {} deleted", sessionId);

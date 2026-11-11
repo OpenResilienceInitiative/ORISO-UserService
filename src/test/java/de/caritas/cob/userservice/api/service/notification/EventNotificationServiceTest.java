@@ -39,6 +39,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
@@ -94,6 +95,131 @@ class EventNotificationServiceTest {
     when(session.getMatrixRoomId()).thenReturn(null);
     when(session.getMatrixRoomId()).thenReturn("!room-1:matrix.example");
     return session;
+  }
+
+  // ---------------------------------------------------------------------------
+  // createMentionNotifications (ORISO-UserService#1510)
+  // ---------------------------------------------------------------------------
+
+  private static final String MENTION_ROOM = "!room-1:matrix.example";
+  private static final String MENTION_KEY = "message.new:$event-1";
+
+  private PrivacyEnvelope mentionEnvelope() {
+    return PrivacyEnvelope.builder().messageId("$event-1").contentClass("TEXT").build();
+  }
+
+  @Test
+  void createMentionNotifications_writesTheMessageRowMarkedAsMention() throws Exception {
+    Session session = sessionMock();
+    when(sessionRepository.findByMatrixRoomId(MENTION_ROOM)).thenReturn(Optional.of(session));
+
+    eventNotificationService.createMentionNotifications(
+        MENTION_ROOM, "sender", null, mentionEnvelope(), Set.of("colleague"));
+
+    verify(deduplicationWriter).persistInNewTransaction(eventCaptor.capture());
+    EventNotification row = eventCaptor.getValue();
+    assertEquals("colleague", row.getRecipientUserId());
+    assertEquals("message.new", row.getEventType());
+    assertEquals(MENTION_KEY, row.getDeduplicationKey());
+    JsonNode params = objectMapper.readTree(row.getParams());
+    assertThat(params.get("mentioned").asBoolean()).isTrue();
+    assertThat(params.get("recipientRole").asText()).isEqualTo("consultant");
+    // The colleague is not the conversation's counsellor, and still a counsellor.
+    assertThat(row.getActionPath()).startsWith("/sessions/consultant/");
+  }
+
+  @Test
+  void createMentionNotifications_writesNothingWhileTheRecipientSeesTheMainChat() {
+    Session session = sessionMock();
+    when(sessionRepository.findByMatrixRoomId(MENTION_ROOM)).thenReturn(Optional.of(session));
+    eventNotificationService.updateActiveView("colleague", MENTION_ROOM, null, true, false);
+
+    eventNotificationService.createMentionNotifications(
+        MENTION_ROOM, "sender", null, mentionEnvelope(), Set.of("colleague"));
+
+    verify(deduplicationWriter, never()).persistInNewTransaction(any());
+  }
+
+  @Test
+  void createMentionNotifications_writesTheRowWhileASidePanelHidesTheMainChat() {
+    Session session = sessionMock();
+    when(sessionRepository.findByMatrixRoomId(MENTION_ROOM)).thenReturn(Optional.of(session));
+    eventNotificationService.updateActiveView("colleague", MENTION_ROOM, "$thread", true, true);
+
+    eventNotificationService.createMentionNotifications(
+        MENTION_ROOM, "sender", null, mentionEnvelope(), Set.of("colleague"));
+
+    verify(deduplicationWriter).persistInNewTransaction(eventCaptor.capture());
+    assertEquals("colleague", eventCaptor.getValue().getRecipientUserId());
+  }
+
+  @Test
+  void createMentionNotifications_writesNothingWhileTheMentionedThreadFillsTheScreen() {
+    Session session = sessionMock();
+    when(sessionRepository.findByMatrixRoomId(MENTION_ROOM)).thenReturn(Optional.of(session));
+    eventNotificationService.updateActiveView("colleague", MENTION_ROOM, "$thread", true, true);
+
+    eventNotificationService.createMentionNotifications(
+        MENTION_ROOM, "sender", "$thread", mentionEnvelope(), Set.of("colleague"));
+
+    verify(deduplicationWriter, never()).persistInNewTransaction(any());
+  }
+
+  @Test
+  void createMessageNotification_staysSuppressedWhileASidePanelHidesTheMainChat() {
+    Session session = sessionMock();
+    when(sessionRepository.findByMatrixRoomId(MENTION_ROOM)).thenReturn(Optional.of(session));
+    Consultant consultant = mock(Consultant.class);
+    when(consultant.getId()).thenReturn("colleague");
+    when(session.getConsultant()).thenReturn(consultant);
+    eventNotificationService.updateActiveView("colleague", MENTION_ROOM, "$thread", true, true);
+
+    eventNotificationService.createMessageNotificationFromRoom(
+        MENTION_ROOM, "sender", mentionEnvelope());
+
+    verify(deduplicationWriter, never()).persistInNewTransaction(any());
+  }
+
+  @Test
+  void createMentionNotifications_marksTheThreadReplyRowInAThread() {
+    Session session = sessionMock();
+    when(sessionRepository.findByMatrixRoomId(MENTION_ROOM)).thenReturn(Optional.of(session));
+
+    eventNotificationService.createMentionNotifications(
+        MENTION_ROOM, "sender", "$root", mentionEnvelope(), Set.of("colleague"));
+
+    verify(deduplicationWriter).persistInNewTransaction(eventCaptor.capture());
+    assertEquals("thread.reply.new:$event-1", eventCaptor.getValue().getDeduplicationKey());
+  }
+
+  /** The Matrix listener often wins: it writes the row and cannot read m.mentions. */
+  @Test
+  void createMentionNotifications_marksTheRowTheListenerWroteFirstAndTellsTheClient() {
+    Session session = sessionMock();
+    when(sessionRepository.findByMatrixRoomId(MENTION_ROOM)).thenReturn(Optional.of(session));
+    when(eventNotificationRepository.existsByRecipientUserIdAndDeduplicationKey(
+            "colleague", MENTION_KEY))
+        .thenReturn(true);
+    when(deduplicationWriter.markMentionedInNewTransaction("colleague", MENTION_KEY, 100L))
+        .thenReturn(true);
+
+    eventNotificationService.createMentionNotifications(
+        MENTION_ROOM, "sender", null, mentionEnvelope(), Set.of("colleague"));
+
+    verify(deduplicationWriter, never()).persistInNewTransaction(any());
+    verify(feedUpdateSignalService).signalFeedUpdated("colleague");
+  }
+
+  @Test
+  void createMentionNotifications_writesNothingWithoutTheMatrixEventId() {
+    eventNotificationService.createMentionNotifications(
+        MENTION_ROOM,
+        "sender",
+        null,
+        PrivacyEnvelope.builder().contentClass("TEXT").build(),
+        Set.of("colleague"));
+
+    verify(deduplicationWriter, never()).persistInNewTransaction(any());
   }
 
   // ---------------------------------------------------------------------------
@@ -1432,11 +1558,12 @@ class EventNotificationServiceTest {
   }
 
   @Test
-  void topicDuplicateStarted_isWrittenOncePerPairForTheExistingCounsellor() {
+  void topicDuplicateStarted_isWrittenOncePerPairForTheExistingCounsellor() throws Exception {
     var counsellor = new Consultant();
     counsellor.setId("old-counsellor");
     var existing = new Session();
     existing.setId(5L);
+    existing.setTenantId(7L);
     existing.setMainTopicId(3L);
     existing.setConsultant(counsellor);
     existing.setMatrixRoomId("!old:matrix");
@@ -1454,7 +1581,18 @@ class EventNotificationServiceTest {
     var event = eventCaptor.getValue();
     assertThat(event.getRecipientUserId()).isEqualTo("old-counsellor");
     assertThat(event.getEventType()).isEqualTo("topic_duplicate.started");
-    assertThat(event.getParams()).contains("\"topicId\":3").doesNotContain("79098");
+    assertThat(event.getActionPath()).isEqualTo("/sessions/consultant/sessionView/!old:matrix/5");
+    assertThat(event.getSourceSessionId()).isEqualTo(5L);
+    assertThat(event.getTenantId()).isEqualTo(7L);
+    assertThat(event.getDeduplicationKey()).isEqualTo("topic_duplicate.started:5:9");
+    assertThat(objectMapper.readTree(event.getParams()))
+        .isEqualTo(
+            objectMapper
+                .createObjectNode()
+                .put("conversationType", "AGENCY_COUNSELLING")
+                .put("sessionId", 5)
+                .put("roomRef", "!old:matrix")
+                .put("topicId", 3));
   }
 
   @Test
@@ -1482,10 +1620,19 @@ class EventNotificationServiceTest {
   }
 
   @Test
-  void topicDuplicateStarted_withoutCounsellorWritesNothing() {
+  void topicDuplicateStarted_withoutValidCounsellorWritesNothing() {
     var existing = new Session();
     existing.setId(5L);
 
+    assertThat(eventNotificationService.createTopicDuplicateStartedNotification(existing, 9L))
+        .isFalse();
+
+    var counsellor = new Consultant();
+    existing.setConsultant(counsellor);
+    assertThat(eventNotificationService.createTopicDuplicateStartedNotification(existing, 9L))
+        .isFalse();
+
+    counsellor.setId(" ");
     assertThat(eventNotificationService.createTopicDuplicateStartedNotification(existing, 9L))
         .isFalse();
     verify(deduplicationWriter, never()).persistInNewTransaction(any());
@@ -2598,6 +2745,7 @@ class EventNotificationServiceTest {
         s6ParticipantRepository,
         levels,
         agencies,
+        consultantRepository,
         sessionRepository,
         eventNotificationService,
         mock(

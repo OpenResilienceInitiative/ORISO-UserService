@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.model.SessionData.SessionDataType;
 import java.util.*;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Component;
 
 /** Provider for {@link SessionData}. */
@@ -117,6 +118,10 @@ public class SessionDataProvider {
    * @return {@link SessionDataDTO}
    */
   public static SessionDataDTO fromUserDTO(UserDTO userDTO) {
-    return new SessionDataDTO().age(String.valueOf(userDTO.getUserAge())).state(userDTO.getState());
+    String alias = StringUtils.stripToNull(userDTO.getDisplayName());
+    return new SessionDataDTO()
+        .displayName(alias)
+        .age(String.valueOf(userDTO.getUserAge()))
+        .state(userDTO.getState());
   }
 }

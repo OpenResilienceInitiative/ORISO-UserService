@@ -44,6 +44,11 @@ import org.springframework.security.access.AccessDeniedException;
 class AskerUserAdminFacadeTest {
 
   @InjectMocks private AskerUserAdminFacade askerUserAdminFacade;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.livechat.LiveChatAccountClaimService
+      liveChatClaims;
+
   @Mock private IdentityDeactivator identityDeactivator;
   @Mock private IdentityReactivationSagaStore identityReactivationSagaStore;
   @Mock private IdentityReactivationRepairService identityReactivationRepairService;
@@ -81,6 +86,19 @@ class AskerUserAdminFacadeTest {
 
     assertThrows(
         ConflictException.class, () -> askerUserAdminFacade.markAskerForDeletion("user id"));
+  }
+
+  @Test
+  void adminDeletionDoesNotDisableIdentityIfConversionClaimRefuses() {
+    var user = new User();
+    when(userService.getUser(any())).thenReturn(Optional.of(user));
+    org.mockito.Mockito.doThrow(new ConflictException("pending"))
+        .when(liveChatClaims)
+        .claimIntentionalDeletion("user id");
+    assertThrows(
+        ConflictException.class, () -> askerUserAdminFacade.markAskerForDeletion("user id"));
+    org.mockito.Mockito.verifyNoInteractions(identityDeactivator);
+    org.mockito.Mockito.verify(userService, org.mockito.Mockito.never()).saveUser(any());
   }
 
   @Test

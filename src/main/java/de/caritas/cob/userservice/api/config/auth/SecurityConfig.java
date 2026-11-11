@@ -399,6 +399,11 @@ public class SecurityConfig {
                     USER_DEFAULT,
                     CONSULTANT_DEFAULT,
                     RESTRICTED_AGENCY_ADMIN)
+                // Only the authenticated advice seeker may promote their own Live Chat account.
+                .requestMatchers(
+                    "/users/live-chat-account/conversion",
+                    "/service/users/live-chat-account/conversion")
+                .access(this::isUnprivilegedLiveChatUser)
                 // The caller's own direct-link temporary account (#1476).
                 .requestMatchers(
                     "/users/temporary-account",
@@ -507,11 +512,18 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/users/chat/room/{chatId:[0-9]+}")
                 .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
                 .requestMatchers(
+                    HttpMethod.GET,
+                    "/users/chat-series/{seriesId:[0-9]+}/occurrences",
+                    "/service/users/chat-series/{seriesId:[0-9]+}/occurrences")
+                .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
+                .requestMatchers(
                     "/users/sessions/open",
                     "/users/sessions/consultants/new",
                     "/users/sessions/new/{sessionId:[0-9]+}",
                     "/users/consultants/absences",
                     "/users/sessions/consultants",
+                    "/users/sessions/consultants/deleted-askers",
+                    "/service/users/sessions/consultants/deleted-askers",
                     "/users/sessions/teams",
                     "/conversations/askers/anonymous/{sessionId:[0-9]+}/accept",
                     "/service/conversations/askers/anonymous/{sessionId:[0-9]+}/accept",
@@ -564,7 +576,10 @@ public class SecurityConfig {
                 .requestMatchers("/users/messages/key")
                 .hasAuthority(TECHNICAL_DEFAULT)
                 .requestMatchers(
-                    "/users/chat/new", "/users/chat/v2/new", "/users/chat/internal-subset")
+                    "/users/chat/new",
+                    "/users/chat/v2/new",
+                    "/users/chat/internal-subset",
+                    "/users/chat/internal-subset/recipients")
                 .hasAuthority(CREATE_NEW_CHAT)
                 .requestMatchers("/users/chat/{chatId:[0-9]+}/start")
                 .hasAuthority(START_CHAT)
@@ -618,6 +633,13 @@ public class SecurityConfig {
                     HttpMethod.PUT,
                     "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/agencies")
                 .hasAnyAuthority(CONSULTANT_UPDATE, TECHNICAL_DEFAULT)
+                // Moving a counsellor to another Träger crosses the boundary between two Träger:
+                // platform admin only (tenant 0 and both admin roles), not even a Träger admin.
+                .requestMatchers(
+                    HttpMethod.PUT,
+                    "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/tenant",
+                    "/service/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/tenant")
+                .access(this::isPlatformAdmin)
                 // Repairing a missing chat identity changes the consultant, so it follows the
                 // consultant-update authority rather than the /useradmin/** catch-all, which only
                 // a user admin passes.
@@ -720,6 +742,18 @@ public class SecurityConfig {
                 .access(this::canReportDeletion)
                 .requestMatchers("/users/deletion-audit-logs", "/service/users/deletion-audit-logs")
                 .access(this::canAccessPlatformAuditLogs)
+                // 1:1 appointments (ORISO-Frontend#1960): who may do what is decided per session in
+                // SessionAppointmentService.
+                .requestMatchers(
+                    "/users/sessions/{sessionId:[0-9]+}/appointments",
+                    "/service/users/sessions/{sessionId:[0-9]+}/appointments",
+                    "/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}",
+                    "/service/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}",
+                    "/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}/cancel",
+                    "/service/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}/cancel",
+                    "/users/appointments/upcoming",
+                    "/service/users/appointments/upcoming")
+                .hasAnyAuthority(USER_DEFAULT, ANONYMOUS_DEFAULT, CONSULTANT_DEFAULT)
                 .requestMatchers(
                     "/users/consultants/sessions/{sessionId:[0-9]+}",
                     "/users/consultants/sessions/{sessionId:[0-9]+}/enquiry/opened",
@@ -871,6 +905,29 @@ public class SecurityConfig {
     return new AuthorizationDecision(
         KeycloakRoles.of(jwtAuthentication.getToken().getClaims())
             .contains(UserRole.AGENCY_ADMIN.getValue()));
+  }
+
+  private AuthorizationDecision isUnprivilegedLiveChatUser(
+      Supplier<? extends Authentication> supplier, RequestAuthorizationContext context) {
+    var auth = supplier.get();
+    if (auth == null || !auth.isAuthenticated()) return new AuthorizationDecision(false);
+    var authorities =
+        auth.getAuthorities().stream()
+            .map(GrantedAuthority::getAuthority)
+            .collect(Collectors.toSet());
+    return new AuthorizationDecision(
+        authorities.contains(USER_DEFAULT)
+            && java.util.Collections.disjoint(
+                authorities,
+                Set.of(
+                    CONSULTANT_DEFAULT,
+                    USER_ADMIN,
+                    SINGLE_TENANT_ADMIN,
+                    TENANT_ADMIN,
+                    RESTRICTED_AGENCY_ADMIN,
+                    GLOBAL_SUPPORT_ADMIN,
+                    TECHNICAL_DEFAULT,
+                    NOTIFICATIONS_TECHNICAL)));
   }
 
   private AuthorizationDecision isPlatformAdmin(

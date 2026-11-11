@@ -2958,6 +2958,64 @@ public class KeycloakServiceTest {
   }
 
   @Test
+  void updateTenant_Should_ChangeOnlyTheTenantAttribute() {
+    var resource = mock(UserResource.class);
+    var representation = new UserRepresentation();
+    representation.setEnabled(false);
+    representation.setAttributes(
+        new java.util.HashMap<>(
+            java.util.Map.of(
+                "userId", java.util.List.of("account-id"), "tenantId", java.util.List.of("7"))));
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    when(usersResource.get("account-id")).thenReturn(resource);
+    when(resource.toRepresentation()).thenReturn(representation);
+
+    keycloakService.updateTenant("account-id", 8L);
+
+    var updated = org.mockito.ArgumentCaptor.forClass(UserRepresentation.class);
+    verify(resource).update(updated.capture());
+    org.assertj.core.api.Assertions.assertThat(updated.getValue().getAttributes())
+        .containsEntry("tenantId", java.util.List.of("8"))
+        .containsEntry("userId", java.util.List.of("account-id"));
+    // A deactivated account must not come back to life through a move.
+    org.assertj.core.api.Assertions.assertThat(updated.getValue().isEnabled()).isFalse();
+  }
+
+  @Test
+  void updateTenant_Should_RefreshUnauthorizedSessionAndRetryOnce() {
+    var resource = mock(UserResource.class);
+    var representation = new UserRepresentation();
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    when(usersResource.get("account-id")).thenReturn(resource);
+    when(resource.toRepresentation())
+        .thenThrow(new jakarta.ws.rs.NotAuthorizedException("expired"))
+        .thenReturn(representation);
+
+    keycloakService.updateTenant("account-id", 8L);
+
+    verify(keycloakClient).refreshAdminSession();
+    verify(resource).update(representation);
+  }
+
+  @Test
+  void updateTenant_Should_RejectAMissingTenant() {
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> keycloakService.updateTenant("account-id", null))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void endSessions_Should_LogTheAccountOutEverywhere() {
+    var resource = mock(UserResource.class);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    when(usersResource.get("account-id")).thenReturn(resource);
+
+    keycloakService.endSessions("account-id");
+
+    verify(resource).logout();
+  }
+
+  @Test
   public void activateUser_Should_enableTheLoginAndTouchNothingElse() {
     var stored = givenStoredUserWithAttributes("email");
     stored.setEnabled(false);

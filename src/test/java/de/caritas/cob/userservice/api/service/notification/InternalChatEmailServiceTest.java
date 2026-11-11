@@ -47,6 +47,7 @@ class InternalChatEmailServiceTest {
   private final ApplicationSettingsService settings = mock(ApplicationSettingsService.class);
   private final TenantSystemEmailClient mailClient = mock(TenantSystemEmailClient.class);
   private final AuthenticatedUser caller = mock(AuthenticatedUser.class);
+  private final List<Consultant> registered = new ArrayList<>();
   private final Map<Long, ReplyEmailDelivery> stored = new LinkedHashMap<>();
   private final java.util.concurrent.atomic.AtomicBoolean failNextRecipientInsert =
       new java.util.concurrent.atomic.AtomicBoolean();
@@ -100,9 +101,7 @@ class InternalChatEmailServiceTest {
         .thenAnswer(i -> Optional.ofNullable(stored.get(i.getArgument(0))));
     when(repository.findByIdForUpdate(anyLong()))
         .thenAnswer(i -> Optional.ofNullable(stored.get(i.getArgument(0))));
-    when(repository
-            .findTop100ByStatusAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAscCreatedAtAscIdAsc(
-                any(), any()))
+    when(repository.findDueTenantIds(any(), any()))
         .thenAnswer(
             i ->
                 stored.values().stream()
@@ -110,6 +109,20 @@ class InternalChatEmailServiceTest {
                         row ->
                             row.getStatus() == i.getArgument(0)
                                 && !row.getNextAttemptAt().isAfter(i.getArgument(1)))
+                    .map(ReplyEmailDelivery::getTenantId)
+                    .distinct()
+                    .toList());
+    when(repository.findDueIds(any(), anyLong(), any(), any()))
+        .thenAnswer(
+            i ->
+                stored.values().stream()
+                    .filter(
+                        row ->
+                            row.getStatus() == i.getArgument(0)
+                                && row.getTenantId().equals(i.getArgument(1))
+                                && !row.getNextAttemptAt().isAfter(i.getArgument(2)))
+                    .map(ReplyEmailDelivery::getId)
+                    .limit(((org.springframework.data.domain.Limit) i.getArgument(3)).max())
                     .toList());
     when(identities.findEnabledById(anyString())).thenReturn(Optional.of(true));
     actor = consultant("actor", 7L);
@@ -133,6 +146,15 @@ class InternalChatEmailServiceTest {
     when(sessions.findByMatrixRoomId(ROOM)).thenReturn(Optional.of(session));
     when(sessions.findById(42L)).thenReturn(Optional.of(session));
     when(participants.findByChatId(42L)).thenAnswer(i -> List.copyOf(membership));
+    when(consultants.findByIdInAndDeleteDateIsNull(any()))
+        .thenAnswer(
+            i -> {
+              java.util.Collection<String> requested = i.getArgument(0);
+              // Mirrors the derived query: only requested ids of accounts that are not deleted.
+              return registered.stream()
+                  .filter(c -> requested.contains(c.getId()) && c.getDeleteDate() == null)
+                  .toList();
+            });
     addConsultant(actor);
     addConsultant(recipient);
     when(caller.isConsultant()).thenReturn(true);
@@ -294,6 +316,52 @@ class InternalChatEmailServiceTest {
         .contains("mail=interne-nachricht")
         .doesNotContain("PRIVATE_");
     assertThat(received.getFirst().email().text()).contains("/42").doesNotContain("PRIVATE_");
+  }
+
+  @Test
+  void fanOutLoadsParticipantsInOneQueryAndKeepsPerRecipientChecks() {
+    var second = consultant("second", 7L);
+    var optedOut = consultant("opted-out", 7L);
+    optedOut.setNotificationsEnabled(false);
+    addConsultant(second);
+    addConsultant(optedOut);
+    membership.add(new GroupChatParticipant(42L, "second"));
+    membership.add(new GroupChatParticipant(42L, "opted-out"));
+    // A soft-deleted counsellor still listed as participant and still in the Matrix room.
+    var deleted = consultant("deleted-account", 7L);
+    deleted.setDeleteDate(LocalDateTime.now().minusDays(1));
+    registered.add(deleted);
+    membership.add(new GroupChatParticipant(42L, "deleted-account"));
+    when(matrix.getRoomMembers(ROOM))
+        .thenReturn(
+            Optional.of(
+                List.of(
+                    actor.getMatrixUserId(),
+                    recipient.getMatrixUserId(),
+                    second.getMatrixUserId(),
+                    optedOut.getMatrixUserId(),
+                    deleted.getMatrixUserId())));
+
+    service.onMessageIntent(ROOM, EVENT, caller);
+    long intent = writer.pendingIds().getFirst();
+    clearInvocations(consultants);
+    service.resolveIntent(intent);
+
+    verify(consultants, times(1)).findByIdInAndDeleteDateIsNull(any());
+    verify(consultants, never()).findByIdAndDeleteDateIsNull("recipient");
+    verify(consultants, never()).findByIdAndDeleteDateIsNull("second");
+    verify(consultants, never()).findByIdAndDeleteDateIsNull("opted-out");
+    verify(consultants, never()).findByIdAndDeleteDateIsNull("deleted-account");
+    // Fan-out reserves claims only for eligible recipients, before any dispatch-time recheck.
+    assertThat(stored.values())
+        .filteredOn(row -> row.getRecipientKind() == ReplyEmailDelivery.RecipientKind.INTERNAL)
+        .extracting(ReplyEmailDelivery::getRecipientUserId)
+        .containsExactlyInAnyOrder("recipient", "second");
+
+    drain();
+    assertThat(received)
+        .extracting(Delivered::recipient)
+        .containsExactlyInAnyOrder("recipient@example.org", "second@example.org");
   }
 
   @org.junit.jupiter.params.ParameterizedTest
@@ -673,6 +741,7 @@ class InternalChatEmailServiceTest {
         new de.caritas.cob.userservice.api.adapters.web.controller.EventNotificationController(
             mock(EventNotificationService.class),
             mock(TeamDiscussionNotificationService.class),
+            mock(MessageMentionNotificationService.class),
             mock(FeedbackMessageEmailService.class),
             service,
             caller,
@@ -880,6 +949,7 @@ class InternalChatEmailServiceTest {
   }
 
   private void addConsultant(Consultant consultant) {
+    registered.add(consultant);
     when(consultants.findByIdAndDeleteDateIsNull(consultant.getId()))
         .thenReturn(Optional.of(consultant));
     when(consultants.findByMatrixUserIdAndDeleteDateIsNull(consultant.getMatrixUserId()))

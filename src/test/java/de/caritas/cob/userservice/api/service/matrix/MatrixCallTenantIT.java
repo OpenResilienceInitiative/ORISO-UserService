@@ -95,6 +95,10 @@ class MatrixCallTenantIT {
   @Autowired private EventNotificationService notificationService;
   @Autowired private PlatformTransactionManager transactionManager;
   @MockitoBean private MatrixSynapseService matrix;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService observations;
+
   @MockitoBean private MatrixFeedUpdateSignalService feedUpdateSignals;
   @MockitoBean private IdentityTombstoneService tombstones;
 
@@ -320,7 +324,13 @@ class MatrixCallTenantIT {
       for (int reload = 0; reload < 2; reload++) {
         var mvc =
             MockMvcBuilders.standaloneSetup(
-                    new MatrixCallStateController(callStates, callGuests, actor))
+                    new MatrixCallStateController(
+                        callStates,
+                        callGuests,
+                        org.mockito.Mockito.mock(
+                            de.caritas.cob.userservice.api.service.matrix
+                                .MatrixCallObservationService.class),
+                        actor))
                 .build();
         mvc.perform(
                 get("/matrix/calls/state")
@@ -340,7 +350,14 @@ class MatrixCallTenantIT {
       TenantContext.setCurrentTenant(8L);
       actor.setUserId("tenant-outsider");
       actor.setTenantId(8L);
-      MockMvcBuilders.standaloneSetup(new MatrixCallStateController(callStates, callGuests, actor))
+      MockMvcBuilders.standaloneSetup(
+              new MatrixCallStateController(
+                  callStates,
+                  callGuests,
+                  org.mockito.Mockito.mock(
+                      de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService
+                          .class),
+                  actor))
           .build()
           .perform(
               get("/matrix/calls/state")

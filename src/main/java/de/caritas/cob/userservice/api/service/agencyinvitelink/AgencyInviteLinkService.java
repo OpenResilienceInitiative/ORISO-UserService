@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
@@ -31,11 +32,14 @@ import java.util.List;
 import java.util.Objects;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
@@ -46,6 +50,7 @@ import org.springframework.web.context.request.ServletRequestAttributes;
  */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class AgencyInviteLinkService {
 
   private static final int TOKEN_BYTES = 24;
@@ -65,6 +70,8 @@ public class AgencyInviteLinkService {
           .TemporaryAccountSettingsService
       temporaryAccountSettings;
 
+  private final @NonNull DirectInvitePolicy directInvitePolicy;
+
   /** Call share links (#1487) in the public context; not {@code @NonNull} for older test wiring. */
   private final CallShareLinkService callShareLinkService;
 
@@ -75,6 +82,7 @@ public class AgencyInviteLinkService {
     }
     applyDefaults(cmd);
     validateEnums(cmd);
+    requireLiveChatLinkWriter(cmd.getLinkKind(), cmd.getChatType());
     if (InviteLinkKind.CALL.name().equals(cmd.getLinkKind())) {
       // Only a counsellor in a running call creates its share link (#1487).
       throw new BadRequestException("Call share links are created from the call");
@@ -85,9 +93,10 @@ public class AgencyInviteLinkService {
       throw new BadRequestException("consultantId is required when linkKind = COUNSELLOR");
     }
 
-    Long callerTenantId = resolveCallerTenantId();
-    if (callerTenantId == null) {
-      throw new ForbiddenException("No tenant context — caller must be tenant-scoped");
+    Long callerTenantId = requireCallerTenantId();
+    if (isExternalLiveChat(cmd.getLinkKind(), cmd.getChatType())
+        && adminScope.current() instanceof AdminScope.Platform) {
+      requireExistingLiveChatManagementTenant(callerTenantId);
     }
 
     Integer consultingTypeId = null;
@@ -103,7 +112,13 @@ public class AgencyInviteLinkService {
     }
 
     if (cmd.getTopicId() != null) {
-      TopicDTO topic = topicService.getTopicById(cmd.getTopicId());
+      TopicDTO topic =
+          isExternalLiveChat(cmd.getLinkKind(), cmd.getChatType())
+              ? topicService.getActiveTopicsForTenant(callerTenantId).stream()
+                  .filter(candidate -> Objects.equals(candidate.getId(), cmd.getTopicId()))
+                  .findFirst()
+                  .orElse(null)
+              : topicService.getTopicById(cmd.getTopicId());
       if (topic == null) {
         throw new NotFoundException("Topic %s not found", cmd.getTopicId());
       }
@@ -170,6 +185,11 @@ public class AgencyInviteLinkService {
     }
 
     var reach = adminScope.current();
+    if (reach instanceof AdminScope.Platform
+        && InviteLinkKind.EXTERNAL_INBOUND.name().equals(linkKind)
+        && (chatType == null || InviteLinkChatType.LIVE_CHAT.name().equals(chatType))) {
+      requireExistingLiveChatManagementTenant(callerTenantId);
+    }
     Page<AgencyInviteLink> result;
     if (reach instanceof AdminScope.Agencies agencies) {
       if (agencies.ids().isEmpty()) {
@@ -206,7 +226,7 @@ public class AgencyInviteLinkService {
             .filter(l -> Objects.equals(l.getTenantId(), callerTenantId))
             .filter(l -> !InviteLinkKind.CALL.name().equals(l.getLinkKind()))
             .orElseThrow(() -> new NotFoundException("Invite link %s not found", linkId));
-    adminScope.assertMay(Target.placedIn(link.getTenantId(), link.getAgencyId()));
+    assertMayWriteLink(link);
 
     if (InviteLinkStatus.DISABLED.name().equals(link.getStatus())) {
       return link;
@@ -217,6 +237,99 @@ public class AgencyInviteLinkService {
     link.setStatus(InviteLinkStatus.DISABLED.name());
     link.setUpdateDate(LocalDateTime.now());
     return repository.save(link);
+  }
+
+  /**
+   * Switch a disabled external link back on. Only {@code EXTERNAL_INBOUND} links of the caller's
+   * Träger exist for this route; any other link reads as not found. A link whose {@code expiresAt}
+   * has passed stays dead (the list and redeem routes derive EXPIRED from it), so it is refused
+   * even while its stored status still says ACTIVE or DISABLED.
+   */
+  @Transactional
+  public AgencyInviteLink reactivate(Long linkId) {
+    AgencyInviteLink link = findExternalLinkOfCallerTenant(linkId);
+    assertMayWriteLink(link);
+
+    if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now())) {
+      throw new ConflictException("An expired invite link cannot be reactivated");
+    }
+    if (InviteLinkStatus.ACTIVE.name().equals(link.getStatus())) {
+      return link;
+    }
+    if (!InviteLinkStatus.DISABLED.name().equals(link.getStatus())) {
+      throw new ConflictException("Only a deactivated invite link can be reactivated");
+    }
+    link.setStatus(InviteLinkStatus.ACTIVE.name());
+    link.setUpdateDate(LocalDateTime.now());
+    return repository.save(link);
+  }
+
+  /**
+   * Hard-delete an external link of any status. Nothing references such a row by foreign key, and
+   * no code reads it again for a conversation that started from it (redeem of a live-chat link
+   * creates its own session and stores no link id).
+   */
+  @Transactional
+  public void delete(Long linkId) {
+    AgencyInviteLink link = findExternalLinkOfCallerTenant(linkId);
+    assertMayWriteLink(link);
+    repository.delete(link);
+  }
+
+  private void assertMayWriteLink(AgencyInviteLink link) {
+    requireLiveChatLinkWriter(link.getLinkKind(), link.getChatType());
+    adminScope.assertMay(Target.placedIn(link.getTenantId(), link.getAgencyId()));
+  }
+
+  public List<TopicDTO> getLiveChatLinkTopics() {
+    requireLiveChatLinkWriter(
+        InviteLinkKind.EXTERNAL_INBOUND.name(), InviteLinkChatType.LIVE_CHAT.name());
+    Long tenantId = requireCallerTenantId();
+    requireExistingLiveChatManagementTenant(tenantId);
+    return topicService.getActiveTopicsForTenant(tenantId);
+  }
+
+  private void requireExistingLiveChatManagementTenant(Long tenantId) {
+    try {
+      var tenant = tenantService.getRestrictedTenantDataFresh(tenantId);
+      if (tenant == null || !Objects.equals(tenantId, tenant.getId())) {
+        throw new NotFoundException("Tenant %s not found", tenantId);
+      }
+    } catch (RestClientException unavailable) {
+      Integer status =
+          unavailable instanceof RestClientResponseException response
+              ? response.getStatusCode().value()
+              : null;
+      // The exception message and stack trace may include the provider's response body.
+      log.warn(
+          "Could not verify live-chat link tenant (provider error {}, HTTP status {})",
+          unavailable.getClass().getSimpleName(),
+          status);
+      if (Objects.equals(status, 404)) {
+        throw new NotFoundException("Tenant %s not found", tenantId);
+      }
+      throw new ServiceUnavailableException("Selected tenant could not be verified");
+    }
+  }
+
+  public static boolean isExternalLiveChat(String kind, String chatType) {
+    return InviteLinkKind.EXTERNAL_INBOUND.name().equals(kind)
+        && InviteLinkChatType.LIVE_CHAT.name().equals(chatType);
+  }
+
+  private void requireLiveChatLinkWriter(String kind, String chatType) {
+    if (isExternalLiveChat(kind, chatType) && !authenticatedUser.isPlatformAdmin()) {
+      throw new ForbiddenException("Only platform admins can manage external live-chat links");
+    }
+  }
+
+  private AgencyInviteLink findExternalLinkOfCallerTenant(Long linkId) {
+    Long callerTenantId = requireCallerTenantId();
+    return repository
+        .findById(linkId)
+        .filter(l -> Objects.equals(l.getTenantId(), callerTenantId))
+        .filter(l -> InviteLinkKind.EXTERNAL_INBOUND.name().equals(l.getLinkKind()))
+        .orElseThrow(() -> new NotFoundException("Invite link %s not found", linkId));
   }
 
   /**
@@ -247,17 +360,39 @@ public class AgencyInviteLinkService {
     return contextOf(link);
   }
 
-  private InvitationContext contextOf(AgencyInviteLink link) {
-    if (InviteLinkStatus.DISABLED.name().equals(link.getStatus())
-        && InviteLinkChatType.isDirectMedium(link.getChatType())) {
+  /**
+   * An admin who withdrew "Direkteinladung erlauben" stops the links that already exist, on every
+   * route a person uses to open one (context and redeem): 410, so the page says "no longer active".
+   */
+  private void requireDirectInviteAllowed(AgencyInviteLink link) {
+    if (InviteLinkChatType.isDirectMedium(link.getChatType())
+        && !directInvitePolicy.allows(
+            link.getTenantId(),
+            link.getAgencyId(),
+            InviteLinkChatType.valueOf(link.getChatType()))) {
       throw new DirectLinkInactiveException();
     }
+  }
+
+  private static void rejectPausedLink(AgencyInviteLink link) {
+    if (!InviteLinkStatus.DISABLED.name().equals(link.getStatus())) return;
+    if (InviteLinkChatType.isDirectMedium(link.getChatType())) {
+      throw new DirectLinkInactiveException();
+    }
+    if (!InviteLinkKind.CALL.name().equals(link.getLinkKind())) {
+      throw new InviteLinkPausedException();
+    }
+  }
+
+  private InvitationContext contextOf(AgencyInviteLink link) {
+    rejectPausedLink(link);
     if (!InviteLinkStatus.ACTIVE.name().equals(link.getStatus())) {
       throw new BadRequestException("Invite link is not active");
     }
     if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now())) {
       throw new BadRequestException("Invite link expired");
     }
+    requireDirectInviteAllowed(link);
     TenantData previousTenant = TenantContext.getCurrentTenantData();
     try {
       TenantContext.setCurrentTenantData(new TenantData(link.getTenantId(), null));
@@ -300,16 +435,32 @@ public class AgencyInviteLinkService {
    * about the call or its conversation is exposed.
    */
   private CallShareContext callShareContext(AgencyInviteLink link) {
-    callShareLinkService.requireUsable(link);
-    return new CallShareContext(
-        link.getTenantId(),
-        link.getAgencyId(),
-        link.getConsultingTypeId(),
-        link.getTopicId(),
-        link.getChatType(),
-        link.isTemporaryAccount() && callShareLinkService.temporaryAccountAllowed(link),
-        (link.isKnock() ? InviteLinkAdmission.KNOCK : InviteLinkAdmission.DIRECT).name(),
-        InviteLinkKind.CALL.name());
+    TenantData previousTenant = TenantContext.getCurrentTenantData();
+    try {
+      TenantContext.setCurrentTenantData(new TenantData(link.getTenantId(), null));
+      callShareLinkService.requireUsable(link);
+      callShareLinkService.requireDirectInviteAllowed(link);
+      boolean temporary =
+          link.isTemporaryAccount() && callShareLinkService.temporaryAccountAllowed(link);
+      var settings = temporary ? temporaryAccountSettings.current() : null;
+      return new CallShareContext(
+          link.getTenantId(),
+          link.getAgencyId(),
+          link.getConsultingTypeId(),
+          link.getTopicId(),
+          link.getChatType(),
+          temporary,
+          (link.isKnock() ? InviteLinkAdmission.KNOCK : InviteLinkAdmission.DIRECT).name(),
+          InviteLinkKind.CALL.name(),
+          settings == null ? null : settings.hidePasswordField(),
+          settings == null ? null : settings.messageRetention().name());
+    } finally {
+      if (previousTenant == null) {
+        TenantContext.clear();
+      } else {
+        TenantContext.setCurrentTenantData(previousTenant);
+      }
+    }
   }
 
   /** Public context of a call share link (#1487). */
@@ -321,7 +472,9 @@ public class AgencyInviteLinkService {
       String chatType,
       boolean temporaryAccount,
       String admission,
-      String linkKind) {}
+      String linkKind,
+      @JsonInclude(JsonInclude.Include.NON_NULL) Boolean hidePasswordField,
+      @JsonInclude(JsonInclude.Include.NON_NULL) String messageRetention) {}
 
   /**
    * Public context deliberately excludes credentials and invitation administration data, including
@@ -349,6 +502,13 @@ public class AgencyInviteLinkService {
 
   @Transactional
   RedeemContext redeem(String token) {
+    // The remote policy reads must not run while the row lock below is held. Read the token
+    // unlocked first; status, expiry and the other checks still decide on the locked row.
+    repository
+        .findByToken(token)
+        .filter(unlocked -> InviteLinkStatus.ACTIVE.name().equals(unlocked.getStatus()))
+        .filter(unlocked -> !InviteLinkKind.CALL.name().equals(unlocked.getLinkKind()))
+        .ifPresent(this::requireDirectInviteAllowed);
     AgencyInviteLink link =
         repository
             .findByTokenAndStatus(token, InviteLinkStatus.ACTIVE.name())
@@ -362,10 +522,7 @@ public class AgencyInviteLinkService {
       if (InviteLinkStatus.USED.name().equals(existing.getStatus())) {
         throw new BadRequestException("Invite link already used");
       }
-      if (InviteLinkStatus.DISABLED.name().equals(existing.getStatus())
-          && InviteLinkChatType.isDirectMedium(existing.getChatType())) {
-        throw new DirectLinkInactiveException();
-      }
+      rejectPausedLink(existing);
       throw new BadRequestException("Invite link is not active");
     }
 
@@ -503,6 +660,14 @@ public class AgencyInviteLinkService {
     return link;
   }
 
+  private Long requireCallerTenantId() {
+    Long callerTenantId = resolveCallerTenantId();
+    if (callerTenantId == null) {
+      throw new ForbiddenException("No tenant context — caller must be tenant-scoped");
+    }
+    return callerTenantId;
+  }
+
   /** The platform picks the Träger with the X-Tenant-Id header; everybody else has their own. */
   private Long resolveCallerTenantId() {
     var reach = adminScope.current();
@@ -517,7 +682,8 @@ public class AgencyInviteLinkService {
       HttpServletRequest request = attrs.getRequest();
       String header = request.getHeader("X-Tenant-Id");
       if (header == null || header.isBlank()) return null;
-      return Long.parseLong(header.trim());
+      long tenantId = Long.parseLong(header.trim());
+      return tenantId > 0 ? tenantId : null;
     } catch (Exception ex) {
       return null;
     }

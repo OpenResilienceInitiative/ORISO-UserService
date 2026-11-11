@@ -4,6 +4,7 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.AGENCY_DTO
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.AGENCY_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.AGENCY_ID_LIST;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
@@ -82,6 +83,47 @@ class AgencyServiceTest {
   void getAgenciesFromAgencyService_Should_returnEmptyList_When_nullPassed(List<Long> emptyIds) {
     List<AgencyDTO> result = this.agencyService.getAgencies(emptyIds);
     assertThat(result).isEmpty();
+  }
+
+  @Test
+  void getPublicAgenciesForTenant_Should_sendCsrfAndTenantHeadersButNoBearerToken() {
+    var csrfHeaders = new HttpHeaders();
+    csrfHeaders.add("Cookie", "csrfCookie=token");
+    csrfHeaders.add("csrfHeader", "token");
+    when(securityHeaderSupplier.getCsrfHttpHeaders()).thenReturn(csrfHeaders);
+    when(agencyControllerApi.getAgenciesByIds(List.of(1L)))
+        .thenReturn(
+            List.of(
+                new AgencyResponseDTO().id(1L).tenantId(7L),
+                new AgencyResponseDTO().id(2L).tenantId(8L)));
+
+    var result = agencyService.getPublicAgenciesForTenant(7L, List.of(1L));
+
+    assertThat(result).extracting(AgencyDTO::getId).containsExactly(1L);
+    verify(apiClient).addDefaultHeader("Cookie", "csrfCookie=token");
+    verify(apiClient).addDefaultHeader("csrfHeader", "token");
+    verify(apiClient).addDefaultHeader("tenantId", "7");
+    verify(apiClient, never()).addDefaultHeader(eq(HttpHeaders.AUTHORIZATION), any());
+    verify(securityHeaderSupplier, never()).getOptionalKeycloakAndCsrfHttpHeaders();
+  }
+
+  @Test
+  void getPublicAgenciesForTenant_Should_returnNoCentres_When_agencyServiceReturns404() {
+    when(securityHeaderSupplier.getCsrfHttpHeaders()).thenReturn(new HttpHeaders());
+    when(agencyControllerApi.getAgenciesByIds(List.of(1L)))
+        .thenThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND));
+
+    assertThat(agencyService.getPublicAgenciesForTenant(7L, List.of(1L))).isEmpty();
+  }
+
+  @Test
+  void getPublicAgenciesForTenant_Should_propagateOtherClientErrors() {
+    when(securityHeaderSupplier.getCsrfHttpHeaders()).thenReturn(new HttpHeaders());
+    when(agencyControllerApi.getAgenciesByIds(List.of(1L)))
+        .thenThrow(new HttpClientErrorException(HttpStatus.FORBIDDEN));
+
+    assertThatThrownBy(() -> agencyService.getPublicAgenciesForTenant(7L, List.of(1L)))
+        .isInstanceOf(HttpClientErrorException.class);
   }
 
   @Test

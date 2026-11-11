@@ -27,6 +27,10 @@ import org.springframework.stereotype.Service;
 @Slf4j
 public class FinishAnonymousConversationFacade {
 
+  private final @NonNull de.caritas.cob.userservice.api.service.livechat.LiveChatAccountClaimService
+      claims;
+  private final @NonNull de.caritas.cob.userservice.api.service.livechat.LiveChatFinishExecutor
+      finishExecutor;
   private final @NonNull SessionService sessionService;
   private final @NonNull ActionsRegistry actionsRegistry;
   private final @NonNull AuthenticatedUser authenticatedUser;
@@ -50,16 +54,29 @@ public class FinishAnonymousConversationFacade {
     // Notify the room first while user/consultant Matrix credentials are still valid.
     postUserLeftChatMessage(session);
 
-    this.actionsRegistry
-        .buildContainerForType(User.class)
-        .addActionToExecute(DeactivateKeycloakUserActionCommand.class)
-        .executeActions(session.getUser());
+    if (session.getRegistrationType() == ANONYMOUS && !session.getUser().isTemporaryAccount()) {
+      switch (claims.claimNormalFinish(session.getUser().getUserId())) {
+        case CONVERTIBLE_FINISH ->
+            finishExecutor.disableAndMarkFinished(session.getUser().getUserId());
+        case LEGACY_DISABLE -> deactivateIdentity(session.getUser());
+        case KEEP_IDENTITY -> {}
+      }
+    } else if (claims.claimIdentityDeactivation(session.getUser().getUserId())) {
+      deactivateIdentity(session.getUser());
+    }
 
     this.actionsRegistry
         .buildContainerForType(Session.class)
         .addActionToExecute(DeactivateSessionActionCommand.class)
         .addActionToExecute(SendFinishedAnonymousConversationEventActionCommand.class)
         .executeActions(session);
+  }
+
+  private void deactivateIdentity(User user) {
+    this.actionsRegistry
+        .buildContainerForType(User.class)
+        .addActionToExecute(DeactivateKeycloakUserActionCommand.class)
+        .executeActions(user);
   }
 
   private void postUserLeftChatMessage(Session session) {

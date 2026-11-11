@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.admin.service.admin.search;
 
+import de.caritas.cob.userservice.api.admin.service.search.AccountSearch;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NoContentException;
 import de.caritas.cob.userservice.api.model.Admin;
@@ -26,6 +27,7 @@ public class RetrieveAdminService {
 
   public static final String ADMIN_WITH_ID_S_NOT_FOUND = "Admin with id %s not found";
   private final @NonNull AdminRepository adminRepository;
+  private final @NonNull AccountSearch accountSearch;
   private final @NonNull AdminAgencyRepository adminAgencyRepository;
 
   public Admin findAdmin(final String adminId, Admin.AdminType adminType) {
@@ -48,7 +50,7 @@ public class RetrieveAdminService {
 
   public Page<AdminBase> findAllByInfix(
       String infix, Admin.AdminType adminType, PageRequest pageRequest) {
-    return adminRepository.findAllByInfix(infix, adminType, pageRequest);
+    return accountSearch.admins(infix, adminType, null, null, pageRequest);
   }
 
   /**
@@ -76,7 +78,7 @@ public class RetrieveAdminService {
     if (tenantId == null) {
       return Page.empty(pageRequest);
     }
-    return adminRepository.findAllByInfixAndTenantId(infix, adminType, tenantId, pageRequest);
+    return accountSearch.admins(infix, adminType, tenantId, null, pageRequest);
   }
 
   /**
@@ -90,15 +92,7 @@ public class RetrieveAdminService {
       Long tenantId,
       Collection<Long> agencyIds,
       PageRequest pageRequest) {
-    if (agencyIds != null) {
-      return agencyIds.isEmpty()
-          ? Page.empty(pageRequest)
-          : adminRepository.findAllByInfixAndTenantIdAndAgencyIds(
-              infix, adminType, tenantId, agencyIds, pageRequest);
-    }
-    return tenantId == null
-        ? adminRepository.findAllByInfix(infix, adminType, pageRequest)
-        : adminRepository.findAllByInfixAndTenantId(infix, adminType, tenantId, pageRequest);
+    return accountSearch.admins(infix, adminType, tenantId, agencyIds, pageRequest);
   }
 
   public List<Admin> findAllById(Set<String> adminIds) {

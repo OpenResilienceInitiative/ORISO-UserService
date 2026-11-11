@@ -10,6 +10,8 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 /** Publishes privacy-safe timeline events for self-help group occurrences. */
 @Slf4j
@@ -43,6 +45,8 @@ public class GroupChatLifecycleNotificationService {
         recipientUserIds);
   }
 
+  /** The caller retains its suspended series lock while each recipient publishes independently. */
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
   public void createReminderNotifications(
       Long seriesId,
       Integer occurrenceIndex,
@@ -114,6 +118,11 @@ public class GroupChatLifecycleNotificationService {
       String deduplicationKey,
       String recipientUserId) {
     try {
+      if (event == LifecycleEvent.REMINDER) {
+        eventNotificationService.createGroupReminderOnce(
+            deduplicationKey, recipientUserId, event.title, event.text, params, seriesId);
+        return;
+      }
       eventNotificationService.createEventOnce(
           deduplicationKey,
           recipientUserId,
@@ -126,8 +135,7 @@ public class GroupChatLifecycleNotificationService {
           seriesId,
           null);
     } catch (RuntimeException ex) {
-      // Each call crosses the EventNotificationService transaction boundary independently, so one
-      // failed recipient cannot roll back notifications already written for other recipients.
+      // Each recipient's insert commits independently, so an already written event stays visible.
       log.warn(
           "Could not persist {} notification for recipient {} (series {})",
           event.eventType,

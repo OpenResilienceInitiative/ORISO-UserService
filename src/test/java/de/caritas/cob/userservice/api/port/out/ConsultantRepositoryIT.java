@@ -360,6 +360,27 @@ class ConsultantRepositoryIT {
   }
 
   @Test
+  void findByIdInAndDeleteDateIsNullShouldLoadOnlyRequestedActiveConsultants() {
+    var infix = RandomStringUtils.randomAlphanumeric(16);
+    var active = underTest.save(givenConsultantMatchingEmail(infix));
+    matchingIds.add(active.getId());
+    var deleted = givenConsultantMatchingEmail(infix);
+    deleted.setStatus(ConsultantStatus.IN_DELETION);
+    deleted.setDeleteDate(LocalDateTime.now());
+    deleted = underTest.save(deleted);
+    matchingIds.add(deleted.getId());
+    var notRequested = underTest.save(givenConsultantMatchingEmail(infix));
+    matchingIds.add(notRequested.getId());
+
+    var found =
+        underTest.findByIdInAndDeleteDateIsNull(
+            List.of(active.getId(), deleted.getId(), "unknown-consultant-id"));
+
+    assertEquals(
+        Set.of(active.getId()), found.stream().map(Consultant::getId).collect(Collectors.toSet()));
+  }
+
+  @Test
   void findAllByInfixShouldNotReturnConsultantsMarkedForDeletion() {
     var infix = RandomStringUtils.randomAlphanumeric(16);
     // A seeded consultant can contain the random infix by chance, so only the delta is asserted.

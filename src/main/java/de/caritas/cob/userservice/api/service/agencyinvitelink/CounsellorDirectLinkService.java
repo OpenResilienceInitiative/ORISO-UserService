@@ -130,7 +130,7 @@ public class CounsellorDirectLinkService {
 
   /**
    * Conversations started through the link carry no reference to it and stay; they keep only the
-   * link's medium (FE#1952).
+   * link's medium (FE#1952) and its name (FE#2170).
    */
   public void delete(Consultant owner, Long linkId) {
     repository.delete(requireOwn(owner, linkId));
@@ -167,8 +167,9 @@ public class CounsellorDirectLinkService {
     }
     tenantService.requireOperationalTenant(link.getTenantId());
     var medium = InviteLinkChatType.valueOf(link.getChatType());
+    // A withdrawn "Direkteinladung erlauben" reads as a link that is no longer active (410).
     if (!directInvitePolicy.allows(link.getTenantId(), link.getAgencyId(), medium)) {
-      throw new ForbiddenException("Direct invitations are not allowed here");
+      throw new DirectLinkInactiveException();
     }
     DirectLinkOwner.requireStillServing(consultantRepository, link);
 
@@ -191,6 +192,11 @@ public class CounsellorDirectLinkService {
     // FE#1952: the counsellor's list names the link's medium instead of "Mail". First link wins;
     // a conversation that already has an origin keeps it.
     sessionRepository.recordDirectLinkOrigin(response.getSessionId(), medium.name());
+    // ORISO-Frontend#2170: and the link's name, so the call is called that, not "Group call for
+    // <room id>". A link without a name leaves the call to be called "Anruf".
+    if (link.getName() != null && !link.getName().isBlank()) {
+      sessionRepository.recordDirectLinkName(response.getSessionId(), link.getName());
+    }
     // Calls never reach the room on their own: every visit knocks (ADR-029 §2).
     var knock =
         medium.admission() == InviteLinkAdmission.KNOCK

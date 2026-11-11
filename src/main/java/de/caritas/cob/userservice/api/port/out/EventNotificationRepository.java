@@ -81,6 +81,9 @@ public interface EventNotificationRepository extends JpaRepository<EventNotifica
   boolean existsByRecipientUserIdAndDeduplicationKey(
       String recipientUserId, String deduplicationKey);
 
+  Optional<EventNotification> findByRecipientUserIdAndDeduplicationKey(
+      String recipientUserId, String deduplicationKey);
+
   /** Removes one deduplicated event again, e.g. a marker whose delivery failed (FE#1876). */
   @Modifying(flushAutomatically = true, clearAutomatically = true)
   @Query(
@@ -119,4 +122,11 @@ public interface EventNotificationRepository extends JpaRepository<EventNotifica
   @Modifying(flushAutomatically = true, clearAutomatically = true)
   @Query("delete from EventNotification e where e.createDate < :cutoff")
   int deleteCreatedBefore(@Param("cutoff") LocalDateTime cutoff);
+
+  /** Deletes one notification type after its own retention period, irrespective of read state. */
+  @Modifying(flushAutomatically = true, clearAutomatically = true)
+  @Query(
+      "delete from EventNotification e where e.eventType = :eventType and e.createDate < :cutoff")
+  int deleteByEventTypeCreatedBefore(
+      @Param("eventType") String eventType, @Param("cutoff") LocalDateTime cutoff);
 }

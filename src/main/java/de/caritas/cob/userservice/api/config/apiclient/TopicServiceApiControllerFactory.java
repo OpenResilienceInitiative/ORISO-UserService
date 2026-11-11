@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.config.apiclient;
 
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.topicservice.generated.web.TopicControllerApi;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -13,10 +14,26 @@ public class TopicServiceApiControllerFactory {
   @Value("${consulting.type.service.api.url}")
   private String topicServiceApiUrl;
 
+  // The short in-cluster hostname lets ConsultingTypeService resolve the server-supplied
+  // tenant header. A dotted host would instead be treated as a public tenant subdomain.
+  @Value("${consulting.type.service.scoped.api.url:}")
+  private String scopedTopicServiceApiUrl;
+
   @Autowired private RestTemplate restTemplate;
 
   public TopicControllerApi createControllerApi() {
-    var apiClient = new TopicServiceApiClient(restTemplate).setBasePath(this.topicServiceApiUrl);
+    return controllerFor(topicServiceApiUrl);
+  }
+
+  public TopicControllerApi createScopedControllerApi() {
+    if (scopedTopicServiceApiUrl.isBlank()) {
+      throw new ServiceUnavailableException("Scoped topic lookup is not configured");
+    }
+    return controllerFor(scopedTopicServiceApiUrl);
+  }
+
+  private TopicControllerApi controllerFor(String baseUrl) {
+    var apiClient = new TopicServiceApiClient(restTemplate).setBasePath(baseUrl);
     TopicControllerApi controllerApi = new TopicControllerApi(apiClient);
     controllerApi.setApiClient(apiClient);
     return controllerApi;

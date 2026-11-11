@@ -84,8 +84,14 @@ class MatrixCallStateControllerTest {
                         users,
                         consultants,
                         matrix,
-                        callGuests),
+                        callGuests,
+                        org.mockito.Mockito.mock(
+                            de.caritas.cob.userservice.api.service.matrix
+                                .MatrixCallObservationService.class)),
                     callGuests,
+                    org.mockito.Mockito.mock(
+                        de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService
+                            .class),
                     actor))
             .build();
   }

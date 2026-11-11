@@ -70,7 +70,9 @@ public class AdviceSeekerReplyEmailService {
       return;
     }
     Session session = sessions.findByMatrixRoomId(roomId).orElse(null);
-    if (!isReplySession(session, roomId) || session.getUser() == null) {
+    if (!isReplySession(session, roomId)
+        || AskerNotificationChannelPolicy.isLiveChat(session)
+        || session.getUser() == null) {
       return;
     }
     User user = session.getUser();
@@ -108,6 +110,7 @@ public class AdviceSeekerReplyEmailService {
     }
     Session session = sessions.findByMatrixRoomId(roomId).orElse(null);
     if (!isConsultationMessage(session, roomId)
+        || AskerNotificationChannelPolicy.isLiveChat(session)
         || session.getUser() == null
         || session.getUser().getDeleteDate() != null
         || !Objects.equals(session.getUser().getTenantId(), session.getTenantId())
@@ -147,6 +150,7 @@ public class AdviceSeekerReplyEmailService {
     }
     boolean consultantMail = claim.getRecipientKind() == RecipientKind.CONSULTANT;
     if (session == null
+        || AskerNotificationChannelPolicy.isLiveChat(session)
         || isBlank(claim.getSourceRoomId())
         || isBlank(claim.getSourceMatrixUserId())
         || !Objects.equals(claim.getSourceRoomId(), session.getMatrixRoomId())) {

@@ -68,7 +68,10 @@ public interface AgencyInviteLinkRepository extends JpaRepository<AgencyInviteLi
   @Query(
       "SELECT l FROM AgencyInviteLink l"
           + " WHERE l.tenantId = :tenantId"
-          + " AND l.agencyId IN :agencyIds"
+          // Live-chat links are created for the whole Träger, without an agency; an agency admin
+          // still sees them read-only (ORISO-Admin#1321). Other Träger-wide kinds stay hidden.
+          + " AND (l.agencyId IN :agencyIds"
+          + "      OR (l.agencyId IS NULL AND l.linkKind = 'EXTERNAL_INBOUND'))"
           + " AND l.linkKind <> 'CALL'"
           + " AND (:linkKind IS NULL OR l.linkKind = :linkKind)"
           + " AND (:topicId  IS NULL OR l.topicId  = :topicId)"

@@ -10,6 +10,7 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -183,13 +184,44 @@ class SupervisorAddedEmailNotificationServiceTest {
   }
 
   @Test
-  void teamChangeMailSkipsTheAdviceSeekerWhenTheSessionIsUnknown() {
-    when(emailRoutes.resolve(8L)).thenReturn(Optional.of(routeSettings()));
+  void teamChangeMailSkipsBothRecipientsWhenTheSessionIsUnknown() {
     when(sessions.findById(42L)).thenReturn(Optional.empty());
 
     service.notifySupervisorAdded(askerOfTenant(8L), supervisorWithMail(), 42L, null, null);
 
-    verify(emailDelivery, never()).send(anyLong(), any(), any(), eq("asker@example.org"), any());
+    verifyNoInteractions(emailDelivery);
+  }
+
+  @Test
+  void liveChatTeamChangesNeverSendEmailToEitherParticipant() {
+    givenRoutesForEveryTeamChangeMail();
+    when(sessions.findById(42L)).thenReturn(Optional.of(session(ConversationType.LIVE_CHAT)));
+
+    sendEveryTeamChangeMail();
+
+    verifyNoInteractions(emailDelivery);
+  }
+
+  @Test
+  void theSameTeamChangesSendEmailForANonLiveChatSession() {
+    givenRoutesForEveryTeamChangeMail();
+
+    sendEveryTeamChangeMail();
+
+    verify(emailDelivery, times(2)).send(eq(8L), any(), any(), eq("asker@example.org"), any());
+    verify(emailDelivery, times(2)).send(eq(8L), any(), any(), eq("supervisor@example.org"), any());
+    verify(emailDelivery).send(eq(3L), any(), any(), eq("old@example.org"), any());
+  }
+
+  private void givenRoutesForEveryTeamChangeMail() {
+    when(emailRoutes.resolve(8L)).thenReturn(Optional.of(routeSettings()));
+    when(emailRoutes.resolve(3L)).thenReturn(Optional.of(routeSettings()));
+  }
+
+  private void sendEveryTeamChangeMail() {
+    service.notifySupervisorAdded(askerOfTenant(8L), supervisorWithMail(), 42L, null, null);
+    service.notifySupervisorRemoved(askerOfTenant(8L), supervisorWithMail(), 42L, null, null);
+    service.notifyTopicDuplicateStarted(topicDuplicateCounsellor(), 42L, null);
   }
 
   @Test

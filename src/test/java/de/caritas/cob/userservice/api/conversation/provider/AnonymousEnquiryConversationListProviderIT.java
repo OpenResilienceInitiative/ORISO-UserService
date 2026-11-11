@@ -7,9 +7,9 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING
 import static java.util.Collections.singletonList;
 import static java.util.Objects.nonNull;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
-import static org.hamcrest.Matchers.lessThanOrEqualTo;
 import static org.hibernate.validator.internal.util.CollectionHelper.asSet;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -130,7 +130,7 @@ class AnonymousEnquiryConversationListProviderIT {
       ConsultantSessionResponseDTO current = peeker.next();
       ConsultantSessionResponseDTO next = peeker.peek();
       if (nonNull(next)) {
-        assertThat(next.getLatestMessage(), lessThanOrEqualTo(current.getLatestMessage()));
+        assertThat(next.getLatestMessage(), greaterThanOrEqualTo(current.getLatestMessage()));
       }
     }
   }

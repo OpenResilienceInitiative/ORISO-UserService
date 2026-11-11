@@ -9,10 +9,12 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AgencyConsultantResponseD
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyTypeDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerReactivationRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ChangeConsultantTenantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAgencyResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSearchResultDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantTenantChangeResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminAgencyRelationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
@@ -46,20 +48,16 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
-import de.caritas.cob.userservice.api.service.helper.EmailUrlDecoder;
 import de.caritas.cob.userservice.api.service.identity.UserIdentitiesService;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UseradminApi;
 import io.swagger.annotations.Api;
 import jakarta.validation.Valid;
-import java.net.URLDecoder;
-import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.validator.routines.EmailValidator;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
@@ -282,6 +280,19 @@ public class UserAdminController implements UseradminApi {
       String consultantId, List<CreateConsultantAgencyDTO> agencyList) {
     this.consultantAdminFacade.setConsultantAgencies(consultantId, agencyList);
     return ResponseEntity.ok().build();
+  }
+
+  /**
+   * Moves a consultant to another Träger; their cases stay with the old one [platform admin only].
+   *
+   * @param consultantId Consultant Id (required)
+   * @param changeConsultantTenantDTO the new Träger, its centres and topics (required)
+   */
+  @Override
+  public ResponseEntity<ConsultantTenantChangeResultDTO> changeConsultantTenant(
+      @PathVariable String consultantId, ChangeConsultantTenantDTO changeConsultantTenantDTO) {
+    return ResponseEntity.ok(
+        consultantAdminFacade.changeConsultantTenant(consultantId, changeConsultantTenantDTO));
   }
 
   /**
@@ -643,10 +654,7 @@ public class UserAdminController implements UseradminApi {
   }
 
   private String determineDecodedInfix(String query) {
-    if (EmailValidator.getInstance().isValid(query)) {
-      return EmailUrlDecoder.decodeEmailQuery(query);
-    } else {
-      return URLDecoder.decode(query, StandardCharsets.UTF_8).trim();
-    }
+    // Spring has already decoded the request parameter. A second pass corrupts literal % and +.
+    return query.trim();
   }
 }

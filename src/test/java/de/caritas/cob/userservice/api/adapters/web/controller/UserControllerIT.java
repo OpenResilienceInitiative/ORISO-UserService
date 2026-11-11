@@ -74,9 +74,11 @@ import de.caritas.cob.userservice.api.port.out.IdentityReactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
+import de.caritas.cob.userservice.api.port.out.IdentityTenantUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.*;
 import de.caritas.cob.userservice.api.service.AgencyAdminContactService;
+import de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.agency.EffectiveAgencySettingsLookup;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
@@ -142,6 +144,9 @@ import org.springframework.test.web.servlet.MockMvc;
       "user.username.invalid.length=Please provide a username with at least 5 and at most 20 characters"
     })
 class UserControllerIT {
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.livechat.LiveChatAccountConversionService
+      liveChatAccountConversionService;
 
   /** The agencyId carried by PATH_GET_CONSULTANTS_FOR_AGENCY. */
   private static final long REQUESTED_AGENCY_ID = 10L;
@@ -290,6 +295,7 @@ class UserControllerIT {
 
   @MockitoBean private EnquiryRejectionService enquiryRejectionService;
   @MockitoBean private UserAccountService userAccountService;
+  @MockitoBean private AskerEmailCollectionPolicy askerEmailCollectionPolicy;
   @MockitoBean private PasswordResetService passwordResetService;
   @MockitoBean private AccountInviteService accountInviteService;
   @MockitoBean private TenantService tenantService;
@@ -339,6 +345,7 @@ class UserControllerIT {
         IdentityRoleLookup.class,
         IdentityRoleUpdater.class,
         IdentitySecondFactor.class,
+        IdentityTenantUpdater.class,
         IdentityUsernameAvailability.class
       })
   private IdentityClient identityClient;
@@ -2075,7 +2082,7 @@ class UserControllerIT {
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk());
 
-    verify(getChatFacade, times(1)).getChat(Mockito.any());
+    verify(getChatFacade, times(1)).getChat(CHAT_ID, null);
   }
 
   @Test

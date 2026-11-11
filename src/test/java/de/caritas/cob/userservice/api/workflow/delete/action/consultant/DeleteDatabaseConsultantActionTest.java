@@ -96,6 +96,42 @@ public class DeleteDatabaseConsultantActionTest {
             de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditOutcome.EXECUTED);
   }
 
+  /**
+   * Keycloak or Matrix failed earlier in the workflow, the row is deleted all the same and cannot
+   * be purged again. The log keeps the entry, but must not claim the account is gone (#1525).
+   */
+  @Test
+  public void execute_Should_LogAPartialFailure_When_anEarlierStepOfTheWorkflowFailed() {
+    var consultant = new Consultant();
+    consultant.setId("c-2");
+    consultant.setTenantId(5L);
+    consultant.setDeletionLifecycleState(
+        de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState
+            .HARD_DELETE_IN_PROGRESS);
+    var keycloakError =
+        DeletionWorkflowError.builder()
+            .deletionSourceType(CONSULTANT)
+            .deletionTargetType(
+                de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.KEYCLOAK)
+            .identifier("c-2")
+            .reason("Keycloak unreachable")
+            .build();
+
+    this.deleteDatabaseConsultantAction.execute(
+        new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>(List.of(keycloakError))));
+
+    var order = inOrder(consultantRepository, deletionAuditService);
+    order.verify(consultantRepository).delete(consultant);
+    order
+        .verify(deletionAuditService)
+        .recordAsSystem(
+            de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditTargetType.CONSULTANT,
+            "c-2",
+            5L,
+            de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditOutcome
+                .PARTIAL_FAILURE);
+  }
+
   @Test
   public void execute_Should_NotLogADeletion_When_aHalfCreatedAccountIsRolledBack() {
     // RollbackFacade removes a consultant whose creation failed; it never entered the deletion

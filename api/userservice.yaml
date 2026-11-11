@@ -58,7 +58,9 @@ paths:
         '404':
           description: Invitation not found
         '410':
-          description: The direct link was switched off; body {"reason":"DIRECT_LINK_INACTIVE"}
+          description: >-
+            A paused invitation returns {"reason":"INVITE_LINK_PAUSED"}.
+            A switched-off direct link returns {"reason":"DIRECT_LINK_INACTIVE"}.
   /users/invitelinks/{token}/conversations:
     post:
       tags: [direct-link-controller]
@@ -266,6 +268,62 @@ paths:
               schema: {$ref: '#/components/schemas/CallKnockDTO'}
         '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
         '404': {description: No own knock with this id}
+  /users/live-chat-account/conversion:
+    get:
+      tags: [live-chat-conversion-controller]
+      operationId: getOwnLiveChatConversion
+      summary: 'Read the caller’s Live Chat conversion state [Authorization: Role: user]'
+      security:
+        - Bearer: []
+      responses:
+        '200':
+          description: The caller’s conversion state and pending intent; no credential verifier is exposed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [userId, username, state]
+                properties:
+                  userId: {type: string}
+                  username: {type: string}
+                  state: {type: string, enum: [ELIGIBLE, ALREADY_REGISTERED, NOT_ELIGIBLE, FINISH_PENDING, ANONYMOUS_FINISHED, PROMOTION_PENDING, PROMOTED, CLEANUP_STARTED]}
+                  intentId: {type: string, nullable: true}
+                  finishedOrigin: {type: boolean}
+        '401': {description: Missing or invalid authentication}
+        '403': {description: Not an advice seeker}
+    post:
+      tags: [live-chat-conversion-controller]
+      operationId: convertOwnLiveChatAccount
+      summary: 'Establish durable credentials for the caller’s anonymous Live Chat identity [Authorization: Role: user]'
+      security:
+        - Bearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedUserId, intentId, password, recoveryKeySaved]
+              properties:
+                expectedUserId: {type: string}
+                intentId: {type: string, format: uuid}
+                password: {type: string, format: password, minLength: 16, writeOnly: true}
+                recoveryKeySaved: {type: boolean, enum: [true], description: User confirms that the existing recovery key has been saved}
+      responses:
+        '200':
+          description: The account was promoted; its login name is returned without changing its identity
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [username]
+                properties:
+                  username: {type: string}
+        '400': {description: Invalid request or no anonymous Live Chat}
+        '401': {description: Missing or invalid authentication}
+        '403': {description: Not an advice seeker}
+        '409': {description: Cleanup started or conversion intent conflicts}
+        '500': {description: Identity service failure; the pending claim remains protected for retry}
   /users/temporary-account:
     get:
       tags: [direct-link-controller]
@@ -1840,6 +1898,38 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
+  /users/chat/internal-subset/recipients:
+    get:
+      tags:
+        - user-controller
+      summary: List eligible recipients for a private internal chat
+      operationId: listInternalSubsetChatRecipients
+      parameters:
+        - name: agencyId
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        200:
+          description: Eligible recipients
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/InternalChatRecipientDTO'
+        204:
+          description: No eligible recipients
+        401:
+          description: Unauthorized
+        403:
+          description: The caller cannot create an internal chat for this centre
+        503:
+          description: Internal chat is temporarily unavailable
+      security:
+        - Bearer: [ ]
   /users/chat/internal-subset:
     post:
       tags:
@@ -1847,7 +1937,9 @@ paths:
       summary: 'Open the members-only room for a subset of selected colleagues: a dedicated encrypted room with exactly the caller and the selected colleagues, created or reused [Authorization: Role: consultant with authority CREATE_NEW_CHAT]'
       description: >-
         Every selected colleague must be within the recipient scope of the caller's Träger (counselling centre, Träger or platform;
-        TenantService setting internalGroupChat.recipientScope, counselling centre when unset). One colleague outside the scope refuses
+        TenantService setting internalGroupChat.recipientScope, counselling centre when unset). Colleagues from other Träger require
+        platform scope on both Träger. Active platform admins without a Träger may be invited at any scope if they already have
+        an active chat identity. One colleague outside the scope refuses
         the whole request; nobody is dropped silently and no broader room is ever used. A room that holds exactly the same members is reused (200).
         The room is members-only: no other colleague can list, open or join it. Every error answers with the header and the body field
         X-Reason / reason set to one of the codes below.
@@ -2104,6 +2196,11 @@ paths:
           schema:
             type: integer
             format: int64
+        - name: includeCallerBan
+          in: query
+          description: Resolve the authenticated registered participant's own ban state for the active self-help room.
+          schema:
+            type: boolean
       responses:
         200:
           description: OK - successful operation
@@ -2466,6 +2563,32 @@ paths:
           description: BAD GATEWAY - contact service lookup failed; no upstream details returned
       security:
         - Bearer: [ ]
+  /users/sessions/consultants/deleted-askers:
+    get:
+      tags: [deleted-asker-session-controller]
+      summary: Placeholders for the calling counsellor's deleted advice-seeker chats
+      description: >-
+        Also available with /service prefix. Lists, newest first, the cases of the calling
+        counsellor whose advice seeker deleted the chat or account (or whose account was deleted
+        automatically) within the retention period. Carries no personal data (ORISO-Frontend#1159).
+      operationId: getDeletedAskerSessions
+      # Dedicated handwritten controller owns both prefixes; prevent a duplicate UsersApi mapping.
+      x-internal: true
+      responses:
+        '200':
+          description: Placeholders, possibly empty
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DeletedAskerSessionDTO'
+        '401':
+          description: Authentication required
+        '403':
+          description: Not a counsellor
+      security:
+        - Bearer: []
   /users/sessions/{sessionId}/case-handover/consent-preference:
     get:
       tags: [case-handover-controller]
@@ -3598,6 +3721,12 @@ components:
           enum: [PARTICIPANT, CO_MODERATOR]
           default: PARTICIPANT
     UserDTO:
+      description: >-
+        Registration data. An optional displayName is attached only to the new ordinary personal
+        session; omitted or blank keeps the existing login username fallback. When the resolved
+        conversation type requires generated names, the submitted login username and any supplied
+        alias must match the generated vocabulary. Self-help and direct-link registrations do
+        not attach the alias to a shared room or a global profile.
       allOf:
         - $ref: '#/components/schemas/SessionDataDTO'
       type: object
@@ -3917,6 +4046,16 @@ components:
             conversation was opened through; absent for every other conversation. A label for the
             list ("Videoanruf", "Audioanruf", "Direktlink" instead of "Mail"), not a modality:
             conversationType stays the ADR-006 value. Additive - older clients can ignore it.
+        directLinkName:
+          type: string
+          maxLength: 100
+          example: Flyer Schule
+          description: >-
+            ORISO-Frontend#2170 - the name of the counsellor direct link (#1475) this conversation
+            was opened through, as the link had it then; absent when there was none or for every
+            other conversation. The call of the conversation is called that ("Anruf" without it).
+            A snapshot: a later rename of the link does not change it. Additive - older clients can
+            ignore it.
         supervision:
           $ref: '#/components/schemas/SessionSupervisionDTO'
 
@@ -3979,6 +4118,22 @@ components:
           type: boolean
           nullable: false
           description: Ask before future allowed additional access; not approval of a current request
+    DeletedAskerSessionDTO:
+      type: object
+      description: Placeholder for a deleted advice-seeker chat; contains no personal data.
+      required: [formerSessionId, deletedAt]
+      properties:
+        formerSessionId:
+          type: integer
+          format: int64
+          description: Id the deleted session had; lets the client drop duplicates
+        agencyId:
+          type: integer
+          format: int64
+        deletedAt:
+          type: string
+          format: date-time
+          description: When the chat was deleted (UTC)
     CaseHandoverConsentPreferenceDTO:
       type: object
       required: [sessionId, alwaysAskBeforeAdditionalAccess]
@@ -4580,6 +4735,14 @@ components:
         userName:
           type: string
           example: max.muster
+        isAskerEmailCollectionAllowed:
+          type: boolean
+          readOnly: true
+          description: >-
+            Current account email collection capability for the authenticated asker. The account
+            master must allow collection, and the asker must own an eligible agency counselling
+            session or belong to an eligible self-help group. False while current policy or
+            context cannot be established. Absent for consultants.
         displayName:
           type: string
           example: Max M.
@@ -5032,6 +5195,29 @@ components:
               type: string
               maxLength: 120
 
+    InternalChatRecipientDTO:
+      type: object
+      required: [consultantId, displayName, agencies]
+      properties:
+        consultantId:
+          type: string
+        displayName:
+          type: string
+        tenantName:
+          type: string
+        agencies:
+          type: array
+          items:
+            $ref: '#/components/schemas/InternalChatRecipientAgencyDTO'
+    InternalChatRecipientAgencyDTO:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
     InternalSubsetChatDTO:
       type: object
       required:
@@ -5120,6 +5306,13 @@ components:
           description: usernames
           items:
             type: string
+        callerBanState:
+          type: string
+          description: >-
+            Present only when a registered advice seeker assigned to the active self-help room opts in.
+            UNKNOWN means the caller's Matrix membership could not be determined.
+          enum: [BANNED, NOT_BANNED, UNKNOWN]
+          x-field-extra-annotation: "@com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)"
 
     ChatMembersResponseDTO:
       type: object

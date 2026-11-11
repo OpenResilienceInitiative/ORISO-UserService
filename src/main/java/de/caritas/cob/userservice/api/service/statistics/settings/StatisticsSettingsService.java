@@ -3,9 +3,12 @@ package de.caritas.cob.userservice.api.service.statistics.settings;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.StatisticsSettingChange;
+import de.caritas.cob.userservice.api.model.StatisticsSettingsLock;
 import de.caritas.cob.userservice.api.port.out.StatisticsSettingChangeRepository;
+import de.caritas.cob.userservice.api.port.out.StatisticsSettingsLockRepository;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.Arrays;
@@ -15,7 +18,10 @@ import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -29,6 +35,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class StatisticsSettingsService {
 
   private final @NonNull StatisticsSettingChangeRepository repository;
+  private final @NonNull StatisticsSettingsLockRepository locks;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull Clock clock;
 
@@ -58,9 +65,12 @@ public class StatisticsSettingsService {
   /**
    * Saves the given values. Only values that differ from the current one produce a protocol line.
    * The revision is the number of protocol lines the caller saw; a different number means someone
-   * else saved in between, and nothing is written.
+   * else saved in between, and nothing is written. Saves queue on a lock first, so two saves of the
+   * same revision cannot both pass the check.
    */
-  @Transactional
+  // READ_COMMITTED: under MariaDB's REPEATABLE READ an earlier read would pin the snapshot, and the
+  // revision count after the lock would miss the save that just committed.
+  @Transactional(isolation = Isolation.READ_COMMITTED)
   public StatisticsSettings updateSettings(Map<String, String> values, Long revision) {
     requirePlatformAdmin();
     if (values == null || values.isEmpty()) {
@@ -70,6 +80,7 @@ public class StatisticsSettingsService {
       throw new BadRequestException("The revision of the statistics settings is missing");
     }
     values.forEach(StatisticsSettingsService::validate);
+    lockSettings();
     if (revision != repository.count()) {
       throw new ConflictException("Statistics settings were changed in the meantime");
     }
@@ -80,7 +91,7 @@ public class StatisticsSettingsService {
       if (newValue == null) {
         continue;
       }
-      var oldValue = currentValue(setting);
+      var oldValue = storedValue(setting);
       if (newValue.equals(oldValue)) {
         continue;
       }
@@ -114,7 +125,8 @@ public class StatisticsSettingsService {
 
   /**
    * The small-cell threshold for an aggregated view. No authorization: called while building the
-   * dashboard. Falls back to the default when the store cannot be read.
+   * dashboard. Fails when the store cannot be read: a default could be weaker than the stored
+   * minimum.
    */
   public int minimumCounsellors(StatisticsSetting setting) {
     return Integer.parseInt(currentValue(setting));
@@ -122,8 +134,7 @@ public class StatisticsSettingsService {
 
   /**
    * How many weeks the "requests per week" chart covers, the current week included. No
-   * authorization: called while building the dashboard. Falls back to the default when the store
-   * cannot be read.
+   * authorization: called while building the dashboard. Fails when the store cannot be read.
    */
   public int chartWeeks() {
     return Integer.parseInt(currentValue(StatisticsSetting.REQUEST_CHART_WEEKS));
@@ -131,14 +142,32 @@ public class StatisticsSettingsService {
 
   /**
    * How many months "most frequent topics" covers, the current month included. No authorization:
-   * called while building the dashboard. Falls back to the default when the store cannot be read.
+   * called while building the dashboard. Fails when the store cannot be read.
    */
   public int topicMonths() {
     return Integer.parseInt(currentValue(StatisticsSetting.TOPIC_MONTHS));
   }
 
+  /**
+   * How often the admin role of this setting gets a new dashboard stand. No authorization: called
+   * while building the dashboard. Fails when the store cannot be read, so a failure never turns a
+   * weekly stand into a daily one.
+   */
+  public StatisticsSnapshotInterval snapshotInterval(StatisticsSetting setting) {
+    return StatisticsSnapshotInterval.valueOf(currentValue(setting));
+  }
+
+  /**
+   * Whether consultant messages are counted. When the store cannot be read, counting stays off: a
+   * default must never restart what an admin switched off.
+   */
   public boolean isMessageCountTrackingEnabled() {
-    return StatisticsSetting.ENABLED.equals(currentValue(StatisticsSetting.MESSAGE_COUNT_TRACKING));
+    try {
+      return StatisticsSetting.ENABLED.equals(
+          currentValue(StatisticsSetting.MESSAGE_COUNT_TRACKING));
+    } catch (ServiceUnavailableException unreadable) {
+      return false;
+    }
   }
 
   private StatisticsSettings currentSettings() {
@@ -161,15 +190,45 @@ public class StatisticsSettingsService {
     return new StatisticsSettings(states, repository.count());
   }
 
+  /**
+   * The value that applies. A read failure or a stored value outside the options throws: falling
+   * back to the default could weaken a protection that was set stricter.
+   */
   private String currentValue(StatisticsSetting setting) {
     try {
-      return latest(setting)
-          .map(StatisticsSettingChange::getNewValue)
-          .filter(value -> setting.options().contains(value))
-          .orElse(setting.defaultValue());
+      var value = storedValue(setting);
+      if (setting.options().contains(value)) {
+        return value;
+      }
+      log.error("Statistics setting {} holds a value outside its options", setting.key());
     } catch (RuntimeException e) {
-      log.error("Could not read statistics setting {}, using its default", setting.key(), e);
-      return setting.defaultValue();
+      log.error("Could not read statistics setting {}", setting.key(), e);
+    }
+    throw new ServiceUnavailableException("The statistics settings cannot be read");
+  }
+
+  /** The latest stored value as it is, the default only when nothing was ever recorded. */
+  private String storedValue(StatisticsSetting setting) {
+    return latest(setting).map(StatisticsSettingChange::getNewValue).orElse(setting.defaultValue());
+  }
+
+  /**
+   * Queues this save behind any other one. Without the row (a database that never ran the
+   * changeset) it is created. Losing that race, a lock wait that times out, or a deadlock the
+   * database resolves all mean another save is ahead, so this one is refused.
+   */
+  private void lockSettings() {
+    try {
+      if (locks.findLockedById(StatisticsSettingsLock.ID).isPresent()) {
+        return;
+      }
+      locks.saveAndFlush(new StatisticsSettingsLock(StatisticsSettingsLock.ID));
+    } catch (DataIntegrityViolationException
+        | PessimisticLockingFailureException lostToAnotherSave) {
+      log.debug("Statistics settings lock not acquired", lostToAnotherSave);
+      var conflict = new ConflictException("Statistics settings were changed in the meantime");
+      conflict.initCause(lostToAnotherSave);
+      throw conflict;
     }
   }
 

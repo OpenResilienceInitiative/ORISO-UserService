@@ -56,10 +56,7 @@ public final class GeneratedPseudonyms {
   public boolean contains(String candidate) {
     if (candidate == null || candidate.isEmpty() || candidate.length() > 255) return false;
     String value = Normalizer.normalize(candidate, Normalizer.Form.NFC);
-    if (value.matches("[a-z0-9_]+_[1-9][0-9]{3}")) {
-      String base = value.substring(0, value.length() - 5);
-      if (handleBases.contains(base)) return true;
-    }
+    if (containsHandle(value)) return true;
     for (JsonNode language : languages) {
       for (JsonNode name : language.get("names")) {
         String suffix = " " + name.asText();
@@ -78,6 +75,12 @@ public final class GeneratedPseudonyms {
       }
     }
     return false;
+  }
+
+  public boolean containsHandle(String candidate) {
+    return candidate != null
+        && candidate.matches("[a-z0-9_]{1,25}_[1-9][0-9]{3}")
+        && handleBases.contains(candidate.substring(0, candidate.length() - 5));
   }
 
   private static String slug(String value) {

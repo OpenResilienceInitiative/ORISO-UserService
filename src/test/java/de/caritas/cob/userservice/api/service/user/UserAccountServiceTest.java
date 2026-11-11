@@ -53,8 +53,17 @@ public class UserAccountServiceTest {
 
   private static final EasyRandom EASY_RANDOM = new EasyRandom();
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy emailCollectionPolicy;
+
   @InjectMocks private UserAccountService accountProvider;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.livechat.LiveChatAccountClaimService
+      liveChatClaims;
+
   @Mock private UserService userService;
+  @Mock private de.caritas.cob.userservice.api.port.out.SessionRepository sessions;
   @Mock private de.caritas.cob.userservice.api.admin.service.tenant.TenantService tenantService;
   @Mock private ConsultantService consultantService;
   @Mock private AuthenticatedUser authenticatedUser;
@@ -74,6 +83,14 @@ public class UserAccountServiceTest {
 
   @org.junit.jupiter.api.BeforeEach
   void currentTenantAllowsEmailByDefault() {
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        accountProvider,
+        "emailCollectionPolicy",
+        new de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy(
+            tenantService,
+            sessions,
+            mock(de.caritas.cob.userservice.api.port.out.UserChatRepository.class),
+            mock(org.springframework.transaction.PlatformTransactionManager.class)));
     org.mockito.Mockito.lenient()
         .when(tenantService.getRestrictedTenantDataFresh(org.mockito.ArgumentMatchers.anyLong()))
         .thenAnswer(
@@ -84,6 +101,14 @@ public class UserAccountServiceTest {
                     .settings(
                         new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
                             .featureAskerEmailEnabled(true)));
+  }
+
+  private void givenOwnedCounsellingSession(User user) {
+    var session = new de.caritas.cob.userservice.api.model.Session();
+    session.setUser(user);
+    session.setConversationType(
+        de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING);
+    when(sessions.findByUser(user)).thenReturn(java.util.List.of(session));
   }
 
   @Test
@@ -106,6 +131,37 @@ public class UserAccountServiceTest {
         .isInstanceOf(
             de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
     verifyNoInteractions(identityEmailAddressUpdater, appointmentService);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {
+        "featureAskerEmailCollectionAgencyCounsellingEnabled",
+        "featureAskerEmailCollectionSelfHelpEnabled"
+      })
+  void restrictedCollectionCannotBeBypassedByTheGlobalProfileWithoutAnOwnedContext(String key) {
+    var user = EASY_RANDOM.nextObject(User.class);
+    user.setTenantId(42L);
+    user.setEmail("old@example.org");
+    when(authenticatedUser.getUserId()).thenReturn("user");
+    when(userService.getUser("user")).thenReturn(Optional.of(user));
+    var settings =
+        new com.fasterxml.jackson.databind.ObjectMapper()
+            .convertValue(
+                java.util.Map.of("featureAskerEmailEnabled", true, key, false),
+                de.caritas.cob.userservice.tenantservice.generated.web.model.Settings.class);
+    when(tenantService.getRestrictedTenantDataFresh(42L))
+        .thenReturn(
+            new de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO()
+                .id(42L)
+                .settings(settings));
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> accountProvider.changeUserAccountEmailAddress(Optional.of("new@example.org")))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    verifyNoInteractions(
+        identityEmailAddressUpdater, appointmentService, supervisorAddedEmailNotificationService);
+    org.assertj.core.api.Assertions.assertThat(user.getEmail()).isEqualTo("old@example.org");
   }
 
   @Test
@@ -270,6 +326,7 @@ public class UserAccountServiceTest {
       changeUserAccountEmailAddress_Should_changeNonEmptyAddressInKeycloakAndUserRepository_When_authenticatedUserIsUser() {
     User user = EASY_RANDOM.nextObject(User.class);
     user.setTenantId(42L);
+    givenOwnedCounsellingSession(user);
     when(this.authenticatedUser.getUserId()).thenReturn("user");
     when(this.userService.getUser("user")).thenReturn(Optional.of(user));
 
@@ -291,6 +348,7 @@ public class UserAccountServiceTest {
   public void changeUserAccountEmailAddress_Should_UseGermanNotice_WhenUserLanguageIsMissing() {
     User user = EASY_RANDOM.nextObject(User.class);
     user.setTenantId(42L);
+    givenOwnedCounsellingSession(user);
     user.setLanguageCode(null);
     when(authenticatedUser.getUserId()).thenReturn("user");
     when(userService.getUser("user")).thenReturn(Optional.of(user));
@@ -308,6 +366,7 @@ public class UserAccountServiceTest {
       changeUserAccountEmailAddress_Should_changeNonEmptyAddressInKeycloakAndUserRepository_When_authenticatedUserHasNoLegacyChatId() {
     User user = EASY_RANDOM.nextObject(User.class);
     user.setTenantId(42L);
+    givenOwnedCounsellingSession(user);
     user.setMatrixUserId(null);
     when(this.authenticatedUser.getUserId()).thenReturn("user");
     when(this.userService.getUser("user")).thenReturn(Optional.of(user));
@@ -517,6 +576,21 @@ public class UserAccountServiceTest {
     accountProvider.deactivateAndFlagUserAccountForDeletion();
 
     verify(userService).saveUser(USER);
+  }
+
+  @Test
+  public void selfDeletionDoesNotDisableIdentityWhenConversionIsPending() {
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(userService.getUser(USER_ID)).thenReturn(Optional.of(USER));
+    Mockito.doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException("pending"))
+        .when(liveChatClaims)
+        .claimIntentionalDeletion(USER.getUserId());
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class,
+        () -> accountProvider.deactivateAndFlagUserAccountForDeletion());
+    verify(identityDeactivator, never()).deactivateUser(any());
+    verify(userService, never()).saveUser(any());
   }
 
   @Test

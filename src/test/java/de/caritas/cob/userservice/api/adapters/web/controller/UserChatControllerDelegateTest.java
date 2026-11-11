@@ -163,9 +163,9 @@ class UserChatControllerDelegateTest {
   @Test
   void getChatShouldReturnFacadeResponse() {
     var chatInfoResponseDTO = new ChatInfoResponseDTO();
-    when(getChatFacade.getChat(1L)).thenReturn(chatInfoResponseDTO);
+    when(getChatFacade.getChat(1L, true)).thenReturn(chatInfoResponseDTO);
 
-    var response = delegate.getChat(1L);
+    var response = delegate.getChat(1L, true);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     assertThat(response.getBody()).isSameAs(chatInfoResponseDTO);

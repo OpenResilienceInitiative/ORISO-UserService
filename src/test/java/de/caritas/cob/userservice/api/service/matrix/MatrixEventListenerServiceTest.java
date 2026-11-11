@@ -1230,6 +1230,8 @@ class MatrixEventListenerServiceTest {
     invokeProcessMatrixSyncEvents(service, syncResultWithEvents(MATRIX_ROOM_ID, List.of(event)));
 
     verify(replyEmailService, never()).onConsultantReply(anyString(), anyString(), anyString());
+    verify(internalChatEmailService, never())
+        .onMatrixMessage(anyString(), anyString(), anyString());
   }
 
   @Test
@@ -1681,6 +1683,9 @@ class MatrixEventListenerServiceTest {
   void processMatrixEvent_shouldNotEmailAnEncryptedEditOrReactionAsANewReply() {
     var service = newServiceWithSyncExecutor();
     service.registerRoom(31L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    // The sender is a present counsellor, so only the relation guard keeps these out of mail.
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultantWithId(CONSULTANT_DOMAIN_ID)));
 
     for (String relationType : List.of("m.replace", "m.annotation")) {
       var event = new HashMap<String, Object>();
@@ -1698,7 +1703,24 @@ class MatrixEventListenerServiceTest {
     }
 
     verifyNoInteractions(
-        replyEmailService, eventNotificationService, mobilePushNotificationService);
+        replyEmailService,
+        internalChatEmailService,
+        eventNotificationService,
+        mobilePushNotificationService);
+
+    // Positive control: the same sender's plain encrypted message does reach the mail path.
+    var message = new HashMap<String, Object>();
+    message.put("type", "m.room.encrypted");
+    message.put("sender", CONSULTANT_MATRIX_ID);
+    message.put("event_id", "$enc-plain");
+    message.put(
+        "content", Map.of("algorithm", "m.megolm.v1.aes-sha2", "ciphertext", "opaque-payload"));
+
+    invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, message);
+
+    verify(replyEmailService).onConsultantReply(MATRIX_ROOM_ID, "$enc-plain", CONSULTANT_MATRIX_ID);
+    verify(internalChatEmailService)
+        .onMatrixMessage(MATRIX_ROOM_ID, "$enc-plain", CONSULTANT_MATRIX_ID);
   }
 
   @Test

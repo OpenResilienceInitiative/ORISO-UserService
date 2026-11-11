@@ -45,11 +45,14 @@ run_maven() {
 # feature/user-service-refactor only and never reached pre-dev, so on this branch the exclusion
 # would have removed the test from required CI entirely instead of moving it.
 mariadb_owned_tests=(
+  LiveChatPromotionMigrationIT
   DatabaseChangelogDriftIT
+  DraftMessageLegacyMariaDbIT
   EnquiryRejectionMariaDbIT
   ConsultantTopicUniqueKeyMariaDbIT
   ConsultantPictureDatabaseIT
   AdminStatisticsRepositoryMariaDbIT
+  UserAdminSearchMariaDbIT
   ProvisioningCompensationMariaDbIT
   ScheduledTaskClaimMariaDbIT
   TutorialProgressServiceMariaDbReplicaIT
@@ -62,9 +65,14 @@ mariadb_owned_tests=(
   ChatMembersOnlyMariaDbIT
   CaseHandoverStatusHttpMariaDbIT
   AccountInviteRevokeAcceptRaceMariaDbIT
+  ConsultantTenantChangeMariaDbIT
+  CaseHandoverLeaveAdminPowerMariaDbIT
+  CaseHandoverTakeoverMatrixMariaDbIT
+  MoveThenTakeoverMatrixMariaDbIT
   GroupChatMatrixCleanupAdoptionMariaDbIT
   IdentityReactivationSagaMariaDbIT
   UserHardDeleteClaimMariaDbIT
+  StatisticsRetentionMariaDbIT
 )
 required_test_pattern="**/*IT"
 for mariadb_owned_test in "${mariadb_owned_tests[@]}"; do

@@ -92,7 +92,8 @@ public class SessionMapper {
         .consentRequired(
             session.isConsentGateApplicable() && isNull(session.getConsentedLegalVersionId()))
         .topic(new SessionTopicDTO().id(session.getMainTopicId()))
-        .directLinkMedium(directLinkMediumOf(session));
+        .directLinkMedium(directLinkMediumOf(session))
+        .directLinkName(session.getDirectLinkName());
   }
 
   /** FE#1952: an unknown stored value is left out rather than failing the whole list. */
