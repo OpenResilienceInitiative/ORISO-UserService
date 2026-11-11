@@ -25,6 +25,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.LongSupplier;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import lombok.Builder;
 import lombok.Getter;
@@ -121,7 +122,7 @@ public class EventNotificationService {
         String.format(
             "Another counselling on the topic of chat #%s has started.", existing.getId()),
         serializeParams(params),
-        buildSessionActionPath(existing),
+        buildSessionActionPathForRecipient(existing, recipientId, null),
         existing.getId(),
         existing.getTenantId());
   }
@@ -1283,6 +1284,29 @@ public class EventNotificationService {
         tenantId);
   }
 
+  /** Called with the scheduler's lock transaction suspended. Only the writer uses a connection. */
+  void createGroupReminderOnce(
+      String deduplicationKey,
+      String recipientUserId,
+      String title,
+      String text,
+      String params,
+      Long seriesId) {
+    persistAndSignal(
+        buildEvent(
+            recipientUserId,
+            GroupChatLifecycleNotificationService.EVENT_GROUP_CHAT_REMINDER,
+            CATEGORY_SYSTEM,
+            title,
+            text,
+            params,
+            null,
+            seriesId,
+            null,
+            deduplicationKey),
+        deduplicationWriter::persistIfAbsentInNewTransaction);
+  }
+
   /** Same as {@link #createEventOnce}; true only when this call persisted the event. */
   private boolean persistOnce(
       String deduplicationKey,
@@ -1304,26 +1328,38 @@ public class EventNotificationService {
       return false;
     }
 
+    return persistAndSignal(
+        buildEvent(
+            recipientUserId,
+            eventType,
+            category,
+            title,
+            text,
+            params,
+            actionPath,
+            sourceSessionId,
+            tenantId,
+            deduplicationKey),
+        event -> {
+          deduplicationWriter.persistInNewTransaction(event);
+          return true;
+        });
+  }
+
+  private boolean persistAndSignal(EventNotification event, Predicate<EventNotification> persist) {
     try {
-      deduplicationWriter.persistInNewTransaction(
-          buildEvent(
-              recipientUserId,
-              eventType,
-              category,
-              title,
-              text,
-              params,
-              actionPath,
-              sourceSessionId,
-              tenantId,
-              deduplicationKey));
-      // Only nudge on a genuine first persist — a duplicate-key race (below) already delivered.
-      signalFeedUpdatedSafely(recipientUserId);
+      if (!persist.test(event)) {
+        return false;
+      }
+      // The independent writer has committed before the feed is signaled.
+      signalFeedUpdatedSafely(event.getRecipientUserId());
       return true;
     } catch (DataIntegrityViolationException duplicate) {
       // Another scheduler replica won the unique-key race. The desired event already exists.
       log.debug(
-          "Notification {} already persisted for recipient {}", deduplicationKey, recipientUserId);
+          "Notification {} already persisted for recipient {}",
+          event.getDeduplicationKey(),
+          event.getRecipientUserId());
       return false;
     }
   }

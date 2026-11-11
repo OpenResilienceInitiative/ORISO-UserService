@@ -35,6 +35,8 @@ public class CaseHandoverMailSender {
   @Async
   public void send(CaseHandoverEmailNotification.Mail mail) {
     try {
+      var session = sessions.findById(mail.sessionId()).orElse(null);
+      if (session == null || AskerNotificationChannelPolicy.isLiveChat(session)) return;
       var route = routes.resolve(mail.tenantId());
       if (route.isEmpty()) return;
       if (mail.outcome() == CaseHandoverEmailNotification.Outcome.GRANTED
@@ -53,9 +55,7 @@ public class CaseHandoverMailSender {
       if (mail.outcome() == CaseHandoverEmailNotification.Outcome.CONSENT_REQUESTED
           && mail.accessType()
               == de.caritas.cob.userservice.api.model.CaseHandoverRequest.AccessType.CO_ACCESS) {
-        var session = sessions.findById(mail.sessionId()).orElse(null);
-        if (session == null
-            || session.getStatus()
+        if (session.getStatus()
                 == de.caritas.cob.userservice.api.model.Session.SessionStatus.REJECTED
             || !Objects.equals(session.getTenantId(), mail.tenantId())
             || !AskerNotificationChannelPolicy.emailAllowed(session, tenant.getSettings())) return;

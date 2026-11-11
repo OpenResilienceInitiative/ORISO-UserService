@@ -131,6 +131,7 @@ public class EmailNotificationFacade {
   }
 
   private void sendMailTasksToMailService(EmailSupplier mailsToSend, Session session) {
+    if (AskerNotificationChannelPolicy.isLiveChat(session)) return;
     List<MailDTO> generatedMails = mailsToSend.generateEmails();
     if (isNotEmpty(generatedMails)) {
       if (session != null) {
@@ -256,6 +257,9 @@ public class EmailNotificationFacade {
       ReassignmentNotificationDTO reassignmentNotification, TenantData tenantData) {
     TenantContext.setCurrentTenantData(tenantData);
     try {
+      var session =
+          sessionService.getSessionByMatrixRoomId(reassignmentNotification.getMatrixRoomId());
+      if (AskerNotificationChannelPolicy.isLiveChat(session)) return;
       Consultant existingConsultantById =
           findExistingConsultantById(reassignmentNotification.getToConsultantId().toString());
 

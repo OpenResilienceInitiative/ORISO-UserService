@@ -144,7 +144,7 @@ public class CreateSessionFacade {
     var session =
         sessionService.initializeDirectSession(
             consultant, user, userDTO, agencyDTO.getTeamAgency());
-    sessionDataService.saveSessionData(session, fromUserDTO(userDTO));
+    sessionDataService.saveInitialSessionData(session, user, fromUserDTO(userDTO));
     session.setConsultant(consultant);
     session.setStatus(SessionStatus.IN_PROGRESS);
     session = sessionService.saveSession(session);
@@ -167,7 +167,7 @@ public class CreateSessionFacade {
       var session = sessionService.initializeSession(user, userDTO, isTeaming);
       initialized = nonNull(session) && nonNull(session.getId());
       sessionId = initialized ? session.getId() : null;
-      sessionDataService.saveSessionData(session, sessionData);
+      sessionDataService.saveInitialSessionData(session, user, sessionData);
 
       return session;
     } catch (Exception ex) {

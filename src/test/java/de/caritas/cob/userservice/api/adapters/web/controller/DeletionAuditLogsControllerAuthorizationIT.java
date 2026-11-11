@@ -283,6 +283,21 @@ class DeletionAuditLogsControllerAuthorizationIT {
   }
 
   @Test
+  void report_Should_ReturnBadRequest_WhenAnAdminReportsAPartialFailure() throws Exception {
+    // PARTIAL_FAILURE is what the deletion job finds out about its own run (#1525).
+    mvc.perform(
+            postWithCsrf()
+                .with(
+                    adminOfTenant(
+                        4, AuthorityValue.RESTRICTED_AGENCY_ADMIN, "restricted-agency-admin"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(AGENCY_REPORT.replace("SCHEDULED", "PARTIAL_FAILURE")))
+        .andExpect(status().isBadRequest());
+
+    verifyNoInteractions(deletionAuditService);
+  }
+
+  @Test
   void report_Should_ReturnForbidden_WhenAnAdminReportsAnAgencyAsExecuted() throws Exception {
     // Only the nightly purge (technical account, via the AgencyService outbox) executes an
     // agency deletion; a person's EXECUTED row would make the outbox pull skip the real one.

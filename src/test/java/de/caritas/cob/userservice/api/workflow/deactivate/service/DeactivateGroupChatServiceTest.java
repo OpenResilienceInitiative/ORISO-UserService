@@ -18,6 +18,7 @@ import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
+import de.caritas.cob.userservice.api.service.chat.RecurringGroupStopCoordinator;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -44,6 +45,8 @@ class DeactivateGroupChatServiceTest {
 
   @Mock private ActionsRegistry actionsRegistry;
 
+  @Mock private RecurringGroupStopCoordinator recurringStops;
+
   @Mock private PlatformTransactionManager transactionManager;
 
   private final AtomicLong nextId = new AtomicLong(100);
@@ -64,7 +67,7 @@ class DeactivateGroupChatServiceTest {
 
   @Test
   void deactivateStaleGroupChats_Should_notPerformAnyDeactivation_When_noChatIsActive() {
-    when(this.chatRepository.findAllByActiveIsTrue()).thenReturn(emptyList());
+    when(this.chatRepository.findActiveDeactivationCandidates()).thenReturn(emptyList());
 
     this.deactivateGroupChatService.deactivateStaleGroupChats();
 
@@ -213,7 +216,7 @@ class DeactivateGroupChatServiceTest {
           .when(this.chatRepository.findByIdForUpdate(chat.getId()))
           .thenReturn(Optional.of(chat));
     }
-    when(this.chatRepository.findAllByActiveIsTrue()).thenReturn(List.of(chats));
+    when(this.chatRepository.findActiveDeactivationCandidates()).thenReturn(List.of(chats));
   }
 
   @Test
@@ -228,9 +231,9 @@ class DeactivateGroupChatServiceTest {
 
     this.deactivateGroupChatService.deactivateStaleGroupChats();
 
-    // One rollback for the stuck chat; commits for the candidate read and the other chat.
+    // Candidate scan, two per-chat reads and the successful stop commit; the stuck stop rolls back.
     verify(this.transactionManager, times(1)).rollback(any());
-    verify(this.transactionManager, times(2)).commit(any());
+    verify(this.transactionManager, times(4)).commit(any());
     verify(stop).execute(other);
   }
 

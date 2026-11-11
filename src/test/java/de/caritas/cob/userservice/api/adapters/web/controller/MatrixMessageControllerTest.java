@@ -7,10 +7,16 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -20,7 +26,11 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixIdentifierRedactor;
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixMediaClient;
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixRoomClient;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.ChatPermissionVerifier;
@@ -30,26 +40,41 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
+import de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeatureGate;
 import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserService;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.test.web.client.response.DefaultResponseCreator;
+import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.client.RestTemplate;
 
 @ExtendWith(MockitoExtension.class)
 class MatrixMessageControllerTest {
@@ -59,6 +84,11 @@ class MatrixMessageControllerTest {
   private static final String USERNAME = "seeker";
   private static final String MATRIX_ROOM_ID = "!room:matrix";
   private static final String MATRIX_USER_ID = "@seeker:matrix";
+  private static final String MATRIX_BASE_URL = "https://matrix.example.com";
+  private static final String MATRIX_LOGIN_URL = MATRIX_BASE_URL + "/_matrix/client/r0/login";
+  private static final String MATRIX_PASSWORD_UPDATE_URL =
+      MATRIX_BASE_URL + "/_synapse/admin/v2/users/%40seeker%3Amatrix";
+  private static final String BROWSER_DEVICE_ID = "DEVICE_A";
 
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private SessionService sessionService;
@@ -68,22 +98,27 @@ class MatrixMessageControllerTest {
   @Mock private UserService userService;
   @Mock private AgencyMatrixCredentialClient matrixCredentialClient;
   @Mock private ChatPermissionVerifier chatPermissionVerifier;
+  @Mock private ConversationFeatureGate conversationFeatureGate;
 
   private MatrixMessageController controller;
 
   @BeforeEach
   void setUp() {
-    controller =
-        new MatrixMessageController(
-            matrixSynapseService,
-            sessionService,
-            chatService,
-            authenticatedUser,
-            consultantService,
-            userService,
-            matrixCredentialClient,
-            chatPermissionVerifier,
-            Optional.<RedisMessageMirrorService>empty());
+    controller = controllerWith(matrixSynapseService);
+  }
+
+  private MatrixMessageController controllerWith(MatrixSynapseService service) {
+    return new MatrixMessageController(
+        service,
+        sessionService,
+        chatService,
+        authenticatedUser,
+        consultantService,
+        userService,
+        matrixCredentialClient,
+        chatPermissionVerifier,
+        conversationFeatureGate,
+        Optional.<RedisMessageMirrorService>empty());
   }
 
   @Test
@@ -94,6 +129,65 @@ class MatrixMessageControllerTest {
     var response =
         controller.sendMessage(SESSION_ID, Map.of("message", "Blocked synthetic message"));
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+    verifyNoInteractions(matrixSynapseService);
+  }
+
+  @Test
+  void uploadFile_ShouldBeRefusedBeforeAnyMatrixCall_WhenAttachmentsAreSwitchedOff() {
+    var session = sessionWithMatrixRoom();
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(session));
+    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser)).thenReturn(session);
+    doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException(
+                de.caritas.cob.userservice.api.exception.httpresponses.customheader
+                    .HttpStatusExceptionReason.FEATURE_DISABLED,
+                HttpStatus.FORBIDDEN))
+        .when(conversationFeatureGate)
+        .require(
+            List.of(
+                de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeature
+                    .MEDIA_UPLOAD),
+            session);
+
+    // Not turned into a 500 by the controller's own catch-all.
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException
+            .class,
+        () ->
+            controller.uploadFile(
+                SESSION_ID,
+                new MockMultipartFile("file", "photo.png", "image/png", "bytes".getBytes())));
+    verifyNoInteractions(matrixSynapseService);
+  }
+
+  @Test
+  void uploadFile_ShouldAskTheVoiceSwitchToo_WhenTheFileBecomesAVoiceMessage() {
+    var session = sessionWithMatrixRoom();
+    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(session));
+    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser)).thenReturn(session);
+    doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException(
+                de.caritas.cob.userservice.api.exception.httpresponses.customheader
+                    .HttpStatusExceptionReason.FEATURE_DISABLED,
+                HttpStatus.FORBIDDEN))
+        .when(conversationFeatureGate)
+        .require(
+            List.of(
+                de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeature
+                    .MEDIA_UPLOAD,
+                de.caritas.cob.userservice.api.service.conversationfeature.ConversationFeature
+                    .VOICE_MESSAGES),
+            session);
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException
+            .class,
+        () ->
+            controller.uploadFile(
+                SESSION_ID,
+                new MockMultipartFile("file", "note.mp3", "audio/mpeg", "bytes".getBytes())));
     verifyNoInteractions(matrixSynapseService);
   }
 
@@ -280,6 +374,167 @@ class MatrixMessageControllerTest {
     assertEquals("dev1", body.get("deviceId"));
     assertEquals("ephemeral-uia-password", body.get("uiaPassword"));
     assertEquals("no-store", response.getHeaders().getCacheControl());
+  }
+
+  @ParameterizedTest
+  @MethodSource("synapseRateLimitDelays")
+  void browserLoginReturnsSafeRateLimitWithUsableRetryAfter(
+      String upstreamRetryAfter, String retryAfterMsJson, String expectedRetryAfter)
+      throws Exception {
+    var restTemplate = new RestTemplate();
+    var synapse = MockRestServiceServer.bindTo(restTemplate).build();
+    var mvc = browserLoginMvc(restTemplate);
+
+    expectBrowserRateLimit(synapse, upstreamRetryAfter, retryAfterMsJson);
+
+    var response =
+        mvc.perform(get("/service/matrix/me/token").param("deviceId", BROWSER_DEVICE_ID))
+            .andExpect(status().isTooManyRequests())
+            .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"))
+            .andReturn()
+            .getResponse();
+
+    assertThat(response.getHeader(HttpHeaders.RETRY_AFTER)).isEqualTo(expectedRetryAfter);
+    assertThat(new ObjectMapper().readTree(response.getContentAsString()))
+        .isEqualTo(new ObjectMapper().readTree("{\"error\":\"Matrix token unavailable\"}"));
+    synapse.verify();
+  }
+
+  private static Stream<Arguments> synapseRateLimitDelays() {
+    return Stream.of(
+        Arguments.of(null, "16006", "17"),
+        Arguments.of(null, "1", "1"),
+        Arguments.of("120", "16006", "120"),
+        Arguments.of("1", "16006", "17"),
+        Arguments.of("invalid", "21037", "22"),
+        Arguments.of("17", "null", "17"),
+        Arguments.of("0", "0", null),
+        Arguments.of(null, "-10", null),
+        Arguments.of(null, "90000, \"retry_after_ms\": 1000", null),
+        Arguments.of(null, "21037} {\"unexpected\": true", null),
+        Arguments.of(null, "\"16006\"", null),
+        Arguments.of(null, "16006.5", null),
+        Arguments.of("2147483648", "2147483647001", null),
+        Arguments.of(null, "9223372036854775808", null));
+  }
+
+  @Test
+  void browserLoginNormalizesAnUpstreamRetryAfterDateToSeconds() throws Exception {
+    var restTemplate = new RestTemplate();
+    var synapse = MockRestServiceServer.bindTo(restTemplate).build();
+    var mvc = browserLoginMvc(restTemplate);
+    var deadline = Instant.now().plusSeconds(120).truncatedTo(ChronoUnit.SECONDS);
+    var retryAfterDate =
+        DateTimeFormatter.RFC_1123_DATE_TIME.format(deadline.atZone(ZoneOffset.UTC));
+    expectBrowserRateLimit(synapse, retryAfterDate, "null");
+
+    var earliest = Instant.now();
+    var response =
+        mvc.perform(get("/matrix/me/token").param("deviceId", BROWSER_DEVICE_ID))
+            .andExpect(status().isTooManyRequests())
+            .andReturn()
+            .getResponse();
+    var latest = Instant.now();
+
+    var delay = Long.parseLong(response.getHeader(HttpHeaders.RETRY_AFTER));
+    assertThat(latest.plusSeconds(delay)).isAfterOrEqualTo(deadline);
+    assertThat(earliest.plusSeconds(delay)).isBefore(deadline.plusSeconds(1));
+    synapse.verify();
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void browserLoginKeepsServiceUnavailableForOtherSynapseFailures(boolean passwordUpdateFails)
+      throws Exception {
+    var restTemplate = new RestTemplate();
+    var synapse = MockRestServiceServer.bindTo(restTemplate).build();
+    var mvc = browserLoginMvc(restTemplate);
+
+    expectAdminLogin(synapse);
+    if (passwordUpdateFails) {
+      expectBrowserPasswordUpdate(
+          synapse, withStatus(HttpStatus.TOO_MANY_REQUESTS).header(HttpHeaders.RETRY_AFTER, "30"));
+    } else {
+      expectBrowserPasswordUpdate(synapse, withSuccess("{}", MediaType.APPLICATION_JSON));
+      expectBrowserLogin(
+          synapse,
+          withStatus(HttpStatus.SERVICE_UNAVAILABLE).header(HttpHeaders.RETRY_AFTER, "30"));
+    }
+
+    mvc.perform(get("/service/matrix/me/token").param("deviceId", BROWSER_DEVICE_ID))
+        .andExpect(status().isServiceUnavailable())
+        .andExpect(header().doesNotExist(HttpHeaders.RETRY_AFTER));
+    synapse.verify();
+  }
+
+  private MockMvc browserLoginMvc(RestTemplate restTemplate) {
+    var config = new MatrixConfig();
+    config.setApiUrl(MATRIX_BASE_URL);
+    config.setAdminUsername("matrix-admin");
+    config.setAdminPassword("synthetic-admin-password");
+    config.setRegistrationSharedSecret("synthetic-shared-secret");
+    var service =
+        new MatrixSynapseService(
+            config,
+            restTemplate,
+            restTemplate,
+            mock(MatrixRoomClient.class),
+            mock(MatrixMediaClient.class),
+            mock(MatrixIdentifierRedactor.class));
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(userService.getUser(USER_ID)).thenReturn(Optional.of(userWithMatrixId()));
+    return MockMvcBuilders.standaloneSetup(controllerWith(service)).build();
+  }
+
+  private static void expectAdminLogin(MockRestServiceServer synapse) {
+    synapse
+        .expect(requestTo(MATRIX_LOGIN_URL))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(jsonPath("$.user").value("matrix-admin"))
+        .andRespond(
+            withSuccess(
+                "{\"access_token\":\"synthetic-admin-token\"}", MediaType.APPLICATION_JSON));
+  }
+
+  private static void expectBrowserPasswordUpdate(
+      MockRestServiceServer synapse, DefaultResponseCreator response) {
+    synapse
+        .expect(requestTo(MATRIX_PASSWORD_UPDATE_URL))
+        .andExpect(method(HttpMethod.PUT))
+        .andExpect(jsonPath("$.logout_devices").value(false))
+        .andRespond(response);
+  }
+
+  private static void expectBrowserRateLimit(
+      MockRestServiceServer synapse, String upstreamRetryAfter, String retryAfterMsJson) {
+    expectAdminLogin(synapse);
+    expectBrowserPasswordUpdate(synapse, withSuccess("{}", MediaType.APPLICATION_JSON));
+    var response =
+        withStatus(HttpStatus.TOO_MANY_REQUESTS)
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(
+                """
+                {
+                  "errcode": "M_LIMIT_EXCEEDED",
+                  "error": "upstream private diagnostic",
+                  "retry_after_ms": %s
+                }
+                """
+                    .formatted(retryAfterMsJson));
+    if (upstreamRetryAfter != null) {
+      response.header(HttpHeaders.RETRY_AFTER, upstreamRetryAfter);
+    }
+    expectBrowserLogin(synapse, response);
+  }
+
+  private static void expectBrowserLogin(
+      MockRestServiceServer synapse, DefaultResponseCreator response) {
+    synapse
+        .expect(requestTo(MATRIX_LOGIN_URL))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(jsonPath("$.user").value(MATRIX_USER_ID))
+        .andExpect(jsonPath("$.device_id").value(BROWSER_DEVICE_ID))
+        .andRespond(response);
   }
 
   @Test

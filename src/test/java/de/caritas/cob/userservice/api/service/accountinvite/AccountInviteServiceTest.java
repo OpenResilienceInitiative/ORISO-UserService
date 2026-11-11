@@ -24,6 +24,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
+import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
 import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.model.TopicPermission;
@@ -756,7 +757,7 @@ class AccountInviteServiceTest {
     // The revoke wins: the old link is not brought back and the revoked row is kept.
     assertThat(oldInvite.getStatus()).isEqualTo(AccountInviteStatus.SUPERSEDED);
     verify(accountInviteRepository, never()).deleteById(any());
-    verify(accountInviteRepository, never()).delete(any());
+    verify(accountInviteRepository, never()).delete(any(AccountInvite.class));
     verify(accountInviteRepository, never()).deleteAll(any());
     verify(accountInviteRepository, never()).deleteAll();
     // Only the three writes of the handover itself; nothing after the failed send.
@@ -840,6 +841,57 @@ class AccountInviteServiceTest {
     assertThat(invite.getEmailVerificationStatus()).isEqualTo(EmailVerificationStatus.PENDING);
     assertThat(invite.getTwoFactorStatus()).isEqualTo(TwoFactorGateStatus.PENDING_SETUP);
     assertThat(invite.getTokenHash()).isNull();
+  }
+
+  @Test
+  void createInvite_Should_StoreAvatarAndNameSuggestion() {
+    when(authenticatedUser.getUserId()).thenReturn("admin-1");
+    when(authenticatedUser.getUsername()).thenReturn("admin@example.org");
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    AccountInvite invite =
+        service.createInvite(
+            new CreateAccountInviteCommand(
+                AccountInviteTargetRole.COUNSELLOR,
+                7L,
+                "new@example.org",
+                "New",
+                "Counsellor",
+                null,
+                11L,
+                30L,
+                null,
+                null,
+                null,
+                null,
+                InviteAvatarSuggestion.of("ICON", "owl", "Maria B.")));
+
+    assertThat(invite.getSuggestedAvatarKind()).isEqualTo(ConsultantAvatarKind.ICON);
+    assertThat(invite.getSuggestedAvatarId()).isEqualTo("owl");
+    assertThat(invite.getSuggestedDisplayName()).isEqualTo("Maria B.");
+  }
+
+  @Test
+  void createInvite_Should_LeaveSuggestionEmpty_When_NoneGiven() {
+    when(authenticatedUser.getUserId()).thenReturn("admin-1");
+    when(authenticatedUser.getUsername()).thenReturn("admin@example.org");
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    AccountInvite invite =
+        service.createInvite(
+            new CreateAccountInviteCommand(
+                AccountInviteTargetRole.COUNSELLOR,
+                7L,
+                "new@example.org",
+                "New",
+                "Counsellor",
+                null,
+                11L,
+                30L));
+
+    assertThat(invite.getSuggestedAvatarKind()).isNull();
+    assertThat(invite.getSuggestedAvatarId()).isNull();
+    assertThat(invite.getSuggestedDisplayName()).isNull();
   }
 
   // ---------------------------------------------------------------------------

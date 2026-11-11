@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+  <changeSet id="20261105-live-chat-account-promotion" author="oriso">
+    <createTable tableName="live_chat_account_claim">
+      <column name="user_id" type="varchar(36) CHARACTER SET utf8 COLLATE utf8_unicode_ci"><constraints primaryKey="true" nullable="false"/></column>
+      <column name="lifecycle" type="varchar(32)"><constraints nullable="false"/></column>
+      <column name="finished_origin" type="boolean" defaultValueBoolean="false"><constraints nullable="false"/></column>
+      <column name="intent_id" type="varchar(36)"/>
+      <column name="credential_verifier" type="varchar(128)"/>
+    </createTable>
+    <addForeignKeyConstraint baseTableName="live_chat_account_claim" baseColumnNames="user_id" referencedTableName="user" referencedColumnNames="user_id" constraintName="fk_live_chat_claim_user" onDelete="CASCADE"/>
+    <rollback><dropTable tableName="live_chat_account_claim"/></rollback>
+  </changeSet>
+</databaseChangeLog>

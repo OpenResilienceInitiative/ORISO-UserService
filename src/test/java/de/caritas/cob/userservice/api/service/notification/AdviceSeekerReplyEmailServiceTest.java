@@ -379,23 +379,17 @@ class AdviceSeekerReplyEmailServiceTest {
   }
 
   @Test
-  void liveChatSeekerMessageUsesTheExistingPrivateRoomEligibility() {
+  void liveChatMessagesNeverReserveEmailForEitherParticipant() {
     var session = consultation();
     session.setConversationType(ConversationType.LIVE_CHAT);
     when(sessions.findByMatrixRoomId("!room:matrix.example")).thenReturn(Optional.of(session));
 
     service.onAdviceSeekerMessage(
         "!room:matrix.example", "$live-chat-message", "@asker:matrix.example");
+    service.onConsultantReply(
+        "!room:matrix.example", "$live-chat-reply", "@consultant:matrix.example");
 
-    verify(writer)
-        .reserve(
-            eq(RecipientKind.CONSULTANT),
-            eq("consultant"),
-            eq("@asker:matrix.example"),
-            eq("!room:matrix.example"),
-            anyString(),
-            eq(7L),
-            eq(42L));
+    verifyNoInteractions(writer, delivery);
   }
 
   @Test
@@ -426,6 +420,20 @@ class AdviceSeekerReplyEmailServiceTest {
     service.onAdviceSeekerMessage("!room:matrix.example", "$event", "@asker:matrix.example");
 
     verifyNoInteractions(writer, delivery);
+  }
+
+  @Test
+  void legacyLiveChatRejectsAlreadyQueuedStaffMailBeforeSmtp() {
+    var session = consultation();
+    session.setConversationType(null);
+    session.setRegistrationType(Session.RegistrationType.ANONYMOUS);
+    when(sessions.findById(42L)).thenReturn(Optional.of(session));
+    when(writer.claim(1L)).thenReturn(Optional.of(consultantClaim()));
+
+    service.deliverPending(1L);
+
+    verify(writer).finish(1L, Status.REJECTED);
+    verifyNoInteractions(delivery);
   }
 
   @Test

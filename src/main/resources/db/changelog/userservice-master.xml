@@ -263,4 +263,14 @@
   <include file="db/changelog/changeset/20261101_statistics_time_windows_1544/changeSet.xml"/>
   <include file="db/changelog/changeset/20261102_statistics_dashboard_snapshot_1547/changeSet.xml"/>
   <include file="db/changelog/changeset/20261102_statistics_settings_lock_1562/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261103_statistics_retention_1561/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261102_session_appointment_1960/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261016_consultant_tenant_change_audit/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261031_invite_avatar_name_1274/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261104_chat_carried_marker/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261029_deleted_asker_session_1159/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261105_live_chat_account_promotion/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261108_protected_draft_scope/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261110_call_observation_2166/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261110_session_direct_link_name_2170/changeSet.xml"/>
 </databaseChangeLog>

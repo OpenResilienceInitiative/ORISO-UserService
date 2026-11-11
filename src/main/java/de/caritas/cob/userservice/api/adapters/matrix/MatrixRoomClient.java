@@ -45,6 +45,9 @@ public class MatrixRoomClient {
       "/_matrix/client/r0/rooms/{roomId}/state/m.room.power_levels";
   private static final String ENDPOINT_MEMBERSHIP =
       "/_matrix/client/r0/rooms/{roomId}/state/m.room.member/{userId}";
+  private static final String ENDPOINT_ADMIN_JOIN = "/_synapse/admin/v1/join/{roomId}";
+  private static final String ENDPOINT_ADMIN_MAKE_ROOM_ADMIN =
+      "/_synapse/admin/v1/rooms/{roomId}/make_room_admin";
   private static final int MEMBERS_ONLY_INVITE_LEVEL = 100;
   private static final int INVITE_USER_MAX_ATTEMPTS = 3;
   private static final long DEFAULT_INVITE_RETRY_DELAY_MS = 1000L;
@@ -810,6 +813,105 @@ public class MatrixRoomClient {
     }
   }
 
+  /**
+   * The power level of {@code userId}, read with {@code token}. Empty when Matrix refuses or cannot
+   * be reached. Never throws. Logs the exception type only, never a user or room ID.
+   */
+  public Optional<Integer> findUserPowerLevel(String roomId, String userId, String token) {
+    try {
+      return Optional.of(userPower(readPowerLevels(roomId, token), userId));
+    } catch (Exception failure) {
+      log.warn("Could not read a Matrix power level ({})", failure.getClass().getSimpleName());
+      return Optional.empty();
+    }
+  }
+
+  /** What {@link #raiseUserPowerLevel} found and did. */
+  public enum PowerRaise {
+    /** The user already held at least the requested level; nothing was written. */
+    ALREADY_HELD,
+    /** The level was written. */
+    RAISED,
+    /** The token holder has less than the requested level themselves, so they cannot give it. */
+    NOT_PERMITTED,
+    /** The room's power levels could not be read or written. */
+    FAILED
+  }
+
+  /**
+   * Gives {@code userId} at least {@code power}, acting with the token of {@code holderId}. Matrix
+   * lets nobody hand out more than they hold, so a holder below {@code power} gets {@link
+   * PowerRaise#NOT_PERMITTED} without a write. Idempotent: a user who already holds the level is
+   * not written again.
+   *
+   * <p>Best-effort: never throws. Logs the exception type only, never a user or room ID.
+   */
+  public PowerRaise raiseUserPowerLevel(
+      String roomId, String userId, String holderId, int power, String holderToken) {
+    try {
+      var current = readPowerLevels(roomId, holderToken);
+      if (userPower(current, userId) >= power) {
+        return PowerRaise.ALREADY_HELD;
+      }
+      if (userPower(current, holderId) < power) {
+        return PowerRaise.NOT_PERMITTED;
+      }
+      writePowerLevels(roomId, userId, power, holderToken, current);
+      return PowerRaise.RAISED;
+    } catch (Exception failure) {
+      log.warn("Could not raise a Matrix power level ({})", failure.getClass().getSimpleName());
+      return PowerRaise.FAILED;
+    }
+  }
+
+  /**
+   * One invite attempt, without the retry loop of {@link #inviteUserToRoom} and without logging the
+   * invited user: callers that run in a repair queue retry on their own and must keep Matrix user
+   * IDs out of the log (KDG).
+   *
+   * @return true when the user is invited or already in the room, false otherwise
+   */
+  public boolean inviteUserQuietly(String roomId, String userId, String accessToken) {
+    try {
+      var headers = getClientHttpHeaders(accessToken);
+      headers.setContentType(MediaType.APPLICATION_JSON);
+      var inviteRequest = new MatrixInviteUserRequestDTO();
+      inviteRequest.setUserId(userId);
+      var response =
+          restTemplate.postForEntity(
+              buildUrl(ENDPOINT_INVITE_USER, Map.of("roomId", roomId)),
+              new HttpEntity<>(inviteRequest, headers),
+              Map.class);
+      return response.getStatusCode().is2xxSuccessful();
+    } catch (HttpClientErrorException ex) {
+      if (ex.getStatusCode().value() == 403
+          && ex.getResponseBodyAsString().contains("already in the room")) {
+        return true;
+      }
+      log.warn("Matrix invite into a room was refused with status {}", ex.getStatusCode());
+      return false;
+    } catch (Exception ex) {
+      log.warn("Matrix invite into a room failed ({})", ex.getClass().getSimpleName());
+      return false;
+    }
+  }
+
+  /**
+   * Reads the room's {@code m.room.power_levels} content with the given member's token. Empty when
+   * Matrix refuses or cannot be reached, so a caller can tell "unknown" from a real answer.
+   */
+  public Optional<Map<String, Object>> getPowerLevels(String roomId, String accessToken) {
+    try {
+      return Optional.of(readPowerLevels(roomId, accessToken));
+    } catch (Exception failure) {
+      log.warn(
+          "Could not read the power levels of Matrix room {} ({})",
+          roomId,
+          failure.getClass().getSimpleName());
+      return Optional.empty();
+    }
+  }
+
   @SuppressWarnings("unchecked")
   private Map<String, Object> readPowerLevels(String roomId, String token) {
     var response =
@@ -1011,6 +1113,75 @@ public class MatrixRoomClient {
       return false;
     } catch (Exception e) {
       log.error("Failed to remove user {} from room {}: {}", userId, roomId, e.getMessage());
+      return false;
+    }
+  }
+
+  /**
+   * Joins a local user into a room without that user's or a room member's token ({@code POST
+   * /_synapse/admin/v1/join/{roomId}}, Synapse admin API). Synapse invites the user as the calling
+   * admin first when the room is not public, so the admin has to be a room member with permission
+   * to invite.
+   *
+   * <p>Best-effort: never throws. Logs the room ID and the Synapse status only, never the user ID.
+   *
+   * @param roomId the Matrix room ID
+   * @param userId the full Matrix user ID of the local user to join
+   * @param adminToken access token of the technical Matrix admin
+   * @return true when Synapse accepted the join, false otherwise
+   */
+  public boolean forceJoinUser(String roomId, String userId, String adminToken) {
+    return postAdminUserAction(ENDPOINT_ADMIN_JOIN, "force-join", roomId, userId, adminToken);
+  }
+
+  /**
+   * Grants a user the highest power level a local room member holds ({@code POST
+   * /_synapse/admin/v1/rooms/{roomId}/make_room_admin}, Synapse admin API). It acts through the
+   * local member with the most power, so it fails when none of them can still change power levels.
+   *
+   * <p>Best-effort: never throws. Logs the room ID and the Synapse status only, never the user ID.
+   *
+   * @param roomId the Matrix room ID
+   * @param userId the full Matrix user ID to raise
+   * @param adminToken access token of the technical Matrix admin
+   * @return true when Synapse accepted the request, false otherwise
+   */
+  public boolean makeRoomAdmin(String roomId, String userId, String adminToken) {
+    return postAdminUserAction(
+        ENDPOINT_ADMIN_MAKE_ROOM_ADMIN, "make-room-admin", roomId, userId, adminToken);
+  }
+
+  private boolean postAdminUserAction(
+      String endpoint, String action, String roomId, String userId, String adminToken) {
+    try {
+      var headers = getClientHttpHeaders(adminToken);
+      headers.setContentType(MediaType.APPLICATION_JSON);
+      HttpEntity<Map<String, Object>> request =
+          new HttpEntity<>(Map.of("user_id", userId), headers);
+
+      var response =
+          restTemplate.postForEntity(
+              buildUrl(endpoint, Map.of("roomId", roomId)), request, Map.class);
+      if (response.getStatusCode().is2xxSuccessful()) {
+        log.info("Matrix admin {} succeeded for room {}", action, roomId);
+        return true;
+      }
+      log.warn(
+          "Matrix admin {} for room {} answered status {}",
+          action,
+          roomId,
+          response.getStatusCode());
+      return false;
+    } catch (HttpClientErrorException ex) {
+      log.warn(
+          "Matrix admin {} for room {} was refused with status {}",
+          action,
+          roomId,
+          ex.getStatusCode());
+      return false;
+    } catch (Exception ex) {
+      log.warn(
+          "Matrix admin {} for room {} failed: {}", action, roomId, ex.getClass().getSimpleName());
       return false;
     }
   }

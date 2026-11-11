@@ -102,6 +102,56 @@ class AskerIdentityPolicySingleTenantTest {
     }
   }
 
+  @Test
+  void generatedClientReadsFreshCollectionFlagsWithoutSubstitutingDeliveryFlags() {
+    var tenants = configured(true);
+    var policy =
+        new AskerEmailCollectionPolicy(
+            tenants,
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.port.out.SessionRepository.class),
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.port.out.UserChatRepository.class),
+            org.mockito.Mockito.mock(
+                org.springframework.transaction.PlatformTransactionManager.class));
+    for (var type :
+        new de.caritas.cob.userservice.api.model.ConversationType[] {
+          de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING,
+          de.caritas.cob.userservice.api.model.ConversationType.LIVE_CHAT,
+          de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP
+        }) {
+      server
+          .expect(requestTo("https://tenant.example/tenant/public/id/42"))
+          .andRespond(
+              withSuccess(
+                  """
+              {"id":42,"settings":{"featureAskerEmailEnabled":true,
+              "featureAskerEmailCollectionAgencyCounsellingEnabled":false,
+              "featureAskerEmailCollectionSelfHelpEnabled":false}}
+              """,
+                  MediaType.APPLICATION_JSON));
+      assertThatThrownBy(() -> policy.requireForRegistration(42L, type))
+          .isInstanceOf(ForbiddenException.class);
+      server.verify();
+      server.reset();
+    }
+    server
+        .expect(requestTo("https://tenant.example/tenant/public/id/42"))
+        .andRespond(
+            withSuccess(
+                """
+            {"id":42,"settings":{"featureAskerEmailEnabled":true,
+            "featureAskerEmailLiveChatEnabled":true}}
+            """,
+                MediaType.APPLICATION_JSON));
+    assertThatThrownBy(
+            () ->
+                policy.requireForRegistration(
+                    42L, de.caritas.cob.userservice.api.model.ConversationType.LIVE_CHAT))
+        .isInstanceOf(ForbiddenException.class);
+    server.verify();
+  }
+
   private TenantService configured(boolean multitenant) {
     context
         .getEnvironment()

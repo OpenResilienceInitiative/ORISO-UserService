@@ -6,6 +6,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import java.time.LocalDateTime;
 import java.util.Objects;
 import lombok.AllArgsConstructor;
@@ -19,7 +20,12 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 @Entity
-@Table(name = "draft_message")
+@Table(
+    name = "draft_message",
+    uniqueConstraints =
+        @UniqueConstraint(
+            name = "uk_draft_message_protected_scope",
+            columnNames = {"user_id", "protected_scope_key"}))
 @AllArgsConstructor
 @NoArgsConstructor
 @Getter
@@ -40,7 +46,11 @@ public class DraftMessage implements TenantAware {
   @Column(name = "scope_key", nullable = false, length = 255)
   private String scopeKey;
 
-  @Column(name = "text", columnDefinition = "text")
+  // Null on legacy rows, whose historical duplicates are intentionally preserved.
+  @Column(name = "protected_scope_key", length = 52)
+  private String protectedScopeKey;
+
+  @Column(name = "text", columnDefinition = "MEDIUMTEXT")
   @JdbcTypeCode(SqlTypes.LONGVARCHAR)
   private String text;
 

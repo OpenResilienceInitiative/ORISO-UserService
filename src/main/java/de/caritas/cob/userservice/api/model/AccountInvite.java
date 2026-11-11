@@ -121,6 +121,21 @@ public class AccountInvite {
   @Column(name = "agency_id_allocation_mode", length = 16)
   private IdAllocationMode agencyIdAllocationMode;
 
+  /**
+   * The inviter's optional suggestion for the invitee's avatar and public display name
+   * (ORISO-Admin#1274). The invitee sees them prefilled and may change both; null on invites
+   * created without a suggestion and on older rows.
+   */
+  @Enumerated(EnumType.STRING)
+  @Column(name = "avatar_kind", length = 16)
+  private ConsultantAvatarKind suggestedAvatarKind;
+
+  @Column(name = "avatar_id", length = 64)
+  private String suggestedAvatarId;
+
+  @Column(name = "display_name")
+  private String suggestedDisplayName;
+
   /** AGENCY_ADMIN only: the inviter's proposal, the invitee may change it; null for other roles. */
   @Column(name = "also_counsellor")
   private Boolean alsoCounsellor;
@@ -203,11 +218,11 @@ public class AccountInvite {
   private int dpaForwardCount = 0;
 
   /**
-   * When the tenant's data processing agreement was signed, written back to the invite so the Admin
-   * invite progress board can prove its final "Vertrag unterschrieben" phase (ORISO-Admin#896, epic
-   * #725). Stamped by the DPA_SIGNED_NOTICE chain for forwarded signatures and by the onboarding
-   * registration for an own acceptance; the authoritative record stays TenantService's {@code
-   * tenant_dpa_signature} — this is the invite-side mirror, never cleared, never regressed.
+   * When the tenant's data processing agreement was signed. This tenant-wide milestone is mirrored
+   * on the invitation for the Admin progress board. TenantService owns the authoritative signature
+   * record, which can be verified during reconciliation or forwarded-signature notice processing.
+   * Onboarding registration can also stamp a recorded acceptance. An existing milestone is
+   * preserved.
    */
   @Column(name = "dpa_signed_at", columnDefinition = "datetime")
   private LocalDateTime dpaSignedAt;

@@ -1558,11 +1558,12 @@ class EventNotificationServiceTest {
   }
 
   @Test
-  void topicDuplicateStarted_isWrittenOncePerPairForTheExistingCounsellor() {
+  void topicDuplicateStarted_isWrittenOncePerPairForTheExistingCounsellor() throws Exception {
     var counsellor = new Consultant();
     counsellor.setId("old-counsellor");
     var existing = new Session();
     existing.setId(5L);
+    existing.setTenantId(7L);
     existing.setMainTopicId(3L);
     existing.setConsultant(counsellor);
     existing.setMatrixRoomId("!old:matrix");
@@ -1580,7 +1581,18 @@ class EventNotificationServiceTest {
     var event = eventCaptor.getValue();
     assertThat(event.getRecipientUserId()).isEqualTo("old-counsellor");
     assertThat(event.getEventType()).isEqualTo("topic_duplicate.started");
-    assertThat(event.getParams()).contains("\"topicId\":3").doesNotContain("79098");
+    assertThat(event.getActionPath()).isEqualTo("/sessions/consultant/sessionView/!old:matrix/5");
+    assertThat(event.getSourceSessionId()).isEqualTo(5L);
+    assertThat(event.getTenantId()).isEqualTo(7L);
+    assertThat(event.getDeduplicationKey()).isEqualTo("topic_duplicate.started:5:9");
+    assertThat(objectMapper.readTree(event.getParams()))
+        .isEqualTo(
+            objectMapper
+                .createObjectNode()
+                .put("conversationType", "AGENCY_COUNSELLING")
+                .put("sessionId", 5)
+                .put("roomRef", "!old:matrix")
+                .put("topicId", 3));
   }
 
   @Test
@@ -1608,10 +1620,19 @@ class EventNotificationServiceTest {
   }
 
   @Test
-  void topicDuplicateStarted_withoutCounsellorWritesNothing() {
+  void topicDuplicateStarted_withoutValidCounsellorWritesNothing() {
     var existing = new Session();
     existing.setId(5L);
 
+    assertThat(eventNotificationService.createTopicDuplicateStartedNotification(existing, 9L))
+        .isFalse();
+
+    var counsellor = new Consultant();
+    existing.setConsultant(counsellor);
+    assertThat(eventNotificationService.createTopicDuplicateStartedNotification(existing, 9L))
+        .isFalse();
+
+    counsellor.setId(" ");
     assertThat(eventNotificationService.createTopicDuplicateStartedNotification(existing, 9L))
         .isFalse();
     verify(deduplicationWriter, never()).persistInNewTransaction(any());

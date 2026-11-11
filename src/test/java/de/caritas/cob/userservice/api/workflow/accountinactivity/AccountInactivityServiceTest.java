@@ -48,6 +48,60 @@ class AccountInactivityServiceTest {
   }
 
   @Test
+  void inactivitySuspensionRefusesPendingGuestConversion() {
+    var service = createService(new Effects());
+    var jdbc =
+        new JdbcTemplate(
+            new DriverManagerDataSource("jdbc:h2:mem:lifecycle;DB_CLOSE_DELAY=-1", "sa", ""));
+    service.assignAtCreation("guest", 1L, 12, 0, Instant.now());
+    jdbc.update("INSERT INTO `user`(user_id) VALUES (?)", "guest");
+    jdbc.update(
+        "INSERT INTO live_chat_account_claim(user_id,lifecycle) VALUES (?,?)",
+        "guest",
+        "PROMOTION_PENDING");
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.suspend("guest"))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(service.snapshot("guest").orElseThrow().status())
+        .isEqualTo(AccountInactivityService.Status.ACTIVE);
+  }
+
+  @Test
+  void inactivitySuspensionRefusesCommittedGuestCleanup() {
+    var service = createService(new Effects());
+    var jdbc =
+        new JdbcTemplate(
+            new DriverManagerDataSource("jdbc:h2:mem:lifecycle;DB_CLOSE_DELAY=-1", "sa", ""));
+    service.assignAtCreation("guest", 1L, 12, 0, Instant.now());
+    jdbc.update("INSERT INTO `user`(user_id) VALUES (?)", "guest");
+    jdbc.update(
+        "INSERT INTO live_chat_account_claim(user_id,lifecycle) VALUES (?,?)",
+        "guest",
+        "CLEANUP_STARTED");
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.suspend("guest"))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(service.snapshot("guest").orElseThrow().status())
+        .isEqualTo(AccountInactivityService.Status.ACTIVE);
+  }
+
+  @Test
+  void inactivitySuspensionRefusesPendingGuestFinish() {
+    var service = createService(new Effects());
+    var jdbc =
+        new JdbcTemplate(
+            new DriverManagerDataSource("jdbc:h2:mem:lifecycle;DB_CLOSE_DELAY=-1", "sa", ""));
+    service.assignAtCreation("guest", 1L, 12, 0, Instant.now());
+    jdbc.update("INSERT INTO `user`(user_id) VALUES (?)", "guest");
+    jdbc.update(
+        "INSERT INTO live_chat_account_claim(user_id,lifecycle) VALUES (?,?)",
+        "guest",
+        "FINISH_PENDING");
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.suspend("guest"))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(service.snapshot("guest").orElseThrow().status())
+        .isEqualTo(AccountInactivityService.Status.ACTIVE);
+  }
+
+  @Test
   void disappearingCandidateDoesNotAbortOtherTenants() {
     var captured = Instant.parse("2023-01-01T00:00:00Z");
     var owner = new java.util.concurrent.atomic.AtomicReference<AccountInactivityService>();
@@ -94,6 +148,11 @@ class AccountInactivityServiceTest {
   void creationSnapshotSurvivesChangedDefaultsAndUsesCalendarMonths() {
     var ds = new DriverManagerDataSource("jdbc:h2:mem:inactivity;DB_CLOSE_DELAY=-1", "sa", "");
     var jdbc = new JdbcTemplate(ds);
+    jdbc.execute("CREATE TABLE IF NOT EXISTS `user` (user_id VARCHAR(36) PRIMARY KEY)");
+    jdbc.execute(
+        "CREATE TABLE IF NOT EXISTS live_chat_account_claim (user_id VARCHAR(36) PRIMARY KEY, lifecycle VARCHAR(32) NOT NULL)");
+    jdbc.execute("DELETE FROM live_chat_account_claim");
+    jdbc.execute("DELETE FROM `user`");
     jdbc.execute("DROP TABLE IF EXISTS account_inactivity");
     jdbc.execute("DROP TABLE IF EXISTS account_inactivity_journal");
     jdbc.execute(
@@ -468,6 +527,11 @@ class AccountInactivityServiceTest {
     var jdbc =
         new JdbcTemplate(
             new DriverManagerDataSource("jdbc:h2:mem:lifecycle;DB_CLOSE_DELAY=-1", "sa", ""));
+    jdbc.execute("CREATE TABLE IF NOT EXISTS `user` (user_id VARCHAR(36) PRIMARY KEY)");
+    jdbc.execute(
+        "CREATE TABLE IF NOT EXISTS live_chat_account_claim (user_id VARCHAR(36) PRIMARY KEY, lifecycle VARCHAR(32) NOT NULL)");
+    jdbc.execute("DELETE FROM live_chat_account_claim");
+    jdbc.execute("DELETE FROM `user`");
     jdbc.execute("DROP TABLE IF EXISTS account_inactivity");
     jdbc.execute("DROP TABLE IF EXISTS account_inactivity_journal");
     jdbc.execute(

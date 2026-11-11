@@ -4,6 +4,9 @@ description: Run Maven validation, CI contracts and package the Java application
 inputs:
   java_version:
     required: true
+  export_signoz_unit_report:
+    description: Archive the selected Surefire unit case in candidate validation.
+    default: 'false'
 
 runs:
   using: 'composite'
@@ -15,17 +18,54 @@ runs:
       distribution: 'temurin'
       cache: maven
 
+  - name: Bind SigNoz unit report to the Maven invocation
+    id: unit-report-start
+    if: ${{ inputs.export_signoz_unit_report == 'true' }}
+    continue-on-error: true
+    shell: bash
+    run: |
+      checkout=$(git rev-parse HEAD)
+      worktree_status=$(git status --porcelain)
+      test -z "$worktree_status"
+      printf 'checkout=%s\nstarted_at=%s\n' "$checkout" "$(date -u +'%Y-%m-%dT%H:%M:%S.%6NZ')" >> "$GITHUB_OUTPUT"
+
   # `shell: bash` runs with errexit, so a red suite would abort this step before
   # any failure detail is written. Capture the status instead and let the
   # reporting steps below run first; `Fail on the Maven test status` re-raises it
   # once the summary is complete. Maven itself keeps its usual behaviour, so a
   # failure that is not a test failure (a compile error, say) still surfaces.
   - name: Run Maven tests
+    id: maven-tests
     shell: bash
     run: |
       test_status=0
       ./mvnw -B test || test_status=$?
       echo "MAVEN_TEST_STATUS=${test_status}" >> "$GITHUB_ENV"
+
+  - name: Prepare sanitized SigNoz unit report
+    id: unit-report
+    if: ${{ always() && !cancelled() && steps.maven-tests.outcome == 'success' && steps.unit-report-start.outputs.checkout != '' }}
+    continue-on-error: true
+    shell: bash
+    env:
+      UNIT_CHECKOUT: ${{ steps.unit-report-start.outputs.checkout }}
+      UNIT_TEST_STARTED_AT: ${{ steps.unit-report-start.outputs.started_at }}
+    run: |
+      completed_at=$(date -u +'%Y-%m-%dT%H:%M:%S.%6NZ')
+      report_dir=$(mktemp -d "${RUNNER_TEMP:?}/signoz-unit-report.XXXXXX")
+      python3 scripts/ci/write-signoz-unit-report.py --checkout "$UNIT_CHECKOUT" \
+        --started-at "$UNIT_TEST_STARTED_AT" --completed-at "$completed_at" --output "$report_dir"
+      printf 'directory=%s\n' "$report_dir" >> "$GITHUB_OUTPUT"
+
+  - name: Upload sanitized SigNoz unit report
+    if: ${{ always() && !cancelled() && steps.unit-report.outputs.directory != '' }}
+    continue-on-error: true
+    uses: actions/upload-artifact@v4
+    with:
+      name: signoz-userservice-unit-report-${{ github.job }}-${{ github.run_attempt }}
+      path: ${{ steps.unit-report.outputs.directory }}
+      if-no-files-found: error
+      retention-days: 14
 
   # jacoco:report is bound to the `test` phase behind surefire, so a green suite
   # has already written the report and this step has nothing to do. Only a red

@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
@@ -31,11 +32,14 @@ import java.util.List;
 import java.util.Objects;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
@@ -46,6 +50,7 @@ import org.springframework.web.context.request.ServletRequestAttributes;
  */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class AgencyInviteLinkService {
 
   private static final int TOKEN_BYTES = 24;
@@ -89,6 +94,10 @@ public class AgencyInviteLinkService {
     }
 
     Long callerTenantId = requireCallerTenantId();
+    if (isExternalLiveChat(cmd.getLinkKind(), cmd.getChatType())
+        && adminScope.current() instanceof AdminScope.Platform) {
+      requireExistingLiveChatManagementTenant(callerTenantId);
+    }
 
     Integer consultingTypeId = null;
     if (cmd.getAgencyId() != null) {
@@ -103,7 +112,13 @@ public class AgencyInviteLinkService {
     }
 
     if (cmd.getTopicId() != null) {
-      TopicDTO topic = topicService.getTopicById(cmd.getTopicId());
+      TopicDTO topic =
+          isExternalLiveChat(cmd.getLinkKind(), cmd.getChatType())
+              ? topicService.getActiveTopicsForTenant(callerTenantId).stream()
+                  .filter(candidate -> Objects.equals(candidate.getId(), cmd.getTopicId()))
+                  .findFirst()
+                  .orElse(null)
+              : topicService.getTopicById(cmd.getTopicId());
       if (topic == null) {
         throw new NotFoundException("Topic %s not found", cmd.getTopicId());
       }
@@ -170,6 +185,11 @@ public class AgencyInviteLinkService {
     }
 
     var reach = adminScope.current();
+    if (reach instanceof AdminScope.Platform
+        && InviteLinkKind.EXTERNAL_INBOUND.name().equals(linkKind)
+        && (chatType == null || InviteLinkChatType.LIVE_CHAT.name().equals(chatType))) {
+      requireExistingLiveChatManagementTenant(callerTenantId);
+    }
     Page<AgencyInviteLink> result;
     if (reach instanceof AdminScope.Agencies agencies) {
       if (agencies.ids().isEmpty()) {
@@ -261,10 +281,44 @@ public class AgencyInviteLinkService {
     adminScope.assertMay(Target.placedIn(link.getTenantId(), link.getAgencyId()));
   }
 
+  public List<TopicDTO> getLiveChatLinkTopics() {
+    requireLiveChatLinkWriter(
+        InviteLinkKind.EXTERNAL_INBOUND.name(), InviteLinkChatType.LIVE_CHAT.name());
+    Long tenantId = requireCallerTenantId();
+    requireExistingLiveChatManagementTenant(tenantId);
+    return topicService.getActiveTopicsForTenant(tenantId);
+  }
+
+  private void requireExistingLiveChatManagementTenant(Long tenantId) {
+    try {
+      var tenant = tenantService.getRestrictedTenantDataFresh(tenantId);
+      if (tenant == null || !Objects.equals(tenantId, tenant.getId())) {
+        throw new NotFoundException("Tenant %s not found", tenantId);
+      }
+    } catch (RestClientException unavailable) {
+      Integer status =
+          unavailable instanceof RestClientResponseException response
+              ? response.getStatusCode().value()
+              : null;
+      // The exception message and stack trace may include the provider's response body.
+      log.warn(
+          "Could not verify live-chat link tenant (provider error {}, HTTP status {})",
+          unavailable.getClass().getSimpleName(),
+          status);
+      if (Objects.equals(status, 404)) {
+        throw new NotFoundException("Tenant %s not found", tenantId);
+      }
+      throw new ServiceUnavailableException("Selected tenant could not be verified");
+    }
+  }
+
+  public static boolean isExternalLiveChat(String kind, String chatType) {
+    return InviteLinkKind.EXTERNAL_INBOUND.name().equals(kind)
+        && InviteLinkChatType.LIVE_CHAT.name().equals(chatType);
+  }
+
   private void requireLiveChatLinkWriter(String kind, String chatType) {
-    if (InviteLinkKind.EXTERNAL_INBOUND.name().equals(kind)
-        && InviteLinkChatType.LIVE_CHAT.name().equals(chatType)
-        && !authenticatedUser.isPlatformAdmin()) {
+    if (isExternalLiveChat(kind, chatType) && !authenticatedUser.isPlatformAdmin()) {
       throw new ForbiddenException("Only platform admins can manage external live-chat links");
     }
   }
@@ -381,17 +435,32 @@ public class AgencyInviteLinkService {
    * about the call or its conversation is exposed.
    */
   private CallShareContext callShareContext(AgencyInviteLink link) {
-    callShareLinkService.requireUsable(link);
-    callShareLinkService.requireDirectInviteAllowed(link);
-    return new CallShareContext(
-        link.getTenantId(),
-        link.getAgencyId(),
-        link.getConsultingTypeId(),
-        link.getTopicId(),
-        link.getChatType(),
-        link.isTemporaryAccount() && callShareLinkService.temporaryAccountAllowed(link),
-        (link.isKnock() ? InviteLinkAdmission.KNOCK : InviteLinkAdmission.DIRECT).name(),
-        InviteLinkKind.CALL.name());
+    TenantData previousTenant = TenantContext.getCurrentTenantData();
+    try {
+      TenantContext.setCurrentTenantData(new TenantData(link.getTenantId(), null));
+      callShareLinkService.requireUsable(link);
+      callShareLinkService.requireDirectInviteAllowed(link);
+      boolean temporary =
+          link.isTemporaryAccount() && callShareLinkService.temporaryAccountAllowed(link);
+      var settings = temporary ? temporaryAccountSettings.current() : null;
+      return new CallShareContext(
+          link.getTenantId(),
+          link.getAgencyId(),
+          link.getConsultingTypeId(),
+          link.getTopicId(),
+          link.getChatType(),
+          temporary,
+          (link.isKnock() ? InviteLinkAdmission.KNOCK : InviteLinkAdmission.DIRECT).name(),
+          InviteLinkKind.CALL.name(),
+          settings == null ? null : settings.hidePasswordField(),
+          settings == null ? null : settings.messageRetention().name());
+    } finally {
+      if (previousTenant == null) {
+        TenantContext.clear();
+      } else {
+        TenantContext.setCurrentTenantData(previousTenant);
+      }
+    }
   }
 
   /** Public context of a call share link (#1487). */
@@ -403,7 +472,9 @@ public class AgencyInviteLinkService {
       String chatType,
       boolean temporaryAccount,
       String admission,
-      String linkKind) {}
+      String linkKind,
+      @JsonInclude(JsonInclude.Include.NON_NULL) Boolean hidePasswordField,
+      @JsonInclude(JsonInclude.Include.NON_NULL) String messageRetention) {}
 
   /**
    * Public context deliberately excludes credentials and invitation administration data, including

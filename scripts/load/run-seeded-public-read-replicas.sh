@@ -99,7 +99,12 @@ python3 "${repo_root}/tests/load/seeded_agency_stub.py" \
 agency_stub_pid="$!"
 
 "${repo_root}/mvnw" -B -DskipTests -Dskip.unit-tests=true -Dskip.integration-tests=true package \
-  >"${run_dir}/package.log" 2>&1
+  >"${run_dir}/package.log" 2>&1 || {
+  package_status="$?"
+  echo "UserService Maven package failed (exit ${package_status}):" >&2
+  tail -n 120 "${run_dir}/package.log" >&2 || true
+  exit "${package_status}"
+}
 jar_path="${repo_root}/target/UserService.jar"
 if [[ ! -f "${jar_path}" ]]; then
   echo "Packaged UserService jar is missing: ${jar_path}" >&2

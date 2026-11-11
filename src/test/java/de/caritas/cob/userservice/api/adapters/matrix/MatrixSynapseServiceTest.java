@@ -411,6 +411,26 @@ class MatrixSynapseServiceTest {
         .isEqualTo(MatrixSynapseService.RoomPurgeOutcome.FAILED);
   }
 
+  @Test
+  void isRoomConfirmedGoneShouldBeTrueOnlyWhenSynapseReturnsNotFound() {
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            eq(
+                URI.create(
+                    "https://matrix.example.com/_synapse/admin/v1/rooms/%21room%3Amatrix.example.com/members")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            eq(String.class)))
+        .thenThrow(
+            HttpClientErrorException.create(HttpStatus.NOT_FOUND, "Not Found", null, null, null))
+        .thenThrow(new HttpServerErrorException(HttpStatus.SERVICE_UNAVAILABLE))
+        .thenReturn(org.springframework.http.ResponseEntity.ok("{\"members\":[]}"));
+
+    assertThat(matrixSynapseService().isRoomConfirmedGone(MATRIX_ROOM_ID)).isTrue();
+    assertThat(matrixSynapseService().isRoomConfirmedGone(MATRIX_ROOM_ID)).isFalse();
+    assertThat(matrixSynapseService().isRoomConfirmedGone(MATRIX_ROOM_ID)).isFalse();
+  }
+
   private void stubAdminLogin() {
     matrixConfig.setAdminUsername("admin");
     matrixConfig.setAdminPassword("admin-password");
@@ -667,6 +687,55 @@ class MatrixSynapseServiceTest {
         matrixMediaClient,
         REDACTOR,
         nowSupplier);
+  }
+
+  // -------------------------------------------------------------------------
+  // findJoinedRoomsForMatrixUser: a lookup that can tell "no rooms" from "could not ask"
+  // -------------------------------------------------------------------------
+
+  @Test
+  void findJoinedRoomsForMatrixUser_returnsTheRoomsTheUserSitsIn() {
+    var service = org.mockito.Mockito.spy(matrixSynapseService());
+    org.mockito.Mockito.doReturn("user-token").when(service).loginAsUserAccessToken(MATRIX_USER_ID);
+    when(restTemplate.exchange(
+            any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("joined_rooms", List.of("!a:x", "!b:x"))));
+
+    assertThat(service.findJoinedRoomsForMatrixUser(MATRIX_USER_ID))
+        .contains(List.of("!a:x", "!b:x"));
+  }
+
+  @Test
+  void findJoinedRoomsForMatrixUser_aUserInNoRoomIsAnEmptyListNotAFailure() {
+    var service = org.mockito.Mockito.spy(matrixSynapseService());
+    org.mockito.Mockito.doReturn("user-token").when(service).loginAsUserAccessToken(MATRIX_USER_ID);
+    when(restTemplate.exchange(
+            any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("joined_rooms", List.of())));
+
+    assertThat(service.findJoinedRoomsForMatrixUser(MATRIX_USER_ID)).contains(List.of());
+  }
+
+  @Test
+  void findJoinedRoomsForMatrixUser_isEmptyWhenNoTokenCouldBeCreated() {
+    var service = org.mockito.Mockito.spy(matrixSynapseService());
+    org.mockito.Mockito.doReturn(null).when(service).loginAsUserAccessToken(MATRIX_USER_ID);
+
+    assertThat(service.findJoinedRoomsForMatrixUser(MATRIX_USER_ID)).isEmpty();
+    verifyNoInteractions(restTemplate);
+  }
+
+  @Test
+  void findJoinedRoomsForMatrixUser_isEmptyWhenTheServerFailsOrAnswersWithoutTheList() {
+    var service = org.mockito.Mockito.spy(matrixSynapseService());
+    org.mockito.Mockito.doReturn("user-token").when(service).loginAsUserAccessToken(MATRIX_USER_ID);
+    when(restTemplate.exchange(
+            any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenThrow(new HttpServerErrorException(HttpStatus.BAD_GATEWAY))
+        .thenReturn(ResponseEntity.ok(Map.of()));
+
+    assertThat(service.findJoinedRoomsForMatrixUser(MATRIX_USER_ID)).isEmpty();
+    assertThat(service.findJoinedRoomsForMatrixUser(MATRIX_USER_ID)).isEmpty();
   }
 
   private MatrixSynapseService matrixSynapseService() {
@@ -1060,6 +1129,52 @@ class MatrixSynapseServiceTest {
     assertThat(browserLoginBody.getInitialDeviceDisplayName()).isEqualTo("ORISO Web");
     assertThat(browserLoginBody.getPassword()).isEqualTo(updateBody.getPassword());
     assertThat(result.get("interactive_auth_password")).isEqualTo(updateBody.getPassword());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "M_FORBIDDEN,M_FORBIDDEN",
+    "M_PRIVATE_VALUE,unknown"
+  })
+  void loginBrowserDevice_logsKnownMatrixCodeWithoutResponseDetails(
+      String upstreamCode, String expectedCode) {
+    matrixConfig.setApiUrl(MATRIX_BASE_URL);
+    matrixConfig.setAdminUsername("admin");
+    matrixConfig.setAdminPassword("admin-password");
+    var responseBody = "{\"errcode\":\"" + upstreamCode + "\",\"error\":\"PRIVATE_RESPONSE_TEXT\"}";
+    when(restTemplate.postForEntity(
+            eq(MATRIX_BASE_URL + "/_matrix/client/r0/login"), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("access_token", MATRIX_ADMIN_TOKEN)))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.FORBIDDEN,
+                "Forbidden",
+                null,
+                responseBody.getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8));
+
+    var logger =
+        (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(MatrixSynapseService.class);
+    var appender =
+        new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      assertThat(matrixSynapseService().loginBrowserDevice(MATRIX_USER_ID, "ORISO_WEB_DEVICE_ONE"))
+          .isNull();
+      assertThat(appender.list)
+          .extracting(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+          .anySatisfy(message -> assertThat(message).contains("403", "errcode=" + expectedCode))
+          .noneSatisfy(
+              message ->
+                  assertThat(message)
+                      .containsAnyOf("PRIVATE_RESPONSE_TEXT", "M_PRIVATE_VALUE", MATRIX_USER_ID));
+      assertThat(appender.list).allSatisfy(event -> assertThat(event.getThrowableProxy()).isNull());
+    } finally {
+      logger.detachAppender(appender);
+      appender.stop();
+    }
   }
 
   @Test
@@ -1550,6 +1665,192 @@ class MatrixSynapseServiceTest {
   }
 
   // -------------------------------------------------------------------------
+  // getCallRoomOrigin: decides who may register a call for observation (#1624)
+  // -------------------------------------------------------------------------
+
+  private static final String CREATOR = "@creator:matrix.example.com";
+  private static final String ATTACKER = "@attacker:matrix.example.com";
+
+  private static Map<String, Object> stateEvent(String type, String stateKey, Object sender) {
+    var event = new java.util.HashMap<String, Object>();
+    event.put("type", type);
+    event.put("state_key", stateKey);
+    event.put("sender", sender);
+    return event;
+  }
+
+  private void stubOriginState(List<Map<String, Object>> state) {
+    stubCallBindingPrerequisites(CREATOR);
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.argThat(uri -> uri.toString().endsWith("/state")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            org.mockito.ArgumentMatchers
+                .<org.springframework.core.ParameterizedTypeReference<List<Map<String, Object>>>>
+                    any()))
+        .thenReturn(ResponseEntity.ok(state));
+  }
+
+  private void stubOriginStateFailure(RuntimeException failure) {
+    stubCallBindingPrerequisites(CREATOR);
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.argThat(uri -> uri.toString().endsWith("/state")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            org.mockito.ArgumentMatchers
+                .<org.springframework.core.ParameterizedTypeReference<List<Map<String, Object>>>>
+                    any()))
+        .thenThrow(failure);
+  }
+
+  @Test
+  void getCallRoomOrigin_returnsCreatorAndBindingSender() {
+    stubOriginState(
+        List.of(
+            stateEvent("m.room.create", "", CREATOR),
+            stateEvent("m.room.member", CREATOR, CREATOR),
+            stateEvent("org.oriso.call.binding", "", CREATOR)));
+
+    assertThat(matrixSynapseService().getCallRoomOrigin(MATRIX_ROOM_ID, CREATOR))
+        .contains(new MatrixSynapseService.CallRoomOrigin(CREATOR, CREATOR));
+  }
+
+  @Test
+  void getCallRoomOrigin_reportsADifferentBindingSenderSoTheCallerCanReject() {
+    stubOriginState(
+        List.of(
+            stateEvent("m.room.create", "", CREATOR),
+            stateEvent("org.oriso.call.binding", "", ATTACKER)));
+
+    assertThat(matrixSynapseService().getCallRoomOrigin(MATRIX_ROOM_ID, CREATOR))
+        .contains(new MatrixSynapseService.CallRoomOrigin(CREATOR, ATTACKER));
+  }
+
+  @Test
+  void getCallRoomOrigin_ignoresLookalikeEventsWithAStateKey() {
+    // A binding event under a non-empty state key is a different event, not a second binding.
+    stubOriginState(
+        List.of(
+            stateEvent("m.room.create", "", CREATOR),
+            stateEvent("org.oriso.call.binding", "", CREATOR),
+            stateEvent("org.oriso.call.binding", "forged", ATTACKER),
+            stateEvent("m.room.create", "forged", ATTACKER)));
+
+    assertThat(matrixSynapseService().getCallRoomOrigin(MATRIX_ROOM_ID, CREATOR))
+        .contains(new MatrixSynapseService.CallRoomOrigin(CREATOR, CREATOR));
+  }
+
+  static java.util.stream.Stream<List<Map<String, Object>>> unprovableRoomStates() {
+    return java.util.stream.Stream.of(
+        List.of(stateEvent("org.oriso.call.binding", "", CREATOR)),
+        List.of(
+            stateEvent("m.room.create", "", CREATOR),
+            stateEvent("m.room.create", "", ATTACKER),
+            stateEvent("org.oriso.call.binding", "", CREATOR)),
+        List.of(stateEvent("m.room.create", "", CREATOR)),
+        List.of(
+            stateEvent("m.room.create", "", CREATOR),
+            stateEvent("org.oriso.call.binding", "", CREATOR),
+            stateEvent("org.oriso.call.binding", "", ATTACKER)),
+        List.of(
+            stateEvent("m.room.create", "forged", CREATOR),
+            stateEvent("org.oriso.call.binding", "", CREATOR)),
+        List.of(
+            stateEvent("m.room.create", "", CREATOR),
+            stateEvent("org.oriso.call.binding", "forged", CREATOR)),
+        List.of(
+            stateEvent("m.room.create", "", 42), stateEvent("org.oriso.call.binding", "", CREATOR)),
+        List.of(
+            stateEvent("m.room.create", "", CREATOR),
+            stateEvent("org.oriso.call.binding", "", null)),
+        List.<Map<String, Object>>of());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.MethodSource("unprovableRoomStates")
+  void getCallRoomOrigin_stateThatDoesNotProveOneCreatorAndOneBindingIsEmpty(
+      List<Map<String, Object>> state) {
+    stubOriginState(state);
+
+    assertThat(matrixSynapseService().getCallRoomOrigin(MATRIX_ROOM_ID, CREATOR)).isEmpty();
+  }
+
+  @Test
+  void getCallRoomOrigin_emptyBodyIsEmpty() {
+    stubOriginState(null);
+
+    assertThat(matrixSynapseService().getCallRoomOrigin(MATRIX_ROOM_ID, CREATOR)).isEmpty();
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = HttpStatus.class,
+      names = {"UNAUTHORIZED", "INTERNAL_SERVER_ERROR", "SERVICE_UNAVAILABLE", "TOO_MANY_REQUESTS"})
+  void getCallRoomOrigin_retryableStatusesAreUnavailable(HttpStatus status) {
+    stubOriginStateFailure(
+        status.is5xxServerError()
+            ? new HttpServerErrorException(status)
+            : new HttpClientErrorException(status));
+
+    assertThatThrownBy(() -> matrixSynapseService().getCallRoomOrigin(MATRIX_ROOM_ID, CREATOR))
+        .isInstanceOf(MatrixSynapseService.CallLookupUnavailableException.class);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = HttpStatus.class,
+      names = {"FORBIDDEN", "NOT_FOUND"})
+  void getCallRoomOrigin_permanentDenialIsDefinitive(HttpStatus status) {
+    stubOriginStateFailure(new HttpClientErrorException(status));
+
+    assertThat(matrixSynapseService().getCallRoomOrigin(MATRIX_ROOM_ID, CREATOR)).isEmpty();
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"M_USER_LOCKED", "M_USER_DEACTIVATED"})
+  void getCallRoomOrigin_lockedMemberTokenIsADefinitiveDenial(String errcode) {
+    // Same rule as getCallRoomBinding: a locked or deactivated member is a denial, not an outage.
+    stubOriginStateFailure(
+        new HttpClientErrorException(
+            HttpStatus.UNAUTHORIZED,
+            "synthetic member denial",
+            org.springframework.http.HttpHeaders.EMPTY,
+            ("{\"errcode\":\"" + errcode + "\"}").getBytes(StandardCharsets.UTF_8),
+            StandardCharsets.UTF_8));
+
+    assertThat(matrixSynapseService().getCallRoomOrigin(MATRIX_ROOM_ID, CREATOR)).isEmpty();
+  }
+
+  @Test
+  void getCallRoomOrigin_transportFailureIsUnavailable() {
+    stubOriginStateFailure(new org.springframework.web.client.ResourceAccessException("timeout"));
+
+    assertThatThrownBy(() -> matrixSynapseService().getCallRoomOrigin(MATRIX_ROOM_ID, CREATOR))
+        .isInstanceOf(MatrixSynapseService.CallLookupUnavailableException.class);
+  }
+
+  @Test
+  void getCallRoomOrigin_nonMemberNeverReadsTheRoomState() {
+    stubAdminPasswordLoginOnly();
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.argThat(uri -> uri.toString().contains("/members")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("members", List.of(CREATOR))));
+
+    assertThat(matrixSynapseService().getCallRoomOrigin(MATRIX_ROOM_ID, ATTACKER)).isEmpty();
+    verify(restTemplate, never())
+        .exchange(
+            org.mockito.ArgumentMatchers.argThat(uri -> uri.toString().endsWith("/state")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            org.mockito.ArgumentMatchers
+                .<org.springframework.core.ParameterizedTypeReference<List<Map<String, Object>>>>
+                    any());
+  }
+
+  // -------------------------------------------------------------------------
   // sendMessage
   // -------------------------------------------------------------------------
 
@@ -1844,6 +2145,110 @@ class MatrixSynapseServiceTest {
     org.mockito.Mockito.doReturn(null).when(service).getAdminToken();
 
     assertThat(service.ensureAdminInRoom(MATRIX_ROOM_ID, MATRIX_USER_ID)).isFalse();
+    verifyNoInteractions(matrixRoomClient);
+  }
+
+  // -------------------------------------------------------------------------
+  // forceJoinUserToRoom / makeRoomAdmin — takeover without the previous owner (#1422)
+  // -------------------------------------------------------------------------
+
+  private static final String COLLEAGUE_ID = "@colleague:matrix.example.com";
+
+  @Test
+  void forceJoinUserToRoom_shouldJoinWithTheAdminTokenAndNoUserImpersonation() throws Exception {
+    var service = ensureAdminServiceSpy();
+    when(matrixRoomClient.forceJoinUser(MATRIX_ROOM_ID, COLLEAGUE_ID, ADMIN_TOKEN))
+        .thenReturn(true);
+
+    assertThat(service.forceJoinUserToRoom(MATRIX_ROOM_ID, COLLEAGUE_ID, List.of(MATRIX_USER_ID)))
+        .isTrue();
+
+    verify(service, never()).loginAsUserAccessToken(any());
+    verify(matrixRoomClient, never()).inviteUserToRoom(any(), any(), any());
+  }
+
+  @Test
+  void forceJoinUserToRoom_shouldGetTheAdminIntoTheRoomViaAMemberAndRetry_whenTheAdminIsNotThere()
+      throws Exception {
+    var service = ensureAdminServiceSpy();
+    org.mockito.Mockito.doReturn(IMPERSONATION_TOKEN)
+        .when(service)
+        .loginAsUserAccessToken(MATRIX_USER_ID);
+    when(matrixRoomClient.forceJoinUser(MATRIX_ROOM_ID, COLLEAGUE_ID, ADMIN_TOKEN))
+        .thenReturn(false, true);
+    when(matrixRoomClient.joinRoom(MATRIX_ROOM_ID, ADMIN_TOKEN)).thenReturn(false, true);
+
+    assertThat(service.forceJoinUserToRoom(MATRIX_ROOM_ID, COLLEAGUE_ID, List.of(MATRIX_USER_ID)))
+        .isTrue();
+
+    verify(matrixRoomClient)
+        .inviteUserToRoom(
+            eq(MATRIX_ROOM_ID), eq("@matrixadm:matrix.example.com"), eq(IMPERSONATION_TOKEN));
+    verify(matrixRoomClient, times(2)).forceJoinUser(MATRIX_ROOM_ID, COLLEAGUE_ID, ADMIN_TOKEN);
+  }
+
+  @Test
+  void forceJoinUserToRoom_shouldTryTheNextMember_whenTheFirstCannotLetTheAdminIn()
+      throws Exception {
+    var service = ensureAdminServiceSpy();
+    String second = "@second:matrix.example.com";
+    org.mockito.Mockito.doReturn(null).when(service).loginAsUserAccessToken(MATRIX_USER_ID);
+    org.mockito.Mockito.doReturn(IMPERSONATION_TOKEN).when(service).loginAsUserAccessToken(second);
+    when(matrixRoomClient.forceJoinUser(MATRIX_ROOM_ID, COLLEAGUE_ID, ADMIN_TOKEN))
+        .thenReturn(false, true);
+    when(matrixRoomClient.joinRoom(MATRIX_ROOM_ID, ADMIN_TOKEN)).thenReturn(false, false, true);
+
+    assertThat(
+            service.forceJoinUserToRoom(
+                MATRIX_ROOM_ID, COLLEAGUE_ID, List.of(MATRIX_USER_ID, second)))
+        .isTrue();
+
+    verify(matrixRoomClient)
+        .inviteUserToRoom(
+            eq(MATRIX_ROOM_ID), eq("@matrixadm:matrix.example.com"), eq(IMPERSONATION_TOKEN));
+  }
+
+  @Test
+  void forceJoinUserToRoom_shouldFail_whenTheAdminCannotGetIntoTheRoomEither() {
+    var service = ensureAdminServiceSpy();
+    when(matrixRoomClient.forceJoinUser(MATRIX_ROOM_ID, COLLEAGUE_ID, ADMIN_TOKEN))
+        .thenReturn(false);
+    when(matrixRoomClient.joinRoom(MATRIX_ROOM_ID, ADMIN_TOKEN)).thenReturn(false);
+
+    assertThat(service.forceJoinUserToRoom(MATRIX_ROOM_ID, COLLEAGUE_ID, List.of())).isFalse();
+
+    verify(matrixRoomClient, times(1)).forceJoinUser(MATRIX_ROOM_ID, COLLEAGUE_ID, ADMIN_TOKEN);
+  }
+
+  @Test
+  void forceJoinUserToRoom_shouldReturnFalse_whenAdminTokenUnavailable() {
+    matrixConfig.setAdminUsername("matrixadm");
+    matrixConfig.setServerName("matrix.example.com");
+    var service = org.mockito.Mockito.spy(matrixSynapseService());
+    org.mockito.Mockito.doReturn(null).when(service).getAdminToken();
+
+    assertThat(service.forceJoinUserToRoom(MATRIX_ROOM_ID, COLLEAGUE_ID, List.of(MATRIX_USER_ID)))
+        .isFalse();
+    verifyNoInteractions(matrixRoomClient);
+  }
+
+  @Test
+  void makeRoomAdmin_shouldRaiseTheUserWithTheAdminToken() {
+    var service = ensureAdminServiceSpy();
+    when(matrixRoomClient.makeRoomAdmin(MATRIX_ROOM_ID, COLLEAGUE_ID, ADMIN_TOKEN))
+        .thenReturn(true);
+
+    assertThat(service.makeRoomAdmin(MATRIX_ROOM_ID, COLLEAGUE_ID)).isTrue();
+  }
+
+  @Test
+  void makeRoomAdmin_shouldReturnFalse_whenAdminTokenUnavailable() {
+    matrixConfig.setAdminUsername("matrixadm");
+    matrixConfig.setServerName("matrix.example.com");
+    var service = org.mockito.Mockito.spy(matrixSynapseService());
+    org.mockito.Mockito.doReturn(null).when(service).getAdminToken();
+
+    assertThat(service.makeRoomAdmin(MATRIX_ROOM_ID, COLLEAGUE_ID)).isFalse();
     verifyNoInteractions(matrixRoomClient);
   }
 }

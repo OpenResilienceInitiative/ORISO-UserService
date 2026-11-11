@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+  <!-- Keep these additive changes on application rollback. Older clients can use their legacy
+       rows without narrowing stored ciphertext or removing the protected scope constraint. -->
+  <changeSet id="20261108-protected-draft-storage" author="oriso">
+    <modifyDataType tableName="draft_message" columnName="text" newDataType="mediumtext"/>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+  <changeSet id="20261108-protected-draft-scope-column" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not><columnExists tableName="draft_message" columnName="protected_scope_key"/></not>
+    </preConditions>
+    <addColumn tableName="draft_message">
+      <column name="protected_scope_key" type="varchar(52)"/>
+    </addColumn>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+  <changeSet id="20261108-protected-draft-scope-constraint" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not>
+        <uniqueConstraintExists tableName="draft_message"
+                                constraintName="uk_draft_message_protected_scope"/>
+      </not>
+    </preConditions>
+    <addUniqueConstraint tableName="draft_message" columnNames="user_id, protected_scope_key"
+                         constraintName="uk_draft_message_protected_scope"/>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+</databaseChangeLog>

@@ -100,18 +100,21 @@ class FailedTestsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("No failing tests", result.stdout)
 
-    def test_escapes_a_pipe_so_it_cannot_break_the_table(self):
+    def test_escapes_pipes_in_test_names_and_details(self):
         result = self.run_failed_tests(
             {
                 "TEST-de.example.FooTest.xml": report(
                     "de.example.FooTest",
-                    case("de.example.FooTest", "parses", "failure", "expected a|b but got c"),
+                    case("de.example.FooTest", "parses a|b", "failure", "expected a|b but got c"),
                 )
             }
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("expected a\\|b but got c", result.stdout)
+        self.assertIn(
+            "| `FooTest.parses a\\|b` | failure | expected a\\|b but got c |", result.stdout
+        )
+        self.assertIn("de.example.FooTest#parses a|b", result.stdout)
 
     def test_reports_zero_exit_even_with_failures(self):
         """suite-inventory.py --require owns the job outcome; this section is reporting."""

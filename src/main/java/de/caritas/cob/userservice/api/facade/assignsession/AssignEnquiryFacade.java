@@ -6,6 +6,7 @@ import static de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW;
 import static java.util.Objects.nonNull;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
 import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
@@ -18,6 +19,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
@@ -80,6 +82,7 @@ public class AssignEnquiryFacade {
   private final @NonNull de.caritas.cob.userservice.api.service.furthercounselling
           .TopicDuplicateService
       topicDuplicateService;
+  private final @NonNull Messaging messaging;
 
   /**
    * Assigns the given {@link Session} to the given {@link Consultant} and removes consultants who
@@ -244,6 +247,7 @@ public class AssignEnquiryFacade {
     }
     sessionToConsultantVerifier.verifyPreconditionsForAssignment(
         consultantSessionDTO, skipConsultantAssignmentAndSessionInProgressChecks);
+    messaging.requireFirstLiveChatEnquiry(session);
 
     // ADR-022 decision 1 / ADR-003: a topic-based anonymous enquiry carries no agency until it is
     // accepted. Bind the accepting counsellor's department here, before the assignment save, so
@@ -254,13 +258,24 @@ public class AssignEnquiryFacade {
           anonymousEnquiryDepartmentResolver.resolveAgencyId(session, consultant).orElse(null);
     }
     if (session.getStatus() == INITIAL || session.getStatus() == NEW) {
-      if (servingAgencyId != null) {
-        dpaPolicy.requireForAgency(servingAgencyId);
-      } else if (bindDepartment) {
-        // A topic queue may have no matching department. The accepting organisation serves it.
-        dpaPolicy.requireForConcreteTenant(consultant.getTenantId());
-      } else {
-        dpaPolicy.requireForAgency((Long) null);
+      try {
+        if (servingAgencyId != null) {
+          dpaPolicy.requireForAgency(servingAgencyId);
+        } else if (bindDepartment) {
+          // A topic queue may have no matching department. The accepting organisation serves it.
+          dpaPolicy.requireForConcreteTenant(consultant.getTenantId());
+        } else {
+          dpaPolicy.requireForAgency((Long) null);
+        }
+      } catch (CustomValidationHttpStatusException refusal) {
+        // #1799: an AVV refusal of the first acceptance was otherwise invisible in the log.
+        log.warn(
+            "AVV refused accepting session {} (agency {}): status={}, reason={}",
+            session.getId(),
+            servingAgencyId,
+            refusal.getHttpStatus(),
+            refusal.getCustomHttpHeaders().getFirst("X-Reason"));
+        throw refusal;
       }
     }
     var departmentBound =

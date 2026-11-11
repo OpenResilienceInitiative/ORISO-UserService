@@ -32,6 +32,7 @@ class ConsultantMessageStatServiceTest {
   @Mock private SessionRepository sessionRepository;
   @Mock private ConsultantIdentityHasher consultantIdentityHasher;
   @Mock private StatisticsSettingsService statisticsSettingsService;
+  @Mock private StatisticsFeatureGate statisticsFeatureGate;
 
   private ConsultantMessageStatService service;
 
@@ -42,8 +43,10 @@ class ConsultantMessageStatServiceTest {
             consultantMessageStatRepository,
             sessionRepository,
             consultantIdentityHasher,
-            statisticsSettingsService);
+            statisticsSettingsService,
+            statisticsFeatureGate);
     lenient().when(statisticsSettingsService.isMessageCountTrackingEnabled()).thenReturn(true);
+    lenient().when(statisticsFeatureGate.isEnabledForTenant(any())).thenReturn(true);
   }
 
   @Test
@@ -97,5 +100,37 @@ class ConsultantMessageStatServiceTest {
     service.recordMessageSent(CONSULTANT_ID, 100L);
 
     verifyNoInteractions(consultantMessageStatRepository, sessionRepository);
+  }
+
+  @Test
+  void recordMessageSentShouldRecordNothing_When_TheOrganisationSwitchIsOff() {
+    var session = new Session();
+    session.setTenantId(3L);
+    when(sessionRepository.findById(100L)).thenReturn(Optional.of(session));
+    when(statisticsFeatureGate.isEnabledForTenant(3L)).thenReturn(false);
+
+    service.recordMessageSent(CONSULTANT_ID, 100L);
+
+    verifyNoInteractions(consultantMessageStatRepository, consultantIdentityHasher);
+  }
+
+  @Test
+  void recordMessageSentShouldAskTheGateWithoutTenant_When_TheSessionIsUnknown() {
+    when(sessionRepository.findById(100L)).thenReturn(Optional.empty());
+    when(statisticsFeatureGate.isEnabledForTenant(null)).thenReturn(false);
+
+    service.recordMessageSent(CONSULTANT_ID, 100L);
+
+    verifyNoInteractions(consultantMessageStatRepository);
+  }
+
+  @Test
+  void deleteForConsultantShouldDeleteTheRowsOfTheHashedConsultant() {
+    when(consultantIdentityHasher.hash(CONSULTANT_ID)).thenReturn(CONSULTANT_HMAC);
+    when(consultantMessageStatRepository.deleteByConsultantHmac(CONSULTANT_HMAC)).thenReturn(7);
+
+    var deleted = service.deleteForConsultant(CONSULTANT_ID);
+
+    assertThat(deleted).isEqualTo(7);
   }
 }

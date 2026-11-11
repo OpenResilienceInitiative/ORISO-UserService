@@ -24,6 +24,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatRoleService;
+import de.caritas.cob.userservice.api.service.chat.RecurringGroupStopCoordinator;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import java.time.LocalDateTime;
@@ -54,8 +55,19 @@ class JoinAndLeaveChatFacadeTest {
   @Mock private MatrixChatShutdownService matrixChatShutdownService;
   @Mock private GroupChatRoleService groupChatRoleService;
 
+  @Mock private RecurringGroupStopCoordinator recurringStops;
+
   @org.junit.jupiter.api.BeforeEach
   void wireRealDeployedGroupPolicy() {
+    org.mockito.Mockito.lenient()
+        .when(
+            recurringStops.withLockedOccurrence(
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            invocation -> {
+              java.util.function.Function<Chat, ?> work = invocation.getArgument(1);
+              return work.apply(invocation.getArgument(0));
+            });
     org.springframework.test.util.ReflectionTestUtils.setField(
         facade,
         "groupCounsellingDpaPolicy",
@@ -233,11 +245,13 @@ class JoinAndLeaveChatFacadeTest {
     when(userService.getUserViaAuthenticatedUser(authenticatedUser)).thenReturn(Optional.of(user));
     when(chat.isRepetitive()).thenReturn(true);
     when(chat.nextStart()).thenReturn(nextStart);
-    when(chatReCreator.recreateMessengerChat(chat)).thenReturn("!next:matrix.example.org");
 
     facade.leaveChat(CHAT_ID, authenticatedUser);
 
-    verify(chatReCreator).updateAsNextChat(chat, "!next:matrix.example.org");
+    var order = org.mockito.Mockito.inOrder(chatReCreator, groupChatMembershipService);
+    order.verify(chatReCreator).removeFromPreparedRoom(chat, MATRIX_USER_ID);
+    order.verify(groupChatMembershipService).removeLeavingMemberFromRoom(chat, MATRIX_USER_ID);
+    verify(recurringStops).stopAfterLastLeave(chat, MATRIX_USER_ID);
     verify(chatService, never()).deleteChat(chat);
   }
 

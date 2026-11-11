@@ -52,6 +52,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityReactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
+import de.caritas.cob.userservice.api.port.out.IdentityTenantUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -151,6 +152,7 @@ class UserAdminAgencyScopeIT {
         IdentityRoleLookup.class,
         IdentityRoleUpdater.class,
         IdentitySecondFactor.class,
+        IdentityTenantUpdater.class,
         IdentityUsernameAvailability.class
       })
   IdentityClient identityClient;
@@ -1158,6 +1160,8 @@ class UserAdminAgencyScopeIT {
         UserRole.AGENCY_ADMIN,
         UserRole.USER_ADMIN);
 
+    when(tenantService.getRestrictedTenantDataFresh(OWN_TENANT))
+        .thenReturn(new RestrictedTenantDTO().id(OWN_TENANT));
     assertStatus(
         mockMvc.perform(createInviteLink("{}").header("X-Tenant-Id", OWN_TENANT)).andReturn(), 201);
     var link = agencyInviteLinkRepository.findAll().iterator().next();

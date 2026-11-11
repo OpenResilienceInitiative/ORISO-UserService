@@ -3,14 +3,17 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryResponseDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.AgencyInviteLinkService;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.AgencyInviteLinkService.CreateInviteLinkCommand;
@@ -29,6 +32,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.client.ResourceAccessException;
 
 @ExtendWith(MockitoExtension.class)
 class AgencyInviteLinkControllerTest {
@@ -54,7 +58,7 @@ class AgencyInviteLinkControllerTest {
 
     var topic = mock(TopicDTO.class);
     when(topic.getName()).thenReturn("Crisis Support");
-    when(topicService.getAllTopicsMap()).thenReturn(Map.of(99L, topic));
+    when(topicService.getTopicNamesForTenant(7L)).thenReturn(Map.of(99L, topic));
     when(agencyInviteLinkService.create(any())).thenReturn(sampleLink());
 
     var response = controller.create(request);
@@ -65,6 +69,57 @@ class AgencyInviteLinkControllerTest {
     verify(agencyInviteLinkService).create(captor.capture());
     assertEquals(9L, captor.getValue().getAgencyId());
     assertEquals(99L, captor.getValue().getTopicId());
+  }
+
+  @Test
+  void create_keepsSuccessWhenScopedTopicNameCannotBeRead() {
+    when(agencyInviteLinkService.create(any())).thenReturn(sampleLink());
+    when(topicService.getTopicNamesForTenant(7L))
+        .thenThrow(new ResourceAccessException("TopicService unavailable"));
+
+    var response = controller.create(new AgencyInviteLinkController.CreateInviteLinkRequestDTO());
+
+    assertEquals(HttpStatus.CREATED, response.getStatusCode());
+    assertEquals(99L, response.getBody().getTopicId());
+    assertNull(response.getBody().getTopicName());
+  }
+
+  @Test
+  void deactivate_keepsSuccessWhenScopedTopicNameCannotBeRead() {
+    var link = sampleLink();
+    link.setStatus("DISABLED");
+    when(agencyInviteLinkService.deactivate(5L)).thenReturn(link);
+    when(topicService.getTopicNamesForTenant(7L))
+        .thenThrow(new ResourceAccessException("TopicService unavailable"));
+
+    var response = controller.deactivate(5L);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertEquals("DISABLED", response.getBody().getStatus());
+    assertNull(response.getBody().getTopicName());
+  }
+
+  @Test
+  void reactivate_keepsSuccessWhenScopedTopicNameCannotBeRead() {
+    when(agencyInviteLinkService.reactivate(5L)).thenReturn(sampleLink());
+    when(topicService.getTopicNamesForTenant(7L))
+        .thenThrow(new ServiceUnavailableException("Scoped topic lookup is not configured"));
+
+    var response = controller.reactivate(5L);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertEquals("ACTIVE", response.getBody().getStatus());
+    assertNull(response.getBody().getTopicName());
+  }
+
+  @Test
+  void liveChatTopics_returnsOnlyTopicIdentityAndName() {
+    when(agencyInviteLinkService.getLiveChatLinkTopics())
+        .thenReturn(List.of(new TopicDTO().id(99L).name("Schuldenberatung")));
+
+    assertEquals(
+        List.of(new AgencyInviteLinkController.LiveChatTopic(99L, "Schuldenberatung")),
+        controller.liveChatTopics());
   }
 
   @Test
@@ -82,7 +137,7 @@ class AgencyInviteLinkControllerTest {
     // sent.
     var topic = mock(TopicDTO.class);
     when(topic.getName()).thenReturn("Topic");
-    when(topicService.getAllTopicsMap()).thenReturn(Map.of(99L, topic));
+    when(topicService.getTopicNamesForTenant(7L)).thenReturn(Map.of(99L, topic));
     when(agencyInviteLinkService.list(null, null, null, null, 0, 20))
         .thenReturn(new PageImpl<>(List.of(sampleLink())));
 
@@ -95,7 +150,7 @@ class AgencyInviteLinkControllerTest {
   @Test
   void list_withPagination_returnsPagedWrapper() {
     // Business reason: new frontend needs pagination metadata for incremental table loading.
-    when(topicService.getAllTopicsMap()).thenReturn(Map.of());
+    when(topicService.getTopicNamesForTenant(7L)).thenReturn(Map.of());
     when(agencyInviteLinkService.list(null, null, null, null, 1, 5))
         .thenReturn(new PageImpl<>(List.of(sampleLink())));
 
@@ -104,6 +159,47 @@ class AgencyInviteLinkControllerTest {
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertInstanceOf(
         AgencyInviteLinkController.PagedInviteLinksResponseDTO.class, response.getBody());
+  }
+
+  @Test
+  void list_keepsRowsAndResolvesTopicLabelsOncePerTenantWhenOneLookupFails() {
+    var secondLink = sampleLink();
+    secondLink.setId(2L);
+    var otherTenantLink = sampleLink();
+    otherTenantLink.setTenantId(8L);
+    var legacyLink = sampleLink();
+    legacyLink.setLinkKind("TENANT");
+    var linkWithoutTopic = sampleLink();
+    linkWithoutTopic.setTopicId(null);
+    linkWithoutTopic.setTenantId(9L);
+    when(agencyInviteLinkService.list(null, null, null, null, 0, 20))
+        .thenReturn(
+            new PageImpl<>(
+                List.of(sampleLink(), secondLink, otherTenantLink, legacyLink, linkWithoutTopic)));
+    when(topicService.getTopicNamesForTenant(7L))
+        .thenThrow(new ResourceAccessException("TopicService unavailable for this tenant"));
+    when(topicService.getTopicNamesForTenant(8L))
+        .thenReturn(Map.of(99L, new TopicDTO().name("Selected tenant topic")));
+    when(topicService.getAllTopicsMap())
+        .thenReturn(Map.of(99L, new TopicDTO().name("Legacy topic")));
+
+    var response = controller.list(null, null, null, null, 0, 20);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    var body =
+        assertInstanceOf(
+            AgencyInviteLinkController.PagedInviteLinksResponseDTO.class, response.getBody());
+    assertEquals(5, body.getContent().size());
+    assertEquals(99L, body.getContent().get(0).getTopicId());
+    assertNull(body.getContent().get(0).getTopicName());
+    assertNull(body.getContent().get(1).getTopicName());
+    assertEquals("Selected tenant topic", body.getContent().get(2).getTopicName());
+    assertEquals("Legacy topic", body.getContent().get(3).getTopicName());
+    assertNull(body.getContent().get(4).getTopicName());
+    verify(topicService).getTopicNamesForTenant(7L);
+    verify(topicService).getTopicNamesForTenant(8L);
+    verify(topicService).getAllTopicsMap();
+    verifyNoMoreInteractions(topicService);
   }
 
   @Test
@@ -143,12 +239,16 @@ class AgencyInviteLinkControllerTest {
   }
 
   @Test
-  void createAndList_havePreAuthorizeAnnotation() throws Exception {
+  void createListAndTopicPicker_havePreAuthorizeAnnotation() throws Exception {
     // Business reason: invite link administration endpoints must remain restricted to admin
     // authorities.
     assertHasPreAuthorize("create", AgencyInviteLinkController.CreateInviteLinkRequestDTO.class);
     assertHasPreAuthorize(
         "list", String.class, Long.class, String.class, String.class, Integer.class, Integer.class);
+    var picker = AgencyInviteLinkController.class.getMethod("liveChatTopics");
+    assertEquals(
+        "hasAuthority('AUTHORIZATION_USER_ADMIN')",
+        picker.getAnnotation(PreAuthorize.class).value());
   }
 
   @Test
@@ -157,7 +257,7 @@ class AgencyInviteLinkControllerTest {
     var link = sampleLink();
     link.setStatus("DISABLED");
     when(agencyInviteLinkService.deactivate(5L)).thenReturn(link);
-    when(topicService.getAllTopicsMap()).thenReturn(Map.of());
+    when(topicService.getTopicNamesForTenant(7L)).thenReturn(Map.of());
 
     var response = controller.deactivate(5L);
 
@@ -197,7 +297,7 @@ class AgencyInviteLinkControllerTest {
 
   @Test
   void reactivate_returnsOkWithLink() {
-    when(topicService.getAllTopicsMap()).thenReturn(Map.of());
+    when(topicService.getTopicNamesForTenant(7L)).thenReturn(Map.of());
     when(agencyInviteLinkService.reactivate(5L)).thenReturn(sampleLink());
 
     var response = controller.reactivate(5L);
