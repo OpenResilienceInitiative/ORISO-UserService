@@ -768,6 +768,29 @@ public class SessionService {
   }
 
   /**
+   * The anonymous Live Chat enquiry with this id, if the anonymous queue shows it to the
+   * consultant: same topic-based, cross-tenant visibility as {@link
+   * #getVisibleAnonymousLiveChatEnquiriesByIds}, returned as the entity.
+   */
+  @Transactional(readOnly = true)
+  public Optional<Session> findVisibleAnonymousLiveChatEnquiry(
+      Consultant consultant, Long sessionId) {
+    var topicIds = consultantTopicRepository.findTopicIdsByConsultantId(consultant.getId());
+    if (topicIds == null || topicIds.isEmpty()) {
+      return Optional.empty();
+    }
+    return TenantContext.supplyAcrossTenants(
+            () ->
+                sessionRepository.findVisibleAnonymousLiveChatEnquiriesForConsultantByIds(
+                    Set.of(sessionId),
+                    new HashSet<>(topicIds),
+                    SessionStatus.NEW,
+                    RegistrationType.ANONYMOUS))
+        .stream()
+        .findFirst();
+  }
+
+  /**
    * Loads sessions the consultant is <b>directly assigned to</b> by id, bypassing the tenant
    * filter.
    *

@@ -120,15 +120,47 @@ class EnquiryOpenedControllerIT {
     assertThat(openedRepository.countByConsultantId(COUNSELLOR_A)).isEqualTo(1);
   }
 
+  // The anonymous queue lists enquiries by the counsellor's topics (across tenants), not by agency.
+  private Long givenAnonymousEnquiryOnTopic(long topicId) {
+    var sessionId = givenSession(SessionStatus.NEW, RegistrationType.ANONYMOUS, AGENCY, null);
+    jdbc.update("UPDATE session SET main_topic_id = ? WHERE id = ?", topicId, sessionId);
+    entityManager.clear();
+    return sessionId;
+  }
+
+  private void counsellorHasTopic(String consultantId, long topicId) {
+    jdbc.update(
+        "INSERT INTO consultant_topic (id, consultant_id, topic_id, create_date, update_date)"
+            + " VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        991549L + topicId,
+        consultantId,
+        topicId);
+  }
+
   @Test
   @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
-  void anonymousEnquiryBehavesLikeARegisteredOne() throws Exception {
+  void anonymousEnquiryOnTheCounsellorsTopicCanBeMarked() throws Exception {
     callerIs(COUNSELLOR_A);
-    var sessionId = givenSession(SessionStatus.NEW, RegistrationType.ANONYMOUS, AGENCY, null);
+    counsellorHasTopic(COUNSELLOR_A, 1549L);
+    var sessionId = givenAnonymousEnquiryOnTopic(1549L);
 
     open(sessionId).andExpect(status().isNoContent());
 
     assertThat(openedRepository.existsByConsultantIdAndSessionId(COUNSELLOR_A, sessionId)).isTrue();
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void anonymousEnquiryOutsideTheCounsellorsTopicsIsForbiddenDespiteTheSharedAgency()
+      throws Exception {
+    callerIs(COUNSELLOR_A);
+    counsellorHasTopic(COUNSELLOR_A, 1549L);
+    var sessionId = givenAnonymousEnquiryOnTopic(1550L);
+
+    open(sessionId).andExpect(status().isForbidden());
+
+    assertThat(openedRepository.existsByConsultantIdAndSessionId(COUNSELLOR_A, sessionId))
+        .isFalse();
   }
 
   @Test

@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantEnquiryOpened;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantEnquiryOpenedRepository;
 import java.util.Optional;
@@ -133,5 +134,30 @@ class EnquiryOpenedServiceTest {
         .isInstanceOf(ConflictException.class);
 
     verifyNoInteractions(repository);
+  }
+
+  @Test
+  void marksAnAnonymousEnquiryTheTopicQueueShowsEvenInAnotherTenant() {
+    waiting.setRegistrationType(RegistrationType.ANONYMOUS);
+    when(sessionService.findVisibleAnonymousLiveChatEnquiry(counsellor, SESSION_ID))
+        .thenReturn(Optional.of(waiting));
+
+    service.markOpened(SESSION_ID, counsellor);
+
+    verify(repository).save(any(ConsultantEnquiryOpened.class));
+    verify(sessionService, never()).getSession(any());
+  }
+
+  @Test
+  void refusesAnAnonymousEnquiryOutsideTheTopicQueueDespiteGeneralSessionAccess() {
+    waiting.setRegistrationType(RegistrationType.ANONYMOUS);
+    givenSession(waiting);
+    org.mockito.Mockito.lenient()
+        .when(sessionService.isConsultantPermittedToSession(counsellor, waiting))
+        .thenReturn(true);
+
+    assertThatThrownBy(() -> service.markOpened(SESSION_ID, counsellor))
+        .isInstanceOf(ForbiddenException.class);
+    verify(repository, never()).save(any());
   }
 }

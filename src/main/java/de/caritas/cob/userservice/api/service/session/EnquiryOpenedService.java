@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantEnquiryOpened;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantEnquiryOpenedRepository;
 import java.time.LocalDateTime;
@@ -37,17 +38,27 @@ public class EnquiryOpenedService {
    * @throws ForbiddenException the enquiry is not in this counsellor's pool
    */
   public void markOpened(@NonNull Long sessionId, @NonNull Consultant consultant) {
-    Session session =
-        sessionService
-            .getSession(sessionId)
-            .orElseThrow(() -> new NotFoundException("Session with id %s not found.", sessionId));
-    if (session.getStatus() != SessionStatus.NEW || session.getConsultant() != null) {
-      throw new ConflictException(String.format("Session %s is not a waiting enquiry.", sessionId));
-    }
-    // Same agency / topic / consulting-type check that decides what the pool shows.
-    if (!sessionService.isConsultantPermittedToSession(consultant, session)) {
-      throw new ForbiddenException(
-          String.format("Consultant %s may not see enquiry %s", consultant.getId(), sessionId));
+    // Anonymous enquiries: the anonymous queue lists them by the consultant's topics, across
+    // tenants. Use exactly that rule, so every enquiry the queue shows can be marked and none
+    // other.
+    var visibleAnonymous =
+        sessionService.findVisibleAnonymousLiveChatEnquiry(consultant, sessionId);
+    if (visibleAnonymous.isEmpty()) {
+      Session session =
+          sessionService
+              .getSession(sessionId)
+              .orElseThrow(() -> new NotFoundException("Session with id %s not found.", sessionId));
+      if (session.getStatus() != SessionStatus.NEW || session.getConsultant() != null) {
+        throw new ConflictException(
+            String.format("Session %s is not a waiting enquiry.", sessionId));
+      }
+      // An anonymous enquiry outside the consultant's topic queue is not in their pool, even if
+      // a shared agency or consulting type would grant general session access.
+      if (session.getRegistrationType() == RegistrationType.ANONYMOUS
+          || !sessionService.isConsultantPermittedToSession(consultant, session)) {
+        throw new ForbiddenException(
+            String.format("Consultant %s may not see enquiry %s", consultant.getId(), sessionId));
+      }
     }
     if (repository.existsByConsultantIdAndSessionId(consultant.getId(), sessionId)) {
       return;
