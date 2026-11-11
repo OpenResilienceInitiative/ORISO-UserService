@@ -122,7 +122,7 @@ public class EventNotificationService {
         String.format(
             "Another counselling on the topic of chat #%s has started.", existing.getId()),
         serializeParams(params),
-        buildSessionActionPath(existing),
+        buildSessionActionPathForRecipient(existing, recipientId, null),
         existing.getId(),
         existing.getTenantId());
   }
