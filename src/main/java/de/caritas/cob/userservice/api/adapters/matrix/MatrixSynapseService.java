@@ -2014,6 +2014,52 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
   }
 
   /**
+   * The room's {@code m.room.history_visibility} ("joined", "invited", "shared", "world_readable"),
+   * read from the room state via the Synapse admin API. A room without the event uses the Matrix
+   * default "shared". Empty when the state cannot be read; callers must treat that as "unknown",
+   * never as a policy.
+   */
+  public java.util.Optional<String> getRoomHistoryVisibility(String matrixRoomId) {
+    String adminToken = getAdminAccessToken();
+    if (adminToken == null) {
+      return java.util.Optional.empty();
+    }
+    try {
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_ROOM_STATE, java.util.Map.of("roomId", matrixRoomId));
+      ResponseEntity<java.util.Map> response =
+          restTemplate.exchange(
+              url,
+              org.springframework.http.HttpMethod.GET,
+              new HttpEntity<>(getClientHttpHeaders(adminToken)),
+              java.util.Map.class);
+      var body = response.getBody();
+      if (body == null || !(body.get("state") instanceof java.util.List<?> events)) {
+        return java.util.Optional.empty();
+      }
+      return java.util.Optional.of(
+          events.stream()
+              .filter(java.util.Map.class::isInstance)
+              .map(java.util.Map.class::cast)
+              .filter(event -> "m.room.history_visibility".equals(event.get("type")))
+              .map(event -> event.get("content"))
+              .filter(java.util.Map.class::isInstance)
+              .map(content -> ((java.util.Map<?, ?>) content).get("history_visibility"))
+              .filter(String.class::isInstance)
+              .map(String.class::cast)
+              .reduce((first, second) -> second)
+              .orElse("shared"));
+    } catch (Exception ex) {
+      log.warn(
+          "Matrix Error: Could not read state of room {}: {}",
+          matrixRoomId,
+          redactor.scrub(ex.getMessage()));
+      return java.util.Optional.empty();
+    }
+  }
+
+  /**
    * Whether a moderator banned the user from the room, read from the room state via the Synapse
    * admin API. Empty when the state cannot be read; callers must treat that as "unknown".
    */

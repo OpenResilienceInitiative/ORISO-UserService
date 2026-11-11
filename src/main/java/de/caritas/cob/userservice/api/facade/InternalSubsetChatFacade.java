@@ -175,6 +175,15 @@ public class InternalSubsetChatFacade {
         .toList();
   }
 
+  /**
+   * Whether {@code colleague} may be in a room anchored to {@code anchor} and {@code agencyId}: the
+   * same rule as for a new chat (ORISO-UserService#1580). For an existing room the anchor is its
+   * owner and its counselling centre, never the person who asks.
+   */
+  boolean permitsRecipient(Consultant anchor, Consultant colleague, Long agencyId) {
+    return permits(anchor, colleague, recipientScopes.resolve(anchor.getTenantId()), agencyId);
+  }
+
   private boolean permits(
       Consultant creator,
       Consultant colleague,
@@ -205,7 +214,7 @@ public class InternalSubsetChatFacade {
     }
   }
 
-  private void requireEncryption() {
+  void requireEncryption() {
     if (!matrixConfig.isEncryptionEnabled()) {
       throw new CustomValidationHttpStatusException(
           HttpStatusExceptionReason.INTERNAL_CHAT_ENCRYPTION_REQUIRED,

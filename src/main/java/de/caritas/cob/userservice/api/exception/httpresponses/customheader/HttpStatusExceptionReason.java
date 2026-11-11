@@ -80,6 +80,13 @@ public enum HttpStatusExceptionReason {
   INTERNAL_CHAT_ENCRYPTION_REQUIRED,
   /** Another request for the same people is still being processed; try again. */
   INTERNAL_CHAT_BUSY,
+  /**
+   * 409 - the room shows earlier messages to people who join later, so nobody new is admitted
+   * (ORISO-UserService#1580).
+   */
+  INTERNAL_CHAT_HISTORY_SHARED,
+  /** 409 - only an active members-only internal chat takes new colleagues. */
+  INTERNAL_CHAT_NOT_INVITABLE,
   /** The session of a members-only chat ends with its chat; stop the chat instead. */
   MEMBERS_ONLY_CHAT_STOP_REQUIRED,
   /** The case owner changed after the case handover request or offer was created. */
