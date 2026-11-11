@@ -150,7 +150,10 @@ class InternalChatEmailServiceTest {
         .thenAnswer(
             i -> {
               java.util.Collection<String> requested = i.getArgument(0);
-              return registered.stream().filter(c -> requested.contains(c.getId())).toList();
+              // Mirrors the derived query: only requested ids of accounts that are not deleted.
+              return registered.stream()
+                  .filter(c -> requested.contains(c.getId()) && c.getDeleteDate() == null)
+                  .toList();
             });
     addConsultant(actor);
     addConsultant(recipient);
@@ -324,6 +327,10 @@ class InternalChatEmailServiceTest {
     addConsultant(optedOut);
     membership.add(new GroupChatParticipant(42L, "second"));
     membership.add(new GroupChatParticipant(42L, "opted-out"));
+    // A soft-deleted counsellor still listed as participant and still in the Matrix room.
+    var deleted = consultant("deleted-account", 7L);
+    deleted.setDeleteDate(LocalDateTime.now().minusDays(1));
+    registered.add(deleted);
     membership.add(new GroupChatParticipant(42L, "deleted-account"));
     when(matrix.getRoomMembers(ROOM))
         .thenReturn(
@@ -332,7 +339,8 @@ class InternalChatEmailServiceTest {
                     actor.getMatrixUserId(),
                     recipient.getMatrixUserId(),
                     second.getMatrixUserId(),
-                    optedOut.getMatrixUserId())));
+                    optedOut.getMatrixUserId(),
+                    deleted.getMatrixUserId())));
 
     service.onMessageIntent(ROOM, EVENT, caller);
     long intent = writer.pendingIds().getFirst();
@@ -344,6 +352,11 @@ class InternalChatEmailServiceTest {
     verify(consultants, never()).findByIdAndDeleteDateIsNull("second");
     verify(consultants, never()).findByIdAndDeleteDateIsNull("opted-out");
     verify(consultants, never()).findByIdAndDeleteDateIsNull("deleted-account");
+    // Fan-out reserves claims only for eligible recipients, before any dispatch-time recheck.
+    assertThat(stored.values())
+        .filteredOn(row -> row.getRecipientKind() == ReplyEmailDelivery.RecipientKind.INTERNAL)
+        .extracting(ReplyEmailDelivery::getRecipientUserId)
+        .containsExactlyInAnyOrder("recipient", "second");
 
     drain();
     assertThat(received)

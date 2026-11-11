@@ -211,6 +211,15 @@ class NotificationEmailSmtpContract {
       when(consultants.findByMatrixUserIdAndDeleteDateIsNull(consultant.getMatrixUserId()))
           .thenReturn(Optional.of(consultant));
     }
+    // The fan-out loads its recipients in one query (#1725).
+    when(consultants.findByIdInAndDeleteDateIsNull(anyCollection()))
+        .thenAnswer(
+            invocation -> {
+              java.util.Collection<String> ids = invocation.getArgument(0);
+              return java.util.stream.Stream.of(actor, recipient)
+                  .filter(consultant -> ids.contains(consultant.getId()))
+                  .toList();
+            });
     when(identities.findEnabledById(anyString())).thenReturn(Optional.of(true));
     when(participants.findByChatId(4202L))
         .thenReturn(
