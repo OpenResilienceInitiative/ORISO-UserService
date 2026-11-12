@@ -104,6 +104,7 @@ class DirectLinkControllerDelegateCallLinkTest {
             .medium("VIDEO")
             .requestedAt(LocalDateTime.now())
             .build();
+    person.setAvatarId("magpie");
     when(waitingRooms.waitIn(42L, person)).thenReturn(entry);
     when(users.findById("guest-1")).thenReturn(java.util.Optional.of(person));
 
@@ -111,6 +112,7 @@ class DirectLinkControllerDelegateCallLinkTest {
 
     org.assertj.core.api.Assertions.assertThat(body.getId()).isEqualTo(11L);
     org.assertj.core.api.Assertions.assertThat(body.getSessionId()).isNull();
+    org.assertj.core.api.Assertions.assertThat(body.getAvatarId()).isEqualTo("magpie");
     org.assertj.core.api.Assertions.assertThat(body.getStatus().getValue()).isEqualTo("PENDING");
   }
 }

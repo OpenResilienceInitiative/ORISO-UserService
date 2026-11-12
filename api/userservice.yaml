@@ -3670,6 +3670,9 @@ components:
         displayName:
           type: string
           description: 'The knocking person''s username (pseudonym), decoded; never the e-mail address or a real name.'
+        avatarId:
+          type: string
+          description: 'The avatar the person picked in their profile (lower-case animal id, e.g. magpie), so the counsellor sees the same picture as in the chat (ORISO-Frontend#2237). Empty when none was picked.'
         status: {$ref: '#/components/schemas/CallKnockStatus'}
         medium: {$ref: '#/components/schemas/DirectLinkMedium'}
         requestedAt: {type: string, format: date-time}
