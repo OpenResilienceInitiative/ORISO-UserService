@@ -27,6 +27,7 @@ import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
+import de.caritas.cob.userservice.api.service.session.EnquiryOpenedService;
 import de.caritas.cob.userservice.api.service.session.SessionConsentService;
 import de.caritas.cob.userservice.api.service.session.SessionFilter;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -48,6 +49,7 @@ class UserSessionControllerDelegate {
 
   private final @NonNull UserAccountService userAccountProvider;
   private final @NonNull SessionService sessionService;
+  private final @NonNull EnquiryOpenedService enquiryOpenedService;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull SessionListFacade sessionListFacade;
   private final @NonNull AssignEnquiryFacade assignEnquiryFacade;
@@ -301,6 +303,12 @@ class UserSessionControllerDelegate {
     var consultant = this.userAccountProvider.retrieveValidatedConsultant();
     var consultantSessionDTO = sessionService.fetchSessionForConsultant(sessionId, consultant);
     return new ResponseEntity<>(consultantSessionDTO, HttpStatus.OK);
+  }
+
+  ResponseEntity<Void> markEnquiryOpened(Long sessionId) {
+    var consultant = this.userAccountProvider.retrieveValidatedConsultant();
+    enquiryOpenedService.markOpened(sessionId, consultant);
+    return new ResponseEntity<>(HttpStatus.NO_CONTENT);
   }
 
   ResponseEntity<Void> archiveSession(Long sessionId) {

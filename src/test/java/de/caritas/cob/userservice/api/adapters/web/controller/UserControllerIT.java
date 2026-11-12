@@ -93,6 +93,7 @@ import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.service.enquiry.EnquiryRejectionService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.RequestedContactSheetService;
+import de.caritas.cob.userservice.api.service.session.EnquiryOpenedService;
 import de.caritas.cob.userservice.api.service.session.SessionConsentService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
@@ -311,6 +312,7 @@ class UserControllerIT {
 
   @MockitoBean private GroupChatJoinRequestControllerDelegate groupChatJoinRequestDelegate;
   @MockitoBean private SessionService sessionService;
+  @MockitoBean private EnquiryOpenedService enquiryOpenedService;
   @MockitoBean private AuthenticatedUser authenticatedUser;
   @MockitoBean private CreateEnquiryMessageFacade createEnquiryMessageFacade;
 
