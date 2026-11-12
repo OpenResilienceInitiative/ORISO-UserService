@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.service.notification.EventNotificationServ
 import de.caritas.cob.userservice.api.service.notification.InternalChatEmailService;
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.session.SessionService;
+import de.caritas.cob.userservice.api.service.statistics.CommunicationStatService;
 import de.caritas.cob.userservice.api.service.statistics.ConsultantMessageStatService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
@@ -50,6 +51,7 @@ public class MatrixEventListenerService {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull ConsultantMessageStatService consultantMessageStatService;
+  private final @NonNull CommunicationStatService communicationStatService;
   private final @NonNull MatrixCallInviteNotificationService callInviteNotifications;
   private final @NonNull AdviceSeekerReplyEmailService replyEmailService;
   private final @NonNull MatrixEmailSyncCursorStore emailSyncCursorStore;
@@ -508,11 +510,16 @@ public class MatrixEventListenerService {
           break;
 
         case "org.oriso.call.invite":
-          outcome =
-              callInviteNotifications.handle(roomId, event) ? Outcome.SUCCESS : Outcome.SKIPPED;
+          // Only a validated invite counts; a forged or unbound one is never a call.
+          boolean handled = callInviteNotifications.handle(roomId, event);
+          if (handled) {
+            recordCallStatistic(roomId, event);
+          }
+          outcome = handled ? Outcome.SUCCESS : Outcome.SKIPPED;
           break;
 
         case "m.call.invite":
+          recordCallStatistic(roomId, event);
           outcome = handleCallInvite(roomId, event) ? Outcome.SUCCESS : Outcome.SKIPPED;
           break;
 
@@ -654,19 +661,89 @@ public class MatrixEventListenerService {
                     return;
                   }
 
-                  if (mappedSessionId != null
-                      && senderDomainUserId != null
-                      && isConsultantMatrixUser(senderId)) {
-                    try {
-                      consultantMessageStatService.recordMessageSent(
-                          senderDomainUserId, mappedSessionId);
-                    } catch (Exception e) {
-                      log.error("Failed to record consultant message statistic", e);
-                    }
+                  if (mappedSessionId != null && senderDomainUserId != null) {
+                    recordMessageStatistics(senderId, senderDomainUserId, mappedSessionId);
                   }
                 }));
 
     return true;
+  }
+
+  /**
+   * Admin dashboard counts (KDG: no content, no identity in the stored row). Best-effort: a failure
+   * is logged and never reaches the notification path. Voice messages are not counted: session
+   * rooms are end-to-end encrypted, so the msgtype is opaque to the server.
+   */
+  private void recordMessageStatistics(String senderId, String senderDomainUserId, Long sessionId) {
+    boolean consultantSender;
+    try {
+      consultantSender = isConsultantMatrixUser(senderId);
+    } catch (Exception e) {
+      log.error("Failed to resolve the sender role for message statistics", e);
+      return;
+    }
+    try {
+      if (consultantSender) {
+        consultantMessageStatService.recordMessageSent(senderDomainUserId, sessionId);
+      } else {
+        communicationStatService.recordAdviceSeekerMessage(sessionId);
+      }
+    } catch (Exception e) {
+      log.error(
+          consultantSender
+              ? "Failed to record consultant message statistic"
+              : "Failed to record advice-seeker message statistic",
+          e);
+    }
+  }
+
+  /**
+   * Counts one call per call id for the admin dashboard, only in a room mapped to a session. Runs
+   * on the notification worker; best-effort.
+   */
+  @SuppressWarnings("unchecked")
+  private void recordCallStatistic(String roomId, Map<String, Object> event) {
+    try {
+      Long sessionId = roomToSessionMap.get(roomId);
+      if (sessionId == null || !(event.get("content") instanceof Map<?, ?> rawContent)) {
+        return;
+      }
+      var content = (Map<String, Object>) rawContent;
+      if (!(content.get("call_id") instanceof String callId) || callId.isBlank()) {
+        return;
+      }
+      boolean video = isVideoCall(content);
+      Runnable record =
+          () ->
+              inTechnicalTenant(
+                  () -> {
+                    try {
+                      communicationStatService.recordCall(sessionId, callId, video);
+                    } catch (Exception e) {
+                      log.error("Failed to record call statistic", e);
+                    }
+                  });
+      if (executorService == null) {
+        record.run();
+      } else {
+        executorService.submit(record);
+      }
+    } catch (Exception e) {
+      log.error("Failed to schedule call statistic", e);
+    }
+  }
+
+  /**
+   * {@code org.oriso.call.invite} carries {@code is_video}; a legacy {@code m.call.invite} only
+   * says so through a video line in its SDP offer.
+   */
+  static boolean isVideoCall(Map<String, Object> content) {
+    if (Boolean.TRUE.equals(content.get("is_video"))) {
+      return true;
+    }
+    return content.get("offer") instanceof Map<?, ?> offer
+        && offer.get("sdp") instanceof String sdp
+        && sdp.contains("m=video");
   }
 
   private boolean isEligibleForReplyEmail(Map<String, Object> event) {

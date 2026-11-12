@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- Admin Statistik communication counts: one row per advice-seeker message, audio call or video
+       call. KDG: no message content and no user or counsellor identity. call_key
+       is a SHA-256 of the Matrix call id, only so one call is counted once. -->
+  <changeSet id="20261113-communication-stat" author="oriso">
+    <createTable tableName="communication_stat">
+      <column name="id" type="BIGINT" autoIncrement="true"><constraints primaryKey="true" nullable="false"/></column>
+      <column name="tenant_id" type="BIGINT"/>
+      <column name="agency_id" type="BIGINT"/>
+      <column name="session_id" type="BIGINT"/>
+      <column name="kind" type="VARCHAR(40)"><constraints nullable="false"/></column>
+      <column name="occurred_at" type="DATETIME"><constraints nullable="false"/></column>
+      <column name="call_key" type="VARCHAR(64)"/>
+    </createTable>
+    <addUniqueConstraint tableName="communication_stat" columnNames="call_key"
+      constraintName="uk_communication_stat_call_key"/>
+    <createIndex tableName="communication_stat" indexName="idx_communication_stat_tenant_kind_time">
+      <column name="tenant_id"/>
+      <column name="kind"/>
+      <column name="occurred_at"/>
+    </createIndex>
+    <createIndex tableName="communication_stat" indexName="idx_communication_stat_occurred_at">
+      <column name="occurred_at"/>
+    </createIndex>
+    <rollback><dropTable tableName="communication_stat"/></rollback>
+  </changeSet>
+</databaseChangeLog>

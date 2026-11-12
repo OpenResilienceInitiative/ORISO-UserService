@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
+import de.caritas.cob.userservice.api.port.out.CommunicationStatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantMessageStatRepository;
 import de.caritas.cob.userservice.api.port.out.StatisticsSettingChangeRepository;
 import java.time.Clock;
@@ -34,6 +35,7 @@ class StatisticsRetentionServiceTest {
 
   @Mock private ConsultantMessageStatRepository messageStatRepository;
   @Mock private StatisticsSettingChangeRepository settingChangeRepository;
+  @Mock private CommunicationStatRepository communicationStatRepository;
 
   private StatisticsRetentionService service;
 
@@ -41,7 +43,10 @@ class StatisticsRetentionServiceTest {
   void setUp() {
     service =
         new StatisticsRetentionService(
-            messageStatRepository, settingChangeRepository, Clock.fixed(NOW, ZoneOffset.UTC));
+            messageStatRepository,
+            communicationStatRepository,
+            settingChangeRepository,
+            Clock.fixed(NOW, ZoneOffset.UTC));
     setField(service, "messageCountRetentionDays", 731);
     setField(service, "settingChangeActorRetentionDays", 366);
     setField(service, "batchSize", 1000);
@@ -55,6 +60,27 @@ class StatisticsRetentionServiceTest {
     service.purgeExpiredStatistics();
 
     verify(messageStatRepository, times(3)).deleteBatchSentBefore(cutoff, 1000);
+  }
+
+  @Test
+  void purge_deletesCommunicationRowsOlderThanTheRetentionPeriod_inBatches() {
+    var cutoff = LocalDateTime.of(2024, 11, 2, 3, 30);
+    when(communicationStatRepository.deleteBatchOccurredBefore(cutoff, 1000)).thenReturn(1000, 3);
+
+    service.purgeExpiredStatistics();
+
+    verify(communicationStatRepository, times(2)).deleteBatchOccurredBefore(cutoff, 1000);
+  }
+
+  @Test
+  void purge_stillPurgesCommunicationRows_whenMessageCountPurgeFails() {
+    var cutoff = LocalDateTime.of(2024, 11, 2, 3, 30);
+    when(messageStatRepository.deleteBatchSentBefore(cutoff, 1000))
+        .thenThrow(new IllegalStateException("db down"));
+
+    service.purgeExpiredStatistics();
+
+    verify(communicationStatRepository).deleteBatchOccurredBefore(cutoff, 1000);
   }
 
   @Test

@@ -2,6 +2,8 @@ package de.caritas.cob.userservice.api.port.out;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import de.caritas.cob.userservice.api.model.CommunicationStat;
+import de.caritas.cob.userservice.api.model.CommunicationStat.Kind;
 import jakarta.persistence.EntityManager;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -67,6 +69,58 @@ class AdminStatisticsRepositoryMariaDbIT {
 
   @Autowired private AdminStatisticsRepository underTest;
   @Autowired private EntityManager entityManager;
+  @Autowired private CommunicationStatRepository communicationStats;
+
+  @Test
+  void communicationCountsShouldRunOnTheLiquibaseSchemaAndRejectASecondRowPerCall() {
+    var now = LocalDateTime.now().withNano(0);
+    communicationStats.save(communicationRow(Kind.ADVICE_SEEKER_MESSAGE, now, null));
+    communicationStats.save(communicationRow(Kind.AUDIO_CALL, now, "mariadb-call"));
+    entityManager
+        .createNativeQuery(
+            "INSERT INTO consultant_message_stat (consultant_hmac, tenant_id, agency_id, "
+                + "sent_date) VALUES ('h', :tenantId, :agencyId, :sentDate)")
+        .setParameter("tenantId", TENANT_ID)
+        .setParameter("agencyId", AGENCY_ID)
+        .setParameter("sentDate", now)
+        .executeUpdate();
+    entityManager.flush();
+
+    var from = now.minusDays(1);
+    var to = now.plusDays(1);
+    assertThat(underTest.countCommunicationByAgency(TENANT_ID, from, to))
+        .extracting(r -> r.getGroupId() + ":" + r.getKind() + ":" + r.getTotal())
+        .containsExactlyInAnyOrder(
+            AGENCY_ID + ":ADVICE_SEEKER_MESSAGE:1", AGENCY_ID + ":AUDIO_CALL:1");
+    assertThat(underTest.countCommunicationByTenant(from, to))
+        .extracting(r -> r.getGroupId() + ":" + r.getKind() + ":" + r.getTotal())
+        .contains(TENANT_ID + ":AUDIO_CALL:1");
+    assertThat(underTest.countCounsellorMessagesByAgency(TENANT_ID, from, to))
+        .extracting(r -> r.getGroupId() + ":" + r.getTotal())
+        .containsExactly(AGENCY_ID + ":1");
+    assertThat(underTest.countCounsellorMessagesByTenant(from, to))
+        .extracting(r -> r.getGroupId() + ":" + r.getTotal())
+        .contains(TENANT_ID + ":1");
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> {
+              communicationStats.save(communicationRow(Kind.AUDIO_CALL, now, "mariadb-call"));
+              entityManager.flush();
+            })
+        .as("the unique call key counts one call once")
+        .isInstanceOf(Exception.class);
+  }
+
+  private static CommunicationStat communicationRow(
+      Kind kind, LocalDateTime occurredAt, String callKey) {
+    return CommunicationStat.builder()
+        .tenantId(TENANT_ID)
+        .agencyId(AGENCY_ID)
+        .sessionId(1L)
+        .kind(kind)
+        .occurredAt(occurredAt)
+        .callKey(callKey)
+        .build();
+  }
 
   @Test
   void countDailyNewSessionsByTenantShouldProjectDayWithoutConversionError() {

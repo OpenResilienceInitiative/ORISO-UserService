@@ -220,7 +220,7 @@ class AdminDashboardStatisticsServiceTest {
         agencyId,
         counsellors,
         false,
-        new Metrics(1, 1, 1, null, 1),
+        new Metrics(1, 1, 1, null, 1, 2L, 3L, 4L, 5L),
         List.of(),
         List.of(),
         List.of(),
@@ -933,5 +933,136 @@ class AdminDashboardStatisticsServiceTest {
     verify(adminStatisticsRepository, atLeast(0))
         .countSessionTopicsByAgency(any(), from.capture(), any(LocalDateTime.class));
     return from.getAllValues().stream().map(value -> YearMonth.from(value).toString()).toList();
+  }
+
+  /* ---------- communication counts (Admin Statistik cards) ---------- */
+
+  private static AdminStatisticsRepository.KindCountProjection kindCount(
+      Long groupId, String kind, long total) {
+    return new AdminStatisticsRepository.KindCountProjection() {
+      @Override
+      public Long getGroupId() {
+        return groupId;
+      }
+
+      @Override
+      public String getKind() {
+        return kind;
+      }
+
+      @Override
+      public Long getTotal() {
+        return total;
+      }
+    };
+  }
+
+  @Test
+  void buildDashboard_Should_CountCurrentMonthCommunication_PerAgencyAndTenantTotal() {
+    givenTenantAdmin();
+    givenEmptyTenantScopedQueries();
+    when(adminStatisticsRepository.countConsultantsByAgency(TENANT_ID))
+        .thenReturn(
+            List.of(groupCount(AGENCY_WITH_TEAM, 10), groupCount(AGENCY_WITH_FEW_COUNSELORS, 1)));
+    // 15 in the total leaves 5 beyond the shown agency, so subtraction protection keeps it shown
+    when(adminStatisticsRepository.countConsultantsForTenant(TENANT_ID)).thenReturn(15L);
+    var monthStart = LocalDateTime.of(2026, 7, 1, 0, 0);
+    var nextMonthStart = LocalDateTime.of(2026, 8, 1, 0, 0);
+    when(adminStatisticsRepository.countCounsellorMessagesByAgency(
+            TENANT_ID, monthStart, nextMonthStart))
+        .thenReturn(
+            List.of(groupCount(AGENCY_WITH_TEAM, 40), groupCount(AGENCY_WITH_FEW_COUNSELORS, 3)));
+    when(adminStatisticsRepository.countCommunicationByAgency(
+            TENANT_ID, monthStart, nextMonthStart))
+        .thenReturn(
+            List.of(
+                kindCount(AGENCY_WITH_TEAM, "ADVICE_SEEKER_MESSAGE", 25),
+                kindCount(AGENCY_WITH_TEAM, "AUDIO_CALL", 2),
+                kindCount(AGENCY_WITH_TEAM, "VIDEO_CALL", 1),
+                kindCount(AGENCY_WITH_FEW_COUNSELORS, "ADVICE_SEEKER_MESSAGE", 4),
+                kindCount(AGENCY_WITH_FEW_COUNSELORS, "SOMETHING_NEWER", 9)));
+
+    var dashboard = service.buildDashboard();
+
+    var team = agency(dashboard, AGENCY_WITH_TEAM).metrics();
+    assertThat(team.messagesCounselorsCurrentMonth()).isEqualTo(40L);
+    assertThat(team.messagesAdviceSeekersCurrentMonth()).isEqualTo(25L);
+    assertThat(team.audioCallsCurrentMonth()).isEqualTo(2L);
+    assertThat(team.videoCallsCurrentMonth()).isEqualTo(1L);
+    // small-cell suppression hides the whole metrics block of a small agency
+    assertThat(agency(dashboard, AGENCY_WITH_FEW_COUNSELORS).metrics()).isNull();
+    // the tenant total counts every agency, the hidden one included; an unknown kind is ignored
+    var total = dashboard.targets().get(0).metrics();
+    assertThat(total.messagesCounselorsCurrentMonth()).isEqualTo(43L);
+    assertThat(total.messagesAdviceSeekersCurrentMonth()).isEqualTo(29L);
+    assertThat(total.audioCallsCurrentMonth()).isEqualTo(2L);
+    assertThat(total.videoCallsCurrentMonth()).isEqualTo(1L);
+  }
+
+  @Test
+  void buildDashboard_Should_ReportZero_NotNull_When_AShownTargetHadNoCommunication() {
+    givenTenantAdmin();
+    givenEmptyTenantScopedQueries();
+    when(adminStatisticsRepository.countConsultantsByAgency(TENANT_ID))
+        .thenReturn(List.of(groupCount(AGENCY_WITH_TEAM, 5)));
+    when(adminStatisticsRepository.countConsultantsForTenant(TENANT_ID)).thenReturn(5L);
+
+    var metrics = agency(service.buildDashboard(), AGENCY_WITH_TEAM).metrics();
+
+    assertThat(metrics.messagesCounselorsCurrentMonth()).isZero();
+    assertThat(metrics.messagesAdviceSeekersCurrentMonth()).isZero();
+    assertThat(metrics.audioCallsCurrentMonth()).isZero();
+    assertThat(metrics.videoCallsCurrentMonth()).isZero();
+  }
+
+  @Test
+  void buildDashboard_Should_CountCommunicationPerTenant_InPlatformScope() {
+    givenPlatformAdminWithTenants(List.of(groupCount(1L, 3), groupCount(2L, 3)));
+    when(adminStatisticsRepository.countCounsellorMessagesByTenant(any(), any()))
+        .thenReturn(List.of(groupCount(1L, 10), groupCount(2L, 5)));
+    when(adminStatisticsRepository.countCommunicationByTenant(any(), any()))
+        .thenReturn(
+            List.of(kindCount(1L, "VIDEO_CALL", 2), kindCount(2L, "ADVICE_SEEKER_MESSAGE", 7)));
+
+    var platform =
+        service.buildDashboard().targets().stream()
+            .filter(target -> target.targetType() == TargetType.PLATFORM)
+            .findFirst()
+            .orElseThrow()
+            .metrics();
+
+    assertThat(platform.messagesCounselorsCurrentMonth()).isEqualTo(15L);
+    assertThat(platform.messagesAdviceSeekersCurrentMonth()).isEqualTo(7L);
+    assertThat(platform.audioCallsCurrentMonth()).isZero();
+    assertThat(platform.videoCallsCurrentMonth()).isEqualTo(2L);
+  }
+
+  @Test
+  void storedStandWithoutCommunicationFields_Should_StillDeserialize_WithNullCounts()
+      throws Exception {
+    var oldMetrics =
+        "{\"enquiriesCurrentMonth\":1,\"enquiriesPreviousMonth\":2,\"activeCases\":3,"
+            + "\"activeConversationsToday\":null,\"groupChatsTotal\":4}";
+
+    var metrics =
+        new com.fasterxml.jackson.databind.ObjectMapper().readValue(oldMetrics, Metrics.class);
+
+    assertThat(metrics.activeCases()).isEqualTo(3);
+    assertThat(metrics.messagesCounselorsCurrentMonth()).isNull();
+    assertThat(metrics.messagesAdviceSeekersCurrentMonth()).isNull();
+    assertThat(metrics.audioCallsCurrentMonth()).isNull();
+    assertThat(metrics.videoCallsCurrentMonth()).isNull();
+  }
+
+  @Test
+  void metricsJson_Should_NotOfferVoiceMessages_BecauseTheyCannotBeTracked() throws Exception {
+    var json =
+        new com.fasterxml.jackson.databind.ObjectMapper()
+            .writeValueAsString(new Metrics(1, 1, 1, null, 1, 0L, 0L, 0L, 0L));
+
+    assertThat(json)
+        .contains("\"messagesCounselorsCurrentMonth\":0")
+        .contains("\"videoCallsCurrentMonth\":0")
+        .doesNotContain("voice");
   }
 }
