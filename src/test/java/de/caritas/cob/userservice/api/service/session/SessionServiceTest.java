@@ -950,6 +950,43 @@ class SessionServiceTest {
   }
 
   @Test
+  void getSessionsForUser_Should_ReturnTheAskersOwnSessionAlias_When_sessionHasDisplayName() {
+    // #2175: the asker must be able to see the name a counsellor sees in this conversation.
+    Session session = easyRandom.nextObject(Session.class);
+    session.setSessionData(
+        new ArrayList<>(
+            List.of(
+                new de.caritas.cob.userservice.api.model.SessionData(
+                    session,
+                    de.caritas.cob.userservice.api.model.SessionData.SessionDataType.REGISTRATION,
+                    "displayName",
+                    "Blauer Falke"),
+                new de.caritas.cob.userservice.api.model.SessionData(
+                    session,
+                    de.caritas.cob.userservice.api.model.SessionData.SessionDataType.REGISTRATION,
+                    "age",
+                    "17"))));
+    when(sessionRepository.findByUserUserId(USER_ID)).thenReturn(singletonList(session));
+
+    var user = sessionService.getSessionsForUserId(USER_ID).get(0).getUser();
+
+    assertEquals("Blauer Falke", user.getDisplayName());
+    // Only the alias is added; registration data stays out of the asker list.
+    assertNull(user.getSessionData());
+  }
+
+  @Test
+  void getSessionsForUser_Should_ReturnNoAlias_When_sessionHasNoDisplayName() {
+    Session session = easyRandom.nextObject(Session.class);
+    session.setSessionData(new ArrayList<>());
+    when(sessionRepository.findByUserUserId(USER_ID)).thenReturn(singletonList(session));
+
+    var user = sessionService.getSessionsForUserId(USER_ID).get(0).getUser();
+
+    assertNull(user.getDisplayName());
+  }
+
+  @Test
   void
       getActiveAndDoneSessionsForConsultant_Should_ReturnListOfActiveAndDoneSessions_When_statusInProgress() {
     Session session = easyRandom.nextObject(Session.class);

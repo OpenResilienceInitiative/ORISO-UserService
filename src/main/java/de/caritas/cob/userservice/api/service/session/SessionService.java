@@ -601,8 +601,10 @@ public class SessionService {
   }
 
   private UserSessionResponseDTO buildUserSessionDTO(Session session, List<AgencyDTO> agencies) {
+    var mapper = new SessionMapper();
     return new UserSessionResponseDTO()
-        .session(new SessionMapper().convertToSessionDTO(session))
+        .session(mapper.convertToSessionDTO(session))
+        .user(mapper.toOwnSessionAlias(session))
         .agency(
             agencies.stream()
                 .filter(agency -> agency.getId().longValue() == session.getAgencyId().longValue())
