@@ -28,6 +28,9 @@ import lombok.Setter;
  *       sessionId}, {@code userId}, #1475, ADR-029 §2). Never enters the Matrix admission path.
  *   <li>{@link Via#CALL_LINK}: a guest knocks on one running call through its share link ({@code
  *       inviteLinkId}, {@code userId}, #1487); the link's counsellor admits it.
+ *   <li>{@link Via#WAITING_ROOM}: an advice seeker waits in a group's waiting room ({@code
+ *       seriesId}, {@code userId}, ORISO-Frontend#2237); a moderator in the group's call lets them
+ *       in. Grants nothing by itself: the person then joins the group as before.
  * </ul>
  */
 @Entity
@@ -57,7 +60,9 @@ public class GroupChatJoinRequest {
     INVITE_LINK,
     DIRECT_LINK,
     /** A guest knocks on one running call through its share link (#1487). */
-    CALL_LINK
+    CALL_LINK,
+    /** An advice seeker waits in a group's waiting room (ORISO-Frontend#2237). */
+    WAITING_ROOM
   }
 
   @Id
@@ -120,6 +125,13 @@ public class GroupChatJoinRequest {
 
   @Column(name = "admission_last_attempt_at")
   private LocalDateTime admissionLastAttemptAt;
+
+  /**
+   * {@link Via#WAITING_ROOM}: when the waiting page last said the person is still there. Somebody
+   * who closed the page drops off the moderator's list once this is old.
+   */
+  @Column(name = "waiting_seen_at")
+  private LocalDateTime waitingSeenAt;
 
   public boolean isPending() {
     return status == Status.PENDING;

@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.port.out.GroupChatJoinRequestRepository;
 import de.caritas.cob.userservice.api.port.out.MatrixCallBindingRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.chat.GroupWaitingRoomService;
 import de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import java.time.LocalDateTime;
@@ -61,8 +62,10 @@ public class DirectCallKnockService {
   private final @NonNull ConsultantRepository consultants;
   private final @NonNull EventNotificationService eventNotifications;
   private final @NonNull DirectInvitePolicy directInvitePolicy;
+  private final @NonNull GroupWaitingRoomService waitingRooms;
 
-  private static final Set<Via> CALL_KNOCKS = EnumSet.of(Via.DIRECT_LINK, Via.CALL_LINK);
+  private static final Set<Via> CALL_KNOCKS =
+      EnumSet.of(Via.DIRECT_LINK, Via.CALL_LINK, Via.WAITING_ROOM);
   private static final Comparator<GroupChatJoinRequest> BY_REQUESTED_AT =
       Comparator.comparing(GroupChatJoinRequest::getRequestedAt)
           .thenComparing(GroupChatJoinRequest::getId);
@@ -291,7 +294,8 @@ public class DirectCallKnockService {
       Consultant consultant, Long sessionId, String matrixRoomId) {
     var scope = callScope(sessionId, matrixRoomId);
     var since = waitingSince();
-    return Stream.concat(
+    return Stream.of(
+            waitingRoomOf(consultant, scope).stream(),
             scope.directLinks()
                 ? repository
                     .findCallKnocksForConsultant(
@@ -309,6 +313,7 @@ public class DirectCallKnockService {
                     .stream()
                     .filter(inCallOf(consultant))
                 : Stream.<GroupChatJoinRequest>empty())
+        .flatMap(knocks -> knocks)
         .sorted(BY_REQUESTED_AT)
         .toList();
   }
@@ -340,7 +345,12 @@ public class DirectCallKnockService {
     // any more; no earlier unlocked read can leave a stale entity in the persistence context.
     var since = waitingSince();
     var checkedLinks = new java.util.HashSet<Long>();
-    return Stream.concat(
+    return Stream.of(
+            // Re-read under lock: somebody who left meanwhile is not let in.
+            waitingRoomOf(consultant, scope).stream()
+                .map(entry -> repository.findByIdForUpdate(entry.getId()))
+                .flatMap(Optional::stream)
+                .filter(GroupChatJoinRequest::isPending),
             scope.directLinks()
                 ? repository
                     .findCallKnocksForConsultantForUpdate(
@@ -358,6 +368,7 @@ public class DirectCallKnockService {
                     .stream()
                     .filter(inCallOf(consultant))
                 : Stream.<GroupChatJoinRequest>empty())
+        .flatMap(knocks -> knocks)
         .sorted(BY_REQUESTED_AT)
         .map(
             knock -> {
@@ -453,8 +464,17 @@ public class DirectCallKnockService {
     return switch (knock.getVia()) {
       case DIRECT_LINK -> isCounsellorOf(knock.getSessionId(), consultant);
       case CALL_LINK -> isInCallOfLink(knock.getInviteLinkId(), consultant);
+      case WAITING_ROOM -> waitingRooms.mayAdmit(knock, consultant);
       default -> false;
     };
+  }
+
+  /**
+   * ORISO-Frontend#2237: in a group's call, the people in the group's waiting room knock too, so
+   * the call's "Reinlassen" lets them in (Frank, 2026-11-12: only in the running call).
+   */
+  private List<GroupChatJoinRequest> waitingRoomOf(Consultant consultant, CallScope scope) {
+    return scope.roomId() == null ? List.of() : waitingRooms.waitingIn(consultant, scope.roomId());
   }
 
   /** One membership lookup per share link, however many guests knock on it. */

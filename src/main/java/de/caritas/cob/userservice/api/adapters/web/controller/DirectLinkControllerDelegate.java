@@ -48,6 +48,8 @@ public class DirectLinkControllerDelegate {
   private static final UsernameTranscoder USERNAMES = new UsernameTranscoder();
 
   private final @NonNull DirectCallKnockService knockService;
+  private final @NonNull de.caritas.cob.userservice.api.service.chat.GroupWaitingRoomService
+      waitingRooms;
   private final @NonNull UserRepository userRepository;
   private final @NonNull de.caritas.cob.userservice.api.service.temporaryaccount
           .TemporaryAccountService
@@ -154,6 +156,12 @@ public class DirectLinkControllerDelegate {
   ResponseEntity<CallKnockDTO> declineCallKnock(Long knockId) {
     var consultant = userAccountService.retrieveValidatedConsultant();
     return ResponseEntity.ok(toKnockDto(knockService.decline(knockId, consultant)));
+  }
+
+  /** ORISO-Frontend#2237: the caller waits in a group's waiting room. */
+  ResponseEntity<CallKnockDTO> waitInGroupChat(Long chatId) {
+    var user = userAccountService.retrieveValidatedUser();
+    return ResponseEntity.ok(toKnockDto(waitingRooms.waitIn(chatId, user)));
   }
 
   ResponseEntity<CallKnockDTO> getOwnCallKnock(Long knockId) {

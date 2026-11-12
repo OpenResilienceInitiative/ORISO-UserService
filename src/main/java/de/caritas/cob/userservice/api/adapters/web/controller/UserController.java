@@ -305,6 +305,12 @@ public class UserController implements UsersApi {
 
   @Override
   public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO>
+      waitInGroupChat(Long chatId) {
+    return directLinkControllerDelegate.waitInGroupChat(chatId);
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO>
       getOwnCallKnock(Long knockId) {
     return directLinkControllerDelegate.getOwnCallKnock(knockId);
   }

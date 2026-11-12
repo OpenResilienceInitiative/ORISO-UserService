@@ -62,6 +62,8 @@ class DirectCallKnockServiceTest {
 
   @org.mockito.Mock private DirectInvitePolicy directInvitePolicy;
 
+  @Mock private de.caritas.cob.userservice.api.service.chat.GroupWaitingRoomService waitingRooms;
+
   private DirectCallKnockService service;
   private Consultant counsellor;
   private User asker;
@@ -79,7 +81,8 @@ class DirectCallKnockServiceTest {
             users,
             consultants,
             eventNotifications,
-            directInvitePolicy);
+            directInvitePolicy,
+            waitingRooms);
     counsellor = consultant("counsellor-1");
     when(callBindings.findById(3L)).thenReturn(Optional.of(binding()));
     asker = new User();
@@ -802,6 +805,91 @@ class DirectCallKnockServiceTest {
     when(repository.findById(1L)).thenReturn(Optional.of(knock));
 
     assertThat(service.getOwn(1L, asker)).isSameAs(knock);
+  }
+
+  // ORISO-Frontend#2237: people in the group's waiting room join the call's knock list.
+  @Test
+  void pendingFor_Should_ListTheGroupsWaitingRoomInItsCall() {
+    when(callBindings.existsBySourceRoomId("!group:oriso")).thenReturn(true);
+    var waiting = waitingEntry(Status.PENDING);
+    when(waitingRooms.waitingIn(counsellor, "!group:oriso")).thenReturn(List.of(waiting));
+
+    assertThat(service.pendingFor(counsellor, null, "!group:oriso")).containsExactly(waiting);
+  }
+
+  @Test
+  void pendingFor_Should_NotAskForAWaitingRoomWithoutARoom() {
+    service.pendingFor(counsellor, SESSION_ID, null);
+
+    verify(waitingRooms, never()).waitingIn(any(), any());
+  }
+
+  @Test
+  void admit_Should_LetAWaitingPersonInWhenTheModeratorMay() {
+    var waiting = waitingEntry(Status.PENDING);
+    when(repository.findByIdForUpdate(77L)).thenReturn(Optional.of(waiting));
+    when(repository.save(any())).thenAnswer(call -> call.getArgument(0));
+    when(waitingRooms.mayAdmit(waiting, counsellor)).thenReturn(true);
+
+    assertThat(service.admit(77L, counsellor).getStatus()).isEqualTo(Status.ADMITTED);
+    assertThat(waiting.getDecidedBy()).isEqualTo("counsellor-1");
+  }
+
+  @Test
+  void admit_Should_RefuseAWaitingPersonToACounsellorWhoMayNotModerate() {
+    var waiting = waitingEntry(Status.PENDING);
+    when(repository.findByIdForUpdate(77L)).thenReturn(Optional.of(waiting));
+    when(waitingRooms.mayAdmit(waiting, counsellor)).thenReturn(false);
+
+    assertThatThrownBy(() -> service.admit(77L, counsellor)).isInstanceOf(NotFoundException.class);
+  }
+
+  @Test
+  void admitAll_Should_LetTheWholeWaitingRoomIn() {
+    when(callBindings.existsBySourceRoomId("!group:oriso")).thenReturn(true);
+    var waiting = waitingEntry(Status.PENDING);
+    when(waitingRooms.waitingIn(counsellor, "!group:oriso")).thenReturn(List.of(waiting));
+    when(repository.findByIdForUpdate(77L)).thenReturn(Optional.of(waiting));
+    when(repository.save(any())).thenAnswer(call -> call.getArgument(0));
+
+    assertThat(service.admitAll(counsellor, null, "!group:oriso")).containsExactly(waiting);
+    assertThat(waiting.getStatus()).isEqualTo(Status.ADMITTED);
+  }
+
+  @Test
+  void admitAll_Should_SkipAWaitingPersonWhoLeftMeanwhile() {
+    when(callBindings.existsBySourceRoomId("!group:oriso")).thenReturn(true);
+    var listed = waitingEntry(Status.PENDING);
+    var meanwhile = waitingEntry(Status.CANCELLED);
+    when(waitingRooms.waitingIn(counsellor, "!group:oriso")).thenReturn(List.of(listed));
+    when(repository.findByIdForUpdate(77L)).thenReturn(Optional.of(meanwhile));
+
+    assertThat(service.admitAll(counsellor, null, "!group:oriso")).isEmpty();
+    verify(repository, never()).save(any());
+  }
+
+  @Test
+  void ownWaitingEntry_Should_BeReadableAndCancellableByThePerson() {
+    var waiting = waitingEntry(Status.PENDING);
+    when(repository.findById(77L)).thenReturn(Optional.of(waiting));
+    when(repository.findByIdForUpdate(77L)).thenReturn(Optional.of(waiting));
+    when(repository.save(any())).thenAnswer(call -> call.getArgument(0));
+
+    assertThat(service.getOwn(77L, asker)).isSameAs(waiting);
+    assertThat(service.cancelOwn(77L, asker).getStatus()).isEqualTo(Status.CANCELLED);
+  }
+
+  private GroupChatJoinRequest waitingEntry(Status status) {
+    return GroupChatJoinRequest.builder()
+        .id(77L)
+        .via(Via.WAITING_ROOM)
+        .seriesId(42L)
+        .userId("asker-1")
+        .medium("VIDEO")
+        .status(status)
+        .requestedAt(LocalDateTime.now())
+        .waitingSeenAt(LocalDateTime.now())
+        .build();
   }
 
   private GroupChatJoinRequest callLinkKnock(Long id, Status status) {

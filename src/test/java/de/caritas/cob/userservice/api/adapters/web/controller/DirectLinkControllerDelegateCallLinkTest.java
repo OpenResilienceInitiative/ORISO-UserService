@@ -30,6 +30,8 @@ class DirectLinkControllerDelegateCallLinkTest {
   private final UserAccountService accounts = mock(UserAccountService.class);
   private final DirectCallKnockService knocks = mock(DirectCallKnockService.class);
   private final UserRepository users = mock(UserRepository.class);
+  private final de.caritas.cob.userservice.api.service.chat.GroupWaitingRoomService waitingRooms =
+      mock(de.caritas.cob.userservice.api.service.chat.GroupWaitingRoomService.class);
   private final Consultant counsellor = new Consultant();
   private final GroupChatJoinRequest knock =
       GroupChatJoinRequest.builder()
@@ -52,6 +54,7 @@ class DirectLinkControllerDelegateCallLinkTest {
             accounts,
             mock(TopicService.class),
             knocks,
+            waitingRooms,
             users,
             mock(TemporaryAccountService.class));
     counsellor.setId("counsellor-1");
@@ -84,5 +87,30 @@ class DirectLinkControllerDelegateCallLinkTest {
     when(knocks.admit(9L, counsellor)).thenReturn(knock);
 
     assertThat(delegate.admitCallKnock(9L).getBody().getDisplayName()).isEqualTo(PSEUDONYM);
+  }
+
+  @org.junit.jupiter.api.Test
+  void waitInGroupChat_Should_ReturnTheEntryWithoutAConversation() {
+    var person = new User();
+    person.setUserId("guest-1");
+    when(accounts.retrieveValidatedUser()).thenReturn(person);
+    var entry =
+        GroupChatJoinRequest.builder()
+            .id(11L)
+            .via(Via.WAITING_ROOM)
+            .seriesId(42L)
+            .userId("guest-1")
+            .status(Status.PENDING)
+            .medium("VIDEO")
+            .requestedAt(LocalDateTime.now())
+            .build();
+    when(waitingRooms.waitIn(42L, person)).thenReturn(entry);
+    when(users.findById("guest-1")).thenReturn(java.util.Optional.of(person));
+
+    var body = delegate.waitInGroupChat(42L).getBody();
+
+    org.assertj.core.api.Assertions.assertThat(body.getId()).isEqualTo(11L);
+    org.assertj.core.api.Assertions.assertThat(body.getSessionId()).isNull();
+    org.assertj.core.api.Assertions.assertThat(body.getStatus().getValue()).isEqualTo("PENDING");
   }
 }

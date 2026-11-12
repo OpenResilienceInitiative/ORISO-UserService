@@ -143,6 +143,14 @@ public interface GroupChatJoinRequestRepository extends CrudRepository<GroupChat
       @Param("since") java.time.LocalDateTime since,
       @Param("roomId") String roomId);
 
+  /** ORISO-Frontend#2237: the person's latest waiting-room entry in a group. */
+  Optional<GroupChatJoinRequest> findFirstBySeriesIdAndUserIdAndViaOrderByIdDesc(
+      Long seriesId, String userId, Via via);
+
+  /** ORISO-Frontend#2237: who is still waiting in a group's waiting room. */
+  List<GroupChatJoinRequest> findBySeriesIdAndViaAndStatusAndWaitingSeenAtAfter(
+      Long seriesId, Via via, Status status, java.time.LocalDateTime since);
+
   List<GroupChatJoinRequest> findBySeriesIdInAndStatusOrderByRequestedAtAscIdAsc(
       Collection<Long> seriesIds, Status status);
 
