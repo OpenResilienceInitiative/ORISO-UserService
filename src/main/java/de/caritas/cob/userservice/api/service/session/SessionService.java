@@ -214,6 +214,8 @@ public class SessionService {
    * @param userId Keycloak/MariaDB user ID
    * @return {@link List} of {@link UserSessionResponseDTO}
    */
+  // #2175: the asker alias reads the lazy sessionData while mapping.
+  @Transactional(readOnly = true)
   public List<UserSessionResponseDTO> getSessionsForUserId(String userId) {
     List<UserSessionResponseDTO> sessionResponseDTOs = new ArrayList<>();
     List<Session> sessions = sessionRepository.findByUserUserId(userId);
@@ -645,6 +647,8 @@ public class SessionService {
    * @param roles the roles of the given user
    * @return {@link UserSessionResponseDTO}
    */
+  // #2175: the asker alias reads the lazy sessionData while mapping.
+  @Transactional(readOnly = true)
   public List<UserSessionResponseDTO> getSessionsByUserAndRoomIds(
       String userId, Set<String> matrixRoomIds, Set<String> roles) {
     checkForAskerRoles(roles);
@@ -662,6 +666,8 @@ public class SessionService {
    * @param roles the roles of the given user
    * @return {@link UserSessionResponseDTO}
    */
+  // #2175: the asker alias reads the lazy sessionData while mapping.
+  @Transactional(readOnly = true)
   public List<UserSessionResponseDTO> getSessionsByUserAndSessionIds(
       String userId, Set<Long> sessionIds, Set<String> roles) {
     checkForAskerRoles(roles);
