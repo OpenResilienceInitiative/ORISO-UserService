@@ -166,6 +166,7 @@ public class CreateUserFacade {
           sessionDataService.validateRegistrationNames(
               userDTO.getUsername(), userDTO.getDisplayName(), tenantId, registrationType);
       if (invitedGroup.isEmpty() && directLink.isEmpty()) {
+        assertDisplayNameHoldsNoPassword(displayName, userDTO.getPassword());
         userDTO.setDisplayName(displayName);
       } else {
         // Group/direct-link signup creates no personal Session here; no shared/global alias.
@@ -461,6 +462,13 @@ public class CreateUserFacade {
     // so the first in-chat privacy gate is shown and persisted only after explicit acceptance.
     return StringUtils.equals("00000", userDTO.getPostcode())
         || StringUtils.startsWith(userDTO.getUsername(), "Anonymous-");
+  }
+
+  /** The alias is stored and shown to counsellors in plain text, so it must not hold a secret. */
+  private void assertDisplayNameHoldsNoPassword(String displayName, String password) {
+    if (displayName != null && !isBlank(password) && displayName.contains(password.strip())) {
+      throw new BadRequestException("A session alias must not contain the password");
+    }
   }
 
   private ExtendedConsultingTypeResponseDTO obtainConsultingTypeSettings(UserDTO userDTO) {
