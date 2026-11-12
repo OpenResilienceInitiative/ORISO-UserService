@@ -519,8 +519,13 @@ public class MatrixEventListenerService {
           break;
 
         case "m.call.invite":
-          recordCallStatistic(roomId, event);
-          outcome = handleCallInvite(roomId, event) ? Outcome.SUCCESS : Outcome.SKIPPED;
+          boolean legacyHandled = handleCallInvite(roomId, event);
+          // The legacy invite carries no server-side binding, so it only counts when its sender
+          // is a known participant of the session room; anything else is never a call.
+          if (legacyHandled && isSessionRoomParticipant(roomId, (String) event.get("sender"))) {
+            recordCallStatistic(roomId, event);
+          }
+          outcome = legacyHandled ? Outcome.SUCCESS : Outcome.SKIPPED;
           break;
 
         case "m.call.answer":
@@ -767,6 +772,12 @@ public class MatrixEventListenerService {
     if (diagnosticMetrics != null) {
       diagnosticMetrics.recordSideEffect(sideEffect, outcome);
     }
+  }
+
+  private boolean isSessionRoomParticipant(String roomId, String matrixUserId) {
+    String domainUserId = resolveDomainUserIdFromMatrixUserId(matrixUserId);
+    Set<String> participants = roomToUsersMap.get(roomId);
+    return domainUserId != null && participants != null && participants.contains(domainUserId);
   }
 
   private boolean isConsultantMatrixUser(String matrixUserId) {

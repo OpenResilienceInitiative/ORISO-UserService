@@ -1272,6 +1272,8 @@ class MatrixEventListenerServiceTest {
   void legacyCallInvite_isCountedAsAudioOrVideoFromItsSdpOffer() {
     var service = newServiceWithSyncExecutor();
     service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(SENDER_MATRIX_ID))
+        .thenReturn(Optional.of(userWithId(ASKER_DOMAIN_ID)));
     invokeProcessMatrixEvent(
         service,
         MATRIX_ROOM_ID,
@@ -1295,6 +1297,29 @@ class MatrixEventListenerServiceTest {
 
     verify(communicationStatService).recordCall(10L, "audio-1", false);
     verify(communicationStatService).recordCall(10L, "video-1", true);
+  }
+
+  @Test
+  void legacyCallInvite_fromSomeoneOutsideTheSession_isNotCounted() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    // the sender resolves to no ORISO account, or to one that is not part of this session
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull("@stranger:matrix.example.org"))
+        .thenReturn(Optional.of(userWithId("someone-else")));
+    for (String sender : List.of("@stranger:matrix.example.org", "@unknown:matrix.example.org")) {
+      invokeProcessMatrixEvent(
+          service,
+          MATRIX_ROOM_ID,
+          Map.of(
+              "type",
+              "m.call.invite",
+              "sender",
+              sender,
+              "content",
+              Map.of("call_id", "forged-" + sender, "offer", Map.of("sdp", "m=video 9"))));
+    }
+
+    verify(communicationStatService, never()).recordCall(any(), any(), anyBoolean());
   }
 
   @Test
