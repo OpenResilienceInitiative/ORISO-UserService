@@ -197,6 +197,64 @@ class CounsellorDirectLinkServiceTest {
     assertThat(updated).isSameAs(link);
   }
 
+  // --- ORISO-Frontend#2142: an optional, informational date and time ---
+
+  @Test
+  void create_Should_StoreTheScheduledTime_When_Given() {
+    var at = LocalDateTime.of(2026, 11, 20, 13, 30);
+
+    var link =
+        service.create(
+            owner,
+            new CreateCommand(InviteLinkChatType.VIDEO, TOPIC, "Termin Frau M.", null, null, at));
+
+    assertThat(link.getName()).isEqualTo("Termin Frau M.");
+    assertThat(link.getScheduledAt()).isEqualTo(at);
+  }
+
+  @Test
+  void create_Should_LeaveTheScheduledTimeEmpty_When_NotGiven() {
+    var link =
+        service.create(owner, new CreateCommand(InviteLinkChatType.CHAT, TOPIC, null, null, null));
+
+    assertThat(link.getScheduledAt()).isNull();
+  }
+
+  @Test
+  void update_Should_SetTheScheduledTime_And_KeepIt_When_Absent() {
+    var link = ownLink(1L, "AUDIO", "ACTIVE");
+    var at = LocalDateTime.of(2026, 12, 1, 9, 0);
+
+    service.update(owner, 1L, new UpdateCommand(null, null, null, null, at, false));
+    assertThat(link.getScheduledAt()).isEqualTo(at);
+
+    service.update(owner, 1L, new UpdateCommand("Neu", null, null, null));
+    assertThat(link.getScheduledAt()).isEqualTo(at);
+  }
+
+  @Test
+  void update_Should_RemoveTheScheduledTime_When_Cleared() {
+    var link = ownLink(1L, "AUDIO", "ACTIVE");
+    link.setScheduledAt(LocalDateTime.of(2026, 12, 1, 9, 0));
+
+    service.update(owner, 1L, new UpdateCommand(null, null, null, null, null, true));
+
+    assertThat(link.getScheduledAt()).isNull();
+  }
+
+  @Test
+  void update_Should_RefuseATimeAndAClearTogether() {
+    ownLink(1L, "AUDIO", "ACTIVE");
+
+    assertThatThrownBy(
+            () ->
+                service.update(
+                    owner,
+                    1L,
+                    new UpdateCommand(null, null, null, null, LocalDateTime.now(), true)))
+        .isInstanceOf(BadRequestException.class);
+  }
+
   @Test
   void update_Should_ReCheckPermission_When_SwitchingOn() {
     ownLink(1L, "VIDEO", "DISABLED");
