@@ -2038,9 +2038,11 @@ paths:
         404:
           description: Chat not found
         409:
-          description: X-Reason INTERNAL_CHAT_NOT_INVITABLE (not an active members-only internal chat)
+          description: >-
+            X-Reason INTERNAL_CHAT_NOT_INVITABLE (not an active members-only internal chat) or
+            INTERNAL_CHAT_HISTORY_SHARED (the room would show earlier messages to a newcomer, so nobody can be invited)
         503:
-          description: X-Reason INTERNAL_CHAT_ENCRYPTION_REQUIRED
+          description: X-Reason INTERNAL_CHAT_ENCRYPTION_REQUIRED, or INTERNAL_CHAT_BUSY (the room's history policy could not be read)
       security:
         - Bearer: [ ]
   /users/chat/internal-subset/{chatId}/participants:
@@ -2051,7 +2053,8 @@ paths:
       description: >-
         Anyone who takes part in the chat may invite. The colleague must be within the recipient scope anchored to the room's
         owner and counselling centre, checked again when the invitation is sent. The room must hide earlier messages from people
-        who join later (history visibility joined or invited); otherwise nobody is admitted. The colleague is invited and joined in
+        who join later (history visibility joined); otherwise nobody is admitted. The tenant and centre switch for internal group chats
+        is checked again on submission, and the owner's invite power in Matrix is restored first after an ownership transfer. The colleague is invited and joined in
         Matrix first; the participant record is written only after that. Every error answers with X-Reason.
       operationId: inviteInternalChatParticipant
       parameters:
@@ -2087,7 +2090,11 @@ paths:
             X-Reason INTERNAL_CHAT_NOT_INVITABLE (not an active members-only internal chat) or
             INTERNAL_CHAT_HISTORY_SHARED (the room would show earlier messages to the newcomer)
         502:
-          description: X-Reason INTERNAL_CHAT_MEMBERSHIP_FAILED (the colleague could not be invited or could not join; nothing was recorded)
+          description: >-
+            X-Reason INTERNAL_CHAT_MEMBERSHIP_FAILED (the colleague could not be invited or could not join, or the record
+            failed and the join was undone; nothing was recorded)
+        500:
+          description: The colleague joined but could neither be recorded nor removed again; an operator must remove the membership
         503:
           description: >-
             X-Reason INTERNAL_CHAT_ENCRYPTION_REQUIRED, or INTERNAL_CHAT_BUSY (another invitation of the same person is

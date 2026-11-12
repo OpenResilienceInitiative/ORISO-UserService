@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -15,6 +16,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.InternalChatRecipientDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ChatAgency;
@@ -27,6 +29,7 @@ import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.chat.MemberSetLock;
+import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -55,6 +58,7 @@ class InternalChatInvitationFacadeTest {
   @Mock private MemberSetLock memberSetLock;
   @Mock private ChatAgencyRepository chatAgencyRepository;
   @Mock private PlatformTransactionManager transactions;
+  @Mock private GroupChatMembershipService groupChatMembershipService;
 
   @InjectMocks private InternalChatInvitationFacade facade;
 
@@ -93,6 +97,9 @@ class InternalChatInvitationFacadeTest {
         .when(matrixSynapseService.getRoomHistoryVisibility(ROOM))
         .thenReturn(Optional.of("joined"));
     lenient().when(matrixSynapseService.loginAsUserAccessToken(anyString())).thenReturn("token");
+    lenient()
+        .when(groupChatMembershipService.ensureOwnerCanInvite(ROOM, "@owner:oriso.test"))
+        .thenReturn(true);
     lenient().when(matrixSynapseService.joinRoom(ROOM, "token")).thenReturn(true);
   }
 
@@ -234,6 +241,69 @@ class InternalChatInvitationFacadeTest {
   void recipients_are_refused_to_an_outsider() throws Exception {
     assertThatThrownBy(() -> facade.recipients(consultant("outsider"), CHAT_ID))
         .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void invite_rechecks_the_feature_switch_of_the_room_before_any_matrix_change() throws Exception {
+    doThrow(new ForbiddenException("switched off"))
+        .when(internalSubsetChatFacade)
+        .requireFeatureEnabled(owner, AGENCY_ID);
+
+    assertThatThrownBy(() -> facade.invite(caller, CHAT_ID, "colleague"))
+        .isInstanceOf(ForbiddenException.class);
+    verifyNothingChanged();
+  }
+
+  @Test
+  void invite_refuses_invited_history_because_it_shows_messages_from_the_invitation_on()
+      throws Exception {
+    when(matrixSynapseService.getRoomHistoryVisibility(ROOM)).thenReturn(Optional.of("invited"));
+
+    assertThatThrownBy(() -> facade.invite(caller, CHAT_ID, "colleague"))
+        .isInstanceOf(ConflictException.class);
+    verifyNothingChanged();
+  }
+
+  @Test
+  void invite_fails_without_a_row_when_the_owners_invite_power_cannot_be_restored()
+      throws Exception {
+    when(groupChatMembershipService.ensureOwnerCanInvite(ROOM, "@owner:oriso.test"))
+        .thenReturn(false);
+
+    assertThatThrownBy(() -> facade.invite(caller, CHAT_ID, "colleague"))
+        .isInstanceOfSatisfying(
+            CustomValidationHttpStatusException.class,
+            failed -> assertThat(failed.getHttpStatus()).isEqualTo(HttpStatus.BAD_GATEWAY));
+    verifyNothingChanged();
+  }
+
+  @Test
+  void invite_takes_the_colleague_out_again_when_the_row_cannot_be_written() throws Exception {
+    when(participantRepository.save(any())).thenThrow(new IllegalStateException("db down"));
+    when(matrixSynapseService.leaveRoom(ROOM, "token")).thenReturn(true);
+
+    assertThatThrownBy(() -> facade.invite(caller, CHAT_ID, "colleague"))
+        .isInstanceOfSatisfying(
+            CustomValidationHttpStatusException.class,
+            failed -> assertThat(failed.getHttpStatus()).isEqualTo(HttpStatus.BAD_GATEWAY));
+    verify(matrixSynapseService).leaveRoom(ROOM, "token");
+  }
+
+  @Test
+  void invite_reports_a_failed_undo_as_a_server_error_never_as_nothing_happened() throws Exception {
+    when(participantRepository.save(any())).thenThrow(new IllegalStateException("db down"));
+    when(matrixSynapseService.leaveRoom(ROOM, "token")).thenReturn(false);
+
+    assertThatThrownBy(() -> facade.invite(caller, CHAT_ID, "colleague"))
+        .isInstanceOf(InternalServerErrorException.class);
+  }
+
+  @Test
+  void recipients_are_refused_for_a_room_that_would_show_earlier_messages() throws Exception {
+    when(matrixSynapseService.getRoomHistoryVisibility(ROOM)).thenReturn(Optional.of("shared"));
+
+    assertThatThrownBy(() -> facade.recipients(caller, CHAT_ID))
+        .isInstanceOf(ConflictException.class);
   }
 
   private void verifyNothingChanged() throws Exception {

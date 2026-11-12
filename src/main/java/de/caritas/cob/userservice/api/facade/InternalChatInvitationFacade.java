@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.InternalChatRecipientDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.helper.MatrixIds;
@@ -19,6 +20,7 @@ import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.chat.MemberSetLock;
+import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.Comparator;
 import java.util.List;
@@ -50,8 +52,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Slf4j
 public class InternalChatInvitationFacade {
 
-  /** History visibilities that hide what was said before someone joined. */
-  static final Set<String> HIDDEN_HISTORY = Set.of("joined", "invited");
+  /**
+   * The one history visibility that hides everything said before someone joined. "invited" would
+   * already show messages from the invitation on, so it does not count.
+   */
+  static final String HIDDEN_HISTORY = "joined";
 
   private final @NonNull InternalSubsetChatFacade internalSubsetChatFacade;
   private final @NonNull ChatRepository chatRepository;
@@ -61,6 +66,7 @@ public class InternalChatInvitationFacade {
   private final @NonNull MemberSetLock memberSetLock;
   private final @NonNull ChatAgencyRepository chatAgencyRepository;
   private final @NonNull PlatformTransactionManager transactions;
+  private final @NonNull GroupChatMembershipService groupChatMembershipService;
 
   /** What the read phase found: the room, who invites and the row to write after the join. */
   private record Admission(
@@ -76,6 +82,8 @@ public class InternalChatInvitationFacade {
         .execute(
             status -> {
               var chat = requireInvitableRoom(caller, chatId);
+              // A room that would refuse every invitation offers nobody to pick.
+              requireHiddenHistory(chat.getMatrixRoomId());
               var inside = participantIds(chat);
               return internalSubsetChatFacade.recipients(ownerOf(chat), agencyIdOf(chat)).stream()
                   .filter(recipient -> !inside.contains(recipient.getConsultantId()))
@@ -100,9 +108,13 @@ public class InternalChatInvitationFacade {
         return false;
       }
       requireHiddenHistory(admission.matrixRoomId());
-      joinRoom(admission);
-      // Saved while the lock is held: a repeat finds the row and adds nobody twice.
-      participantRepository.save(admission.row());
+      var colleagueToken = joinRoom(admission);
+      try {
+        // Saved while the lock is held: a repeat finds the row and adds nobody twice.
+        participantRepository.save(admission.row());
+      } catch (RuntimeException failure) {
+        compensateJoin(admission, colleagueToken, failure);
+      }
       return true;
     }
   }
@@ -116,13 +128,16 @@ public class InternalChatInvitationFacade {
       return null;
     }
     var owner = ownerOf(chat);
+    var agencyId = agencyIdOf(chat);
+    // Checked again on submission: a switch turned off after the list was opened still refuses.
+    internalSubsetChatFacade.requireFeatureEnabled(owner, agencyId);
     var colleague =
         TenantContext.supplyAcrossTenants(
                 () -> consultantRepository.findByIdAndDeleteDateIsNull(consultantId))
             .orElse(null);
     // An unknown id answers exactly like one outside the scope.
     if (colleague == null
-        || !internalSubsetChatFacade.permitsRecipient(owner, colleague, agencyIdOf(chat))) {
+        || !internalSubsetChatFacade.permitsRecipient(owner, colleague, agencyId)) {
       log.info("An invited colleague is outside the recipient scope of chat {}", chat.getId());
       throw new CustomValidationHttpStatusException(
           HttpStatusExceptionReason.INTERNAL_CHAT_RECIPIENT_OUT_OF_SCOPE, HttpStatus.FORBIDDEN);
@@ -176,7 +191,7 @@ public class InternalChatInvitationFacade {
       throw new CustomValidationHttpStatusException(
           HttpStatusExceptionReason.INTERNAL_CHAT_BUSY, HttpStatus.SERVICE_UNAVAILABLE);
     }
-    if (!HIDDEN_HISTORY.contains(visibility.get())) {
+    if (!HIDDEN_HISTORY.equals(visibility.get())) {
       throw new ConflictException(
           "The room shows earlier messages to people who join later",
           HttpStatusExceptionReason.INTERNAL_CHAT_HISTORY_SHARED);
@@ -185,10 +200,18 @@ public class InternalChatInvitationFacade {
 
   /**
    * The owner invites, because only the owner holds the invite power level of a members-only room;
-   * the colleague then joins with their own account, exactly as at creation.
+   * the colleague then joins with their own account, exactly as at creation. After an ownership
+   * transfer the current owner may still be an ordinary member in Matrix, so their power is
+   * repaired first, as for a re-created group room.
+   *
+   * @return the colleague's access token, needed to undo the join
    */
-  private void joinRoom(Admission admission) {
+  private String joinRoom(Admission admission) {
     try {
+      if (!groupChatMembershipService.ensureOwnerCanInvite(
+          admission.matrixRoomId(), admission.ownerMatrixId())) {
+        throw new IllegalStateException("The owner holds no power to invite");
+      }
       var ownerToken = matrixSynapseService.loginAsUserAccessToken(admission.ownerMatrixId());
       if (ownerToken != null) {
         matrixSynapseService.inviteUserToRoom(
@@ -197,7 +220,7 @@ public class InternalChatInvitationFacade {
             matrixSynapseService.loginAsUserAccessToken(admission.colleagueMatrixId());
         if (colleagueToken != null
             && matrixSynapseService.joinRoom(admission.matrixRoomId(), colleagueToken)) {
-          return;
+          return colleagueToken;
         }
       }
     } catch (Exception failure) {
@@ -206,6 +229,37 @@ public class InternalChatInvitationFacade {
           admission.colleagueId(),
           failure.getClass().getSimpleName());
     }
+    throw new CustomValidationHttpStatusException(
+        HttpStatusExceptionReason.INTERNAL_CHAT_MEMBERSHIP_FAILED, HttpStatus.BAD_GATEWAY);
+  }
+
+  /**
+   * The participant row could not be written after the join: take the colleague out of the room
+   * again, so nobody reads a private chat without being recorded in it. A failed undo is reported
+   * as such, never as "nothing happened".
+   */
+  private void compensateJoin(
+      Admission admission, String colleagueToken, RuntimeException failure) {
+    boolean left;
+    try {
+      left = matrixSynapseService.leaveRoom(admission.matrixRoomId(), colleagueToken);
+    } catch (RuntimeException leaveFailure) {
+      failure.addSuppressed(leaveFailure);
+      left = false;
+    }
+    if (!left) {
+      log.error(
+          "Colleague {} joined members-only chat room {} but could neither be recorded nor removed"
+              + " again; an operator must remove the membership",
+          admission.colleagueId(),
+          admission.matrixRoomId());
+      throw new InternalServerErrorException(
+          "The colleague joined the room but could not be recorded or removed again");
+    }
+    log.warn(
+        "Colleague {} was removed from the room again after the participant record failed: {}",
+        admission.colleagueId(),
+        failure.getClass().getSimpleName());
     throw new CustomValidationHttpStatusException(
         HttpStatusExceptionReason.INTERNAL_CHAT_MEMBERSHIP_FAILED, HttpStatus.BAD_GATEWAY);
   }

@@ -2051,6 +2051,10 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
               .reduce((first, second) -> second)
               .orElse("shared"));
     } catch (Exception ex) {
+      if (ex instanceof HttpStatusCodeException status && status.getStatusCode().value() == 401) {
+        // The cached admin token is no longer accepted: log in again on the next call.
+        invalidateAdminAccessToken();
+      }
       log.warn(
           "Matrix Error: Could not read state of room {}: {}",
           matrixRoomId,

@@ -180,6 +180,13 @@ public class InternalSubsetChatFacade {
    * same rule as for a new chat (ORISO-UserService#1580). For an existing room the anchor is its
    * owner and its counselling centre, never the person who asks.
    */
+  /**
+   * The tenant and centre switch for internal group chats, for a room anchored to {@code anchor}.
+   */
+  void requireFeatureEnabled(Consultant anchor, Long agencyId) {
+    featureGate.requireEnabled(anchor, ChatDTO.builder().agencyId(agencyId).build());
+  }
+
   boolean permitsRecipient(Consultant anchor, Consultant colleague, Long agencyId) {
     return permits(anchor, colleague, recipientScopes.resolve(anchor.getTenantId()), agencyId);
   }
