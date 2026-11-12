@@ -44,7 +44,7 @@ public class DeleteMatrixConsultantAction extends DeleteMatrixUserAction
       sessionRepository
           .findByConsultantId(consultant.getId(), Pageable.unpaged())
           .forEach(session -> purgeMatrixRoom(session.getMatrixRoomId()));
-      if (DeleteDatabaseConsultantAction.hasReleasedUsername(consultant)) {
+      if (usernameAlreadyReleased(consultant)) {
         // An earlier run deactivated this account and released the name. A new counsellor may have
         // taken the name and reactivated the account since, and they may themselves be in a
         // cancellable deletion, so this row never touches the account again (#1489).
@@ -75,5 +75,19 @@ public class DeleteMatrixConsultantAction extends DeleteMatrixUserAction
             () -> consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(matrixUserId))
         .filter(active -> !active.getId().equals(consultant.getId()))
         .isPresent();
+  }
+
+  /**
+   * Reads the row again instead of trusting the workflow's snapshot: a run that outlived its hard
+   * delete claim may hold a copy from before another run released the name.
+   */
+  private boolean usernameAlreadyReleased(Consultant consultant) {
+    if (DeleteDatabaseConsultantAction.hasReleasedUsername(consultant)) {
+      return true;
+    }
+    return TenantContext.supplyAcrossTenants(
+            () -> consultantRepository.findById(consultant.getId()))
+        .map(DeleteDatabaseConsultantAction::hasReleasedUsername)
+        .orElse(false);
   }
 }

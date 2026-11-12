@@ -189,4 +189,19 @@ public class DeleteMatrixConsultantActionTest {
     verify(matrixSynapseService, org.mockito.Mockito.never()).deactivateUser(any());
     assertThat(workflowDTO.getDeletionWorkflowErrors(), hasSize(0));
   }
+
+  /** A run that outlived its claim holds a stale copy; another run released the name meanwhile. */
+  @Test
+  public void execute_Should_notDeactivateMatrixUser_When_anotherRunReleasedTheUsernameMeanwhile() {
+    Consultant stale = consultantWithMatrixUserId();
+    Consultant current = consultantWithMatrixUserId();
+    current.setUsername("deleted:" + CONSULTANT_ID);
+    when(consultantRepository.findById(CONSULTANT_ID)).thenReturn(java.util.Optional.of(current));
+    ConsultantDeletionWorkflowDTO workflowDTO =
+        new ConsultantDeletionWorkflowDTO(stale, emptyList());
+
+    deleteMatrixConsultantAction.execute(workflowDTO);
+
+    verify(matrixSynapseService, org.mockito.Mockito.never()).deactivateUser(any());
+  }
 }
