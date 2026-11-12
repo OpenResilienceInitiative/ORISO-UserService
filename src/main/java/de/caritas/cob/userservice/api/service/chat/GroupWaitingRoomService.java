@@ -98,6 +98,23 @@ public class GroupWaitingRoomService {
         .orElse(List.of());
   }
 
+  /**
+   * The same list, locked in one query, for "Alle einlassen". Nothing in the calling transaction
+   * has read these rows before, so the lock returns their committed state.
+   */
+  public List<GroupChatJoinRequest> waitingInForUpdate(Consultant consultant, String matrixRoomId) {
+    return groupOf(matrixRoomId)
+        .filter(chat -> consultantAccess.mayModerate(chat, consultant))
+        .map(
+            chat ->
+                repository.findWaitingForUpdate(
+                    chat.getId(),
+                    Via.WAITING_ROOM,
+                    Status.PENDING,
+                    LocalDateTime.now().minusSeconds(SEEN_SECONDS)))
+        .orElse(List.of());
+  }
+
   /** Owner and Co-Moderators of the group, as for starting it. */
   public boolean mayAdmit(GroupChatJoinRequest entry, Consultant consultant) {
     return entry.getSeriesId() != null

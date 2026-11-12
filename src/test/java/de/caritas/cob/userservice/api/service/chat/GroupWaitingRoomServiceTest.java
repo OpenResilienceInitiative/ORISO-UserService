@@ -151,9 +151,11 @@ class GroupWaitingRoomServiceTest {
             eq(CHAT_ID), eq(Via.WAITING_ROOM), eq(Status.PENDING), since.capture()))
         .thenReturn(List.of(waiting));
 
+    var before = LocalDateTime.now();
     assertThat(service.waitingIn(host, ROOM)).containsExactly(waiting);
-    // Somebody who closed the page drops off the list within a minute.
-    assertThat(since.getValue()).isAfter(LocalDateTime.now().minusMinutes(2));
+    var after = LocalDateTime.now();
+    // Somebody who closed the page drops off the list after 45 seconds.
+    assertThat(since.getValue()).isBetween(before.minusSeconds(45), after.minusSeconds(45));
   }
 
   @Test
@@ -168,6 +170,19 @@ class GroupWaitingRoomServiceTest {
         .thenReturn(List.of(pending(LocalDateTime.now())));
 
     assertThat(service.waitingIn(host, "!occurrence:oriso")).hasSize(1);
+  }
+
+  @Test
+  void letInAllReadsTheWaitingRoomUnderLockInOneQuery() {
+    when(consultantAccess.mayModerate(chat, host)).thenReturn(true);
+    var waiting = pending(LocalDateTime.now());
+    when(repository.findWaitingForUpdate(
+            eq(CHAT_ID), eq(Via.WAITING_ROOM), eq(Status.PENDING), any()))
+        .thenReturn(List.of(waiting));
+
+    assertThat(service.waitingInForUpdate(host, ROOM)).containsExactly(waiting);
+    when(consultantAccess.mayModerate(chat, host)).thenReturn(false);
+    assertThat(service.waitingInForUpdate(host, ROOM)).isEmpty();
   }
 
   @Test

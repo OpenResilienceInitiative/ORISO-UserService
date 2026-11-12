@@ -16,7 +16,13 @@
       <column name="waiting_seen_at" type="DATETIME"/>
     </addColumn>
     <!-- Keep the column on rollback (same rule as 20261110_session_direct_link_name_2170): it is
-         nullable and additive, so an older application ignores it. -->
-    <rollback><sql>SELECT 1</sql></rollback>
+         nullable and additive, so an older application ignores it. Waiting-room rows are
+         short-lived presence that grants nothing, and an older application has no WAITING_ROOM
+         value to load them with, so they are removed. No other table references them. -->
+    <rollback>
+      <delete tableName="group_chat_join_request">
+        <where>via = 'WAITING_ROOM'</where>
+      </delete>
+    </rollback>
   </changeSet>
 </databaseChangeLog>

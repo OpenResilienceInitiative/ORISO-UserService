@@ -151,6 +151,18 @@ public interface GroupChatJoinRequestRepository extends CrudRepository<GroupChat
   List<GroupChatJoinRequest> findBySeriesIdAndViaAndStatusAndWaitingSeenAtAfter(
       Long seriesId, Via via, Status status, java.time.LocalDateTime since);
 
+  /** The same, locked in one query, for "Alle einlassen" (#2237). */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "SELECT request FROM GroupChatJoinRequest request WHERE request.seriesId = :seriesId"
+          + " AND request.via = :via AND request.status = :status"
+          + " AND request.waitingSeenAt > :since ORDER BY request.requestedAt, request.id")
+  List<GroupChatJoinRequest> findWaitingForUpdate(
+      @Param("seriesId") Long seriesId,
+      @Param("via") Via via,
+      @Param("status") Status status,
+      @Param("since") java.time.LocalDateTime since);
+
   List<GroupChatJoinRequest> findBySeriesIdInAndStatusOrderByRequestedAtAscIdAsc(
       Collection<Long> seriesIds, Status status);
 

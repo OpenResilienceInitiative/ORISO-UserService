@@ -46,6 +46,9 @@ import lombok.Setter;
 @Getter
 @Setter
 @Builder
+// Only changed columns are written: the waiting room's "still here" (#2237) must never write back a
+// status that a moderator's admission changed meanwhile.
+@org.hibernate.annotations.DynamicUpdate
 public class GroupChatJoinRequest {
 
   public enum Status {

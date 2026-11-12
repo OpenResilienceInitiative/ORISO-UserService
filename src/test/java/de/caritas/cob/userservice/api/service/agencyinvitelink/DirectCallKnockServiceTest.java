@@ -848,24 +848,12 @@ class DirectCallKnockServiceTest {
   void admitAll_Should_LetTheWholeWaitingRoomIn() {
     when(callBindings.existsBySourceRoomId("!group:oriso")).thenReturn(true);
     var waiting = waitingEntry(Status.PENDING);
-    when(waitingRooms.waitingIn(counsellor, "!group:oriso")).thenReturn(List.of(waiting));
-    when(repository.findByIdForUpdate(77L)).thenReturn(Optional.of(waiting));
+    when(waitingRooms.waitingInForUpdate(counsellor, "!group:oriso")).thenReturn(List.of(waiting));
     when(repository.save(any())).thenAnswer(call -> call.getArgument(0));
 
     assertThat(service.admitAll(counsellor, null, "!group:oriso")).containsExactly(waiting);
+    verify(waitingRooms, never()).waitingIn(any(), any());
     assertThat(waiting.getStatus()).isEqualTo(Status.ADMITTED);
-  }
-
-  @Test
-  void admitAll_Should_SkipAWaitingPersonWhoLeftMeanwhile() {
-    when(callBindings.existsBySourceRoomId("!group:oriso")).thenReturn(true);
-    var listed = waitingEntry(Status.PENDING);
-    var meanwhile = waitingEntry(Status.CANCELLED);
-    when(waitingRooms.waitingIn(counsellor, "!group:oriso")).thenReturn(List.of(listed));
-    when(repository.findByIdForUpdate(77L)).thenReturn(Optional.of(meanwhile));
-
-    assertThat(service.admitAll(counsellor, null, "!group:oriso")).isEmpty();
-    verify(repository, never()).save(any());
   }
 
   @Test

@@ -346,11 +346,11 @@ public class DirectCallKnockService {
     var since = waitingSince();
     var checkedLinks = new java.util.HashSet<Long>();
     return Stream.of(
-            // Re-read under lock: somebody who left meanwhile is not let in.
-            waitingRoomOf(consultant, scope).stream()
-                .map(entry -> repository.findByIdForUpdate(entry.getId()))
-                .flatMap(Optional::stream)
-                .filter(GroupChatJoinRequest::isPending),
+            // Loaded under lock in one query, like the knocks below: somebody who left meanwhile
+            // is not pending any more and is not let in.
+            scope.roomId() == null
+                ? Stream.<GroupChatJoinRequest>empty()
+                : waitingRooms.waitingInForUpdate(consultant, scope.roomId()).stream(),
             scope.directLinks()
                 ? repository
                     .findCallKnocksForConsultantForUpdate(
