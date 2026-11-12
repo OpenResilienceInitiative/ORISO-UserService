@@ -146,10 +146,74 @@ class MatrixCallObservationServiceTest {
   }
 
   @Test
-  void aSessionConversationIsNotAnInternalGroup() {
+  void groupRegistrationStoresTheChatAndNoSession() {
+    assertThat(service.register(actor, SOURCE, "call", MEDIA, true)).isEqualTo(Outcome.OK);
+    assertThat(saved.get(0).getChatId()).isEqualTo(45L);
+    assertThat(saved.get(0).getSessionId()).isNull();
+  }
+
+  @Test
+  void sessionCallIsObservedWithTheSessionAsOnlySource() {
+    // #2237: a 1:1 session call invite is end-to-end encrypted, so no binding exists.
+    var session = new MatrixCallConversation(SOURCE, 7L, 9L, null);
+    when(conversations.resolveForWriting(SOURCE)).thenReturn(Optional.of(session));
+
+    assertThat(service.register(actor, SOURCE, "call", MEDIA, false)).isEqualTo(Outcome.OK);
+
+    var row = saved.get(0);
+    assertThat(row.getSessionId()).isEqualTo(9L);
+    assertThat(row.getChatId()).isNull();
+    assertThat(row.getTenantId()).isEqualTo(7L);
+    verify(conversations).lockCurrentForWriting(session);
+    verify(notifications)
+        .createCallInvitationNotification(
+            eq(session), eq("other"), eq(false), eq("creator"), eq("call"), eq(MEDIA), eq(false));
+  }
+
+  @Test
+  void sessionCallKeepsAllRegistrationChecks() {
     when(conversations.resolveForWriting(SOURCE))
         .thenReturn(Optional.of(new MatrixCallConversation(SOURCE, 7L, 9L, null)));
+    when(matrix.getCallRoomMembers(SOURCE)).thenReturn(Optional.of(List.of(OTHER)));
     assertThat(service.register(actor, SOURCE, "call", MEDIA, true)).isEqualTo(Outcome.NOT_FOUND);
+    when(matrix.getCallRoomMembers(SOURCE)).thenReturn(Optional.of(List.of(CREATOR, OTHER)));
+    when(conversations.lockCurrentForWriting(any())).thenReturn(false); // rejected session
+    assertThat(service.register(actor, SOURCE, "call", MEDIA, true)).isEqualTo(Outcome.NOT_FOUND);
+    actor.setTenantId(8L);
+    assertThat(service.register(actor, SOURCE, "call", MEDIA, true)).isEqualTo(Outcome.NOT_FOUND);
+    verify(repo, never()).saveAndFlush(any());
+  }
+
+  @Test
+  void sessionMemberReadsARunningSessionCall() {
+    long now = System.currentTimeMillis();
+    when(repo.findBySourceRoomIdAndCallId(SOURCE, "call"))
+        .thenReturn(Optional.of(sessionRow(9L, now - 1000, now + 60_000)));
+    var state = service.readState(new MatrixCallConversation(SOURCE, 7L, 9L, null), "call");
+    assertThat(state.orElseThrow().state()).isEqualTo("running");
+    assertThat(state.orElseThrow().callRoomId()).isEqualTo(MEDIA);
+  }
+
+  @Test
+  void sessionRowIsNotReadableThroughAnotherSessionOrAChatWithTheSameId() {
+    long now = System.currentTimeMillis();
+    when(repo.findBySourceRoomIdAndCallId(SOURCE, "call"))
+        .thenReturn(Optional.of(sessionRow(9L, now - 1000, now + 60_000)));
+    assertThat(service.readState(new MatrixCallConversation(SOURCE, 7L, 10L, null), "call"))
+        .isEmpty();
+    assertThat(service.readState(new MatrixCallConversation(SOURCE, 7L, null, 9L), "call"))
+        .isEmpty();
+  }
+
+  @Test
+  void groupRowIsNotReadableThroughASessionWithTheSameId() {
+    long now = System.currentTimeMillis();
+    when(repo.findBySourceRoomIdAndCallId(SOURCE, "call"))
+        .thenReturn(Optional.of(row(now - 1000, now + 60_000, null)));
+    assertThat(service.readState(new MatrixCallConversation(SOURCE, 7L, 45L, null), "call"))
+        .isEmpty();
+    assertThat(service.readState(new MatrixCallConversation(SOURCE, 7L, null, 45L), "call"))
+        .isPresent();
   }
 
   @Test
@@ -297,6 +361,21 @@ class MatrixCallObservationServiceTest {
         .lastSeenAt(registered)
         .expiresAt(expires)
         .endedAt(ended)
+        .build();
+  }
+
+  private static MatrixCallObservation sessionRow(long sessionId, long registered, long expires) {
+    return MatrixCallObservation.builder()
+        .origin(MatrixCallObservation.ORIGIN_CREATOR_REGISTRATION)
+        .sourceRoomId(SOURCE)
+        .callId("call")
+        .mediaRoomId(MEDIA)
+        .creatorMatrixId(CREATOR)
+        .tenantId(7L)
+        .sessionId(sessionId)
+        .registeredAt(registered)
+        .lastSeenAt(registered)
+        .expiresAt(expires)
         .build();
   }
 
