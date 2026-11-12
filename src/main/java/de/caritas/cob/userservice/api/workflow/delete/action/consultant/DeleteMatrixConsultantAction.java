@@ -44,6 +44,12 @@ public class DeleteMatrixConsultantAction extends DeleteMatrixUserAction
       sessionRepository
           .findByConsultantId(consultant.getId(), Pageable.unpaged())
           .forEach(session -> purgeMatrixRoom(session.getMatrixRoomId()));
+      if (DeleteDatabaseConsultantAction.hasReleasedUsername(consultant)) {
+        // An earlier run deactivated this account and released the name. A new counsellor may have
+        // taken the name and reactivated the account since, and they may themselves be in a
+        // cancellable deletion, so this row never touches the account again (#1489).
+        return;
+      }
       if (isReassignedToAnotherConsultant(consultant)) {
         // The row survived an earlier failed run, its username was released, and a new counsellor
         // took the name: creation reactivated this same Matrix account for them (#1489). It is no

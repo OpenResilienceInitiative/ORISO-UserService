@@ -32,6 +32,8 @@ import org.springframework.stereotype.Component;
 public class DeleteDatabaseConsultantAction
     implements ActionCommand<ConsultantDeletionWorkflowDTO> {
 
+  private static final String RELEASED_USERNAME_PREFIX = "deleted:";
+
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull SessionOwnershipService sessionOwnershipService;
   private final @NonNull SessionSupervisorRepository sessionSupervisorRepository;
@@ -158,7 +160,16 @@ public class DeleteDatabaseConsultantAction
 
   /** Unique because the consultant id is; cannot be an encoded ("enc.") or valid plain username. */
   static String releasedUsernameOf(String consultantId) {
-    return "deleted:" + consultantId;
+    return RELEASED_USERNAME_PREFIX + consultantId;
+  }
+
+  /**
+   * Whether this row's username was already released. That only happens in a run that deactivated
+   * the counsellor's Matrix account, so the account may since belong to someone else.
+   */
+  public static boolean hasReleasedUsername(Consultant consultant) {
+    var username = consultant.getUsername();
+    return username != null && username.startsWith(RELEASED_USERNAME_PREFIX);
   }
 
   /**

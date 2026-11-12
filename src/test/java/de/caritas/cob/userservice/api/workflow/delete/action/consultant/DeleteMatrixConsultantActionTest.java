@@ -171,4 +171,22 @@ public class DeleteMatrixConsultantActionTest {
     verify(matrixSynapseService, org.mockito.Mockito.never()).deactivateUser(any());
     assertThat(workflowDTO.getDeletionWorkflowErrors(), hasSize(0));
   }
+
+  /**
+   * #1489: the name was released in an earlier run, after this account was deactivated. The new
+   * holder may be in a cancellable deletion of their own (delete date set), so the lookup for an
+   * active holder would not protect them; the released name does.
+   */
+  @Test
+  public void execute_Should_notDeactivateMatrixUser_When_theUsernameWasAlreadyReleased() {
+    Consultant consultant = consultantWithMatrixUserId();
+    consultant.setUsername("deleted:" + CONSULTANT_ID);
+    ConsultantDeletionWorkflowDTO workflowDTO =
+        new ConsultantDeletionWorkflowDTO(consultant, emptyList());
+
+    deleteMatrixConsultantAction.execute(workflowDTO);
+
+    verify(matrixSynapseService, org.mockito.Mockito.never()).deactivateUser(any());
+    assertThat(workflowDTO.getDeletionWorkflowErrors(), hasSize(0));
+  }
 }
