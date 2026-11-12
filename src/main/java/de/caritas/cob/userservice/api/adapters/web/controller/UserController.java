@@ -953,6 +953,17 @@ public class UserController implements UsersApi {
   }
 
   /**
+   * Remembers that the calling consultant has opened the given waiting enquiry.
+   *
+   * @param sessionId Session id (required)
+   * @return {@link ResponseEntity} without content
+   */
+  @Override
+  public ResponseEntity<Void> markEnquiryOpened(@PathVariable Long sessionId) {
+    return userSessionControllerDelegate.markEnquiryOpened(sessionId);
+  }
+
+  /**
    * Updates or sets the email address for the current authenticated user.
    *
    * @param emailAddress the email address to set
