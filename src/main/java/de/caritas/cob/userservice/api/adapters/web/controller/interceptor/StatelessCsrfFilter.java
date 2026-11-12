@@ -100,6 +100,9 @@ public class StatelessCsrfFilter extends OncePerRequestFilter {
       // endpoints must still pass the normal CSRF check.
       if ("POST".equals(request.getMethod())
           && "/internal/matrix/group-join-policy".equals(request.getRequestURI())) return true;
+      // The AddonService is a machine client as well and holds only a technical service token.
+      if ("POST".equals(request.getMethod())
+          && "/users/event-notifications/addon".equals(request.getRequestURI())) return true;
       if ("/internal/matrixrtc/call-policy".equals(request.getRequestURI())
           || "/internal/matrixrtc/media-access".equals(request.getRequestURI())) {
         return true;

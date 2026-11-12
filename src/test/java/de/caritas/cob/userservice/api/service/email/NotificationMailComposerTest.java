@@ -89,6 +89,21 @@ class NotificationMailComposerTest {
   }
 
   @Test
+  void addonNotificationUsesTheNeutralNoticeAndNeverItsInputText() {
+    var mail = mail("addon-notification");
+    mail.addTemplateDataItem(new TemplateDataDTO().key("title").value("AddonTitle"));
+    mail.addTemplateDataItem(new TemplateDataDTO().key("text").value("AddonText"));
+
+    var result = composer.compose(mail, 7L);
+
+    assertThat(result.subject()).isEqualTo("Neue Nachricht auf Independent Platform");
+    assertThat(result.html())
+        .contains("Bitte melden Sie sich an.", "https://tenant.example.org")
+        .doesNotContain("AddonTitle", "AddonText", "{{");
+    assertThat(result.text()).doesNotContain("AddonTitle", "AddonText", "{{");
+  }
+
+  @Test
   void automaticNoticeRejectsMissingCanonicalPlatformName() {
     var branding = new EmailBranding("Träger Sieben", null, "#1c4f8f", null, null);
     when(brandValues.values(branding, 7L)).thenReturn(Map.of("platformName", "Träger Sieben"));
