@@ -319,6 +319,39 @@ class ConsultantChatIdentityServiceTest {
     verify(consultantChatIdentityWriter, never()).attachChatIdentity(anyString(), anyString());
   }
 
+  /**
+   * ORISO-Admin#1489: the deleted counsellor's row survived, but its username was released, which
+   * only happens after their account was deactivated and erased. A successor whose onboarding
+   * failed half-way must be able to repair onto it.
+   */
+  @Test
+  void provisionMissingChatIdentity_Should_adopt_When_onlyARowWithAReleasedUsernameHoldsIt()
+      throws Exception {
+    var released = new Consultant();
+    released.setId("6f2e9a41-0000-4000-8000-1a2b3c4d5e6f");
+    released.setUsername("deleted:6f2e9a41-0000-4000-8000-1a2b3c4d5e6f");
+    released.setMatrixUserId("@anna.beispiel:matrix.local");
+
+    when(consultantChatIdentityWriter.find(CONSULTANT_ID))
+        .thenReturn(Optional.of(incompleteConsultant));
+    when(userHelper.getRandomPassword()).thenReturn("s3cret-Pass!");
+    when(matrixUserClient.createUserIdWithoutReactivation(anyString(), anyString(), any()))
+        .thenThrow(new MatrixCreateUserException("Matrix user is already active"));
+    when(matrixUserClient.findUserId("anna.beispiel")).thenReturn("@anna.beispiel:matrix.local");
+    when(consultantRepository.findByMatrixUserId("@anna.beispiel:matrix.local"))
+        .thenReturn(List.of(released));
+    when(matrixUserClient.updateUserDisplayName("@anna.beispiel:matrix.local", "anna.beispiel"))
+        .thenReturn(true);
+    when(consultantChatIdentityWriter.attachChatIdentity(
+            CONSULTANT_ID, "@anna.beispiel:matrix.local"))
+        .thenReturn(incompleteConsultant);
+
+    consultantChatIdentityService.provisionMissingChatIdentity(CONSULTANT_ID);
+
+    verify(consultantChatIdentityWriter)
+        .attachChatIdentity(CONSULTANT_ID, "@anna.beispiel:matrix.local");
+  }
+
   @Test
   void provisionMissingChatIdentity_Should_adopt_When_noOtherConsultantHoldsTheAccount()
       throws Exception {

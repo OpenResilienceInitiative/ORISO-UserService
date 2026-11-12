@@ -159,6 +159,31 @@ class CreateConsultantSagaTest {
     verify(consultantService, never()).saveConsultant(any());
   }
 
+  /**
+   * ORISO-Admin#1489: a counsellor in deletion keeps the username until the hard deletion ran. The
+   * admin is told so, and no identity is created that would have to be rolled back.
+   */
+  @Test
+  void createNewConsultant_Should_refuseWithUsernameInDeletion_When_aDeletedCounsellorHoldsIt() {
+    org.mockito.Mockito.when(consultantService.isUsernameHeldByDeletedConsultant(any()))
+        .thenReturn(true);
+
+    var exception =
+        assertThrows(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class,
+            () -> createConsultantSaga.createNewConsultant(validCreateConsultantDto()));
+
+    assertThat(
+        exception.getCustomHttpHeaders().getFirst("X-Reason"),
+        is(
+            de.caritas.cob.userservice.api.exception.httpresponses.customheader
+                .HttpStatusExceptionReason.USERNAME_IN_DELETION
+                .name()));
+    verify(identityClient, never()).createUser(any(), any(), any());
+    verify(consultantService, never()).saveConsultant(any());
+  }
+
   @Test
   void createNewConsultant_Should_returnResponse_When_happyPath() throws Exception {
     stubHappyPath();

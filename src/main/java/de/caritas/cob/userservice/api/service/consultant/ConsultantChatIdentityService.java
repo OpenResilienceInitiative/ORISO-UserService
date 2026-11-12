@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
+import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteDatabaseConsultantAction;
 import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -224,7 +225,11 @@ public class ConsultantChatIdentityService {
   private void assertNotHeldByAnotherConsultant(String matrixUserId, Consultant consultant) {
     var heldByAnother =
         consultantRepository.findByMatrixUserId(matrixUserId).stream()
-            .anyMatch(other -> !consultant.getId().equals(other.getId()));
+            .filter(other -> !consultant.getId().equals(other.getId()))
+            // A deleted counsellor whose username was released no longer holds the account: the
+            // name is only released after the account was deactivated and erased (left its rooms),
+            // and that row never touches the account again (ORISO-Admin#1489).
+            .anyMatch(other -> !DeleteDatabaseConsultantAction.hasReleasedUsername(other));
     if (!heldByAnother) {
       return;
     }

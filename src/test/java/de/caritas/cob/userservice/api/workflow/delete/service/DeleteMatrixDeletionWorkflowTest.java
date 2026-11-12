@@ -107,7 +107,12 @@ class DeleteMatrixDeletionWorkflowTest {
     when(matrixSynapseService.deactivateUser(MATRIX_USER_ID)).thenReturn(true);
 
     var workflowDTO = new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>());
-    new DeleteMatrixConsultantAction(matrixSynapseService, sessionRepository).execute(workflowDTO);
+    new DeleteMatrixConsultantAction(
+            matrixSynapseService,
+            sessionRepository,
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.port.out.ConsultantRepository.class))
+        .execute(workflowDTO);
 
     var order = inOrder(matrixSynapseService);
     order.verify(matrixSynapseService).purgeRoom(MATRIX_ROOM_ID);

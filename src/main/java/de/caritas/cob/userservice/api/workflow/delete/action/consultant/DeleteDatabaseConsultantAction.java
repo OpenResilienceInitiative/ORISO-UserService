@@ -32,6 +32,8 @@ import org.springframework.stereotype.Component;
 public class DeleteDatabaseConsultantAction
     implements ActionCommand<ConsultantDeletionWorkflowDTO> {
 
+  private static final String RELEASED_USERNAME_PREFIX = "deleted:";
+
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull SessionOwnershipService sessionOwnershipService;
   private final @NonNull SessionSupervisorRepository sessionSupervisorRepository;
@@ -60,6 +62,8 @@ public class DeleteDatabaseConsultantAction
    */
   @Override
   public void execute(ConsultantDeletionWorkflowDTO actionTarget) {
+    releaseUsername(actionTarget);
+
     if (UserContentCleanup.failed(actionTarget.getDeletionWorkflowErrors())) {
       log.warn("Keeping consultant account row: unencrypted user content could not be deleted");
       return;
@@ -113,6 +117,59 @@ public class DeleteDatabaseConsultantAction
         actionTarget.getConsultant().getId(),
         actionTarget.getConsultant().getTenantId(),
         outcomeOf(actionTarget));
+  }
+
+  /**
+   * Frees the username before anything else, in its own transaction. {@code consultant.username} is
+   * unique: when the row delete below fails (a reference that blocks it, kept user content), the
+   * row used to keep the name, and nobody could create an account with it again (ORISO-Admin#1489).
+   * The hard deletion only runs after the read-only safeguard window, so the deletion can no longer
+   * be cancelled and the name is not needed any more. A failure here is recorded and the deletion
+   * goes on: the row may still be deleted, which frees the name as well.
+   */
+  private void releaseUsername(ConsultantDeletionWorkflowDTO actionTarget) {
+    var consultant = actionTarget.getConsultant();
+    if (!wentThroughDeletionLifecycle(consultant)) {
+      return;
+    }
+    if (externalAccountsStillHeld(actionTarget)) {
+      // Keycloak or the Matrix account could not be removed in this run. A new counsellor with the
+      // name would then get no chat identity (the still active Matrix account cannot be
+      // reactivated for them, and the retained row blocks the repair). The next run retries both
+      // and releases the name once they are gone.
+      return;
+    }
+    try {
+      consultantRepository.releaseUsernameOfDeletedConsultant(
+          consultant.getId(), releasedUsernameOf(consultant.getId()));
+    } catch (Exception e) {
+      handleExceptionWithMessage(actionTarget, e, "Unable to release the consultant username");
+    }
+  }
+
+  private static boolean externalAccountsStillHeld(ConsultantDeletionWorkflowDTO actionTarget) {
+    var matrixUserId = actionTarget.getConsultant().getMatrixUserId();
+    return actionTarget.getDeletionWorkflowErrors().stream()
+        .anyMatch(
+            error ->
+                error.getDeletionTargetType() == DeletionTargetType.KEYCLOAK
+                    || (error.getDeletionTargetType() == DeletionTargetType.MATRIX
+                        && matrixUserId != null
+                        && matrixUserId.equals(error.getIdentifier())));
+  }
+
+  /** Unique because the consultant id is; cannot be an encoded ("enc.") or valid plain username. */
+  static String releasedUsernameOf(String consultantId) {
+    return RELEASED_USERNAME_PREFIX + consultantId;
+  }
+
+  /**
+   * Whether this row's username was already released. That only happens in a run that deactivated
+   * the counsellor's Matrix account, so the account may since belong to someone else.
+   */
+  public static boolean hasReleasedUsername(Consultant consultant) {
+    var username = consultant.getUsername();
+    return username != null && username.startsWith(RELEASED_USERNAME_PREFIX);
   }
 
   /**

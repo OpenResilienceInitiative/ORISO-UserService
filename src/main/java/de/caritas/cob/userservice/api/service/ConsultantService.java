@@ -49,6 +49,15 @@ public class ConsultantService {
    * @param consultantId consultant ID
    * @return An {@link Optional} with the {@link Consultant} if found
    */
+  /**
+   * Whether a counsellor marked for deletion still holds the given encoded username. Usernames are
+   * unique across all tenants, so the lookup ignores the tenant filter.
+   */
+  public boolean isUsernameHeldByDeletedConsultant(String encodedUsername) {
+    return de.caritas.cob.userservice.api.tenant.TenantContext.supplyAcrossTenants(
+        () -> consultantRepository.existsByUsernameAndDeleteDateIsNotNull(encodedUsername));
+  }
+
   public Optional<Consultant> getConsultant(String consultantId) {
     return consultantRepository.findByIdAndDeleteDateIsNull(consultantId);
   }

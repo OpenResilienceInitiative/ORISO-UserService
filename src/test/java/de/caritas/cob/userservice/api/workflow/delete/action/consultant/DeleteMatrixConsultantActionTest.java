@@ -47,6 +47,8 @@ public class DeleteMatrixConsultantActionTest {
 
   @Mock private SessionRepository sessionRepository;
 
+  @Mock private de.caritas.cob.userservice.api.port.out.ConsultantRepository consultantRepository;
+
   @BeforeEach
   public void setup() {
     lenient()
@@ -148,5 +150,58 @@ public class DeleteMatrixConsultantActionTest {
     consultant.setId(CONSULTANT_ID);
     consultant.setMatrixUserId(MATRIX_USER_ID);
     return consultant;
+  }
+
+  /**
+   * #1489: the old row survived a failed run, its username was released and a new counsellor took
+   * the name, which reactivated this Matrix account for them. A retry must leave it alone.
+   */
+  @Test
+  public void execute_Should_notDeactivateMatrixUser_When_anActiveConsultantNowHoldsIt() {
+    Consultant consultant = consultantWithMatrixUserId();
+    Consultant successor = new Consultant();
+    successor.setId("successor-id");
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(MATRIX_USER_ID))
+        .thenReturn(java.util.Optional.of(successor));
+    ConsultantDeletionWorkflowDTO workflowDTO =
+        new ConsultantDeletionWorkflowDTO(consultant, emptyList());
+
+    deleteMatrixConsultantAction.execute(workflowDTO);
+
+    verify(matrixSynapseService, org.mockito.Mockito.never()).deactivateUser(any());
+    assertThat(workflowDTO.getDeletionWorkflowErrors(), hasSize(0));
+  }
+
+  /**
+   * #1489: the name was released in an earlier run, after this account was deactivated. The new
+   * holder may be in a cancellable deletion of their own (delete date set), so the lookup for an
+   * active holder would not protect them; the released name does.
+   */
+  @Test
+  public void execute_Should_notDeactivateMatrixUser_When_theUsernameWasAlreadyReleased() {
+    Consultant consultant = consultantWithMatrixUserId();
+    consultant.setUsername("deleted:" + CONSULTANT_ID);
+    ConsultantDeletionWorkflowDTO workflowDTO =
+        new ConsultantDeletionWorkflowDTO(consultant, emptyList());
+
+    deleteMatrixConsultantAction.execute(workflowDTO);
+
+    verify(matrixSynapseService, org.mockito.Mockito.never()).deactivateUser(any());
+    assertThat(workflowDTO.getDeletionWorkflowErrors(), hasSize(0));
+  }
+
+  /** A run that outlived its claim holds a stale copy; another run released the name meanwhile. */
+  @Test
+  public void execute_Should_notDeactivateMatrixUser_When_anotherRunReleasedTheUsernameMeanwhile() {
+    Consultant stale = consultantWithMatrixUserId();
+    Consultant current = consultantWithMatrixUserId();
+    current.setUsername("deleted:" + CONSULTANT_ID);
+    when(consultantRepository.findById(CONSULTANT_ID)).thenReturn(java.util.Optional.of(current));
+    ConsultantDeletionWorkflowDTO workflowDTO =
+        new ConsultantDeletionWorkflowDTO(stale, emptyList());
+
+    deleteMatrixConsultantAction.execute(workflowDTO);
+
+    verify(matrixSynapseService, org.mockito.Mockito.never()).deactivateUser(any());
   }
 }

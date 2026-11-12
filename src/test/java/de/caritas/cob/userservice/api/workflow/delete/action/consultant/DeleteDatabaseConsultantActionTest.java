@@ -300,4 +300,149 @@ public class DeleteDatabaseConsultantActionTest {
     verify(this.identityTombstoneService, never()).recordDeletedConsultant(any());
     assertThat(workflowDTO.getDeletionWorkflowErrors(), hasSize(1));
   }
+
+  /**
+   * ORISO-Admin#1489: the username is unique, and a row whose delete failed kept it forever. It is
+   * released first, so a failing row delete no longer blocks the name.
+   */
+  @Test
+  public void execute_Should_ReleaseTheUsernameBeforeDeletingTheRow_When_consultantIsHardDeleted() {
+    var consultant = consultantInHardDeletion("c-1489");
+
+    this.deleteDatabaseConsultantAction.execute(
+        new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>()));
+
+    var order = inOrder(consultantRepository);
+    order
+        .verify(consultantRepository)
+        .releaseUsernameOfDeletedConsultant("c-1489", "deleted:c-1489");
+    order.verify(consultantRepository).delete(consultant);
+  }
+
+  @Test
+  public void execute_Should_ReleaseTheUsername_When_theRowCannotBeDeleted() {
+    var consultant = consultantInHardDeletion("c-blocked");
+    org.mockito.Mockito.doThrow(new RuntimeException("foreign key"))
+        .when(consultantRepository)
+        .delete(consultant);
+    var workflowDTO = new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>());
+
+    this.deleteDatabaseConsultantAction.execute(workflowDTO);
+
+    verify(consultantRepository)
+        .releaseUsernameOfDeletedConsultant("c-blocked", "deleted:c-blocked");
+    assertThat(workflowDTO.getDeletionWorkflowErrors(), hasSize(1));
+  }
+
+  @Test
+  public void execute_Should_ReleaseTheUsername_When_userContentCleanupFailedAndTheRowIsKept() {
+    var consultant = consultantInHardDeletion("c-content");
+    var contentError =
+        DeletionWorkflowError.builder()
+            .deletionSourceType(CONSULTANT)
+            .deletionTargetType(
+                de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType
+                    .USER_CONTENT)
+            .identifier("c-content")
+            .reason("drafts")
+            .build();
+
+    this.deleteDatabaseConsultantAction.execute(
+        new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>(List.of(contentError))));
+
+    verify(consultantRepository)
+        .releaseUsernameOfDeletedConsultant("c-content", "deleted:c-content");
+    verify(consultantRepository, never()).delete(any(Consultant.class));
+  }
+
+  @Test
+  public void execute_Should_StillDeleteTheRow_When_releasingTheUsernameFails() {
+    var consultant = consultantInHardDeletion("c-release-fails");
+    org.mockito.Mockito.when(consultantRepository.releaseUsernameOfDeletedConsultant(any(), any()))
+        .thenThrow(new RuntimeException("db down"));
+    var workflowDTO = new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>());
+
+    this.deleteDatabaseConsultantAction.execute(workflowDTO);
+
+    verify(consultantRepository).delete(consultant);
+    assertThat(workflowDTO.getDeletionWorkflowErrors(), hasSize(1));
+  }
+
+  @Test
+  public void execute_Should_NotTouchTheUsername_When_aHalfCreatedAccountIsRolledBack() {
+    var consultant = new Consultant();
+    consultant.setId("c-rollback");
+
+    this.deleteDatabaseConsultantAction.execute(
+        new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>()));
+
+    verify(consultantRepository, never()).releaseUsernameOfDeletedConsultant(any(), any());
+  }
+
+  @Test
+  public void execute_Should_KeepTheUsername_When_theMatrixAccountCouldNotBeDeactivated() {
+    var consultant = consultantInHardDeletion("c-matrix-failed");
+    consultant.setMatrixUserId("@old:matrix.example");
+    var matrixError =
+        DeletionWorkflowError.builder()
+            .deletionSourceType(CONSULTANT)
+            .deletionTargetType(
+                de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.MATRIX)
+            .identifier("@old:matrix.example")
+            .reason("deactivation failed")
+            .build();
+
+    this.deleteDatabaseConsultantAction.execute(
+        new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>(List.of(matrixError))));
+
+    verify(consultantRepository, never()).releaseUsernameOfDeletedConsultant(any(), any());
+  }
+
+  @Test
+  public void execute_Should_KeepTheUsername_When_theKeycloakAccountCouldNotBeDeleted() {
+    var consultant = consultantInHardDeletion("c-keycloak-failed");
+    var keycloakError =
+        DeletionWorkflowError.builder()
+            .deletionSourceType(CONSULTANT)
+            .deletionTargetType(
+                de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.KEYCLOAK)
+            .identifier("c-keycloak-failed")
+            .reason("Keycloak unreachable")
+            .build();
+
+    this.deleteDatabaseConsultantAction.execute(
+        new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>(List.of(keycloakError))));
+
+    verify(consultantRepository, never()).releaseUsernameOfDeletedConsultant(any(), any());
+  }
+
+  @Test
+  public void execute_Should_ReleaseTheUsername_When_onlyAGroupChatRoomCouldNotBePurged() {
+    var consultant = consultantInHardDeletion("c-room-failed");
+    consultant.setMatrixUserId("@old:matrix.example");
+    var roomError =
+        DeletionWorkflowError.builder()
+            .deletionSourceType(CONSULTANT)
+            .deletionTargetType(
+                de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.MATRIX)
+            .identifier("!room:matrix.example")
+            .reason("Unable to delete Matrix room")
+            .build();
+
+    this.deleteDatabaseConsultantAction.execute(
+        new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>(List.of(roomError))));
+
+    verify(consultantRepository)
+        .releaseUsernameOfDeletedConsultant("c-room-failed", "deleted:c-room-failed");
+  }
+
+  private static Consultant consultantInHardDeletion(String id) {
+    var consultant = new Consultant();
+    consultant.setId(id);
+    consultant.setTenantId(5L);
+    consultant.setDeletionLifecycleState(
+        de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState
+            .HARD_DELETE_IN_PROGRESS);
+    return consultant;
+  }
 }
