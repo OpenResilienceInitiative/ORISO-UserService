@@ -256,10 +256,9 @@ public class CreateUserFacadeTest {
         identityClient, matrixSynapseService, userService, createNewSessionFacade);
   }
 
-  @Test
-  void signupAliasContainingThePasswordIsRefusedBeforeIdentityOrAccountEffects() {
-    var password = "Sichere-Passphrase9!";
-    var alias = "Name " + password;
+  private static final String SIGNUP_PASSWORD = "Sichere-Passphrase9!";
+
+  private UserDTO signupWithAlias(String password, String alias) {
     var dto =
         UserDTO.builder()
             .username("new-login")
@@ -272,10 +271,21 @@ public class CreateUserFacadeTest {
             .build();
     var names = mock(de.caritas.cob.userservice.api.service.SessionDataService.class);
     when(names.validateRegistrationNames(
-            "new-login", alias, 42L, ConversationType.AGENCY_COUNSELLING))
+            org.mockito.ArgumentMatchers.eq("new-login"),
+            org.mockito.ArgumentMatchers.eq(alias),
+            org.mockito.ArgumentMatchers.eq(42L),
+            any()))
         .thenReturn(alias);
     org.springframework.test.util.ReflectionTestUtils.setField(
         createUserFacade, "sessionDataService", names);
+    return dto;
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {SIGNUP_PASSWORD, "  " + SIGNUP_PASSWORD + "\t"})
+  void signupAliasContainingThePasswordIsRefusedBeforeIdentityOrAccountEffects(String password) {
+    var dto = signupWithAlias(password, "Name " + SIGNUP_PASSWORD);
     TenantContext.setCurrentTenant(42L);
     try {
       assertThrows(
@@ -286,6 +296,53 @@ public class CreateUserFacadeTest {
     }
     org.mockito.Mockito.verifyNoInteractions(
         identityClient, matrixSynapseService, userService, createNewSessionFacade);
+  }
+
+  enum AliasCase {
+    SAFE_ALIAS,
+    ABSENT_ALIAS,
+    GROUP_INVITE,
+    DIRECT_LINK
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(AliasCase.class)
+  void signupWithoutAPasswordBearingPersonalAliasReachesIdentityCreation(AliasCase aliasCase) {
+    var alias =
+        switch (aliasCase) {
+          case SAFE_ALIAS -> "Sonnenblume";
+          case ABSENT_ALIAS -> null;
+          case GROUP_INVITE, DIRECT_LINK -> "Name " + SIGNUP_PASSWORD;
+        };
+    var dto = signupWithAlias(SIGNUP_PASSWORD, alias);
+    if (aliasCase == AliasCase.GROUP_INVITE) {
+      var group = new Chat();
+      group.setConversationType(ConversationType.SELF_HELP);
+      when(groupInviteRegistration.resolveInvitedGroup(dto)).thenReturn(Optional.of(group));
+    }
+    if (aliasCase == AliasCase.DIRECT_LINK) {
+      var link =
+          de.caritas.cob.userservice.api.model.AgencyInviteLink.builder()
+              .id(77L)
+              .chatType("CHAT")
+              .temporaryAccount(false)
+              .build();
+      when(temporaryAccountLinkResolver.resolve(dto)).thenReturn(Optional.of(link));
+    }
+    var reachedIdentity = new IllegalStateException("identity creation reached");
+    when(identityClient.createUser(dto)).thenThrow(reachedIdentity);
+    TenantContext.setCurrentTenant(42L);
+    try {
+      var thrown =
+          assertThrows(
+              IllegalStateException.class,
+              () -> createUserFacade.createUserAccountWithInitializedConsultingType(dto));
+      org.assertj.core.api.Assertions.assertThat(thrown).isSameAs(reachedIdentity);
+    } finally {
+      TenantContext.clear();
+    }
+    var expectedAlias = aliasCase == AliasCase.SAFE_ALIAS ? alias : null;
+    org.assertj.core.api.Assertions.assertThat(dto.getDisplayName()).isEqualTo(expectedAlias);
   }
 
   @Test
