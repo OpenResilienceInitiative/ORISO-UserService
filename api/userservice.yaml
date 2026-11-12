@@ -4630,6 +4630,8 @@ components:
       properties:
         session:
           $ref: '#/components/schemas/SessionDTO'
+        user:
+          $ref: '#/components/schemas/SessionUserDTO'
         chat:
           $ref: '#/components/schemas/UserChatDTO'
         agency:

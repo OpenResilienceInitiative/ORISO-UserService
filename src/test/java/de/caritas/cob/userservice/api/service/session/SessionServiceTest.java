@@ -950,6 +950,73 @@ class SessionServiceTest {
   }
 
   @Test
+  void getSessionsForUser_Should_ReturnTheAskersOwnSessionAlias_When_sessionHasDisplayName() {
+    // #2175: the asker must be able to see the name a counsellor sees in this conversation.
+    Session session = easyRandom.nextObject(Session.class);
+    session.setSessionData(
+        new ArrayList<>(
+            List.of(
+                new de.caritas.cob.userservice.api.model.SessionData(
+                    session,
+                    de.caritas.cob.userservice.api.model.SessionData.SessionDataType.REGISTRATION,
+                    "displayName",
+                    "Blauer Falke"),
+                new de.caritas.cob.userservice.api.model.SessionData(
+                    session,
+                    de.caritas.cob.userservice.api.model.SessionData.SessionDataType.REGISTRATION,
+                    "age",
+                    "17"))));
+    when(sessionRepository.findByUserUserId(USER_ID)).thenReturn(singletonList(session));
+
+    var user = sessionService.getSessionsForUserId(USER_ID).get(0).getUser();
+
+    assertEquals("Blauer Falke", user.getDisplayName());
+    assertEquals(session.getUser().getUserId(), user.getId());
+    assertEquals(
+        new de.caritas.cob.userservice.api.helper.UsernameTranscoder()
+            .decodeUsername(session.getUser().getUsername()),
+        user.getUsername());
+    // Only the alias is added; registration data stays out of the asker list.
+    assertNull(user.getSessionData());
+  }
+
+  static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments>
+      sessionsWithoutAlias() {
+    return java.util.stream.Stream.of(
+        org.junit.jupiter.params.provider.Arguments.of("no session data", null, false),
+        org.junit.jupiter.params.provider.Arguments.of("empty session data", null, true),
+        org.junit.jupiter.params.provider.Arguments.of("null alias value", null, null),
+        org.junit.jupiter.params.provider.Arguments.of("blank alias value", "   ", null));
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest(name = "{0}")
+  @org.junit.jupiter.params.provider.MethodSource("sessionsWithoutAlias")
+  void getSessionsForUser_Should_ReturnNoAlias_When_sessionHasNoUsableDisplayName(
+      String caseName, String aliasValue, Boolean emptyList) {
+    Session session = easyRandom.nextObject(Session.class);
+    if (Boolean.FALSE.equals(emptyList)) {
+      session.setSessionData(null);
+    } else if (Boolean.TRUE.equals(emptyList)) {
+      session.setSessionData(new ArrayList<>());
+    } else {
+      session.setSessionData(
+          new ArrayList<>(
+              List.of(
+                  new de.caritas.cob.userservice.api.model.SessionData(
+                      session,
+                      de.caritas.cob.userservice.api.model.SessionData.SessionDataType.REGISTRATION,
+                      "displayName",
+                      aliasValue))));
+    }
+    when(sessionRepository.findByUserUserId(USER_ID)).thenReturn(singletonList(session));
+
+    var user = sessionService.getSessionsForUserId(USER_ID).get(0).getUser();
+
+    assertNull(user.getDisplayName());
+    assertEquals(session.getUser().getUserId(), user.getId());
+  }
+
+  @Test
   void
       getActiveAndDoneSessionsForConsultant_Should_ReturnListOfActiveAndDoneSessions_When_statusInProgress() {
     Session session = easyRandom.nextObject(Session.class);

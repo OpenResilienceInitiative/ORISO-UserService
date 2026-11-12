@@ -214,6 +214,8 @@ public class SessionService {
    * @param userId Keycloak/MariaDB user ID
    * @return {@link List} of {@link UserSessionResponseDTO}
    */
+  // #2175: the asker alias reads the lazy sessionData while mapping.
+  @Transactional(readOnly = true)
   public List<UserSessionResponseDTO> getSessionsForUserId(String userId) {
     List<UserSessionResponseDTO> sessionResponseDTOs = new ArrayList<>();
     List<Session> sessions = sessionRepository.findByUserUserId(userId);
@@ -601,8 +603,10 @@ public class SessionService {
   }
 
   private UserSessionResponseDTO buildUserSessionDTO(Session session, List<AgencyDTO> agencies) {
+    var mapper = new SessionMapper();
     return new UserSessionResponseDTO()
-        .session(new SessionMapper().convertToSessionDTO(session))
+        .session(mapper.convertToSessionDTO(session))
+        .user(mapper.toOwnSessionAlias(session))
         .agency(
             agencies.stream()
                 .filter(agency -> agency.getId().longValue() == session.getAgencyId().longValue())
@@ -643,6 +647,8 @@ public class SessionService {
    * @param roles the roles of the given user
    * @return {@link UserSessionResponseDTO}
    */
+  // #2175: the asker alias reads the lazy sessionData while mapping.
+  @Transactional(readOnly = true)
   public List<UserSessionResponseDTO> getSessionsByUserAndRoomIds(
       String userId, Set<String> matrixRoomIds, Set<String> roles) {
     checkForAskerRoles(roles);
@@ -660,6 +666,8 @@ public class SessionService {
    * @param roles the roles of the given user
    * @return {@link UserSessionResponseDTO}
    */
+  // #2175: the asker alias reads the lazy sessionData while mapping.
+  @Transactional(readOnly = true)
   public List<UserSessionResponseDTO> getSessionsByUserAndSessionIds(
       String userId, Set<Long> sessionIds, Set<String> roles) {
     checkForAskerRoles(roles);
