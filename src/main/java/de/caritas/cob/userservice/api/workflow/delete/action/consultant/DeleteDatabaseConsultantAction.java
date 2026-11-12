@@ -130,12 +130,30 @@ public class DeleteDatabaseConsultantAction
     if (!wentThroughDeletionLifecycle(consultant)) {
       return;
     }
+    if (externalAccountsStillHeld(actionTarget)) {
+      // Keycloak or the Matrix account could not be removed in this run. A new counsellor with the
+      // name would then get no chat identity (the still active Matrix account cannot be
+      // reactivated for them, and the retained row blocks the repair). The next run retries both
+      // and releases the name once they are gone.
+      return;
+    }
     try {
       consultantRepository.releaseUsernameOfDeletedConsultant(
           consultant.getId(), releasedUsernameOf(consultant.getId()));
     } catch (Exception e) {
       handleExceptionWithMessage(actionTarget, e, "Unable to release the consultant username");
     }
+  }
+
+  private static boolean externalAccountsStillHeld(ConsultantDeletionWorkflowDTO actionTarget) {
+    var matrixUserId = actionTarget.getConsultant().getMatrixUserId();
+    return actionTarget.getDeletionWorkflowErrors().stream()
+        .anyMatch(
+            error ->
+                error.getDeletionTargetType() == DeletionTargetType.KEYCLOAK
+                    || (error.getDeletionTargetType() == DeletionTargetType.MATRIX
+                        && matrixUserId != null
+                        && matrixUserId.equals(error.getIdentifier())));
   }
 
   /** Unique because the consultant id is; cannot be an encoded ("enc.") or valid plain username. */

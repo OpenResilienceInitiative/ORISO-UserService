@@ -69,7 +69,7 @@ public interface ConsultantRepository
    * @return the number of rows updated (0 or 1)
    */
   @Modifying
-  @Transactional
+  @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
   @Query(
       value =
           "UPDATE consultant SET username = :releasedUsername"

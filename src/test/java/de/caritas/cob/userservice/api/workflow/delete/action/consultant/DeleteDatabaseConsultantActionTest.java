@@ -379,6 +379,63 @@ public class DeleteDatabaseConsultantActionTest {
     verify(consultantRepository, never()).releaseUsernameOfDeletedConsultant(any(), any());
   }
 
+  @Test
+  public void execute_Should_KeepTheUsername_When_theMatrixAccountCouldNotBeDeactivated() {
+    var consultant = consultantInHardDeletion("c-matrix-failed");
+    consultant.setMatrixUserId("@old:matrix.example");
+    var matrixError =
+        DeletionWorkflowError.builder()
+            .deletionSourceType(CONSULTANT)
+            .deletionTargetType(
+                de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.MATRIX)
+            .identifier("@old:matrix.example")
+            .reason("deactivation failed")
+            .build();
+
+    this.deleteDatabaseConsultantAction.execute(
+        new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>(List.of(matrixError))));
+
+    verify(consultantRepository, never()).releaseUsernameOfDeletedConsultant(any(), any());
+  }
+
+  @Test
+  public void execute_Should_KeepTheUsername_When_theKeycloakAccountCouldNotBeDeleted() {
+    var consultant = consultantInHardDeletion("c-keycloak-failed");
+    var keycloakError =
+        DeletionWorkflowError.builder()
+            .deletionSourceType(CONSULTANT)
+            .deletionTargetType(
+                de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.KEYCLOAK)
+            .identifier("c-keycloak-failed")
+            .reason("Keycloak unreachable")
+            .build();
+
+    this.deleteDatabaseConsultantAction.execute(
+        new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>(List.of(keycloakError))));
+
+    verify(consultantRepository, never()).releaseUsernameOfDeletedConsultant(any(), any());
+  }
+
+  @Test
+  public void execute_Should_ReleaseTheUsername_When_onlyAGroupChatRoomCouldNotBePurged() {
+    var consultant = consultantInHardDeletion("c-room-failed");
+    consultant.setMatrixUserId("@old:matrix.example");
+    var roomError =
+        DeletionWorkflowError.builder()
+            .deletionSourceType(CONSULTANT)
+            .deletionTargetType(
+                de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.MATRIX)
+            .identifier("!room:matrix.example")
+            .reason("Unable to delete Matrix room")
+            .build();
+
+    this.deleteDatabaseConsultantAction.execute(
+        new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>(List.of(roomError))));
+
+    verify(consultantRepository)
+        .releaseUsernameOfDeletedConsultant("c-room-failed", "deleted:c-room-failed");
+  }
+
   private static Consultant consultantInHardDeletion(String id) {
     var consultant = new Consultant();
     consultant.setId(id);
