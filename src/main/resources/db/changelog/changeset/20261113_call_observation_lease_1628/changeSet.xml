@@ -9,15 +9,24 @@
   <changeSet id="20261113-matrix-call-observation-lease-1628" author="oriso">
     <dropNotNullConstraint tableName="matrix_call_observation" columnName="media_room_id"
       columnDataType="VARCHAR(255)"/>
-    <addColumn tableName="matrix_call_observation">
-      <column name="liveness_checked_at" type="BIGINT"/>
-    </addColumn>
     <rollback>
       <delete tableName="matrix_call_observation">
         <where>media_room_id IS NULL</where>
       </delete>
       <addNotNullConstraint tableName="matrix_call_observation" columnName="media_room_id"
         columnDataType="VARCHAR(255)"/>
+    </rollback>
+  </changeSet>
+  <changeSet id="20261113-matrix-call-observation-liveness-checked-at-1628" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <columnExists tableName="matrix_call_observation" columnName="liveness_checked_at"/>
+      </not>
+    </preConditions>
+    <addColumn tableName="matrix_call_observation">
+      <column name="liveness_checked_at" type="BIGINT"/>
+    </addColumn>
+    <rollback>
       <dropColumn tableName="matrix_call_observation" columnName="liveness_checked_at"/>
     </rollback>
   </changeSet>
