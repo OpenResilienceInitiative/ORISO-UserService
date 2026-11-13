@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.archive;
 import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
 import de.caritas.cob.userservice.api.actions.user.DeactivateKeycloakUserActionCommand;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -10,6 +11,7 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
+import de.caritas.cob.userservice.api.service.session.AnonymousSessionRegistration;
 import de.caritas.cob.userservice.api.service.session.DeletedAskerSessionService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
@@ -63,6 +65,7 @@ public class SessionDeleteService {
       throw new CustomValidationHttpStatusException(
           HttpStatusExceptionReason.MEMBERS_ONLY_CHAT_STOP_REQUIRED, HttpStatus.CONFLICT);
     }
+    requireDeletableByCaller(session);
 
     try {
       var endedBy =
@@ -101,6 +104,33 @@ public class SessionDeleteService {
 
     fireArchiveOrDeleteSessionEvent(session);
     log.info("Session with id {} deleted", sessionId);
+  }
+
+  /**
+   * ORISO-Admin#1518: deleting removes the conversation for both sides and can deactivate the
+   * advice seeker's account. A counsellor may therefore only delete an anonymous live chat they are
+   * assigned to (the "delete anonymous account" action); a registered advice seeker's conversation
+   * is archived instead and stays theirs until they delete it. Anyone else may only delete a
+   * session that is their own.
+   */
+  private void requireDeletableByCaller(Session session) {
+    var userId = authenticatedUser.getUserId();
+    if (authenticatedUser.isConsultant()) {
+      if (!AnonymousSessionRegistration.matches(session)) {
+        throw new ForbiddenException(
+            "Session %s belongs to a registered advice seeker; a consultant archives it instead.",
+            session.getId());
+      }
+      if (!session.isAdvisedBy(userId)) {
+        throw new ForbiddenException(
+            "Consultant is not assigned to session (%s).", session.getId());
+      }
+      return;
+    }
+    if (!session.isAdvised(userId)) {
+      throw new ForbiddenException(
+          "Session (%s) can only be deleted by its own advice seeker.", session.getId());
+    }
   }
 
   private void fireArchiveOrDeleteSessionEvent(Session session) {

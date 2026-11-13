@@ -2590,9 +2590,12 @@ paths:
     delete:
       tags:
         - user-controller
-      summary: 'Deletes a session. [Authorization: Role: consultant]'
-      description: 'If the user has no other sessions, the account will be deleted, too, unless the
-       system''s setting prevents it.'
+      summary: 'Deletes an anonymous live-chat session. [Authorization: Role: consultant]'
+      description: 'Deletes the session for every participant. A consultant may only delete an
+       anonymous (or anonymous-style) live-chat session they are assigned to; a registered advice
+       seeker''s session is archived instead and stays with the advice seeker (ORISO-Admin#1518).
+       If the user has no other sessions, the account will be deleted, too, unless the system''s
+       setting prevents it.'
       operationId: deleteSessionAndInactiveUser
       parameters:
         - name: sessionId
@@ -2610,7 +2613,9 @@ paths:
         401:
           description: UNAUTHORIZED - no/invalid Keycloak token
         403:
-          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+          description: >-
+            FORBIDDEN - no/invalid role/authorization or CSRF token, the session belongs to a
+            registered advice seeker, or the consultant is not assigned to it
         404:
           description: NOT FOUND - a session with such an ID does not exist
         409:

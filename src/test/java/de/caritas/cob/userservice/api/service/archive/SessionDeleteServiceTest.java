@@ -149,7 +149,7 @@ class SessionDeleteServiceTest {
   void deleteSession_Should_sayAdviceSeekerEndedIt_When_theAskerDeletes() {
     var sessionId = givenAPresentSession(false);
     givenActionRegistryDeletesSession();
-    when(authenticatedUser.isConsultant()).thenReturn(false);
+    givenTheAdviceSeekerDeletes(sessionService.getSession(sessionId).orElseThrow());
 
     sessionDeleteService.deleteSession(sessionId);
 
@@ -164,7 +164,7 @@ class SessionDeleteServiceTest {
   void deleteSession_Should_leaveThePlaceholder_When_theAskerDeletes() {
     var sessionId = givenAPresentSession(false);
     givenActionRegistryDeletesSession();
-    when(authenticatedUser.isConsultant()).thenReturn(false);
+    givenTheAdviceSeekerDeletes(sessionService.getSession(sessionId).orElseThrow());
 
     sessionDeleteService.deleteSession(sessionId);
 
@@ -206,22 +206,97 @@ class SessionDeleteServiceTest {
   @Test
   void deleteSession_doesNotRecordPlaceholderWithoutConsultant() {
     var sessionId = givenAPresentSession(false);
-    sessionService.getSession(sessionId).orElseThrow().setConsultant(null);
+    var session = sessionService.getSession(sessionId).orElseThrow();
+    session.setConsultant(null);
+    givenTheAdviceSeekerDeletes(session);
     givenActionRegistryDeletesSession();
     sessionDeleteService.deleteSession(sessionId);
     org.mockito.Mockito.verifyNoInteractions(deletedAskerSessionService);
   }
 
+  // ORISO-Admin#1518: a counsellor's delete removed a registered advice seeker's whole
+  // conversation and could deactivate their account. Counsellors archive such chats instead.
+  @Test
+  void deleteSession_Should_refuseTheAssignedConsultant_When_theAdviceSeekerIsRegistered() {
+    var sessionId = givenAPresentSession(true);
+    var session = sessionService.getSession(sessionId).orElseThrow();
+    session.setRegistrationType(Session.RegistrationType.REGISTERED);
+    session.setPostcode("12345");
+    session.getUser().setUsername("registered-asker");
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+        () -> sessionDeleteService.deleteSession(sessionId));
+
+    org.mockito.Mockito.verifyNoInteractions(
+        actionsRegistry, matrixSessionSystemMessageService, deletedAskerSessionService);
+  }
+
+  @Test
+  void deleteSession_Should_refuseAConsultantWhoIsNotAssigned_When_theChatIsAnonymous() {
+    var sessionId = givenAPresentSession(true);
+    when(authenticatedUser.getUserId()).thenReturn("another-consultant");
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+        () -> sessionDeleteService.deleteSession(sessionId));
+
+    org.mockito.Mockito.verifyNoInteractions(
+        actionsRegistry, matrixSessionSystemMessageService, deletedAskerSessionService);
+  }
+
+  @Test
+  void deleteSession_Should_letTheAssignedConsultantDelete_When_theChatIsAnonymousStyle() {
+    var sessionId = givenAPresentSession(false);
+    var session = sessionService.getSession(sessionId).orElseThrow();
+    session.setRegistrationType(Session.RegistrationType.REGISTERED);
+    session.getUser().setUsername("Anonymous-4711");
+    var delete = givenActionRegistryDeletesSession();
+
+    sessionDeleteService.deleteSession(sessionId);
+
+    verify(delete).executeActions(any(SessionDeletionWorkflowDTO.class));
+  }
+
+  @Test
+  void deleteSession_Should_refuseAnAdviceSeekerWhoDoesNotOwnTheSession() {
+    var sessionId = givenAPresentSession(false);
+    when(authenticatedUser.isConsultant()).thenReturn(false);
+    when(authenticatedUser.getUserId()).thenReturn("someone-else");
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+        () -> sessionDeleteService.deleteSession(sessionId));
+
+    org.mockito.Mockito.verifyNoInteractions(actionsRegistry);
+  }
+
+  /**
+   * An anonymous live-chat session, deleted by its assigned consultant: the one case the
+   * counsellor-facing endpoint still serves.
+   */
   private long givenAPresentSession(boolean isOnlySession) {
     var sessionId = easyRandom.nextLong();
     var session = easyRandom.nextObject(Session.class);
+    session.setRegistrationType(Session.RegistrationType.ANONYMOUS);
     if (isOnlySession) {
       session.getUser().setSessions(Set.of(session));
     }
 
     when(sessionService.getSession(sessionId)).thenReturn(Optional.of(session));
+    org.mockito.Mockito.lenient().when(authenticatedUser.isConsultant()).thenReturn(true);
+    org.mockito.Mockito.lenient()
+        .when(authenticatedUser.getUserId())
+        .thenReturn(session.getConsultant().getId());
 
     return sessionId;
+  }
+
+  private void givenTheAdviceSeekerDeletes(Session session) {
+    org.mockito.Mockito.lenient().when(authenticatedUser.isConsultant()).thenReturn(false);
+    org.mockito.Mockito.lenient()
+        .when(authenticatedUser.getUserId())
+        .thenReturn(session.getUser().getUserId());
   }
 
   private ActionContainer<SessionDeletionWorkflowDTO> givenActionRegistryDeletesSession() {
