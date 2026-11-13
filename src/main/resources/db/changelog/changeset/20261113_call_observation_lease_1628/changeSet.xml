@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- #1628: an end that arrives before the registration leaves a tombstone row (origin
+       END_TOMBSTONE, media_room_id NULL), so the late registration is rejected. The unique key
+       on media_room_id still holds for real rows; NULLs do not collide.
+       liveness_checked_at throttles the server's MatrixRTC membership check to once a minute. -->
+  <changeSet id="20261113-matrix-call-observation-lease-1628" author="oriso">
+    <dropNotNullConstraint tableName="matrix_call_observation" columnName="media_room_id"
+      columnDataType="VARCHAR(255)"/>
+    <addColumn tableName="matrix_call_observation">
+      <column name="liveness_checked_at" type="BIGINT"/>
+    </addColumn>
+    <rollback>
+      <delete tableName="matrix_call_observation">
+        <where>media_room_id IS NULL</where>
+      </delete>
+      <addNotNullConstraint tableName="matrix_call_observation" columnName="media_room_id"
+        columnDataType="VARCHAR(255)"/>
+      <dropColumn tableName="matrix_call_observation" columnName="liveness_checked_at"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

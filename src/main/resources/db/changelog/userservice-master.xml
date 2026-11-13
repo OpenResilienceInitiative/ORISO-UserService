@@ -276,4 +276,5 @@
   <include file="db/changelog/changeset/20261102_consultant_enquiry_opened_1549/changeSet.xml"/>
   <include file="db/changelog/changeset/20261112_direct_link_scheduled_at_2142/changeSet.xml"/>
   <include file="db/changelog/changeset/20261112_call_observation_session_2237/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261113_call_observation_lease_1628/changeSet.xml"/>
 </databaseChangeLog>

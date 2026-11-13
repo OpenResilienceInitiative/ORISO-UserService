@@ -65,7 +65,9 @@ class MatrixCallObservationIsolationTest {
           Class.forName(candidate.getBeanClassName(), false, getClass().getClassLoader());
       String name = type.getName(); // binary name: also covers nested and anonymous classes
       // Production classes only: the scan also sees test classes on the classpath.
+      // The service's own private nested types (#1628 end/write results) are part of the service.
       if (type == MatrixCallObservationService.class
+          || type.getEnclosingClass() == MatrixCallObservationService.class
           || type == MatrixCallObservation.class
           || type == MatrixCallObservationRepository.class
           || name.matches(".*(IT|Test)(\\$.*)?")) continue;

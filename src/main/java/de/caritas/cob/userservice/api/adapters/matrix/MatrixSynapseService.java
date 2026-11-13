@@ -1689,6 +1689,42 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
    */
   public java.util.Optional<CallRoomOrigin> getCallRoomOrigin(
       String roomId, String memberMatrixUserId) {
+    var state = readCallRoomState(roomId, memberMatrixUserId, "call origin lookup unavailable");
+    if (state.isEmpty()) return java.util.Optional.empty();
+    String creator = null;
+    String bindingSender = null;
+    int creates = 0;
+    int bindings = 0;
+    for (var event : state.get()) {
+      String type = String.valueOf(event.get("type"));
+      if ("m.room.create".equals(type) && "".equals(event.get("state_key"))) {
+        creates++;
+        creator = event.get("sender") instanceof String s ? s : null;
+      } else if ("org.oriso.call.binding".equals(type) && "".equals(event.get("state_key"))) {
+        bindings++;
+        bindingSender = event.get("sender") instanceof String s ? s : null;
+      }
+    }
+    if (creates != 1 || bindings != 1 || creator == null || bindingSender == null) {
+      return java.util.Optional.empty();
+    }
+    return java.util.Optional.of(new CallRoomOrigin(creator, bindingSender));
+  }
+
+  /**
+   * The full current state of a media room, read with a joined member's authority (#1628). State
+   * events are not end-to-end encrypted, so this includes the MatrixRTC call memberships of an
+   * encrypted call. Empty when the member is not joined or the room denies the read.
+   *
+   * @throws CallLookupUnavailableException when Matrix cannot answer right now
+   */
+  public java.util.Optional<java.util.List<java.util.Map<String, Object>>> getCallRoomState(
+      String roomId, String memberMatrixUserId) {
+    return readCallRoomState(roomId, memberMatrixUserId, "call room state unavailable");
+  }
+
+  private java.util.Optional<java.util.List<java.util.Map<String, Object>>> readCallRoomState(
+      String roomId, String memberMatrixUserId, String unavailableMessage) {
     if (roomId == null
         || roomId.isBlank()
         || memberMatrixUserId == null
@@ -1705,7 +1741,7 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
               matrixConfig,
               "/_matrix/client/v3/rooms/{roomId}/state",
               java.util.Map.of("roomId", roomId));
-      var state =
+      return java.util.Optional.ofNullable(
           restTemplate
               .exchange(
                   url,
@@ -1713,36 +1749,17 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
                   new HttpEntity<>(getClientHttpHeaders(token)),
                   new org.springframework.core.ParameterizedTypeReference<
                       java.util.List<java.util.Map<String, Object>>>() {})
-              .getBody();
-      if (state == null) return java.util.Optional.empty();
-      String creator = null;
-      String bindingSender = null;
-      int creates = 0;
-      int bindings = 0;
-      for (var event : state) {
-        String type = String.valueOf(event.get("type"));
-        if ("m.room.create".equals(type) && "".equals(event.get("state_key"))) {
-          creates++;
-          creator = event.get("sender") instanceof String s ? s : null;
-        } else if ("org.oriso.call.binding".equals(type) && "".equals(event.get("state_key"))) {
-          bindings++;
-          bindingSender = event.get("sender") instanceof String s ? s : null;
-        }
-      }
-      if (creates != 1 || bindings != 1 || creator == null || bindingSender == null) {
-        return java.util.Optional.empty();
-      }
-      return java.util.Optional.of(new CallRoomOrigin(creator, bindingSender));
+              .getBody());
     } catch (HttpStatusCodeException response) {
       if (isDefinitiveMemberDenial(response)) {
         return java.util.Optional.empty();
       }
       if (response.getStatusCode().value() == 401 || isRetryableCallLookupStatus(response)) {
-        throw new CallLookupUnavailableException("call origin lookup unavailable", response);
+        throw new CallLookupUnavailableException(unavailableMessage, response);
       }
       return java.util.Optional.empty();
     } catch (org.springframework.web.client.RestClientException unavailable) {
-      throw new CallLookupUnavailableException("call origin lookup unavailable", unavailable);
+      throw new CallLookupUnavailableException(unavailableMessage, unavailable);
     }
   }
 
