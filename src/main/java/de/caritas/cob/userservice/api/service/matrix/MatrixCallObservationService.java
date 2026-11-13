@@ -16,9 +16,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Observation-only registry for encrypted internal-group calls (#2166/#1624). Feeds the RTC state
- * lookup and the Activity Timeline only. It must never be read by guest admission, share links,
- * knocks or any other access decision; those read {@code MatrixCallBinding} exclusively.
+ * Observation-only registry for encrypted calls whose invite UserService cannot read: internal
+ * groups (#2166/#1624) and 1:1 sessions (#2237). Feeds the RTC state lookup and the Activity
+ * Timeline only. It must never be read by guest admission, share links, knocks or any other access
+ * decision; those read {@code MatrixCallBinding} exclusively.
  */
 @Service
 @RequiredArgsConstructor
@@ -51,9 +52,10 @@ public class MatrixCallObservationService {
       return Outcome.NOT_FOUND;
     }
     var conversation = conversations.resolveForWriting(sourceRoomId).orElse(null);
-    // Internal groups only: exactly a chat, never a session.
+    // Exactly one source: an internal group (chat) or a 1:1 session (#2237). The conversation
+    // type already enforces this; the explicit check keeps a row from ever naming both or neither.
     if (conversation == null
-        || conversation.getChatId() == null
+        || (conversation.getChatId() == null) == (conversation.getSessionId() == null)
         || actor.getTenantId() == null
         || !actor.getTenantId().equals(conversation.getTenantId())) {
       return Outcome.NOT_FOUND;
@@ -105,6 +107,7 @@ public class MatrixCallObservationService {
             .creatorMatrixId(creator)
             .tenantId(conversation.getTenantId())
             .chatId(conversation.getChatId())
+            .sessionId(conversation.getSessionId())
             .video(video)
             .registeredAt(now)
             .lastSeenAt(now)
@@ -180,11 +183,16 @@ public class MatrixCallObservationService {
   /** State for an authorized reader (conversation member). The caller checks membership. */
   Optional<MatrixCallStateService.CallState> readState(
       MatrixCallConversation conversation, String callId) {
-    if (conversation.getChatId() == null) return Optional.empty();
+    if ((conversation.getChatId() == null) == (conversation.getSessionId() == null)) {
+      return Optional.empty();
+    }
+    // Exact source match on both ids: a session row is never readable through a chat that happens
+    // to share its numeric id, nor through another session, and vice versa.
     return observations
         .findBySourceRoomIdAndCallId(conversation.getMatrixRoomId(), callId)
         .filter(row -> Objects.equals(row.getTenantId(), conversation.getTenantId()))
         .filter(row -> Objects.equals(row.getChatId(), conversation.getChatId()))
+        .filter(row -> Objects.equals(row.getSessionId(), conversation.getSessionId()))
         .map(
             row -> {
               long now = System.currentTimeMillis();

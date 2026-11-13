@@ -1286,6 +1286,51 @@ class MatrixSynapseServiceTest {
   // -------------------------------------------------------------------------
 
   @Test
+  void getRoomHistoryVisibility_readsTheLatestHistoryEventOfTheRoomState() {
+    // Invitations into a running internal chat need the room's history policy (#1580).
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.argThat(uri -> uri.toString().contains("/state")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(
+            ResponseEntity.ok(
+                Map.of(
+                    "state",
+                    List.of(
+                        Map.of("type", "m.room.create", "content", Map.of()),
+                        Map.of(
+                            "type",
+                            "m.room.history_visibility",
+                            "content",
+                            Map.of("history_visibility", "joined"))))));
+
+    assertThat(matrixSynapseService().getRoomHistoryVisibility(MATRIX_ROOM_ID)).contains("joined");
+  }
+
+  @Test
+  void getRoomHistoryVisibility_withoutTheEvent_isTheMatrixDefaultShared() {
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.argThat(uri -> uri.toString().contains("/state")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("state", List.of())));
+
+    assertThat(matrixSynapseService().getRoomHistoryVisibility(MATRIX_ROOM_ID)).contains("shared");
+  }
+
+  @Test
+  void getRoomHistoryVisibility_noAdminToken_isUnknown() {
+    matrixConfig.setAdminUsername("");
+
+    assertThat(matrixSynapseService().getRoomHistoryVisibility(MATRIX_ROOM_ID)).isEmpty();
+    verifyNoInteractions(restTemplate);
+  }
+
+  @Test
   void getRoomMembers_noAdminToken_returnsEmptyOptional() {
     // Room membership cannot be read without admin credentials.
     matrixConfig.setAdminUsername("");

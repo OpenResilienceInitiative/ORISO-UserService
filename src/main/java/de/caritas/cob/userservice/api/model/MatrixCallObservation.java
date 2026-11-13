@@ -4,7 +4,8 @@ import jakarta.persistence.*;
 import lombok.*;
 
 /**
- * Observation-only registration of an encrypted internal-group call (#2166/#1624). It is NOT a call
+ * Observation-only registration of an encrypted call (#2166/#1624) in an internal group or, since
+ * #2237, a 1:1 session. Exactly one of {@code chatId} or {@code sessionId} is set. It is NOT a call
  * binding: it never admits a guest, never backs a share link or knock and never grants access.
  */
 @Entity
@@ -38,8 +39,13 @@ public class MatrixCallObservation {
   @Column(name = "tenant_id", nullable = false)
   private Long tenantId;
 
-  @Column(name = "chat_id", nullable = false)
+  /** Internal group source; null for a session call. */
+  @Column(name = "chat_id")
   private Long chatId;
+
+  /** Session source (#2237); null for an internal-group call. */
+  @Column(name = "session_id")
+  private Long sessionId;
 
   @Column(name = "video", nullable = false)
   private boolean video;
