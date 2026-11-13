@@ -330,6 +330,9 @@ class MatrixCallTenantIT {
                         org.mockito.Mockito.mock(
                             de.caritas.cob.userservice.api.service.matrix
                                 .MatrixCallObservationService.class),
+                        org.mockito.Mockito.mock(
+                            de.caritas.cob.userservice.api.service.matrix
+                                .MatrixSessionCallBindingService.class),
                         actor))
                 .build();
         mvc.perform(
@@ -356,6 +359,9 @@ class MatrixCallTenantIT {
                   callGuests,
                   org.mockito.Mockito.mock(
                       de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService
+                          .class),
+                  org.mockito.Mockito.mock(
+                      de.caritas.cob.userservice.api.service.matrix.MatrixSessionCallBindingService
                           .class),
                   actor))
           .build()

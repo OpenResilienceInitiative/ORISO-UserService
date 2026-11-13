@@ -410,7 +410,14 @@ class MatrixCallGuestRoomIT {
 
   private MockMvc mvc(AuthenticatedUser actor) {
     return MockMvcBuilders.standaloneSetup(
-            new MatrixCallStateController(callStates, callGuests, observations, actor))
+            new MatrixCallStateController(
+                callStates,
+                callGuests,
+                observations,
+                mock(
+                    de.caritas.cob.userservice.api.service.matrix.MatrixSessionCallBindingService
+                        .class),
+                actor))
         .build();
   }
 
