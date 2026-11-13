@@ -18,10 +18,12 @@ record MatrixRtcMembershipEvent(
     boolean departed,
     String replacesEventId) {
 
+  static final String TYPE = "org.matrix.msc3401.call.member";
+
   private static final long DEFAULT_EXPIRE_DURATION = 4 * 60 * 60 * 1000L;
 
   static Optional<MatrixRtcMembershipEvent> parse(Map<String, Object> event) {
-    if (!"org.matrix.msc3401.call.member".equals(event.get("type"))) return Optional.empty();
+    if (!TYPE.equals(event.get("type"))) return Optional.empty();
     if (!(event.get("event_id") instanceof String eventId)
         || eventId.isBlank()
         || !(event.get("sender") instanceof String sender)

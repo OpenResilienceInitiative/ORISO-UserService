@@ -333,6 +333,10 @@ public class MatrixCallObservationService {
       MatrixCallConversation conversation, MatrixCallObservation row, List<String> sourceMembers) {
     long now = System.currentTimeMillis();
     long[] lastPresence = {row.getRegisteredAt()};
+    // What this verdict is based on: a renewal or another check that commits while Matrix is read
+    // supersedes it (two readers probing at once must not let the older answer win).
+    long seenAt = row.getLastSeenAt();
+    Long checkedAt = row.getLivenessCheckedAt();
     Liveness liveness;
     try {
       liveness = probe(row, sourceMembers, now, lastPresence);
@@ -354,7 +358,9 @@ public class MatrixCallObservationService {
                           .orElse(null);
                   if (locked == null
                       || locked.getEndedAt() != null
-                      || !Objects.equals(locked.getMediaRoomId(), row.getMediaRoomId())) {
+                      || !Objects.equals(locked.getMediaRoomId(), row.getMediaRoomId())
+                      || locked.getLastSeenAt() != seenAt
+                      || !Objects.equals(locked.getLivenessCheckedAt(), checkedAt)) {
                     return null;
                   }
                   long at = System.currentTimeMillis();
@@ -388,9 +394,19 @@ public class MatrixCallObservationService {
     var state = matrix.getCallRoomState(row.getMediaRoomId(), readers.get(0)).orElse(null);
     if (state == null) return Liveness.UNKNOWN;
     boolean understood = false;
+    boolean inconclusive = false;
     for (var event : state) {
       var membership = MatrixRtcMembershipEvent.parse(event).orElse(null);
-      if (membership == null || !sourceMembers.contains(membership.sender())) continue;
+      if (membership == null) {
+        // A participant's call membership this server cannot read is no proof they left.
+        if (MatrixRtcMembershipEvent.TYPE.equals(event.get("type"))
+            && event.get("sender") instanceof String sender
+            && sourceMembers.contains(sender)) {
+          inconclusive = true;
+        }
+        continue;
+      }
+      if (!sourceMembers.contains(membership.sender())) continue;
       understood = true;
       if (!membership.departed() && membership.expiresAt() > now) {
         return Liveness.SOMEBODY_IN_CALL;
@@ -400,7 +416,7 @@ public class MatrixCallObservationService {
               lastPresence[0],
               membership.departed() ? membership.eventTimestamp() : membership.expiresAt());
     }
-    return understood ? Liveness.EVERYBODY_LEFT : Liveness.UNKNOWN;
+    return understood && !inconclusive ? Liveness.EVERYBODY_LEFT : Liveness.UNKNOWN;
   }
 
   private static MatrixCallStateService.CallState toState(MatrixCallObservation row) {

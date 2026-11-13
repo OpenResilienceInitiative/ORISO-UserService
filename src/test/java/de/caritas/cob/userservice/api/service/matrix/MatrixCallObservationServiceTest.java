@@ -572,6 +572,61 @@ class MatrixCallObservationServiceTest {
   }
 
   @Test
+  void aCallMemberEventOfAParticipantThatCannotBeReadIsNoProofTheyLeft() {
+    long now = System.currentTimeMillis();
+    var row = row(now - 20 * 60_000, now + 5 * 60_000, null);
+    when(repo.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    when(matrix.getCallRoomMembers(MEDIA)).thenReturn(Optional.of(List.of(CREATOR, OTHER)));
+    // OTHER's membership has content this server does not understand (no focus_active).
+    Map<String, Object> unreadable =
+        Map.of(
+            "type",
+            "org.matrix.msc3401.call.member",
+            "event_id",
+            "$unreadable",
+            "sender",
+            OTHER,
+            "state_key",
+            "_" + OTHER + "_DEVICE",
+            "origin_server_ts",
+            now - 60_000,
+            "content",
+            Map.of("application", "m.call", "scope", "m.room", "call_id", ""));
+    when(matrix.getCallRoomState(MEDIA, CREATOR))
+        .thenReturn(Optional.of(List.of(departed(CREATOR, now - 90_000), unreadable)));
+
+    var state =
+        service.readState(new MatrixCallConversation(SOURCE, 7L, null, 45L), "call", MEMBERS);
+
+    assertThat(state.orElseThrow().state()).isEqualTo("running");
+    assertThat(row.getEndedAt()).isNull();
+  }
+
+  @Test
+  void aLivenessVerdictOvertakenByANewerRenewalIsDiscarded() {
+    long now = System.currentTimeMillis();
+    // What this reader saw before it asked Matrix ...
+    var seen = row(now - 20 * 60_000, now + 5 * 60_000, null);
+    // ... and the row under the lock: the creator renewed in the meantime.
+    var locked = row(now - 20 * 60_000, now + 5 * 60_000, null);
+    locked.renew(now, now + 5 * 60_000);
+    when(repo.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(seen));
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(locked));
+    when(matrix.getCallRoomMembers(MEDIA)).thenReturn(Optional.of(List.of(CREATOR, OTHER)));
+    when(matrix.getCallRoomState(MEDIA, CREATOR))
+        .thenReturn(
+            Optional.of(List.of(departed(CREATOR, now - 90_000), departed(OTHER, now - 70_000))));
+
+    service.readState(new MatrixCallConversation(SOURCE, 7L, null, 45L), "call", MEMBERS);
+
+    assertThat(locked.getEndedAt()).isNull();
+    verify(notifications, never())
+        .createCallEndedNotification(
+            any(), anyString(), anyBoolean(), anyString(), anyString(), anyLong(), anyLong());
+  }
+
+  @Test
   void livenessIsCheckedAtMostOncePerMinute() {
     long now = System.currentTimeMillis();
     var row = row(now - 20 * 60_000, now + 5 * 60_000, null);
