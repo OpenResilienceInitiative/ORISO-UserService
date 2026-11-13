@@ -137,36 +137,81 @@ public class MatrixSessionCallBindingService {
       return false;
     }
     Set<String> invitees = invitees(members, caller, conversation.getTenantId());
-    // Security review: a binding about to be taken over first loses its guests in its own (old)
-    // call room, before the transaction opens (#1630). A removal that fails refuses this bind.
-    if (known != null
-        && known.getEndedAt() == null
-        && !authority.grantsGuestAuthority(known)
-        && !callGuests.revokeBeforeTakeOver(known)) {
-      return false;
-    }
 
-    Result written =
-        new TransactionTemplate(transactionManager)
-            .execute(
-                status -> write(actor, conversation, callId, mediaRoomId, caller, video, invitees));
+    Result written = null;
+    for (int attempt = 0; written == null; attempt++) {
+      // Security review: a binding about to be taken over first loses its guests in its own (old)
+      // call room, before the transaction opens (#1630). A removal that fails refuses this bind.
+      if (known != null
+          && !authority.grantsGuestAuthority(known)
+          && !callGuests.revokeBeforeTakeOver(known)) {
+        return false;
+      }
+      Long lockFirst = known == null ? null : known.getId();
+      try {
+        written =
+            new TransactionTemplate(transactionManager)
+                .execute(
+                    status ->
+                        write(
+                            actor,
+                            conversation,
+                            callId,
+                            mediaRoomId,
+                            caller,
+                            video,
+                            invitees,
+                            lockFirst));
+      } catch (LockOrderRetry appeared) {
+        // A binding of this call appeared after the lookup; lock it first on the next attempt.
+        if (attempt > 0) return false;
+        known = bindings.findBySourceRoomIdAndCallId(sourceRoomId, callId).orElse(null);
+        if (known != null && authority.grantsGuestAuthority(known)) {
+          return sameCall(known, conversation, mediaRoomId, caller)
+              && known.getEndedAt() == null
+              && known.isLive(System.currentTimeMillis());
+        }
+      }
+    }
     if (written == Result.REFUSED) return false;
     if (written == Result.CREATED) observe(mediaRoomId, caller);
     return true;
   }
 
   /**
-   * Outside any transaction: the call room of this call's binding, if one exists yet. The end
-   * transaction locks that binding first, in the order the lifecycle takes (binding, then session).
+   * FE#2209 round 3: one lock order on every session-call path: the binding, then the session's
+   * call lock, then observation and end rows, then the share link and its knocks. A path that finds
+   * a binding it did not lock first throws this; its transaction rolls back and is retried with
+   * that binding locked first.
    */
-  public Optional<String> boundCallRoom(String sourceRoomId, String callId) {
-    if (blank(sourceRoomId, 255) || blank(callId, 191)) return Optional.empty();
-    return bindings.findBySourceRoomIdAndCallId(sourceRoomId, callId).map(b -> b.getMediaRoomId());
+  public static class LockOrderRetry
+      extends org.springframework.dao.PessimisticLockingFailureException {
+    public LockOrderRetry() {
+      super("call binding appeared after the lookup; retry in lock order");
+    }
   }
 
-  /** First step of the end transaction when {@link #boundCallRoom} found a binding. */
-  public void lockBinding(String mediaRoomId) {
-    bindings.lockByMediaRoomId(mediaRoomId);
+  /**
+   * Outside any transaction: the id of this call's binding, if one exists yet. The end transaction
+   * locks that binding first (binding, then session).
+   */
+  public Optional<Long> boundCallId(String sourceRoomId, String callId) {
+    if (blank(sourceRoomId, 255) || blank(callId, 191)) return Optional.empty();
+    return bindings.findBySourceRoomIdAndCallId(sourceRoomId, callId).map(b -> b.getId());
+  }
+
+  /** First step of the end transaction when {@link #boundCallId} found a binding. */
+  public void lockBinding(Long bindingId) {
+    bindings.lockById(bindingId);
+  }
+
+  /**
+   * Whether this binding preempts an observation registration of the same call: a group chat's
+   * binding always; a 1:1 session call's only when it carries the assigned counsellor's authority.
+   * An asker's plaintext invite never keeps the counsellor's call from being registered.
+   */
+  public boolean preemptsRegistration(MatrixCallBinding binding) {
+    return binding.getSessionId() == null || authority.grantsGuestAuthority(binding);
   }
 
   /**
@@ -180,7 +225,11 @@ public class MatrixSessionCallBindingService {
    * binding this ended, else {@code null}. Call {@link #revokeGuestsAfterEnd} after the commit.
    */
   public String endWhileSessionLocked(
-      AuthenticatedUser actor, MatrixCallConversation conversation, String callId, long now) {
+      AuthenticatedUser actor,
+      MatrixCallConversation conversation,
+      String callId,
+      long now,
+      Long lockedBindingId) {
     if (actor == null
         || !actor.isConsultant()
         || actor.getUserId() == null
@@ -202,7 +251,9 @@ public class MatrixSessionCallBindingService {
     // Read after the session lock, so a binding committed while this end waited is seen.
     var known = bindings.findBySourceRoomIdAndCallId(sourceRoomId, callId).orElse(null);
     if (known == null) return null;
-    var binding = bindings.lockByMediaRoomId(known.getMediaRoomId()).orElse(null);
+    // Locked before the session by the caller; one that appeared meanwhile is retried in order.
+    if (!Objects.equals(known.getId(), lockedBindingId)) throw new LockOrderRetry();
+    var binding = bindings.lockById(known.getId()).orElse(null);
     if (binding == null
         || binding.getEndedAt() != null
         || !sourceRoomId.equals(binding.getSourceRoomId())
@@ -246,7 +297,10 @@ public class MatrixSessionCallBindingService {
       String mediaRoomId,
       String caller,
       boolean video,
-      Set<String> invitees) {
+      Set<String> invitees,
+      Long lockFirst) {
+    // Lock order (round 3): the binding before the session's call lock.
+    if (lockFirst != null) bindings.lockById(lockFirst);
     if (!conversations.lockCurrentForWriting(conversation)) return Result.REFUSED;
     // Under the session's call lock: the assignment and the account may have changed while Matrix
     // was asked.
@@ -257,6 +311,9 @@ public class MatrixSessionCallBindingService {
     String sourceRoomId = conversation.getMatrixRoomId();
     long now = System.currentTimeMillis();
     var existing = bindings.findBySourceRoomIdAndCallId(sourceRoomId, callId).orElse(null);
+    if (existing != null && !Objects.equals(existing.getId(), lockFirst)) {
+      throw new LockOrderRetry();
+    }
     if (existing != null && !authority.grantsGuestAuthority(existing)) {
       return takeOver(existing, sourceRoomId, callId, mediaRoomId, caller, video, invitees, now);
     }
@@ -271,7 +328,7 @@ public class MatrixSessionCallBindingService {
     if (bindings.findByMediaRoomId(mediaRoomId).isPresent()) return Result.REFUSED;
     // #1641 "ending wins": a call this counsellor already ended, or whose registration lease ran
     // out, is never bound by a late registration. Deny-only: the row grants nothing.
-    if (endedByObservation(sourceRoomId, callId, caller, now)) return Result.REFUSED;
+    if (endedByObservation(sourceRoomId, callId, caller, now, true)) return Result.REFUSED;
     var proposed =
         MatrixCallBinding.builder()
             .sourceRoomId(sourceRoomId)
@@ -291,10 +348,11 @@ public class MatrixSessionCallBindingService {
 
   /**
    * FE#2209 review: the same call (source room and call id) already has a binding from somebody
-   * else's plaintext invite. It never blocks the assigned counsellor: the row is taken over in
-   * place (so the unique key on source room and call id holds) and points at the counsellor's
-   * verified call room from now on. Refused only when that call room belongs to another binding, or
-   * the call was already ended.
+   * else's plaintext invite. It never blocks the assigned counsellor, also not once it ended or
+   * lapsed (round 3: an asker could otherwise send lifetime=1 for the counsellor's call id): the
+   * row is taken over in place (so the unique key on source room and call id holds), starts the
+   * counsellor's call afresh and points at the counsellor's verified call room from now on. Refused
+   * only when that call room belongs to another binding, or the counsellor already ended the call.
    */
   private Result takeOver(
       MatrixCallBinding existing,
@@ -305,21 +363,17 @@ public class MatrixSessionCallBindingService {
       boolean video,
       Set<String> invitees,
       long now) {
-    // Security review: an ended or lapsed call is never brought back by a takeover.
-    if (existing.getEndedAt() != null || !existing.isLive(now)) return Result.REFUSED;
     var owner = bindings.findByMediaRoomId(mediaRoomId).orElse(null);
     if (owner != null && !Objects.equals(owner.getId(), existing.getId())) return Result.REFUSED;
-    if (endedByObservation(sourceRoomId, callId, caller, now)) return Result.REFUSED;
-    var locked = bindings.lockByMediaRoomId(existing.getMediaRoomId()).orElse(null);
-    if (locked == null
-        || !Objects.equals(locked.getId(), existing.getId())
-        || locked.getEndedAt() != null
-        || !locked.isLive(now)) {
-      return Result.REFUSED;
-    }
+    // CodeRabbit 4562143186: only an explicit end blocks a takeover. A lease is not renewed once a
+    // binding exists, so its lapse says nothing about the call.
+    if (endedByObservation(sourceRoomId, callId, caller, now, false)) return Result.REFUSED;
+    // Already locked first by write(); the same transaction takes it again at no cost.
+    var locked = bindings.lockById(existing.getId()).orElse(null);
+    if (locked == null || !Objects.equals(locked.getId(), existing.getId())) return Result.REFUSED;
     // Nothing of the old call carries into the counsellor's room: no seat (taken back before the
-    // transaction), no share link and no knock waiting on it.
-    if (!callGuests.forgetSeatsForTakeOver(locked.getId())) return Result.REFUSED;
+    // transaction; the revoked records stay), no share link and no knock waiting on it.
+    if (!callGuests.noSeatOutstanding(locked.getId())) return Result.REFUSED;
     retireShareLink(locked.getId());
     locked.takeOver(caller, mediaRoomId, now, now + START_GRACE_MILLIS, video, invitees);
     bindings.saveAndFlush(locked);
@@ -352,19 +406,22 @@ public class MatrixSessionCallBindingService {
     }
   }
 
-  private boolean endedByObservation(String sourceRoomId, String callId, String caller, long now) {
+  private boolean endedByObservation(
+      String sourceRoomId, String callId, String caller, long now, boolean leaseCounts) {
     // Locked: an explicit end (MatrixCallObservationService.writeEnd) locks the same row, so it
     // either committed before this read or waits for this binding and then ends it (end below).
     var row = observations.findForUpdateBySourceRoomIdAndCallId(sourceRoomId, callId).orElse(null);
-    // US#1641 per-person ends: the caller's own end always wins; before any registration, any
-    // member's end means the call reads as ended, so it is not bound either.
+    // US#1641 per-person ends. Round 3 (R1): only the counsellor's own end, or the counsellor's own
+    // registration having ended or lapsed, counts. Somebody else's end, or somebody else's
+    // registration of the same call id, never blocks the assigned counsellor. (A colleague with
+    // authority ends the counsellor's binding itself, which bind sees as an ended binding.)
     if (ends.findForUpdateBySourceRoomIdAndCallIdAndActorMatrixId(sourceRoomId, callId, caller)
         .isPresent()) {
       return true;
     }
-    if (row == null)
-      return !ends.findForUpdateBySourceRoomIdAndCallId(sourceRoomId, callId).isEmpty();
-    return row.getEndedAt() != null || now >= row.getExpiresAt();
+    return row != null
+        && caller.equals(row.getCreatorMatrixId())
+        && (row.getEndedAt() != null || (leaseCounts && now >= row.getExpiresAt()));
   }
 
   private static boolean sameCall(

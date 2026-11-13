@@ -156,6 +156,22 @@ class MatrixCallObservationServiceTest {
   }
 
   @Test
+  void aBindingCommittedWhileMatrixWasAskedIsSeenUnderTheLockAndWins() {
+    // CodeRabbit 4562143169: the check runs again under the source lock, so an authoritative
+    // binding written during the Matrix lookups is never pre-empted by this registration.
+    when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call"))
+        .thenReturn(
+            Optional.empty(),
+            Optional.of(MatrixCallBinding.builder().sourceRoomId(SOURCE).build()));
+
+    assertThat(service.register(actor, SOURCE, "call", MEDIA, true)).isEqualTo(Outcome.NOT_FOUND);
+    verify(repo, never()).saveAndFlush(any());
+    verify(notifications, never())
+        .createCallInvitationNotification(
+            any(), any(), anyBoolean(), any(), any(), any(), anyBoolean());
+  }
+
+  @Test
   void aCallThatAlreadyHasAnAuthoritativeBindingIsNotObserved() {
     // Observation and binding notifications share one dedupe key per (room, call). A member
     // must not be able to register a look-alike first and suppress the real call's entries.
@@ -420,7 +436,7 @@ class MatrixCallObservationServiceTest {
     long now = System.currentTimeMillis();
     var row = sessionRow(16L, now - 1000, now + 60_000);
     when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
-    when(sessionBindings.boundCallRoom(SOURCE, "call")).thenReturn(Optional.of(MEDIA));
+    when(sessionBindings.boundCallId(SOURCE, "call")).thenReturn(Optional.of(5L));
     var order = new java.util.ArrayList<String>();
     org.mockito.Mockito.doAnswer(
             i -> {
@@ -428,14 +444,14 @@ class MatrixCallObservationServiceTest {
               return null;
             })
         .when(sessionBindings)
-        .lockBinding(MEDIA);
+        .lockBinding(5L);
     when(conversations.lockCurrentForWriting(any()))
         .thenAnswer(
             i -> {
               order.add("lock session " + tx.isOpen());
               return true;
             });
-    when(sessionBindings.endWhileSessionLocked(any(), eq(session), eq("call"), anyLong()))
+    when(sessionBindings.endWhileSessionLocked(any(), eq(session), eq("call"), anyLong(), eq(5L)))
         .thenAnswer(
             i -> {
               order.add("end binding " + tx.isOpen());
@@ -468,7 +484,8 @@ class MatrixCallObservationServiceTest {
     when(users.findByUserIdAndDeleteDateIsNull("other"))
         .thenReturn(Optional.of(user("other", OTHER)));
     // ... but the binding rule lets a counsellor who is in the call end the call.
-    when(sessionBindings.endWhileSessionLocked(eq(colleague), eq(session), eq("call"), anyLong()))
+    when(sessionBindings.endWhileSessionLocked(
+            eq(colleague), eq(session), eq("call"), anyLong(), any()))
         .thenReturn(MEDIA);
 
     assertThat(service.end(colleague, SOURCE, "call")).isEqualTo(Outcome.OK);

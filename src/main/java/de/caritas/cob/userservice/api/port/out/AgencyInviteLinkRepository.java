@@ -29,6 +29,26 @@ public interface AgencyInviteLinkRepository extends JpaRepository<AgencyInviteLi
   /** The share link of one running call (#1487); at most one per call. */
   Optional<AgencyInviteLink> findByCallBindingId(Long callBindingId);
 
+  /**
+   * FE#2209 round 3: the call a link belongs to, without loading the link, so callers can lock that
+   * call's binding before the link (lock order: binding, session, observation, link, knocks).
+   */
+  @Query("SELECT l.callBindingId FROM AgencyInviteLink l WHERE l.id = :id")
+  Optional<Long> findCallBindingIdById(@Param("id") Long id);
+
+  /** The call of the share link a knock came through (same lock order). */
+  @Query(
+      "SELECT l.callBindingId FROM AgencyInviteLink l, GroupChatJoinRequest r"
+          + " WHERE r.id = :knockId AND r.inviteLinkId = l.id")
+  Optional<Long> findCallBindingIdOfKnock(@Param("knockId") Long knockId);
+
+  /** The calls of a counsellor's active share links, in id order (same lock order). */
+  @Query(
+      "SELECT l.callBindingId FROM AgencyInviteLink l WHERE l.consultantId = :consultantId"
+          + " AND l.linkKind = 'CALL' AND l.status = 'ACTIVE' AND l.callBindingId IS NOT NULL"
+          + " ORDER BY l.callBindingId")
+  List<Long> findActiveCallBindingIdsOfConsultant(@Param("consultantId") String consultantId);
+
   /** Locked: knocks through one share link are serialised on the link row (#1487). */
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("SELECT l FROM AgencyInviteLink l WHERE l.id = :id")

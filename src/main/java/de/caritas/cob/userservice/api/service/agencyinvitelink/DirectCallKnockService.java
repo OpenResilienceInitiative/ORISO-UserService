@@ -336,6 +336,17 @@ public class DirectCallKnockService {
     if (!scope.scoped()) {
       throw new BadRequestException("admit-all needs sessionId or matrixRoomId");
     }
+    // FE#2209 round 3 lock order: the calls whose knocks may be let in, then the conversation,
+    // then the knocks.
+    if (scope.callLinks()) {
+      if (scope.roomId() != null) {
+        callBindings.lockBySourceRoomId(scope.roomId());
+      } else {
+        inviteLinkRepository
+            .findActiveCallBindingIdsOfConsultant(consultant.getId())
+            .forEach(callBindings::lockById);
+      }
+    }
     // A group-call room has no 1:1 conversation to lock; its knocks are locked row by row below.
     if (scope.sessionId() != null) {
       lockConversation(scope.sessionId());
@@ -403,6 +414,8 @@ public class DirectCallKnockService {
   }
 
   private GroupChatJoinRequest decide(Long knockId, Consultant consultant, Status outcome) {
+    // FE#2209 round 3 lock order: the call's binding, then the conversation, then the knock.
+    inviteLinkRepository.findCallBindingIdOfKnock(knockId).ifPresent(callBindings::lockById);
     repository.findSessionIdById(knockId).ifPresent(this::lockConversation);
     var knock =
         repository

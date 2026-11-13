@@ -130,7 +130,7 @@ class MatrixSessionCallBindingServiceTest {
     when(callBindings.registerWhileSourceLocked(any())).thenReturn(true);
     when(lifecycle.isActiveRecipient(anyString())).thenReturn(true);
     when(callGuests.revokeBeforeTakeOver(any())).thenReturn(true);
-    when(callGuests.forgetSeatsForTakeOver(any())).thenReturn(true);
+    when(callGuests.noSeatOutstanding(any())).thenReturn(true);
     // Only the session's assigned counsellor's binding carries authority (SessionCallAuthority).
     when(authority.grantsGuestAuthority(any()))
         .thenAnswer(
@@ -356,17 +356,40 @@ class MatrixSessionCallBindingServiceTest {
   }
 
   @Test
-  void anyMembersEndOfACallWithoutRegistrationRefusesTheBinding() {
-    // The call reads as ended (US#1641 endedBeforeRegistration), so it is not bound either.
-    when(ends.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call"))
-        .thenReturn(List.of(end(OTHER_COUNSELLOR)));
-    assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isFalse();
-    verify(callBindings, never()).registerWhileSourceLocked(any());
+  void aNonCallersEndOrRegistrationNeverBlocksTheBinding() {
+    // Round 3 (R1): only the counsellor's own end or own registration counts as "ended"; an
+    // asker's end, or an asker's ended or lapsed registration of the same call id, does not.
+    when(ends.findForUpdateBySourceRoomIdAndCallIdAndActorMatrixId(SOURCE, "call", ASKER))
+        .thenReturn(Optional.of(end(ASKER)));
+    var askers = observation(System.currentTimeMillis() - 1);
+    askers.finish(System.currentTimeMillis() - 1);
+    when(observations.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call"))
+        .thenReturn(Optional.of(askerObservation(askers)));
+    assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isTrue();
+    verify(callBindings).registerWhileSourceLocked(any());
+  }
+
+  private static de.caritas.cob.userservice.api.model.MatrixCallObservation askerObservation(
+      de.caritas.cob.userservice.api.model.MatrixCallObservation template) {
+    return de.caritas.cob.userservice.api.model.MatrixCallObservation.builder()
+        .origin(template.getOrigin())
+        .sourceRoomId(SOURCE)
+        .callId("call")
+        .mediaRoomId("!asker-media:example")
+        .creatorMatrixId(ASKER)
+        .tenantId(TENANT)
+        .sessionId(SESSION)
+        .registeredAt(template.getRegisteredAt())
+        .lastSeenAt(template.getLastSeenAt())
+        .expiresAt(template.getExpiresAt())
+        .endedAt(template.getEndedAt())
+        .build();
   }
 
   @Test
   void somebodyElsesEndDoesNotBlockTheBindingOfARegisteredLiveCall() {
-    when(ends.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(List.of(end(ASKER)));
+    when(ends.findForUpdateBySourceRoomIdAndCallIdAndActorMatrixId(SOURCE, "call", ASKER))
+        .thenReturn(Optional.of(end(ASKER)));
     when(observations.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call"))
         .thenReturn(Optional.of(observation(System.currentTimeMillis() + 60_000)));
     assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isTrue();
@@ -436,7 +459,7 @@ class MatrixSessionCallBindingServiceTest {
     // FE#2209 decision: an asker's (or unassigned colleague's) invite never blocks bind().
     var askers = existing(42L, "!asker-media:example", ASKER);
     when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(askers));
-    when(bindings.lockByMediaRoomId("!asker-media:example")).thenReturn(Optional.of(askers));
+    when(bindings.lockById(42L)).thenReturn(Optional.of(askers));
 
     assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isTrue();
 
@@ -448,13 +471,16 @@ class MatrixSessionCallBindingServiceTest {
   }
 
   @Test
-  void anEndedOrLapsedAuthorityLessBindingIsNeverTakenOver() {
-    // Security review: a takeover must not bring an ended call back.
+  void anEndedOrLapsedAuthorityLessBindingIsStillTakenOver() {
+    // Round 3 (R1): an asker's binding that ended or lapsed (lifetime=1) never blocks the assigned
+    // counsellor; the takeover starts the counsellor's call afresh on the same row.
     var ended = existing(42L, "!asker-media:example", ASKER);
     ended.finish(System.currentTimeMillis());
     when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(ended));
-    when(bindings.lockByMediaRoomId("!asker-media:example")).thenReturn(Optional.of(ended));
-    assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isFalse();
+    when(bindings.lockById(42L)).thenReturn(Optional.of(ended));
+    assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isTrue();
+    assertThat(ended.getEndedAt()).isNull();
+    assertThat(ended.getCallerMatrixId()).isEqualTo(COUNSELLOR);
 
     var lapsed =
         MatrixCallBinding.builder()
@@ -469,20 +495,46 @@ class MatrixSessionCallBindingServiceTest {
             .inviteExpiresAt(System.currentTimeMillis() - 60_000)
             .build();
     when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(lapsed));
-    when(bindings.lockByMediaRoomId("!asker-media:example")).thenReturn(Optional.of(lapsed));
-    assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isFalse();
-    verify(bindings, never()).saveAndFlush(any());
+    when(bindings.lockById(43L)).thenReturn(Optional.of(lapsed));
+    assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isTrue();
+    assertThat(lapsed.getCallerMatrixId()).isEqualTo(COUNSELLOR);
   }
 
   @Test
-  void aBindingThatEndedWhileTheTakeOverWaitedForItsLockIsNotTakenOver() {
-    var seen = existing(42L, "!asker-media:example", ASKER);
-    var locked = existing(42L, "!asker-media:example", ASKER);
-    locked.finish(System.currentTimeMillis());
-    when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(seen));
-    when(bindings.lockByMediaRoomId("!asker-media:example")).thenReturn(Optional.of(locked));
+  void aBindingThatAppearsAfterTheLookupIsLockedBeforeTheSessionOnTheRetry() {
+    // Round 3 lock order (binding, then session): a binding inserted between bind's lookup and
+    // its transaction was not locked first, so that attempt is rolled back and retried.
+    var askers = existing(42L, "!asker-media:example", ASKER);
+    when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call"))
+        .thenReturn(Optional.empty(), Optional.of(askers));
+    when(bindings.lockById(42L)).thenReturn(Optional.of(askers));
+    assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isTrue();
+    var order = org.mockito.Mockito.inOrder(bindings, conversations);
+    order.verify(bindings).lockById(42L);
+    order.verify(conversations).lockCurrentForWriting(any());
+    verify(callBindings, never()).registerWhileSourceLocked(any());
+    assertThat(askers.getCallerMatrixId()).isEqualTo(COUNSELLOR);
+  }
+
+  @Test
+  void aLapsedRegistrationLeaseDoesNotBlockATakeOver_OnlyAnExplicitEndDoes() {
+    // CodeRabbit 4562143186: a lease is not renewed once a binding exists, so a lapsed lease says
+    // nothing about the call; the takeover counts explicit ends only.
+    var askers = existing(42L, "!asker-media:example", ASKER);
+    when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(askers));
+    when(bindings.lockById(42L)).thenReturn(Optional.of(askers));
+    when(observations.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call"))
+        .thenReturn(Optional.of(observation(System.currentTimeMillis() - 1)));
+    assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isTrue();
+
+    var ended = observation(System.currentTimeMillis() + 60_000);
+    ended.finish(System.currentTimeMillis());
+    var again = existing(43L, "!asker-media-2:example", ASKER);
+    when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(again));
+    when(bindings.lockById(43L)).thenReturn(Optional.of(again));
+    when(observations.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call"))
+        .thenReturn(Optional.of(ended));
     assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isFalse();
-    verify(bindings, never()).saveAndFlush(any());
   }
 
   @Test
@@ -520,9 +572,9 @@ class MatrixSessionCallBindingServiceTest {
       new MatrixCallConversation(SOURCE, TENANT, SESSION, null);
 
   private MatrixCallBinding liveBinding() {
-    var live = existing(MEDIA, COUNSELLOR);
+    var live = existing(5L, MEDIA, COUNSELLOR);
     when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(live));
-    when(bindings.lockByMediaRoomId(MEDIA)).thenReturn(Optional.of(live));
+    when(bindings.lockById(5L)).thenReturn(Optional.of(live));
     return live;
   }
 
@@ -541,7 +593,7 @@ class MatrixSessionCallBindingServiceTest {
     long now = System.currentTimeMillis();
     assertThat(
             service.endWhileSessionLocked(
-                actor("counsellor-id", true), sessionConversation, "call", now))
+                actor("counsellor-id", true), sessionConversation, "call", now, 5L))
         .isEqualTo(MEDIA);
     assertThat(live.getEndedAt()).isNotNull();
     verify(bindings).save(live);
@@ -555,7 +607,7 @@ class MatrixSessionCallBindingServiceTest {
     inCall(live, OTHER_COUNSELLOR, now + 60_000);
     assertThat(
             service.endWhileSessionLocked(
-                actor("other-counsellor-id", true), sessionConversation, "call", now))
+                actor("other-counsellor-id", true), sessionConversation, "call", now, 5L))
         .isEqualTo(MEDIA);
     assertThat(live.getEndedAt()).isNotNull();
   }
@@ -568,17 +620,17 @@ class MatrixSessionCallBindingServiceTest {
     inCall(live, OTHER_COUNSELLOR, now - 1);
     assertThat(
             service.endWhileSessionLocked(
-                actor("other-counsellor-id", true), sessionConversation, "call", now))
+                actor("other-counsellor-id", true), sessionConversation, "call", now, 5L))
         .isNull();
     inCall(live, OTHER_COUNSELLOR, now + 60_000);
     when(lifecycle.isActiveRecipient("other-counsellor-id")).thenReturn(false);
     assertThat(
             service.endWhileSessionLocked(
-                actor("other-counsellor-id", true), sessionConversation, "call", now))
+                actor("other-counsellor-id", true), sessionConversation, "call", now, 5L))
         .isNull();
     assertThat(
             service.endWhileSessionLocked(
-                actor("asker-id", false), sessionConversation, "call", now))
+                actor("asker-id", false), sessionConversation, "call", now, 5L))
         .isNull();
     assertThat(live.getEndedAt()).isNull();
   }
@@ -587,9 +639,9 @@ class MatrixSessionCallBindingServiceTest {
   void endingACallWithoutABindingChangesNothing() {
     assertThat(
             service.endWhileSessionLocked(
-                actor("counsellor-id", true), sessionConversation, "call", 1L))
+                actor("counsellor-id", true), sessionConversation, "call", 1L, null))
         .isNull();
-    verify(bindings, never()).lockByMediaRoomId(anyString());
+    verify(bindings, never()).lockById(any());
   }
 
   @Test

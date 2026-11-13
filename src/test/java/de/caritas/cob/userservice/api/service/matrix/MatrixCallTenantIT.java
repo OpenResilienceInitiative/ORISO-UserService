@@ -278,15 +278,30 @@ class MatrixCallTenantIT {
       // Poll on the test thread so repository assertions retain technical tenant 0 and
       // inspect all persisted recipients, including any incorrectly notified tenant 8 user.
       listener.initialize();
-      if (!invitationAlreadyExpired)
+      if (invitationAlreadyExpired) {
+        // FE#2209 round 3: an already expired invite of the asker (the session's owner sends it
+        // here) creates no binding of the 1:1 session call and notifies nobody. Late-sync
+        // recovery stays for the assigned counsellor's own invite and for group chats.
         await()
             .pollInSameThread()
+            .during(Duration.ofMillis(1500))
             .atMost(Duration.ofSeconds(5))
             .untilAsserted(
-                () ->
-                    assertThat(notifications.findAll())
-                        .anySatisfy(
-                            event -> assertThat(event.getEventType()).isEqualTo("call.invited")));
+                () -> {
+                  assertThat(bindings.findBySourceRoomIdAndCallId(source, "tenant-call")).isEmpty();
+                  assertThat(notifications.findAll()).isEmpty();
+                });
+        listener.shutdown();
+        return;
+      }
+      await()
+          .pollInSameThread()
+          .atMost(Duration.ofSeconds(5))
+          .untilAsserted(
+              () ->
+                  assertThat(notifications.findAll())
+                      .anySatisfy(
+                          event -> assertThat(event.getEventType()).isEqualTo("call.invited")));
       await()
           .pollInSameThread()
           .atMost(Duration.ofSeconds(10))
@@ -319,7 +334,6 @@ class MatrixCallTenantIT {
                                   "\"callId\":\"tenant-call\"", "\"callRoomId\":\"" + media + "\"");
                         });
               });
-      if (invitationAlreadyExpired) assertThat(notifications.findAll()).isEmpty();
       response.set(
           Map.of(
               "next_batch",

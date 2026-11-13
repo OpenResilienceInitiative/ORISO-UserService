@@ -87,9 +87,9 @@ public class MatrixCallObservationService {
     }
     // A readable invite already produced the authoritative binding; notifications of both paths
     // share one dedupe key per (room, call), so an observation must never pre-empt that call.
-    if (bindings.findBySourceRoomIdAndCallId(sourceRoomId, callId).isPresent()) {
-      return Outcome.NOT_FOUND;
-    }
+    // FE#2209 round 3: an asker's plaintext invite of the same call id is no such binding; it must
+    // not keep the assigned counsellor's call from being registered.
+    if (preemptedByBinding(sourceRoomId, callId)) return Outcome.NOT_FOUND;
     String creator = matrixIdOf(actor, conversation.getTenantId()).orElse(null);
     // Matrix evidence first, with no transaction open (#1630).
     var members = matrix.getCallRoomMembers(sourceRoomId).orElse(null);
@@ -136,6 +136,9 @@ public class MatrixCallObservationService {
       boolean video) {
     String sourceRoomId = conversation.getMatrixRoomId();
     if (!conversations.lockCurrentForWriting(conversation)) return Registration.REJECTED;
+    // CodeRabbit 4562143169: again under the source lock, which bind and the readable-invite path
+    // hold while they write a binding; one committed during the Matrix lookups wins.
+    if (preemptedByBinding(sourceRoomId, callId)) return Registration.REJECTED;
     long now = System.currentTimeMillis();
     var existing =
         observations.findForUpdateBySourceRoomIdAndCallId(sourceRoomId, callId).orElse(null);
@@ -176,6 +179,17 @@ public class MatrixCallObservationService {
             .expiresAt(now + LEASE_MILLIS)
             .build());
     return Registration.CREATED;
+  }
+
+  /**
+   * A binding of this call that the observation must never pre-empt: a group chat's always, a 1:1
+   * session call's only with the assigned counsellor's authority (FE#2209 round 3).
+   */
+  private boolean preemptedByBinding(String sourceRoomId, String callId) {
+    return bindings
+        .findBySourceRoomIdAndCallId(sourceRoomId, callId)
+        .filter(b -> b.getSessionId() == null || sessionBindings.preemptsRegistration(b))
+        .isPresent();
   }
 
   private void notifyInvited(
@@ -230,14 +244,27 @@ public class MatrixCallObservationService {
     // FE#2209 review: a 1:1 session call's binding ends in the same transaction as its observation,
     // so neither a failing notification nor a binding written meanwhile can leave it live.
     boolean oneToOne = conversation.getSessionId() != null && conversation.getChatId() == null;
-    String boundRoom =
-        oneToOne ? sessionBindings.boundCallRoom(sourceRoomId, callId).orElse(null) : null;
     Ending ending;
     try {
-      ending = writeEnd(actor, conversation, caller, callId, members, boundRoom);
+      ending =
+          writeEnd(
+              actor,
+              conversation,
+              caller,
+              callId,
+              members,
+              boundId(oneToOne, sourceRoomId, callId));
     } catch (DataIntegrityViolationException | PessimisticLockingFailureException raced) {
-      // The registration landed while the end was written: end that row instead.
-      ending = writeEnd(actor, conversation, caller, callId, members, boundRoom);
+      // The registration or a binding landed while the end was written: end that one instead,
+      // with the binding (if any now) locked first.
+      ending =
+          writeEnd(
+              actor,
+              conversation,
+              caller,
+              callId,
+              members,
+              boundId(oneToOne, sourceRoomId, callId));
     }
     // After the commit: first the guest seats, then the notifications; neither can undo the end.
     if (ending.endedCallRoom() != null)
@@ -254,19 +281,24 @@ public class MatrixCallObservationService {
   private record Ending(
       MatrixCallObservation row, boolean endedNow, boolean observed, String endedCallRoom) {}
 
+  /** Outside the transaction: the session call's binding, which the end locks first. */
+  private Long boundId(boolean oneToOne, String sourceRoomId, String callId) {
+    return oneToOne ? sessionBindings.boundCallId(sourceRoomId, callId).orElse(null) : null;
+  }
+
   private Ending writeEnd(
       AuthenticatedUser actor,
       MatrixCallConversation conversation,
       String caller,
       String callId,
       List<String> members,
-      String boundRoom) {
+      Long boundId) {
     return new TransactionTemplate(transactionManager)
         .execute(
             status -> {
               // Lock order: binding (as the lifecycle takes it), session, observation, as bind and
               // registration take session before observation.
-              if (boundRoom != null) sessionBindings.lockBinding(boundRoom);
+              if (boundId != null) sessionBindings.lockBinding(boundId);
               // The session's call lock; a closed session still holds it, and ending is always
               // allowed.
               conversations.lockCurrentForWriting(conversation);
@@ -274,7 +306,8 @@ public class MatrixCallObservationService {
               var observed = endObservation(conversation, caller, callId, members, now);
               String endedCallRoom =
                   conversation.getSessionId() != null && conversation.getChatId() == null
-                      ? sessionBindings.endWhileSessionLocked(actor, conversation, callId, now)
+                      ? sessionBindings.endWhileSessionLocked(
+                          actor, conversation, callId, now, boundId)
                       : null;
               return observed == null
                   ? new Ending(null, false, false, endedCallRoom)

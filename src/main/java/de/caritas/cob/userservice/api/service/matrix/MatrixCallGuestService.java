@@ -35,6 +35,7 @@ public class MatrixCallGuestService {
   private final MatrixSynapseService matrix;
   private final AccountInactivityService accountLifecycle;
   private final SessionCallAuthority authority;
+  private final org.springframework.transaction.PlatformTransactionManager transactionManager;
 
   /** Failed removals after which every further failure is logged at ERROR for alerting. */
   public static final int REVOKE_ALERT_THRESHOLD = 10;
@@ -116,21 +117,24 @@ public class MatrixCallGuestService {
             .orElse(null);
     if (binding == null || !authority.grantsGuestAuthority(binding))
       return CounsellorCall.of(Outcome.NOT_FOUND);
-    // FE#2209 review (Frank): any counsellor of the Träger who is in the call itself, with a live
-    // MatrixRTC membership in its call room, may open it to somebody else.
-    if (!binding.isInCall(counsellor, System.currentTimeMillis()))
+    // FE#2209 review (Frank): in a 1:1 session call, any counsellor of the Träger who is in the
+    // call itself, with a live MatrixRTC membership in its call room, may open it to somebody else.
+    // Group chats are out of scope and keep the conversation rule (round 3).
+    if (binding.getSessionId() != null && !binding.isInCall(counsellor, System.currentTimeMillis()))
       return CounsellorCall.of(Outcome.NOT_FOUND);
     return new CounsellorCall(Outcome.ADMITTED, binding, counsellor, members);
   }
 
   /**
-   * The active counsellors of {@code tenant} who are in the call: a live MatrixRTC membership in
-   * its call room (FE#2209 review). Empty for another Träger's call.
+   * The active counsellors of {@code tenant} who may vouch for the call: for a 1:1 session call,
+   * those in the call (a live MatrixRTC membership in its call room, FE#2209 review); for a group
+   * chat, as before, those in the conversation. Empty for another Träger's call.
    */
   @Transactional(readOnly = true)
   public List<String> counsellorsInCall(Long tenant, MatrixCallBinding binding) {
     if (tenant == null || binding == null || !tenant.equals(binding.getTenantId()))
       return List.of();
+    if (binding.getSessionId() == null) return counsellorsInConversation(tenant, binding);
     long now = System.currentTimeMillis();
     return binding.getDevices().values().stream()
         .map(device -> device.getSenderMatrixId())
@@ -254,11 +258,16 @@ public class MatrixCallGuestService {
             .orElse(false);
   }
 
-  /** True while the call runs and the person holds an unrevoked guest seat in it. */
+  /**
+   * True while the call runs, still carries guest authority (CodeRabbit review 5889378142: the same
+   * authority and liveness as admission) and the person holds an unrevoked guest seat in it.
+   */
   public boolean isActiveGuest(MatrixCallBinding binding, String matrixUserId) {
     return binding.getId() != null
         && binding.getEndedAt() == null
         && !blank(matrixUserId)
+        && grantsGuestAuthority(binding)
+        && binding.isLive(System.currentTimeMillis())
         && guests.existsByBindingIdAndMatrixUserIdAndRevokedAtIsNull(binding.getId(), matrixUserId);
   }
 
@@ -279,33 +288,91 @@ public class MatrixCallGuestService {
 
   /**
    * FE#2209 security review: before the assigned counsellor takes over a binding that lost its
-   * authority, every guest seat of it is taken back from its current (old) call room, so no seat
-   * carries over into the counsellor's room. Runs before the takeover's transaction (#1630: no
-   * Matrix calls while it is open). Returns whether no seat is outstanding any more.
+   * authority, every guest seat of it is taken back from the call room the takeover saw, so no seat
+   * carries over into the counsellor's room. The Matrix removal runs with no transaction open
+   * (#1630). The result is recorded only if, under the binding's row lock, the binding still points
+   * at that room without authority (CodeRabbit 4562143165): once a concurrent takeover moved it, a
+   * seat found now belongs to the new call and is left alone. Returns whether no seat of the room
+   * it saw is outstanding any more.
    */
-  public boolean revokeBeforeTakeOver(MatrixCallBinding binding) {
-    if (binding == null || binding.getId() == null) return true;
-    for (MatrixCallGuest guest : guests.findByBindingIdAndRevokedAtIsNull(binding.getId())) {
-      revoke(binding, guest);
-      guests.save(guest);
+  public boolean revokeBeforeTakeOver(MatrixCallBinding seen) {
+    if (seen == null || seen.getId() == null) return true;
+    String room = seen.getMediaRoomId();
+    for (MatrixCallGuest guest : guests.findByBindingIdAndRevokedAtIsNull(seen.getId())) {
+      Removal removal = remove(seen, guest);
+      Boolean recorded =
+          new org.springframework.transaction.support.TransactionTemplate(transactionManager)
+              .execute(
+                  status -> {
+                    var current = bindings.lockById(seen.getId()).orElse(null);
+                    if (current == null
+                        || !Objects.equals(room, current.getMediaRoomId())
+                        || authority.grantsGuestAuthority(current)) {
+                      return false;
+                    }
+                    guests
+                        .findById(guest.getId())
+                        .filter(seat -> seat.getRevokedAt() == null)
+                        .ifPresent(
+                            seat -> {
+                              apply(seat, room, removal);
+                              guests.save(seat);
+                            });
+                    return true;
+                  });
+      if (!Boolean.TRUE.equals(recorded)) return false;
     }
-    return guests.findByBindingIdAndRevokedAtIsNull(binding.getId()).isEmpty();
+    return guests.findByBindingIdAndRevokedAtIsNull(seen.getId()).isEmpty();
   }
 
   /**
-   * Inside the takeover's transaction: {@code false} while a seat is still outstanding; otherwise
-   * the revoked seats of the old call are forgotten, so a guest of it may be let into the new call
-   * afresh.
+   * Inside the takeover's transaction: whether every seat of the old call was taken back. The
+   * revoked rows stay, so "removed, cannot come back" (#1487) still holds for the call id.
    */
-  public boolean forgetSeatsForTakeOver(Long bindingId) {
-    var seats = guests.findByBindingId(bindingId);
-    if (seats.stream().anyMatch(seat -> seat.getRevokedAt() == null)) return false;
-    guests.deleteAll(seats);
-    guests.flush();
-    return true;
+  public boolean noSeatOutstanding(Long bindingId) {
+    return guests.findByBindingIdAndRevokedAtIsNull(bindingId).isEmpty();
+  }
+
+  /** Group chats (out of FE#2209's scope): the Träger's counsellors in the conversation room. */
+  private List<String> counsellorsInConversation(Long tenant, MatrixCallBinding binding) {
+    var conversation =
+        conversations
+            .resolve(binding.getSourceRoomId())
+            .filter(value -> tenant.equals(value.getTenantId()))
+            .orElse(null);
+    if (conversation == null) return List.of();
+    return callRoomMembers(binding.getSourceRoomId()).orElse(List.of()).stream()
+        .map(consultants::findByMatrixUserIdAndDeleteDateIsNull)
+        .flatMap(Optional::stream)
+        .filter(value -> tenant.equals(value.getTenantId()))
+        .map(value -> value.getId())
+        .filter(this::isActive)
+        .toList();
   }
 
   private void revoke(MatrixCallBinding binding, MatrixCallGuest guest) {
+    apply(guest, binding.getMediaRoomId(), remove(binding, guest));
+  }
+
+  private enum Removal {
+    REMOVED,
+    NO_TOKEN,
+    STILL_THERE,
+    POWER_LEVEL_KEPT
+  }
+
+  private void apply(MatrixCallGuest guest, String room, Removal removal) {
+    switch (removal) {
+      case REMOVED -> guest.revoke(System.currentTimeMillis());
+      case NO_TOKEN -> deferRevocation(guest, room, "no moderator token");
+      case STILL_THERE -> deferRevocation(guest, room, "membership is not leave or ban");
+        // A kept power level would apply again if the account were ever invited back.
+      case POWER_LEVEL_KEPT -> deferRevocation(guest, room, "power level not cleared");
+    }
+  }
+
+  /** Matrix only: takes the guest out of the binding's call room; records nothing. */
+  private Removal remove(MatrixCallBinding binding, MatrixCallGuest guest) {
     String room = binding.getMediaRoomId();
     String guestId = guest.getMatrixUserId();
     // The caller first, then the admitting counsellor, whose token may hold the needed rights.
@@ -324,16 +391,10 @@ public class MatrixCallGuestService {
         break;
       }
     }
-    if (token == null) {
-      deferRevocation(guest, room, "no moderator token");
-    } else if (!gone) {
-      deferRevocation(guest, room, "membership is not leave or ban");
-    } else if (!matrix.clearUserPowerLevel(room, guestId, token)) {
-      // A kept power level would apply again if the account were ever invited back.
-      deferRevocation(guest, room, "power level not cleared");
-    } else {
-      guest.revoke(System.currentTimeMillis());
-    }
+    if (token == null) return Removal.NO_TOKEN;
+    if (!gone) return Removal.STILL_THERE;
+    if (!matrix.clearUserPowerLevel(room, guestId, token)) return Removal.POWER_LEVEL_KEPT;
+    return Removal.REMOVED;
   }
 
   /**

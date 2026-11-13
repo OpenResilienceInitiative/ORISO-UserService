@@ -140,6 +140,7 @@ public class CallShareLinkService {
   @Transactional
   public ShareLink update(
       Long tenant, String consultantId, Long linkId, Boolean knock, Boolean temporaryAccount) {
+    lockCallOf(linkId);
     var link =
         links
             .findByIdForUpdate(linkId)
@@ -188,7 +189,9 @@ public class CallShareLinkService {
     var unlocked = bindingOf(found);
     requireUsable(found, unlocked);
     requireGuestMayUse(found, unlocked, guest);
-    // Serialise visits on the link, so parallel visits of one guest insert one knock.
+    // Serialise visits on the link, so parallel visits of one guest insert one knock. The call's
+    // binding is locked first (FE#2209 round 3 lock order: binding before link).
+    lockCallOf(found.getId());
     var link = links.findByIdForUpdate(found.getId()).orElseThrow(CallShareLinkEndedException::new);
     var binding = bindingOf(link);
     requireUsable(link, binding);
@@ -234,6 +237,7 @@ public class CallShareLinkService {
    */
   @Transactional
   public void removeGuest(Long tenant, String consultantId, Long linkId, String guestMatrixUserId) {
+    lockCallOf(linkId);
     var link =
         links
             .findByIdForUpdate(linkId)
@@ -413,6 +417,15 @@ public class CallShareLinkService {
         || !callGuests.grantsGuestAuthority(binding)) {
       throw new CallShareLinkEndedException();
     }
+  }
+
+  /**
+   * FE#2209 round 3: one lock order on session-call paths (binding, session, observation, link,
+   * knocks). The link's call binding is locked before the link, so a takeover or an end, which hold
+   * the binding while they retire the link, never wait on a link this transaction holds.
+   */
+  private void lockCallOf(Long linkId) {
+    links.findCallBindingIdById(linkId).ifPresent(bindings::lockById);
   }
 
   private boolean outlived(AgencyInviteLink link) {

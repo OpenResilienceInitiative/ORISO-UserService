@@ -53,7 +53,15 @@ class MatrixCallGuestServiceTest {
   void setUp() throws Exception {
     service =
         new MatrixCallGuestService(
-            bindings, guests, conversations, users, consultants, matrix, accounts, authority);
+            bindings,
+            guests,
+            conversations,
+            users,
+            consultants,
+            matrix,
+            accounts,
+            authority,
+            mock(org.springframework.transaction.PlatformTransactionManager.class));
     counsellor = new AuthenticatedUser();
     counsellor.setUserId("counsellor");
     counsellor.setTenantId(7L);
@@ -113,6 +121,52 @@ class MatrixCallGuestServiceTest {
 
     assertThat(service.isActiveGuest(binding(null), GUEST)).isTrue();
     assertThat(service.isActiveGuest(binding(5000L), GUEST)).isFalse();
+  }
+
+  @Test
+  void aSeatGrantsNothingOnceTheCallLostItsAuthorityOrIsNoLongerLive() {
+    // CodeRabbit (review 5889378142): readBound lets a non-member read the call state only as an
+    // active guest; that follows the same authority and liveness as admission.
+    when(guests.existsByBindingIdAndMatrixUserIdAndRevokedAtIsNull(11L, GUEST)).thenReturn(true);
+    when(authority.grantsGuestAuthority(any())).thenReturn(false);
+    assertThat(service.isActiveGuest(binding(null), GUEST)).isFalse();
+    when(authority.grantsGuestAuthority(any())).thenReturn(true);
+    assertThat(service.isActiveGuest(callBinding(null), GUEST)).as("not live").isFalse();
+  }
+
+  @Test
+  void aTakeOverRevokesOnlySeatsOfTheRoomItSaw_NotOfACallThatMovedMeanwhile() {
+    // CodeRabbit 4562143165: a concurrent takeover committed and moved the row to a new call
+    // room; a seat found now belongs to that call and is not marked revoked.
+    var guest = guest();
+    when(guests.findByBindingIdAndRevokedAtIsNull(11L)).thenReturn(List.of(guest));
+    when(matrix.getRoomMembership(MEDIA, GUEST, "counsellor-token"))
+        .thenReturn(Optional.of("leave"));
+    when(matrix.clearUserPowerLevel(MEDIA, GUEST, "counsellor-token")).thenReturn(true);
+    var moved =
+        MatrixCallBinding.builder()
+            .id(11L)
+            .sourceRoomId(SOURCE)
+            .callId("call")
+            .mediaRoomId("!new-room:example")
+            .callerMatrixId(COUNSELLOR)
+            .sessionId(45L)
+            .tenantId(7L)
+            .build();
+    when(bindings.lockById(11L)).thenReturn(Optional.of(moved));
+    when(guests.findById(3L)).thenReturn(Optional.of(guest));
+    when(authority.grantsGuestAuthority(any())).thenReturn(false);
+
+    service.revokeBeforeTakeOver(binding(null));
+
+    verify(guests, never()).save(any(MatrixCallGuest.class));
+    assertThat(guest.getRevokedAt()).isNull();
+
+    // Still the room it saw: the removal is recorded.
+    when(bindings.lockById(11L)).thenReturn(Optional.of(binding(null)));
+    service.revokeBeforeTakeOver(binding(null));
+    verify(guests).save(guest);
+    assertThat(guest.getRevokedAt()).isNotNull();
   }
 
   @Test
@@ -246,6 +300,33 @@ class MatrixCallGuestServiceTest {
     assertThat(service.admit(counsellor, SOURCE, "call", "guest").outcome())
         .isEqualTo(MatrixCallGuestService.Outcome.NOT_FOUND);
     verify(matrix, never()).inviteUserToRoom(anyString(), anyString(), anyString());
+  }
+
+  @Test
+  void aGroupChatCallKeepsItsRule_AnyCounsellorOfTheConversationMayOpenIt() throws Exception {
+    // FE#2209 round 3: the live-membership rule is for 1:1 session calls; group chats are out of
+    // scope and keep the conversation rule.
+    binding =
+        MatrixCallBinding.builder()
+            .id(12L)
+            .sourceRoomId(SOURCE)
+            .callId("call")
+            .mediaRoomId(MEDIA)
+            .callerMatrixId("@second:example")
+            .chatId(9L)
+            .tenantId(7L)
+            .invitedAt(1000L)
+            .inviteExpiresAt(61000L)
+            .startedAt(1200L)
+            .build();
+    device("other-device", "@second:example", System.currentTimeMillis() + 60_000);
+    when(conversations.resolve(SOURCE))
+        .thenReturn(Optional.of(new MatrixCallConversation(SOURCE, 7L, null, 9L)));
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull(COUNSELLOR))
+        .thenReturn(Optional.of(consultant("counsellor", COUNSELLOR, 7L)));
+    assertThat(service.counsellorCall(7L, "counsellor", SOURCE, "call").outcome())
+        .isEqualTo(MatrixCallGuestService.Outcome.ADMITTED);
+    assertThat(service.counsellorsInCall(7L, binding)).containsExactly("counsellor");
   }
 
   @Test

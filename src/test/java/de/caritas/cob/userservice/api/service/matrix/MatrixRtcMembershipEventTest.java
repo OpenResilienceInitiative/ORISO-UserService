@@ -93,6 +93,32 @@ class MatrixRtcMembershipEventTest {
   }
 
   @Test
+  void aStateKeyNamingAnotherUserIsRejectedSoNobodyClaimsSomebodyElsesDevice() {
+    // FE#2209 round 3: MatrixRTC state keys are "_@user:server_DEVICE..." (or the legacy
+    // "@user:server_DEVICE"); the user part must be the sender.
+    var content = content();
+    content.put("expires", 60000L);
+    for (String foreign :
+        List.of(
+            "_@counsellor:example_DEVICE_m.call",
+            "@counsellor:example_DEVICE",
+            "_@user:example.org_DEVICE_m.call",
+            "@counsellor:example")) {
+      var claim = new HashMap<>(event(content));
+      claim.put("state_key", foreign);
+      assertThat(MatrixRtcMembershipEvent.parse(claim)).as(foreign).isEmpty();
+      var departure = new HashMap<>(event(Map.of()));
+      departure.put("state_key", foreign);
+      assertThat(MatrixRtcMembershipEvent.parse(departure)).as("departure " + foreign).isEmpty();
+    }
+    for (String own : List.of("_@user:example_DEVICE_m.call", "@user:example_DEVICE")) {
+      var mine = new HashMap<>(event(content));
+      mine.put("state_key", own);
+      assertThat(MatrixRtcMembershipEvent.parse(mine)).as(own).isPresent();
+    }
+  }
+
+  @Test
   void representsEmptyStateAsDepartureOfTheExactStateKeyNotEveryDeviceOfTheSender() {
     var member = MatrixRtcMembershipEvent.parse(event(Map.of())).orElseThrow();
     assertThat(member.departed()).isTrue();

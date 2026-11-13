@@ -20,14 +20,6 @@ public interface MatrixCallObservationEndRepository
   Optional<MatrixCallObservationEnd> findForUpdateBySourceRoomIdAndCallIdAndActorMatrixId(
       String sourceRoomId, String callId, String actorMatrixId);
 
-  /**
-   * FE#2209: every stored end of a call, locked, so a session binding waits for an end being
-   * written and then sees it.
-   */
-  @Lock(LockModeType.PESSIMISTIC_WRITE)
-  java.util.List<MatrixCallObservationEnd> findForUpdateBySourceRoomIdAndCallId(
-      String sourceRoomId, String callId);
-
   /** The first end of a call that never got a registration; the call reads as ended. */
   Optional<MatrixCallObservationEnd> findFirstBySourceRoomIdAndCallIdOrderByEndedAtAsc(
       String sourceRoomId, String callId);

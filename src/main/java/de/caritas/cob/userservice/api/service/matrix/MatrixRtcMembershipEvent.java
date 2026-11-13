@@ -30,6 +30,18 @@ record MatrixRtcMembershipEvent(
    */
   static final long MAX_MEMBERSHIP_VALIDITY_MILLIS = DEFAULT_EXPIRE_DURATION + 60 * 60 * 1000L;
 
+  /**
+   * FE#2209 round 3: a MatrixRTC state key names its owner, {@code _@user:server_DEVICE...} (or the
+   * legacy {@code @user:server_DEVICE} and {@code @user:server}). A key naming anybody but the
+   * sender is somebody else's device and is ignored, so nobody can claim it first. A server name
+   * never contains "_", so the separator after the sender is unambiguous.
+   */
+  static boolean ownedBy(String stateKey, String sender) {
+    return stateKey.equals(sender)
+        || stateKey.startsWith(sender + "_")
+        || stateKey.startsWith("_" + sender + "_");
+  }
+
   static Optional<MatrixRtcMembershipEvent> parse(Map<String, Object> event) {
     if (!TYPE.equals(event.get("type"))) return Optional.empty();
     if (!(event.get("event_id") instanceof String eventId)
@@ -39,7 +51,8 @@ record MatrixRtcMembershipEvent(
         || !sender.contains(":")
         || !(event.get("state_key") instanceof String stateKey)
         || stateKey.isBlank()
-        || !(event.get("content") instanceof Map<?, ?> content)) return Optional.empty();
+        || !(event.get("content") instanceof Map<?, ?> content)
+        || !ownedBy(stateKey, sender)) return Optional.empty();
     Long timestamp = nonNegativeInteger(event.get("origin_server_ts"));
     if (timestamp == null) return Optional.empty();
     String replaces =

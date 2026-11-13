@@ -26,6 +26,7 @@ public class MatrixCallInviteNotificationService {
   private final MatrixCallBindingService callBindings;
   private final MatrixCallLifecycleService lifecycle;
   private final MatrixCallGuestService callGuests;
+  private final SessionCallAuthority authority;
 
   public boolean handleMediaRoom(String room, Map<String, Object> roomData) {
     return lifecycle.handleRoom(room, roomData);
@@ -96,6 +97,14 @@ public class MatrixCallInviteNotificationService {
     boolean expired = now - timestamp >= lifetime;
     var session = conversations.resolveForWriting(sourceRoom).orElse(null);
     if (session == null) return false;
+    // FE#2209 round 3: an already expired invite of anybody but the assigned counsellor never
+    // creates a 1:1 session call's binding. Its only effect would be a lapsed row on the call id
+    // (an asker could send lifetime=1 for the counsellor's call). The counsellor's own late sync
+    // and group chats keep the recovery below.
+    if (expired
+        && session.getSessionId() != null
+        && !authority.isAssignedCounsellor(session.getSessionId(), session.getTenantId(), sender))
+      return false;
     var members = matrix.getCallRoomMembers(sourceRoom).orElse(null);
     if (members == null || !members.contains(sender)) return false;
     var actor = identity(sender, session.getTenantId()).orElse(null);

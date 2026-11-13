@@ -111,6 +111,7 @@ import org.springframework.transaction.support.TransactionTemplate;
   de.caritas.cob.userservice.api.service.matrix.MatrixCallBindingWriter.class,
   de.caritas.cob.userservice.api.service.matrix.OrisoRoomRegistry.class,
   de.caritas.cob.userservice.api.service.matrix.MatrixCallInviteNotificationService.class,
+  de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService.class,
   CallShareLinkIT.AccountFixture.class
 })
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -157,6 +158,9 @@ class CallShareLinkIT {
 
   @Autowired
   private de.caritas.cob.userservice.api.service.matrix.MatrixCallInviteNotificationService invites;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService observations;
 
   @Autowired
   private de.caritas.cob.userservice.api.service.matrix.MatrixSessionCallBindingService
@@ -259,6 +263,9 @@ class CallShareLinkIT {
 
   @AfterEach
   void tearDown() {
+    var cleanup = new JdbcTemplate(dataSource);
+    cleanup.update("DELETE FROM matrix_call_observation_end");
+    cleanup.update("DELETE FROM matrix_call_observation");
     transaction.executeWithoutResult(
         status -> {
           knockRows.deleteAll();
@@ -820,9 +827,100 @@ class CallShareLinkIT {
     verify(matrix).removeUserFromRoom(MEDIA, GUEST, "c-token");
     verify(matrix, never()).inviteUserToRoom(eq(colleagueMedia), anyString(), anyString());
     assertThat(guests.findByBindingIdAndRevokedAtIsNull(id)).isEmpty();
-    assertThat(callGuests.wasRemoved(taken, GUEST))
-        .as("a guest of the old call may be let into the new one afresh")
-        .isFalse();
+    // Round 3: the seat record stays, so "removed, cannot come back" (#1487) still holds.
+    assertThat(callGuests.wasRemoved(taken, GUEST)).isTrue();
+    assertThat(guests.findByBindingId(id))
+        .extracting(seat -> seat.getMatrixUserId())
+        .contains(GUEST);
+  }
+
+  // --- FE#2209 round 3 (R1): nothing an asker does blocks the assigned counsellor's bind ---
+
+  private String stubCounsellorsCallRoom(String callId, String media) {
+    String caller = counsellor.getMatrixUserId();
+    when(matrix.getCallRoomBinding(media, caller))
+        .thenReturn(Optional.of(Map.of("call_id", callId, "source_room_id", SOURCE)));
+    when(matrix.getCallRoomOrigin(media, caller))
+        .thenReturn(Optional.of(new MatrixSynapseService.CallRoomOrigin(caller, caller)));
+    when(matrix.ensureAdminInRoom(anyString(), anyString())).thenReturn(true);
+    return caller;
+  }
+
+  @Test
+  void anAlreadyExpiredAskerInviteCreatesNoBinding_AndTheCounsellorBinds() throws Exception {
+    String askerMedia = "!expired-asker-media:example";
+    String counsellorMedia = "!expired-counsellor-media:example";
+    when(matrix.getCallRoomBinding(askerMedia, ASKER))
+        .thenReturn(Optional.of(Map.of("call_id", "lt1-call", "source_room_id", SOURCE)));
+    stubCounsellorsCallRoom("lt1-call", counsellorMedia);
+    var invite = new java.util.HashMap<>(plaintextInvite(ASKER, "lt1-call", askerMedia));
+    invite.put("origin_server_ts", System.currentTimeMillis() - 10_000);
+    invite.put(
+        "content",
+        Map.of("call_id", "lt1-call", "call_room_id", askerMedia, "lifetime", 1, "is_video", true));
+
+    invites.handle(SOURCE, invite);
+
+    assertThat(bindings.findBySourceRoomIdAndCallId(SOURCE, "lt1-call")).isEmpty();
+    assertThat(
+            sessionBindings.bind(
+                actor(counsellor.getId(), "consultant"), SOURCE, "lt1-call", counsellorMedia, true))
+        .isTrue();
+    assertThat(
+            bindings.findBySourceRoomIdAndCallId(SOURCE, "lt1-call").orElseThrow().getMediaRoomId())
+        .isEqualTo(counsellorMedia);
+  }
+
+  @Test
+  void aLapsedAskerBindingIsTakenOverByTheCounsellor() throws Exception {
+    String askerMedia = "!lapsed-asker-media:example";
+    String counsellorMedia = "!lapsed-counsellor-media:example";
+    when(matrix.getCallRoomBinding(askerMedia, ASKER))
+        .thenReturn(Optional.of(Map.of("call_id", "lapsed-call", "source_room_id", SOURCE)));
+    String caller = stubCounsellorsCallRoom("lapsed-call", counsellorMedia);
+    invites.handle(SOURCE, plaintextInvite(ASKER, "lapsed-call", askerMedia));
+    new JdbcTemplate(dataSource)
+        .update(
+            "UPDATE matrix_call_binding SET invite_expires_at = ? WHERE call_id = 'lapsed-call'",
+            System.currentTimeMillis() - 1);
+
+    assertThat(
+            sessionBindings.bind(
+                actor(counsellor.getId(), "consultant"),
+                SOURCE,
+                "lapsed-call",
+                counsellorMedia,
+                true))
+        .isTrue();
+    var taken = bindings.findBySourceRoomIdAndCallId(SOURCE, "lapsed-call").orElseThrow();
+    assertThat(taken.getCallerMatrixId()).isEqualTo(caller);
+    assertThat(taken.getMediaRoomId()).isEqualTo(counsellorMedia);
+  }
+
+  @Test
+  void anAskersBindingAndEndNeitherBlockTheCounsellorsRegistrationNorBind() throws Exception {
+    String askerMedia = "!ended-asker-media:example";
+    String counsellorMedia = "!ended-counsellor-media:example";
+    when(matrix.getCallRoomBinding(askerMedia, ASKER))
+        .thenReturn(Optional.of(Map.of("call_id", "asker-ended", "source_room_id", SOURCE)));
+    stubCounsellorsCallRoom("asker-ended", counsellorMedia);
+    invites.handle(SOURCE, plaintextInvite(ASKER, "asker-ended", askerMedia));
+    assertThat(bindings.findBySourceRoomIdAndCallId(SOURCE, "asker-ended")).isPresent();
+
+    // The asker ends "the call" before anything of the counsellor's was registered.
+    assertThat(observations.end(actor("share-asker", "user"), SOURCE, "asker-ended"))
+        .isEqualTo(
+            de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService.Outcome.OK);
+
+    var counsellorActor = actor(counsellor.getId(), "consultant");
+    assertThat(observations.register(counsellorActor, SOURCE, "asker-ended", counsellorMedia, true))
+        .isEqualTo(
+            de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService.Outcome.OK);
+    assertThat(sessionBindings.bind(counsellorActor, SOURCE, "asker-ended", counsellorMedia, true))
+        .isTrue();
+    var taken = bindings.findBySourceRoomIdAndCallId(SOURCE, "asker-ended").orElseThrow();
+    assertThat(taken.getMediaRoomId()).isEqualTo(counsellorMedia);
+    assertThat(taken.getEndedAt()).isNull();
   }
 
   @Test

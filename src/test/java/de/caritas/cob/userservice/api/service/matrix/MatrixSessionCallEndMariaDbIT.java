@@ -89,6 +89,10 @@ class MatrixSessionCallEndMariaDbIT {
         "spring.jpa.properties.hibernate.dialect", () -> "org.hibernate.dialect.MariaDBDialect");
     registry.add("spring.jpa.defer-datasource-initialization", () -> "false");
     registry.add("spring.sql.init.mode", () -> "never");
+    // Deployment isolation level: nothing in the application, Hikari or the MariaDB chart sets one,
+    // so production runs MariaDB's default REPEATABLE READ. Pinned so the race ITs prove that.
+    registry.add(
+        "spring.datasource.hikari.transaction-isolation", () -> "TRANSACTION_REPEATABLE_READ");
     registry.add(
         "spring.datasource.hikari.connection-init-sql",
         () -> "SET SESSION innodb_lock_wait_timeout = 10");
@@ -155,6 +159,16 @@ class MatrixSessionCallEndMariaDbIT {
     when(matrix.ensureAdminInRoom(anyString(), anyString())).thenReturn(true);
   }
 
+  @Autowired private javax.sql.DataSource dataSource;
+
+  @Test
+  void runsAtTheDeploymentsIsolationLevel() {
+    assertThat(
+            new org.springframework.jdbc.core.JdbcTemplate(dataSource)
+                .queryForObject("SELECT @@tx_isolation", String.class))
+        .isEqualTo("REPEATABLE-READ");
+  }
+
   @Test
   void anEndWhileTheBindingIsBeingWrittenEndsItWithoutAnObservationRow() throws Exception {
     assertEndWaitsForTheBindingAndEndsIt();
@@ -169,10 +183,12 @@ class MatrixSessionCallEndMariaDbIT {
 
   /**
    * Bind is paused inside its write transaction (after the session lock, before the insert); the
-   * end runs meanwhile. Ending wins: the binding that commits is ended, nothing stays live.
+   * end runs meanwhile and is confirmed to wait on a lock before bind is released. Ending wins: the
+   * binding that commits is ended, nothing stays live.
    */
   private void assertEndWaitsForTheBindingAndEndsIt() throws Exception {
     var bindInside = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
     var activeChecks = new AtomicInteger();
     when(lifecycle.isActiveRecipient(counsellor.getId()))
         .thenAnswer(
@@ -180,7 +196,7 @@ class MatrixSessionCallEndMariaDbIT {
               // The second check is the recheck under the session lock.
               if (activeChecks.incrementAndGet() == 2) {
                 bindInside.countDown();
-                Thread.sleep(1500);
+                release.await(20, TimeUnit.SECONDS);
               }
               return true;
             });
@@ -189,10 +205,14 @@ class MatrixSessionCallEndMariaDbIT {
       var bound = pool.submit(() -> sessionBindings.bind(actor, source, "call", media, true));
       assertThat(bindInside.await(10, TimeUnit.SECONDS)).isTrue();
       var ended = pool.submit(() -> observations.end(actor, source, "call"));
+      // CodeRabbit 4562143209: deterministic, the end is blocked on the session lock bind holds.
+      MariaDbLockWaits.awaitLockWait(DATABASE);
+      release.countDown();
       assertThat(bound.get(20, TimeUnit.SECONDS)).isTrue();
       assertThat(ended.get(20, TimeUnit.SECONDS))
           .isEqualTo(MatrixCallObservationService.Outcome.OK);
     } finally {
+      release.countDown();
       pool.shutdownNow();
     }
     assertNoLiveBinding();
