@@ -49,6 +49,7 @@ class MatrixSessionCallBindingServiceTest {
   private final UserRepository users = mock(UserRepository.class);
   private final MatrixCallBindingRepository bindings = mock(MatrixCallBindingRepository.class);
   private final MatrixCallBindingService callBindings = mock(MatrixCallBindingService.class);
+  private final MatrixCallLifecycleService lifecycle = mock(MatrixCallLifecycleService.class);
   private final RecordingTransactionManager tx = new RecordingTransactionManager();
   private final List<String> matrixCallsInsideTransaction = new ArrayList<>();
   private final MatrixSynapseService matrix =
@@ -68,7 +69,15 @@ class MatrixSessionCallBindingServiceTest {
   void setUp() {
     service =
         new MatrixSessionCallBindingService(
-            conversations, sessions, consultants, users, bindings, callBindings, matrix, tx);
+            conversations,
+            sessions,
+            consultants,
+            users,
+            bindings,
+            callBindings,
+            matrix,
+            lifecycle,
+            tx);
     var conversation = new MatrixCallConversation(SOURCE, TENANT, SESSION, null);
     when(conversations.resolveForWriting(SOURCE)).thenReturn(Optional.of(conversation));
     when(conversations.lockCurrentForWriting(any())).thenReturn(true);
@@ -100,6 +109,24 @@ class MatrixSessionCallBindingServiceTest {
         .thenReturn(Optional.empty());
     when(bindings.findByMediaRoomId(anyString())).thenReturn(Optional.empty());
     when(callBindings.registerWhileSourceLocked(any())).thenReturn(true);
+    when(lifecycle.isActiveRecipient(anyString())).thenReturn(true);
+  }
+
+  @Test
+  void aSuspendedCounsellorCannotCreateIt() {
+    when(lifecycle.isActiveRecipient("counsellor-id")).thenReturn(false);
+    assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isFalse();
+    verifyNoInteractions(callBindings);
+    // Refused before any Matrix lookup or database write.
+    verifyNoInteractions(matrix);
+  }
+
+  @Test
+  void aDeletedCounsellorCannotCreateIt() {
+    when(consultants.findByIdAndDeleteDateIsNull("counsellor-id")).thenReturn(Optional.empty());
+    assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isFalse();
+    verifyNoInteractions(callBindings);
+    verifyNoInteractions(matrix);
   }
 
   @Test

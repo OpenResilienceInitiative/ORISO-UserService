@@ -58,6 +58,7 @@ public class MatrixSessionCallBindingService {
   private final MatrixCallBindingRepository bindings;
   private final MatrixCallBindingService callBindings;
   private final MatrixSynapseService matrix;
+  private final MatrixCallLifecycleService lifecycle;
   private final PlatformTransactionManager transactionManager;
 
   /**
@@ -89,6 +90,9 @@ public class MatrixSessionCallBindingService {
     }
     var counsellor = assignedCounsellor(actor, conversation).orElse(null);
     if (counsellor == null) return false;
+    // A suspended account keeps its rows and Matrix membership; it must not bind a call. Same check
+    // the readable-invite path applies to its caller (MatrixCallInviteNotificationService).
+    if (!lifecycle.isActiveRecipient(counsellor.getId())) return false;
     String caller = counsellor.getMatrixUserId();
 
     // Matrix evidence first, with no transaction open (#1630).
