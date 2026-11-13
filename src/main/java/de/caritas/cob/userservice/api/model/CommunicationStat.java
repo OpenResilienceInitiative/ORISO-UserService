@@ -21,8 +21,9 @@ import lombok.Setter;
  * end-to-end encrypted, so the server cannot tell a voice message from a text message.
  *
  * <p>KDG: the row holds no message content and no identity of an advice seeker or counsellor, only
- * where (tenant, agency, session) and when something happened. {@code callKey} is a SHA-256 of the
- * Matrix call id and exists only so that one call is counted once.
+ * where (tenant, agency, session) and when something happened. {@code eventKey} is a SHA-256 of the
+ * Matrix event id (message) or call id (call) and exists only so that one message or call is
+ * counted once, even when a Matrix sync batch is delivered again.
  */
 @Entity
 @Builder
@@ -59,6 +60,6 @@ public class CommunicationStat {
   @Column(name = "occurred_at", nullable = false)
   private LocalDateTime occurredAt;
 
-  @Column(name = "call_key", length = 64, unique = true)
-  private String callKey;
+  @Column(name = "event_key", length = 64, unique = true)
+  private String eventKey;
 }

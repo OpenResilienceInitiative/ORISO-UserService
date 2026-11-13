@@ -37,9 +37,15 @@ public class CommunicationStatService {
   private final @NonNull StatisticsFeatureGate statisticsFeatureGate;
   private final @NonNull Clock clock;
 
-  /** One message whose sender resolved to an advice seeker, in a room mapped to a session. */
-  public void recordAdviceSeekerMessage(Long sessionId) {
-    record(Kind.ADVICE_SEEKER_MESSAGE, sessionId, null);
+  /**
+   * One message whose sender resolved to an advice seeker, in a room mapped to a session. Counted
+   * once per Matrix event id: a sync batch is delivered again when a later event in it fails.
+   */
+  public void recordAdviceSeekerMessage(Long sessionId, String eventId) {
+    record(
+        Kind.ADVICE_SEEKER_MESSAGE,
+        sessionId,
+        eventId == null || eventId.isBlank() ? null : eventKey(eventId));
   }
 
   /** One call, counted once per Matrix call id however often its invite is seen. */
@@ -47,10 +53,10 @@ public class CommunicationStatService {
     if (callId == null || callId.isBlank()) {
       return;
     }
-    record(video ? Kind.VIDEO_CALL : Kind.AUDIO_CALL, sessionId, callKey(callId));
+    record(video ? Kind.VIDEO_CALL : Kind.AUDIO_CALL, sessionId, eventKey(callId));
   }
 
-  private void record(Kind kind, Long sessionId, String callKey) {
+  private void record(Kind kind, Long sessionId, String eventKey) {
     try {
       if (sessionId == null || !statisticsSettingsService.isMessageCountTrackingEnabled()) {
         return;
@@ -59,7 +65,7 @@ public class CommunicationStatService {
       if (session == null || !statisticsFeatureGate.isEnabledForTenant(session.getTenantId())) {
         return;
       }
-      if (callKey != null && communicationStatRepository.existsByCallKey(callKey)) {
+      if (eventKey != null && communicationStatRepository.existsByEventKey(eventKey)) {
         return;
       }
       communicationStatRepository.save(
@@ -69,18 +75,19 @@ public class CommunicationStatService {
               .sessionId(sessionId)
               .kind(kind)
               .occurredAt(LocalDateTime.now(clock))
-              .callKey(callKey)
+              .eventKey(eventKey)
               .build());
     } catch (Exception e) {
-      // A duplicate call key from a concurrent writer also lands here: the call is counted.
+      // A duplicate event key from a concurrent writer also lands here: it is already counted.
       log.error("Failed to record {} communication statistic", kind, e);
     }
   }
 
-  static String callKey(String callId) {
+  /** SHA-256 of a Matrix event id or call id; the id itself is never stored. */
+  static String eventKey(String matrixId) {
     try {
       var digest = MessageDigest.getInstance("SHA-256");
-      return HexFormat.of().formatHex(digest.digest(callId.getBytes(StandardCharsets.UTF_8)));
+      return HexFormat.of().formatHex(digest.digest(matrixId.getBytes(StandardCharsets.UTF_8)));
     } catch (NoSuchAlgorithmException e) {
       throw new IllegalStateException("SHA-256 is not available", e);
     }

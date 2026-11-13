@@ -3,8 +3,9 @@
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
   <!-- Admin Statistik communication counts: one row per advice-seeker message, audio call or video
-       call. KDG: no message content and no user or counsellor identity. call_key
-       is a SHA-256 of the Matrix call id, only so one call is counted once. -->
+       call. KDG: no message content and no user or counsellor identity. event_key
+       is a SHA-256 of the Matrix event id (message) or call id (call), only so a
+       message or call seen again on a re-delivered sync batch is counted once. -->
   <changeSet id="20261113-communication-stat" author="oriso">
     <createTable tableName="communication_stat">
       <column name="id" type="BIGINT" autoIncrement="true"><constraints primaryKey="true" nullable="false"/></column>
@@ -13,10 +14,10 @@
       <column name="session_id" type="BIGINT"/>
       <column name="kind" type="VARCHAR(40)"><constraints nullable="false"/></column>
       <column name="occurred_at" type="DATETIME"><constraints nullable="false"/></column>
-      <column name="call_key" type="VARCHAR(64)"/>
+      <column name="event_key" type="VARCHAR(64)"/>
     </createTable>
-    <addUniqueConstraint tableName="communication_stat" columnNames="call_key"
-      constraintName="uk_communication_stat_call_key"/>
+    <addUniqueConstraint tableName="communication_stat" columnNames="event_key"
+      constraintName="uk_communication_stat_event_key"/>
     <createIndex tableName="communication_stat" indexName="idx_communication_stat_tenant_kind_time">
       <column name="tenant_id"/>
       <column name="kind"/>

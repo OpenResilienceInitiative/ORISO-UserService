@@ -62,19 +62,19 @@ class AdminStatisticsRepositoryIT {
     assertThat(underTest.countCounsellorMessagesByTenant(FROM, TO))
         .extracting(r -> r.getGroupId() + ":" + r.getTotal())
         .containsExactly(TENANT_ID + ":1");
-    assertThat(communicationStats.existsByCallKey("k1")).isTrue();
+    assertThat(communicationStats.existsByEventKey("k1")).isTrue();
     assertThat(communicationStats.deleteBatchOccurredBefore(TO, 100)).isEqualTo(4);
   }
 
   private static CommunicationStat row(
-      Long agencyId, Kind kind, LocalDateTime occurredAt, String callKey) {
+      Long agencyId, Kind kind, LocalDateTime occurredAt, String eventKey) {
     return CommunicationStat.builder()
         .tenantId(TENANT_ID)
         .agencyId(agencyId)
         .sessionId(1L)
         .kind(kind)
         .occurredAt(occurredAt)
-        .callKey(callKey)
+        .eventKey(eventKey)
         .build();
   }
 

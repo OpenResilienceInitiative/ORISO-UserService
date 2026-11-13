@@ -636,6 +636,8 @@ public class MatrixEventListenerService {
           recipientIds.size());
     }
 
+    String statisticEventId = privacyEnvelope == null ? null : privacyEnvelope.getMessageId();
+
     // Notify asynchronously so the Matrix sync loop is not blocked.
     executorService.submit(
         () ->
@@ -667,7 +669,8 @@ public class MatrixEventListenerService {
                   }
 
                   if (mappedSessionId != null && senderDomainUserId != null) {
-                    recordMessageStatistics(senderId, senderDomainUserId, mappedSessionId);
+                    recordMessageStatistics(
+                        senderId, senderDomainUserId, mappedSessionId, statisticEventId);
                   }
                 }));
 
@@ -679,7 +682,8 @@ public class MatrixEventListenerService {
    * is logged and never reaches the notification path. Voice messages are not counted: session
    * rooms are end-to-end encrypted, so the msgtype is opaque to the server.
    */
-  private void recordMessageStatistics(String senderId, String senderDomainUserId, Long sessionId) {
+  private void recordMessageStatistics(
+      String senderId, String senderDomainUserId, Long sessionId, String eventId) {
     boolean consultantSender;
     try {
       consultantSender = isConsultantMatrixUser(senderId);
@@ -691,7 +695,7 @@ public class MatrixEventListenerService {
       if (consultantSender) {
         consultantMessageStatService.recordMessageSent(senderDomainUserId, sessionId);
       } else {
-        communicationStatService.recordAdviceSeekerMessage(sessionId);
+        communicationStatService.recordAdviceSeekerMessage(sessionId, eventId);
       }
     } catch (Exception e) {
       log.error(

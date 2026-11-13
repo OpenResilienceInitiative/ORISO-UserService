@@ -14,7 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
  */
 public interface CommunicationStatRepository extends CrudRepository<CommunicationStat, Long> {
 
-  boolean existsByCallKey(String callKey);
+  boolean existsByEventKey(String eventKey);
 
   /**
    * Retention: deletes at most {@code batchSize} rows that occurred strictly before the cutoff.

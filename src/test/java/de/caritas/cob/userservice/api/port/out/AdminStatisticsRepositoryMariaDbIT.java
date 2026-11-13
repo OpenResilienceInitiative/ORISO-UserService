@@ -111,14 +111,14 @@ class AdminStatisticsRepositoryMariaDbIT {
   }
 
   private static CommunicationStat communicationRow(
-      Kind kind, LocalDateTime occurredAt, String callKey) {
+      Kind kind, LocalDateTime occurredAt, String eventKey) {
     return CommunicationStat.builder()
         .tenantId(TENANT_ID)
         .agencyId(AGENCY_ID)
         .sessionId(1L)
         .kind(kind)
         .occurredAt(occurredAt)
-        .callKey(callKey)
+        .eventKey(eventKey)
         .build();
   }
 

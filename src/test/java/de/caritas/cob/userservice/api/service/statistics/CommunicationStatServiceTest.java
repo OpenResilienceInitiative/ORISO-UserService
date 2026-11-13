@@ -70,7 +70,7 @@ class CommunicationStatServiceTest {
 
   @Test
   void adviceSeekerMessage_storesOnlyPlaceKindAndTime() {
-    service.recordAdviceSeekerMessage(SESSION_ID);
+    service.recordAdviceSeekerMessage(SESSION_ID, "$evt-1");
 
     var row = saved();
     assertThat(row.getKind()).isEqualTo(Kind.ADVICE_SEEKER_MESSAGE);
@@ -78,24 +78,46 @@ class CommunicationStatServiceTest {
     assertThat(row.getAgencyId()).isEqualTo(AGENCY_ID);
     assertThat(row.getSessionId()).isEqualTo(SESSION_ID);
     assertThat(row.getOccurredAt()).isEqualTo(LocalDateTime.of(2026, 11, 13, 9, 0));
-    assertThat(row.getCallKey()).isNull();
+    // Only a SHA-256 of the Matrix event id is kept, never the id itself.
+    assertThat(row.getEventKey())
+        .isEqualTo(CommunicationStatService.eventKey("$evt-1"))
+        .doesNotContain("evt-1");
   }
 
   @Test
-  void call_isStoredWithItsKind_andAHashedCallKey() {
+  void adviceSeekerMessage_alreadyCounted_isNotCountedAgain() {
+    // A Matrix sync batch is re-delivered when a later event in it fails.
+    when(repository.existsByEventKey(CommunicationStatService.eventKey("$evt-1"))).thenReturn(true);
+
+    service.recordAdviceSeekerMessage(SESSION_ID, "$evt-1");
+
+    verify(repository, never()).save(any());
+  }
+
+  @Test
+  void adviceSeekerMessage_withoutEventId_isStillCounted() {
+    service.recordAdviceSeekerMessage(SESSION_ID, null);
+
+    var row = saved();
+    assertThat(row.getKind()).isEqualTo(Kind.ADVICE_SEEKER_MESSAGE);
+    assertThat(row.getEventKey()).isNull();
+  }
+
+  @Test
+  void call_isStoredWithItsKind_andAHashedEventKey() {
     service.recordCall(SESSION_ID, "call-1", true);
 
     var row = saved();
     assertThat(row.getKind()).isEqualTo(Kind.VIDEO_CALL);
     // SHA-256 of "call-1", calculated independently: printf 'call-1' | shasum -a 256
-    assertThat(row.getCallKey()).isEqualTo(CALL_1_SHA256);
+    assertThat(row.getEventKey()).isEqualTo(CALL_1_SHA256);
   }
 
   @Test
   void differentCalls_getDifferentKeys_andTheSameCallTheSameKey() {
-    assertThat(CommunicationStatService.callKey("call-1"))
-        .isEqualTo(CommunicationStatService.callKey("call-1"))
-        .isNotEqualTo(CommunicationStatService.callKey("call-2"));
+    assertThat(CommunicationStatService.eventKey("call-1"))
+        .isEqualTo(CommunicationStatService.eventKey("call-1"))
+        .isNotEqualTo(CommunicationStatService.eventKey("call-2"));
   }
 
   @Test
@@ -107,7 +129,7 @@ class CommunicationStatServiceTest {
 
   @Test
   void call_alreadyCounted_isNotCountedAgain() {
-    when(repository.existsByCallKey(CommunicationStatService.callKey("call-1"))).thenReturn(true);
+    when(repository.existsByEventKey(CommunicationStatService.eventKey("call-1"))).thenReturn(true);
 
     service.recordCall(SESSION_ID, "call-1", false);
 
@@ -118,7 +140,7 @@ class CommunicationStatServiceTest {
   void nothingIsStored_whenMessageCountingIsSwitchedOff() {
     when(settings.isMessageCountTrackingEnabled()).thenReturn(false);
 
-    service.recordAdviceSeekerMessage(SESSION_ID);
+    service.recordAdviceSeekerMessage(SESSION_ID, "$evt-1");
     service.recordCall(SESSION_ID, "call-1", true);
 
     verify(repository, never()).save(any());
@@ -128,16 +150,16 @@ class CommunicationStatServiceTest {
   void nothingIsStored_whenTheOrganisationDidNotSwitchStatisticsOn() {
     when(featureGate.isEnabledForTenant(TENANT_ID)).thenReturn(false);
 
-    service.recordAdviceSeekerMessage(SESSION_ID);
+    service.recordAdviceSeekerMessage(SESSION_ID, "$evt-1");
 
     verify(repository, never()).save(any());
   }
 
   @Test
   void nothingIsStored_withoutSessionOrCallId() {
-    service.recordAdviceSeekerMessage(null);
+    service.recordAdviceSeekerMessage(null, "$evt-1");
     service.recordCall(SESSION_ID, " ", true);
-    service.recordAdviceSeekerMessage(99L);
+    service.recordAdviceSeekerMessage(99L, "$evt-1");
 
     verify(repository, never()).save(any());
   }
@@ -146,6 +168,7 @@ class CommunicationStatServiceTest {
   void aFailingDatabase_isSwallowed() {
     when(repository.save(any())).thenThrow(new IllegalStateException("db down"));
 
-    assertThatCode(() -> service.recordAdviceSeekerMessage(SESSION_ID)).doesNotThrowAnyException();
+    assertThatCode(() -> service.recordAdviceSeekerMessage(SESSION_ID, "$evt-1"))
+        .doesNotThrowAnyException();
   }
 }

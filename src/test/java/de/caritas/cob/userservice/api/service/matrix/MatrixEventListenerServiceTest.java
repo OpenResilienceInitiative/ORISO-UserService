@@ -1185,7 +1185,7 @@ class MatrixEventListenerServiceTest {
     verify(internalChatEmailService)
         .onMatrixMessage(MATRIX_ROOM_ID, "$evt-direct", CONSULTANT_MATRIX_ID);
     verify(consultantMessageStatService).recordMessageSent(CONSULTANT_DOMAIN_ID, 10L);
-    verify(communicationStatService, never()).recordAdviceSeekerMessage(any());
+    verify(communicationStatService, never()).recordAdviceSeekerMessage(any(), any());
   }
 
   // ── Admin Statistik communication tracking ─────────────────────────────────
@@ -1206,7 +1206,7 @@ class MatrixEventListenerServiceTest {
     invokeProcessMatrixSyncEvents(
         service, syncResultWithEvents(MATRIX_ROOM_ID, List.of(encrypted)));
 
-    verify(communicationStatService).recordAdviceSeekerMessage(10L);
+    verify(communicationStatService).recordAdviceSeekerMessage(10L, "$enc");
     verify(consultantMessageStatService, never()).recordMessageSent(anyString(), any());
   }
 
@@ -1218,7 +1218,7 @@ class MatrixEventListenerServiceTest {
         .thenReturn(Optional.of(userWithId(ASKER_DOMAIN_ID)));
     org.mockito.Mockito.doThrow(new IllegalStateException("db down"))
         .when(communicationStatService)
-        .recordAdviceSeekerMessage(10L);
+        .recordAdviceSeekerMessage(10L, "$s");
 
     invokeProcessMatrixSyncEvents(
         service,
