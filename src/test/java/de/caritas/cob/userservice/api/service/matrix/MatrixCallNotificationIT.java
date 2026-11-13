@@ -534,6 +534,9 @@ class MatrixCallNotificationIT {
                 consultants,
                 sessions,
                 mock(ConsultantMessageStatService.class),
+                mock(
+                    de.caritas.cob.userservice.api.service.statistics.CommunicationStatService
+                        .class),
                 inviteService,
                 mock(
                     de.caritas.cob.userservice.api.service.notification
@@ -845,6 +848,9 @@ class MatrixCallNotificationIT {
                 consultants,
                 sessions,
                 mock(ConsultantMessageStatService.class),
+                mock(
+                    de.caritas.cob.userservice.api.service.statistics.CommunicationStatService
+                        .class),
                 inviteService,
                 mock(
                     de.caritas.cob.userservice.api.service.notification
@@ -1476,6 +1482,7 @@ class MatrixCallNotificationIT {
         consultants,
         sessions,
         mock(ConsultantMessageStatService.class),
+        mock(de.caritas.cob.userservice.api.service.statistics.CommunicationStatService.class),
         inviteService,
         mock(
             de.caritas.cob.userservice.api.service.notification.AdviceSeekerReplyEmailService
@@ -1714,6 +1721,9 @@ class MatrixCallNotificationIT {
                 consultants,
                 sessions,
                 mock(ConsultantMessageStatService.class),
+                mock(
+                    de.caritas.cob.userservice.api.service.statistics.CommunicationStatService
+                        .class),
                 inviteService,
                 mock(
                     de.caritas.cob.userservice.api.service.notification

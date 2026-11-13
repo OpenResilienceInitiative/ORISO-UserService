@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeast;
@@ -83,6 +84,11 @@ class MatrixEventListenerServiceTest {
   @Mock private SessionRepository sessionRepository;
   @Mock private RedisMessageMirrorService redisMessageMirrorService;
   @Mock private ConsultantMessageStatService consultantMessageStatService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.statistics.CommunicationStatService
+      communicationStatService;
+
   @Mock private AdviceSeekerReplyEmailService replyEmailService;
 
   @Mock private MatrixEmailSyncCursorStore emailSyncCursorStore;
@@ -136,6 +142,7 @@ class MatrixEventListenerServiceTest {
             consultantRepository,
             sessionRepository,
             consultantMessageStatService,
+            communicationStatService,
             callInviteNotifications,
             replyEmailService,
             emailSyncCursorStore,
@@ -212,6 +219,7 @@ class MatrixEventListenerServiceTest {
             consultantRepository,
             sessionRepository,
             consultantMessageStatService,
+            communicationStatService,
             callInviteNotifications,
             replyEmailService,
             emailSyncCursorStore,
@@ -661,6 +669,7 @@ class MatrixEventListenerServiceTest {
             consultantRepository,
             sessionRepository,
             consultantMessageStatService,
+            communicationStatService,
             callInviteNotifications,
             replyEmailService,
             emailSyncCursorStore,
@@ -697,6 +706,7 @@ class MatrixEventListenerServiceTest {
             consultantRepository,
             sessionRepository,
             consultantMessageStatService,
+            communicationStatService,
             callInviteNotifications,
             replyEmailService,
             emailSyncCursorStore,
@@ -1175,6 +1185,194 @@ class MatrixEventListenerServiceTest {
     verify(internalChatEmailService)
         .onMatrixMessage(MATRIX_ROOM_ID, "$evt-direct", CONSULTANT_MATRIX_ID);
     verify(consultantMessageStatService).recordMessageSent(CONSULTANT_DOMAIN_ID, 10L);
+    verify(communicationStatService, never()).recordAdviceSeekerMessage(any(), any());
+  }
+
+  // ── Admin Statistik communication tracking ─────────────────────────────────
+
+  @Test
+  void adviceSeekerMessage_isCountedForTheMappedSession_andNotAsCounsellorMessage() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    var seeker = userWithId(ASKER_DOMAIN_ID);
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(SENDER_MATRIX_ID))
+        .thenReturn(Optional.of(seeker));
+
+    var encrypted = new HashMap<String, Object>();
+    encrypted.put("type", "m.room.encrypted");
+    encrypted.put("sender", SENDER_MATRIX_ID);
+    encrypted.put("event_id", "$enc");
+    encrypted.put("content", Map.of("algorithm", "m.megolm.v1.aes-sha2", "ciphertext", "x"));
+    invokeProcessMatrixSyncEvents(
+        service, syncResultWithEvents(MATRIX_ROOM_ID, List.of(encrypted)));
+
+    verify(communicationStatService).recordAdviceSeekerMessage(10L, "$enc");
+    verify(consultantMessageStatService, never()).recordMessageSent(anyString(), any());
+  }
+
+  @Test
+  void adviceSeekerMessage_failingStatistic_doesNotBreakTheNotificationPath() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(SENDER_MATRIX_ID))
+        .thenReturn(Optional.of(userWithId(ASKER_DOMAIN_ID)));
+    org.mockito.Mockito.doThrow(new IllegalStateException("db down"))
+        .when(communicationStatService)
+        .recordAdviceSeekerMessage(10L, "$s");
+
+    invokeProcessMatrixSyncEvents(
+        service,
+        syncResultWithEvents(
+            MATRIX_ROOM_ID, List.of(messageEvent(SENDER_MATRIX_ID, "m.text", "hi", "$s"))));
+
+    verify(eventNotificationService)
+        .createMessageNotificationFromRoom(
+            eq(MATRIX_ROOM_ID), eq(ASKER_DOMAIN_ID), any(PrivacyEnvelope.class));
+  }
+
+  @Test
+  void adviceSeekerMessage_isCounted_whenNoOneElseIsInTheSessionYet() {
+    // An unassigned enquiry: the advice seeker is the only participant, so nobody is notified.
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(SENDER_MATRIX_ID))
+        .thenReturn(Optional.of(userWithId(ASKER_DOMAIN_ID)));
+
+    invokeProcessMatrixSyncEvents(
+        service,
+        syncResultWithEvents(
+            MATRIX_ROOM_ID, List.of(messageEvent(SENDER_MATRIX_ID, "m.text", "hi", "$alone"))));
+
+    verify(communicationStatService).recordAdviceSeekerMessage(10L, "$alone");
+    verify(eventNotificationService, never())
+        .createMessageNotificationFromRoom(anyString(), any(), any(PrivacyEnvelope.class));
+  }
+
+  @Test
+  void adviceSeekerMessage_isCounted_whenTheFeedNotificationFails() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(SENDER_MATRIX_ID))
+        .thenReturn(Optional.of(userWithId(ASKER_DOMAIN_ID)));
+    org.mockito.Mockito.doThrow(new IllegalStateException("feed down"))
+        .when(eventNotificationService)
+        .createMessageNotificationFromRoom(anyString(), any(), any(PrivacyEnvelope.class));
+
+    invokeProcessMatrixSyncEvents(
+        service,
+        syncResultWithEvents(
+            MATRIX_ROOM_ID, List.of(messageEvent(SENDER_MATRIX_ID, "m.text", "hi", "$feed"))));
+
+    verify(communicationStatService).recordAdviceSeekerMessage(10L, "$feed");
+  }
+
+  @Test
+  void validatedOrisoCallInvite_isCountedOncePerCall_withItsVideoFlag() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    var invite =
+        Map.<String, Object>of(
+            "type",
+            "org.oriso.call.invite",
+            "sender",
+            SENDER_MATRIX_ID,
+            "content",
+            Map.of("call_id", "call-1", "is_video", true, "call_room_id", "!media:x"));
+    when(callInviteNotifications.handle(MATRIX_ROOM_ID, invite)).thenReturn(true);
+
+    invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, invite);
+
+    verify(communicationStatService).recordCall(10L, "call-1", true);
+  }
+
+  @Test
+  void rejectedOrisoCallInvite_isNotCounted() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    var invite =
+        Map.<String, Object>of(
+            "type",
+            "org.oriso.call.invite",
+            "sender",
+            SENDER_MATRIX_ID,
+            "content",
+            Map.of("call_id", "forged", "is_video", false));
+    when(callInviteNotifications.handle(MATRIX_ROOM_ID, invite)).thenReturn(false);
+
+    invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, invite);
+
+    verify(communicationStatService, never()).recordCall(any(), any(), anyBoolean());
+  }
+
+  @Test
+  void legacyCallInvite_isCountedAsAudioOrVideoFromItsSdpOffer() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(SENDER_MATRIX_ID))
+        .thenReturn(Optional.of(userWithId(ASKER_DOMAIN_ID)));
+    invokeProcessMatrixEvent(
+        service,
+        MATRIX_ROOM_ID,
+        Map.of(
+            "type",
+            "m.call.invite",
+            "sender",
+            SENDER_MATRIX_ID,
+            "content",
+            Map.of("call_id", "audio-1", "offer", Map.of("sdp", "v=0\r\nm=audio 9"))));
+    invokeProcessMatrixEvent(
+        service,
+        MATRIX_ROOM_ID,
+        Map.of(
+            "type",
+            "m.call.invite",
+            "sender",
+            SENDER_MATRIX_ID,
+            "content",
+            Map.of("call_id", "video-1", "offer", Map.of("sdp", "m=audio 9\r\nm=video 9"))));
+
+    verify(communicationStatService).recordCall(10L, "audio-1", false);
+    verify(communicationStatService).recordCall(10L, "video-1", true);
+  }
+
+  @Test
+  void legacyCallInvite_fromSomeoneOutsideTheSession_isNotCounted() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    // the sender resolves to no ORISO account, or to one that is not part of this session
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull("@stranger:matrix.example.org"))
+        .thenReturn(Optional.of(userWithId("someone-else")));
+    for (String sender : List.of("@stranger:matrix.example.org", "@unknown:matrix.example.org")) {
+      invokeProcessMatrixEvent(
+          service,
+          MATRIX_ROOM_ID,
+          Map.of(
+              "type",
+              "m.call.invite",
+              "sender",
+              sender,
+              "content",
+              Map.of("call_id", "forged-" + sender, "offer", Map.of("sdp", "m=video 9"))));
+    }
+
+    verify(communicationStatService, never()).recordCall(any(), any(), anyBoolean());
+  }
+
+  @Test
+  void callInvite_inARoomWithoutSession_isNotCounted() {
+    var service = newServiceWithSyncExecutor();
+    invokeProcessMatrixEvent(
+        service,
+        "!unmapped:x",
+        Map.of(
+            "type",
+            "m.call.invite",
+            "sender",
+            SENDER_MATRIX_ID,
+            "content",
+            Map.of("call_id", "c", "offer", Map.of("sdp", "m=video"))));
+
+    verify(communicationStatService, never()).recordCall(any(), any(), anyBoolean());
   }
 
   @Test

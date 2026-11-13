@@ -189,6 +189,7 @@ class MatrixCallTenantIT {
             consultants,
             sessions,
             mock(ConsultantMessageStatService.class),
+            mock(de.caritas.cob.userservice.api.service.statistics.CommunicationStatService.class),
             invites,
             mock(
                 de.caritas.cob.userservice.api.service.notification.AdviceSeekerReplyEmailService
