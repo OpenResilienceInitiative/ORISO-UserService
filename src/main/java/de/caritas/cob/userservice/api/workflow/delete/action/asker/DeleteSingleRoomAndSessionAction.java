@@ -8,6 +8,8 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.port.out.SessionTopicRepository;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
+import de.caritas.cob.userservice.api.service.lifecycle.LifecycleEventPublisher;
+import de.caritas.cob.userservice.api.service.lifecycle.LifecycleEventPublisher.DeletedSession;
 import de.caritas.cob.userservice.api.workflow.delete.model.SessionDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.service.TeamDiscussionPurgeService;
 import org.springframework.stereotype.Component;
@@ -16,12 +18,15 @@ import org.springframework.stereotype.Component;
 public class DeleteSingleRoomAndSessionAction extends DeleteRoomsAndSessionAction
     implements ActionCommand<SessionDeletionWorkflowDTO> {
 
+  private final LifecycleEventPublisher lifecycleEventPublisher;
+
   /**
    * Constructor.
    *
    * @param sessionRepository a {@link SessionRepository} instance
    * @param sessionDataRepository a {@link SessionDataRepository} instance
    * @param caseHandoverRequestRepository a {@link CaseHandoverRequestRepository} instance
+   * @param lifecycleEventPublisher announces the deleted session to add-ons (ADR-032)
    */
   public DeleteSingleRoomAndSessionAction(
       SessionRepository sessionRepository,
@@ -30,7 +35,8 @@ public class DeleteSingleRoomAndSessionAction extends DeleteRoomsAndSessionActio
       SessionSupervisorRepository sessionSupervisorRepository,
       SessionTopicRepository sessionTopicRepository,
       TeamDiscussionRepository teamDiscussionRepository,
-      TeamDiscussionPurgeService teamDiscussionPurgeService) {
+      TeamDiscussionPurgeService teamDiscussionPurgeService,
+      LifecycleEventPublisher lifecycleEventPublisher) {
     super(
         sessionRepository,
         sessionDataRepository,
@@ -39,6 +45,7 @@ public class DeleteSingleRoomAndSessionAction extends DeleteRoomsAndSessionActio
         sessionTopicRepository,
         teamDiscussionRepository,
         teamDiscussionPurgeService);
+    this.lifecycleEventPublisher = lifecycleEventPublisher;
   }
 
   /**
@@ -48,6 +55,11 @@ public class DeleteSingleRoomAndSessionAction extends DeleteRoomsAndSessionActio
    */
   @Override
   public void execute(SessionDeletionWorkflowDTO actionTarget) {
-    performSessionDeletion(actionTarget.getSession(), actionTarget.getDeletionWorkflowErrors());
+    // ADR-032: capture the ids while the row exists, announce session.deleted once it is gone.
+    var deletedSession = DeletedSession.of(actionTarget.getSession());
+    if (performSessionDeletion(
+        actionTarget.getSession(), actionTarget.getDeletionWorkflowErrors())) {
+      lifecycleEventPublisher.sessionDeleted(deletedSession);
+    }
   }
 }

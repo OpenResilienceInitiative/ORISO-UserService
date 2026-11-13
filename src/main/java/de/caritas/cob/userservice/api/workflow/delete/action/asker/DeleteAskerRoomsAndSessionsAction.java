@@ -8,6 +8,8 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.port.out.SessionTopicRepository;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
+import de.caritas.cob.userservice.api.service.lifecycle.LifecycleEventPublisher;
+import de.caritas.cob.userservice.api.service.lifecycle.LifecycleEventPublisher.DeletedSession;
 import de.caritas.cob.userservice.api.service.session.DeletedAskerSessionService;
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.service.TeamDiscussionPurgeService;
@@ -21,6 +23,7 @@ public class DeleteAskerRoomsAndSessionsAction extends DeleteRoomsAndSessionActi
     implements ActionCommand<AskerDeletionWorkflowDTO> {
 
   private final DeletedAskerSessionService deletedAskerSessionService;
+  private final LifecycleEventPublisher lifecycleEventPublisher;
 
   public DeleteAskerRoomsAndSessionsAction(
       SessionRepository sessionRepository,
@@ -30,7 +33,8 @@ public class DeleteAskerRoomsAndSessionsAction extends DeleteRoomsAndSessionActi
       SessionTopicRepository sessionTopicRepository,
       TeamDiscussionRepository teamDiscussionRepository,
       TeamDiscussionPurgeService teamDiscussionPurgeService,
-      DeletedAskerSessionService deletedAskerSessionService) {
+      DeletedAskerSessionService deletedAskerSessionService,
+      LifecycleEventPublisher lifecycleEventPublisher) {
     super(
         sessionRepository,
         sessionDataRepository,
@@ -40,6 +44,7 @@ public class DeleteAskerRoomsAndSessionsAction extends DeleteRoomsAndSessionActi
         teamDiscussionRepository,
         teamDiscussionPurgeService);
     this.deletedAskerSessionService = deletedAskerSessionService;
+    this.lifecycleEventPublisher = lifecycleEventPublisher;
   }
 
   /**
@@ -57,8 +62,11 @@ public class DeleteAskerRoomsAndSessionsAction extends DeleteRoomsAndSessionActi
               // ORISO-Frontend#1159: capture what the counsellor's placeholder needs while the
               // session still exists, and record it only if the session really was deleted.
               var placeholder = DeletedAskerSessionService.Placeholder.of(session);
+              // ADR-032: likewise the ids add-ons need, announced as session.deleted once gone.
+              var deletedSession = DeletedSession.of(session);
               if (performSessionDeletion(session, actionTarget.getDeletionWorkflowErrors())) {
                 placeholder.ifPresent(this::recordPlaceholder);
+                lifecycleEventPublisher.sessionDeleted(deletedSession);
               }
             });
   }

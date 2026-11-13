@@ -49,7 +49,9 @@ public class InactiveAskerDeletionService {
                 DeleteAskerDraftMessagesAction.class,
                 DeleteAskerEventNotificationsAction.class,
                 DeleteKeycloakAskerAction.class,
-                DeleteDatabaseAskerAction.class);
+                DeleteDatabaseAskerAction.class,
+                // Last: announces user.deleted to add-ons (ADR-032) once the row is gone.
+                PublishAskerDeletedEventAction.class);
     for (var step : steps) {
       actions
           .buildContainerForType(AskerDeletionWorkflowDTO.class)
