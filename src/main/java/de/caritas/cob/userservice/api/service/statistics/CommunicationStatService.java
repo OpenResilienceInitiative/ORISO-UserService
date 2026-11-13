@@ -45,7 +45,7 @@ public class CommunicationStatService {
     record(
         Kind.ADVICE_SEEKER_MESSAGE,
         sessionId,
-        eventId == null || eventId.isBlank() ? null : eventKey(eventId));
+        eventId == null || eventId.isBlank() ? null : messageKey(eventId));
   }
 
   /** One call, counted once per Matrix call id however often its invite is seen. */
@@ -53,7 +53,7 @@ public class CommunicationStatService {
     if (callId == null || callId.isBlank()) {
       return;
     }
-    record(video ? Kind.VIDEO_CALL : Kind.AUDIO_CALL, sessionId, eventKey(callId));
+    record(video ? Kind.VIDEO_CALL : Kind.AUDIO_CALL, sessionId, callKey(callId));
   }
 
   private void record(Kind kind, Long sessionId, String eventKey) {
@@ -83,11 +83,23 @@ public class CommunicationStatService {
     }
   }
 
-  /** SHA-256 of a Matrix event id or call id; the id itself is never stored. */
-  static String eventKey(String matrixId) {
+  /** Key of an advice-seeker message: a SHA-256 of its Matrix event id, never the id itself. */
+  static String messageKey(String eventId) {
+    return sha256("message:" + eventId);
+  }
+
+  /**
+   * Key of a call: a SHA-256 of its Matrix call id. Namespaced apart from message keys because a
+   * client chooses its own call id, which may equal an existing message's event id.
+   */
+  static String callKey(String callId) {
+    return sha256("call:" + callId);
+  }
+
+  private static String sha256(String value) {
     try {
       var digest = MessageDigest.getInstance("SHA-256");
-      return HexFormat.of().formatHex(digest.digest(matrixId.getBytes(StandardCharsets.UTF_8)));
+      return HexFormat.of().formatHex(digest.digest(value.getBytes(StandardCharsets.UTF_8)));
     } catch (NoSuchAlgorithmException e) {
       throw new IllegalStateException("SHA-256 is not available", e);
     }

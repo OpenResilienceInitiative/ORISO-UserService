@@ -35,7 +35,7 @@ class CommunicationStatServiceTest {
   private static final long TENANT_ID = 3L;
   private static final long AGENCY_ID = 7L;
   private static final String CALL_1_SHA256 =
-      "5d7963c4f471e142f5a72214a9666fb164718f9ba1066a7862ac1c5041887940";
+      "e10e70c2d1e2e95661af7a8081386056f609bb1ca2442f2675987517f47b0740";
 
   @Mock private CommunicationStatRepository repository;
   @Mock private SessionRepository sessionRepository;
@@ -80,14 +80,15 @@ class CommunicationStatServiceTest {
     assertThat(row.getOccurredAt()).isEqualTo(LocalDateTime.of(2026, 11, 13, 9, 0));
     // Only a SHA-256 of the Matrix event id is kept, never the id itself.
     assertThat(row.getEventKey())
-        .isEqualTo(CommunicationStatService.eventKey("$evt-1"))
+        .isEqualTo(CommunicationStatService.messageKey("$evt-1"))
         .doesNotContain("evt-1");
   }
 
   @Test
   void adviceSeekerMessage_alreadyCounted_isNotCountedAgain() {
     // A Matrix sync batch is re-delivered when a later event in it fails.
-    when(repository.existsByEventKey(CommunicationStatService.eventKey("$evt-1"))).thenReturn(true);
+    when(repository.existsByEventKey(CommunicationStatService.messageKey("$evt-1")))
+        .thenReturn(true);
 
     service.recordAdviceSeekerMessage(SESSION_ID, "$evt-1");
 
@@ -109,15 +110,22 @@ class CommunicationStatServiceTest {
 
     var row = saved();
     assertThat(row.getKind()).isEqualTo(Kind.VIDEO_CALL);
-    // SHA-256 of "call-1", calculated independently: printf 'call-1' | shasum -a 256
+    // SHA-256 of "call:call-1", calculated independently: printf 'call:call-1' | shasum -a 256
     assertThat(row.getEventKey()).isEqualTo(CALL_1_SHA256);
   }
 
   @Test
   void differentCalls_getDifferentKeys_andTheSameCallTheSameKey() {
-    assertThat(CommunicationStatService.eventKey("call-1"))
-        .isEqualTo(CommunicationStatService.eventKey("call-1"))
-        .isNotEqualTo(CommunicationStatService.eventKey("call-2"));
+    assertThat(CommunicationStatService.callKey("call-1"))
+        .isEqualTo(CommunicationStatService.callKey("call-1"))
+        .isNotEqualTo(CommunicationStatService.callKey("call-2"));
+  }
+
+  @Test
+  void aCallAndAMessage_withTheSameMatrixId_getDifferentKeys() {
+    // A client chooses its own call_id, so it can equal an existing message's event id.
+    assertThat(CommunicationStatService.callKey("$evt-1"))
+        .isNotEqualTo(CommunicationStatService.messageKey("$evt-1"));
   }
 
   @Test
@@ -129,7 +137,7 @@ class CommunicationStatServiceTest {
 
   @Test
   void call_alreadyCounted_isNotCountedAgain() {
-    when(repository.existsByEventKey(CommunicationStatService.eventKey("call-1"))).thenReturn(true);
+    when(repository.existsByEventKey(CommunicationStatService.callKey("call-1"))).thenReturn(true);
 
     service.recordCall(SESSION_ID, "call-1", false);
 

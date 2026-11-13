@@ -1231,6 +1231,42 @@ class MatrixEventListenerServiceTest {
   }
 
   @Test
+  void adviceSeekerMessage_isCounted_whenNoOneElseIsInTheSessionYet() {
+    // An unassigned enquiry: the advice seeker is the only participant, so nobody is notified.
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(SENDER_MATRIX_ID))
+        .thenReturn(Optional.of(userWithId(ASKER_DOMAIN_ID)));
+
+    invokeProcessMatrixSyncEvents(
+        service,
+        syncResultWithEvents(
+            MATRIX_ROOM_ID, List.of(messageEvent(SENDER_MATRIX_ID, "m.text", "hi", "$alone"))));
+
+    verify(communicationStatService).recordAdviceSeekerMessage(10L, "$alone");
+    verify(eventNotificationService, never())
+        .createMessageNotificationFromRoom(anyString(), any(), any(PrivacyEnvelope.class));
+  }
+
+  @Test
+  void adviceSeekerMessage_isCounted_whenTheFeedNotificationFails() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(SENDER_MATRIX_ID))
+        .thenReturn(Optional.of(userWithId(ASKER_DOMAIN_ID)));
+    org.mockito.Mockito.doThrow(new IllegalStateException("feed down"))
+        .when(eventNotificationService)
+        .createMessageNotificationFromRoom(anyString(), any(), any(PrivacyEnvelope.class));
+
+    invokeProcessMatrixSyncEvents(
+        service,
+        syncResultWithEvents(
+            MATRIX_ROOM_ID, List.of(messageEvent(SENDER_MATRIX_ID, "m.text", "hi", "$feed"))));
+
+    verify(communicationStatService).recordAdviceSeekerMessage(10L, "$feed");
+  }
+
+  @Test
   void validatedOrisoCallInvite_isCountedOncePerCall_withItsVideoFlag() {
     var service = newServiceWithSyncExecutor();
     service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));

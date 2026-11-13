@@ -610,6 +610,16 @@ public class MatrixEventListenerService {
       }
     }
 
+    // Statistics do not depend on who is notified: a message in a session the advice seeker is
+    // still alone in (an unassigned enquiry) counts, and so does one whose feed entry failed.
+    if (sessionId != null && senderDomainUserId != null) {
+      scheduleMessageStatistics(
+          senderId,
+          senderDomainUserId,
+          sessionId,
+          privacyEnvelope == null ? null : privacyEnvelope.getMessageId());
+    }
+
     // Get users who should receive notification (exclude sender)
     Set<String> userIds = getRecipientCandidatesForRoom(roomId);
     if (userIds == null || userIds.isEmpty()) {
@@ -635,8 +645,6 @@ public class MatrixEventListenerService {
           roomId,
           recipientIds.size());
     }
-
-    String statisticEventId = privacyEnvelope == null ? null : privacyEnvelope.getMessageId();
 
     // Notify asynchronously so the Matrix sync loop is not blocked.
     executorService.submit(
@@ -665,16 +673,28 @@ public class MatrixEventListenerService {
                   } catch (Exception e) {
                     recordSideEffect(SideEffect.NOTIFICATION, Outcome.FAILURE);
                     log.error("❌ Failed to create event notification from room", e);
-                    return;
-                  }
-
-                  if (mappedSessionId != null && senderDomainUserId != null) {
-                    recordMessageStatistics(
-                        senderId, senderDomainUserId, mappedSessionId, statisticEventId);
                   }
                 }));
 
     return true;
+  }
+
+  /** Runs {@link #recordMessageStatistics} on the notification worker, off the sync loop. */
+  private void scheduleMessageStatistics(
+      String senderId, String senderDomainUserId, Long sessionId, String eventId) {
+    try {
+      Runnable record =
+          () ->
+              inTechnicalTenant(
+                  () -> recordMessageStatistics(senderId, senderDomainUserId, sessionId, eventId));
+      if (executorService == null) {
+        record.run();
+      } else {
+        executorService.submit(record);
+      }
+    } catch (Exception e) {
+      log.error("Failed to schedule message statistics", e);
+    }
   }
 
   /**
