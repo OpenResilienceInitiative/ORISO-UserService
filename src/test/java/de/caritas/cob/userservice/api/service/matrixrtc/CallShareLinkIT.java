@@ -926,6 +926,42 @@ class CallShareLinkIT {
   }
 
   @Test
+  void theCounsellorsOwnEndBlocksTheirDelayedBind_EvenWhenAnAskerOwnsTheObservation()
+      throws Exception {
+    // CodeRabbit 4563094690: the asker registered the call id first, so the observation is theirs.
+    // The counsellor ends the call while their bind is still checking Matrix; the end is stored as
+    // the counsellor's own, and the delayed bind does not start a live call.
+    String askerMedia = "!owned-asker-media:example";
+    String counsellorMedia = "!owned-counsellor-media:example";
+    when(matrix.getCallRoomBinding(askerMedia, ASKER))
+        .thenReturn(Optional.of(Map.of("call_id", "owned-call", "source_room_id", SOURCE)));
+    when(matrix.getCallRoomOrigin(askerMedia, ASKER))
+        .thenReturn(Optional.of(new MatrixSynapseService.CallRoomOrigin(ASKER, ASKER)));
+    stubCounsellorsCallRoom("owned-call", counsellorMedia);
+    var outcome =
+        de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService.Outcome.OK;
+    assertThat(
+            observations.register(
+                actor("share-asker", "user"), SOURCE, "owned-call", askerMedia, true))
+        .isEqualTo(outcome);
+
+    var counsellorActor = actor(counsellor.getId(), "consultant");
+    assertThat(observations.end(counsellorActor, SOURCE, "owned-call")).isEqualTo(outcome);
+
+    assertThat(
+            new JdbcTemplate(dataSource)
+                .queryForObject(
+                    "SELECT COUNT(*) FROM matrix_call_observation_end WHERE call_id = 'owned-call'"
+                        + " AND actor_matrix_id = ?",
+                    Integer.class,
+                    counsellor.getMatrixUserId()))
+        .isEqualTo(1);
+    assertThat(sessionBindings.bind(counsellorActor, SOURCE, "owned-call", counsellorMedia, true))
+        .isFalse();
+    assertThat(bindings.findBySourceRoomIdAndCallId(SOURCE, "owned-call")).isEmpty();
+  }
+
+  @Test
   void anAlreadyExpiredAskerInviteCreatesNoBinding_AndTheCounsellorBinds() throws Exception {
     String askerMedia = "!expired-asker-media:example";
     String counsellorMedia = "!expired-counsellor-media:example";

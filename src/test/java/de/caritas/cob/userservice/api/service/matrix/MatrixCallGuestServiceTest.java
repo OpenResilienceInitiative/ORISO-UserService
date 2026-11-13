@@ -361,6 +361,37 @@ class MatrixCallGuestServiceTest {
   }
 
   @Test
+  void nobodyIsSeatedInAGroupCallWhoseMembershipsAllExpired() throws Exception {
+    // CodeRabbit 4563094721: a group call passes counsellorCall on the conversation rule, so only
+    // the liveness check in admitAs keeps a guest out of a group call that is over.
+    binding =
+        MatrixCallBinding.builder()
+            .id(12L)
+            .sourceRoomId(SOURCE)
+            .callId("call")
+            .mediaRoomId(MEDIA)
+            .callerMatrixId("@second:example")
+            .chatId(9L)
+            .tenantId(7L)
+            .invitedAt(1000L)
+            .inviteExpiresAt(61000L)
+            .startedAt(1200L)
+            .build();
+    device("expired-device", "@second:example", System.currentTimeMillis() - 1);
+    device("counsellor-device", COUNSELLOR, System.currentTimeMillis() - 1);
+    when(conversations.resolve(SOURCE))
+        .thenReturn(Optional.of(new MatrixCallConversation(SOURCE, 7L, null, 9L)));
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull(COUNSELLOR))
+        .thenReturn(Optional.of(consultant("counsellor", COUNSELLOR, 7L)));
+    assertThat(service.counsellorCall(7L, "counsellor", SOURCE, "call").outcome())
+        .isEqualTo(MatrixCallGuestService.Outcome.ADMITTED);
+
+    assertThat(service.admitAs(7L, "counsellor", SOURCE, "call", "guest").outcome())
+        .isEqualTo(MatrixCallGuestService.Outcome.NOT_FOUND);
+    verify(matrix, never()).inviteUserToRoom(anyString(), anyString(), anyString());
+  }
+
+  @Test
   void aSuspendedCounsellorCannotAdmitOrVouchForALink() throws Exception {
     suspend("counsellor");
     assertThat(service.admit(counsellor, SOURCE, "call", "guest").outcome())

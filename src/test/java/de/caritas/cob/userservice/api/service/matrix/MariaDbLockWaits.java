@@ -19,19 +19,26 @@ import org.testcontainers.containers.MariaDBContainer;
  * particular table, instead of sleeping and hoping the competitor got there (CodeRabbit 4562143209,
  * 4562502751, 4562504270).
  *
- * <p>The waiter must be in a {@code FOR UPDATE} on {@code table} and either listed as {@code LOCK
- * WAIT} in INNODB_TRX or executing for at least 300 ms. The second signal is needed because a
+ * <p>The waiter must be in a {@code FOR UPDATE} on {@code table}, and InnoDB must confirm a row
+ * lock wait: either INNODB_TRX lists the waiter's transaction as {@code LOCK WAIT}, or the server's
+ * {@code Innodb_row_lock_current_waits} counter is above zero. The counter is needed because a
  * {@code FOR UPDATE} on a primary-key constant waits inside the optimizer ("Statistics" state),
- * where MariaDB 10.11 does not list the waiting transaction in INNODB_TRX. Reads both tables as
- * root, because they need the PROCESS privilege.
+ * where MariaDB 10.11 does not list the waiting transaction in INNODB_TRX; InnoDB's lock wait
+ * counts it all the same. The counter is server-wide, so it is a lock-wait signal only while the
+ * test's waiter is the only connection that can wait on a row lock, which holds for these ITs (the
+ * competitor holds the lock, nothing else runs). No elapsed-time fallback (CodeRabbit 4563106479):
+ * a slow query is never taken for a lock wait. Reads as root, because the tables need the PROCESS
+ * privilege.
  */
 final class MariaDbLockWaits {
   private static final String WAITING =
       "SELECT COUNT(*) FROM information_schema.PROCESSLIST p"
           + " WHERE p.ID = ? AND p.COMMAND = 'Query'"
           + " AND LOWER(p.INFO) LIKE '%for update%' AND LOWER(p.INFO) LIKE ?"
-          + " AND (p.TIME_MS >= 300 OR EXISTS (SELECT 1 FROM information_schema.INNODB_TRX t"
-          + " WHERE t.trx_mysql_thread_id = p.ID AND t.trx_state = 'LOCK WAIT'))";
+          + " AND (EXISTS (SELECT 1 FROM information_schema.INNODB_TRX t"
+          + " WHERE t.trx_mysql_thread_id = p.ID AND t.trx_state = 'LOCK WAIT')"
+          + " OR (SELECT CAST(s.VARIABLE_VALUE AS UNSIGNED) FROM information_schema.GLOBAL_STATUS s"
+          + " WHERE s.VARIABLE_NAME = 'INNODB_ROW_LOCK_CURRENT_WAITS') > 0)";
 
   private MariaDbLockWaits() {}
 

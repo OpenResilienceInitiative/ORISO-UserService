@@ -72,7 +72,8 @@ import org.testcontainers.containers.MariaDBContainer;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class MatrixCallTakeoverLockOrderMariaDbIT {
   private static final MariaDBContainer<?> DATABASE =
-      new MariaDBContainer<>("mariadb:10.11").withDatabaseName("userservice");
+      new MariaDBContainer<>(System.getProperty("it.mariadb.image", "mariadb:10.11"))
+          .withDatabaseName("userservice");
 
   static {
     DATABASE.start();

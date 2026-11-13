@@ -421,11 +421,20 @@ public class CallShareLinkService {
 
   /**
    * FE#2209 round 3: one lock order on session-call paths (binding, session, observation, link,
-   * knocks). The link's call binding is locked before the link, so a takeover or an end, which hold
-   * the binding while they retire the link, never wait on a link this transaction holds.
+   * knocks). The link's call binding, then its session, are locked before the link, so a takeover
+   * or an end, which hold the binding while they retire the link, never wait on a link this
+   * transaction holds.
    */
   private void lockCallOf(Long linkId) {
-    links.findCallBindingIdById(linkId).ifPresent(bindings::lockById);
+    links
+        .findCallBindingIdById(linkId)
+        .flatMap(bindings::lockById)
+        .map(MatrixCallBinding::getSessionId)
+        // CodeRabbit 4563094668: the authority check after the locks reads the session's assigned
+        // counsellor. The session is locked and re-read here (binding, session, link), so a
+        // reassignment that committed after the first, unlocked check is seen, and one that comes
+        // later waits for this join.
+        .ifPresent(sessions::lockFresh);
   }
 
   private boolean outlived(AgencyInviteLink link) {

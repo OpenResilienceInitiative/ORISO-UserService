@@ -332,9 +332,14 @@ public class MatrixCallObservationService {
       recordEnd(conversation, callId, caller, now);
       return new ObservationEnd(null, false);
     }
-    if (!caller.equals(row.getCreatorMatrixId())
-        || !Objects.equals(row.getTenantId(), conversation.getTenantId())) {
-      return null;
+    if (!Objects.equals(row.getTenantId(), conversation.getTenantId())) return null;
+    if (!caller.equals(row.getCreatorMatrixId())) {
+      // CodeRabbit 4563094690: somebody else (an asker) owns the observation of this call id. Their
+      // observation stays as it is, but this member's own end is stored, so a bind of this member
+      // still in flight (and any later one) sees it and does not start a live call.
+      if (!members.contains(caller)) return null;
+      recordEnd(conversation, callId, caller, now);
+      return new ObservationEnd(null, false);
     }
     recordEnd(conversation, callId, caller, now);
     if (row.getEndedAt() != null) return new ObservationEnd(row, false);

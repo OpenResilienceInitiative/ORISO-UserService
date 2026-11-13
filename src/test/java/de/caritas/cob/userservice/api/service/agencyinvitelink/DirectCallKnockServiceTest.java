@@ -93,6 +93,7 @@ class DirectCallKnockServiceTest {
     session.setId(SESSION_ID);
     session.setConsultant(counsellor);
     when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
+    when(sessionRepository.lockFresh(SESSION_ID)).thenReturn(Optional.of(session));
     when(sessionRepository.findByIdForUpdate(SESSION_ID)).thenReturn(Optional.of(session));
     when(repository.save(any())).thenAnswer(i -> i.getArgument(0));
     when(repository.findSessionIdById(any())).thenReturn(Optional.of(SESSION_ID));
@@ -307,13 +308,13 @@ class DirectCallKnockServiceTest {
 
     service.admit(1L, counsellor);
     var order = inOrder(sessionRepository, repository);
-    order.verify(sessionRepository).findByIdForUpdate(SESSION_ID);
+    order.verify(sessionRepository).lockFresh(SESSION_ID);
     order.verify(repository).findByIdForUpdate(1L);
     // The knock entity is not loaded unlocked first, so no stale copy can be decided.
     verify(repository, never()).findById(any());
 
     service.admitAll(counsellor, SESSION_ID, null);
-    order.verify(sessionRepository).findByIdForUpdate(SESSION_ID);
+    order.verify(sessionRepository).lockFresh(SESSION_ID);
     order
         .verify(repository)
         .findCallKnocksForConsultantForUpdate(
@@ -684,7 +685,7 @@ class DirectCallKnockServiceTest {
 
     var order = org.mockito.Mockito.inOrder(callBindings, sessionRepository, callGuests);
     order.verify(callBindings).lockById(3L);
-    order.verify(sessionRepository).findByIdForUpdate(SESSION_ID);
+    order.verify(sessionRepository).lockFresh(SESSION_ID);
     order.verify(callGuests).counsellorCall(TENANT, "counsellor-1", "!room:oriso", "call-1");
     verify(callGuests, org.mockito.Mockito.times(1))
         .counsellorCall(TENANT, "counsellor-1", "!room:oriso", "call-1");

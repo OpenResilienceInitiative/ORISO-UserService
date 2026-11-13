@@ -588,8 +588,10 @@ public class DirectCallKnockService {
    * knock), so an admission cannot slip between knock's admission check and its pending lookup.
    */
   private void lockConversation(Long sessionId) {
+    // Fresh (round 5): the in-call and authority checks after this lock read the session's assigned
+    // counsellor, which an earlier unlocked read could have left stale in this transaction.
     sessionRepository
-        .findByIdForUpdate(sessionId)
+        .lockFresh(sessionId)
         .orElseThrow(() -> new NotFoundException("Session %s not found", sessionId));
   }
 

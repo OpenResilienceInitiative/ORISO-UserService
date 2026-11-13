@@ -178,6 +178,7 @@ class MatrixCallTenantIT {
               conversation.setIsConsultantDirectlySet(false);
               return sessions.save(conversation);
             });
+    var cursor = freshEmailCursor();
     var listener =
         new MatrixEventListenerService(
             matrix,
@@ -194,7 +195,7 @@ class MatrixCallTenantIT {
             mock(
                 de.caritas.cob.userservice.api.service.notification.AdviceSeekerReplyEmailService
                     .class),
-            freshEmailCursor(),
+            cursor,
             mock(InternalChatEmailService.class));
     try {
       // Control: this fixture must really enforce tenant isolation before testing the worker.
@@ -282,15 +283,12 @@ class MatrixCallTenantIT {
         // FE#2209 round 3: an already expired invite of the asker (the session's owner sends it
         // here) creates no binding of the 1:1 session call and notifies nobody. Late-sync
         // recovery stays for the assigned counsellor's own invite and for group chats.
-        await()
-            .pollInSameThread()
-            .during(Duration.ofMillis(1500))
-            .atMost(Duration.ofSeconds(5))
-            .untilAsserted(
-                () -> {
-                  assertThat(bindings.findBySourceRoomIdAndCallId(source, "tenant-call")).isEmpty();
-                  assertThat(notifications.findAll()).isEmpty();
-                });
+        // CodeRabbit 4563094732: the listener acknowledges the cursor only after the cycle
+        // processed the invite and reconciled successfully, so a cycle that failed (and retries
+        // later) is never taken for a rejection.
+        org.mockito.Mockito.verify(cursor, org.mockito.Mockito.timeout(5000)).write("joined");
+        assertThat(bindings.findBySourceRoomIdAndCallId(source, "tenant-call")).isEmpty();
+        assertThat(notifications.findAll()).isEmpty();
         listener.shutdown();
         return;
       }

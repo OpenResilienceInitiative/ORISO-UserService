@@ -21,7 +21,7 @@ import org.springframework.data.repository.CrudRepository;
 import org.springframework.data.repository.query.Param;
 import org.springframework.transaction.annotation.Transactional;
 
-public interface SessionRepository extends CrudRepository<Session, Long> {
+public interface SessionRepository extends CrudRepository<Session, Long>, SessionRowLock {
 
   /**
    * FE#2209: whether any session of any tenant uses this Matrix room. Native, so the Hibernate

@@ -33,7 +33,8 @@ class CallObservationSessionMigrationMariaDbIT {
   private static final String CHECKSUM_ON_DEV = "9:135d1aa1ce2e13ed4645f36997610ae2";
 
   private static final MariaDBContainer<?> DATABASE =
-      new MariaDBContainer<>("mariadb:10.11").withDatabaseName("userservice");
+      new MariaDBContainer<>(System.getProperty("it.mariadb.image", "mariadb:10.11"))
+          .withDatabaseName("userservice");
 
   static {
     DATABASE.start();

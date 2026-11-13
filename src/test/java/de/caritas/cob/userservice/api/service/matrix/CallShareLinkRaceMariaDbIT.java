@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.matrix;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -107,7 +108,8 @@ import org.testcontainers.containers.MariaDBContainer;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class CallShareLinkRaceMariaDbIT {
   private static final MariaDBContainer<?> DATABASE =
-      new MariaDBContainer<>("mariadb:10.11").withDatabaseName("userservice");
+      new MariaDBContainer<>(System.getProperty("it.mariadb.image", "mariadb:10.11"))
+          .withDatabaseName("userservice");
 
   static {
     DATABASE.start();
@@ -266,6 +268,89 @@ class CallShareLinkRaceMariaDbIT {
   void runsAtTheDeploymentsIsolationLevel() {
     assertThat(new JdbcTemplate(dataSource).queryForObject("SELECT @@tx_isolation", String.class))
         .isEqualTo("REPEATABLE-READ");
+  }
+
+  @Test
+  void aRowDeletedAfterItWasReadLocksAsAbsentWithoutMarkingTheTransactionForRollback()
+      throws Exception {
+    // CodeRabbit 4563094647: the row was read unlocked (managed), then another transaction deleted
+    // it. The lock answers empty, and the transaction can still commit its own work.
+    long now = System.currentTimeMillis();
+    Long goneId =
+        transaction.execute(
+            status ->
+                bindings
+                    .save(
+                        MatrixCallBinding.builder()
+                            .sourceRoomId(source)
+                            .callId("gone-call")
+                            .mediaRoomId("!gone-media-" + suffix + ":example")
+                            .callerMatrixId(counsellor.getMatrixUserId())
+                            .sessionId(sessionId)
+                            .tenantId(7L)
+                            .invitedAt(now)
+                            .inviteExpiresAt(now + 60000)
+                            .video(false)
+                            .build())
+                    .getId());
+    var pool = Executors.newSingleThreadExecutor();
+    try {
+      transaction.executeWithoutResult(
+          status -> {
+            assertThat(bindings.findById(goneId)).isPresent();
+            try {
+              pool.submit(
+                      () ->
+                          new JdbcTemplate(dataSource)
+                              .update("DELETE FROM matrix_call_binding WHERE id = ?", goneId))
+                  .get(15, TimeUnit.SECONDS);
+            } catch (Exception e) {
+              throw new IllegalStateException(e);
+            }
+            assertThat(bindings.lockById(goneId)).isEmpty();
+            assertThat(status.isRollbackOnly()).isFalse();
+          });
+      // The commit above did not fail with UnexpectedRollbackException.
+    } finally {
+      pool.shutdownNow();
+    }
+  }
+
+  @Test
+  void aJoinSeesAReassignmentThatCommittedAfterItsFirstAuthorityCheck() throws Exception {
+    // CodeRabbit 4563094668: join checks the counsellor's authority once before the locks (which
+    // loads the session) and once after. A reassignment that commits in between must be seen by
+    // the second check, not answered from the transaction's stale copy of the session.
+    String token =
+        shareLinks.create(7L, counsellor.getId(), source, "call", false, null).link().getToken();
+    var guest = users.findById("join-end-guest-" + suffix).orElseThrow();
+    var successor = transaction.execute(status -> consultants.save(consultant()));
+    var jdbc = new JdbcTemplate(dataSource);
+    var pool = Executors.newSingleThreadExecutor();
+    // Runs between the two checks (the operational-tenant check of the guest), in its own
+    // connection, and commits before join goes on.
+    doAnswer(
+            invocation -> {
+              pool.submit(
+                      () ->
+                          jdbc.update(
+                              "UPDATE session SET consultant_id = ? WHERE id = ?",
+                              successor.getId(),
+                              sessionId))
+                  .get(15, TimeUnit.SECONDS);
+              return null;
+            })
+        .when(tenantService)
+        .requireOperationalTenant(7L);
+    try {
+      assertThatThrownBy(() -> shareLinks.join(token, guest))
+          .isInstanceOf(CallShareLinkEndedException.class);
+    } finally {
+      pool.shutdownNow();
+      jdbc.update(
+          "UPDATE session SET consultant_id = ? WHERE id = ?", counsellor.getId(), sessionId);
+      transaction.executeWithoutResult(status -> consultants.deleteById(successor.getId()));
+    }
   }
 
   @Test

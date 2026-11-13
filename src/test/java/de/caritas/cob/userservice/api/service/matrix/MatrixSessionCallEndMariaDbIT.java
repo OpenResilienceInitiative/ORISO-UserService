@@ -68,7 +68,8 @@ import org.testcontainers.containers.MariaDBContainer;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class MatrixSessionCallEndMariaDbIT {
   private static final MariaDBContainer<?> DATABASE =
-      new MariaDBContainer<>("mariadb:10.11").withDatabaseName("userservice");
+      new MariaDBContainer<>(System.getProperty("it.mariadb.image", "mariadb:10.11"))
+          .withDatabaseName("userservice");
 
   static {
     DATABASE.start();
@@ -223,7 +224,10 @@ class MatrixSessionCallEndMariaDbIT {
       release.countDown();
       pool.shutdownNow();
     }
-    assertNoLiveBinding();
+    // CodeRabbit 4563094742: bind succeeded, so its row must exist, retained and ended (a deleted
+    // row would let a later registration revive the call).
+    assertThat(bindings.findBySourceRoomIdAndCallId(source, "call").orElseThrow().getEndedAt())
+        .isNotNull();
   }
 
   @Test
@@ -266,6 +270,7 @@ class MatrixSessionCallEndMariaDbIT {
         .isNotNull();
   }
 
+  /** Only for the end-before-bind case: bind refused, so a row may be absent. */
   private void assertNoLiveBinding() {
     Optional<MatrixCallBinding> binding = bindings.findBySourceRoomIdAndCallId(source, "call");
     binding.ifPresent(value -> assertThat(value.getEndedAt()).isNotNull());
