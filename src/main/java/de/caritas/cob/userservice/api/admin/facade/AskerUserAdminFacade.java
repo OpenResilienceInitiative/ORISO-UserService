@@ -12,8 +12,11 @@ import de.caritas.cob.userservice.api.admin.service.IdentityReactivationUnmutate
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.admin.service.asker.AskerAdminSearchService;
+import de.caritas.cob.userservice.api.admin.service.asker.GroupChatSystemAccounts;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
@@ -23,8 +26,10 @@ import de.caritas.cob.userservice.api.workflow.delete.service.AskerEnquiryCloser
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
 /** Wrapper facade to provide admin operations on asker accounts. */
 @Service
@@ -42,6 +47,7 @@ public class AskerUserAdminFacade {
   private final @NonNull AdminScope adminScope;
   private final @NonNull AskerAdminSearchService askerAdminSearchService;
   private final @NonNull AskerEnquiryCloser askerEnquiryCloser;
+  private final @NonNull GroupChatSystemAccounts groupChatSystemAccounts;
 
   /** Advice seekers within the caller's reach, including those already marked for deletion. */
   public AskerSearchResultDTO findAskers(Integer page, Integer perPage, AskerFilter filter) {
@@ -64,12 +70,30 @@ public class AskerUserAdminFacade {
       throw new ConflictException(
           String.format("Asker with id %s is already marked for deletion", userId));
     }
+    assertNotTechnicalAccountOfExistingTenant(user);
 
     liveChatClaims.claimIntentionalDeletion(userId);
     this.identityDeactivator.deactivateUser(userId);
     this.deletionLifecycleService.beginUserDeletion(user, null);
     this.userService.saveUser(user);
     this.askerEnquiryCloser.closeOpenEnquiries(user);
+  }
+
+  /** A group-chat system account goes with its Träger, unless the Träger is already gone. */
+  private void assertNotTechnicalAccountOfExistingTenant(User user) {
+    boolean mayDelete;
+    try {
+      mayDelete = groupChatSystemAccounts.mayDelete(user.getUserId(), user.getTenantId());
+    } catch (RuntimeException unavailable) {
+      throw new ResponseStatusException(
+          HttpStatus.BAD_GATEWAY,
+          "Whether the Träger still exists could not be checked",
+          unavailable);
+    }
+    if (!mayDelete) {
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.TECHNICAL_ACCOUNT_OF_EXISTING_TENANT, HttpStatus.CONFLICT);
+    }
   }
 
   public void pauseAskerDeletion(String userId, String reason, Integer months, String pausedBy) {

@@ -511,9 +511,14 @@ paths:
         404:
           description: NOT FOUND - asker not found
         409:
-          description: CONFLICT - asker is already marked for deletion
+          description: >-
+            CONFLICT - asker is already marked for deletion, or (X-Reason
+            TECHNICAL_ACCOUNT_OF_EXISTING_TENANT) it is the technical group-chat account of a
+            Träger that still exists and goes with the Träger
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
+        502:
+          description: BAD GATEWAY - whether the Träger of a technical account still exists could not be checked
       security:
         - Bearer: [ ]
   /useradmin/report:
@@ -2895,6 +2900,8 @@ components:
         - username
         - agencyIds
         - deletionState
+        - technical
+        - deletable
       properties:
         id:
           type: string
@@ -2922,6 +2929,15 @@ components:
           type: string
           description: The deletion lifecycle state, e.g. ACTIVE, READ_ONLY_SAFEGUARD or HARD_DELETE_PARTIAL_FAILURE.
           example: ACTIVE
+        technical:
+          type: boolean
+          description: >-
+            A technical group-chat-system account that owns a Träger's group chats, not a person.
+        deletable:
+          type: boolean
+          description: >-
+            Whether an admin may mark this entry now. False for a technical account whose Träger
+            still exists (it is deleted with the Träger) or when that could not be checked.
 
     AskerResponseDTO:
       type: object

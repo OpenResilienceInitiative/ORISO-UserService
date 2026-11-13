@@ -17,10 +17,13 @@ import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -28,6 +31,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /** Lists advice seekers for the admin interface, within the caller's reach. */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class AskerAdminSearchService {
@@ -47,6 +51,7 @@ public class AskerAdminSearchService {
   private final @NonNull UserAgencyRepository userAgencyRepository;
   private final @NonNull AdminScope adminScope;
   private final @NonNull UsernameTranscoder usernameTranscoder;
+  private final @NonNull GroupChatSystemAccounts groupChatSystemAccounts;
 
   @Transactional(readOnly = true)
   public AskerSearchResultDTO findAskers(Integer page, Integer perPage, AskerFilter filter) {
@@ -66,13 +71,46 @@ public class AskerAdminSearchService {
 
     var result = askerSearchRepository.findAll(specification, pageRequest);
     var agencyIds = agencyIdsByUser(result.getContent());
+    var presentTenants = tenantsOfTechnicalAccounts(result.getContent());
 
     return new AskerSearchResultDTO()
         .total(result.getTotalElements())
         .embedded(
             result.getContent().stream()
-                .map(asker -> toResponse(asker, agencyIds.get(asker.getUserId())))
+                .map(asker -> toResponse(asker, agencyIds.get(asker.getUserId()), presentTenants))
                 .toList());
+  }
+
+  /**
+   * Which Träger of the page's technical accounts still exist; {@code null} when that could not be
+   * checked, so those accounts are shown as not deletable (fail closed) instead of failing the
+   * list.
+   */
+  private Set<Long> tenantsOfTechnicalAccounts(List<User> askers) {
+    var tenantIds =
+        askers.stream()
+            .filter(asker -> GroupChatSystemAccounts.isTechnical(asker.getUserId()))
+            .map(User::getTenantId)
+            .filter(Objects::nonNull)
+            .collect(Collectors.toSet());
+    if (tenantIds.isEmpty()) {
+      return Set.of();
+    }
+    try {
+      return groupChatSystemAccounts.tenantsStillPresent(tenantIds);
+    } catch (RuntimeException unavailable) {
+      log.warn("Could not check the Träger of {} technical accounts", tenantIds.size());
+      return null;
+    }
+  }
+
+  private static boolean deletable(User asker, Set<Long> presentTenants) {
+    if (!GroupChatSystemAccounts.isTechnical(asker.getUserId())) {
+      return true;
+    }
+    return presentTenants != null
+        && !GroupChatSystemAccounts.isPlatformTenant(asker.getTenantId())
+        && !presentTenants.contains(asker.getTenantId());
   }
 
   /** Only a platform admin chooses the Träger; everybody else searches their own. */
@@ -113,7 +151,8 @@ public class AskerAdminSearchService {
     }
   }
 
-  private AskerAdminResponseDTO toResponse(User asker, Set<Long> agencyIds) {
+  private AskerAdminResponseDTO toResponse(
+      User asker, Set<Long> agencyIds, Set<Long> presentTenants) {
     return new AskerAdminResponseDTO()
         .id(asker.getUserId())
         .username(usernameTranscoder.decodeUsername(asker.getUsername()))
@@ -121,7 +160,9 @@ public class AskerAdminSearchService {
         .agencyIds(agencyIds == null ? List.of() : List.copyOf(agencyIds))
         .createDate(format(asker.getCreateDate()))
         .deleteDate(format(asker.getDeleteDate()))
-        .deletionState(deletionState(asker));
+        .deletionState(deletionState(asker))
+        .technical(GroupChatSystemAccounts.isTechnical(asker.getUserId()))
+        .deletable(deletable(asker, presentTenants));
   }
 
   private static String deletionState(User asker) {

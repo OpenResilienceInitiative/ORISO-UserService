@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.admin.service.IdentityReactivationSagaStor
 import de.caritas.cob.userservice.api.admin.service.IdentityReactivationUnmutatedException;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.admin.service.asker.AskerAdminSearchService;
+import de.caritas.cob.userservice.api.admin.service.asker.GroupChatSystemAccounts;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.identity.IdentityReactivationCompensationException;
@@ -60,6 +61,7 @@ class AskerUserAdminFacadeTest {
   @Mock private AdminScope adminScope;
   @Mock private AskerAdminSearchService askerAdminSearchService;
   @Mock private AskerEnquiryCloser askerEnquiryCloser;
+  @Mock private GroupChatSystemAccounts groupChatSystemAccounts;
 
   @BeforeEach
   void setUp() {
@@ -96,6 +98,7 @@ class AskerUserAdminFacadeTest {
   void adminDeletionDoesNotDisableIdentityIfConversionClaimRefuses() {
     var user = new User();
     when(userService.getUser(any())).thenReturn(Optional.of(user));
+    when(groupChatSystemAccounts.mayDelete(any(), any())).thenReturn(true);
     org.mockito.Mockito.doThrow(new ConflictException("pending"))
         .when(liveChatClaims)
         .claimIntentionalDeletion("user id");
@@ -109,6 +112,7 @@ class AskerUserAdminFacadeTest {
   void markAskerForDeletionDisablesIdentityAndPersistsLifecycle() {
     User user = new User();
     when(userService.getUser(any())).thenReturn(Optional.of(user));
+    when(groupChatSystemAccounts.mayDelete(any(), any())).thenReturn(true);
     doAnswer(
             invocation -> {
               invocation.<User>getArgument(0).setDeleteDate(nowInUtc());
@@ -126,6 +130,47 @@ class AskerUserAdminFacadeTest {
     var order = org.mockito.Mockito.inOrder(userService, askerEnquiryCloser);
     order.verify(userService).saveUser(user);
     order.verify(askerEnquiryCloser).closeOpenEnquiries(user);
+  }
+
+  @Test
+  void markAskerForDeletion_Should_refuseTheTechnicalAccountOfAnExistingTenant() {
+    User system = new User();
+    system.setUserId("group-chat-system-3");
+    system.setTenantId(3L);
+    when(userService.getUser("group-chat-system-3")).thenReturn(Optional.of(system));
+    when(groupChatSystemAccounts.mayDelete("group-chat-system-3", 3L)).thenReturn(false);
+
+    var refused =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class,
+            () -> askerUserAdminFacade.markAskerForDeletion("group-chat-system-3"));
+
+    assertThat(
+        refused.getHttpStatus(),
+        org.hamcrest.Matchers.is(org.springframework.http.HttpStatus.CONFLICT));
+    verify(identityDeactivator, org.mockito.Mockito.never()).deactivateUser(any());
+    verify(userService, org.mockito.Mockito.never()).saveUser(any());
+  }
+
+  @Test
+  void markAskerForDeletion_Should_failClosed_When_tenantCannotBeChecked() {
+    User system = new User();
+    system.setUserId("group-chat-system-4");
+    system.setTenantId(4L);
+    when(userService.getUser("group-chat-system-4")).thenReturn(Optional.of(system));
+    when(groupChatSystemAccounts.mayDelete("group-chat-system-4", 4L))
+        .thenThrow(new IllegalStateException("tenant service down"));
+
+    var refused =
+        org.junit.jupiter.api.Assertions.assertThrows(
+            org.springframework.web.server.ResponseStatusException.class,
+            () -> askerUserAdminFacade.markAskerForDeletion("group-chat-system-4"));
+
+    assertThat(
+        refused.getStatusCode(),
+        org.hamcrest.Matchers.is(org.springframework.http.HttpStatus.BAD_GATEWAY));
+    verify(identityDeactivator, org.mockito.Mockito.never()).deactivateUser(any());
   }
 
   @Test

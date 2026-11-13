@@ -41,6 +41,7 @@ class AskerAdminSearchServiceTest {
   @Mock private SessionRepository sessionRepository;
   @Mock private UserAgencyRepository userAgencyRepository;
   @Mock private AdminScope adminScope;
+  @Mock private GroupChatSystemAccounts groupChatSystemAccounts;
 
   private AskerAdminSearchService service;
 
@@ -52,7 +53,8 @@ class AskerAdminSearchServiceTest {
             sessionRepository,
             userAgencyRepository,
             adminScope,
-            usernameTranscoder);
+            usernameTranscoder,
+            groupChatSystemAccounts);
   }
 
   @Test
@@ -138,6 +140,45 @@ class AskerAdminSearchServiceTest {
     assertThat(service.usernameVariants(encoded)).containsExactlyInAnyOrder("anna", encoded);
     assertThat(service.usernameVariants(" ")).isEmpty();
     assertThat(service.usernameVariants(null)).isEmpty();
+  }
+
+  @Test
+  void findAskers_Should_flagTechnicalAccountsDeletableOnlyWhenTheirTenantIsGone() {
+    givenReach(new Platform());
+    var person = asker("a-1", "anna", 3L, null, DeletionLifecycleState.ACTIVE);
+    var ofLiveTenant = technical("group-chat-system-3", 3L);
+    var ofGoneTenant = technical("group-chat-system-4", 4L);
+    var ofPlatform = technical("group-chat-system-default", null);
+    givenPage(List.of(person, ofLiveTenant, ofGoneTenant, ofPlatform), 4);
+    when(groupChatSystemAccounts.tenantsStillPresent(Set.of(3L, 4L))).thenReturn(Set.of(3L));
+
+    var rows = service.findAskers(1, 4, null).getEmbedded();
+
+    assertThat(rows)
+        .extracting(r -> r.getId() + ":" + r.getTechnical() + ":" + r.getDeletable())
+        .containsExactly(
+            "a-1:false:true",
+            "group-chat-system-3:true:false",
+            "group-chat-system-4:true:true",
+            "group-chat-system-default:true:false");
+  }
+
+  @Test
+  void findAskers_Should_showTechnicalAccountsAsNotDeletable_When_tenantCheckFails() {
+    givenReach(new Platform());
+    givenPage(List.of(technical("group-chat-system-4", 4L)), 1);
+    when(groupChatSystemAccounts.tenantsStillPresent(Set.of(4L)))
+        .thenThrow(new IllegalStateException("tenant service down"));
+
+    var row = service.findAskers(1, 20, null).getEmbedded().get(0);
+
+    assertThat(row.getDeletable()).isFalse();
+  }
+
+  private User technical(String id, Long tenantId) {
+    var user = asker(id, id, tenantId, null, DeletionLifecycleState.ACTIVE);
+    user.setUsername(id);
+    return user;
   }
 
   private void givenReach(AdminScope.Reach reach) {
