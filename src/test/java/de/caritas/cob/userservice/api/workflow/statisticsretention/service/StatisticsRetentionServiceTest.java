@@ -24,6 +24,8 @@ import java.util.Properties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.io.ClassPathResource;
@@ -102,14 +104,15 @@ class StatisticsRetentionServiceTest {
     verify(settingChangeRepository, never()).delete(any());
   }
 
-  /** A misconfigured or empty value must never wipe the table. */
-  @Test
-  void purge_leavesMessageRowsAlone_when_theRetentionIsNotPositive() {
-    setField(service, "messageCountRetentionDays", 0);
+  /** A misconfigured or empty value must never wipe either table. */
+  @ParameterizedTest
+  @ValueSource(ints = {0, -1})
+  void purge_leavesMessageAndCommunicationRowsAlone_when_theRetentionIsNotPositive(int days) {
+    setField(service, "messageCountRetentionDays", days);
 
     service.purgeExpiredStatistics();
 
-    verifyNoInteractions(messageStatRepository);
+    verifyNoInteractions(messageStatRepository, communicationStatRepository);
     verify(settingChangeRepository).anonymizeActorBefore(any());
   }
 

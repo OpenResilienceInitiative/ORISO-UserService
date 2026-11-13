@@ -34,6 +34,8 @@ class CommunicationStatServiceTest {
   private static final long SESSION_ID = 10L;
   private static final long TENANT_ID = 3L;
   private static final long AGENCY_ID = 7L;
+  private static final String CALL_1_SHA256 =
+      "5d7963c4f471e142f5a72214a9666fb164718f9ba1066a7862ac1c5041887940";
 
   @Mock private CommunicationStatRepository repository;
   @Mock private SessionRepository sessionRepository;
@@ -85,7 +87,15 @@ class CommunicationStatServiceTest {
 
     var row = saved();
     assertThat(row.getKind()).isEqualTo(Kind.VIDEO_CALL);
-    assertThat(row.getCallKey()).hasSize(64).isNotEqualTo("call-1");
+    // SHA-256 of "call-1", calculated independently: printf 'call-1' | shasum -a 256
+    assertThat(row.getCallKey()).isEqualTo(CALL_1_SHA256);
+  }
+
+  @Test
+  void differentCalls_getDifferentKeys_andTheSameCallTheSameKey() {
+    assertThat(CommunicationStatService.callKey("call-1"))
+        .isEqualTo(CommunicationStatService.callKey("call-1"))
+        .isNotEqualTo(CommunicationStatService.callKey("call-2"));
   }
 
   @Test

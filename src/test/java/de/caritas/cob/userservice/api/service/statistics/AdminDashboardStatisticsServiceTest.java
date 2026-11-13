@@ -33,6 +33,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
@@ -966,8 +967,9 @@ class AdminDashboardStatisticsServiceTest {
             List.of(groupCount(AGENCY_WITH_TEAM, 10), groupCount(AGENCY_WITH_FEW_COUNSELORS, 1)));
     // 15 in the total leaves 5 beyond the shown agency, so subtraction protection keeps it shown
     when(adminStatisticsRepository.countConsultantsForTenant(TENANT_ID)).thenReturn(15L);
-    var monthStart = LocalDateTime.of(2026, 7, 1, 0, 0);
-    var nextMonthStart = LocalDateTime.of(2026, 8, 1, 0, 0);
+    // the German month July, in stored UTC time
+    var monthStart = LocalDateTime.of(2026, 6, 30, 22, 0);
+    var nextMonthStart = LocalDateTime.of(2026, 7, 31, 22, 0);
     when(adminStatisticsRepository.countCounsellorMessagesByAgency(
             TENANT_ID, monthStart, nextMonthStart))
         .thenReturn(
@@ -997,6 +999,32 @@ class AdminDashboardStatisticsServiceTest {
     assertThat(total.messagesAdviceSeekersCurrentMonth()).isEqualTo(29L);
     assertThat(total.audioCallsCurrentMonth()).isEqualTo(2L);
     assertThat(total.videoCallsCurrentMonth()).isEqualTo(1L);
+  }
+
+  @Test
+  void
+      buildDashboard_Should_CountCommunication_ForTheGermanMonth_When_UtcIsStillInThePreviousOne() {
+    // 22:30 UTC on 31 July is 00:30 on 1 August in Germany: the live counts cover August
+    service =
+        new AdminDashboardStatisticsService(
+            adminStatisticsRepository,
+            adminAgencyRepository,
+            authenticatedUser,
+            Clock.fixed(Instant.parse("2026-07-31T22:30:00Z"), ZoneOffset.UTC),
+            mockEnvironment,
+            statisticsSettingsService,
+            dashboardStands);
+    givenTenantAdmin();
+    givenEmptyTenantScopedQueries();
+    var augustStart = LocalDateTime.of(2026, 7, 31, 22, 0);
+    var septemberStart = LocalDateTime.of(2026, 8, 31, 22, 0);
+
+    service.buildDashboard();
+
+    verify(adminStatisticsRepository)
+        .countCounsellorMessagesByAgency(TENANT_ID, augustStart, septemberStart);
+    verify(adminStatisticsRepository)
+        .countCommunicationByAgency(TENANT_ID, augustStart, septemberStart);
   }
 
   @Test

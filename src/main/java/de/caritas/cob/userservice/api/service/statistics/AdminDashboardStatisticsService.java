@@ -214,7 +214,10 @@ public class AdminDashboardStatisticsService {
       LocalDateTime yearStart,
       LocalDateTime lastYearStart,
       List<TopicMonth> topicMonths,
-      boolean fixedStand) {}
+      boolean fixedStand,
+      // the German calendar month in stored (UTC) time; the communication counts promise it
+      LocalDateTime communicationMonthStart,
+      LocalDateTime communicationMonthEnd) {}
 
   private record TopicMonth(YearMonth month, LocalDateTime from, LocalDateTime to) {}
 
@@ -783,13 +786,15 @@ public class AdminDashboardStatisticsService {
   private static Map<Long, CommunicationCounts> collectCommunicationCounts(
       DateRanges ranges, RangeQuery counsellorMessages, KindQuery communication) {
     var result = new HashMap<Long, CommunicationCounts>();
-    for (var row : counsellorMessages.query(ranges.currentMonthStart(), ranges.nextMonthStart())) {
+    var from = ranges.communicationMonthStart();
+    var to = ranges.communicationMonthEnd();
+    for (var row : counsellorMessages.query(from, to)) {
       result.merge(
           row.getGroupId(),
           new CommunicationCounts(row.getTotal() == null ? 0L : row.getTotal(), 0, 0, 0),
           CommunicationCounts::plus);
     }
-    for (var row : communication.query(ranges.currentMonthStart(), ranges.nextMonthStart())) {
+    for (var row : communication.query(from, to)) {
       long total = row.getTotal() == null ? 0L : row.getTotal();
       CommunicationCounts counts;
       try {
@@ -1020,6 +1025,7 @@ public class AdminDashboardStatisticsService {
 
   private DateRanges buildLiveRanges(TimeWindows windows) {
     var today = LocalDate.now(clock);
+    var germanMonth = YearMonth.from(clock.instant().atZone(GERMAN_ZONE));
     var weekStart = today.with(DayOfWeek.MONDAY);
     var currentMonth = YearMonth.from(today);
     var topicMonths = new ArrayList<TopicMonth>();
@@ -1042,7 +1048,9 @@ public class AdminDashboardStatisticsService {
         today.withDayOfYear(1).atStartOfDay(),
         today.withDayOfYear(1).minusYears(1).atStartOfDay(),
         topicMonths,
-        false);
+        false,
+        germanDayStart(germanMonth.atDay(1)),
+        germanDayStart(germanMonth.plusMonths(1).atDay(1)));
   }
 
   /**
@@ -1077,7 +1085,9 @@ public class AdminDashboardStatisticsService {
         germanDayStart(yearStart),
         germanDayStart(yearStart.minusYears(1)),
         topicMonths,
-        true);
+        true,
+        germanDayStart(currentMonth.atDay(1)),
+        end);
   }
 
   /** Where a German calendar day starts in the stored time (UTC). */
