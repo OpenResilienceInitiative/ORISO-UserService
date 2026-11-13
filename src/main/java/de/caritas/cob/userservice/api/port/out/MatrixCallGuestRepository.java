@@ -10,6 +10,8 @@ public interface MatrixCallGuestRepository extends JpaRepository<MatrixCallGuest
 
   List<MatrixCallGuest> findByBindingIdAndRevokedAtIsNull(Long bindingId);
 
+  List<MatrixCallGuest> findByBindingId(Long bindingId);
+
   boolean existsByBindingIdAndMatrixUserIdAndRevokedAtIsNull(Long bindingId, String matrixUserId);
 
   /**

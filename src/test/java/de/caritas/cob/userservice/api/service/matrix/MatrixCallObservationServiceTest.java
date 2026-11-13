@@ -16,9 +16,11 @@ import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService.CallR
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.MatrixCallBinding;
 import de.caritas.cob.userservice.api.model.MatrixCallObservation;
+import de.caritas.cob.userservice.api.model.MatrixCallObservationEnd;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.MatrixCallBindingRepository;
+import de.caritas.cob.userservice.api.port.out.MatrixCallObservationEndRepository;
 import de.caritas.cob.userservice.api.port.out.MatrixCallObservationRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService.Outcome;
@@ -37,6 +39,9 @@ class MatrixCallObservationServiceTest {
   private static final List<String> MEMBERS = List.of(CREATOR, OTHER);
 
   private final MatrixCallObservationRepository repo = mock(MatrixCallObservationRepository.class);
+  private final MatrixCallObservationEndRepository ends =
+      mock(MatrixCallObservationEndRepository.class);
+  private final java.util.List<MatrixCallObservationEnd> storedEnds = new java.util.ArrayList<>();
   private final MatrixCallBindingRepository bindings = mock(MatrixCallBindingRepository.class);
   private final MatrixCallConversationResolver conversations =
       mock(MatrixCallConversationResolver.class);
@@ -71,6 +76,7 @@ class MatrixCallObservationServiceTest {
     service =
         new MatrixCallObservationService(
             repo,
+            ends,
             bindings,
             conversations,
             users,
@@ -109,6 +115,29 @@ class MatrixCallObservationServiceTest {
               saved.add(i.getArgument(0));
               return i.getArgument(0);
             });
+    // The end table behaves like its unique key (source room, call, actor).
+    when(ends.saveAndFlush(any()))
+        .thenAnswer(
+            i -> {
+              storedEnds.add(i.getArgument(0));
+              return i.getArgument(0);
+            });
+    when(ends.findForUpdateBySourceRoomIdAndCallIdAndActorMatrixId(
+            anyString(), anyString(), anyString()))
+        .thenAnswer(
+            i ->
+                storedEnds.stream()
+                    .filter(e -> e.getSourceRoomId().equals(i.getArgument(0)))
+                    .filter(e -> e.getCallId().equals(i.getArgument(1)))
+                    .filter(e -> e.getActorMatrixId().equals(i.getArgument(2)))
+                    .findFirst());
+    when(ends.findFirstBySourceRoomIdAndCallIdOrderByEndedAtAsc(anyString(), anyString()))
+        .thenAnswer(
+            i ->
+                storedEnds.stream()
+                    .filter(e -> e.getSourceRoomId().equals(i.getArgument(0)))
+                    .filter(e -> e.getCallId().equals(i.getArgument(1)))
+                    .min(java.util.Comparator.comparingLong(MatrixCallObservationEnd::getEndedAt)));
   }
 
   @Test
@@ -475,29 +504,21 @@ class MatrixCallObservationServiceTest {
   // --- #1628 (2): ending wins over a registration that arrives late ---
 
   @Test
-  void endBeforeTheRegistrationLandsLeavesATombstoneThatRejectsTheLateRegistration() {
-    var tombstones = new java.util.ArrayList<MatrixCallObservation>();
-    when(repo.saveAndFlush(any()))
-        .thenAnswer(
-            i -> {
-              tombstones.add(i.getArgument(0));
-              return i.getArgument(0);
-            });
-
+  void endBeforeTheRegistrationLandsIsStoredAndRejectsTheLateRegistration() {
     assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
 
-    assertThat(tombstones).hasSize(1);
-    var tombstone = tombstones.get(0);
-    assertThat(tombstone.getOrigin()).isEqualTo(MatrixCallObservation.ORIGIN_END_TOMBSTONE);
-    assertThat(tombstone.getEndedAt()).isNotNull();
-    assertThat(tombstone.getMediaRoomId()).isNull();
-    assertThat(tombstone.getCreatorMatrixId()).isEqualTo(CREATOR);
-    assertThat(tombstone.isLive(System.currentTimeMillis())).isFalse();
+    assertThat(storedEnds).hasSize(1);
+    var end = storedEnds.get(0);
+    assertThat(end.getActorMatrixId()).isEqualTo(CREATOR);
+    assertThat(end.getSourceRoomId()).isEqualTo(SOURCE);
+    assertThat(end.getCallId()).isEqualTo("call");
+    assertThat(end.getChatId()).isEqualTo(45L);
+    assertThat(end.getSessionId()).isNull();
+    assertThat(end.getEndedAt()).isPositive();
+    verify(repo, never()).saveAndFlush(any());
 
-    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call"))
-        .thenReturn(Optional.of(tombstone));
     assertThat(service.register(actor, SOURCE, "call", MEDIA, true)).isEqualTo(Outcome.NOT_FOUND);
-    assertThat(tombstones).hasSize(1);
+    verify(repo, never()).saveAndFlush(any());
     verify(notifications, never())
         .createCallInvitationNotification(
             any(), anyString(), anyBoolean(), any(), any(), any(), anyBoolean());
@@ -507,33 +528,90 @@ class MatrixCallObservationServiceTest {
   }
 
   @Test
-  void aTombstoneLeftBySomebodyElseDoesNotBlockTheCreatorsRegistration() {
-    var foreign = MatrixCallObservation.tombstone(SOURCE, 7L, 45L, null, "call", OTHER, 1000L);
-    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call"))
-        .thenReturn(Optional.of(foreign));
+  void theCreatorsCancellationAfterAnotherMembersEndIsStoredOnItsOwn() {
+    assertThat(service.end(other(), SOURCE, "call")).isEqualTo(Outcome.OK);
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
 
-    assertThat(service.register(actor, SOURCE, "call", MEDIA, true)).isEqualTo(Outcome.OK);
-
-    verify(repo).delete(foreign);
-    assertThat(saved).hasSize(1);
-    assertThat(saved.get(0).getMediaRoomId()).isEqualTo(MEDIA);
-  }
-
-  @Test
-  void onlyACurrentMemberOfTheConversationCanLeaveATombstone() {
-    when(matrix.getCallRoomMembers(SOURCE)).thenReturn(Optional.of(List.of(OTHER)));
-    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.NOT_FOUND);
+    assertThat(storedEnds)
+        .extracting(MatrixCallObservationEnd::getActorMatrixId)
+        .containsExactly(OTHER, CREATOR);
+    assertThat(service.register(actor, SOURCE, "call", MEDIA, true)).isEqualTo(Outcome.NOT_FOUND);
     verify(repo, never()).saveAndFlush(any());
   }
 
   @Test
-  void tombstoneReadsAsEnded() {
-    var tombstone = MatrixCallObservation.tombstone(SOURCE, 7L, 45L, null, "call", CREATOR, 5000L);
-    when(repo.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(tombstone));
+  void aRepeatedEndOfTheSamePersonIsStoredOnce() {
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
+    assertThat(storedEnds).hasSize(1);
+  }
+
+  @Test
+  void anEndLeftBySomebodyElseDoesNotBlockTheCreatorsRegistrationAndIsKept() {
+    assertThat(service.end(other(), SOURCE, "call")).isEqualTo(Outcome.OK);
+
+    assertThat(service.register(actor, SOURCE, "call", MEDIA, true)).isEqualTo(Outcome.OK);
+
+    verify(repo, never()).delete(any());
+    verify(ends, never()).delete(any());
+    assertThat(saved).hasSize(1);
+    assertThat(saved.get(0).getMediaRoomId()).isEqualTo(MEDIA);
+    assertThat(storedEnds)
+        .extracting(MatrixCallObservationEnd::getActorMatrixId)
+        .containsExactly(OTHER);
+  }
+
+  @Test
+  void theCreatorsEndOfARegisteredCallIsStoredToo() {
+    var row = row(System.currentTimeMillis() - 1000, System.currentTimeMillis() + 60_000, null);
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
+
+    assertThat(row.getEndedAt()).isNotNull();
+    assertThat(storedEnds)
+        .extracting(MatrixCallObservationEnd::getActorMatrixId)
+        .containsExactly(CREATOR);
+  }
+
+  @Test
+  void anotherMembersEndOfARegisteredCallIsRefusedAndNotStored() {
+    var row = row(System.currentTimeMillis() - 1000, System.currentTimeMillis() + 60_000, null);
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+
+    assertThat(service.end(other(), SOURCE, "call")).isEqualTo(Outcome.NOT_FOUND);
+
+    assertThat(row.getEndedAt()).isNull();
+    assertThat(storedEnds).isEmpty();
+  }
+
+  @Test
+  void onlyACurrentMemberOfTheConversationCanEndACallBeforeItsRegistration() {
+    when(matrix.getCallRoomMembers(SOURCE)).thenReturn(Optional.of(List.of(OTHER)));
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.NOT_FOUND);
+    verify(ends, never()).saveAndFlush(any());
+  }
+
+  @Test
+  void aCallEndedBeforeItsRegistrationReadsAsEnded() {
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
     var state =
         service.readState(new MatrixCallConversation(SOURCE, 7L, null, 45L), "call", MEMBERS);
     assertThat(state.orElseThrow().state()).isEqualTo("ended");
     verify(matrix, never()).getCallRoomState(anyString(), anyString());
+    // Never through another source that shares the room id's numbers.
+    assertThat(
+            service.readState(new MatrixCallConversation(SOURCE, 7L, 45L, null), "call", MEMBERS))
+        .isEmpty();
+  }
+
+  private AuthenticatedUser other() {
+    var other = new AuthenticatedUser();
+    other.setUserId("other");
+    other.setTenantId(7L);
+    when(users.findByUserIdAndDeleteDateIsNull("other"))
+        .thenReturn(Optional.of(user("other", OTHER)));
+    return other;
   }
 
   // --- #1628 (1): a call stays known while anyone is still in it ---

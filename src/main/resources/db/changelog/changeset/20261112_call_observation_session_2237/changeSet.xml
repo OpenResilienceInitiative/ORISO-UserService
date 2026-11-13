@@ -6,6 +6,15 @@
        A row names exactly one source: chat_id (internal group) or session_id (session).
        Still observation only: no foreign key, no access grants. -->
   <changeSet id="20261112-matrix-call-observation-session-2237" author="oriso">
+    <!-- Added after the changeset ran on Dev; Liquibase 4.27 leaves preconditions out of the
+         checksum (9:135d1aa1ce2e13ed4645f36997610ae2 with and without), so Dev is unaffected.
+         Marked as ran also skips the chat_id change below; the follow-up
+         20261113_call_observation_chat_nullable_2237 applies it where it is still missing. -->
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <columnExists tableName="matrix_call_observation" columnName="session_id"/>
+      </not>
+    </preConditions>
     <addColumn tableName="matrix_call_observation">
       <column name="session_id" type="BIGINT"/>
     </addColumn>

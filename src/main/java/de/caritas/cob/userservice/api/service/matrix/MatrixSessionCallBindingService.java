@@ -38,8 +38,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  *   <li>the call room's binding state names exactly this call and this session room, and
  *   <li>the caller created the call room and sent its binding state,
  *   <li>the call room is none of ORISO's own conversation rooms, and
- *   <li>the call was not already ended (#1641: the creator's end tombstone, an ended or lapsed
- *       registration), and assignment and account are checked again under the session lock.
+ *   <li>the call was not already ended (#1641: the caller's own stored end, any stored end of a
+ *       call that has no registration, an ended or lapsed registration), and assignment and account
+ *       are checked again under the session lock.
  * </ul>
  *
  * Once written, the binding is the readable-invite binding in every respect: the lifecycle observes
@@ -67,6 +68,10 @@ public class MatrixSessionCallBindingService {
   private final SessionCallAuthority authority;
   private final de.caritas.cob.userservice.api.port.out.MatrixCallObservationRepository
       observations;
+  private final de.caritas.cob.userservice.api.port.out.MatrixCallObservationEndRepository ends;
+  private final MatrixCallGuestService callGuests;
+  private final de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository links;
+  private final de.caritas.cob.userservice.api.port.out.GroupChatJoinRequestRepository knockRows;
   private final PlatformTransactionManager transactionManager;
 
   /**
@@ -132,6 +137,14 @@ public class MatrixSessionCallBindingService {
       return false;
     }
     Set<String> invitees = invitees(members, caller, conversation.getTenantId());
+    // Security review: a binding about to be taken over first loses its guests in its own (old)
+    // call room, before the transaction opens (#1630). A removal that fails refuses this bind.
+    if (known != null
+        && known.getEndedAt() == null
+        && !authority.grantsGuestAuthority(known)
+        && !callGuests.revokeBeforeTakeOver(known)) {
+      return false;
+    }
 
     Result written =
         new TransactionTemplate(transactionManager)
@@ -160,7 +173,7 @@ public class MatrixSessionCallBindingService {
    * FE#2209 review: an explicit end ends the 1:1 session call's binding in the same transaction as
    * the observation end, after the session's call lock that {@link #bind} takes as well. So an end
    * and a binding never interleave: either the binding committed first and is ended here, or the
-   * end committed first and the binding sees its tombstone or ended row and refuses.
+   * end committed first and the binding sees its stored end or ended row and refuses.
    *
    * <p>Who may end it (Frank, 13 Nov): the binding's caller, or any active counsellor of the Träger
    * who is in the call (a live MatrixRTC membership in its call room). Returns the call room of the
@@ -292,22 +305,65 @@ public class MatrixSessionCallBindingService {
       boolean video,
       Set<String> invitees,
       long now) {
+    // Security review: an ended or lapsed call is never brought back by a takeover.
+    if (existing.getEndedAt() != null || !existing.isLive(now)) return Result.REFUSED;
     var owner = bindings.findByMediaRoomId(mediaRoomId).orElse(null);
     if (owner != null && !Objects.equals(owner.getId(), existing.getId())) return Result.REFUSED;
     if (endedByObservation(sourceRoomId, callId, caller, now)) return Result.REFUSED;
     var locked = bindings.lockByMediaRoomId(existing.getMediaRoomId()).orElse(null);
-    if (locked == null || !Objects.equals(locked.getId(), existing.getId())) return Result.REFUSED;
+    if (locked == null
+        || !Objects.equals(locked.getId(), existing.getId())
+        || locked.getEndedAt() != null
+        || !locked.isLive(now)) {
+      return Result.REFUSED;
+    }
+    // Nothing of the old call carries into the counsellor's room: no seat (taken back before the
+    // transaction), no share link and no knock waiting on it.
+    if (!callGuests.forgetSeatsForTakeOver(locked.getId())) return Result.REFUSED;
+    retireShareLink(locked.getId());
     locked.takeOver(caller, mediaRoomId, now, now + START_GRACE_MILLIS, video, invitees);
     bindings.saveAndFlush(locked);
     return Result.CREATED;
+  }
+
+  /**
+   * The old call's share link is closed and detached from the binding, so its token lets nobody in
+   * and the counsellor's own link is a new one; knocks still waiting on it are cancelled.
+   */
+  private void retireShareLink(Long bindingId) {
+    var found = links.findByCallBindingId(bindingId).orElse(null);
+    if (found == null) return;
+    var link = links.findByIdForUpdate(found.getId()).orElse(null);
+    if (link == null) return;
+    var now = java.time.LocalDateTime.now();
+    link.setStatus(
+        de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkStatus.EXPIRED.name());
+    link.setCallBindingId(null);
+    link.setUpdateDate(now);
+    links.saveAndFlush(link);
+    for (var knock :
+        knockRows.findByInviteLinkIdAndViaAndStatus(
+            link.getId(),
+            de.caritas.cob.userservice.api.model.GroupChatJoinRequest.Via.CALL_LINK,
+            de.caritas.cob.userservice.api.model.GroupChatJoinRequest.Status.PENDING)) {
+      knock.setStatus(de.caritas.cob.userservice.api.model.GroupChatJoinRequest.Status.CANCELLED);
+      knock.setDecidedAt(now);
+      knockRows.save(knock);
+    }
   }
 
   private boolean endedByObservation(String sourceRoomId, String callId, String caller, long now) {
     // Locked: an explicit end (MatrixCallObservationService.writeEnd) locks the same row, so it
     // either committed before this read or waits for this binding and then ends it (end below).
     var row = observations.findForUpdateBySourceRoomIdAndCallId(sourceRoomId, callId).orElse(null);
-    if (row == null) return false;
-    if (row.isTombstone()) return caller.equals(row.getCreatorMatrixId());
+    // US#1641 per-person ends: the caller's own end always wins; before any registration, any
+    // member's end means the call reads as ended, so it is not bound either.
+    if (ends.findForUpdateBySourceRoomIdAndCallIdAndActorMatrixId(sourceRoomId, callId, caller)
+        .isPresent()) {
+      return true;
+    }
+    if (row == null)
+      return !ends.findForUpdateBySourceRoomIdAndCallId(sourceRoomId, callId).isEmpty();
     return row.getEndedAt() != null || now >= row.getExpiresAt();
   }
 

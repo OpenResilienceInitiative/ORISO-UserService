@@ -415,6 +415,10 @@ public class SecurityConfig {
                 .requestMatchers(
                     "/users/call-knocks/mine",
                     "/service/users/call-knocks/mine",
+                    // ORISO-Frontend#2237: waiting in a group's waiting room; the service checks
+                    // the chat permission.
+                    "/users/chat/{chatId:[0-9]+}/waiting",
+                    "/service/users/chat/{chatId:[0-9]+}/waiting",
                     "/users/call-knocks/mine/{knockId:[0-9]+}",
                     "/service/users/call-knocks/mine/{knockId:[0-9]+}")
                 .hasAuthority(USER_DEFAULT)
@@ -579,7 +583,9 @@ public class SecurityConfig {
                     "/users/chat/new",
                     "/users/chat/v2/new",
                     "/users/chat/internal-subset",
-                    "/users/chat/internal-subset/recipients")
+                    "/users/chat/internal-subset/recipients",
+                    "/users/chat/internal-subset/{chatId:[0-9]+}/recipients",
+                    "/users/chat/internal-subset/{chatId:[0-9]+}/participants")
                 .hasAuthority(CREATE_NEW_CHAT)
                 .requestMatchers("/users/chat/{chatId:[0-9]+}/start")
                 .hasAuthority(START_CHAT)

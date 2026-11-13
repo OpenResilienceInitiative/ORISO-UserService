@@ -150,8 +150,13 @@ public class GroupChatJoinRequestService {
     }
 
     var pending =
-        joinRequestRepository.findBySeriesIdInAndStatusOrderByRequestedAtAscIdAsc(
-            moderatedSeries.keySet(), Status.PENDING);
+        joinRequestRepository
+            .findBySeriesIdInAndStatusOrderByRequestedAtAscIdAsc(
+                moderatedSeries.keySet(), Status.PENDING)
+            .stream()
+            // Waiting-room entries (#2237) share the table but are not counsellor requests.
+            .filter(request -> request.getVia() == GroupChatJoinRequest.Via.INVITE_LINK)
+            .toList();
     var seriesById =
         StreamSupport.stream(
                 chatRepository

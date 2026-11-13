@@ -268,6 +268,28 @@ paths:
               schema: {$ref: '#/components/schemas/CallKnockDTO'}
         '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
         '404': {description: No own knock with this id}
+  /users/chat/{chatId}/waiting:
+    put:
+      tags: [direct-link-controller]
+      operationId: waitInGroupChat
+      summary: 'Wait in a group''s waiting room until a moderator lets the caller in [Authorization: Role: user]'
+      description: 'ORISO-Frontend#2237. One open entry per person and group; calling again marks the person as still there (call it every few seconds while waiting, else the entry drops off the moderator''s list). A moderator in the group''s running call sees the entry in GET /users/call-knocks?matrixRoomId=<group room> and admits it there. Returns a fresh admission as it is. Admission grants nothing by itself: the caller then joins with PUT /users/chat/{chatId}/join. Stop waiting with DELETE /users/call-knocks/mine/{knockId}.'
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: chatId
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        '200':
+          description: The caller's waiting-room entry
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CallKnockDTO'}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '403': {description: FORBIDDEN - no permission for this chat}
+        '404': {description: No such chat}
   /users/live-chat-account/conversion:
     get:
       tags: [live-chat-conversion-controller]
@@ -2004,6 +2026,103 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
+  /users/chat/internal-subset/{chatId}/recipients:
+    get:
+      tags:
+        - user-controller
+      summary: 'Colleagues who can be invited into a running members-only internal chat [Authorization: Role: consultant with authority CREATE_NEW_CHAT who takes part in the chat]'
+      description: >-
+        The recipient scope of a new chat, anchored to the room: its owner and its counselling centre, never the caller.
+        People already in the chat are left out (ORISO-UserService#1580).
+      operationId: listInternalChatInvitationRecipients
+      parameters:
+        - name: chatId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        200:
+          description: Colleagues who can be invited
+          content:
+            'application/json':
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/InternalChatRecipientDTO'
+        204:
+          description: Nobody else can be invited
+        401:
+          description: Unauthorized
+        403:
+          description: The caller does not take part in the chat
+        404:
+          description: Chat not found
+        409:
+          description: >-
+            X-Reason INTERNAL_CHAT_NOT_INVITABLE (not an active members-only internal chat) or
+            INTERNAL_CHAT_HISTORY_SHARED (the room would show earlier messages to a newcomer, so nobody can be invited)
+        503:
+          description: X-Reason INTERNAL_CHAT_ENCRYPTION_REQUIRED, or INTERNAL_CHAT_BUSY (the room's history policy could not be read)
+      security:
+        - Bearer: [ ]
+  /users/chat/internal-subset/{chatId}/participants:
+    post:
+      tags:
+        - user-controller
+      summary: 'Invite a colleague into a running members-only internal chat [Authorization: Role: consultant with authority CREATE_NEW_CHAT who takes part in the chat]'
+      description: >-
+        Anyone who takes part in the chat may invite. The colleague must be within the recipient scope anchored to the room's
+        owner and counselling centre, checked again when the invitation is sent. The room must hide earlier messages from people
+        who join later (history visibility joined); otherwise nobody is admitted. The tenant and centre switch for internal group chats
+        is checked again on submission, and the owner's invite power in Matrix is restored first after an ownership transfer. The colleague is invited and joined in
+        Matrix first; the participant record is written only after that. Every error answers with X-Reason.
+      operationId: inviteInternalChatParticipant
+      parameters:
+        - name: chatId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        content:
+          'application/json':
+            schema:
+              $ref: '#/components/schemas/InternalChatInvitationDTO'
+        required: true
+      responses:
+        200:
+          description: OK - the colleague already takes part; nothing changed
+        201:
+          description: CREATED - the colleague was invited, joined and recorded
+        400:
+          description: X-Reason INTERNAL_CHAT_RECIPIENT_UNKNOWN (no consultant id, or the colleague has no chat identity yet)
+        401:
+          description: Unauthorized
+        403:
+          description: >-
+            The caller does not take part in the chat (no X-Reason), or X-Reason INTERNAL_CHAT_RECIPIENT_OUT_OF_SCOPE
+            (the colleague is outside the room's recipient scope or is no active consultant; both answer alike)
+        404:
+          description: Chat not found
+        409:
+          description: >-
+            X-Reason INTERNAL_CHAT_NOT_INVITABLE (not an active members-only internal chat) or
+            INTERNAL_CHAT_HISTORY_SHARED (the room would show earlier messages to the newcomer)
+        502:
+          description: >-
+            X-Reason INTERNAL_CHAT_MEMBERSHIP_FAILED (the colleague could not be invited or could not join, or the record
+            failed and the join was undone; nothing was recorded)
+        500:
+          description: The colleague joined but could neither be recorded nor removed again; an operator must remove the membership
+        503:
+          description: >-
+            X-Reason INTERNAL_CHAT_ENCRYPTION_REQUIRED, or INTERNAL_CHAT_BUSY (another invitation of the same person is
+            running, or the room's history policy could not be read; try again)
+      security:
+        - Bearer: [ ]
   /users/chat/{chatId}/update:
     put:
       tags:
@@ -3663,6 +3782,9 @@ components:
         displayName:
           type: string
           description: 'The knocking person''s username (pseudonym), decoded; never the e-mail address or a real name.'
+        avatarId:
+          type: string
+          description: 'The avatar the person picked in their profile (lower-case animal id, e.g. magpie), so the counsellor sees the same picture as in the chat (ORISO-Frontend#2237). Empty when none was picked.'
         status: {$ref: '#/components/schemas/CallKnockStatus'}
         medium: {$ref: '#/components/schemas/DirectLinkMedium'}
         requestedAt: {type: string, format: date-time}
@@ -5235,6 +5357,15 @@ components:
           format: int64
         name:
           type: string
+    InternalChatInvitationDTO:
+      type: object
+      required:
+        - consultantId
+      properties:
+        consultantId:
+          type: string
+          description: The colleague to invite, as listed by GET /users/chat/internal-subset/{chatId}/recipients.
+          example: consultant-id-1
     InternalSubsetChatDTO:
       type: object
       required:

@@ -105,6 +105,7 @@ class MatrixSessionCallEndMariaDbIT {
   @MockitoBean private MatrixSynapseService matrix;
   @MockitoBean private EventNotificationService notifications;
   @MockitoBean private MatrixCallLifecycleService lifecycle;
+  @MockitoBean private MatrixCallGuestService callGuests;
 
   @MockitoBean
   private de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService

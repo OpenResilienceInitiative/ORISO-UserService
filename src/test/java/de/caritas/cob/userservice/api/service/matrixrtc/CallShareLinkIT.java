@@ -165,6 +165,11 @@ class CallShareLinkIT {
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private javax.sql.DataSource dataSource;
   @MockitoBean private MatrixSynapseService matrix;
+
+  // Group waiting rooms (#2237) are not part of the call-share-link flow.
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.chat.GroupWaitingRoomService waitingRooms;
+
   @MockitoBean private MatrixFeedUpdateSignalService feedUpdateSignals;
   @MockitoBean private IdentityTombstoneService tombstones;
   @MockitoBean private TenantService tenantService;
@@ -761,6 +766,63 @@ class CallShareLinkIT {
     assertThat(seated.callRoomId()).isEqualTo(counsellorMedia);
     verify(matrix).inviteUserToRoom(counsellorMedia, GUEST, "c-token");
     verify(matrix, never()).inviteUserToRoom(eq(askerMedia), anyString(), anyString());
+  }
+
+  @Test
+  void aTakeOverLeavesNoStaleLinkKnockOrSeatOfTheOldCall() throws Exception {
+    // Security review of FE#2209: the session is reassigned while its call runs with a share link,
+    // a seated guest and a waiting knock. The old binding loses its authority; the newly assigned
+    // counsellor's bind takes the row over and nothing of the old call carries into the new room.
+    var link = shareLinks.create(7L, counsellor.getId(), SOURCE, "share-call", null, null).link();
+    var guest = users.findById("share-guest").orElseThrow();
+    var knockId = shareLinks.join(link.getToken(), guest).knockId();
+    var counsellorEntity = consultants.findById(counsellor.getId()).orElseThrow();
+    transaction.executeWithoutResult(s -> knocks.admit(knockId, counsellorEntity));
+    assertThat(shareLinks.join(link.getToken(), guest).callAdmitted()).isTrue();
+    var waiting =
+        shareLinks.join(link.getToken(), users.findById("share-guest-2").orElseThrow()).knockId();
+    long id = bindings.findBySourceRoomIdAndCallId(SOURCE, "share-call").orElseThrow().getId();
+
+    String colleagueId = colleague.getMatrixUserId();
+    String colleagueMedia = "!reassigned-media:example";
+    transaction.executeWithoutResult(
+        s -> {
+          var session = sessions.findById(sessionId).orElseThrow();
+          session.setConsultant(consultants.findById(colleague.getId()).orElseThrow());
+          sessions.save(session);
+        });
+    var members = List.of(ASKER, counsellor.getMatrixUserId(), colleagueId);
+    when(matrix.getCallRoomMembers(SOURCE)).thenReturn(Optional.of(members));
+    when(matrix.getRoomMembers(SOURCE)).thenReturn(Optional.of(members));
+    when(matrix.getCallRoomBinding(colleagueMedia, colleagueId))
+        .thenReturn(Optional.of(Map.of("call_id", "share-call", "source_room_id", SOURCE)));
+    when(matrix.getCallRoomOrigin(colleagueMedia, colleagueId))
+        .thenReturn(Optional.of(new MatrixSynapseService.CallRoomOrigin(colleagueId, colleagueId)));
+    when(matrix.ensureAdminInRoom(anyString(), anyString())).thenReturn(true);
+
+    assertThat(
+            sessionBindings.bind(
+                actor(colleague.getId(), "consultant"), SOURCE, "share-call", colleagueMedia, true))
+        .isTrue();
+
+    var taken = bindings.findBySourceRoomIdAndCallId(SOURCE, "share-call").orElseThrow();
+    assertThat(taken.getId()).isEqualTo(id);
+    assertThat(taken.getMediaRoomId()).isEqualTo(colleagueMedia);
+    // The old link is closed and no longer tied to the call; its token lets nobody in.
+    var old = links.findById(link.getId()).orElseThrow();
+    assertThat(old.getStatus()).isEqualTo("EXPIRED");
+    assertThat(old.getCallBindingId()).isNull();
+    assertThatThrownBy(() -> shareLinks.join(link.getToken(), guest))
+        .isInstanceOf(CallShareLinkEndedException.class);
+    assertThat(knockRows.findById(waiting).orElseThrow().getStatus())
+        .isEqualTo(GroupChatJoinRequest.Status.CANCELLED);
+    // The seated guest was taken out of the OLD call room, and holds no seat in the new call.
+    verify(matrix).removeUserFromRoom(MEDIA, GUEST, "c-token");
+    verify(matrix, never()).inviteUserToRoom(eq(colleagueMedia), anyString(), anyString());
+    assertThat(guests.findByBindingIdAndRevokedAtIsNull(id)).isEmpty();
+    assertThat(callGuests.wasRemoved(taken, GUEST))
+        .as("a guest of the old call may be let into the new one afresh")
+        .isFalse();
   }
 
   @Test
