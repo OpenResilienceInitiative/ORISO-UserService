@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AskerAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerSearchResultDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Agencies;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Platform;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Reach;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
@@ -56,12 +57,13 @@ public class AskerAdminSearchService {
   @Transactional(readOnly = true)
   public AskerSearchResultDTO findAskers(Integer page, Integer perPage, AskerFilter filter) {
     var askerFilter = filter == null ? new AskerFilter() : filter;
+    var reach = adminScope.current();
     var specification =
         adminScope.narrow(
             AskerAdminSpecification.matching(
                 usernameVariants(askerFilter.getUsername()),
                 askerFilter.getAgencyId(),
-                effectiveTenantId(adminScope.current(), askerFilter)),
+                effectiveTenantId(reach, askerFilter)),
             AskerAdminSpecification::inAgencies);
     var pageRequest =
         PageRequest.of(
@@ -70,7 +72,7 @@ public class AskerAdminSearchService {
             Sort.by(Sort.Order.desc("createDate"), Sort.Order.asc("userId")));
 
     var result = askerSearchRepository.findAll(specification, pageRequest);
-    var agencyIds = agencyIdsByUser(result.getContent());
+    var agencyIds = visibleAgencyIds(agencyIdsByUser(result.getContent()), reach);
     var presentTenants = tenantsOfTechnicalAccounts(result.getContent());
 
     return new AskerSearchResultDTO()
@@ -111,6 +113,18 @@ public class AskerAdminSearchService {
     return presentTenants != null
         && !GroupChatSystemAccounts.isPlatformTenant(asker.getTenantId())
         && !presentTenants.contains(asker.getTenantId());
+  }
+
+  /**
+   * An agency admin sees only their own agencies of an advice seeker: that the person also writes
+   * to another Beratungsstelle is not theirs to know.
+   */
+  static Map<String, Set<Long>> visibleAgencyIds(Map<String, Set<Long>> agencyIds, Reach reach) {
+    if (!(reach instanceof Agencies agencies)) {
+      return agencyIds;
+    }
+    agencyIds.values().forEach(ids -> ids.retainAll(agencies.ids()));
+    return agencyIds;
   }
 
   /** Only a platform admin chooses the Träger; everybody else searches their own. */

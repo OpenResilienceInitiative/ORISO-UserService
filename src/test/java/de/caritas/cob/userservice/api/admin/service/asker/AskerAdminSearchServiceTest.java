@@ -123,6 +123,25 @@ class AskerAdminSearchServiceTest {
   }
 
   @Test
+  @SuppressWarnings("unchecked")
+  void findAskers_Should_narrowToAndOnlyShowTheAgencyAdminsAgencies() {
+    var reach = new Agencies(7L, Set.of(10L));
+    when(adminScope.current()).thenReturn(reach);
+    when(adminScope.narrow(any(), any())).thenAnswer(invocation -> invocation.getArgument(0));
+    var asker = asker("a-1", "anna", 7L, null, DeletionLifecycleState.ACTIVE);
+    givenPage(List.of(asker), 1);
+    when(sessionRepository.findAgencyIdsByUserIds(anyCollection()))
+        .thenReturn(List.of(agencyOf("a-1", 10L), agencyOf("a-1", 30L)));
+    when(userAgencyRepository.findByUserUserIdIn(anyCollection()))
+        .thenReturn(List.of(membership(asker, 20L)));
+
+    var row = service.findAskers(1, 20, new AskerFilter()).getEmbedded().get(0);
+
+    verify(adminScope).narrow(any(Specification.class), any(AdminScope.InAgencies.class));
+    assertThat(row.getAgencyIds()).containsExactly(10L);
+  }
+
+  @Test
   void effectiveTenantId_Should_honourRequestedTenant_When_callerIsPlatformAdmin() {
     var filter = new AskerFilter().tenantId(9L);
 

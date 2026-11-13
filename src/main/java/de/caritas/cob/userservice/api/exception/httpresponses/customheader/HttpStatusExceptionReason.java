@@ -114,5 +114,7 @@ public enum HttpStatusExceptionReason {
    * The technical {@code group-chat-system-*} account of a Träger that still exists: it owns the
    * Träger's group chats and is deleted together with the Träger, not on its own (#1521).
    */
-  TECHNICAL_ACCOUNT_OF_EXISTING_TENANT
+  TECHNICAL_ACCOUNT_OF_EXISTING_TENANT,
+  /** The advice seeker is already marked for deletion; marking again changes nothing (#1521). */
+  ASKER_ALREADY_MARKED_FOR_DELETION
 }

@@ -512,9 +512,10 @@ paths:
           description: NOT FOUND - asker not found
         409:
           description: >-
-            CONFLICT - asker is already marked for deletion, or (X-Reason
-            TECHNICAL_ACCOUNT_OF_EXISTING_TENANT) it is the technical group-chat account of a
-            Träger that still exists and goes with the Träger
+            CONFLICT - X-Reason ASKER_ALREADY_MARKED_FOR_DELETION: already marked;
+            TECHNICAL_ACCOUNT_OF_EXISTING_TENANT: the technical group-chat account of a Träger that
+            still exists, which goes with the Träger. Without X-Reason: another operation on the
+            account (e.g. a live-chat transition) is in progress.
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
         502:

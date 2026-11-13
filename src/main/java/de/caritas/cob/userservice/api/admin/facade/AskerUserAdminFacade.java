@@ -67,8 +67,9 @@ public class AskerUserAdminFacade {
             .orElseThrow(() -> new NotFoundException("Asker with id %s does not exist", userId));
 
     if (nonNull(user.getDeleteDate())) {
-      throw new ConflictException(
-          String.format("Asker with id %s is already marked for deletion", userId));
+      // Its own X-Reason, so a caller can tell it from other 409s (e.g. a live-chat transition).
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.ASKER_ALREADY_MARKED_FOR_DELETION, HttpStatus.CONFLICT);
     }
     assertNotTechnicalAccountOfExistingTenant(user);
 

@@ -90,8 +90,17 @@ class AskerUserAdminFacadeTest {
     user.setDeleteDate(nowInUtc());
     when(userService.getUser(any())).thenReturn(Optional.of(user));
 
-    assertThrows(
-        ConflictException.class, () -> askerUserAdminFacade.markAskerForDeletion("user id"));
+    var refused =
+        assertThrows(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class,
+            () -> askerUserAdminFacade.markAskerForDeletion("user id"));
+    assertThat(
+        refused.getHttpStatus(),
+        org.hamcrest.Matchers.is(org.springframework.http.HttpStatus.CONFLICT));
+    assertThat(
+        refused.getCustomHttpHeaders().getFirst("X-Reason"),
+        org.hamcrest.Matchers.is("ASKER_ALREADY_MARKED_FOR_DELETION"));
   }
 
   @Test
