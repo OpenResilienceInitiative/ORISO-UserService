@@ -2862,9 +2862,13 @@ components:
           type: string
           description: The complete username, plain or encoded.
         agencyId:
-          type: integer
-          format: int64
-          description: Only advice seekers with an enquiry, session or membership in this agency.
+          type: array
+          description: >-
+            Only advice seekers with a session or membership in one of these agencies, sent comma
+            separated (agencyId=101,102) like the other user searches.
+          items:
+            type: integer
+            format: int64
         tenantId:
           type: integer
           format: int64

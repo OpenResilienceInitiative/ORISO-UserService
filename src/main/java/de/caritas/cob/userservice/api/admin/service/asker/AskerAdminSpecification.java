@@ -19,11 +19,11 @@ public final class AskerAdminSpecification {
 
   /**
    * @param usernames stored forms of the searched username (plain and encoded); empty = any
-   * @param agencyId only advice seekers of this agency; {@code null} = any
+   * @param agencyIds only advice seekers of one of these agencies; empty = any
    * @param tenantId only advice seekers of this Träger; {@code null} = any
    */
   public static Specification<User> matching(
-      Collection<String> usernames, Long agencyId, Long tenantId) {
+      Collection<String> usernames, Collection<Long> agencyIds, Long tenantId) {
     return (root, query, cb) -> {
       var predicates = new ArrayList<Predicate>();
       if (usernames != null && !usernames.isEmpty()) {
@@ -32,8 +32,8 @@ public final class AskerAdminSpecification {
       if (tenantId != null) {
         predicates.add(cb.equal(root.get("tenantId"), tenantId));
       }
-      if (agencyId != null) {
-        predicates.add(inAgencies(root, query, cb, Set.of(agencyId)));
+      if (agencyIds != null && !agencyIds.isEmpty()) {
+        predicates.add(inAgencies(root, query, cb, Set.copyOf(agencyIds)));
       }
       return cb.and(predicates.toArray(Predicate[]::new));
     };

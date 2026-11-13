@@ -400,7 +400,7 @@ class UserAdminControllerAuthorizationIT {
                 .param(PAGE_PARAM, "2")
                 .param(PER_PAGE_PARAM, "20")
                 .param("username", "anna")
-                .param("agencyId", "5")
+                .param("agencyId", "5,6")
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE))
         .andExpect(status().isOk());
@@ -408,7 +408,7 @@ class UserAdminControllerAuthorizationIT {
     var filter = ArgumentCaptor.forClass(AskerFilter.class);
     verify(askerUserAdminFacade).findAskers(eq(2), eq(20), filter.capture());
     assertThat(filter.getValue().getUsername()).isEqualTo("anna");
-    assertThat(filter.getValue().getAgencyId()).isEqualTo(5L);
+    assertThat(filter.getValue().getAgencyId()).containsExactly(5L, 6L);
   }
 
   @Test

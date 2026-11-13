@@ -65,19 +65,26 @@ class AskerAdminSpecificationIT {
 
   @Test
   void matching_Should_findAskersOfAgencyThroughSessionOrMembership() {
-    assertThat(ids(AskerAdminSpecification.matching(Set.of(), SESSION_AGENCY, TENANT)))
+    assertThat(ids(AskerAdminSpecification.matching(Set.of(), Set.of(SESSION_AGENCY), TENANT)))
         .containsExactly(withSession.getUserId());
-    assertThat(ids(AskerAdminSpecification.matching(Set.of(), MEMBERSHIP_AGENCY, TENANT)))
+    assertThat(ids(AskerAdminSpecification.matching(Set.of(), Set.of(MEMBERSHIP_AGENCY), TENANT)))
         .containsExactly(withMembership.getUserId());
-    assertThat(ids(AskerAdminSpecification.matching(Set.of(), FOREIGN_AGENCY, TENANT))).isEmpty();
+    assertThat(ids(AskerAdminSpecification.matching(Set.of(), Set.of(FOREIGN_AGENCY), TENANT)))
+        .isEmpty();
+    assertThat(
+            ids(
+                AskerAdminSpecification.matching(
+                    Set.of(), Set.of(SESSION_AGENCY, MEMBERSHIP_AGENCY), TENANT)))
+        .containsExactlyInAnyOrder(withSession.getUserId(), withMembership.getUserId());
   }
 
   @Test
   void matching_Should_keepTenantsApart() {
-    assertThat(ids(AskerAdminSpecification.matching(Set.of(), null, TENANT)))
+    assertThat(ids(AskerAdminSpecification.matching(Set.of(), Set.of(), TENANT)))
         .containsExactlyInAnyOrder(
             withSession.getUserId(), withMembership.getUserId(), withoutAgency.getUserId());
-    assertThat(ids(AskerAdminSpecification.matching(Set.of(), SESSION_AGENCY, OTHER_TENANT)))
+    assertThat(
+            ids(AskerAdminSpecification.matching(Set.of(), Set.of(SESSION_AGENCY), OTHER_TENANT)))
         .containsExactly(otherTenant.getUserId());
   }
 
@@ -86,14 +93,14 @@ class AskerAdminSpecificationIT {
     assertThat(
             ids(
                 AskerAdminSpecification.matching(
-                    Set.of("plain-member", "enc.plain-member"), null, TENANT)))
+                    Set.of("plain-member", "enc.plain-member"), Set.of(), TENANT)))
         .containsExactly(withMembership.getUserId());
   }
 
   @Test
   void inAgencies_Should_narrowToTheAgencyAdminsAgencies() {
     Specification<User> narrowed =
-        Specification.where(AskerAdminSpecification.matching(Set.of(), null, TENANT))
+        Specification.where(AskerAdminSpecification.matching(Set.of(), Set.of(), TENANT))
             .and(
                 (root, query, cb) ->
                     AskerAdminSpecification.inAgencies(
