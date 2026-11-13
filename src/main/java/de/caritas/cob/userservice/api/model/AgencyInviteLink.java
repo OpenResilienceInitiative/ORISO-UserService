@@ -110,6 +110,13 @@ public class AgencyInviteLink {
   @Column(name = "name", length = 100)
   private String name;
 
+  /**
+   * Optional date and time a counsellor noted for a direct link, in UTC (ORISO-Frontend#2142).
+   * Informational only: the link works before and after it.
+   */
+  @Column(name = "scheduled_at")
+  private LocalDateTime scheduledAt;
+
   /** Direct links: people without an account get a temporary one (ADR-029 §3). */
   @Builder.Default
   @Column(name = "temporary_account", nullable = false)

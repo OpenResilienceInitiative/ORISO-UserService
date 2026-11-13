@@ -22,6 +22,8 @@ import de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkStatus;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.HashMap;
 import java.util.List;
@@ -96,7 +98,8 @@ public class DirectLinkControllerDelegate {
                 body.getTopicId(),
                 body.getName(),
                 body.getTemporary(),
-                body.getAgencyId()));
+                body.getAgencyId(),
+                toUtc(body.getScheduledAt())));
     return new ResponseEntity<>(toDto(link, topicService.getAllTopicsMap()), HttpStatus.CREATED);
   }
 
@@ -106,7 +109,12 @@ public class DirectLinkControllerDelegate {
         body == null
             ? null
             : new UpdateCommand(
-                body.getName(), body.getTopicId(), body.getTemporary(), body.getActive());
+                body.getName(),
+                body.getTopicId(),
+                body.getTemporary(),
+                body.getActive(),
+                toUtc(body.getScheduledAt()),
+                Boolean.TRUE.equals(body.getClearScheduledAt()));
     var link = service.update(owner, linkId, cmd);
     return ResponseEntity.ok(toDto(link, topicService.getAllTopicsMap()));
   }
@@ -224,7 +232,14 @@ public class DirectLinkControllerDelegate {
         .active(InviteLinkStatus.ACTIVE.name().equals(link.getStatus()))
         .admission(DirectLinkDTO.AdmissionEnum.valueOf(medium.admission().name()))
         .createDate(
-            link.getCreateDate() == null ? null : link.getCreateDate().atOffset(ZoneOffset.UTC));
+            link.getCreateDate() == null ? null : link.getCreateDate().atOffset(ZoneOffset.UTC))
+        .scheduledAt(
+            link.getScheduledAt() == null ? null : link.getScheduledAt().atOffset(ZoneOffset.UTC));
+  }
+
+  /** Link times are stored in UTC, like {@code create_date}. */
+  private static LocalDateTime toUtc(OffsetDateTime time) {
+    return time == null ? null : time.withOffsetSameInstant(ZoneOffset.UTC).toLocalDateTime();
   }
 
   /** Same entry route as the admin invite links: the frontend's /invite/:token. */
