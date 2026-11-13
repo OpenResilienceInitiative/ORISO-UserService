@@ -142,6 +142,25 @@ class AskerAdminSearchServiceTest {
   }
 
   @Test
+  void effectiveAgencyIds_Should_keepAnAgencyAdminToTheirOwnAgencies() {
+    var reach = new Agencies(7L, Set.of(10L, 20L));
+
+    assertThat(
+            AskerAdminSearchService.effectiveAgencyIds(
+                reach, new AskerFilter().agencyId(List.of(10L, 30L))))
+        .containsExactly(10L);
+    assertThat(
+            AskerAdminSearchService.effectiveAgencyIds(
+                reach, new AskerFilter().agencyId(List.of(30L))))
+        .isNull();
+    assertThat(AskerAdminSearchService.effectiveAgencyIds(reach, new AskerFilter())).isEmpty();
+    assertThat(
+            AskerAdminSearchService.effectiveAgencyIds(
+                new Tenant(7L), new AskerFilter().agencyId(List.of(30L))))
+        .containsExactly(30L);
+  }
+
+  @Test
   void effectiveTenantId_Should_honourRequestedTenant_When_callerIsPlatformAdmin() {
     var filter = new AskerFilter().tenantId(9L);
 

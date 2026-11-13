@@ -58,11 +58,15 @@ public class AskerAdminSearchService {
   public AskerSearchResultDTO findAskers(Integer page, Integer perPage, AskerFilter filter) {
     var askerFilter = filter == null ? new AskerFilter() : filter;
     var reach = adminScope.current();
+    var requestedAgencyIds = effectiveAgencyIds(reach, askerFilter);
+    if (requestedAgencyIds == null) {
+      return new AskerSearchResultDTO().total(0L).embedded(List.of());
+    }
     var specification =
         adminScope.narrow(
             AskerAdminSpecification.matching(
                 usernameVariants(askerFilter.getUsername()),
-                askerFilter.getAgencyId(),
+                requestedAgencyIds,
                 effectiveTenantId(reach, askerFilter)),
             AskerAdminSpecification::inAgencies);
     var pageRequest =
@@ -125,6 +129,20 @@ public class AskerAdminSearchService {
     }
     agencyIds.values().forEach(ids -> ids.retainAll(agencies.ids()));
     return agencyIds;
+  }
+
+  /**
+   * An agency admin may only filter by their own agencies; asking for another one would tell them
+   * which of their advice seekers also write there. {@code null} when none of the requested
+   * agencies is theirs, so the search finds nobody.
+   */
+  static List<Long> effectiveAgencyIds(Reach reach, AskerFilter filter) {
+    var requested = filter.getAgencyId() == null ? List.<Long>of() : filter.getAgencyId();
+    if (requested.isEmpty() || !(reach instanceof Agencies agencies)) {
+      return requested;
+    }
+    var own = requested.stream().filter(agencies.ids()::contains).toList();
+    return own.isEmpty() ? null : own;
   }
 
   /** Only a platform admin chooses the Träger; everybody else searches their own. */
