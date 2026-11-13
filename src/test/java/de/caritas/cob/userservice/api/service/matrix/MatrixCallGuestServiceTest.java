@@ -476,4 +476,19 @@ class MatrixCallGuestServiceTest {
         .isEqualTo(MatrixCallGuestService.Outcome.NOT_FOUND);
     verify(matrix, never()).inviteUserToRoom(anyString(), anyString(), anyString());
   }
+
+  @Test
+  void aRetainedDeviceWhoseMembershipExpiredSeatsNobody() throws Exception {
+    // Not ended, a device is still recorded, but its membership ran out: the call is over.
+    binding = callBinding(null);
+    binding
+        .getDevices()
+        .put(
+            "device",
+            new de.caritas.cob.userservice.api.model.MatrixCallDevice(
+                COUNSELLOR, 1200L, System.currentTimeMillis() - 1, true, "$start"));
+    assertThat(service.admit(counsellor, SOURCE, "call", "guest").outcome())
+        .isEqualTo(MatrixCallGuestService.Outcome.NOT_FOUND);
+    verify(matrix, never()).inviteUserToRoom(anyString(), anyString(), anyString());
+  }
 }

@@ -69,7 +69,8 @@ import org.springframework.transaction.support.TransactionTemplate;
   MatrixCallGuestService.class,
   MatrixCallConversationResolver.class,
   MatrixCallStateService.class,
-  MatrixCallInviteNotificationService.class
+  MatrixCallInviteNotificationService.class,
+  OrisoRoomRegistry.class
 })
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class MatrixCallTenantIT {
@@ -94,6 +95,8 @@ class MatrixCallTenantIT {
   @Autowired private MatrixCallGuestService callGuests;
   @Autowired private EventNotificationService notificationService;
   @Autowired private PlatformTransactionManager transactionManager;
+  @Autowired private OrisoRoomRegistry roomRegistry;
+  @Autowired private TeamDiscussionRepository discussions;
   @MockitoBean private MatrixSynapseService matrix;
 
   @MockitoBean
@@ -107,6 +110,45 @@ class MatrixCallTenantIT {
     when(cursor.readOrCreateActivation())
         .thenReturn(new MatrixEmailSyncCursorStore.Start(null, 0L));
     return cursor;
+  }
+
+  @org.junit.jupiter.api.Test
+  void aConversationRoomOfAnotherTenantIsStillKnownAsAConversationRoom() {
+    // CodeRabbit review on FE#2209: the room rule must not depend on the tenant filter.
+    var transaction = new TransactionTemplate(transactionManager);
+    String sessionRoom = "!registry-session:example";
+    String discussionRoom = "!registry-discussion:example";
+    TenantContext.setCurrentTenant(0L);
+    try {
+      transaction.executeWithoutResult(
+          status -> {
+            var owner = users.save(user("registry-owner", "@registry-owner:example"));
+            var conversation =
+                new Session(owner, 1, "12345", 1L, Session.SessionStatus.IN_PROGRESS, false);
+            conversation.setTenantId(7L);
+            conversation.setMatrixRoomId(sessionRoom);
+            conversation.setLanguageCode(LanguageCode.de);
+            conversation.setIsConsultantDirectlySet(false);
+            var saved = sessions.save(conversation);
+            discussions.save(
+                de.caritas.cob.userservice.api.model.TeamDiscussion.builder()
+                    .sessionId(saved.getId())
+                    .matrixRoomId(discussionRoom)
+                    .status(de.caritas.cob.userservice.api.model.TeamDiscussion.Status.OPEN)
+                    .createDate(java.time.LocalDateTime.now())
+                    .tenantId(7L)
+                    .build());
+          });
+      for (Long tenant : new Long[] {8L, null}) {
+        if (tenant == null) TenantContext.clear();
+        else TenantContext.setCurrentTenant(tenant);
+        assertThat(roomRegistry.isKnownConversationRoom(sessionRoom)).isTrue();
+        assertThat(roomRegistry.isKnownConversationRoom(discussionRoom)).isTrue();
+        assertThat(roomRegistry.isKnownConversationRoom("!dedicated-call-room:example")).isFalse();
+      }
+    } finally {
+      TenantContext.setCurrentTenant(0L);
+    }
   }
 
   @ParameterizedTest

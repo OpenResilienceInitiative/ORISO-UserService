@@ -528,6 +528,15 @@ class CallShareLinkIT {
             + 1;
     assertThat(lifecycle.finishNeverObserved(encryptedMedia, later)).isTrue();
     assertThat(bindings.findByMediaRoomId(encryptedMedia).orElseThrow().getEndedAt()).isNotNull();
+    // The guest admitted before the end loses the seat: row revoked, removed, power level cleared.
+    assertThat(
+            guests
+                .findByBindingIdAndMatrixUserId(bound.getId(), GUEST)
+                .orElseThrow()
+                .getRevokedAt())
+        .isNotNull();
+    verify(matrix).removeUserFromRoom(encryptedMedia, GUEST, "c-token");
+    verify(matrix).clearUserPowerLevel(encryptedMedia, GUEST, "c-token");
     assertThat(
             callGuests
                 .admitAs(7L, counsellor.getId(), SOURCE, "encrypted-call", "share-guest-2")

@@ -138,6 +138,70 @@ public class MatrixSessionCallBindingService {
     return true;
   }
 
+  /**
+   * FE#2209 review: the binding's caller ended the call explicitly, so the binding ends with the
+   * observation and share links, knocks and guest seats stop at once, not at the next call-room
+   * event. Call it after the observation end: a binding that was being written then has either seen
+   * the ended observation and refused, or committed first and is ended here. {@code true} when this
+   * call ended a binding.
+   */
+  public boolean end(AuthenticatedUser actor, String sourceRoomId, String callId) {
+    if (actor == null
+        || !actor.isConsultant()
+        || actor.getUserId() == null
+        || actor.getTenantId() == null
+        || blank(sourceRoomId, 255)
+        || blank(callId, 191)) {
+      return false;
+    }
+    var conversation = conversations.resolve(sourceRoomId).orElse(null);
+    if (conversation == null
+        || conversation.getSessionId() == null
+        || conversation.getChatId() != null
+        || !actor.getTenantId().equals(conversation.getTenantId())) {
+      return false;
+    }
+    // Ending needs no current assignment: a reassigned counsellor may still end their own call.
+    String caller =
+        consultants
+            .findByIdAndDeleteDateIsNull(actor.getUserId())
+            .filter(value -> conversation.getTenantId().equals(value.getTenantId()))
+            .map(Consultant::getMatrixUserId)
+            .filter(value -> !blank(value, 255))
+            .orElse(null);
+    if (caller == null) return false;
+    var known = bindings.findBySourceRoomIdAndCallId(sourceRoomId, callId).orElse(null);
+    if (known == null) return false;
+    String ended =
+        new TransactionTemplate(transactionManager)
+            .execute(
+                status -> {
+                  var binding = bindings.lockByMediaRoomId(known.getMediaRoomId()).orElse(null);
+                  if (binding == null
+                      || binding.getEndedAt() != null
+                      || !sourceRoomId.equals(binding.getSourceRoomId())
+                      || !callId.equals(binding.getCallId())
+                      || !caller.equals(binding.getCallerMatrixId())
+                      || binding.getChatId() != null
+                      || !Objects.equals(binding.getSessionId(), conversation.getSessionId())
+                      || !Objects.equals(binding.getTenantId(), conversation.getTenantId())) {
+                    return null;
+                  }
+                  binding.finish(System.currentTimeMillis());
+                  bindings.save(binding);
+                  return binding.getMediaRoomId();
+                });
+    if (ended == null) return false;
+    // After the commit: guest seats end with the call on the US#1477 path, which retries a failed
+    // removal on the next reconcile.
+    try {
+      lifecycle.handleRoom(ended, java.util.Map.of());
+    } catch (RuntimeException unavailable) {
+      log.warn("Call guest revocation deferred ({})", unavailable.getClass().getSimpleName());
+    }
+    return true;
+  }
+
   private enum Result {
     CREATED,
     EXISTING,
@@ -192,7 +256,9 @@ public class MatrixSessionCallBindingService {
   }
 
   private boolean endedByObservation(String sourceRoomId, String callId, String caller, long now) {
-    var row = observations.findBySourceRoomIdAndCallId(sourceRoomId, callId).orElse(null);
+    // Locked: an explicit end (MatrixCallObservationService.writeEnd) locks the same row, so it
+    // either committed before this read or waits for this binding and then ends it (end below).
+    var row = observations.findForUpdateBySourceRoomIdAndCallId(sourceRoomId, callId).orElse(null);
     if (row == null) return false;
     if (row.isTombstone()) return caller.equals(row.getCreatorMatrixId());
     return row.getEndedAt() != null || now >= row.getExpiresAt();

@@ -23,6 +23,13 @@ import org.springframework.transaction.annotation.Transactional;
 
 public interface SessionRepository extends CrudRepository<Session, Long> {
 
+  /**
+   * FE#2209: whether any session of any tenant uses this Matrix room. Native, so the Hibernate
+   * tenant filter does not apply: a room of another tenant is still an ORISO conversation room.
+   */
+  @Query(value = "SELECT COUNT(*) FROM session WHERE matrix_room_id = :room", nativeQuery = true)
+  long countAnyTenantByMatrixRoomId(@Param("room") String room);
+
   // A known modality is authoritative; the older markers only identify pre-modality rows.
   String LIVE_CHAT_MODALITY =
       " AND (s.conversationType = de.caritas.cob.userservice.api.model.ConversationType.LIVE_CHAT"

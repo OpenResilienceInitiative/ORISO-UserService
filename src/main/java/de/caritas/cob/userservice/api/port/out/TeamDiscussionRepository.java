@@ -12,6 +12,12 @@ import org.springframework.data.repository.query.Param;
 
 public interface TeamDiscussionRepository extends JpaRepository<TeamDiscussion, Long> {
 
+  /** FE#2209: tenant-independent, see {@code SessionRepository#countAnyTenantByMatrixRoomId}. */
+  @Query(
+      value = "SELECT COUNT(*) FROM team_discussion WHERE matrix_room_id = :room",
+      nativeQuery = true)
+  long countAnyTenantByMatrixRoomId(@Param("room") String room);
+
   Optional<TeamDiscussion> findBySessionId(Long sessionId);
 
   Optional<TeamDiscussion> findByMatrixRoomId(String matrixRoomId);
@@ -52,7 +58,4 @@ public interface TeamDiscussionRepository extends JpaRepository<TeamDiscussion, 
    */
   List<TeamDiscussion> findByStatusAndArchiveDateBefore(
       TeamDiscussion.Status status, LocalDateTime cutoff);
-
-  /** FE#2209: a known ORISO room is never accepted as a call room. */
-  boolean existsByMatrixRoomId(String matrixRoomId);
 }

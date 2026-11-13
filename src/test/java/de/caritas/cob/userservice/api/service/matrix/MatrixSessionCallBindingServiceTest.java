@@ -311,7 +311,7 @@ class MatrixSessionCallBindingServiceTest {
   @Test
   void aCallTheCounsellorAlreadyEndedIsNotBoundByALateRegistration() {
     // #1641 "ending wins": the end left a tombstone (or ended row) before the registration landed.
-    when(observations.findBySourceRoomIdAndCallId(SOURCE, "call"))
+    when(observations.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call"))
         .thenReturn(
             Optional.of(
                 de.caritas.cob.userservice.api.model.MatrixCallObservation.tombstone(
@@ -331,10 +331,11 @@ class MatrixSessionCallBindingServiceTest {
     long now = System.currentTimeMillis();
     var ended = observation(now + 60_000);
     ended.finish(now);
-    when(observations.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(ended));
+    when(observations.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call"))
+        .thenReturn(Optional.of(ended));
     assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isFalse();
 
-    when(observations.findBySourceRoomIdAndCallId(SOURCE, "call"))
+    when(observations.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call"))
         .thenReturn(Optional.of(observation(now - 1)));
     assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isFalse();
     verify(callBindings, never()).registerWhileSourceLocked(any());
@@ -342,7 +343,7 @@ class MatrixSessionCallBindingServiceTest {
 
   @Test
   void aLiveObservationOfTheCallDoesNotBlockTheBinding() {
-    when(observations.findBySourceRoomIdAndCallId(SOURCE, "call"))
+    when(observations.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call"))
         .thenReturn(Optional.of(observation(System.currentTimeMillis() + 60_000)));
     assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isTrue();
     verify(callBindings).registerWhileSourceLocked(any());
@@ -405,6 +406,56 @@ class MatrixSessionCallBindingServiceTest {
         .thenReturn(Optional.of(otherSession));
     assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isFalse();
     verify(callBindings, never()).registerWhileSourceLocked(any());
+  }
+
+  // --- CodeRabbit review (13 Nov): an explicit end ends the binding too ---
+
+  @Test
+  void theCallersExplicitEndEndsTheBindingAndThenItsGuestSeats() {
+    var live = existing(MEDIA, COUNSELLOR);
+    when(conversations.resolve(SOURCE))
+        .thenReturn(Optional.of(new MatrixCallConversation(SOURCE, TENANT, SESSION, null)));
+    when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(live));
+    when(bindings.lockByMediaRoomId(MEDIA)).thenReturn(Optional.of(live));
+    when(lifecycle.handleRoom(MEDIA, Map.of()))
+        .thenAnswer(
+            ignored -> {
+              // Guest seats are revoked only after the end committed.
+              assertThat(tx.isOpen()).isFalse();
+              return true;
+            });
+
+    assertThat(service.end(actor("counsellor-id", true), SOURCE, "call")).isTrue();
+
+    assertThat(live.getEndedAt()).isNotNull();
+    assertThat(live.isLive(System.currentTimeMillis())).isFalse();
+    verify(bindings).save(live);
+    verify(lifecycle).handleRoom(MEDIA, Map.of());
+    verifyNoInteractions(matrix);
+  }
+
+  @Test
+  void nobodyButTheBindingsCallerEndsIt() {
+    var live = existing(MEDIA, COUNSELLOR);
+    when(conversations.resolve(SOURCE))
+        .thenReturn(Optional.of(new MatrixCallConversation(SOURCE, TENANT, SESSION, null)));
+    when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(live));
+    when(bindings.lockByMediaRoomId(MEDIA)).thenReturn(Optional.of(live));
+
+    assertThat(service.end(actor("other-counsellor-id", true), SOURCE, "call")).isFalse();
+    assertThat(service.end(actor("asker-id", false), SOURCE, "call")).isFalse();
+
+    assertThat(live.getEndedAt()).isNull();
+    verify(lifecycle, never()).handleRoom(anyString(), any());
+  }
+
+  @Test
+  void endingACallWithoutABindingChangesNothing() {
+    when(conversations.resolve(SOURCE))
+        .thenReturn(Optional.of(new MatrixCallConversation(SOURCE, TENANT, SESSION, null)));
+    assertThat(service.end(actor("counsellor-id", true), SOURCE, "call")).isFalse();
+    verify(bindings, never()).lockByMediaRoomId(anyString());
+    verify(lifecycle, never()).handleRoom(anyString(), any());
   }
 
   private static de.caritas.cob.userservice.api.model.MatrixCallObservation observation(

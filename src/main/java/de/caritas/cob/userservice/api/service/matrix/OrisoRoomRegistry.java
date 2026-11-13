@@ -27,10 +27,12 @@ public class OrisoRoomRegistry {
 
   @Transactional(readOnly = true)
   public boolean isKnownConversationRoom(String room) {
-    return sessions.findByMatrixRoomId(room).isPresent()
+    // Sessions and team discussions carry the tenant filter; this rule does not depend on the
+    // tenant, and without a tenant context the filter would match nothing and let the room pass.
+    return sessions.countAnyTenantByMatrixRoomId(room) > 0
         || chats.existsByMatrixRoomId(room)
         || chatRooms.existsById(room)
-        || discussions.existsByMatrixRoomId(room)
+        || discussions.countAnyTenantByMatrixRoomId(room) > 0
         || supervisors.existsByMatrixRoomId(room)
         || supportRooms.existsByMatrixRoomId(room);
   }

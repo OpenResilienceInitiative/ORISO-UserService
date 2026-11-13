@@ -151,6 +151,22 @@ class MatrixCallObservationControllerTest {
   }
 
   @Test
+  void anExplicitEndAlsoEndsTheSessionCallsBindingAfterTheObservation() throws Exception {
+    when(observations.end(any(), anyString(), anyString()))
+        .thenReturn(MatrixCallObservationService.Outcome.NOT_FOUND);
+    when(sessionBindings.end(any(), anyString(), anyString())).thenReturn(true);
+
+    mvc.perform(
+            post("/service/matrix/calls/observations/end")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(END))
+        .andExpect(status().isNoContent());
+    var order = org.mockito.Mockito.inOrder(observations, sessionBindings);
+    order.verify(observations).end(any(), anyString(), anyString());
+    order.verify(sessionBindings).end(any(), anyString(), anyString());
+  }
+
+  @Test
   void rejectedRegistrationIsNotFound() throws Exception {
     when(observations.register(any(), anyString(), anyString(), anyString(), anyBoolean()))
         .thenReturn(MatrixCallObservationService.Outcome.NOT_FOUND);

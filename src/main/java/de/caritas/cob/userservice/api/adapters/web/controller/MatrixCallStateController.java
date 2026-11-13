@@ -142,8 +142,16 @@ public class MatrixCallStateController {
   @PostMapping("/observations/end")
   public ResponseEntity<?> end(@RequestBody ObservationEndRequest request) {
     try {
+      var observed = observations.end(authenticatedUser, request.sourceRoomId(), request.callId());
+      // FE#2209 review: after the observation end, so a binding written concurrently is either
+      // refused by the ended observation or committed and ended here.
+      boolean bindingEnded =
+          sessionBindings.end(authenticatedUser, request.sourceRoomId(), request.callId());
       return observationResponse(
-          observations.end(authenticatedUser, request.sourceRoomId(), request.callId()));
+          bindingEnded
+              ? de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService.Outcome
+                  .OK
+              : observed);
     } catch (MatrixSynapseService.CallLookupUnavailableException unavailable) {
       return unavailable();
     } catch (org.springframework.dao.PessimisticLockingFailureException concurrent) {
