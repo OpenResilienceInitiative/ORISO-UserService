@@ -41,6 +41,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -60,6 +61,7 @@ import org.testcontainers.containers.MariaDBContainer;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({
   SessionCallAuthority.class,
+  SessionCallRevival.class,
   MatrixCallObservationService.class,
   MatrixSessionCallBindingService.class,
   MatrixCallBindingService.class,
@@ -116,6 +118,7 @@ class MatrixCallTakeoverLockOrderMariaDbIT {
   @MockitoBean private MatrixSynapseService matrix;
   @MockitoBean private EventNotificationService notifications;
   @MockitoBean private AccountInactivityService accountLifecycle;
+  @MockitoSpyBean private MatrixCallGuestService callGuests;
 
   private String source;
   private String askerMedia;
@@ -197,6 +200,70 @@ class MatrixCallTakeoverLockOrderMariaDbIT {
     var binding = bindings.findBySourceRoomIdAndCallId(source, "call").orElseThrow();
     assertThat(binding.getMediaRoomId()).isEqualTo(counsellorMedia);
     assertThat(binding.getEndedAt()).isNull();
+  }
+
+  @Test
+  void aBindingThatStopsBeingRevivableBetweenTheGateAndTheLockIsNotTakenOver() throws Exception {
+    // Round 6 (F4): the server closed the asker's binding unseen, so bind's gate (outside any
+    // transaction) finds it revivable. Before bind's transaction locks it, the counsellor's own
+    // explicit end commits. The checks under the lock see that fresh state and refuse.
+    new JdbcTemplate(dataSource)
+        .update(
+            "UPDATE matrix_call_binding SET ended_at = ?, end_cause = 'LIFECYCLE'"
+                + " WHERE source_room_id = ? AND call_id = 'call'",
+            System.currentTimeMillis(),
+            source);
+    var gatePassed = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    var bindThread = new java.util.concurrent.atomic.AtomicReference<Thread>();
+    var outsideTransaction = new AtomicBoolean();
+    // The barrier: right after the gate, before bind's transaction; revoking the old call's
+    // guests is the gate's last step and runs with no transaction open.
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              if (Thread.currentThread() == bindThread.get()) {
+                outsideTransaction.set(
+                    !TransactionSynchronizationManager.isActualTransactionActive());
+                gatePassed.countDown();
+                release.await(20, TimeUnit.SECONDS);
+              }
+              return invocation.callRealMethod();
+            })
+        .when(callGuests)
+        .revokeBeforeTakeOver(org.mockito.ArgumentMatchers.any());
+    var pool = Executors.newSingleThreadExecutor();
+    try {
+      Future<Boolean> bound =
+          pool.submit(
+              () -> {
+                bindThread.set(Thread.currentThread());
+                return sessionBindings.bind(actor, source, "call", counsellorMedia, true);
+              });
+      assertThat(gatePassed.await(15, TimeUnit.SECONDS)).isTrue();
+      assertThat(outsideTransaction).as("barrier outside any transaction").isTrue();
+      // Commits completely while bind waits: bind holds no lock yet.
+      assertThat(observations.end(actor, source, "call"))
+          .isEqualTo(MatrixCallObservationService.Outcome.OK);
+      assertThat(
+              new JdbcTemplate(dataSource)
+                  .queryForObject(
+                      "SELECT COUNT(*) FROM matrix_call_observation_end WHERE source_room_id = ?"
+                          + " AND call_id = 'call' AND actor_matrix_id = ?",
+                      Integer.class,
+                      source,
+                      counsellor.getMatrixUserId()))
+          .isEqualTo(1);
+      release.countDown();
+      assertThat(bound.get(30, TimeUnit.SECONDS)).isFalse();
+    } finally {
+      release.countDown();
+      pool.shutdownNow();
+    }
+    var binding = bindings.findBySourceRoomIdAndCallId(source, "call").orElseThrow();
+    assertThat(binding.getEndedAt()).isNotNull();
+    assertThat(binding.getEndCause()).isEqualTo(MatrixCallBinding.END_CAUSE_LIFECYCLE);
+    assertThat(binding.getCallerMatrixId()).isEqualTo(askerMatrixId);
+    assertThat(binding.getMediaRoomId()).isEqualTo(askerMedia);
   }
 
   private <T> T runWhileTheTakeOverHoldsItsLocks(java.util.concurrent.Callable<T> concurrent)

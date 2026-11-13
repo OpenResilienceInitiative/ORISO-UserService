@@ -88,6 +88,7 @@ import org.testcontainers.containers.MariaDBContainer;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({
   SessionCallAuthority.class,
+  SessionCallRevival.class,
   EventNotificationService.class,
   ConsultantDisplayNameResolver.class,
   EventNotificationDeduplicationWriter.class,

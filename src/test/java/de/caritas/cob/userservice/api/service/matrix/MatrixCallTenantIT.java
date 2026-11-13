@@ -59,6 +59,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({
   de.caritas.cob.userservice.api.service.matrix.SessionCallAuthority.class,
+  de.caritas.cob.userservice.api.service.matrix.SessionCallRevival.class,
   MatrixCallTenantIT.AopConfiguration.class,
   EventNotificationService.class,
   ConsultantDisplayNameResolver.class,

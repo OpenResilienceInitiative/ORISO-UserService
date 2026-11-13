@@ -72,6 +72,7 @@ public class MatrixSessionCallBindingService {
   private final MatrixCallGuestService callGuests;
   private final de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository links;
   private final de.caritas.cob.userservice.api.port.out.GroupChatJoinRequestRepository knockRows;
+  private final SessionCallRevival revival;
   private final PlatformTransactionManager transactionManager;
 
   /**
@@ -144,7 +145,7 @@ public class MatrixSessionCallBindingService {
       // call room, before the transaction opens (#1630). A removal that fails refuses this bind.
       if (known != null
           && !authority.grantsGuestAuthority(known)
-          && ((known.getEndedAt() != null && !revivable(known))
+          && ((known.getEndedAt() != null && !revival.revivableBy(known, caller))
               || !callGuests.revokeBeforeTakeOver(known))) {
         // Round 4 (R4): an ended binding is never taken over (round 5: unless revivable), so
         // nothing is revoked for it here.
@@ -357,7 +358,8 @@ public class MatrixSessionCallBindingService {
    * counsellor's call afresh and points at the counsellor's verified call room from now on. Refused
    * when that call room belongs to another binding, when the counsellor already ended the call, and
    * (round 4, R4) when the binding has ended, whoever ended it: an ended call is never brought
-   * back, for example by counsellor B after the session was reassigned from A.
+   * back, for example by counsellor B after the session was reassigned from A. The one exception is
+   * {@link SessionCallRevival} (rounds 5 and 6).
    */
   private Result takeOver(
       MatrixCallBinding existing,
@@ -376,8 +378,9 @@ public class MatrixSessionCallBindingService {
     // Already locked first by write(); the same transaction takes it again at no cost.
     var locked = bindings.lockById(existing.getId()).orElse(null);
     if (locked == null || !Objects.equals(locked.getId(), existing.getId())) return Result.REFUSED;
-    // R4, under the row lock (fresh state): takeOver would reset endedAt.
-    if (locked.getEndedAt() != null && !revivable(locked)) return Result.REFUSED;
+    // R4, under the row lock (fresh state): takeOver would reset endedAt. Round 6 (F4): the gate
+    // before the transaction may have seen an older, revivable state.
+    if (locked.getEndedAt() != null && !revival.revivableBy(locked, caller)) return Result.REFUSED;
     // Nothing of the old call carries into the counsellor's room: no seat (taken back before the
     // transaction; the revoked records stay), no share link and no knock waiting on it.
     if (!callGuests.noSeatOutstanding(locked.getId())) return Result.REFUSED;
@@ -411,39 +414,6 @@ public class MatrixSessionCallBindingService {
       knock.setDecidedAt(now);
       knockRows.save(knock);
     }
-  }
-
-  /**
-   * FE#2209 round 5, the one exception to R4: an ended binding may still be taken over by the
-   * assigned counsellor when it never had authority and the server closed it unseen. Otherwise an
-   * asker who decrypted the counsellor's call id could post a plaintext invite with a few seconds
-   * of lifetime and, once the server closed it, block that call id for good. All of these hold:
-   *
-   * <ul>
-   *   <li>the server closed it ({@code end_cause = LIFECYCLE}); an end through the endpoint, or an
-   *       end recorded before the cause was stored (null), keeps it ended;
-   *   <li>it never ran: never started, never observed, no device;
-   *   <li>its caller is no counsellor (deleted ones included), so it never had authority;
-   *   <li>no counsellor stored an end of this call (the asker's own end does not count, round 3).
-   * </ul>
-   *
-   * The takeover then starts a fresh live call; old guests stay revoked, the old link expired.
-   */
-  private boolean revivable(MatrixCallBinding binding) {
-    return MatrixCallBinding.END_CAUSE_LIFECYCLE.equals(binding.getEndCause())
-        && binding.getStartedAt() == null
-        && binding.getMediaObservedAt() == null
-        && binding.getDevices().isEmpty()
-        && !isCounsellor(binding.getCallerMatrixId())
-        && ends
-            .findActorMatrixIdsBySourceRoomIdAndCallId(
-                binding.getSourceRoomId(), binding.getCallId())
-            .stream()
-            .noneMatch(this::isCounsellor);
-  }
-
-  private boolean isCounsellor(String matrixId) {
-    return matrixId == null || !consultants.findByMatrixUserId(matrixId).isEmpty();
   }
 
   private boolean endedByObservation(

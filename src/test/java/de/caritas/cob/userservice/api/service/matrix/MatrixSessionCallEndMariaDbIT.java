@@ -58,6 +58,7 @@ import org.testcontainers.containers.MariaDBContainer;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({
   de.caritas.cob.userservice.api.service.matrix.SessionCallAuthority.class,
+  de.caritas.cob.userservice.api.service.matrix.SessionCallRevival.class,
   MatrixCallObservationService.class,
   MatrixSessionCallBindingService.class,
   MatrixCallBindingService.class,

@@ -96,6 +96,7 @@ class MatrixSessionCallBindingServiceTest {
             callGuests,
             links,
             knockRows,
+            new SessionCallRevival(consultants, ends),
             tx);
     var conversation = new MatrixCallConversation(SOURCE, TENANT, SESSION, null);
     when(conversations.resolveForWriting(SOURCE)).thenReturn(Optional.of(conversation));
@@ -536,10 +537,10 @@ class MatrixSessionCallBindingServiceTest {
 
   @Test
   void anEndedCallStaysEndedWhenEndedExplicitlyOrWhenItMayHaveHadAuthority() {
-    // Round 5: R4 stays strict for an end through the endpoint, for any counsellor's end, for a
-    // call that ran, and for a binding whose caller is a counsellor (it may have had authority).
-    when(consultants.findByMatrixUserId(OTHER_COUNSELLOR))
-        .thenReturn(java.util.List.of(new de.caritas.cob.userservice.api.model.Consultant()));
+    // Round 5: R4 stays strict for an end through the endpoint, for the assigned counsellor's own
+    // end (round 6), for a call that ran, and for a binding whose caller is a counsellor (it may
+    // have had authority).
+    when(consultants.countAnyTenantByMatrixUserId(OTHER_COUNSELLOR)).thenReturn(1L);
     long now = System.currentTimeMillis();
 
     var explicitly = existing(42L, "!asker-media:example", ASKER);
@@ -549,8 +550,8 @@ class MatrixSessionCallBindingServiceTest {
     var counsellorsEnd = existing(42L, "!asker-media:example", ASKER);
     counsellorsEnd.finishByLifecycle(now);
     when(ends.findActorMatrixIdsBySourceRoomIdAndCallId(SOURCE, "call"))
-        .thenReturn(java.util.List.of(OTHER_COUNSELLOR));
-    assertRefused(counsellorsEnd, "a counsellor ended it");
+        .thenReturn(java.util.List.of(COUNSELLOR));
+    assertRefused(counsellorsEnd, "the assigned counsellor ended it");
     when(ends.findActorMatrixIdsBySourceRoomIdAndCallId(SOURCE, "call"))
         .thenReturn(java.util.List.of());
 
@@ -562,6 +563,104 @@ class MatrixSessionCallBindingServiceTest {
     var formerCounsellors = existing(42L, "!asker-media:example", OTHER_COUNSELLOR);
     formerCounsellors.finishByLifecycle(now);
     assertRefused(formerCounsellors, "a counsellor's call");
+    verify(bindings, never()).saveAndFlush(any());
+  }
+
+  @Test
+  void aColleaguesOrTheAskersEndDoesNotKeepTheServerClosedAskerCallFromTheCounsellor() {
+    // Round 6 (F1): in a team session a same-Träger colleague who is a room member but not in the
+    // call declines the asker's call; their end row is stored. Only the end of the counsellor
+    // taking over (the session's assigned one) blocks the revival, never a colleague's or asker's.
+    when(consultants.countAnyTenantByMatrixUserId(OTHER_COUNSELLOR)).thenReturn(1L);
+    var closed = existing(42L, "!asker-media:example", ASKER);
+    closed.finishByLifecycle(System.currentTimeMillis());
+    when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(closed));
+    when(bindings.lockById(42L)).thenReturn(Optional.of(closed));
+    when(ends.findActorMatrixIdsBySourceRoomIdAndCallId(SOURCE, "call"))
+        .thenReturn(java.util.List.of(OTHER_COUNSELLOR, ASKER));
+
+    assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isTrue();
+    assertThat(closed.getEndedAt()).isNull();
+    assertThat(closed.getCallerMatrixId()).isEqualTo(COUNSELLOR);
+  }
+
+  @Test
+  void theAssignedCounsellorsOwnEndKeepsTheServerClosedAskerCallEnded() {
+    // Round 6 (F1): the counsellor's own stored end still blocks, even when a colleague's end
+    // and the asker's end are stored as well. Checked by the revival predicate itself (the list of
+    // enders), not only by the locked per-person lookup inside the transaction.
+    when(consultants.countAnyTenantByMatrixUserId(OTHER_COUNSELLOR)).thenReturn(1L);
+    var closed = existing(42L, "!asker-media:example", ASKER);
+    closed.finishByLifecycle(System.currentTimeMillis());
+    when(ends.findActorMatrixIdsBySourceRoomIdAndCallId(SOURCE, "call"))
+        .thenReturn(java.util.List.of(OTHER_COUNSELLOR, ASKER, COUNSELLOR));
+    assertRefused(closed, "the assigned counsellor's own end");
+    verify(bindings, never()).saveAndFlush(any());
+  }
+
+  /**
+   * Round 6 (F4): the gate before the transaction saw a revivable binding, but the row locked
+   * inside it is no longer revivable. The fresh in-lock re-check refuses the takeover.
+   */
+  @Test
+  void theInLockRecheckRefusesABindingThatStoppedBeingRevivableAfterTheGate() {
+    long now = System.currentTimeMillis();
+    java.util.Map<String, MatrixCallBinding> changed = new java.util.LinkedHashMap<>();
+
+    var legacy = existing(42L, "!asker-media:example", ASKER);
+    legacy.finish(now);
+    changed.put("legacy end_cause null", legacy);
+
+    var devices = existing(42L, "!asker-media:example", ASKER);
+    inCall(devices, ASKER, now + 60_000);
+    devices.finishByLifecycle(now);
+    changed.put("devices without startedAt", devices);
+
+    var started = existing(42L, "!asker-media:example", ASKER);
+    started.recordAttendance(now - 1000);
+    started.finishByLifecycle(now);
+    changed.put("startedAt alone", started);
+
+    var observed = existing(42L, "!asker-media:example", ASKER);
+    observed.recordMediaObservation(now - 1000);
+    observed.finishByLifecycle(now);
+    changed.put("mediaObservedAt alone", observed);
+
+    var nullCaller = existing(42L, "!asker-media:example", null);
+    nullCaller.finishByLifecycle(now);
+    changed.put("null caller", nullCaller);
+
+    for (var entry : changed.entrySet()) {
+      var seenAtTheGate = existing(42L, "!asker-media:example", ASKER);
+      seenAtTheGate.finishByLifecycle(now);
+      var fresh = entry.getValue();
+      Long endedAt = fresh.getEndedAt();
+      String caller = fresh.getCallerMatrixId();
+      when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call"))
+          .thenReturn(Optional.of(seenAtTheGate));
+      when(bindings.lockById(42L)).thenReturn(Optional.of(fresh));
+
+      assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true))
+          .as(entry.getKey())
+          .isFalse();
+      assertThat(fresh.getEndedAt()).as(entry.getKey()).isEqualTo(endedAt);
+      assertThat(fresh.getCallerMatrixId()).as(entry.getKey()).isEqualTo(caller);
+      assertThat(fresh.getMediaRoomId()).as(entry.getKey()).isEqualTo("!asker-media:example");
+    }
+    verify(bindings, never()).saveAndFlush(any());
+  }
+
+  @Test
+  void aCallerWhoIsACounsellorMovedToAnotherTenantIsNotRevivable() {
+    // CodeRabbit 4564532702: the tenant-filtered lookup no longer finds a counsellor moved to
+    // another tenant, who keeps their Matrix id. Their binding may have had authority, so it stays
+    // ended; the counsellor check counts rows of every tenant.
+    String moved = "@moved-counsellor:example";
+    when(consultants.findByMatrixUserId(moved)).thenReturn(java.util.List.of());
+    when(consultants.countAnyTenantByMatrixUserId(moved)).thenReturn(1L);
+    var closed = existing(42L, "!moved-media:example", moved);
+    closed.finishByLifecycle(System.currentTimeMillis());
+    assertRefused(closed, "a counsellor of another tenant");
     verify(bindings, never()).saveAndFlush(any());
   }
 

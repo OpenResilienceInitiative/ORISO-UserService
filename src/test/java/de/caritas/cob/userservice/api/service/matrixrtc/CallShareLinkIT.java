@@ -95,6 +95,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({
   de.caritas.cob.userservice.api.service.matrix.SessionCallAuthority.class,
+  de.caritas.cob.userservice.api.service.matrix.SessionCallRevival.class,
   EventNotificationService.class,
   ConsultantDisplayNameResolver.class,
   EventNotificationDeduplicationWriter.class,
@@ -899,6 +900,71 @@ class CallShareLinkIT {
     assertThat(link.getStatus()).isEqualTo("ACTIVE");
     var guest = users.findById("share-guest").orElseThrow();
     assertThat(shareLinks.join(link.getToken(), guest).knockId()).isNotNull();
+  }
+
+  @Test
+  void aColleaguesDeclineOfTheAskersCallDoesNotBlockTheCounsellorsTakeover() throws Exception {
+    // Round 6 (F1): team session. The asker reuses the counsellor's call id and owns its
+    // observation. Colleague C of the same Träger, a room member who is not in the call, declines
+    // it, so C's end row is stored. The server then closes the asker's binding. Only the assigned
+    // counsellor's own end blocks their takeover; C's decline does not.
+    String askerMedia = "!declined-asker-media:example";
+    String counsellorMedia = "!declined-counsellor-media:example";
+    String colleagueId = colleague.getMatrixUserId();
+    var members = List.of(ASKER, counsellor.getMatrixUserId(), colleagueId);
+    when(matrix.getCallRoomMembers(SOURCE)).thenReturn(Optional.of(members));
+    when(matrix.getRoomMembers(SOURCE)).thenReturn(Optional.of(members));
+    when(matrix.getCallRoomBinding(askerMedia, ASKER))
+        .thenReturn(Optional.of(Map.of("call_id", "declined-call", "source_room_id", SOURCE)));
+    when(matrix.getCallRoomOrigin(askerMedia, ASKER))
+        .thenReturn(Optional.of(new MatrixSynapseService.CallRoomOrigin(ASKER, ASKER)));
+    String caller = stubCounsellorsCallRoom("declined-call", counsellorMedia);
+    var ok = de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService.Outcome.OK;
+    assertThat(
+            observations.register(
+                actor("share-asker", "user"), SOURCE, "declined-call", askerMedia, true))
+        .isEqualTo(ok);
+    assertThat(invites.handle(SOURCE, plaintextInvite(ASKER, "declined-call", askerMedia)))
+        .isTrue();
+
+    assertThat(observations.end(actor(colleague.getId(), "consultant"), SOURCE, "declined-call"))
+        .isEqualTo(ok);
+    assertThat(
+            new JdbcTemplate(dataSource)
+                .queryForObject(
+                    "SELECT COUNT(*) FROM matrix_call_observation_end"
+                        + " WHERE call_id = 'declined-call' AND actor_matrix_id = ?",
+                    Integer.class,
+                    colleagueId))
+        .isEqualTo(1);
+    var askers = bindings.findBySourceRoomIdAndCallId(SOURCE, "declined-call").orElseThrow();
+    assertThat(askers.getEndedAt()).as("C's decline does not end the asker's binding").isNull();
+    assertThat(
+            lifecycle.finishNeverObserved(
+                askerMedia,
+                askers.getInviteExpiresAt()
+                    + MatrixCallLifecycleService.NEVER_OBSERVED_MARGIN_MILLIS
+                    + 1))
+        .isTrue();
+    assertThat(
+            bindings
+                .findBySourceRoomIdAndCallId(SOURCE, "declined-call")
+                .orElseThrow()
+                .getEndCause())
+        .isEqualTo(MatrixCallBinding.END_CAUSE_LIFECYCLE);
+
+    assertThat(
+            sessionBindings.bind(
+                actor(counsellor.getId(), "consultant"),
+                SOURCE,
+                "declined-call",
+                counsellorMedia,
+                true))
+        .isTrue();
+    var taken = bindings.findBySourceRoomIdAndCallId(SOURCE, "declined-call").orElseThrow();
+    assertThat(taken.getEndedAt()).isNull();
+    assertThat(taken.getCallerMatrixId()).isEqualTo(caller);
+    assertThat(taken.getMediaRoomId()).isEqualTo(counsellorMedia);
   }
 
   @Test

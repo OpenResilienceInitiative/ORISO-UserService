@@ -91,11 +91,14 @@ class MatrixCallObservationIsolationTest {
     // The retention service only deletes expired rows; it neither reads nor grants anything.
     // FE#2209: MatrixSessionCallBindingService reads the row only to REFUSE a binding for a call
     // that was already ended (#1641 "ending wins"); the row never grants anything there.
+    // FE#2209 round 6: SessionCallRevival reads the stored end rows only to KEEP an ended binding
+    // ended (the assigned counsellor's own end blocks its revival); they never grant anything.
     assertThat(holders)
         .containsExactly(
             "CallObservationRetentionService",
             "MatrixCallStateController",
             "MatrixCallStateService",
-            "MatrixSessionCallBindingService");
+            "MatrixSessionCallBindingService",
+            "SessionCallRevival");
   }
 }

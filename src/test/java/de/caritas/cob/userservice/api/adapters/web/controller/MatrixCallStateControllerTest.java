@@ -88,6 +88,8 @@ class MatrixCallStateControllerTest {
                         org.mockito.Mockito.mock(
                             de.caritas.cob.userservice.api.service.matrix
                                 .MatrixCallObservationService.class),
+                        org.mockito.Mockito.mock(
+                            de.caritas.cob.userservice.api.service.matrix.SessionCallRevival.class),
                         new de.caritas.cob.userservice.api.service.matrix
                             .RecordingTransactionManager()),
                     callGuests,

@@ -99,6 +99,16 @@ public interface ConsultantRepository
   List<Consultant> findByMatrixUserId(String matrixUserId);
 
   /**
+   * FE#2209 round 6: how many consultant rows of any tenant, soft-deleted ones included, hold this
+   * Matrix id. Native, so the Hibernate tenant filter does not apply: a counsellor moved to another
+   * tenant keeps their Matrix id and is still a counsellor.
+   */
+  @Query(
+      value = "SELECT COUNT(*) FROM consultant WHERE matrix_user_id = :matrixUserId",
+      nativeQuery = true)
+  long countAnyTenantByMatrixUserId(@Param("matrixUserId") String matrixUserId);
+
+  /**
    * Every active consultant that owns no chat (Matrix) identity. Such a record looks complete to an
    * administrator but is refused by every counselling room operation.
    *
