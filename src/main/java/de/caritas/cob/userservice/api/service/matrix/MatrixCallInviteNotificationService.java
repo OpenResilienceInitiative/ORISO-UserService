@@ -54,6 +54,13 @@ public class MatrixCallInviteNotificationService {
     for (String room : callBindings.expiredMediaRooms(System.currentTimeMillis())) {
       lifecycle.handleRoom(room, Map.of());
     }
+    // FE#2209 review: a session call that was never observed would otherwise never end.
+    long now = System.currentTimeMillis();
+    for (String room :
+        callBindings.neverObservedSessionCalls(
+            now - MatrixCallLifecycleService.NEVER_OBSERVED_MARGIN_MILLIS)) {
+      lifecycle.finishNeverObserved(room, now);
+    }
     // US#1477: an ended call can still hold a guest whose removal failed; retry without an event.
     for (String room : callGuests.endedRoomsWithOutstandingGuests()) {
       lifecycle.handleRoom(room, Map.of());

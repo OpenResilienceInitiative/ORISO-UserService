@@ -35,7 +35,10 @@ import org.springframework.transaction.support.TransactionTemplate;
  *   <li>the caller is that session's assigned counsellor ({@code session.consultant}),
  *   <li>the caller is a current member of the session room,
  *   <li>the call room's binding state names exactly this call and this session room, and
- *   <li>the caller created the call room and sent its binding state.
+ *   <li>the caller created the call room and sent its binding state,
+ *   <li>the call room is none of ORISO's own conversation rooms, and
+ *   <li>the call was not already ended (#1641: the creator's end tombstone, an ended or lapsed
+ *       registration), and assignment and account are checked again under the session lock.
  * </ul>
  *
  * Once written, the binding is the readable-invite binding in every respect: the lifecycle observes
@@ -59,6 +62,9 @@ public class MatrixSessionCallBindingService {
   private final MatrixCallBindingService callBindings;
   private final MatrixSynapseService matrix;
   private final MatrixCallLifecycleService lifecycle;
+  private final OrisoRoomRegistry rooms;
+  private final de.caritas.cob.userservice.api.port.out.MatrixCallObservationRepository
+      observations;
   private final PlatformTransactionManager transactionManager;
 
   /**
@@ -94,6 +100,17 @@ public class MatrixSessionCallBindingService {
     // the readable-invite path applies to its caller (MatrixCallInviteNotificationService).
     if (!lifecycle.isActiveRecipient(counsellor.getId())) return false;
     String caller = counsellor.getMatrixUserId();
+    // A renewal of this counsellor's live binding needs no Matrix lookup; an ended or foreign
+    // binding is never confirmed or replaced.
+    var known = bindings.findBySourceRoomIdAndCallId(sourceRoomId, callId).orElse(null);
+    if (known != null) {
+      return sameCall(known, conversation, mediaRoomId, caller)
+          && known.getEndedAt() == null
+          && known.isLive(System.currentTimeMillis());
+    }
+    // Only a dedicated call room can be bound: never one of ORISO's own conversation rooms, or a
+    // counsellor could bind one session's call to another session's room.
+    if (rooms.isKnownConversationRoom(mediaRoomId)) return false;
 
     // Matrix evidence first, with no transaction open (#1630).
     var members = matrix.getCallRoomMembers(sourceRoomId).orElse(null);
@@ -114,7 +131,8 @@ public class MatrixSessionCallBindingService {
 
     Result written =
         new TransactionTemplate(transactionManager)
-            .execute(status -> write(conversation, callId, mediaRoomId, caller, video, invitees));
+            .execute(
+                status -> write(actor, conversation, callId, mediaRoomId, caller, video, invitees));
     if (written == Result.REFUSED) return false;
     if (written == Result.CREATED) observe(mediaRoomId, caller);
     return true;
@@ -127,6 +145,7 @@ public class MatrixSessionCallBindingService {
   }
 
   private Result write(
+      AuthenticatedUser actor,
       MatrixCallConversation conversation,
       String callId,
       String mediaRoomId,
@@ -134,19 +153,27 @@ public class MatrixSessionCallBindingService {
       boolean video,
       Set<String> invitees) {
     if (!conversations.lockCurrentForWriting(conversation)) return Result.REFUSED;
+    // Under the session's call lock: the assignment and the account may have changed while Matrix
+    // was asked.
+    if (assignedCounsellor(actor, conversation).isEmpty()
+        || !lifecycle.isActiveRecipient(actor.getUserId())) {
+      return Result.REFUSED;
+    }
     String sourceRoomId = conversation.getMatrixRoomId();
+    long now = System.currentTimeMillis();
     var existing = bindings.findBySourceRoomIdAndCallId(sourceRoomId, callId).orElse(null);
     if (existing != null) {
-      // Renewal of the same call by the same counsellor; anything else is never replaced.
-      return mediaRoomId.equals(existing.getMediaRoomId())
-              && caller.equals(existing.getCallerMatrixId())
-              && Objects.equals(conversation.getSessionId(), existing.getSessionId())
-              && Objects.equals(conversation.getTenantId(), existing.getTenantId())
+      // Renewal of the same live call by the same counsellor; anything else is never replaced.
+      return sameCall(existing, conversation, mediaRoomId, caller)
+              && existing.getEndedAt() == null
+              && existing.isLive(now)
           ? Result.EXISTING
           : Result.REFUSED;
     }
     if (bindings.findByMediaRoomId(mediaRoomId).isPresent()) return Result.REFUSED;
-    long now = System.currentTimeMillis();
+    // #1641 "ending wins": a call this counsellor already ended, or whose registration lease ran
+    // out, is never bound by a late registration. Deny-only: the row grants nothing.
+    if (endedByObservation(sourceRoomId, callId, caller, now)) return Result.REFUSED;
     var proposed =
         MatrixCallBinding.builder()
             .sourceRoomId(sourceRoomId)
@@ -162,6 +189,25 @@ public class MatrixSessionCallBindingService {
             .invitedMatrixIds(invitees)
             .build();
     return callBindings.registerWhileSourceLocked(proposed) ? Result.CREATED : Result.REFUSED;
+  }
+
+  private boolean endedByObservation(String sourceRoomId, String callId, String caller, long now) {
+    var row = observations.findBySourceRoomIdAndCallId(sourceRoomId, callId).orElse(null);
+    if (row == null) return false;
+    if (row.isTombstone()) return caller.equals(row.getCreatorMatrixId());
+    return row.getEndedAt() != null || now >= row.getExpiresAt();
+  }
+
+  private static boolean sameCall(
+      MatrixCallBinding binding,
+      MatrixCallConversation conversation,
+      String mediaRoomId,
+      String caller) {
+    return mediaRoomId.equals(binding.getMediaRoomId())
+        && caller.equals(binding.getCallerMatrixId())
+        && Objects.equals(conversation.getSessionId(), binding.getSessionId())
+        && binding.getChatId() == null
+        && Objects.equals(conversation.getTenantId(), binding.getTenantId());
   }
 
   /** The session's assigned counsellor, and only when that is the caller. */

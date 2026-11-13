@@ -35,6 +35,12 @@ public class MatrixCallBindingService {
         now, org.springframework.data.domain.PageRequest.of(0, 100));
   }
 
+  /** FE#2209 review: never-observed session calls whose invite ran out before {@code cutoff}. */
+  public java.util.List<String> neverObservedSessionCalls(long cutoff) {
+    return bindings.findNeverObservedSessionCalls(
+        cutoff, org.springframework.data.domain.PageRequest.of(0, 100));
+  }
+
   public boolean register(MatrixCallBinding proposed) {
     var existing = existing(proposed);
     if (existing.isPresent()) return matches(existing.get(), proposed);

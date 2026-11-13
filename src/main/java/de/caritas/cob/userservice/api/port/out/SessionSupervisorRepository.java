@@ -130,4 +130,7 @@ public interface SessionSupervisorRepository extends JpaRepository<SessionSuperv
           + " and supervisor.isActive = true")
   int endActiveSupervisionsOf(
       @Param("consultantId") String consultantId, @Param("removedAt") LocalDateTime removedAt);
+
+  /** FE#2209: a known ORISO room is never accepted as a call room. */
+  boolean existsByMatrixRoomId(String matrixRoomId);
 }

@@ -50,6 +50,10 @@ class MatrixSessionCallBindingServiceTest {
   private final MatrixCallBindingRepository bindings = mock(MatrixCallBindingRepository.class);
   private final MatrixCallBindingService callBindings = mock(MatrixCallBindingService.class);
   private final MatrixCallLifecycleService lifecycle = mock(MatrixCallLifecycleService.class);
+  private final OrisoRoomRegistry rooms = mock(OrisoRoomRegistry.class);
+  private final de.caritas.cob.userservice.api.port.out.MatrixCallObservationRepository
+      observations =
+          mock(de.caritas.cob.userservice.api.port.out.MatrixCallObservationRepository.class);
   private final RecordingTransactionManager tx = new RecordingTransactionManager();
   private final List<String> matrixCallsInsideTransaction = new ArrayList<>();
   private final MatrixSynapseService matrix =
@@ -77,6 +81,8 @@ class MatrixSessionCallBindingServiceTest {
             callBindings,
             matrix,
             lifecycle,
+            rooms,
+            observations,
             tx);
     var conversation = new MatrixCallConversation(SOURCE, TENANT, SESSION, null);
     when(conversations.resolveForWriting(SOURCE)).thenReturn(Optional.of(conversation));
@@ -157,6 +163,7 @@ class MatrixSessionCallBindingServiceTest {
   void anAdviceSeekerCannotCreateIt() {
     assertThat(service.bind(actor("asker-id", false), SOURCE, "call", MEDIA, true)).isFalse();
     verifyNoInteractions(callBindings);
+    verifyNoInteractions(matrix);
   }
 
   @Test
@@ -165,6 +172,7 @@ class MatrixSessionCallBindingServiceTest {
     assertThat(service.bind(actor("other-counsellor-id", true), SOURCE, "call", MEDIA, true))
         .isFalse();
     verifyNoInteractions(callBindings);
+    verifyNoInteractions(matrix);
   }
 
   @Test
@@ -268,6 +276,8 @@ class MatrixSessionCallBindingServiceTest {
         .callerMatrixId(caller)
         .sessionId(SESSION)
         .tenantId(TENANT)
+        .invitedAt(System.currentTimeMillis())
+        .inviteExpiresAt(System.currentTimeMillis() + 60_000)
         .build();
   }
 
@@ -285,5 +295,132 @@ class MatrixSessionCallBindingServiceTest {
     consultant.setMatrixUserId(matrixId);
     consultant.setTenantId(TENANT);
     return consultant;
+  }
+
+  // --- Review round 1 (13 Nov) ---
+
+  @Test
+  void aKnownOrisoConversationRoomIsNeverACallRoom() {
+    // A counsellor who created two session rooms must not bind S1's call to S2's room.
+    when(rooms.isKnownConversationRoom(MEDIA)).thenReturn(true);
+    assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isFalse();
+    verifyNoInteractions(callBindings);
+    verifyNoInteractions(matrix);
+  }
+
+  @Test
+  void aCallTheCounsellorAlreadyEndedIsNotBoundByALateRegistration() {
+    // #1641 "ending wins": the end left a tombstone (or ended row) before the registration landed.
+    when(observations.findBySourceRoomIdAndCallId(SOURCE, "call"))
+        .thenReturn(
+            Optional.of(
+                de.caritas.cob.userservice.api.model.MatrixCallObservation.tombstone(
+                    SOURCE,
+                    TENANT,
+                    null,
+                    SESSION,
+                    "call",
+                    COUNSELLOR,
+                    System.currentTimeMillis())));
+    assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isFalse();
+    verify(callBindings, never()).registerWhileSourceLocked(any());
+  }
+
+  @Test
+  void anEndedOrExpiredObservationOfTheCallRefusesTheBinding() {
+    long now = System.currentTimeMillis();
+    var ended = observation(now + 60_000);
+    ended.finish(now);
+    when(observations.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(ended));
+    assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isFalse();
+
+    when(observations.findBySourceRoomIdAndCallId(SOURCE, "call"))
+        .thenReturn(Optional.of(observation(now - 1)));
+    assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isFalse();
+    verify(callBindings, never()).registerWhileSourceLocked(any());
+  }
+
+  @Test
+  void aLiveObservationOfTheCallDoesNotBlockTheBinding() {
+    when(observations.findBySourceRoomIdAndCallId(SOURCE, "call"))
+        .thenReturn(Optional.of(observation(System.currentTimeMillis() + 60_000)));
+    assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isTrue();
+    verify(callBindings).registerWhileSourceLocked(any());
+  }
+
+  @Test
+  void theAssignmentIsCheckedAgainUnderTheLock() {
+    // The session was reassigned between the check and the write.
+    var reassigned = new Session();
+    reassigned.setId(SESSION);
+    reassigned.setConsultant(consultant("other-counsellor-id", OTHER_COUNSELLOR));
+    when(sessions.findById(SESSION)).thenReturn(Optional.of(session), Optional.of(reassigned));
+    assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isFalse();
+    verify(callBindings, never()).registerWhileSourceLocked(any());
+  }
+
+  @Test
+  void aSuspensionDuringTheMatrixChecksIsSeenUnderTheLock() {
+    when(lifecycle.isActiveRecipient("counsellor-id")).thenReturn(true, false);
+    assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isFalse();
+    verify(callBindings, never()).registerWhileSourceLocked(any());
+  }
+
+  @Test
+  void anEndedBindingIsNotRenewed() {
+    var ended = existing(MEDIA, COUNSELLOR);
+    ended.finish(System.currentTimeMillis());
+    when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(ended));
+    assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isFalse();
+    verify(callBindings, never()).registerWhileSourceLocked(any());
+  }
+
+  @Test
+  void aLiveExactBindingIsConfirmedWithoutAnyMatrixLookup() {
+    when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call"))
+        .thenReturn(Optional.of(existing(MEDIA, COUNSELLOR)));
+    assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isTrue();
+    verifyNoInteractions(matrix);
+    verify(callBindings, never()).registerWhileSourceLocked(any());
+  }
+
+  @Test
+  void anExistingBindingForTheSameCallRoomButAnotherCallerOrSessionIsRefused() {
+    when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call"))
+        .thenReturn(Optional.of(existing(MEDIA, OTHER_COUNSELLOR)));
+    assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isFalse();
+
+    var otherSession =
+        MatrixCallBinding.builder()
+            .sourceRoomId(SOURCE)
+            .callId("call")
+            .mediaRoomId(MEDIA)
+            .callerMatrixId(COUNSELLOR)
+            .sessionId(SESSION + 1)
+            .tenantId(TENANT)
+            .invitedAt(System.currentTimeMillis())
+            .inviteExpiresAt(System.currentTimeMillis() + 60_000)
+            .build();
+    when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call"))
+        .thenReturn(Optional.of(otherSession));
+    assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isFalse();
+    verify(callBindings, never()).registerWhileSourceLocked(any());
+  }
+
+  private static de.caritas.cob.userservice.api.model.MatrixCallObservation observation(
+      long expiresAt) {
+    return de.caritas.cob.userservice.api.model.MatrixCallObservation.builder()
+        .origin(
+            de.caritas.cob.userservice.api.model.MatrixCallObservation.ORIGIN_CREATOR_REGISTRATION)
+        .sourceRoomId(SOURCE)
+        .callId("call")
+        .mediaRoomId(MEDIA)
+        .creatorMatrixId(COUNSELLOR)
+        .tenantId(TENANT)
+        .sessionId(SESSION)
+        .registeredAt(expiresAt - 600_000)
+        .lastSeenAt(expiresAt - 600_000)
+        .expiresAt(expiresAt)
+        .build();
   }
 }

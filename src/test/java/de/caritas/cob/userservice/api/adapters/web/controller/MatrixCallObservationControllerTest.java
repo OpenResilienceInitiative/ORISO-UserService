@@ -189,4 +189,33 @@ class MatrixCallObservationControllerTest {
 
     register().andExpect(status().isNoContent());
   }
+
+  @Test
+  void neitherObservationNorBindingAcceptedIsNotFound() throws Exception {
+    when(observations.register(any(), anyString(), anyString(), anyString(), anyBoolean()))
+        .thenReturn(MatrixCallObservationService.Outcome.NOT_FOUND);
+    when(sessionBindings.bind(any(), anyString(), anyString(), anyString(), anyBoolean()))
+        .thenReturn(false);
+
+    register().andExpect(status().isNotFound());
+  }
+
+  @Test
+  void aRaceOnTheCallBindingKeysIsAConflictNotAServerError() throws Exception {
+    when(observations.register(any(), anyString(), anyString(), anyString(), anyBoolean()))
+        .thenReturn(MatrixCallObservationService.Outcome.OK);
+    when(sessionBindings.bind(any(), anyString(), anyString(), anyString(), anyBoolean()))
+        .thenThrow(
+            new DataIntegrityViolationException(
+                "could not execute statement",
+                new java.sql.SQLIntegrityConstraintViolationException(
+                    "Duplicate entry 'x' for key 'matrix_call_binding.uk_call_binding_source_call'")));
+    register().andExpect(status().isConflict());
+
+    org.mockito.Mockito.doThrow(
+            new DuplicateKeyException("Duplicate entry for key 'uk_call_binding_media_room'"))
+        .when(sessionBindings)
+        .bind(any(), anyString(), anyString(), anyString(), anyBoolean());
+    register().andExpect(status().isConflict());
+  }
 }

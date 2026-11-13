@@ -52,4 +52,7 @@ public interface TeamDiscussionRepository extends JpaRepository<TeamDiscussion, 
    */
   List<TeamDiscussion> findByStatusAndArchiveDateBefore(
       TeamDiscussion.Status status, LocalDateTime cutoff);
+
+  /** FE#2209: a known ORISO room is never accepted as a call room. */
+  boolean existsByMatrixRoomId(String matrixRoomId);
 }

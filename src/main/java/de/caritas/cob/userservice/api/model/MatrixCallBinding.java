@@ -93,6 +93,17 @@ public class MatrixCallBinding {
     if (endedAt == null && (startedAt == null || timestamp < startedAt)) startedAt = timestamp;
   }
 
+  /**
+   * Running or still ringing: not ended, and either nobody has been seen yet and the invite has not
+   * run out, or a seen device's membership has not expired. Share links, knocks and guest seats all
+   * ask this (FE#2209).
+   */
+  public boolean isLive(long now) {
+    if (endedAt != null) return false;
+    if (startedAt == null) return inviteExpiresAt > now;
+    return devices.values().stream().anyMatch(device -> device.getExpiresAt() > now);
+  }
+
   public void finish(long timestamp) {
     if (endedAt == null) endedAt = Math.max(startedAt == null ? invitedAt : startedAt, timestamp);
   }

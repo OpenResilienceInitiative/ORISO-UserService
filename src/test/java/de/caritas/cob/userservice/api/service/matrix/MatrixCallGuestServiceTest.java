@@ -421,6 +421,19 @@ class MatrixCallGuestServiceTest {
   }
 
   private MatrixCallBinding binding(Long endedAt) {
+    var binding = callBinding(endedAt);
+    // A running call: one device whose membership has not expired (FE#2209 review: admission
+    // requires a live call).
+    binding
+        .getDevices()
+        .put(
+            "device",
+            new de.caritas.cob.userservice.api.model.MatrixCallDevice(
+                COUNSELLOR, 1200L, Long.MAX_VALUE, true, "$start"));
+    return binding;
+  }
+
+  private MatrixCallBinding callBinding(Long endedAt) {
     return MatrixCallBinding.builder()
         .id(11L)
         .sourceRoomId(SOURCE)
@@ -453,5 +466,14 @@ class MatrixCallGuestServiceTest {
         .matrixUserId(matrixId)
         .tenantId(tenant)
         .build();
+  }
+
+  @Test
+  void aCallThatIsNoLongerLiveSeatsNobody() throws Exception {
+    // FE#2209 review: a binding that was never seen ending must not admit guests hours later.
+    binding = callBinding(null);
+    assertThat(service.admit(counsellor, SOURCE, "call", "guest").outcome())
+        .isEqualTo(MatrixCallGuestService.Outcome.NOT_FOUND);
+    verify(matrix, never()).inviteUserToRoom(anyString(), anyString(), anyString());
   }
 }

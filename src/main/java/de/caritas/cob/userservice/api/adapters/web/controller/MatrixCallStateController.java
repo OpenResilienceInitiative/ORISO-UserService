@@ -127,7 +127,10 @@ public class MatrixCallStateController {
       if (message != null) {
         String lower = message.toLowerCase(java.util.Locale.ROOT);
         if (lower.contains("uk_call_observation_source_call")
-            || lower.contains("uk_call_observation_media_room")) {
+            || lower.contains("uk_call_observation_media_room")
+            // FE#2209: two first bindings of the same 1:1 call raced.
+            || lower.contains("uk_call_binding_source_call")
+            || lower.contains("uk_call_binding_media_room")) {
           return true;
         }
       }

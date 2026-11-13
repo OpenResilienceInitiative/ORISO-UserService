@@ -308,13 +308,7 @@ public class CallShareLinkService {
    * second half closes the link even when the hang-up event itself was missed.
    */
   static boolean isLive(MatrixCallBinding binding, long now) {
-    if (binding.getEndedAt() != null) {
-      return false;
-    }
-    if (binding.getStartedAt() == null) {
-      return binding.getInviteExpiresAt() > now;
-    }
-    return binding.getDevices().values().stream().anyMatch(device -> device.getExpiresAt() > now);
+    return binding.isLive(now);
   }
 
   /**

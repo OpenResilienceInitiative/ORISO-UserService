@@ -84,10 +84,13 @@ class MatrixCallObservationIsolationTest {
       if (holds) holders.add(type.getName().substring(type.getName().lastIndexOf('.') + 1));
     }
     // The retention service only deletes expired rows; it neither reads nor grants anything.
+    // FE#2209: MatrixSessionCallBindingService reads the row only to REFUSE a binding for a call
+    // that was already ended (#1641 "ending wins"); the row never grants anything there.
     assertThat(holders)
         .containsExactly(
             "CallObservationRetentionService",
             "MatrixCallStateController",
-            "MatrixCallStateService");
+            "MatrixCallStateService",
+            "MatrixSessionCallBindingService");
   }
 }

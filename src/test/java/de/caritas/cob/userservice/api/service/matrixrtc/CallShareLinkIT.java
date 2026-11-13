@@ -105,6 +105,10 @@ import org.springframework.transaction.support.TransactionTemplate;
   DirectCallKnockService.class,
   EffectiveDirectInvitePolicy.class,
   ConfiguredTemporaryAccountPolicy.class,
+  de.caritas.cob.userservice.api.service.matrix.MatrixSessionCallBindingService.class,
+  de.caritas.cob.userservice.api.service.matrix.MatrixCallBindingService.class,
+  de.caritas.cob.userservice.api.service.matrix.MatrixCallBindingWriter.class,
+  de.caritas.cob.userservice.api.service.matrix.OrisoRoomRegistry.class,
   CallShareLinkIT.AccountFixture.class
 })
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -148,6 +152,11 @@ class CallShareLinkIT {
   @Autowired private CallShareLinkSweep sweep;
   @Autowired private DirectCallKnockService knocks;
   @Autowired private MatrixCallGuestService callGuests;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.service.matrix.MatrixSessionCallBindingService
+      sessionBindings;
+
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private javax.sql.DataSource dataSource;
   @MockitoBean private MatrixSynapseService matrix;
@@ -445,6 +454,105 @@ class CallShareLinkIT {
                 .param("callId", "share-call"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.id").value(link.getId()));
+  }
+
+  /**
+   * FE#2209: an encrypted 1:1 call has no readable invite. The session counsellor's verified
+   * registration binds it, and the same share link, knock and seat then work against a real
+   * database. A binding nobody was ever seen in ends by itself and seats nobody afterwards.
+   */
+  @Test
+  void aSessionCounsellorsVerifiedRegistrationBacksShareLinkKnockAndSeat() throws Exception {
+    String encryptedMedia = "!share-encrypted-media:example";
+    String caller = counsellor.getMatrixUserId();
+    when(matrix.getCallRoomBinding(encryptedMedia, caller))
+        .thenReturn(Optional.of(Map.of("call_id", "encrypted-call", "source_room_id", SOURCE)));
+    when(matrix.getCallRoomOrigin(encryptedMedia, caller))
+        .thenReturn(Optional.of(new MatrixSynapseService.CallRoomOrigin(caller, caller)));
+    when(matrix.getRoomMembership(eq(encryptedMedia), anyString(), eq("c-token")))
+        .thenReturn(Optional.of("leave"));
+    when(matrix.removeUserFromRoom(eq(encryptedMedia), anyString(), eq("c-token")))
+        .thenReturn(true);
+    when(matrix.clearUserPowerLevel(eq(encryptedMedia), anyString(), eq("c-token")))
+        .thenReturn(true);
+
+    // Nobody but the session's counsellor can bind it.
+    assertThat(
+            sessionBindings.bind(
+                actor(colleague.getId(), "consultant"),
+                SOURCE,
+                "encrypted-call",
+                encryptedMedia,
+                true))
+        .isFalse();
+    assertThat(
+            sessionBindings.bind(
+                actor("share-asker", "user"), SOURCE, "encrypted-call", encryptedMedia, true))
+        .isFalse();
+    // Not even the counsellor can bind another ORISO room (here: the session room) as call room.
+    assertThat(
+            sessionBindings.bind(
+                actor(counsellor.getId(), "consultant"), SOURCE, "encrypted-call", SOURCE, true))
+        .isFalse();
+    assertThat(bindings.findBySourceRoomIdAndCallId(SOURCE, "encrypted-call")).isEmpty();
+
+    assertThat(
+            sessionBindings.bind(
+                actor(counsellor.getId(), "consultant"),
+                SOURCE,
+                "encrypted-call",
+                encryptedMedia,
+                true))
+        .isTrue();
+    var bound = bindings.findBySourceRoomIdAndCallId(SOURCE, "encrypted-call").orElseThrow();
+    assertThat(bound.getSessionId()).isEqualTo(sessionId);
+    assertThat(bound.getMediaRoomId()).isEqualTo(encryptedMedia);
+
+    var link =
+        shareLinks.create(7L, counsellor.getId(), SOURCE, "encrypted-call", null, null).link();
+    var guest = users.findById("share-guest").orElseThrow();
+    var waiting = shareLinks.join(link.getToken(), guest);
+    assertThat(waiting.callAdmitted()).isFalse();
+    var counsellorEntity = consultants.findById(counsellor.getId()).orElseThrow();
+    transaction.executeWithoutResult(s -> knocks.admit(waiting.knockId(), counsellorEntity));
+    var seated = shareLinks.join(link.getToken(), guest);
+    assertThat(seated.callAdmitted()).isTrue();
+    assertThat(seated.callRoomId()).isEqualTo(encryptedMedia);
+    verify(matrix).inviteUserToRoom(encryptedMedia, GUEST, "c-token");
+
+    // Never observed and nobody seen: once the invite ran out by the margin, the call ends.
+    long later =
+        bound.getInviteExpiresAt()
+            + de.caritas.cob.userservice.api.service.matrix.MatrixCallLifecycleService
+                .NEVER_OBSERVED_MARGIN_MILLIS
+            + 1;
+    assertThat(lifecycle.finishNeverObserved(encryptedMedia, later)).isTrue();
+    assertThat(bindings.findByMediaRoomId(encryptedMedia).orElseThrow().getEndedAt()).isNotNull();
+    assertThat(
+            callGuests
+                .admitAs(7L, counsellor.getId(), SOURCE, "encrypted-call", "share-guest-2")
+                .outcome())
+        .isEqualTo(MatrixCallGuestService.Outcome.NOT_FOUND);
+    assertThatThrownBy(() -> shareLinks.join(link.getToken(), guest))
+        .isInstanceOf(CallShareLinkEndedException.class);
+    // An ended binding is not renewed by another registration.
+    assertThat(
+            sessionBindings.bind(
+                actor(counsellor.getId(), "consultant"),
+                SOURCE,
+                "encrypted-call",
+                encryptedMedia,
+                true))
+        .isFalse();
+  }
+
+  private static de.caritas.cob.userservice.api.helper.AuthenticatedUser actor(
+      String id, String role) {
+    var actor = new de.caritas.cob.userservice.api.helper.AuthenticatedUser();
+    actor.setUserId(id);
+    actor.setTenantId(7L);
+    actor.setRoles(java.util.Set.of(role));
+    return actor;
   }
 
   /** Security review of #1487: an admission can be taken back, and "Anklopfen" on again holds. */

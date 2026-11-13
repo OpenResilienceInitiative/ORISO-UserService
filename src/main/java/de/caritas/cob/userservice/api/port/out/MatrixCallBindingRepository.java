@@ -35,6 +35,18 @@ public interface MatrixCallBindingRepository extends JpaRepository<MatrixCallBin
       @org.springframework.data.repository.query.Param("now") long now,
       org.springframework.data.domain.Pageable page);
 
+  /**
+   * FE#2209 review: session calls nobody was ever seen in and whose call room was never observed,
+   * well after the invite ran out. Without this they would never end.
+   */
+  @org.springframework.data.jpa.repository.Query(
+      "select b.mediaRoomId from MatrixCallBinding b where b.endedAt is null "
+          + "and b.sessionId is not null and b.startedAt is null and b.mediaObservedAt is null "
+          + "and b.inviteExpiresAt <= :cutoff order by b.id")
+  java.util.List<String> findNeverObservedSessionCalls(
+      @org.springframework.data.repository.query.Param("cutoff") long cutoff,
+      org.springframework.data.domain.Pageable page);
+
   @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
   @org.springframework.data.jpa.repository.Query(
       "select b from MatrixCallBinding b where b.mediaRoomId = :room")

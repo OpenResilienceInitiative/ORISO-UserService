@@ -147,6 +147,9 @@ public class MatrixCallGuestService {
     var call = counsellorCall(tenant, consultantId, sourceRoomId, callId);
     if (call.outcome() != Outcome.ADMITTED) return Admission.of(call.outcome());
     var binding = call.binding();
+    // FE#2209 review: a binding that was never seen ending is not a running call; nobody is seated
+    // in a call that is over or never started.
+    if (!binding.isLive(System.currentTimeMillis())) return Admission.of(Outcome.NOT_FOUND);
     var members = call.members();
     String admitter = call.counsellorMatrixId();
     var guest = identity(guestUserId, tenant).orElse(null);
