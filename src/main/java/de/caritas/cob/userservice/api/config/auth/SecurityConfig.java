@@ -415,6 +415,10 @@ public class SecurityConfig {
                 .requestMatchers(
                     "/users/call-knocks/mine",
                     "/service/users/call-knocks/mine",
+                    // ORISO-Frontend#2237: waiting in a group's waiting room; the service checks
+                    // the chat permission.
+                    "/users/chat/{chatId:[0-9]+}/waiting",
+                    "/service/users/chat/{chatId:[0-9]+}/waiting",
                     "/users/call-knocks/mine/{knockId:[0-9]+}",
                     "/service/users/call-knocks/mine/{knockId:[0-9]+}")
                 .hasAuthority(USER_DEFAULT)
