@@ -3,8 +3,10 @@ package de.caritas.cob.userservice.api.service.matrix;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.MatrixCallObservation;
+import de.caritas.cob.userservice.api.model.MatrixCallObservationEnd;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.MatrixCallBindingRepository;
+import de.caritas.cob.userservice.api.port.out.MatrixCallObservationEndRepository;
 import de.caritas.cob.userservice.api.port.out.MatrixCallObservationRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
@@ -47,6 +49,7 @@ public class MatrixCallObservationService {
   }
 
   private final MatrixCallObservationRepository observations;
+  private final MatrixCallObservationEndRepository ends;
   private final MatrixCallBindingRepository bindings;
   private final MatrixCallConversationResolver conversations;
   private final UserRepository users;
@@ -128,17 +131,16 @@ public class MatrixCallObservationService {
     long now = System.currentTimeMillis();
     var existing =
         observations.findForUpdateBySourceRoomIdAndCallId(sourceRoomId, callId).orElse(null);
-    if (existing != null
-        && existing.isTombstone()
-        && !creator.equals(existing.getCreatorMatrixId())) {
-      // Only the creator's own end may block the creator's registration; somebody else's end of
-      // a call they could not register must not suppress it.
-      observations.delete(existing);
-      observations.flush();
-      existing = null;
+    // #1628: the creator's own end, also one that came before the registration, wins. Only the
+    // creator's end counts; somebody else's end of a call they could not register is kept but
+    // does not suppress the creator's registration. Locking read, so an end being written right
+    // now is waited for and seen.
+    if (ends.findForUpdateBySourceRoomIdAndCallIdAndActorMatrixId(sourceRoomId, callId, creator)
+        .isPresent()) {
+      return Registration.REJECTED;
     }
     if (existing != null) {
-      // #1628: an ended call, including a tombstone left by an end that came first, stays ended.
+      // #1628: an ended call stays ended.
       if (!creator.equals(existing.getCreatorMatrixId())
           || !mediaRoomId.equals(existing.getMediaRoomId())
           || existing.getEndedAt() != null
@@ -194,9 +196,9 @@ public class MatrixCallObservationService {
 
   /**
    * Only the registering creator may end a registration. When the end arrives before the
-   * registration (#1628: the browser gave up waiting, the server was still working on it), a
-   * current member of the conversation leaves a tombstone instead, and the late registration of the
-   * same call by the same person is rejected.
+   * registration (#1628: the browser gave up waiting, the server was still working on it), any
+   * current member of the conversation may end the call; every such end is stored on its own, per
+   * person, and the creator's own end rejects the late registration of that call.
    */
   public Outcome end(AuthenticatedUser actor, String sourceRoomId, String callId) {
     if (blank(sourceRoomId, 255) || blank(callId, 191) || actor.getTenantId() == null) {
@@ -221,7 +223,7 @@ public class MatrixCallObservationService {
     try {
       ending = writeEnd(conversation, caller, callId, members);
     } catch (DataIntegrityViolationException | PessimisticLockingFailureException raced) {
-      // The registration landed while the tombstone was written: end that row instead.
+      // The registration landed while the end was written: end that row instead.
       ending = writeEnd(conversation, caller, callId, members);
     }
     if (ending == null) return Outcome.NOT_FOUND;
@@ -243,26 +245,40 @@ public class MatrixCallObservationService {
               long now = System.currentTimeMillis();
               if (row == null) {
                 if (!members.contains(caller)) return null;
-                observations.saveAndFlush(
-                    MatrixCallObservation.tombstone(
-                        conversation.getMatrixRoomId(),
-                        conversation.getTenantId(),
-                        conversation.getChatId(),
-                        conversation.getSessionId(),
-                        callId,
-                        caller,
-                        now));
+                recordEnd(conversation, callId, caller, now);
                 return new Ending(null, false);
               }
               if (!caller.equals(row.getCreatorMatrixId())
                   || !Objects.equals(row.getTenantId(), conversation.getTenantId())) {
                 return null;
               }
+              recordEnd(conversation, callId, caller, now);
               if (row.getEndedAt() != null) return new Ending(row, false);
               row.finish(now);
               observations.save(row);
               return new Ending(row, true);
             });
+  }
+
+  /** One stored end per person and call; a repeated end keeps the first time. */
+  private void recordEnd(
+      MatrixCallConversation conversation, String callId, String actorMatrixId, long now) {
+    String sourceRoomId = conversation.getMatrixRoomId();
+    if (ends.findForUpdateBySourceRoomIdAndCallIdAndActorMatrixId(
+            sourceRoomId, callId, actorMatrixId)
+        .isPresent()) {
+      return;
+    }
+    ends.saveAndFlush(
+        MatrixCallObservationEnd.builder()
+            .sourceRoomId(sourceRoomId)
+            .callId(callId)
+            .actorMatrixId(actorMatrixId)
+            .tenantId(conversation.getTenantId())
+            .chatId(conversation.getChatId())
+            .sessionId(conversation.getSessionId())
+            .endedAt(now)
+            .build());
   }
 
   private void notifyEnded(
@@ -297,7 +313,7 @@ public class MatrixCallObservationService {
       return Optional.empty();
     }
     var row = readable(conversation, callId).orElse(null);
-    if (row == null) return Optional.empty();
+    if (row == null) return endedBeforeRegistration(conversation, callId);
     if (needsLivenessCheck(row, System.currentTimeMillis())) {
       checkLiveness(conversation, row, sourceMembers);
       row = readable(conversation, callId).orElse(null);
@@ -315,6 +331,29 @@ public class MatrixCallObservationService {
         .filter(row -> Objects.equals(row.getTenantId(), conversation.getTenantId()))
         .filter(row -> Objects.equals(row.getChatId(), conversation.getChatId()))
         .filter(row -> Objects.equals(row.getSessionId(), conversation.getSessionId()));
+  }
+
+  /** #1628: a call that was ended before its registration landed reads as ended. */
+  private Optional<MatrixCallStateService.CallState> endedBeforeRegistration(
+      MatrixCallConversation conversation, String callId) {
+    return ends.findFirstBySourceRoomIdAndCallIdOrderByEndedAtAsc(
+            conversation.getMatrixRoomId(), callId)
+        .filter(end -> Objects.equals(end.getTenantId(), conversation.getTenantId()))
+        .filter(end -> Objects.equals(end.getChatId(), conversation.getChatId()))
+        .filter(end -> Objects.equals(end.getSessionId(), conversation.getSessionId()))
+        .map(
+            end ->
+                new MatrixCallStateService.CallState(
+                    end.getSourceRoomId(),
+                    end.getCallId(),
+                    null,
+                    "audio",
+                    "ended",
+                    end.getEndedAt(),
+                    end.getEndedAt(),
+                    end.getEndedAt(),
+                    0,
+                    List.of()));
   }
 
   private static boolean needsLivenessCheck(MatrixCallObservation row, long now) {

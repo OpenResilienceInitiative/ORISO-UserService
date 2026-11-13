@@ -36,7 +36,9 @@ class MatrixCallObservationIsolationTest {
         List.of(
             MatrixCallObservationRepository.class,
             MatrixCallObservationService.class,
-            MatrixCallObservation.class);
+            MatrixCallObservation.class,
+            de.caritas.cob.userservice.api.port.out.MatrixCallObservationEndRepository.class,
+            de.caritas.cob.userservice.api.model.MatrixCallObservationEnd.class);
     for (Field field : consumer.getDeclaredFields()) {
       assertThat(forbidden).as(consumer + "." + field.getName()).doesNotContain(field.getType());
     }
@@ -70,6 +72,9 @@ class MatrixCallObservationIsolationTest {
           || type.getEnclosingClass() == MatrixCallObservationService.class
           || type == MatrixCallObservation.class
           || type == MatrixCallObservationRepository.class
+          || type == de.caritas.cob.userservice.api.model.MatrixCallObservationEnd.class
+          || type
+              == de.caritas.cob.userservice.api.port.out.MatrixCallObservationEndRepository.class
           || name.matches(".*(IT|Test)(\\$.*)?")) continue;
       boolean holds = false;
       // Walk superclasses too: an abstract parent can carry the field for its subclasses.

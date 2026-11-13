@@ -17,12 +17,6 @@ import lombok.*;
 public class MatrixCallObservation {
   public static final String ORIGIN_CREATOR_REGISTRATION = "CREATOR_REGISTRATION";
 
-  /**
-   * #1628: an end that arrived before the registration. It names no media room and is never live;
-   * it only makes a late registration of the same call by the same person fail.
-   */
-  public static final String ORIGIN_END_TOMBSTONE = "END_TOMBSTONE";
-
   @Id
   @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;
@@ -36,8 +30,7 @@ public class MatrixCallObservation {
   @Column(name = "call_id", nullable = false, length = 191)
   private String callId;
 
-  /** Null only for an {@link #ORIGIN_END_TOMBSTONE end tombstone}. */
-  @Column(name = "media_room_id", length = 255)
+  @Column(name = "media_room_id", nullable = false, length = 255)
   private String mediaRoomId;
 
   @Column(name = "creator_matrix_id", nullable = false, length = 255)
@@ -77,34 +70,6 @@ public class MatrixCallObservation {
   /** #1628: last time the server looked at the MatrixRTC memberships of the media room. */
   @Column(name = "liveness_checked_at")
   private Long livenessCheckedAt;
-
-  /** The end of a call whose registration has not landed yet (#1628). */
-  public static MatrixCallObservation tombstone(
-      String sourceRoomId,
-      Long tenantId,
-      Long chatId,
-      Long sessionId,
-      String callId,
-      String enderMatrixId,
-      long now) {
-    return MatrixCallObservation.builder()
-        .origin(ORIGIN_END_TOMBSTONE)
-        .sourceRoomId(sourceRoomId)
-        .callId(callId)
-        .creatorMatrixId(enderMatrixId)
-        .tenantId(tenantId)
-        .chatId(chatId)
-        .sessionId(sessionId)
-        .registeredAt(now)
-        .lastSeenAt(now)
-        .expiresAt(now)
-        .endedAt(now)
-        .build();
-  }
-
-  public boolean isTombstone() {
-    return ORIGIN_END_TOMBSTONE.equals(origin);
-  }
 
   /**
    * #1628: somebody is provably still in the call, so the lease is extended even when the creator's

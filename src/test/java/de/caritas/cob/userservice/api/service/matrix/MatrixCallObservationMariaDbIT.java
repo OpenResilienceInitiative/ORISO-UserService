@@ -13,7 +13,6 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService.CallRoomOrigin;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.model.MatrixCallObservation;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.MatrixCallObservationRepository;
@@ -49,8 +48,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.testcontainers.containers.MariaDBContainer;
 
 /**
- * #1630/#1628 on the real database: parallel first registrations of one call, the end tombstone and
- * "no transaction open while Matrix is called", with the Liquibase schema on MariaDB.
+ * #1630/#1628 on the real database: parallel first registrations of one call, ends stored per
+ * person and "no transaction open while Matrix is called", with the Liquibase schema on MariaDB.
  */
 @DataJpaTest
 @ActiveProfiles("testing")
@@ -118,6 +117,8 @@ class MatrixCallObservationMariaDbIT {
     when(users.findByMatrixUserIdAndDeleteDateIsNull(CREATOR)).thenReturn(Optional.of(creator));
     when(users.findByMatrixUserIdAndDeleteDateIsNull(OTHER))
         .thenReturn(Optional.of(user("other", OTHER)));
+    when(users.findByUserIdAndDeleteDateIsNull("other"))
+        .thenReturn(Optional.of(user("other", OTHER)));
     when(consultants.findByMatrixUserIdAndDeleteDateIsNull(anyString()))
         .thenReturn(Optional.empty());
     when(lifecycle.isActiveRecipient(anyString())).thenReturn(true);
@@ -178,24 +179,79 @@ class MatrixCallObservationMariaDbIT {
   }
 
   @Test
-  void anEndThatArrivesFirstLeavesATombstoneThatRejectsTheLateRegistration() {
+  void anEndThatArrivesFirstIsStoredAndRejectsTheLateRegistration() {
     String media = "!media-late:example";
     stubMediaRoom("late", media);
 
     assertThat(service.end(actor, SOURCE, "late")).isEqualTo(Outcome.OK);
-    // A second call ended early too: two tombstones without a media room may coexist.
+    // A second call ended early too: its end is stored separately.
     assertThat(service.end(actor, SOURCE, "late-2")).isEqualTo(Outcome.OK);
 
     assertThat(service.register(actor, SOURCE, "late", media, true)).isEqualTo(Outcome.NOT_FOUND);
-    var row = observations.findBySourceRoomIdAndCallId(SOURCE, "late").orElseThrow();
-    assertThat(row.getOrigin()).isEqualTo(MatrixCallObservation.ORIGIN_END_TOMBSTONE);
-    assertThat(row.getMediaRoomId()).isNull();
-    assertThat(row.getEndedAt()).isNotNull();
-    assertThat(rows("late-2")).isEqualTo(1);
+    assertThat(rows("late")).isZero();
+    assertThat(enders("late")).containsExactly(CREATOR);
+    assertThat(enders("late-2")).containsExactly(CREATOR);
     verify(notifications, never())
         .createCallInvitationNotification(
             any(), anyString(), anyBoolean(), any(), any(), any(), anyBoolean());
     assertThat(matrixCallsInsideTransaction).isEmpty();
+  }
+
+  // --- each end is stored on its own; the creator's cancellation is never lost ---
+
+  @Test
+  void theCreatorsCancellationAfterAnotherMembersEndIsStoredAndRefusesTheLateRegistration() {
+    String media = "!media-both:example";
+    stubMediaRoom("both", media);
+
+    assertThat(service.end(other(), SOURCE, "both")).isEqualTo(Outcome.OK);
+    assertThat(service.end(actor, SOURCE, "both")).isEqualTo(Outcome.OK);
+
+    assertThat(enders("both")).containsExactlyInAnyOrder(OTHER, CREATOR);
+    assertThat(service.register(actor, SOURCE, "both", media, true)).isEqualTo(Outcome.NOT_FOUND);
+    assertThat(rows("both")).isZero();
+    assertThat(enders("both")).containsExactlyInAnyOrder(OTHER, CREATOR);
+    verify(notifications, never())
+        .createCallInvitationNotification(
+            any(), anyString(), anyBoolean(), any(), any(), any(), anyBoolean());
+    assertThat(matrixCallsInsideTransaction).isEmpty();
+  }
+
+  @Test
+  void anotherMembersEndAfterTheCreatorsCancellationIsStoredTooAndTheLateRegistrationIsRefused() {
+    String media = "!media-reverse:example";
+    stubMediaRoom("reverse", media);
+
+    assertThat(service.end(actor, SOURCE, "reverse")).isEqualTo(Outcome.OK);
+    assertThat(service.end(other(), SOURCE, "reverse")).isEqualTo(Outcome.OK);
+    // The same person ending twice stays one stored end.
+    assertThat(service.end(actor, SOURCE, "reverse")).isEqualTo(Outcome.OK);
+
+    assertThat(enders("reverse")).containsExactlyInAnyOrder(CREATOR, OTHER);
+    assertThat(service.register(actor, SOURCE, "reverse", media, true))
+        .isEqualTo(Outcome.NOT_FOUND);
+    assertThat(rows("reverse")).isZero();
+  }
+
+  @Test
+  void anotherMembersEndAloneDoesNotRefuseTheCreatorsRegistrationAndIsKept() {
+    String media = "!media-foreign:example";
+    stubMediaRoom("foreign", media);
+
+    assertThat(service.end(other(), SOURCE, "foreign")).isEqualTo(Outcome.OK);
+    assertThat(service.register(actor, SOURCE, "foreign", media, true)).isEqualTo(Outcome.OK);
+
+    var row = observations.findBySourceRoomIdAndCallId(SOURCE, "foreign").orElseThrow();
+    assertThat(row.getMediaRoomId()).isEqualTo(media);
+    assertThat(row.isLive(System.currentTimeMillis())).isTrue();
+    assertThat(enders("foreign")).containsExactly(OTHER);
+
+    // The creator's own end still ends the registered call and is stored next to the other one.
+    assertThat(service.end(actor, SOURCE, "foreign")).isEqualTo(Outcome.OK);
+    assertThat(
+            observations.findBySourceRoomIdAndCallId(SOURCE, "foreign").orElseThrow().getEndedAt())
+        .isNotNull();
+    assertThat(enders("foreign")).containsExactlyInAnyOrder(OTHER, CREATOR);
   }
 
   @Test
@@ -236,6 +292,22 @@ class MatrixCallObservationMariaDbIT {
     return jdbc.queryForObject(
         "SELECT COUNT(*) FROM matrix_call_observation WHERE source_room_id = ? AND call_id = ?",
         Integer.class,
+        SOURCE,
+        callId);
+  }
+
+  private AuthenticatedUser other() {
+    var other = new AuthenticatedUser();
+    other.setUserId("other");
+    other.setTenantId(7L);
+    return other;
+  }
+
+  private List<String> enders(String callId) {
+    return jdbc.queryForList(
+        "SELECT actor_matrix_id FROM matrix_call_observation_end"
+            + " WHERE source_room_id = ? AND call_id = ?",
+        String.class,
         SOURCE,
         callId);
   }
