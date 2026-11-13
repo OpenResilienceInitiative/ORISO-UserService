@@ -248,6 +248,12 @@ public class MatrixCallGuestService {
     return authority.grantsGuestAuthority(binding);
   }
 
+  /** Whether {@code matrixId} is the assigned, active counsellor of the binding's session. */
+  public boolean isAssignedCounsellor(MatrixCallBinding binding, String matrixId) {
+    return binding != null
+        && authority.isAssignedCounsellor(binding.getSessionId(), binding.getTenantId(), matrixId);
+  }
+
   /** True when a counsellor removed the person from this call; they cannot come back (#1487). */
   public boolean wasRemoved(MatrixCallBinding binding, String matrixUserId) {
     return binding.getId() != null

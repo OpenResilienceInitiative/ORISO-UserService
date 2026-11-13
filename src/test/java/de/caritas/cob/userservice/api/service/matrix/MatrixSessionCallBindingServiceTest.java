@@ -515,6 +515,69 @@ class MatrixSessionCallBindingServiceTest {
   }
 
   @Test
+  void anAskersCallThatTheServerClosedIsTakenOver_EvenAfterTheAskersOwnEnd() {
+    // Round 5: the asker decrypts the counsellor's call id, posts a plaintext invite with a few
+    // seconds of lifetime, and the server closes that never-observed binding. It never had
+    // authority and nobody ended it explicitly (the asker's own end does not count, round 3), so
+    // the assigned counsellor still takes it over as a fresh live call.
+    var closed = existing(42L, "!asker-media:example", ASKER);
+    closed.finishByLifecycle(System.currentTimeMillis());
+    when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(closed));
+    when(bindings.lockById(42L)).thenReturn(Optional.of(closed));
+    when(ends.findActorMatrixIdsBySourceRoomIdAndCallId(SOURCE, "call"))
+        .thenReturn(java.util.List.of(ASKER));
+
+    assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isTrue();
+    assertThat(closed.getEndedAt()).isNull();
+    assertThat(closed.getEndCause()).isNull();
+    assertThat(closed.getCallerMatrixId()).isEqualTo(COUNSELLOR);
+    assertThat(closed.getMediaRoomId()).isEqualTo(MEDIA);
+  }
+
+  @Test
+  void anEndedCallStaysEndedWhenEndedExplicitlyOrWhenItMayHaveHadAuthority() {
+    // Round 5: R4 stays strict for an end through the endpoint, for any counsellor's end, for a
+    // call that ran, and for a binding whose caller is a counsellor (it may have had authority).
+    when(consultants.findByMatrixUserId(OTHER_COUNSELLOR))
+        .thenReturn(java.util.List.of(new de.caritas.cob.userservice.api.model.Consultant()));
+    long now = System.currentTimeMillis();
+
+    var explicitly = existing(42L, "!asker-media:example", ASKER);
+    explicitly.finishExplicitly(now);
+    assertRefused(explicitly, "ended through the endpoint");
+
+    var counsellorsEnd = existing(42L, "!asker-media:example", ASKER);
+    counsellorsEnd.finishByLifecycle(now);
+    when(ends.findActorMatrixIdsBySourceRoomIdAndCallId(SOURCE, "call"))
+        .thenReturn(java.util.List.of(OTHER_COUNSELLOR));
+    assertRefused(counsellorsEnd, "a counsellor ended it");
+    when(ends.findActorMatrixIdsBySourceRoomIdAndCallId(SOURCE, "call"))
+        .thenReturn(java.util.List.of());
+
+    var ran = existing(42L, "!asker-media:example", ASKER);
+    ran.recordMediaObservation(now - 1000);
+    ran.finishByLifecycle(now);
+    assertRefused(ran, "the call was observed");
+
+    var formerCounsellors = existing(42L, "!asker-media:example", OTHER_COUNSELLOR);
+    formerCounsellors.finishByLifecycle(now);
+    assertRefused(formerCounsellors, "a counsellor's call");
+    verify(bindings, never()).saveAndFlush(any());
+  }
+
+  private void assertRefused(MatrixCallBinding ended, String why) {
+    Long endedAt = ended.getEndedAt();
+    String caller = ended.getCallerMatrixId();
+    when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(ended));
+    when(bindings.lockById(42L)).thenReturn(Optional.of(ended));
+    assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true))
+        .as(why)
+        .isFalse();
+    assertThat(ended.getEndedAt()).as(why).isEqualTo(endedAt);
+    assertThat(ended.getCallerMatrixId()).as(why).isEqualTo(caller);
+  }
+
+  @Test
   void aBindingThatAppearsAfterTheLookupIsLockedBeforeTheSessionOnTheRetry() {
     // Round 3 lock order (binding, then session): a binding inserted between bind's lookup and
     // its transaction was not locked first, so that attempt is rolled back and retried.

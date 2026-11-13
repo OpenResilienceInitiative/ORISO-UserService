@@ -18,6 +18,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.chat.GroupWaitingRoomService;
 import de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService;
+import de.caritas.cob.userservice.api.service.matrix.MatrixSessionCallBindingService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import java.time.LocalDateTime;
 import java.util.Comparator;
@@ -63,6 +64,8 @@ public class DirectCallKnockService {
   private final @NonNull EventNotificationService eventNotifications;
   private final @NonNull DirectInvitePolicy directInvitePolicy;
   private final @NonNull GroupWaitingRoomService waitingRooms;
+  private final @NonNull org.springframework.transaction.PlatformTransactionManager
+      transactionManager;
 
   private static final Set<Via> CALL_KNOCKS =
       EnumSet.of(Via.DIRECT_LINK, Via.CALL_LINK, Via.WAITING_ROOM);
@@ -338,10 +341,29 @@ public class DirectCallKnockService {
    * would deadlock with the insert. A binding inserted after the lookup is not locked here; it
    * belongs to a call that has no share link and no knock yet, so admit-all has nothing of it to
    * let in.
+   *
+   * <p>Round 5 enforces that assumption: a knock whose call binding was not locked first (its call,
+   * link and knock appeared after the lookup) would lock that binding only after the session,
+   * through the in-call check. Instead the attempt is rolled back ({@link
+   * MatrixSessionCallBindingService.LockOrderRetry}) and run once more, whose lookup then locks
+   * that binding first. A knock whose call appears again after the retry's lookup stays pending.
+   * Not {@code @Transactional}: each attempt runs in its own transaction.
    */
-  @Transactional
   public List<GroupChatJoinRequest> admitAll(
       Consultant consultant, Long sessionId, String matrixRoomId) {
+    var transaction =
+        new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+    try {
+      return transaction.execute(
+          status -> admitAllInLockOrder(consultant, sessionId, matrixRoomId, false));
+    } catch (MatrixSessionCallBindingService.LockOrderRetry late) {
+      return transaction.execute(
+          status -> admitAllInLockOrder(consultant, sessionId, matrixRoomId, true));
+    }
+  }
+
+  private List<GroupChatJoinRequest> admitAllInLockOrder(
+      Consultant consultant, Long sessionId, String matrixRoomId, boolean lastAttempt) {
     var scope = callScope(sessionId, matrixRoomId);
     if (!scope.scoped()) {
       throw new BadRequestException("admit-all needs sessionId or matrixRoomId");
@@ -349,11 +371,15 @@ public class DirectCallKnockService {
     // FE#2209 lock order: the calls whose knocks may be let in, then the conversation, then the
     // knocks. Round 4: only bindings that exist are locked, each by primary key, never a range or
     // gap of the call-binding index (see the javadoc).
+    var lockedFirst = new java.util.HashSet<Long>();
     if (scope.callLinks()) {
-      (scope.roomId() != null
+      for (Long bindingId :
+          scope.roomId() != null
               ? callBindings.findIdsBySourceRoomId(scope.roomId())
-              : inviteLinkRepository.findActiveCallBindingIdsOfConsultant(consultant.getId()))
-          .forEach(callBindings::lockById);
+              : inviteLinkRepository.findActiveCallBindingIdsOfConsultant(consultant.getId())) {
+        callBindings.lockById(bindingId);
+        lockedFirst.add(bindingId);
+      }
     }
     // A group-call room has no 1:1 conversation to lock; its knocks are locked row by row below.
     if (scope.sessionId() != null) {
@@ -385,7 +411,7 @@ public class DirectCallKnockService {
                     .findCallLinkKnocksForConsultantForUpdate(
                         consultant.getId(), Via.CALL_LINK, Status.PENDING, since, scope.roomId())
                     .stream()
-                    .filter(inCallOf(consultant))
+                    .filter(inLockedCallOf(consultant, lockedFirst, lastAttempt))
                 : Stream.<GroupChatJoinRequest>empty())
         .flatMap(knocks -> knocks)
         .sorted(BY_REQUESTED_AT)
@@ -505,6 +531,31 @@ public class DirectCallKnockService {
         knock.getInviteLinkId() != null
             && byLink.computeIfAbsent(
                 knock.getInviteLinkId(), linkId -> isInCallOfLink(linkId, consultant));
+  }
+
+  /**
+   * Admit-all's in-call check, only for calls whose binding it locked first (round 5). A link that
+   * is not visible yet, or whose binding was not locked first, appeared after the lookup: the
+   * attempt is retried in lock order, or on the last attempt the knock stays pending.
+   */
+  private Predicate<GroupChatJoinRequest> inLockedCallOf(
+      Consultant consultant, java.util.Set<Long> lockedFirst, boolean lastAttempt) {
+    var byLink = new HashMap<Long, Boolean>();
+    return knock ->
+        knock.getInviteLinkId() != null
+            && byLink.computeIfAbsent(
+                knock.getInviteLinkId(),
+                linkId -> {
+                  var link = inviteLinkRepository.findById(linkId).orElse(null);
+                  Long bindingId = link == null ? null : link.getCallBindingId();
+                  boolean late =
+                      link == null || (bindingId != null && !lockedFirst.contains(bindingId));
+                  if (late) {
+                    if (!lastAttempt) throw new MatrixSessionCallBindingService.LockOrderRetry();
+                    return false;
+                  }
+                  return isInCallOfLink(linkId, consultant);
+                });
   }
 
   /**

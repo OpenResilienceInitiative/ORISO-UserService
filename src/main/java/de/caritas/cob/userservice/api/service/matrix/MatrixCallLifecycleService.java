@@ -52,7 +52,7 @@ public class MatrixCallLifecycleService {
         || binding.getStartedAt() != null
         || binding.getMediaObservedAt() != null
         || binding.getInviteExpiresAt() + NEVER_OBSERVED_MARGIN_MILLIS > now) return false;
-    binding.finish(now);
+    binding.finishByLifecycle(now);
     callGuests.revokeOutstanding(binding);
     return true;
   }
@@ -119,7 +119,7 @@ public class MatrixCallLifecycleService {
     boolean retainedClosure = !conversations.lockCurrentForWriting(session);
     if (retainedClosure && !startedBeforeRejection(binding)) {
       // No call history is retained here; close silently so expiry stops reselecting the row.
-      binding.finish(System.currentTimeMillis());
+      binding.finishByLifecycle(System.currentTimeMillis());
       return;
     }
     long now = System.currentTimeMillis();
@@ -187,7 +187,7 @@ public class MatrixCallLifecycleService {
                   .mapToLong(MatrixCallDevice::getExpiresAt)
                   .max()
                   .orElse(now);
-      binding.finish(lastPresenceEnd);
+      binding.finishByLifecycle(lastPresenceEnd);
       if (retainedClosure) return;
       binding.getDevices().values().stream()
           .filter(MatrixCallDevice::isAttended)

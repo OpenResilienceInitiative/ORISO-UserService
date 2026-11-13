@@ -112,6 +112,7 @@ import org.springframework.transaction.support.TransactionTemplate;
   de.caritas.cob.userservice.api.service.matrix.OrisoRoomRegistry.class,
   de.caritas.cob.userservice.api.service.matrix.MatrixCallInviteNotificationService.class,
   de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService.class,
+  de.caritas.cob.userservice.api.service.matrix.MatrixCallStateService.class,
   CallShareLinkIT.AccountFixture.class
 })
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -155,6 +156,9 @@ class CallShareLinkIT {
   @Autowired private CallShareLinkSweep sweep;
   @Autowired private DirectCallKnockService knocks;
   @Autowired private MatrixCallGuestService callGuests;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.service.matrix.MatrixCallStateService callStates;
 
   @Autowired
   private de.caritas.cob.userservice.api.service.matrix.MatrixCallInviteNotificationService invites;
@@ -844,6 +848,81 @@ class CallShareLinkIT {
         .thenReturn(Optional.of(new MatrixSynapseService.CallRoomOrigin(caller, caller)));
     when(matrix.ensureAdminInRoom(anyString(), anyString())).thenReturn(true);
     return caller;
+  }
+
+  @Test
+  void anAskersFewSecondInviteThatTheServerClosedDoesNotBlockTheCounsellorsCall() throws Exception {
+    // Round 5: the browser sends the encrypted invite before it binds. The asker decrypts the call
+    // id, posts a plaintext invite with it, and the server closes that never-observed binding once
+    // its invite ran out. The counsellor's call with that id still works, with share links.
+    String askerMedia = "!short-asker-media:example";
+    String counsellorMedia = "!short-counsellor-media:example";
+    when(matrix.getCallRoomBinding(askerMedia, ASKER))
+        .thenReturn(Optional.of(Map.of("call_id", "short-call", "source_room_id", SOURCE)));
+    String caller = stubCounsellorsCallRoom("short-call", counsellorMedia);
+    when(matrix.getRoomMembership(eq(counsellorMedia), anyString(), eq("c-token")))
+        .thenReturn(Optional.of("leave"));
+    assertThat(invites.handle(SOURCE, plaintextInvite(ASKER, "short-call", askerMedia))).isTrue();
+    var askers = bindings.findBySourceRoomIdAndCallId(SOURCE, "short-call").orElseThrow();
+    assertThat(
+            lifecycle.finishNeverObserved(
+                askerMedia,
+                askers.getInviteExpiresAt()
+                    + MatrixCallLifecycleService.NEVER_OBSERVED_MARGIN_MILLIS
+                    + 1))
+        .isTrue();
+    assertThat(bindings.findBySourceRoomIdAndCallId(SOURCE, "short-call").orElseThrow())
+        .satisfies(
+            closed -> {
+              assertThat(closed.getEndedAt()).isNotNull();
+              assertThat(closed.getEndCause()).isEqualTo(MatrixCallBinding.END_CAUSE_LIFECYCLE);
+            });
+    // The counsellor is not shown the asker's closed call as a missed call.
+    assertThat(callStates.read(actor(counsellor.getId(), "consultant"), SOURCE, "short-call"))
+        .map(state -> state.state())
+        .isNotEqualTo(Optional.of("missed"));
+
+    assertThat(
+            sessionBindings.bind(
+                actor(counsellor.getId(), "consultant"),
+                SOURCE,
+                "short-call",
+                counsellorMedia,
+                true))
+        .isTrue();
+    var taken = bindings.findBySourceRoomIdAndCallId(SOURCE, "short-call").orElseThrow();
+    assertThat(taken.getEndedAt()).isNull();
+    assertThat(taken.getCallerMatrixId()).isEqualTo(caller);
+    assertThat(taken.getMediaRoomId()).isEqualTo(counsellorMedia);
+    inCall(counsellorMedia, caller, System.currentTimeMillis() + 600000);
+    var link = shareLinks.create(7L, counsellor.getId(), SOURCE, "short-call", null, null).link();
+    assertThat(link.getStatus()).isEqualTo("ACTIVE");
+    var guest = users.findById("share-guest").orElseThrow();
+    assertThat(shareLinks.join(link.getToken(), guest).knockId()).isNotNull();
+  }
+
+  @Test
+  void aCounsellorsExplicitlyEndedCallIsNeverRevived() throws Exception {
+    // Round 5, R4 stays strict: the counsellor ended the call through the endpoint; a later bind
+    // of the same call id (for example by a newly assigned counsellor) does not bring it back.
+    String media = "!ended-media:example";
+    stubCounsellorsCallRoom("ended-call", media);
+    var actor = actor(counsellor.getId(), "consultant");
+    assertThat(sessionBindings.bind(actor, SOURCE, "ended-call", media, true)).isTrue();
+    assertThat(observations.end(actor, SOURCE, "ended-call"))
+        .isEqualTo(
+            de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService.Outcome.OK);
+    var ended = bindings.findBySourceRoomIdAndCallId(SOURCE, "ended-call").orElseThrow();
+    assertThat(ended.getEndCause()).isEqualTo(MatrixCallBinding.END_CAUSE_ENDPOINT);
+    String newMedia = "!ended-new-media:example";
+    stubCounsellorsCallRoom("ended-call", newMedia);
+    assertThat(sessionBindings.bind(actor, SOURCE, "ended-call", newMedia, true)).isFalse();
+    assertThat(bindings.findBySourceRoomIdAndCallId(SOURCE, "ended-call").orElseThrow())
+        .satisfies(
+            still -> {
+              assertThat(still.getEndedAt()).isEqualTo(ended.getEndedAt());
+              assertThat(still.getMediaRoomId()).isEqualTo(media);
+            });
   }
 
   @Test

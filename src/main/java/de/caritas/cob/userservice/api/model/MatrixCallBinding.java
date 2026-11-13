@@ -64,6 +64,15 @@ public class MatrixCallBinding {
   @Column(name = "ended_at")
   private Long endedAt;
 
+  /**
+   * FE#2209 round 5: how the call ended. {@link #END_CAUSE_ENDPOINT}: a counsellor ended it through
+   * the end endpoint. {@link #END_CAUSE_LIFECYCLE}: the server closed it (invite ran out, never
+   * observed, everybody left, closure). Null for calls ended before this was recorded, and for
+   * running calls; null counts as an explicit end (fail closed).
+   */
+  @Column(name = "end_cause", length = 16)
+  private String endCause;
+
   @Column(name = "media_observed_at")
   private Long mediaObservedAt;
 
@@ -140,11 +149,32 @@ public class MatrixCallBinding {
     this.devices.clear();
     this.startedAt = null;
     this.endedAt = null;
+    this.endCause = null;
     this.mediaObservedAt = null;
     this.nextObservationAttemptAt = null;
   }
 
+  public static final String END_CAUSE_ENDPOINT = "ENDPOINT";
+  public static final String END_CAUSE_LIFECYCLE = "LIFECYCLE";
+
+  /** Ends the call without recording why; such an end counts as explicit (fail closed). */
   public void finish(long timestamp) {
     if (endedAt == null) endedAt = Math.max(startedAt == null ? invitedAt : startedAt, timestamp);
+  }
+
+  /** A counsellor ended the call through the end endpoint. */
+  public void finishExplicitly(long timestamp) {
+    finish(timestamp, END_CAUSE_ENDPOINT);
+  }
+
+  /** The server closed the call: invite ran out, never observed, everybody left, closure. */
+  public void finishByLifecycle(long timestamp) {
+    finish(timestamp, END_CAUSE_LIFECYCLE);
+  }
+
+  private void finish(long timestamp, String cause) {
+    if (endedAt != null) return;
+    finish(timestamp);
+    endCause = cause;
   }
 }

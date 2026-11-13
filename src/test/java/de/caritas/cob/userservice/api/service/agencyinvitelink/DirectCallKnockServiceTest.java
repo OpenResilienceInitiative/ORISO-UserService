@@ -82,7 +82,9 @@ class DirectCallKnockServiceTest {
             consultants,
             eventNotifications,
             directInvitePolicy,
-            waitingRooms);
+            waitingRooms,
+            org.mockito.Mockito.mock(
+                org.springframework.transaction.PlatformTransactionManager.class));
     counsellor = consultant("counsellor-1");
     when(callBindings.findById(3L)).thenReturn(Optional.of(binding()));
     asker = new User();
@@ -652,11 +654,59 @@ class DirectCallKnockServiceTest {
     when(repository.save(any())).thenAnswer(call -> call.getArgument(0));
     when(inviteLinkRepository.findById(5L)).thenReturn(Optional.of(callLink("counsellor-1")));
     inCall(counsellor, Outcome.ADMITTED);
+    when(callBindings.findIdsBySourceRoomId("!room:oriso")).thenReturn(List.of(3L));
 
     assertThat(service.admitAll(counsellor, null, "!room:oriso")).containsExactly(viaLink);
     assertThat(viaLink.getStatus()).isEqualTo(Status.ADMITTED);
     verify(repository, never())
         .findCallLinkKnocksForConsultantForUpdate(any(), any(), any(), any(), eq(null));
+  }
+
+  @Test
+  void admitAll_Should_RetryWithTheCallLockedFirst_WhenItsBindingAppearedAfterTheLookup() {
+    // FE#2209 round 5: a call, its link and a knock appear after admit-all looked the calls up.
+    // Its binding must not be locked after the session (through the in-call check); admit-all
+    // rolls back and retries once with that binding locked first.
+    var session = new Session();
+    session.setId(SESSION_ID);
+    session.setMatrixRoomId("!room:oriso");
+    when(sessionRepository.findByMatrixRoomId("!room:oriso")).thenReturn(Optional.of(session));
+    when(callBindings.findIdsBySourceRoomId("!room:oriso")).thenReturn(List.of(), List.of(3L));
+    var viaLink = callLinkKnock(2L, Status.PENDING);
+    when(repository.findCallLinkKnocksForConsultantForUpdate(
+            eq("counsellor-1"), eq(Via.CALL_LINK), eq(Status.PENDING), any(), eq("!room:oriso")))
+        .thenReturn(List.of(viaLink));
+    when(repository.save(any())).thenAnswer(call -> call.getArgument(0));
+    when(inviteLinkRepository.findById(5L)).thenReturn(Optional.of(callLink("counsellor-1")));
+    inCall(counsellor, Outcome.ADMITTED);
+
+    assertThat(service.admitAll(counsellor, null, "!room:oriso")).containsExactly(viaLink);
+
+    var order = org.mockito.Mockito.inOrder(callBindings, sessionRepository, callGuests);
+    order.verify(callBindings).lockById(3L);
+    order.verify(sessionRepository).findByIdForUpdate(SESSION_ID);
+    order.verify(callGuests).counsellorCall(TENANT, "counsellor-1", "!room:oriso", "call-1");
+    verify(callGuests, org.mockito.Mockito.times(1))
+        .counsellorCall(TENANT, "counsellor-1", "!room:oriso", "call-1");
+  }
+
+  @Test
+  void admitAll_Should_LeaveAKnockPending_WhenItsCallAppearsAgainAfterTheRetrysLookup() {
+    var session = new Session();
+    session.setId(SESSION_ID);
+    session.setMatrixRoomId("!room:oriso");
+    when(sessionRepository.findByMatrixRoomId("!room:oriso")).thenReturn(Optional.of(session));
+    when(callBindings.findIdsBySourceRoomId("!room:oriso")).thenReturn(List.of());
+    var viaLink = callLinkKnock(2L, Status.PENDING);
+    when(repository.findCallLinkKnocksForConsultantForUpdate(
+            eq("counsellor-1"), eq(Via.CALL_LINK), eq(Status.PENDING), any(), eq("!room:oriso")))
+        .thenReturn(List.of(viaLink));
+    when(inviteLinkRepository.findById(5L)).thenReturn(Optional.of(callLink("counsellor-1")));
+    inCall(counsellor, Outcome.ADMITTED);
+
+    assertThat(service.admitAll(counsellor, null, "!room:oriso")).isEmpty();
+    assertThat(viaLink.getStatus()).isEqualTo(Status.PENDING);
+    verify(callGuests, never()).counsellorCall(any(), any(), any(), any());
   }
 
   // Frank 2026-10-28: a knock on a call share link reaches every counsellor in that call.
@@ -761,6 +811,7 @@ class DirectCallKnockServiceTest {
     inCall(coModerator, Outcome.ADMITTED);
     when(callGuests.counsellorCall(TENANT, "co-moderator", "!room:oriso", "call-2"))
         .thenReturn(new CounsellorCall(Outcome.NOT_FOUND, null, null, null));
+    when(callBindings.findIdsBySourceRoomId("!room:oriso")).thenReturn(List.of(3L, 4L));
 
     assertThat(service.admitAll(coModerator, null, "!room:oriso")).containsExactly(mine);
     assertThat(other.getStatus()).isEqualTo(Status.PENDING);
