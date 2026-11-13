@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- #2237: observation-only registrations also cover encrypted 1:1 session calls.
+       A row names exactly one source: chat_id (internal group) or session_id (session).
+       Still observation only: no foreign key, no access grants. -->
+  <changeSet id="20261112-matrix-call-observation-session-2237" author="oriso">
+    <addColumn tableName="matrix_call_observation">
+      <column name="session_id" type="BIGINT"/>
+    </addColumn>
+    <dropNotNullConstraint tableName="matrix_call_observation" columnName="chat_id"
+      columnDataType="BIGINT"/>
+    <rollback>
+      <delete tableName="matrix_call_observation">
+        <where>chat_id IS NULL</where>
+      </delete>
+      <addNotNullConstraint tableName="matrix_call_observation" columnName="chat_id"
+        columnDataType="BIGINT"/>
+      <dropColumn tableName="matrix_call_observation" columnName="session_id"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestAdmit
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestStatusDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionListResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.InternalChatInvitationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.InternalChatRecipientDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.InternalSubsetChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.InternalSubsetChatResponseDTO;
@@ -724,6 +725,20 @@ public class UserController implements UsersApi {
   public ResponseEntity<InternalSubsetChatResponseDTO> openInternalSubsetChat(
       @RequestBody InternalSubsetChatDTO request) {
     return userChatControllerDelegate.openInternalSubsetChat(request);
+  }
+
+  /** Colleagues who can join a running members-only chat (ORISO-UserService#1580). */
+  @Override
+  public ResponseEntity<List<InternalChatRecipientDTO>> listInternalChatInvitationRecipients(
+      Long chatId) {
+    return userChatControllerDelegate.listInternalChatInvitationRecipients(chatId);
+  }
+
+  /** Invites a colleague into a running members-only chat (ORISO-UserService#1580). */
+  @Override
+  public ResponseEntity<Void> inviteInternalChatParticipant(
+      Long chatId, @RequestBody InternalChatInvitationDTO request) {
+    return userChatControllerDelegate.inviteInternalChatParticipant(chatId, request);
   }
 
   @Override

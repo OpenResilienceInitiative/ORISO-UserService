@@ -69,7 +69,7 @@ public class MatrixCallStateController {
     }
   }
 
-  /** Creator of an active encrypted internal-group call registers it for observation only. */
+  /** Creator of an active encrypted group or session call registers it for observation only. */
   @PostMapping("/observations")
   public ResponseEntity<?> register(@RequestBody ObservationRequest request) {
     try {
