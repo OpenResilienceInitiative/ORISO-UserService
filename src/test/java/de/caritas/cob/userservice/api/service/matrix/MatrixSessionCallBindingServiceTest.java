@@ -471,17 +471,9 @@ class MatrixSessionCallBindingServiceTest {
   }
 
   @Test
-  void anEndedOrLapsedAuthorityLessBindingIsStillTakenOver() {
-    // Round 3 (R1): an asker's binding that ended or lapsed (lifetime=1) never blocks the assigned
+  void aLapsedAuthorityLessBindingIsStillTakenOver() {
+    // Round 3 (R1): an asker's binding whose invite lapsed (lifetime=1) never blocks the assigned
     // counsellor; the takeover starts the counsellor's call afresh on the same row.
-    var ended = existing(42L, "!asker-media:example", ASKER);
-    ended.finish(System.currentTimeMillis());
-    when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(ended));
-    when(bindings.lockById(42L)).thenReturn(Optional.of(ended));
-    assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isTrue();
-    assertThat(ended.getEndedAt()).isNull();
-    assertThat(ended.getCallerMatrixId()).isEqualTo(COUNSELLOR);
-
     var lapsed =
         MatrixCallBinding.builder()
             .id(43L)
@@ -498,6 +490,28 @@ class MatrixSessionCallBindingServiceTest {
     when(bindings.lockById(43L)).thenReturn(Optional.of(lapsed));
     assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isTrue();
     assertThat(lapsed.getCallerMatrixId()).isEqualTo(COUNSELLOR);
+  }
+
+  @Test
+  void anEndedBindingIsNeverTakenOver_WhoeverEndedIt() {
+    // Round 4 (R4): an ended call stays ended. Counsellor A's ended call is not brought back by
+    // counsellor B after the session was reassigned, and an ended asker binding is not reopened
+    // either; the takeover would reset endedAt.
+    for (String formerCaller : java.util.List.of(OTHER_COUNSELLOR, ASKER)) {
+      var ended = existing(42L, "!old-media:example", formerCaller);
+      ended.finish(System.currentTimeMillis());
+      Long endedAt = ended.getEndedAt();
+      when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(ended));
+      when(bindings.lockById(42L)).thenReturn(Optional.of(ended));
+
+      assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true))
+          .as("ended binding of " + formerCaller)
+          .isFalse();
+      assertThat(ended.getEndedAt()).isEqualTo(endedAt);
+      assertThat(ended.getCallerMatrixId()).isEqualTo(formerCaller);
+      assertThat(ended.getMediaRoomId()).isEqualTo("!old-media:example");
+    }
+    verify(bindings, never()).saveAndFlush(any());
   }
 
   @Test

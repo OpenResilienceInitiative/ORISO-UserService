@@ -201,12 +201,20 @@ class MatrixSessionCallEndMariaDbIT {
               return true;
             });
     var pool = Executors.newFixedThreadPool(2);
-    try {
+    var endThread = new java.util.concurrent.atomic.AtomicReference<Thread>();
+    try (var connections =
+        MariaDbLockWaits.TransactionConnections.watch(transactionManager, dataSource)) {
       var bound = pool.submit(() -> sessionBindings.bind(actor, source, "call", media, true));
       assertThat(bindInside.await(10, TimeUnit.SECONDS)).isTrue();
-      var ended = pool.submit(() -> observations.end(actor, source, "call"));
-      // CodeRabbit 4562143209: deterministic, the end is blocked on the session lock bind holds.
-      MariaDbLockWaits.awaitLockWait(DATABASE);
+      var ended =
+          pool.submit(
+              () -> {
+                endThread.set(Thread.currentThread());
+                return observations.end(actor, source, "call");
+              });
+      // CodeRabbit 4562143209, 4562502751: deterministic, the end's own connection is blocked on
+      // the session row lock bind holds.
+      MariaDbLockWaits.awaitLockWait(DATABASE, connections.of(endThread), "session");
       release.countDown();
       assertThat(bound.get(20, TimeUnit.SECONDS)).isTrue();
       assertThat(ended.get(20, TimeUnit.SECONDS))

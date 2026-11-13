@@ -4,7 +4,8 @@ import de.caritas.cob.userservice.api.model.MatrixCallBinding;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 
-public interface MatrixCallBindingRepository extends JpaRepository<MatrixCallBinding, Long> {
+public interface MatrixCallBindingRepository
+    extends JpaRepository<MatrixCallBinding, Long>, MatrixCallBindingRowLock {
   Optional<MatrixCallBinding> findBySourceRoomIdAndCallId(String sourceRoomId, String callId);
 
   Optional<MatrixCallBinding> findByMediaRoomId(String mediaRoomId);
@@ -72,20 +73,13 @@ public interface MatrixCallBindingRepository extends JpaRepository<MatrixCallBin
       @org.springframework.data.repository.query.Param("room") String room);
 
   /**
-   * FE#2209 round 3: the call row by id, locked. Session-call paths lock the binding first, then
-   * the session, then observation and end rows, then the share link and its knocks.
+   * The calls of one conversation room, in id order. Unlocked: admit-all locks each of them by
+   * primary key ({@link #lockById}), never the room's range of the index, see {@code
+   * DirectCallKnockService#admitAll}.
    */
-  @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
   @org.springframework.data.jpa.repository.Query(
-      "select b from MatrixCallBinding b where b.id = :id")
-  Optional<MatrixCallBinding> lockById(
-      @org.springframework.data.repository.query.Param("id") Long id);
-
-  /** Every call of one conversation room, locked in id order (admit-all, same lock order). */
-  @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
-  @org.springframework.data.jpa.repository.Query(
-      "select b from MatrixCallBinding b where b.sourceRoomId = :room order by b.id")
-  java.util.List<MatrixCallBinding> lockBySourceRoomId(
+      "select b.id from MatrixCallBinding b where b.sourceRoomId = :room order by b.id")
+  java.util.List<Long> findIdsBySourceRoomId(
       @org.springframework.data.repository.query.Param("room") String room);
 
   /** Calls of the given sessions, for the temporary-account cleanup (#1476). */

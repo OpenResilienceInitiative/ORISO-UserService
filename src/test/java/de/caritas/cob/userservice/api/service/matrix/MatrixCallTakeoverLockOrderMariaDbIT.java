@@ -218,7 +218,9 @@ class MatrixCallTakeoverLockOrderMariaDbIT {
               return Optional.empty();
             });
     var pool = Executors.newFixedThreadPool(2);
-    try {
+    var otherThread = new java.util.concurrent.atomic.AtomicReference<Thread>();
+    try (var connections =
+        MariaDbLockWaits.TransactionConnections.watch(transactionManager, dataSource)) {
       Future<Boolean> bound =
           pool.submit(
               () -> {
@@ -226,9 +228,15 @@ class MatrixCallTakeoverLockOrderMariaDbIT {
                 return sessionBindings.bind(actor, source, "call", counsellorMedia, true);
               });
       assertThat(inside.await(15, TimeUnit.SECONDS)).isTrue();
-      Future<T> other = pool.submit(concurrent);
-      // Deterministic: the concurrent transaction is blocked on a lock the takeover holds.
-      MariaDbLockWaits.awaitLockWait(DATABASE);
+      Future<T> other =
+          pool.submit(
+              () -> {
+                otherThread.set(Thread.currentThread());
+                return concurrent.call();
+              });
+      // Deterministic: the concurrent operation's own connection is blocked on the binding row the
+      // takeover holds (both lock the binding first).
+      MariaDbLockWaits.awaitLockWait(DATABASE, connections.of(otherThread), "matrix_call_binding");
       release.countDown();
       assertThat(bound.get(30, TimeUnit.SECONDS)).isTrue();
       T result = other.get(30, TimeUnit.SECONDS);

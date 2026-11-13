@@ -328,7 +328,17 @@ public class DirectCallKnockService {
     return decide(knockId, consultant, Status.DECLINED);
   }
 
-  /** Only the current call: letting in every knock of every conversation at once is refused. */
+  /**
+   * Only the current call: letting in every knock of every conversation at once is refused.
+   *
+   * <p>Lock rule (FE#2209 round 4): the call bindings that exist when admit-all looks them up are
+   * locked one by one by primary key, then the conversation (session row), then the knocks. Admit-
+   * all never takes a range or gap lock on the call bindings: the first bind of a call holds the
+   * session lock and then inserts the binding, so a gap lock held while waiting for that session
+   * would deadlock with the insert. A binding inserted after the lookup is not locked here; it
+   * belongs to a call that has no share link and no knock yet, so admit-all has nothing of it to
+   * let in.
+   */
   @Transactional
   public List<GroupChatJoinRequest> admitAll(
       Consultant consultant, Long sessionId, String matrixRoomId) {
@@ -336,16 +346,14 @@ public class DirectCallKnockService {
     if (!scope.scoped()) {
       throw new BadRequestException("admit-all needs sessionId or matrixRoomId");
     }
-    // FE#2209 round 3 lock order: the calls whose knocks may be let in, then the conversation,
-    // then the knocks.
+    // FE#2209 lock order: the calls whose knocks may be let in, then the conversation, then the
+    // knocks. Round 4: only bindings that exist are locked, each by primary key, never a range or
+    // gap of the call-binding index (see the javadoc).
     if (scope.callLinks()) {
-      if (scope.roomId() != null) {
-        callBindings.lockBySourceRoomId(scope.roomId());
-      } else {
-        inviteLinkRepository
-            .findActiveCallBindingIdsOfConsultant(consultant.getId())
-            .forEach(callBindings::lockById);
-      }
+      (scope.roomId() != null
+              ? callBindings.findIdsBySourceRoomId(scope.roomId())
+              : inviteLinkRepository.findActiveCallBindingIdsOfConsultant(consultant.getId()))
+          .forEach(callBindings::lockById);
     }
     // A group-call room has no 1:1 conversation to lock; its knocks are locked row by row below.
     if (scope.sessionId() != null) {

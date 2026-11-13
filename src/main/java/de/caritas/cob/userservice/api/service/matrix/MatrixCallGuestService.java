@@ -268,7 +268,11 @@ public class MatrixCallGuestService {
         && !blank(matrixUserId)
         && grantsGuestAuthority(binding)
         && binding.isLive(System.currentTimeMillis())
-        && guests.existsByBindingIdAndMatrixUserIdAndRevokedAtIsNull(binding.getId(), matrixUserId);
+        && guests.existsByBindingIdAndMatrixUserIdAndRevokedAtIsNull(binding.getId(), matrixUserId)
+        // FE#2209 round 4: in a 1:1 session call a seat counts only while a counsellor is in the
+        // call; a guest's own refreshed membership keeps nothing open after every counsellor left.
+        && (binding.getSessionId() == null
+            || !counsellorsInCall(binding.getTenantId(), binding).isEmpty());
   }
 
   /**
@@ -277,7 +281,8 @@ public class MatrixCallGuestService {
    */
   public void revokeOutstanding(MatrixCallBinding binding) {
     if (binding == null || binding.getEndedAt() == null || binding.getId() == null) return;
-    List<MatrixCallGuest> outstanding = guests.findByBindingIdAndRevokedAtIsNull(binding.getId());
+    // Locking read: a seat committed while this transaction waited on the binding lock is seen.
+    List<MatrixCallGuest> outstanding = guests.lockOutstandingByBindingId(binding.getId());
     long retryBefore = System.currentTimeMillis() - guestRevokeRetryMillis;
     for (MatrixCallGuest guest : outstanding) {
       if (guest.getLastRevokeAttemptAt() != null && guest.getLastRevokeAttemptAt() > retryBefore)

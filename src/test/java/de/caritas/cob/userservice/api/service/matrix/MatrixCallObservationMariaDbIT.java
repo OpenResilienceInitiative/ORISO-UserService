@@ -135,6 +135,13 @@ class MatrixCallObservationMariaDbIT {
         .thenAnswer(outsideTransaction(Optional.of(List.of(CREATOR, OTHER))));
   }
 
+  /** CodeRabbit 4562500014: the race ITs run at the deployment's isolation level. */
+  @Test
+  void runsAtTheDeploymentsIsolationLevel() {
+    assertThat(jdbc.queryForObject("SELECT @@tx_isolation", String.class))
+        .isEqualTo("REPEATABLE-READ");
+  }
+
   @Test
   void parallelFirstRegistrationsLeaveOneRowAndOneInvitation() throws Exception {
     String media = "!media-race:example";
@@ -186,35 +193,38 @@ class MatrixCallObservationMariaDbIT {
 
   @Test
   void anEndRacingTheFirstRegistrationLeavesTheEndStoredAndNoLiveCall() throws Exception {
-    // CodeRabbit 4562143201: end and first registration enter their write transactions together
-    // and race on the real observation and end rows. After the permitted retries the creator's
-    // end is stored and no observation of the call is live, whichever order the database chose.
+    // CodeRabbit 4562143201: end and first registration start together and race on the real
+    // observation and end rows. After the permitted retries the creator's end is stored and no
+    // observation of the call is live, whichever order the database chose.
+    // CI run 43413620072: the start barrier sits before either operation opens its transaction.
+    // A barrier inside the transactions timed out on a slow runner: one thread held a row lock
+    // while the other was blocked on it before reaching the barrier. Never wait on a barrier
+    // while holding a database lock.
     for (int round = 0; round < 5; round++) {
       String callId = "end-race-" + round;
       String media = "!media-end-race-" + round + ":example";
       stubMediaRoom(callId, media);
-      var bothInside = new CyclicBarrier(2);
-      when(conversations.lockCurrentForWriting(any()))
-          .thenAnswer(
-              invocation -> {
-                bothInside.await(10, TimeUnit.SECONDS);
-                return true;
-              });
+      var start = new CyclicBarrier(2);
+      org.mockito.Mockito.doReturn(true).when(conversations).lockCurrentForWriting(any());
       var pool = Executors.newFixedThreadPool(2);
       Callable<Object> register =
           () -> {
+            start.await(30, TimeUnit.SECONDS);
             try {
               return service.register(actor, SOURCE, callId, media, true);
             } catch (RuntimeException failure) {
               return failure;
             }
           };
-      Callable<Object> end = () -> service.end(actor, SOURCE, callId);
+      Callable<Object> end =
+          () -> {
+            start.await(30, TimeUnit.SECONDS);
+            return service.end(actor, SOURCE, callId);
+          };
       List<Future<Object>> results = pool.invokeAll(List.of(register, end), 60, TimeUnit.SECONDS);
       pool.shutdown();
       Object registered = results.get(0).get();
       assertThat(results.get(1).get()).isEqualTo(Outcome.OK);
-      org.mockito.Mockito.doReturn(true).when(conversations).lockCurrentForWriting(any());
       if (registered instanceof RuntimeException) {
         assertThat(registered)
             .isInstanceOfAny(

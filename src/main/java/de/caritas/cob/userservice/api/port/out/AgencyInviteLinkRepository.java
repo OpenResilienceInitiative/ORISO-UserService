@@ -12,7 +12,8 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-public interface AgencyInviteLinkRepository extends JpaRepository<AgencyInviteLink, Long> {
+public interface AgencyInviteLinkRepository
+    extends JpaRepository<AgencyInviteLink, Long>, AgencyInviteLinkRowLock {
 
   Optional<AgencyInviteLink> findByToken(String token);
 
@@ -48,11 +49,6 @@ public interface AgencyInviteLinkRepository extends JpaRepository<AgencyInviteLi
           + " AND l.linkKind = 'CALL' AND l.status = 'ACTIVE' AND l.callBindingId IS NOT NULL"
           + " ORDER BY l.callBindingId")
   List<Long> findActiveCallBindingIdsOfConsultant(@Param("consultantId") String consultantId);
-
-  /** Locked: knocks through one share link are serialised on the link row (#1487). */
-  @Lock(LockModeType.PESSIMISTIC_WRITE)
-  @Query("SELECT l FROM AgencyInviteLink l WHERE l.id = :id")
-  Optional<AgencyInviteLink> findByIdForUpdate(@Param("id") Long id);
 
   /** Active links of one kind after {@code id}, oldest first, for the expiry sweep (#1487). */
   List<AgencyInviteLink> findByLinkKindAndStatusAndIdGreaterThanOrderByIdAsc(

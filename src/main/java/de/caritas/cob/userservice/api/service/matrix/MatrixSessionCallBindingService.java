@@ -144,7 +144,8 @@ public class MatrixSessionCallBindingService {
       // call room, before the transaction opens (#1630). A removal that fails refuses this bind.
       if (known != null
           && !authority.grantsGuestAuthority(known)
-          && !callGuests.revokeBeforeTakeOver(known)) {
+          && (known.getEndedAt() != null || !callGuests.revokeBeforeTakeOver(known))) {
+        // Round 4 (R4): an ended binding is never taken over, so nothing is revoked for it here.
         return false;
       }
       Long lockFirst = known == null ? null : known.getId();
@@ -348,11 +349,13 @@ public class MatrixSessionCallBindingService {
 
   /**
    * FE#2209 review: the same call (source room and call id) already has a binding from somebody
-   * else's plaintext invite. It never blocks the assigned counsellor, also not once it ended or
-   * lapsed (round 3: an asker could otherwise send lifetime=1 for the counsellor's call id): the
-   * row is taken over in place (so the unique key on source room and call id holds), starts the
+   * else's plaintext invite. It does not block the assigned counsellor once its invite lapsed
+   * (round 3: an asker could otherwise send lifetime=1 for the counsellor's call id): the row is
+   * taken over in place (so the unique key on source room and call id holds), starts the
    * counsellor's call afresh and points at the counsellor's verified call room from now on. Refused
-   * only when that call room belongs to another binding, or the counsellor already ended the call.
+   * when that call room belongs to another binding, when the counsellor already ended the call, and
+   * (round 4, R4) when the binding has ended, whoever ended it: an ended call is never brought
+   * back, for example by counsellor B after the session was reassigned from A.
    */
   private Result takeOver(
       MatrixCallBinding existing,
@@ -371,6 +374,8 @@ public class MatrixSessionCallBindingService {
     // Already locked first by write(); the same transaction takes it again at no cost.
     var locked = bindings.lockById(existing.getId()).orElse(null);
     if (locked == null || !Objects.equals(locked.getId(), existing.getId())) return Result.REFUSED;
+    // R4, under the row lock (fresh state): takeOver would reset endedAt.
+    if (locked.getEndedAt() != null) return Result.REFUSED;
     // Nothing of the old call carries into the counsellor's room: no seat (taken back before the
     // transaction; the revoked records stay), no share link and no knock waiting on it.
     if (!callGuests.noSeatOutstanding(locked.getId())) return Result.REFUSED;
