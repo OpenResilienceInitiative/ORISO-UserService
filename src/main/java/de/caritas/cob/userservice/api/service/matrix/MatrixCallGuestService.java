@@ -94,6 +94,9 @@ public class MatrixCallGuestService {
             .filter(value -> !blank(value))
             .orElse(null);
     if (conversation == null || counsellor == null) return CounsellorCall.of(Outcome.NOT_FOUND);
+    // FE#2209 review: a suspended account keeps its rows and Matrix membership; it vouches for
+    // nobody.
+    if (!isActive(consultantId)) return CounsellorCall.of(Outcome.NOT_FOUND);
     var members = callRoomMembers(sourceRoomId).orElse(null);
     if (members == null) return CounsellorCall.of(Outcome.MATRIX_UNAVAILABLE);
     // Only a counsellor who is in the conversation may open its call to somebody else.
@@ -111,27 +114,31 @@ public class MatrixCallGuestService {
             .filter(value -> value.getEndedAt() == null)
             .orElse(null);
     if (binding == null) return CounsellorCall.of(Outcome.NOT_FOUND);
+    // FE#2209 review (Frank): any counsellor of the Träger who is in the call itself, with a live
+    // MatrixRTC membership in its call room, may open it to somebody else.
+    if (!binding.isInCall(counsellor, System.currentTimeMillis()))
+      return CounsellorCall.of(Outcome.NOT_FOUND);
     return new CounsellorCall(Outcome.ADMITTED, binding, counsellor, members);
   }
 
   /**
-   * The counsellors of {@code tenant} who are members of conversation {@code sourceRoomId}; empty
-   * for another Träger's conversation or when Matrix cannot tell.
+   * The active counsellors of {@code tenant} who are in the call: a live MatrixRTC membership in
+   * its call room (FE#2209 review). Empty for another Träger's call.
    */
   @Transactional(readOnly = true)
-  public List<String> counsellorsInConversation(Long tenant, String sourceRoomId) {
-    if (tenant == null || blank(sourceRoomId)) return List.of();
-    var conversation =
-        conversations
-            .resolve(sourceRoomId)
-            .filter(value -> tenant.equals(value.getTenantId()))
-            .orElse(null);
-    if (conversation == null) return List.of();
-    return callRoomMembers(sourceRoomId).orElse(List.of()).stream()
+  public List<String> counsellorsInCall(Long tenant, MatrixCallBinding binding) {
+    if (tenant == null || binding == null || !tenant.equals(binding.getTenantId()))
+      return List.of();
+    long now = System.currentTimeMillis();
+    return binding.getDevices().values().stream()
+        .map(device -> device.getSenderMatrixId())
+        .distinct()
+        .filter(member -> binding.isInCall(member, now))
         .map(consultants::findByMatrixUserIdAndDeleteDateIsNull)
         .flatMap(Optional::stream)
         .filter(value -> tenant.equals(value.getTenantId()))
         .map(value -> value.getId())
+        .filter(this::isActive)
         .toList();
   }
 

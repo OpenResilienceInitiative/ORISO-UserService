@@ -104,6 +104,19 @@ public class MatrixCallBinding {
     return devices.values().stream().anyMatch(device -> device.getExpiresAt() > now);
   }
 
+  /**
+   * FE#2209 review: whether {@code matrixId} holds a live MatrixRTC membership in this call room,
+   * the same source {@link #isLive} reads. A departure or an expired membership is not in the call.
+   */
+  public boolean isInCall(String matrixId, long now) {
+    return endedAt == null
+        && matrixId != null
+        && devices.values().stream()
+            .anyMatch(
+                device ->
+                    matrixId.equals(device.getSenderMatrixId()) && device.getExpiresAt() > now);
+  }
+
   public void finish(long timestamp) {
     if (endedAt == null) endedAt = Math.max(startedAt == null ? invitedAt : startedAt, timestamp);
   }

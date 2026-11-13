@@ -179,7 +179,6 @@ class MatrixCallGuestServiceTest {
 
     assertThat(service.counsellorCall(7L, "counsellor", SOURCE, "call").outcome())
         .isEqualTo(Outcome.MATRIX_UNAVAILABLE);
-    assertThat(service.counsellorsInConversation(7L, SOURCE)).isEmpty();
   }
 
   @Test
@@ -213,23 +212,75 @@ class MatrixCallGuestServiceTest {
   }
 
   @Test
-  void counsellorsInConversationAreTheTraegersCounsellorsAmongItsMembers() throws Exception {
-    when(matrix.getCallRoomMembers(SOURCE))
-        .thenReturn(Optional.of(List.of(COUNSELLOR, GUEST, "@foreign:example", "@second:example")));
+  void counsellorsInCallAreTheTraegersActiveCounsellorsWithALiveMembership() throws Exception {
+    // FE#2209 review: in the call, not merely in the conversation.
+    long now = System.currentTimeMillis();
+    device("second-device", "@second:example", now + 60_000);
+    device("left-device", "@left:example", now - 1);
+    device("foreign-device", "@foreign:example", now + 60_000);
+    device("suspended-device", "@suspended:example", now + 60_000);
     when(consultants.findByMatrixUserIdAndDeleteDateIsNull(COUNSELLOR))
         .thenReturn(Optional.of(consultant("counsellor", COUNSELLOR, 7L)));
-    when(consultants.findByMatrixUserIdAndDeleteDateIsNull("@foreign:example"))
-        .thenReturn(Optional.of(consultant("foreign", "@foreign:example", 8L)));
     when(consultants.findByMatrixUserIdAndDeleteDateIsNull("@second:example"))
         .thenReturn(Optional.of(consultant("second", "@second:example", 7L)));
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull("@left:example"))
+        .thenReturn(Optional.of(consultant("left", "@left:example", 7L)));
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull("@foreign:example"))
+        .thenReturn(Optional.of(consultant("foreign", "@foreign:example", 8L)));
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull("@suspended:example"))
+        .thenReturn(Optional.of(consultant("suspended", "@suspended:example", 7L)));
+    suspend("suspended");
 
-    assertThat(service.counsellorsInConversation(7L, SOURCE))
-        .containsExactly("counsellor", "second");
+    assertThat(service.counsellorsInCall(7L, binding))
+        .containsExactlyInAnyOrder("counsellor", "second");
+    assertThat(service.counsellorsInCall(8L, binding)).isEmpty();
   }
 
   @Test
-  void counsellorsInConversationIsEmptyForAnotherTraegersConversation() throws Exception {
-    assertThat(service.counsellorsInConversation(8L, SOURCE)).isEmpty();
+  void aCounsellorInTheConversationButNotInTheCallCannotAdmit() throws Exception {
+    binding = callBinding(null);
+    device("device", COUNSELLOR, System.currentTimeMillis() - 1);
+    device("other-device", "@second:example", System.currentTimeMillis() + 60_000);
+    assertThat(service.admit(counsellor, SOURCE, "call", "guest").outcome())
+        .isEqualTo(MatrixCallGuestService.Outcome.NOT_FOUND);
+    verify(matrix, never()).inviteUserToRoom(anyString(), anyString(), anyString());
+  }
+
+  @Test
+  void aSuspendedCounsellorCannotAdmitOrVouchForALink() throws Exception {
+    suspend("counsellor");
+    assertThat(service.admit(counsellor, SOURCE, "call", "guest").outcome())
+        .isEqualTo(MatrixCallGuestService.Outcome.NOT_FOUND);
+    assertThat(service.counsellorCall(7L, "counsellor", SOURCE, "call").outcome())
+        .isEqualTo(MatrixCallGuestService.Outcome.NOT_FOUND);
+    verify(matrix, never()).inviteUserToRoom(anyString(), anyString(), anyString());
+  }
+
+  private void device(String key, String sender, long expiresAt) {
+    binding
+        .getDevices()
+        .put(
+            key,
+            new de.caritas.cob.userservice.api.model.MatrixCallDevice(
+                sender, 1200L, expiresAt, true, "$" + key));
+  }
+
+  private void suspend(String identityId) {
+    when(accounts.snapshot(identityId))
+        .thenReturn(
+            Optional.of(
+                new de.caritas.cob.userservice.api.workflow.accountinactivity
+                    .AccountInactivityService.Snapshot(
+                    identityId,
+                    7L,
+                    1,
+                    1L,
+                    null,
+                    null,
+                    de.caritas.cob.userservice.api.workflow.accountinactivity
+                        .AccountInactivityService.Status.SUSPENDED,
+                    0,
+                    null)));
   }
 
   @Test

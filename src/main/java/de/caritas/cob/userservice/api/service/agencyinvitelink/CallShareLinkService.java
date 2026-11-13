@@ -424,8 +424,9 @@ public class CallShareLinkService {
   }
 
   /**
-   * The admitting counsellor, then the link owner, then any other counsellor still in the
-   * conversation vouches: either may have left it while the call runs on.
+   * The admitting counsellor, then the link owner, then any other counsellor still in the call
+   * vouches: either may have left it while the call runs on. Each must be active and in the call
+   * (FE#2209 review), so seating stops once no such counsellor is left.
    */
   private Admission seatOnAuthority(
       AgencyInviteLink link, MatrixCallBinding binding, GroupChatJoinRequest admitted, User guest) {
@@ -441,8 +442,7 @@ public class CallShareLinkService {
         return seat;
       }
     }
-    for (var counsellor :
-        callGuests.counsellorsInConversation(link.getTenantId(), binding.getSourceRoomId())) {
+    for (var counsellor : callGuests.counsellorsInCall(link.getTenantId(), binding)) {
       if (tried.contains(counsellor)) {
         continue;
       }

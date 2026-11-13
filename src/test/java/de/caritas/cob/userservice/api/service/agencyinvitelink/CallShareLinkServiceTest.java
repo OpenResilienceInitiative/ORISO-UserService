@@ -464,7 +464,7 @@ class CallShareLinkServiceTest {
     joinable(false);
     when(callGuests.admitAs(TENANT, COUNSELLOR, SOURCE, CALL_ID, "guest-1"))
         .thenReturn(new Admission(Outcome.NOT_FOUND, null, null, null));
-    when(callGuests.counsellorsInConversation(TENANT, SOURCE)).thenReturn(List.of("co-moderator"));
+    when(callGuests.counsellorsInCall(eq(TENANT), any())).thenReturn(List.of("co-moderator"));
     when(callGuests.admitAs(TENANT, "co-moderator", SOURCE, CALL_ID, "guest-1"))
         .thenReturn(new Admission(Outcome.ADMITTED, MEDIA, "@guest:example", 1L));
 
@@ -479,7 +479,7 @@ class CallShareLinkServiceTest {
     joinable(false);
     when(callGuests.admitAs(TENANT, COUNSELLOR, SOURCE, CALL_ID, "guest-1"))
         .thenReturn(new Admission(Outcome.NOT_FOUND, null, null, null));
-    when(callGuests.counsellorsInConversation(TENANT, SOURCE)).thenReturn(List.of());
+    when(callGuests.counsellorsInCall(eq(TENANT), any())).thenReturn(List.of());
 
     assertThatThrownBy(() -> service.join("token-5", guest)).isInstanceOf(NotFoundException.class);
   }

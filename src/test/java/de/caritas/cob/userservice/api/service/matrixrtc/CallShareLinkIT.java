@@ -507,6 +507,8 @@ class CallShareLinkIT {
     var bound = bindings.findBySourceRoomIdAndCallId(SOURCE, "encrypted-call").orElseThrow();
     assertThat(bound.getSessionId()).isEqualTo(sessionId);
     assertThat(bound.getMediaRoomId()).isEqualTo(encryptedMedia);
+    // The counsellor's MatrixRTC membership in the call room, as the lifecycle records it.
+    inCall(encryptedMedia, caller, System.currentTimeMillis() + 600000);
 
     var link =
         shareLinks.create(7L, counsellor.getId(), SOURCE, "encrypted-call", null, null).link();
@@ -634,10 +636,16 @@ class CallShareLinkIT {
             () -> transaction.executeWithoutResult(s -> knocks.admit(knockId, colleagueEntity)))
         .isInstanceOf(NotFoundException.class);
 
-    // Joins the call: sees the knock in the per-call list and lets the guest in.
+    // In the conversation but not in the call: still nothing to decide (FE#2209 review).
     var members = List.of(ASKER, counsellor.getMatrixUserId(), colleague.getMatrixUserId());
     when(matrix.getCallRoomMembers(SOURCE)).thenReturn(Optional.of(members));
     when(matrix.getRoomMembers(SOURCE)).thenReturn(Optional.of(members));
+    assertThatThrownBy(
+            () -> transaction.executeWithoutResult(s -> knocks.admit(knockId, colleagueEntity)))
+        .isInstanceOf(NotFoundException.class);
+
+    // Joins the call: sees the knock in the per-call list and lets the guest in.
+    inCall(MEDIA, colleague.getMatrixUserId(), System.currentTimeMillis() + 600000);
     when(matrix.loginAsUserAccessToken(colleague.getMatrixUserId())).thenReturn("c-token");
     assertThat(knocks.pendingFor(colleagueEntity, null, SOURCE))
         .extracting(GroupChatJoinRequest::getId)
@@ -650,6 +658,30 @@ class CallShareLinkIT {
     assertThat(knockRows.findById(knockId).orElseThrow().getDecidedBy())
         .isEqualTo(colleague.getId());
     assertThat(shareLinks.join(link.getToken(), guest).callAdmitted()).isTrue();
+  }
+
+  /**
+   * FE#2209 review: the link owner's authority ends when no authorised counsellor is in the call.
+   */
+  @Test
+  void seatingStopsOnceEveryCounsellorHasLeftTheCall() throws Exception {
+    var link = shareLinks.create(7L, counsellor.getId(), SOURCE, "share-call", null, null).link();
+    var guest = users.findById("share-guest").orElseThrow();
+    var knockId = shareLinks.join(link.getToken(), guest).knockId();
+    var counsellorEntity = consultants.findById(counsellor.getId()).orElseThrow();
+    transaction.executeWithoutResult(s -> knocks.admit(knockId, counsellorEntity));
+    // The asker stays, so the call itself still runs; the counsellor left it.
+    inCall(MEDIA, ASKER, System.currentTimeMillis() + 600000);
+    inCall(MEDIA, counsellor.getMatrixUserId(), System.currentTimeMillis() - 1);
+    new JdbcTemplate(dataSource)
+        .update(
+            "UPDATE matrix_call_device SET expires_at = ? WHERE sender_matrix_id = ?",
+            System.currentTimeMillis() - 1,
+            counsellor.getMatrixUserId());
+
+    assertThatThrownBy(() -> shareLinks.join(link.getToken(), guest))
+        .isInstanceOf(NotFoundException.class);
+    verify(matrix, never()).inviteUserToRoom(eq(MEDIA), eq(GUEST), anyString());
   }
 
   /** Security review of #1487: declining an admitted knock takes the seat back too. */
@@ -730,6 +762,25 @@ class CallShareLinkIT {
 
   private String device() {
     return "_" + counsellor.getMatrixUserId() + "_device";
+  }
+
+  /** Records a MatrixRTC membership of {@code matrixId} in the call room, as the lifecycle does. */
+  private void inCall(String media, String matrixId, long expiresAt) {
+    transaction.executeWithoutResult(
+        status -> {
+          var binding = bindings.lockByMediaRoomId(media).orElseThrow();
+          binding
+              .getDevices()
+              .put(
+                  "_" + matrixId + "_device",
+                  new MatrixCallDevice(
+                      matrixId,
+                      System.currentTimeMillis() - 100,
+                      expiresAt,
+                      true,
+                      "$" + matrixId + expiresAt));
+          bindings.save(binding);
+        });
   }
 
   private Map<String, Object> leave() {
