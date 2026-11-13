@@ -59,6 +59,10 @@ class MessengerTest {
   @Mock
   private de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService matrixSynapseService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.matrixrtc.CallParticipantEviction
+      callParticipantEviction;
+
   @InjectMocks private Messenger messenger;
 
   @BeforeEach
@@ -356,6 +360,9 @@ class MessengerTest {
     verify(matrixSynapseService)
         .banUserFromRoomAsModerator(
             "!room:matrix.example.org", "@seeker:matrix.example.org", "@owner:matrix.example.org");
+    // ORISO-Admin#1518 follow-up: a running call of the conversation drops them too.
+    verify(callParticipantEviction)
+        .evictFromRunningCalls("!room:matrix.example.org", "@seeker:matrix.example.org");
   }
 
   @Test
@@ -375,6 +382,8 @@ class MessengerTest {
     when(matrixSynapseService.banUserFromRoomAsModerator(any(), any(), any())).thenReturn(false);
 
     assertThat(messenger.banUserFromChat("u-1", 10L)).isFalse();
+    verify(callParticipantEviction, org.mockito.Mockito.never())
+        .evictFromRunningCalls(any(), any());
   }
 
   @Test
