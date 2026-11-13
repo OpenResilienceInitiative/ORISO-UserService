@@ -54,8 +54,8 @@ public class MatrixCallStateService {
             .orElse(false);
     var bound = bindings.findBySourceRoomIdAndCallId(sourceRoomId, callId);
     if (bound.isEmpty()) {
-      // #2166: encrypted internal-group call without a readable invite. Observation only, read by
-      // conversation members; never consulted for guests or any access decision.
+      // #2166/#2237: encrypted group or session call without a readable invite. Observation only,
+      // read by conversation members; never consulted for guests or any access decision.
       return conversationMember ? observations.readState(conversation, callId) : Optional.empty();
     }
     return bound
