@@ -434,6 +434,15 @@ public class CallShareLinkService {
         // counsellor. The session is locked and re-read here (binding, session, link), so a
         // reassignment that committed after the first, unlocked check is seen, and one that comes
         // later waits for this join.
+        //
+        // Round 6 (F3), a known trade-off: join then seats the guest under these locks, and the
+        // seat goes through Matrix (the call room's members, the admitter's login, the invite). So
+        // a guest's join holds this session's row lock, not only the binding's, for those HTTP
+        // calls; bind, end and registration of calls in the same session wait meanwhile. Moving
+        // the lookup out of the lock is not clean: the invite must follow the seat reservation
+        // under the binding lock (no invited guest the cleanup cannot find, no seat in an ended
+        // call), and the authority decision must read the locked session. The binding lock was
+        // already held across these calls before round 5.
         .ifPresent(sessions::lockFresh);
   }
 
