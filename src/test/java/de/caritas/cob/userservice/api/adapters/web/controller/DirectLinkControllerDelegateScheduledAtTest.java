@@ -48,6 +48,7 @@ class DirectLinkControllerDelegateScheduledAtTest {
             accounts,
             topics,
             mock(DirectCallKnockService.class),
+            mock(de.caritas.cob.userservice.api.service.chat.GroupWaitingRoomService.class),
             mock(UserRepository.class),
             mock(TemporaryAccountService.class));
     counsellor.setId("counsellor-1");
