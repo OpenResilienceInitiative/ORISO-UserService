@@ -96,6 +96,34 @@ public interface ChatRepository extends CrudRepository<Chat, Long> {
   @Query("select chat from Chat chat where chat.id = :seriesId")
   Optional<Chat> findSeriesForAppointmentMailUpdate(@Param("seriesId") Long seriesId);
 
-  List<Chat> findAllByActiveIsFalseAndStartDateBetween(
-      LocalDateTime startInclusive, LocalDateTime endInclusive);
+  /**
+   * Candidate discovery only. The recurring branch uses an upper bound on days per period plus two
+   * days for UTC offset changes. The occurrence projector resolves the exact dates and edits.
+   */
+  @Query(
+      """
+      select c.id from Chat c
+      where c.active = false and c.currentOccurrenceIndex < c.repeatCount
+        and (
+          c.startDate between :windowStart and :windowEnd
+          or (
+            c.repeatCount > 1 and c.initialStartDate <= :windowEnd
+            and timestampdiff(day, c.initialStartDate, :windowStart) <=
+              (c.repeatCount - 1) * case cast(c.chatInterval as String)
+                when 'DAILY' then 1
+                when 'WEEKLY' then 7
+                when 'BIWEEKLY' then 14
+                when 'MONTHLY' then 31
+                when 'QUARTERLY' then 93
+                when 'YEARLY' then 366
+                else 0 end + 2
+          )
+          or exists (
+            select e.id from ChatOccurrenceException e
+            where e.series = c and e.overrideStartUtc between :windowStart and :windowEnd
+          )
+        )
+      """)
+  List<Long> findInactiveReminderCandidateIds(
+      @Param("windowStart") LocalDateTime windowStart, @Param("windowEnd") LocalDateTime windowEnd);
 }

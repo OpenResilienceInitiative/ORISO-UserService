@@ -25,6 +25,8 @@ import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.model.UserAgency;
+import de.caritas.cob.userservice.api.model.UserChat;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.ChatAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
@@ -37,6 +39,7 @@ import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import jakarta.persistence.EntityManager;
 import jakarta.servlet.http.Cookie;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -283,6 +286,67 @@ class GroupChatCrossTenantAccessE2EIT {
 
   @Test
   @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void theOwnerCanReadTheSeriesSchedule() throws Exception {
+    actingAs(owner);
+
+    mockMvc.perform(occurrenceGet()).andExpect(status().isOk());
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void assignedAdviceSeekerCanReadTheScheduleBeforeJoiningFromAnotherTrager() throws Exception {
+    var participant = anAdviceSeekerWithMatrixId("@scheduled:matrix.test");
+    participant.setTenantId(FOREIGN_TENANT);
+    userRepository.save(participant);
+    assignToGroup(participant);
+    actingAs(participant);
+
+    mockMvc
+        .perform(occurrenceGet())
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].seriesId", is(group.getId().intValue())))
+        .andExpect(jsonPath("$[0].duration", is(60)));
+    mockMvc
+        .perform(consultantPost("/users/chat-series/" + group.getId() + "/occurrences/skip"))
+        .andExpect(status().isForbidden());
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void sameAgencyDoesNotGrantAnAdviceSeekerTheSchedule() throws Exception {
+    var outsider = anAdviceSeekerWithMatrixId("@outsider:matrix.test");
+    outsider.setTenantId(OWN_TENANT);
+    userRepository.save(outsider);
+    entityManager.persist(new UserAgency(outsider, GROUP_AGENCY));
+    entityManager.flush();
+    entityManager.clear();
+    actingAs(outsider);
+
+    mockMvc.perform(occurrenceGet()).andExpect(status().isForbidden());
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void evenAnAssignedAdviceSeekerCannotReadAMembersOnlySchedule() throws Exception {
+    var participant = anAdviceSeekerWithMatrixId("@invalid-membership:matrix.test");
+    var storedGroup = chatRepository.findById(group.getId()).orElseThrow();
+    storedGroup.setConversationType(ConversationType.INTERNAL_GROUP);
+    storedGroup.setMembersOnly(true);
+    chatRepository.save(storedGroup);
+    assignToGroup(participant);
+    actingAs(participant);
+
+    mockMvc.perform(occurrenceGet()).andExpect(status().isForbidden());
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.ANONYMOUS_DEFAULT)
+  void anAnonymousAdviceSeekerCannotReadTheSchedule() throws Exception {
+    mockMvc.perform(occurrenceGet()).andExpect(status().isForbidden());
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
   void counsellorOfAnotherTragerCannotReadTheChatInfo() throws Exception {
     actingAs(foreignCounsellor);
 
@@ -493,6 +557,26 @@ class GroupChatCrossTenantAccessE2EIT {
     when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.CONSULTANT.getValue()));
     when(authenticatedUser.getGrantedAuthorities())
         .thenReturn(Set.of(AuthorityValue.CONSULTANT_DEFAULT));
+  }
+
+  private void actingAs(User user) {
+    when(authenticatedUser.getUserId()).thenReturn(user.getUserId());
+    when(authenticatedUser.isAdviceSeeker()).thenReturn(true);
+    when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.USER.getValue()));
+  }
+
+  private void assignToGroup(User user) {
+    entityManager.persist(UserChat.builder().user(user).chat(group).build());
+    entityManager.flush();
+    entityManager.clear();
+  }
+
+  private MockHttpServletRequestBuilder occurrenceGet() {
+    var start = group.getStartDate().atOffset(ZoneOffset.UTC);
+    return consultantGet("/users/chat-series/" + group.getId() + "/occurrences")
+        .queryParam("from", start.minusDays(1).toString())
+        .queryParam("to", start.plusDays(1).toString())
+        .queryParam("limit", "5");
   }
 
   private Consultant thirdConsultant() {

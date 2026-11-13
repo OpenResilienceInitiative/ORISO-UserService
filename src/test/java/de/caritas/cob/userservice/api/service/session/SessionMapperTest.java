@@ -123,6 +123,33 @@ class SessionMapperTest {
         .contains("\"conversationType\":\"AGENCY_COUNSELLING\"");
   }
 
+  /** ORISO-Frontend#2170: the call is called what the direct link is called. */
+  @Test
+  void convertToSessionDTO_Should_projectTheDirectLinkName() throws Exception {
+    Session session = new EasyRandom().nextObject(Session.class);
+    session.setDirectLinkMedium("VIDEO");
+    session.setDirectLinkName("Flyer Schule");
+
+    SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
+
+    org.assertj.core.api.Assertions.assertThat(
+            new AppConfig().objectMapper().writeValueAsString(sessionDTO))
+        .contains("\"directLinkName\":\"Flyer Schule\"");
+  }
+
+  @Test
+  void convertToSessionDTO_Should_leaveTheDirectLinkNameEmpty_ForOtherConversations()
+      throws Exception {
+    Session session = new EasyRandom().nextObject(Session.class);
+    session.setDirectLinkName(null);
+
+    SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
+
+    org.assertj.core.api.Assertions.assertThat(
+            new AppConfig().objectMapper().writeValueAsString(sessionDTO))
+        .doesNotContain("\"directLinkName\":\"");
+  }
+
   /** An unknown stored value is left out; it never fails the whole session list. */
   @Test
   void convertToSessionDTO_Should_leaveAnUnknownDirectLinkMediumOut() throws Exception {

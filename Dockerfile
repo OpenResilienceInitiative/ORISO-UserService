@@ -5,9 +5,9 @@ FROM eclipse-temurin:21-jre@sha256:273396ed5998598ed1091e8d72711c2d36980a0e65103
 RUN rm -f /usr/bin/pebble
 # Upgrade the pinned base's OpenSSL and curl packages before scanning.
 # curl/libcurl4t64 need the Ubuntu fix for CVE-2026-92392, libbrotli1 the one for
-# CVE-2026-111497.
+# CVE-2026-111497; apt/libapt-pkg7.0 need the fix for CVE-2026-109518.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends --only-upgrade libssl3t64 openssl openssl-provider-legacy curl libcurl4t64 libbrotli1 \
+    && apt-get install -y --no-install-recommends --only-upgrade libssl3t64 openssl openssl-provider-legacy curl libcurl4t64 libbrotli1 apt libapt-pkg7.0 \
     && rm -rf /var/lib/apt/lists/*
 VOLUME ["/tmp","/log"]
 EXPOSE 8082

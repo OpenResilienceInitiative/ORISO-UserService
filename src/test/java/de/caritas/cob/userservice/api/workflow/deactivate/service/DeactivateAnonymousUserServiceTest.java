@@ -1,7 +1,9 @@
 package de.caritas.cob.userservice.api.workflow.deactivate.service;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -21,6 +23,7 @@ import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.service.livechat.LiveChatAccountClaimService;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -48,6 +51,7 @@ class DeactivateAnonymousUserServiceTest {
   @Mock private SessionRepository sessionRepository;
 
   @Mock private ActionsRegistry actionsRegistry;
+  @Mock private LiveChatAccountClaimService claims;
 
   private final ActionCommandMockProvider commandMockProvider = new ActionCommandMockProvider();
 
@@ -56,6 +60,7 @@ class DeactivateAnonymousUserServiceTest {
     ReflectionTestUtils.setField(
         deactivateAnonymousUserService, "deactivatePeriodMinutes", DEACTIVATE_PERIOD_MINUTES);
     ensureSessionActionMocks();
+    lenient().when(claims.claimCleanup(anyString())).thenReturn(true);
   }
 
   @SuppressWarnings("unchecked")
@@ -248,6 +253,22 @@ class DeactivateAnonymousUserServiceTest {
                       times(1))
                   .execute(session);
             });
+  }
+
+  @Test
+  void doesNotDeactivateStaleCandidateClaimedByPromotion() {
+    var user = createUserWithSingleSession(LocalDateTime.now().minusDays(2));
+    when(sessionRepository.findLiveChatSessionsByStatusIn(any(), any()))
+        .thenReturn(new ArrayList<>(user.getSessions()));
+    when(claims.claimCleanup("user id")).thenReturn(false);
+    var action = mock(DeactivateKeycloakUserActionCommand.class);
+    when(actionsRegistry.buildContainerForType(User.class))
+        .thenReturn(new ActionContainer<>(Set.of(action)));
+    when(actionsRegistry.buildContainerForType(Session.class))
+        .thenReturn(commandMockProvider.getActionContainer(Session.class));
+    deactivateAnonymousUserService.deactivateStaleAnonymousUsers();
+    verify(action, never()).execute(any());
+    verifyNoSessionDeactivationActionsExecuted();
   }
 
   private enum OverdueDeactivationScenario {

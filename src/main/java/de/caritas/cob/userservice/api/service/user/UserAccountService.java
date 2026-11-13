@@ -36,6 +36,8 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 @Slf4j
 public class UserAccountService {
+  private final @NonNull de.caritas.cob.userservice.api.service.livechat.LiveChatAccountClaimService
+      liveChatClaims;
 
   private final @NonNull UserService userService;
   private final @NonNull AskerEmailCollectionPolicy emailCollectionPolicy;
@@ -233,6 +235,7 @@ public class UserAccountService {
    */
   public void deactivateAndFlagUserAccountForDeletion() {
     User user = retrieveValidatedUser();
+    liveChatClaims.claimIntentionalDeletion(user.getUserId());
     this.identityDeactivator.deactivateUser(user.getUserId());
     deletionLifecycleService.beginUserDeletion(user, user.getUserId());
     userService.saveUser(user);

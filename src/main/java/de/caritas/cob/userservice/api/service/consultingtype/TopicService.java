@@ -53,6 +53,27 @@ public class TopicService {
     return controllerApi.getAllActiveTopics();
   }
 
+  /** Topics for a management tenant already checked by the caller. */
+  public List<TopicDTO> getActiveTopicsForTenant(Long tenantId) {
+    var controller = topicServiceApiControllerFactory.createScopedControllerApi();
+    controller.getApiClient().addDefaultHeader("tenantId", tenantId.toString());
+    controller.getApiClient().addDefaultHeader(HttpHeaders.COOKIE, "lang=" + publicTopicLanguage());
+    var topics = controller.getAllActiveTopics();
+    return topics == null ? List.of() : topics;
+  }
+
+  /** Existing links may refer to inactive topics. Do not use the unscoped topic cache. */
+  public Map<Long, TopicDTO> getTopicNamesForTenant(Long tenantId) {
+    var controller = topicServiceApiControllerFactory.createScopedControllerApi();
+    var headers = securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders();
+    headers.set("tenantId", tenantId.toString());
+    headers.set(HttpHeaders.COOKIE, "lang=" + publicTopicLanguage());
+    headers.forEach(
+        (key, value) -> controller.getApiClient().addDefaultHeader(key, value.getFirst()));
+    var topics = controller.getAllTopics();
+    return topics == null ? Map.of() : getAllTopicsMap(topics);
+  }
+
   /**
    * Look up a single topic by id. Resolution is done against the tenant-scoped active-topics map
    * (the topic service already filters by the current tenant header), so a topic that does not

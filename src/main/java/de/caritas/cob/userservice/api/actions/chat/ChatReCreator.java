@@ -4,6 +4,7 @@ import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc
 import static java.util.Objects.isNull;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixIdentifierRedactor;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
@@ -57,6 +58,7 @@ public class ChatReCreator {
   private final GroupChatMembershipService groupChatMembershipService;
   private final SessionRepository sessionRepository;
   private final GroupChatMatrixCleanupService matrixCleanup;
+  private final MatrixIdentifierRedactor redactor;
 
   /**
    * Resets the given chat to its next occurrence: the new Matrix room id becomes the canonical room
@@ -152,10 +154,21 @@ public class ChatReCreator {
    * Makes the next room hold exactly the people of the current one. A departure or join that did
    * not take the group lock (a native Matrix client, or a leave after a failed transfer) is picked
    * up here: the current room is read again until it has stopped changing.
+   *
+   * <p>The owner invites, so the owner is settled first: a room prepared by a failed stop belongs
+   * to whoever owned the group then, and an owner who took over since is not in it. The former
+   * owner is taken out only afterwards, like anyone else who left the current room.
    */
   private void reconcileNextRoom(
       Chat chat, String oldRoomId, String newRoomId, List<ResolvedRoomMember> current) {
     var owner = chat.getChatOwner().getMatrixUserId();
+    if (!groupChatMembershipService.ensureOwnerCanInvite(newRoomId, owner)) {
+      throw new InternalServerErrorException(
+          String.format(
+              "Could not settle the owner (membership and invite power) in the next occurrence"
+                  + " of group chat %s",
+              chat.getId()));
+    }
     var carried = new HashSet<String>();
     for (int pass = 0; pass < MAX_RECONCILE_PASSES; pass++) {
       var expected =
@@ -168,7 +181,7 @@ public class ChatReCreator {
           throw new InternalServerErrorException(
               String.format(
                   "Could not carry member %s into next occurrence of group chat %s",
-                  member, chat.getId()));
+                  redactor.pseudonym(member), chat.getId()));
         }
         carried.add(member);
       }
@@ -188,7 +201,7 @@ public class ChatReCreator {
           throw new InternalServerErrorException(
               String.format(
                   "Could not remove departed member %s from next occurrence of group chat %s",
-                  id, chat.getId()));
+                  redactor.pseudonym(id), chat.getId()));
         }
         carried.remove(id);
       }

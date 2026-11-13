@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.port.out;
 
+import de.caritas.cob.userservice.api.admin.service.search.InviteSearchSpecification;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteProvisioningStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose;
@@ -16,12 +17,15 @@ import java.util.Optional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
-public interface AccountInviteRepository extends JpaRepository<AccountInvite, Long> {
+public interface AccountInviteRepository
+    extends JpaRepository<AccountInvite, Long>, JpaSpecificationExecutor<AccountInvite> {
 
   boolean existsByQueuedTemplateIdAndStatus(Long templateId, AccountInviteStatus status);
 
@@ -330,54 +334,30 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       @Param("statuses") Collection<AccountInviteStatus> statuses,
       @Param("now") LocalDateTime now);
 
-  /**
-   * The {@code search} match against recipient email/first/last name and the {@code searchTenantId}
-   * exact tenant-ID match are two independent legs of the same query-box term
-   * (ORISO-UserService#479): the service lower-cases and trims the raw query once for {@code
-   * search}, and additionally parses it as a tenant ID for {@code searchTenantId} when it is purely
-   * numeric. A blank/absent query leaves both null, which short-circuits this clause to true and
-   * preserves the existing result set.
-   */
-  @Query(
-      "SELECT i FROM AccountInvite i"
-          + " WHERE (:tenantId IS NULL OR i.tenantId = :tenantId)"
-          + " AND (:targetRole IS NULL OR i.targetRole = :targetRole)"
-          + " AND (:status IS NULL OR i.status = :status)"
-          + " AND (:search IS NULL"
-          + "      OR LOWER(i.recipientEmail) LIKE CONCAT('%', :search, '%')"
-          + "      OR LOWER(i.firstName) LIKE CONCAT('%', :search, '%')"
-          + "      OR LOWER(i.lastName) LIKE CONCAT('%', :search, '%')"
-          + "      OR (:searchTenantId IS NOT NULL AND i.tenantId = :searchTenantId))"
-          + " ORDER BY i.createDate DESC")
-  Page<AccountInvite> findAllByFilters(
-      @Param("tenantId") Long tenantId,
-      @Param("targetRole") AccountInviteTargetRole targetRole,
-      @Param("status") AccountInviteStatus status,
-      @Param("search") String search,
-      @Param("searchTenantId") Long searchTenantId,
-      Pageable pageable);
+  /** Compatibility entry point; every word is matched before paging. */
+  default Page<AccountInvite> findAllByFilters(
+      Long tenantId,
+      AccountInviteTargetRole targetRole,
+      AccountInviteStatus status,
+      String search,
+      Long searchTenantId,
+      Pageable pageable) {
+    return findAll(
+        InviteSearchSpecification.matching(tenantId, targetRole, status, search, null), pageable);
+  }
 
-  /** {@link #findAllByFilters} narrowed to the given agencies, which are never empty. */
-  @Query(
-      "SELECT i FROM AccountInvite i"
-          + " WHERE i.agencyId IN :agencyIds"
-          + " AND (:tenantId IS NULL OR i.tenantId = :tenantId)"
-          + " AND (:targetRole IS NULL OR i.targetRole = :targetRole)"
-          + " AND (:status IS NULL OR i.status = :status)"
-          + " AND (:search IS NULL"
-          + "      OR LOWER(i.recipientEmail) LIKE CONCAT('%', :search, '%')"
-          + "      OR LOWER(i.firstName) LIKE CONCAT('%', :search, '%')"
-          + "      OR LOWER(i.lastName) LIKE CONCAT('%', :search, '%')"
-          + "      OR (:searchTenantId IS NOT NULL AND i.tenantId = :searchTenantId))"
-          + " ORDER BY i.createDate DESC")
-  Page<AccountInvite> findAllByFiltersWithinAgencies(
-      @Param("tenantId") Long tenantId,
-      @Param("targetRole") AccountInviteTargetRole targetRole,
-      @Param("status") AccountInviteStatus status,
-      @Param("search") String search,
-      @Param("searchTenantId") Long searchTenantId,
-      @Param("agencyIds") Collection<Long> agencyIds,
-      Pageable pageable);
+  default Page<AccountInvite> findAllByFiltersWithinAgencies(
+      Long tenantId,
+      AccountInviteTargetRole targetRole,
+      AccountInviteStatus status,
+      String search,
+      Long searchTenantId,
+      Collection<Long> agencyIds,
+      Pageable pageable) {
+    return findAll(
+        InviteSearchSpecification.matching(tenantId, targetRole, status, search, agencyIds),
+        pageable);
+  }
 
   /** Null {@code tenantId} matches any tenant; null {@code excludedId} excludes nothing. */
   @Query(
@@ -613,5 +593,56 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
   int markDpaSigned(
       @Param("tenantId") Long tenantId,
       @Param("targetRole") AccountInviteTargetRole targetRole,
+      @Param("signedAt") LocalDateTime signedAt);
+
+  // The same current account/tenant proof must hold when the candidate is selected and when the
+  // timestamp is written, as the authoritative owner read happens between those operations.
+  String DPA_RECONCILIATION_SCOPE =
+      """
+      i.status = ACCEPTED AND i.targetRole = TENANT_ADMIN
+      AND i.tenantId > 0 AND i.dpaSignedAt IS NULL
+      AND (i.acceptedByUserId IS NULL OR i.provisionedUserId IS NULL
+           OR i.acceptedByUserId = i.provisionedUserId)
+      AND EXISTS (
+        SELECT a.id FROM Admin a
+        WHERE a.id = COALESCE(i.provisionedUserId, i.acceptedByUserId)
+          AND a.tenantId = i.tenantId AND a.type = TENANT)
+      """;
+
+  interface DpaReconciliationCandidate {
+    Long getInviteId();
+
+    Long getTenantId();
+
+    String getActorId();
+  }
+
+  @Query("SELECT MAX(i.id) FROM AccountInvite i")
+  Optional<Long> findDpaReconciliationUpperBound();
+
+  @Query(
+      """
+      SELECT i.id AS inviteId, i.tenantId AS tenantId,
+             COALESCE(i.provisionedUserId, i.acceptedByUserId) AS actorId
+      FROM AccountInvite i WHERE i.id > :afterId AND i.id <= :throughId AND
+      """
+          + DPA_RECONCILIATION_SCOPE
+          + " ORDER BY i.id")
+  List<DpaReconciliationCandidate> findDpaReconciliationCandidates(
+      @Param("afterId") Long afterId, @Param("throughId") Long throughId, Pageable pageable);
+
+  @Transactional
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      """
+      UPDATE AccountInvite i SET i.dpaSignedAt = :signedAt
+      WHERE i.id = :inviteId AND i.tenantId = :tenantId
+        AND COALESCE(i.provisionedUserId, i.acceptedByUserId) = :actorId AND
+      """
+          + DPA_RECONCILIATION_SCOPE)
+  int reconcileDpaSigned(
+      @Param("inviteId") Long inviteId,
+      @Param("tenantId") Long tenantId,
+      @Param("actorId") String actorId,
       @Param("signedAt") LocalDateTime signedAt);
 }
