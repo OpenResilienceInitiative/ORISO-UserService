@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
+import de.caritas.cob.userservice.api.port.out.CommunicationStatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantMessageStatRepository;
 import de.caritas.cob.userservice.api.port.out.StatisticsSettingChangeRepository;
 import java.time.Clock;
@@ -23,6 +24,8 @@ import java.util.Properties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.io.ClassPathResource;
@@ -34,6 +37,7 @@ class StatisticsRetentionServiceTest {
 
   @Mock private ConsultantMessageStatRepository messageStatRepository;
   @Mock private StatisticsSettingChangeRepository settingChangeRepository;
+  @Mock private CommunicationStatRepository communicationStatRepository;
 
   private StatisticsRetentionService service;
 
@@ -41,7 +45,10 @@ class StatisticsRetentionServiceTest {
   void setUp() {
     service =
         new StatisticsRetentionService(
-            messageStatRepository, settingChangeRepository, Clock.fixed(NOW, ZoneOffset.UTC));
+            messageStatRepository,
+            communicationStatRepository,
+            settingChangeRepository,
+            Clock.fixed(NOW, ZoneOffset.UTC));
     setField(service, "messageCountRetentionDays", 731);
     setField(service, "settingChangeActorRetentionDays", 366);
     setField(service, "batchSize", 1000);
@@ -55,6 +62,27 @@ class StatisticsRetentionServiceTest {
     service.purgeExpiredStatistics();
 
     verify(messageStatRepository, times(3)).deleteBatchSentBefore(cutoff, 1000);
+  }
+
+  @Test
+  void purge_deletesCommunicationRowsOlderThanTheRetentionPeriod_inBatches() {
+    var cutoff = LocalDateTime.of(2024, 11, 2, 3, 30);
+    when(communicationStatRepository.deleteBatchOccurredBefore(cutoff, 1000)).thenReturn(1000, 3);
+
+    service.purgeExpiredStatistics();
+
+    verify(communicationStatRepository, times(2)).deleteBatchOccurredBefore(cutoff, 1000);
+  }
+
+  @Test
+  void purge_stillPurgesCommunicationRows_whenMessageCountPurgeFails() {
+    var cutoff = LocalDateTime.of(2024, 11, 2, 3, 30);
+    when(messageStatRepository.deleteBatchSentBefore(cutoff, 1000))
+        .thenThrow(new IllegalStateException("db down"));
+
+    service.purgeExpiredStatistics();
+
+    verify(communicationStatRepository).deleteBatchOccurredBefore(cutoff, 1000);
   }
 
   @Test
@@ -76,14 +104,15 @@ class StatisticsRetentionServiceTest {
     verify(settingChangeRepository, never()).delete(any());
   }
 
-  /** A misconfigured or empty value must never wipe the table. */
-  @Test
-  void purge_leavesMessageRowsAlone_when_theRetentionIsNotPositive() {
-    setField(service, "messageCountRetentionDays", 0);
+  /** A misconfigured or empty value must never wipe either table. */
+  @ParameterizedTest
+  @ValueSource(ints = {0, -1})
+  void purge_leavesMessageAndCommunicationRowsAlone_when_theRetentionIsNotPositive(int days) {
+    setField(service, "messageCountRetentionDays", days);
 
     service.purgeExpiredStatistics();
 
-    verifyNoInteractions(messageStatRepository);
+    verifyNoInteractions(messageStatRepository, communicationStatRepository);
     verify(settingChangeRepository).anonymizeActorBefore(any());
   }
 

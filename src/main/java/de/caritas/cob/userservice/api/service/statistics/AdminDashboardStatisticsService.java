@@ -2,11 +2,13 @@ package de.caritas.cob.userservice.api.service.statistics;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.model.CommunicationStat.Kind;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminStatisticsRepository;
 import de.caritas.cob.userservice.api.port.out.AdminStatisticsRepository.DailyCountProjection;
 import de.caritas.cob.userservice.api.port.out.AdminStatisticsRepository.GroupCountProjection;
 import de.caritas.cob.userservice.api.port.out.AdminStatisticsRepository.HourlyCountProjection;
+import de.caritas.cob.userservice.api.port.out.AdminStatisticsRepository.KindCountProjection;
 import de.caritas.cob.userservice.api.port.out.AdminStatisticsRepository.TopicCountProjection;
 import de.caritas.cob.userservice.api.service.statistics.settings.StatisticsSetting;
 import de.caritas.cob.userservice.api.service.statistics.settings.StatisticsSettingsService;
@@ -154,12 +156,38 @@ public class AdminDashboardStatisticsService {
       PeriodCounts sessionCountsByPeriod,
       PeriodCounts groupChatCountsByPeriod) {}
 
+  /**
+   * The four communication counts cover the current German calendar month (in a fixed stand: up to
+   * its reference day). They are boxed so a stand stored by an older release, which lacks them,
+   * still reads (as null); a freshly calculated target always carries a number, 0 included. Voice
+   * messages are not offered: session rooms are end-to-end encrypted, so the server cannot tell
+   * them apart from text messages.
+   */
   public record Metrics(
       long enquiriesCurrentMonth,
       long enquiriesPreviousMonth,
       long activeCases,
       Long activeConversationsToday,
-      long groupChatsTotal) {}
+      long groupChatsTotal,
+      Long messagesCounselorsCurrentMonth,
+      Long messagesAdviceSeekersCurrentMonth,
+      Long audioCallsCurrentMonth,
+      Long videoCallsCurrentMonth) {}
+
+  /** Raw current-month communication counts of one group, before suppression. */
+  private record CommunicationCounts(
+      long counsellorMessages, long adviceSeekerMessages, long audioCalls, long videoCalls) {
+
+    static final CommunicationCounts NONE = new CommunicationCounts(0, 0, 0, 0);
+
+    CommunicationCounts plus(CommunicationCounts other) {
+      return new CommunicationCounts(
+          counsellorMessages + other.counsellorMessages,
+          adviceSeekerMessages + other.adviceSeekerMessages,
+          audioCalls + other.audioCalls,
+          videoCalls + other.videoCalls);
+    }
+  }
 
   public record DailyCount(String date, long count) {}
 
@@ -186,7 +214,10 @@ public class AdminDashboardStatisticsService {
       LocalDateTime yearStart,
       LocalDateTime lastYearStart,
       List<TopicMonth> topicMonths,
-      boolean fixedStand) {}
+      boolean fixedStand,
+      // the German calendar month in stored (UTC) time; the communication counts promise it
+      LocalDateTime communicationMonthStart,
+      LocalDateTime communicationMonthEnd) {}
 
   private record TopicMonth(YearMonth month, LocalDateTime from, LocalDateTime to) {}
 
@@ -200,7 +231,8 @@ public class AdminDashboardStatisticsService {
       Map<String, Long> dailyNewSessions,
       Map<String, Map<Long, Long>> topicCountsByMonth,
       PeriodCounts sessionCountsByPeriod,
-      PeriodCounts groupChatCountsByPeriod) {}
+      PeriodCounts groupChatCountsByPeriod,
+      CommunicationCounts communication) {}
 
   public DashboardStatistics buildDashboard() {
     if (authenticatedUser.isPlatformAdmin()) {
@@ -290,7 +322,11 @@ public class AdminDashboardStatisticsService {
             metrics.enquiriesPreviousMonth(),
             metrics.activeCases(),
             null,
-            metrics.groupChatsTotal()),
+            metrics.groupChatsTotal(),
+            metrics.messagesCounselorsCurrentMonth(),
+            metrics.messagesAdviceSeekersCurrentMonth(),
+            metrics.audioCallsCurrentMonth(),
+            metrics.videoCallsCurrentMonth()),
         weekly ? List.of() : target.dailyNewSessions(),
         weekly ? toWeeks(target.dailyNewSessions()) : List.of(),
         target.monthlyTopTopics(),
@@ -519,7 +555,9 @@ public class AdminDashboardStatisticsService {
             adminStatisticsRepository::countDailyNewSessionsByTenant,
             adminStatisticsRepository::countHourlyNewSessionsByTenant,
             adminStatisticsRepository::countSessionTopicsByTenant,
-            adminStatisticsRepository::countGroupChatsByTenant);
+            adminStatisticsRepository::countGroupChatsByTenant,
+            adminStatisticsRepository::countCounsellorMessagesByTenant,
+            adminStatisticsRepository::countCommunicationByTenant);
 
     var tenantGroups = groups.entrySet().stream().filter(entry -> entry.getKey() != null).toList();
 
@@ -651,7 +689,9 @@ public class AdminDashboardStatisticsService {
         from -> adminStatisticsRepository.countDailyNewSessionsByAgency(tenantId, from),
         (from, to) -> adminStatisticsRepository.countHourlyNewSessionsByAgency(tenantId, from, to),
         (from, to) -> adminStatisticsRepository.countSessionTopicsByAgency(tenantId, from, to),
-        (from, to) -> adminStatisticsRepository.countGroupChatsByAgency(tenantId, from, to));
+        (from, to) -> adminStatisticsRepository.countGroupChatsByAgency(tenantId, from, to),
+        (from, to) -> adminStatisticsRepository.countCounsellorMessagesByAgency(tenantId, from, to),
+        (from, to) -> adminStatisticsRepository.countCommunicationByAgency(tenantId, from, to));
   }
 
   private interface RangeQuery {
@@ -674,6 +714,10 @@ public class AdminDashboardStatisticsService {
     List<TopicCountProjection> query(LocalDateTime from, LocalDateTime to);
   }
 
+  private interface KindQuery {
+    List<KindCountProjection> query(LocalDateTime from, LocalDateTime to);
+  }
+
   private interface PlainQuery {
     List<GroupCountProjection> query();
   }
@@ -688,7 +732,9 @@ public class AdminDashboardStatisticsService {
       DailyQuery daily,
       HourlyQuery hourly,
       TopicQuery topics,
-      RangeQuery groupChats) {
+      RangeQuery groupChats,
+      RangeQuery counsellorMessages,
+      KindQuery communication) {
 
     var counselorCounts = toCountMap(counselors.query());
     var enquiriesCurrent =
@@ -704,6 +750,7 @@ public class AdminDashboardStatisticsService {
             ? toGermanDays(hourly.query(ranges.chartStart(), ranges.tomorrowStart()))
             : toDailyMap(daily.query(ranges.chartStart()));
     var topicDistributions = collectTopicDistributions(ranges, topics);
+    var communicationCounts = collectCommunicationCounts(ranges, counsellorMessages, communication);
 
     var groupIds = new HashSet<Long>();
     groupIds.addAll(counselorCounts.keySet());
@@ -714,6 +761,7 @@ public class AdminDashboardStatisticsService {
     groupIds.addAll(chatPeriods.keySet());
     groupIds.addAll(dailyCounts.keySet());
     groupIds.addAll(topicDistributions.keySet());
+    groupIds.addAll(communicationCounts.keySet());
 
     var groups = new LinkedHashMap<Long, GroupData>();
     for (var groupId : groupIds) {
@@ -728,9 +776,40 @@ public class AdminDashboardStatisticsService {
               dailyCounts.getOrDefault(groupId, Map.of()),
               topicDistributions.getOrDefault(groupId, Map.of()),
               sessionPeriods.getOrDefault(groupId, zeroPeriods()),
-              chatPeriods.getOrDefault(groupId, zeroPeriods())));
+              chatPeriods.getOrDefault(groupId, zeroPeriods()),
+              communicationCounts.getOrDefault(groupId, CommunicationCounts.NONE)));
     }
     return groups;
+  }
+
+  /** Current-month counsellor messages, advice-seeker messages and calls per group. */
+  private static Map<Long, CommunicationCounts> collectCommunicationCounts(
+      DateRanges ranges, RangeQuery counsellorMessages, KindQuery communication) {
+    var result = new HashMap<Long, CommunicationCounts>();
+    var from = ranges.communicationMonthStart();
+    var to = ranges.communicationMonthEnd();
+    for (var row : counsellorMessages.query(from, to)) {
+      result.merge(
+          row.getGroupId(),
+          new CommunicationCounts(row.getTotal() == null ? 0L : row.getTotal(), 0, 0, 0),
+          CommunicationCounts::plus);
+    }
+    for (var row : communication.query(from, to)) {
+      long total = row.getTotal() == null ? 0L : row.getTotal();
+      CommunicationCounts counts;
+      try {
+        counts =
+            switch (Kind.valueOf(row.getKind())) {
+              case ADVICE_SEEKER_MESSAGE -> new CommunicationCounts(0, total, 0, 0);
+              case AUDIO_CALL -> new CommunicationCounts(0, 0, total, 0);
+              case VIDEO_CALL -> new CommunicationCounts(0, 0, 0, total);
+            };
+      } catch (IllegalArgumentException | NullPointerException unknownKind) {
+        continue;
+      }
+      result.merge(row.getGroupId(), counts, CommunicationCounts::plus);
+    }
+    return result;
   }
 
   private Map<Long, PeriodCounts> collectPeriodCounts(DateRanges ranges, RangeQuery query) {
@@ -824,6 +903,7 @@ public class AdminDashboardStatisticsService {
     long sessionsLastYear = 0;
     var daily = new TreeMap<String, Long>();
     var topicCountsByMonth = new HashMap<String, Map<Long, Long>>();
+    var communication = CommunicationCounts.NONE;
 
     for (var group : groups) {
       enquiriesCurrent += group.enquiriesCurrentMonth();
@@ -836,6 +916,7 @@ public class AdminDashboardStatisticsService {
       sessionsTotal += group.sessionCountsByPeriod().total();
       sessionsThisYear += group.sessionCountsByPeriod().thisYear();
       sessionsLastYear += group.sessionCountsByPeriod().lastYear();
+      communication = communication.plus(group.communication());
       group.dailyNewSessions().forEach((day, count) -> daily.merge(day, count, Long::sum));
       group
           .topicCountsByMonth()
@@ -863,7 +944,8 @@ public class AdminDashboardStatisticsService {
             sessionsTotal,
             sessionsThisYear,
             sessionsLastYear),
-        chatPeriods);
+        chatPeriods,
+        communication);
   }
 
   private TargetStatistics toTargetStatistics(
@@ -885,7 +967,11 @@ public class AdminDashboardStatisticsService {
             data.enquiriesPreviousMonth(),
             data.activeCases(),
             data.activeConversationsToday(),
-            data.groupChatCountsByPeriod().total());
+            data.groupChatCountsByPeriod().total(),
+            data.communication().counsellorMessages(),
+            data.communication().adviceSeekerMessages(),
+            data.communication().audioCalls(),
+            data.communication().videoCalls());
     var daily =
         data.dailyNewSessions().entrySet().stream()
             .sorted(Map.Entry.comparingByKey())
@@ -939,6 +1025,7 @@ public class AdminDashboardStatisticsService {
 
   private DateRanges buildLiveRanges(TimeWindows windows) {
     var today = LocalDate.now(clock);
+    var germanMonth = YearMonth.from(clock.instant().atZone(GERMAN_ZONE));
     var weekStart = today.with(DayOfWeek.MONDAY);
     var currentMonth = YearMonth.from(today);
     var topicMonths = new ArrayList<TopicMonth>();
@@ -961,7 +1048,9 @@ public class AdminDashboardStatisticsService {
         today.withDayOfYear(1).atStartOfDay(),
         today.withDayOfYear(1).minusYears(1).atStartOfDay(),
         topicMonths,
-        false);
+        false,
+        germanDayStart(germanMonth.atDay(1)),
+        germanDayStart(germanMonth.plusMonths(1).atDay(1)));
   }
 
   /**
@@ -996,7 +1085,9 @@ public class AdminDashboardStatisticsService {
         germanDayStart(yearStart),
         germanDayStart(yearStart.minusYears(1)),
         topicMonths,
-        true);
+        true,
+        germanDayStart(currentMonth.atDay(1)),
+        end);
   }
 
   /** Where a German calendar day starts in the stored time (UTC). */
