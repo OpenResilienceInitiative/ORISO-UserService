@@ -579,7 +579,9 @@ public class SecurityConfig {
                     "/users/chat/new",
                     "/users/chat/v2/new",
                     "/users/chat/internal-subset",
-                    "/users/chat/internal-subset/recipients")
+                    "/users/chat/internal-subset/recipients",
+                    "/users/chat/internal-subset/{chatId:[0-9]+}/recipients",
+                    "/users/chat/internal-subset/{chatId:[0-9]+}/participants")
                 .hasAuthority(CREATE_NEW_CHAT)
                 .requestMatchers("/users/chat/{chatId:[0-9]+}/start")
                 .hasAuthority(START_CHAT)
