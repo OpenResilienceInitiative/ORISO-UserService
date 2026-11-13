@@ -64,6 +64,7 @@ public class MatrixSessionCallBindingService {
   private final MatrixSynapseService matrix;
   private final MatrixCallLifecycleService lifecycle;
   private final OrisoRoomRegistry rooms;
+  private final SessionCallAuthority authority;
   private final de.caritas.cob.userservice.api.port.out.MatrixCallObservationRepository
       observations;
   private final PlatformTransactionManager transactionManager;
@@ -104,7 +105,9 @@ public class MatrixSessionCallBindingService {
     // A renewal of this counsellor's live binding needs no Matrix lookup; an ended or foreign
     // binding is never confirmed or replaced.
     var known = bindings.findBySourceRoomIdAndCallId(sourceRoomId, callId).orElse(null);
-    if (known != null) {
+    // FE#2209 review: a binding somebody else's plaintext invite created grants nothing and is
+    // taken over below; only the counsellor's own binding answers here.
+    if (known != null && authority.grantsGuestAuthority(known)) {
       return sameCall(known, conversation, mediaRoomId, caller)
           && known.getEndedAt() == null
           && known.isLive(System.currentTimeMillis());
@@ -241,6 +244,9 @@ public class MatrixSessionCallBindingService {
     String sourceRoomId = conversation.getMatrixRoomId();
     long now = System.currentTimeMillis();
     var existing = bindings.findBySourceRoomIdAndCallId(sourceRoomId, callId).orElse(null);
+    if (existing != null && !authority.grantsGuestAuthority(existing)) {
+      return takeOver(existing, sourceRoomId, callId, mediaRoomId, caller, video, invitees, now);
+    }
     if (existing != null) {
       // Renewal of the same live call by the same counsellor; anything else is never replaced.
       return sameCall(existing, conversation, mediaRoomId, caller)
@@ -268,6 +274,32 @@ public class MatrixSessionCallBindingService {
             .invitedMatrixIds(invitees)
             .build();
     return callBindings.registerWhileSourceLocked(proposed) ? Result.CREATED : Result.REFUSED;
+  }
+
+  /**
+   * FE#2209 review: the same call (source room and call id) already has a binding from somebody
+   * else's plaintext invite. It never blocks the assigned counsellor: the row is taken over in
+   * place (so the unique key on source room and call id holds) and points at the counsellor's
+   * verified call room from now on. Refused only when that call room belongs to another binding, or
+   * the call was already ended.
+   */
+  private Result takeOver(
+      MatrixCallBinding existing,
+      String sourceRoomId,
+      String callId,
+      String mediaRoomId,
+      String caller,
+      boolean video,
+      Set<String> invitees,
+      long now) {
+    var owner = bindings.findByMediaRoomId(mediaRoomId).orElse(null);
+    if (owner != null && !Objects.equals(owner.getId(), existing.getId())) return Result.REFUSED;
+    if (endedByObservation(sourceRoomId, callId, caller, now)) return Result.REFUSED;
+    var locked = bindings.lockByMediaRoomId(existing.getMediaRoomId()).orElse(null);
+    if (locked == null || !Objects.equals(locked.getId(), existing.getId())) return Result.REFUSED;
+    locked.takeOver(caller, mediaRoomId, now, now + START_GRACE_MILLIS, video, invitees);
+    bindings.saveAndFlush(locked);
+    return Result.CREATED;
   }
 
   private boolean endedByObservation(String sourceRoomId, String callId, String caller, long now) {

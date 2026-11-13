@@ -407,7 +407,10 @@ public class CallShareLinkService {
         || !InviteLinkStatus.ACTIVE.name().equals(link.getStatus())
         || outlived(link)
         || !hasSeparateMediaRoom(binding)
-        || !isLive(binding, System.currentTimeMillis())) {
+        || !isLive(binding, System.currentTimeMillis())
+        // FE#2209 review: a 1:1 session call placed by anybody but its assigned, active
+        // counsellor rings, but never takes guests, knocks or links.
+        || !callGuests.grantsGuestAuthority(binding)) {
       throw new CallShareLinkEndedException();
     }
   }

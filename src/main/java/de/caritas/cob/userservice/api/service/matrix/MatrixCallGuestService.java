@@ -34,6 +34,7 @@ public class MatrixCallGuestService {
   private final ConsultantRepository consultants;
   private final MatrixSynapseService matrix;
   private final AccountInactivityService accountLifecycle;
+  private final SessionCallAuthority authority;
 
   /** Failed removals after which every further failure is logged at ERROR for alerting. */
   public static final int REVOKE_ALERT_THRESHOLD = 10;
@@ -113,7 +114,8 @@ public class MatrixCallGuestService {
             .flatMap(value -> bindings.lockByMediaRoomId(value.getMediaRoomId()))
             .filter(value -> value.getEndedAt() == null)
             .orElse(null);
-    if (binding == null) return CounsellorCall.of(Outcome.NOT_FOUND);
+    if (binding == null || !authority.grantsGuestAuthority(binding))
+      return CounsellorCall.of(Outcome.NOT_FOUND);
     // FE#2209 review (Frank): any counsellor of the Träger who is in the call itself, with a live
     // MatrixRTC membership in its call room, may open it to somebody else.
     if (!binding.isInCall(counsellor, System.currentTimeMillis()))
@@ -232,6 +234,14 @@ public class MatrixCallGuestService {
     if (!matrix.clearUserPowerLevel(room, guestMatrixId, token))
       log.warn("Call guest power level could not be cleared in call room {}", room);
     return true;
+  }
+
+  /**
+   * FE#2209 review: whether this binding backs share links, knocks and seats at all. A 1:1 session
+   * call does only while its caller is the session's assigned, active counsellor.
+   */
+  public boolean grantsGuestAuthority(MatrixCallBinding binding) {
+    return authority.grantsGuestAuthority(binding);
   }
 
   /** True when a counsellor removed the person from this call; they cannot come back (#1487). */

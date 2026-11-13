@@ -94,6 +94,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @TestPropertySource(properties = {"spring.profiles.active=testing,call-share-link-fixture"})
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({
+  de.caritas.cob.userservice.api.service.matrix.SessionCallAuthority.class,
   EventNotificationService.class,
   ConsultantDisplayNameResolver.class,
   EventNotificationDeduplicationWriter.class,
@@ -109,6 +110,7 @@ import org.springframework.transaction.support.TransactionTemplate;
   de.caritas.cob.userservice.api.service.matrix.MatrixCallBindingService.class,
   de.caritas.cob.userservice.api.service.matrix.MatrixCallBindingWriter.class,
   de.caritas.cob.userservice.api.service.matrix.OrisoRoomRegistry.class,
+  de.caritas.cob.userservice.api.service.matrix.MatrixCallInviteNotificationService.class,
   CallShareLinkIT.AccountFixture.class
 })
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -152,6 +154,9 @@ class CallShareLinkIT {
   @Autowired private CallShareLinkSweep sweep;
   @Autowired private DirectCallKnockService knocks;
   @Autowired private MatrixCallGuestService callGuests;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.service.matrix.MatrixCallInviteNotificationService invites;
 
   @Autowired
   private de.caritas.cob.userservice.api.service.matrix.MatrixSessionCallBindingService
@@ -658,6 +663,132 @@ class CallShareLinkIT {
     assertThat(knockRows.findById(knockId).orElseThrow().getDecidedBy())
         .isEqualTo(colleague.getId());
     assertThat(shareLinks.join(link.getToken(), guest).callAdmitted()).isTrue();
+  }
+
+  // --- FE#2209 decision of 13 Nov: any member's session call rings; only the assigned
+  // counsellor's binding opens it to guests ---
+
+  private Map<String, Object> plaintextInvite(String sender, String callId, String media) {
+    return Map.of(
+        "type",
+        "org.oriso.call.invite",
+        "sender",
+        sender,
+        "event_id",
+        "$" + callId + sender,
+        "origin_server_ts",
+        System.currentTimeMillis(),
+        "content",
+        Map.of("call_id", callId, "call_room_id", media, "lifetime", 60000, "is_video", true));
+  }
+
+  private int invitationsOf(String recipientId, String callId) {
+    return new JdbcTemplate(dataSource)
+        .queryForObject(
+            "SELECT COUNT(*) FROM event_notification WHERE recipient_user_id = ?"
+                + " AND event_type = 'call.invited' AND params LIKE ?",
+            Integer.class,
+            recipientId,
+            "%" + callId + "%");
+  }
+
+  @Test
+  void anAskersPlaintextInviteRingsButYieldsNoShareLinkKnockOrSeat() throws Exception {
+    String askerMedia = "!asker-media:example";
+    when(matrix.getCallRoomBinding(askerMedia, ASKER))
+        .thenReturn(Optional.of(Map.of("call_id", "asker-call", "source_room_id", SOURCE)));
+    when(matrix.ensureAdminInRoom(anyString(), anyString())).thenReturn(true);
+
+    assertThat(invites.handle(SOURCE, plaintextInvite(ASKER, "asker-call", askerMedia))).isTrue();
+
+    // Rings as before: the counsellor has the invitation, and the call has its lifecycle record.
+    assertThat(invitationsOf(counsellor.getId(), "asker-call")).isPositive();
+    var askers = bindings.findBySourceRoomIdAndCallId(SOURCE, "asker-call").orElseThrow();
+    assertThat(askers.getCallerMatrixId()).isEqualTo(ASKER);
+    // The counsellor is even in that call; still no link, no knock, no seat.
+    inCall(askerMedia, counsellor.getMatrixUserId(), System.currentTimeMillis() + 600000);
+    assertThatThrownBy(
+            () -> shareLinks.create(7L, counsellor.getId(), SOURCE, "asker-call", null, null))
+        .isInstanceOf(NotFoundException.class);
+    assertThat(
+            callGuests
+                .admitAs(7L, counsellor.getId(), SOURCE, "asker-call", "share-guest")
+                .outcome())
+        .isEqualTo(MatrixCallGuestService.Outcome.NOT_FOUND);
+    verify(matrix, never()).inviteUserToRoom(eq(askerMedia), anyString(), anyString());
+  }
+
+  @Test
+  void afterAnAskersInviteTheCounsellorsBindingTakesOverAndGuestsLandInTheCounsellorsRoom()
+      throws Exception {
+    String askerMedia = "!asker-media-2:example";
+    String counsellorMedia = "!counsellor-media-2:example";
+    String caller = counsellor.getMatrixUserId();
+    when(matrix.getCallRoomBinding(askerMedia, ASKER))
+        .thenReturn(Optional.of(Map.of("call_id", "taken-call", "source_room_id", SOURCE)));
+    when(matrix.getCallRoomBinding(counsellorMedia, caller))
+        .thenReturn(Optional.of(Map.of("call_id", "taken-call", "source_room_id", SOURCE)));
+    when(matrix.getCallRoomOrigin(counsellorMedia, caller))
+        .thenReturn(Optional.of(new MatrixSynapseService.CallRoomOrigin(caller, caller)));
+    when(matrix.ensureAdminInRoom(anyString(), anyString())).thenReturn(true);
+    when(matrix.getRoomMembership(eq(counsellorMedia), anyString(), eq("c-token")))
+        .thenReturn(Optional.of("leave"));
+    assertThat(invites.handle(SOURCE, plaintextInvite(ASKER, "taken-call", askerMedia))).isTrue();
+    long id = bindings.findBySourceRoomIdAndCallId(SOURCE, "taken-call").orElseThrow().getId();
+
+    assertThat(
+            sessionBindings.bind(
+                actor(counsellor.getId(), "consultant"),
+                SOURCE,
+                "taken-call",
+                counsellorMedia,
+                true))
+        .isTrue();
+
+    var taken = bindings.findBySourceRoomIdAndCallId(SOURCE, "taken-call").orElseThrow();
+    assertThat(taken.getId()).as("the same row, so the unique key holds").isEqualTo(id);
+    assertThat(taken.getCallerMatrixId()).isEqualTo(caller);
+    assertThat(taken.getMediaRoomId()).isEqualTo(counsellorMedia);
+    assertThat(bindings.findByMediaRoomId(askerMedia)).isEmpty();
+    inCall(counsellorMedia, caller, System.currentTimeMillis() + 600000);
+    var link = shareLinks.create(7L, counsellor.getId(), SOURCE, "taken-call", null, null).link();
+    var guest = users.findById("share-guest").orElseThrow();
+    var knockId = shareLinks.join(link.getToken(), guest).knockId();
+    var counsellorEntity = consultants.findById(counsellor.getId()).orElseThrow();
+    transaction.executeWithoutResult(s -> knocks.admit(knockId, counsellorEntity));
+    var seated = shareLinks.join(link.getToken(), guest);
+    assertThat(seated.callAdmitted()).isTrue();
+    assertThat(seated.callRoomId()).isEqualTo(counsellorMedia);
+    verify(matrix).inviteUserToRoom(counsellorMedia, GUEST, "c-token");
+    verify(matrix, never()).inviteUserToRoom(eq(askerMedia), anyString(), anyString());
+  }
+
+  @Test
+  void anUnassignedCounsellorsInviteRingsWithoutAuthority_ButTheyMayUseTheAssignedOnesBinding()
+      throws Exception {
+    String colleagueMedia = "!colleague-media:example";
+    String colleagueId = colleague.getMatrixUserId();
+    var members = List.of(ASKER, counsellor.getMatrixUserId(), colleagueId);
+    when(matrix.getCallRoomMembers(SOURCE)).thenReturn(Optional.of(members));
+    when(matrix.getRoomMembers(SOURCE)).thenReturn(Optional.of(members));
+    when(matrix.getCallRoomBinding(colleagueMedia, colleagueId))
+        .thenReturn(Optional.of(Map.of("call_id", "team-call", "source_room_id", SOURCE)));
+    when(matrix.ensureAdminInRoom(anyString(), anyString())).thenReturn(true);
+    when(matrix.loginAsUserAccessToken(colleagueId)).thenReturn("c-token");
+
+    assertThat(invites.handle(SOURCE, plaintextInvite(colleagueId, "team-call", colleagueMedia)))
+        .isTrue();
+    assertThat(invitationsOf(counsellor.getId(), "team-call")).isPositive();
+    inCall(colleagueMedia, colleagueId, System.currentTimeMillis() + 600000);
+    assertThatThrownBy(
+            () -> shareLinks.create(7L, colleague.getId(), SOURCE, "team-call", null, null))
+        .isInstanceOf(NotFoundException.class);
+
+    // The assigned counsellor's own call (the fixture's running binding): the colleague in it may
+    // open it to guests.
+    inCall(MEDIA, colleagueId, System.currentTimeMillis() + 600000);
+    assertThat(shareLinks.create(7L, colleague.getId(), SOURCE, "share-call", null, null).link())
+        .isNotNull();
   }
 
   /**

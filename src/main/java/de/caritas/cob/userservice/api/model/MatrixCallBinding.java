@@ -117,6 +117,33 @@ public class MatrixCallBinding {
                     matrixId.equals(device.getSenderMatrixId()) && device.getExpiresAt() > now);
   }
 
+  /**
+   * FE#2209 review: the session's assigned counsellor takes over a binding that somebody else's
+   * plaintext invite created for the same call (same source room and call id, so the unique key
+   * stays). It becomes a fresh, not yet observed call in the counsellor's call room; nothing of the
+   * other call room carries over.
+   */
+  public void takeOver(
+      String caller,
+      String mediaRoomId,
+      long now,
+      long inviteExpiresAt,
+      boolean video,
+      java.util.Set<String> invitees) {
+    this.callerMatrixId = caller;
+    this.mediaRoomId = mediaRoomId;
+    this.invitedAt = now;
+    this.inviteExpiresAt = inviteExpiresAt;
+    this.video = video;
+    this.invitedMatrixIds.clear();
+    this.invitedMatrixIds.addAll(invitees);
+    this.devices.clear();
+    this.startedAt = null;
+    this.endedAt = null;
+    this.mediaObservedAt = null;
+    this.nextObservationAttemptAt = null;
+  }
+
   public void finish(long timestamp) {
     if (endedAt == null) endedAt = Math.max(startedAt == null ? invitedAt : startedAt, timestamp);
   }

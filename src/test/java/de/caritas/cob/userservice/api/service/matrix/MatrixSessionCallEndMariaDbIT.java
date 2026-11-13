@@ -57,6 +57,7 @@ import org.testcontainers.containers.MariaDBContainer;
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({
+  de.caritas.cob.userservice.api.service.matrix.SessionCallAuthority.class,
   MatrixCallObservationService.class,
   MatrixSessionCallBindingService.class,
   MatrixCallBindingService.class,
@@ -104,6 +105,10 @@ class MatrixSessionCallEndMariaDbIT {
   @MockitoBean private MatrixSynapseService matrix;
   @MockitoBean private EventNotificationService notifications;
   @MockitoBean private MatrixCallLifecycleService lifecycle;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+      accountLifecycle;
 
   private String source;
   private String media;

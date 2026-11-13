@@ -42,6 +42,7 @@ class MatrixCallGuestServiceTest {
   private final ConsultantRepository consultants = mock(ConsultantRepository.class);
   private final MatrixSynapseService matrix = mock(MatrixSynapseService.class);
   private final AccountInactivityService accounts = mock(AccountInactivityService.class);
+  private final SessionCallAuthority authority = mock(SessionCallAuthority.class);
   private final List<MatrixCallGuest> saved = new ArrayList<>();
 
   private MatrixCallGuestService service;
@@ -52,7 +53,7 @@ class MatrixCallGuestServiceTest {
   void setUp() throws Exception {
     service =
         new MatrixCallGuestService(
-            bindings, guests, conversations, users, consultants, matrix, accounts);
+            bindings, guests, conversations, users, consultants, matrix, accounts, authority);
     counsellor = new AuthenticatedUser();
     counsellor.setUserId("counsellor");
     counsellor.setTenantId(7L);
@@ -70,6 +71,7 @@ class MatrixCallGuestServiceTest {
     when(bindings.lockByMediaRoomId(MEDIA)).thenAnswer(i -> Optional.of(binding));
     when(matrix.loginAsUserAccessToken(COUNSELLOR)).thenReturn("counsellor-token");
     when(accounts.snapshot(anyString())).thenReturn(Optional.empty());
+    when(authority.grantsGuestAuthority(any())).thenReturn(true);
     lenient()
         .when(guests.saveAndFlush(any(MatrixCallGuest.class)))
         .thenAnswer(

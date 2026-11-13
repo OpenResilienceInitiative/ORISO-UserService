@@ -69,6 +69,7 @@ class CallShareLinkServiceTest {
 
   @BeforeEach
   void setUp() {
+    org.mockito.Mockito.lenient().when(callGuests.grantsGuestAuthority(any())).thenReturn(true);
     useBinding(runningCall(500L, null, MEDIA));
     var session = new Session();
     session.setAgencyId(99L);

@@ -51,6 +51,7 @@ class MatrixSessionCallBindingServiceTest {
   private final MatrixCallBindingService callBindings = mock(MatrixCallBindingService.class);
   private final MatrixCallLifecycleService lifecycle = mock(MatrixCallLifecycleService.class);
   private final OrisoRoomRegistry rooms = mock(OrisoRoomRegistry.class);
+  private final SessionCallAuthority authority = mock(SessionCallAuthority.class);
   private final de.caritas.cob.userservice.api.port.out.MatrixCallObservationRepository
       observations =
           mock(de.caritas.cob.userservice.api.port.out.MatrixCallObservationRepository.class);
@@ -82,6 +83,7 @@ class MatrixSessionCallBindingServiceTest {
             matrix,
             lifecycle,
             rooms,
+            authority,
             observations,
             tx);
     var conversation = new MatrixCallConversation(SOURCE, TENANT, SESSION, null);
@@ -116,6 +118,11 @@ class MatrixSessionCallBindingServiceTest {
     when(bindings.findByMediaRoomId(anyString())).thenReturn(Optional.empty());
     when(callBindings.registerWhileSourceLocked(any())).thenReturn(true);
     when(lifecycle.isActiveRecipient(anyString())).thenReturn(true);
+    // Only the session's assigned counsellor's binding carries authority (SessionCallAuthority).
+    when(authority.grantsGuestAuthority(any()))
+        .thenAnswer(
+            call ->
+                COUNSELLOR.equals(((MatrixCallBinding) call.getArgument(0)).getCallerMatrixId()));
   }
 
   @Test
@@ -269,7 +276,12 @@ class MatrixSessionCallBindingServiceTest {
   }
 
   private static MatrixCallBinding existing(String media, String caller) {
+    return existing(null, media, caller);
+  }
+
+  private static MatrixCallBinding existing(Long id, String media, String caller) {
     return MatrixCallBinding.builder()
+        .id(id)
         .sourceRoomId(SOURCE)
         .callId("call")
         .mediaRoomId(media)
@@ -386,11 +398,33 @@ class MatrixSessionCallBindingServiceTest {
   }
 
   @Test
-  void anExistingBindingForTheSameCallRoomButAnotherCallerOrSessionIsRefused() {
-    when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call"))
-        .thenReturn(Optional.of(existing(MEDIA, OTHER_COUNSELLOR)));
-    assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isFalse();
+  void anAuthorityLessBindingIsTakenOverInPlaceByTheAssignedCounsellor() {
+    // FE#2209 decision: an asker's (or unassigned colleague's) invite never blocks bind().
+    var askers = existing(42L, "!asker-media:example", ASKER);
+    when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(askers));
+    when(bindings.lockByMediaRoomId("!asker-media:example")).thenReturn(Optional.of(askers));
 
+    assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isTrue();
+
+    verify(bindings).saveAndFlush(askers);
+    assertThat(askers.getId()).isEqualTo(42L);
+    assertThat(askers.getCallerMatrixId()).isEqualTo(COUNSELLOR);
+    assertThat(askers.getMediaRoomId()).isEqualTo(MEDIA);
+    verify(callBindings, never()).registerWhileSourceLocked(any());
+  }
+
+  @Test
+  void aTakeOverIsRefusedWhenAnotherBindingOwnsTheCounsellorsCallRoom() {
+    var askers = existing(42L, "!asker-media:example", ASKER);
+    var owner = existing(7L, MEDIA, COUNSELLOR);
+    when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(askers));
+    when(bindings.findByMediaRoomId(MEDIA)).thenReturn(Optional.of(owner));
+    assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isFalse();
+    verify(bindings, never()).saveAndFlush(any());
+  }
+
+  @Test
+  void anExistingBindingForTheSameCallRoomButAnotherSessionIsRefused() {
     var otherSession =
         MatrixCallBinding.builder()
             .sourceRoomId(SOURCE)
