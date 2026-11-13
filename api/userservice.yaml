@@ -3612,6 +3612,10 @@ components:
         active: {type: boolean}
         admission: {type: string, enum: [DIRECT, KNOCK]}
         createDate: {type: string, format: date-time}
+        scheduledAt:
+          type: string
+          format: date-time
+          description: Optional date and time the counsellor noted for the link (ORISO-Frontend#2142). Informational only; it does not limit when the link works.
     CreateDirectLinkDTO:
       type: object
       required: [medium, topicId]
@@ -3626,6 +3630,10 @@ components:
           type: integer
           format: int64
           description: Required only when the caller works for more than one Beratungsstelle
+        scheduledAt:
+          type: string
+          format: date-time
+          description: Optional informational date and time (ORISO-Frontend#2142)
     UpdateDirectLinkDTO:
       type: object
       description: Every field is optional; absent fields stay unchanged
@@ -3634,6 +3642,13 @@ components:
         topicId: {type: integer, format: int64}
         temporary: {type: boolean}
         active: {type: boolean}
+        scheduledAt:
+          type: string
+          format: date-time
+          description: New informational date and time (ORISO-Frontend#2142)
+        clearScheduledAt:
+          type: boolean
+          description: true removes the date and time; must not be combined with scheduledAt
     DirectLinkConversationDTO:
       type: object
       required: [sessionId, medium, admission, created]
