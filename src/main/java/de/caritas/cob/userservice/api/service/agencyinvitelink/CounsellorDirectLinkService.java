@@ -85,6 +85,7 @@ public class CounsellorDirectLinkService {
             .anonymity(InviteLinkAnonymity.FULL.name())
             .consultantId(owner.getId())
             .name(normalizeName(cmd.name()))
+            .scheduledAt(cmd.scheduledAt())
             .temporaryAccount(cmd.temporary() != null ? cmd.temporary() : defaultTemporary(medium))
             .createdByUserId(owner.getId())
             .createdByUsername(owner.getUsername())
@@ -102,6 +103,14 @@ public class CounsellorDirectLinkService {
     }
     if (cmd.name() != null) {
       link.setName(normalizeName(cmd.name()));
+    }
+    if (cmd.clearScheduledAt() && cmd.scheduledAt() != null) {
+      throw new BadRequestException("scheduledAt and clearScheduledAt cannot be combined");
+    }
+    if (cmd.clearScheduledAt()) {
+      link.setScheduledAt(null);
+    } else if (cmd.scheduledAt() != null) {
+      link.setScheduledAt(cmd.scheduledAt());
     }
     if (cmd.topicId() != null) {
       requireTopic(cmd.topicId());
@@ -279,10 +288,37 @@ public class CounsellorDirectLinkService {
     return Base64.getUrlEncoder().withoutPadding().encodeToString(buf);
   }
 
+  /** {@code scheduledAt} is UTC and informational only (ORISO-Frontend#2142). */
   public record CreateCommand(
-      InviteLinkChatType medium, Long topicId, String name, Boolean temporary, Long agencyId) {}
+      InviteLinkChatType medium,
+      Long topicId,
+      String name,
+      Boolean temporary,
+      Long agencyId,
+      LocalDateTime scheduledAt) {
 
-  public record UpdateCommand(String name, Long topicId, Boolean temporary, Boolean active) {}
+    public CreateCommand(
+        InviteLinkChatType medium, Long topicId, String name, Boolean temporary, Long agencyId) {
+      this(medium, topicId, name, temporary, agencyId, null);
+    }
+  }
+
+  /**
+   * Absent fields stay unchanged. {@code clearScheduledAt} removes the date, since a missing {@code
+   * scheduledAt} means "keep it".
+   */
+  public record UpdateCommand(
+      String name,
+      Long topicId,
+      Boolean temporary,
+      Boolean active,
+      LocalDateTime scheduledAt,
+      boolean clearScheduledAt) {
+
+    public UpdateCommand(String name, Long topicId, Boolean temporary, Boolean active) {
+      this(name, topicId, temporary, active, null, false);
+    }
+  }
 
   public record StartedConversation(
       Long sessionId,
