@@ -67,7 +67,9 @@ class AskerAdminSearchServiceTest {
             "bert",
             7L,
             LocalDateTime.of(2026, 11, 12, 22, 0),
-            DeletionLifecycleState.READ_ONLY_SAFEGUARD);
+            DeletionLifecycleState.HARD_DELETE_PARTIAL_FAILURE);
+    marked.setDeletionFailureReason("MATRIX: Unable to delete Matrix user account");
+    marked.setDeletionFailedAt(LocalDateTime.of(2026, 11, 13, 3, 0, 12));
     givenPage(List.of(active, marked), 12);
     when(sessionRepository.findAgencyIdsByUserIds(anyCollection()))
         .thenReturn(List.of(agencyOf("a-1", 30L), agencyOf("a-1", 10L), agencyOf("a-2", 10L)));
@@ -88,7 +90,11 @@ class AskerAdminSearchServiceTest {
     var second = result.getEmbedded().get(1);
     assertThat(second.getAgencyIds()).containsExactly(10L);
     assertThat(second.getDeleteDate()).isEqualTo("2026-11-12T22:00:00");
-    assertThat(second.getDeletionState()).isEqualTo("READ_ONLY_SAFEGUARD");
+    assertThat(second.getDeletionState()).isEqualTo("HARD_DELETE_PARTIAL_FAILURE");
+    assertThat(second.getDeletionFailureReason())
+        .isEqualTo("MATRIX: Unable to delete Matrix user account");
+    assertThat(second.getDeletionFailedAt()).isEqualTo("2026-11-13T03:00:12");
+    assertThat(first.getDeletionFailureReason()).isNull();
   }
 
   @Test

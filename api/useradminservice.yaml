@@ -2929,6 +2929,15 @@ components:
           type: string
           description: The deletion lifecycle state, e.g. ACTIVE, READ_ONLY_SAFEGUARD or HARD_DELETE_PARTIAL_FAILURE.
           example: ACTIVE
+        deletionFailureReason:
+          type: string
+          description: >-
+            Why the last nightly run kept this entry: each failed store with its reason, e.g.
+            "DATABASE: Unable to delete user: still referenced by session (session_ibfk_1)". Absent
+            when no run failed.
+        deletionFailedAt:
+          type: string
+          description: When that run failed, ISO-8601 in UTC.
         technical:
           type: boolean
           description: >-

@@ -161,6 +161,8 @@ public class AskerAdminSearchService {
         .createDate(format(asker.getCreateDate()))
         .deleteDate(format(asker.getDeleteDate()))
         .deletionState(deletionState(asker))
+        .deletionFailureReason(asker.getDeletionFailureReason())
+        .deletionFailedAt(format(asker.getDeletionFailedAt()))
         .technical(GroupChatSystemAccounts.isTechnical(asker.getUserId()))
         .deletable(deletable(asker, presentTenants));
   }
