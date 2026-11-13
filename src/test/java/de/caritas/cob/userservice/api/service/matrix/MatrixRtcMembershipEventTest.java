@@ -62,6 +62,37 @@ class MatrixRtcMembershipEventTest {
   }
 
   @Test
+  void aCreationTimeInTheFutureCannotStretchTheMembership() {
+    // FE#2209 review: created_ts is sender-controlled; the server timestamp bounds it.
+    var content = content();
+    content.put("created_ts", 10L * 365 * 24 * 60 * 60 * 1000L);
+    content.put("expires", 60000L);
+    assertThat(MatrixRtcMembershipEvent.parse(event(content)).orElseThrow().expiresAt())
+        .isEqualTo(1000L + 60000L);
+  }
+
+  @Test
+  void aHugeExpiryEndsNoLaterThanTheCapAfterTheServerTimestamp() {
+    var content = content();
+    content.put("expires", Long.MAX_VALUE / 2);
+    assertThat(MatrixRtcMembershipEvent.parse(event(content)).orElseThrow().expiresAt())
+        .isEqualTo(1000L + MatrixRtcMembershipEvent.MAX_MEMBERSHIP_VALIDITY_MILLIS);
+  }
+
+  @Test
+  void aLongCallsRefreshedMembershipStaysValidFromItsNewServerTimestamp() {
+    // Element Call keeps created_ts and grows expires by four hours on each refresh.
+    long fourHours = 4 * 60 * 60 * 1000L;
+    var content = content();
+    content.put("created_ts", 0L);
+    content.put("expires", 3 * fourHours);
+    var refreshed = new HashMap<>(event(content));
+    refreshed.put("origin_server_ts", 2 * fourHours + 1000L);
+    assertThat(MatrixRtcMembershipEvent.parse(refreshed).orElseThrow().expiresAt())
+        .isEqualTo(3 * fourHours);
+  }
+
+  @Test
   void representsEmptyStateAsDepartureOfTheExactStateKeyNotEveryDeviceOfTheSender() {
     var member = MatrixRtcMembershipEvent.parse(event(Map.of())).orElseThrow();
     assertThat(member.departed()).isTrue();

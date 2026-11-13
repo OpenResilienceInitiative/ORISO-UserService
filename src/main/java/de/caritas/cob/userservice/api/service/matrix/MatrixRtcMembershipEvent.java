@@ -22,6 +22,14 @@ record MatrixRtcMembershipEvent(
 
   private static final long DEFAULT_EXPIRE_DURATION = 4 * 60 * 60 * 1000L;
 
+  /**
+   * FE#2209 review: created_ts and expires are sender-controlled. A membership counts as live for
+   * at most this long after its server timestamp. Element Call (matrix-js-sdk MembershipManager)
+   * sends a four-hour expiry and refreshes the event before it runs out, keeping created_ts and
+   * growing expires; each refresh carries a new server timestamp, so long calls stay live.
+   */
+  static final long MAX_MEMBERSHIP_VALIDITY_MILLIS = DEFAULT_EXPIRE_DURATION + 60 * 60 * 1000L;
+
   static Optional<MatrixRtcMembershipEvent> parse(Map<String, Object> event) {
     if (!TYPE.equals(event.get("type"))) return Optional.empty();
     if (!(event.get("event_id") instanceof String eventId)
@@ -64,6 +72,11 @@ record MatrixRtcMembershipEvent(
             : Long.valueOf(DEFAULT_EXPIRE_DURATION);
     if (created == null || duration == null) return Optional.empty();
     try {
+      long claimed = Math.addExact(Math.min(created, timestamp), duration);
+      long cap =
+          timestamp > Long.MAX_VALUE - MAX_MEMBERSHIP_VALIDITY_MILLIS
+              ? Long.MAX_VALUE
+              : timestamp + MAX_MEMBERSHIP_VALIDITY_MILLIS;
       return Optional.of(
           new MatrixRtcMembershipEvent(
               eventId,
@@ -71,7 +84,7 @@ record MatrixRtcMembershipEvent(
               stateKey,
               deviceId,
               timestamp,
-              Math.addExact(created, duration),
+              Math.min(claimed, cap),
               false,
               replaces));
     } catch (ArithmeticException overflow) {
