@@ -2,13 +2,16 @@ package de.caritas.cob.userservice.api.admin.facade;
 
 import static java.util.Objects.nonNull;
 
+import de.caritas.cob.userservice.api.adapters.web.dto.AskerFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerReactivationRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AskerSearchResultDTO;
 import de.caritas.cob.userservice.api.admin.service.IdentityReactivationRepairService;
 import de.caritas.cob.userservice.api.admin.service.IdentityReactivationSagaStore;
 import de.caritas.cob.userservice.api.admin.service.IdentityReactivationUnmutatedException;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
+import de.caritas.cob.userservice.api.admin.service.asker.AskerAdminSearchService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
@@ -36,6 +39,12 @@ public class AskerUserAdminFacade {
   private final @NonNull UsernameTranscoder usernameTranscoder;
   private final @NonNull DeletionLifecycleService deletionLifecycleService;
   private final @NonNull AdminScope adminScope;
+  private final @NonNull AskerAdminSearchService askerAdminSearchService;
+
+  /** Advice seekers within the caller's reach, including those already marked for deletion. */
+  public AskerSearchResultDTO findAskers(Integer page, Integer perPage, AskerFilter filter) {
+    return askerAdminSearchService.findAskers(page, perPage, filter);
+  }
 
   /**
    * Marks the asker with the given id for deletion.

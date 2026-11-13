@@ -227,6 +227,18 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
    */
   List<Session> findByUserUserId(String userId);
 
+  /** One row per session of the given advice seekers that has an agency. */
+  interface UserAgencyId {
+    String getUserId();
+
+    Long getAgencyId();
+  }
+
+  @Query(
+      "select distinct s.user.userId as userId, s.agencyId as agencyId from Session s"
+          + " where s.user.userId in :userIds and s.agencyId is not null")
+  List<UserAgencyId> findAgencyIdsByUserIds(@Param("userIds") Collection<String> userIds);
+
   /**
    * Find the {@link Session}s by user id and pageable.
    *

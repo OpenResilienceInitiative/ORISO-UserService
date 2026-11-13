@@ -13,9 +13,11 @@ import static de.caritas.cob.userservice.api.adapters.web.controller.UserAdminCo
 import static de.caritas.cob.userservice.api.adapters.web.controller.UserAdminControllerIT.PER_PAGE_PARAM;
 import static de.caritas.cob.userservice.api.adapters.web.controller.UserAdminControllerIT.REPORT_PATH;
 import static de.caritas.cob.userservice.api.adapters.web.controller.UserAdminControllerIT.SESSION_PATH;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -24,7 +26,9 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.adapters.web.dto.AskerFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerReactivationRequestDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AskerSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
@@ -45,6 +49,7 @@ import java.util.List;
 import java.util.UUID;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
@@ -70,6 +75,7 @@ class UserAdminControllerAuthorizationIT {
   private static final String REACTIVATE_ASKER_PATH =
       "/service/useradmin/askers/deletion/reactivate";
   private static final String REACTIVATE_ASKER_ALIAS_PATH = "/useradmin/askers/deletion/reactivate";
+  private static final String ASKERS_PATH = "/useradmin/askers";
 
   private static final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -355,6 +361,54 @@ class UserAdminControllerAuthorizationIT {
         .andExpect(status().isOk());
 
     verify(consultantAdminFacade, times(1)).findFilteredConsultants(any(), anyInt(), any(), any());
+  }
+
+  @Test
+  void getAskers_Should_ReturnUnauthorizedAndCallNoMethods_When_noKeycloakAuthorizationIsPresent()
+      throws Exception {
+
+    mvc.perform(get(ASKERS_PATH).cookie(CSRF_COOKIE).header(CSRF_HEADER, CSRF_VALUE))
+        .andExpect(status().isUnauthorized());
+
+    verifyNoMoreInteractions(askerUserAdminFacade);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT, AuthorityValue.CONSULTANT_CREATE})
+  void getAskers_Should_ReturnForbiddenAndCallNoMethods_When_noUserAdminAuthority()
+      throws Exception {
+
+    mvc.perform(
+            get(ASKERS_PATH)
+                .param(PAGE_PARAM, "1")
+                .param(PER_PAGE_PARAM, "20")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE))
+        .andExpect(status().isForbidden());
+
+    verifyNoMoreInteractions(askerUserAdminFacade);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void getAskers_Should_ReturnOkAndPassFilter_When_userAdminAuthority() throws Exception {
+    when(askerUserAdminFacade.findAskers(any(), any(), any()))
+        .thenReturn(new AskerSearchResultDTO().total(0L));
+
+    mvc.perform(
+            get(ASKERS_PATH)
+                .param(PAGE_PARAM, "2")
+                .param(PER_PAGE_PARAM, "20")
+                .param("username", "anna")
+                .param("agencyId", "5")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE))
+        .andExpect(status().isOk());
+
+    var filter = ArgumentCaptor.forClass(AskerFilter.class);
+    verify(askerUserAdminFacade).findAskers(eq(2), eq(20), filter.capture());
+    assertThat(filter.getValue().getUsername()).isEqualTo("anna");
+    assertThat(filter.getValue().getAgencyId()).isEqualTo(5L);
   }
 
   @Test

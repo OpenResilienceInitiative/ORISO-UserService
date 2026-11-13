@@ -1,0 +1,142 @@
+package de.caritas.cob.userservice.api.admin.service.asker;
+
+import de.caritas.cob.userservice.api.adapters.web.dto.AskerAdminResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AskerFilter;
+import de.caritas.cob.userservice.api.adapters.web.dto.AskerSearchResultDTO;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Platform;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Reach;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.AskerSearchRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
+import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+/** Lists advice seekers for the admin interface, within the caller's reach. */
+@Service
+@RequiredArgsConstructor
+public class AskerAdminSearchService {
+
+  static final int MAX_PER_PAGE = 100;
+
+  /** Shown for a row marked before the lifecycle column existed. */
+  static final String MARKED_FOR_DELETION = "MARKED_FOR_DELETION";
+
+  private static final String ACTIVE = "ACTIVE";
+
+  private static final DateTimeFormatter ISO_SECONDS =
+      DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
+
+  private final @NonNull AskerSearchRepository askerSearchRepository;
+  private final @NonNull SessionRepository sessionRepository;
+  private final @NonNull UserAgencyRepository userAgencyRepository;
+  private final @NonNull AdminScope adminScope;
+  private final @NonNull UsernameTranscoder usernameTranscoder;
+
+  @Transactional(readOnly = true)
+  public AskerSearchResultDTO findAskers(Integer page, Integer perPage, AskerFilter filter) {
+    var askerFilter = filter == null ? new AskerFilter() : filter;
+    var specification =
+        adminScope.narrow(
+            AskerAdminSpecification.matching(
+                usernameVariants(askerFilter.getUsername()),
+                askerFilter.getAgencyId(),
+                effectiveTenantId(adminScope.current(), askerFilter)),
+            AskerAdminSpecification::inAgencies);
+    var pageRequest =
+        PageRequest.of(
+            Math.max(nullToZero(page) - 1, 0),
+            Math.clamp(nullToZero(perPage), 1, MAX_PER_PAGE),
+            Sort.by(Sort.Order.desc("createDate"), Sort.Order.asc("userId")));
+
+    var result = askerSearchRepository.findAll(specification, pageRequest);
+    var agencyIds = agencyIdsByUser(result.getContent());
+
+    return new AskerSearchResultDTO()
+        .total(result.getTotalElements())
+        .embedded(
+            result.getContent().stream()
+                .map(asker -> toResponse(asker, agencyIds.get(asker.getUserId())))
+                .toList());
+  }
+
+  /** Only a platform admin chooses the Träger; everybody else searches their own. */
+  static Long effectiveTenantId(Reach reach, AskerFilter filter) {
+    return reach instanceof Platform ? filter.getTenantId() : reach.tenantId();
+  }
+
+  /** Usernames are stored encoded, older rows in plain text: match both forms exactly. */
+  Set<String> usernameVariants(String username) {
+    if (StringUtils.isBlank(username)) {
+      return Set.of();
+    }
+    var trimmed = username.trim();
+    return Set.of(
+        usernameTranscoder.encodeUsername(trimmed), usernameTranscoder.decodeUsername(trimmed));
+  }
+
+  private Map<String, Set<Long>> agencyIdsByUser(List<User> askers) {
+    Map<String, Set<Long>> agencyIds = new HashMap<>();
+    if (askers.isEmpty()) {
+      return agencyIds;
+    }
+    var userIds = askers.stream().map(User::getUserId).toList();
+    sessionRepository
+        .findAgencyIdsByUserIds(userIds)
+        .forEach(row -> add(agencyIds, row.getUserId(), row.getAgencyId()));
+    userAgencyRepository
+        .findByUserUserIdIn(userIds)
+        .forEach(
+            membership ->
+                add(agencyIds, membership.getUser().getUserId(), membership.getAgencyId()));
+    return agencyIds;
+  }
+
+  private static void add(Map<String, Set<Long>> agencyIds, String userId, Long agencyId) {
+    if (agencyId != null) {
+      agencyIds.computeIfAbsent(userId, id -> new TreeSet<>()).add(agencyId);
+    }
+  }
+
+  private AskerAdminResponseDTO toResponse(User asker, Set<Long> agencyIds) {
+    return new AskerAdminResponseDTO()
+        .id(asker.getUserId())
+        .username(usernameTranscoder.decodeUsername(asker.getUsername()))
+        .tenantId(asker.getTenantId())
+        .agencyIds(agencyIds == null ? List.of() : List.copyOf(agencyIds))
+        .createDate(format(asker.getCreateDate()))
+        .deleteDate(format(asker.getDeleteDate()))
+        .deletionState(deletionState(asker));
+  }
+
+  private static String deletionState(User asker) {
+    if (asker.getDeletionLifecycleState() != null) {
+      return asker.getDeletionLifecycleState().name();
+    }
+    return asker.getDeleteDate() == null ? ACTIVE : MARKED_FOR_DELETION;
+  }
+
+  /** Always with seconds, so the admin interface parses every value the same way. */
+  private static String format(LocalDateTime dateTime) {
+    return dateTime == null ? null : dateTime.truncatedTo(ChronoUnit.SECONDS).format(ISO_SECONDS);
+  }
+
+  private static int nullToZero(Integer value) {
+    return value == null ? 0 : value;
+  }
+}

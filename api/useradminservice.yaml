@@ -412,6 +412,53 @@ paths:
             in this service where a lock or a downstream step is unavailable.
       security:
         - Bearer: [ ]
+  /useradmin/askers:
+    get:
+      tags:
+        - admin-user-controller
+      summary: >-
+        Returns advice seekers matching the filter, newest first, limited to the caller's reach
+        (platform, own Träger or own agencies). [Authorization: Role: user-admin]
+      description: >-
+        Advice seekers marked for deletion are included, with their deletion state, so the admin
+        interface can show them as "in deletion". Usernames are stored encoded, so the username
+        filter matches the whole username, not a part of it.
+      operationId: getAskers
+      parameters:
+        - name: filter
+          in: query
+          description: The filter parameters to search for. Without a filter all reachable advice seekers are returned.
+          schema:
+            $ref: '#/components/schemas/AskerFilter'
+        - name: page
+          in: query
+          description: Number of page where to start in the query (1 = first page)
+          required: true
+          schema:
+            type: integer
+        - name: perPage
+          in: query
+          description: Number of items which are being returned per page (at most 100)
+          required: true
+          schema:
+            type: integer
+      responses:
+        200:
+          description: OK - successful operation
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/AskerSearchResultDTO'
+        400:
+          description: BAD REQUEST - invalid/incomplete request
+        401:
+          description: UNAUTHORIZED - no/invalid role/authorization
+        403:
+          description: FORBIDDEN - the caller has no Träger of their own to search in
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
   /useradmin/askers/{askerId}:
     get:
       tags:
@@ -2807,6 +2854,70 @@ components:
         hasOtherIdentity:
           type: boolean
           description: true if this admin also holds a consultant identity on the same account
+
+    AskerFilter:
+      type: object
+      properties:
+        username:
+          type: string
+          description: The complete username, plain or encoded.
+        agencyId:
+          type: integer
+          format: int64
+          description: Only advice seekers with an enquiry, session or membership in this agency.
+        tenantId:
+          type: integer
+          format: int64
+          description: Only advice seekers of this Träger. Ignored unless the caller is a platform admin.
+
+    AskerSearchResultDTO:
+      type: object
+      required:
+        - _embedded
+        - total
+      properties:
+        _embedded:
+          type: array
+          items:
+            $ref: '#/components/schemas/AskerAdminResponseDTO'
+        total:
+          type: integer
+          format: int64
+
+    AskerAdminResponseDTO:
+      type: object
+      required:
+        - id
+        - username
+        - agencyIds
+        - deletionState
+      properties:
+        id:
+          type: string
+          example: "0f2cca9c-9303-4791-a0a5-a1ce16f1524f"
+        username:
+          type: string
+          example: max94
+        tenantId:
+          type: integer
+          format: int64
+        agencyIds:
+          type: array
+          description: Agencies of the advice seeker's sessions and memberships.
+          items:
+            type: integer
+            format: int64
+        createDate:
+          type: string
+          description: Registration time, ISO-8601 in UTC without offset.
+          example: "2026-11-13T09:15:00"
+        deleteDate:
+          type: string
+          description: When the advice seeker was marked for deletion, ISO-8601 in UTC; absent while active.
+        deletionState:
+          type: string
+          description: The deletion lifecycle state, e.g. ACTIVE, READ_ONLY_SAFEGUARD or HARD_DELETE_PARTIAL_FAILURE.
+          example: ACTIVE
 
     AskerResponseDTO:
       type: object
