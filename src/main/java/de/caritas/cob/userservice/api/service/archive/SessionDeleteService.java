@@ -10,8 +10,8 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess;
+import de.caritas.cob.userservice.api.service.conversationfeature.ConversationKind;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
-import de.caritas.cob.userservice.api.service.session.AnonymousSessionRegistration;
 import de.caritas.cob.userservice.api.service.session.DeletedAskerSessionService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
@@ -112,13 +112,18 @@ public class SessionDeleteService {
    * assigned to (the "delete anonymous account" action); a registered advice seeker's conversation
    * is archived instead and stays theirs until they delete it. Anyone else may only delete a
    * session that is their own.
+   *
+   * <p>The live chat is told apart by {@link ConversationKind}: the anonymous postcode alone would
+   * also admit the backing session of a group chat, which carries the dummy postcode 00000 and has
+   * its creator assigned.
    */
   private void requireDeletableByCaller(Session session) {
     var userId = authenticatedUser.getUserId();
     if (authenticatedUser.isConsultant()) {
-      if (!AnonymousSessionRegistration.matches(session)) {
+      if (ConversationKind.of(session, membersOnlyChatAccess::concerns)
+          != ConversationKind.ANONYMOUS) {
         throw new ForbiddenException(
-            "Session %s belongs to a registered advice seeker; a consultant archives it instead.",
+            "Session %s is no anonymous live chat; a consultant archives it instead.",
             session.getId());
       }
       if (!session.isAdvisedBy(userId)) {

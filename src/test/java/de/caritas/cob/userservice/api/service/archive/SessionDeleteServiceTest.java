@@ -221,6 +221,8 @@ class SessionDeleteServiceTest {
     var sessionId = givenAPresentSession(true);
     var session = sessionService.getSession(sessionId).orElseThrow();
     session.setRegistrationType(Session.RegistrationType.REGISTERED);
+    session.setConversationType(
+        de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING);
     session.setPostcode("12345");
     session.getUser().setUsername("registered-asker");
 
@@ -250,6 +252,7 @@ class SessionDeleteServiceTest {
     var sessionId = givenAPresentSession(false);
     var session = sessionService.getSession(sessionId).orElseThrow();
     session.setRegistrationType(Session.RegistrationType.REGISTERED);
+    session.setConversationType(null);
     session.getUser().setUsername("Anonymous-4711");
     var delete = givenActionRegistryDeletesSession();
 
@@ -271,6 +274,42 @@ class SessionDeleteServiceTest {
     org.mockito.Mockito.verifyNoInteractions(actionsRegistry);
   }
 
+  // A group chat's backing session carries the dummy postcode 00000, is REGISTERED and has its
+  // creator assigned: the anonymous postcode rule alone would let the creator delete the group.
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = de.caritas.cob.userservice.api.model.ConversationType.class,
+      names = {"INTERNAL_GROUP", "SELF_HELP"})
+  void deleteSession_Should_refuseTheCreator_When_theSessionBacksAGroupChat(
+      de.caritas.cob.userservice.api.model.ConversationType groupType) {
+    var sessionId = givenAPresentSession(true);
+    var session = sessionService.getSession(sessionId).orElseThrow();
+    session.setRegistrationType(Session.RegistrationType.REGISTERED);
+    session.setConversationType(groupType);
+    session.setPostcode("00000");
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+        () -> sessionDeleteService.deleteSession(sessionId));
+
+    org.mockito.Mockito.verifyNoInteractions(
+        actionsRegistry, matrixSessionSystemMessageService, deletedAskerSessionService);
+  }
+
+  @Test
+  void deleteSession_Should_letTheAssignedConsultantDelete_When_aLiveChatIsNoLongerAnonymous() {
+    var sessionId = givenAPresentSession(false);
+    var session = sessionService.getSession(sessionId).orElseThrow();
+    session.setRegistrationType(Session.RegistrationType.REGISTERED);
+    session.setPostcode("12345");
+    session.getUser().setUsername("converted-asker");
+    var delete = givenActionRegistryDeletesSession();
+
+    sessionDeleteService.deleteSession(sessionId);
+
+    verify(delete).executeActions(any(SessionDeletionWorkflowDTO.class));
+  }
+
   /**
    * An anonymous live-chat session, deleted by its assigned consultant: the one case the
    * counsellor-facing endpoint still serves.
@@ -279,6 +318,7 @@ class SessionDeleteServiceTest {
     var sessionId = easyRandom.nextLong();
     var session = easyRandom.nextObject(Session.class);
     session.setRegistrationType(Session.RegistrationType.ANONYMOUS);
+    session.setConversationType(de.caritas.cob.userservice.api.model.ConversationType.LIVE_CHAT);
     if (isOnlySession) {
       session.getUser().setSessions(Set.of(session));
     }
