@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -139,67 +140,81 @@ public class MatrixSessionCallBindingService {
   }
 
   /**
-   * FE#2209 review: the binding's caller ended the call explicitly, so the binding ends with the
-   * observation and share links, knocks and guest seats stop at once, not at the next call-room
-   * event. Call it after the observation end: a binding that was being written then has either seen
-   * the ended observation and refused, or committed first and is ended here. {@code true} when this
-   * call ended a binding.
+   * Outside any transaction: the call room of this call's binding, if one exists yet. The end
+   * transaction locks that binding first, in the order the lifecycle takes (binding, then session).
    */
-  public boolean end(AuthenticatedUser actor, String sourceRoomId, String callId) {
+  public Optional<String> boundCallRoom(String sourceRoomId, String callId) {
+    if (blank(sourceRoomId, 255) || blank(callId, 191)) return Optional.empty();
+    return bindings.findBySourceRoomIdAndCallId(sourceRoomId, callId).map(b -> b.getMediaRoomId());
+  }
+
+  /** First step of the end transaction when {@link #boundCallRoom} found a binding. */
+  public void lockBinding(String mediaRoomId) {
+    bindings.lockByMediaRoomId(mediaRoomId);
+  }
+
+  /**
+   * FE#2209 review: an explicit end ends the 1:1 session call's binding in the same transaction as
+   * the observation end, after the session's call lock that {@link #bind} takes as well. So an end
+   * and a binding never interleave: either the binding committed first and is ended here, or the
+   * end committed first and the binding sees its tombstone or ended row and refuses.
+   *
+   * <p>Who may end it (Frank, 13 Nov): the binding's caller, or any active counsellor of the Träger
+   * who is in the call (a live MatrixRTC membership in its call room). Returns the call room of the
+   * binding this ended, else {@code null}. Call {@link #revokeGuestsAfterEnd} after the commit.
+   */
+  public String endWhileSessionLocked(
+      AuthenticatedUser actor, MatrixCallConversation conversation, String callId, long now) {
     if (actor == null
         || !actor.isConsultant()
         || actor.getUserId() == null
-        || actor.getTenantId() == null
-        || blank(sourceRoomId, 255)
-        || blank(callId, 191)) {
-      return false;
-    }
-    var conversation = conversations.resolve(sourceRoomId).orElse(null);
-    if (conversation == null
+        || conversation == null
         || conversation.getSessionId() == null
         || conversation.getChatId() != null
-        || !actor.getTenantId().equals(conversation.getTenantId())) {
-      return false;
+        || !Objects.equals(actor.getTenantId(), conversation.getTenantId())) {
+      return null;
     }
-    // Ending needs no current assignment: a reassigned counsellor may still end their own call.
-    String caller =
+    String ender =
         consultants
             .findByIdAndDeleteDateIsNull(actor.getUserId())
             .filter(value -> conversation.getTenantId().equals(value.getTenantId()))
             .map(Consultant::getMatrixUserId)
             .filter(value -> !blank(value, 255))
             .orElse(null);
-    if (caller == null) return false;
+    if (ender == null) return null;
+    String sourceRoomId = conversation.getMatrixRoomId();
+    // Read after the session lock, so a binding committed while this end waited is seen.
     var known = bindings.findBySourceRoomIdAndCallId(sourceRoomId, callId).orElse(null);
-    if (known == null) return false;
-    String ended =
-        new TransactionTemplate(transactionManager)
-            .execute(
-                status -> {
-                  var binding = bindings.lockByMediaRoomId(known.getMediaRoomId()).orElse(null);
-                  if (binding == null
-                      || binding.getEndedAt() != null
-                      || !sourceRoomId.equals(binding.getSourceRoomId())
-                      || !callId.equals(binding.getCallId())
-                      || !caller.equals(binding.getCallerMatrixId())
-                      || binding.getChatId() != null
-                      || !Objects.equals(binding.getSessionId(), conversation.getSessionId())
-                      || !Objects.equals(binding.getTenantId(), conversation.getTenantId())) {
-                    return null;
-                  }
-                  binding.finish(System.currentTimeMillis());
-                  bindings.save(binding);
-                  return binding.getMediaRoomId();
-                });
-    if (ended == null) return false;
-    // After the commit: guest seats end with the call on the US#1477 path, which retries a failed
-    // removal on the next reconcile.
+    if (known == null) return null;
+    var binding = bindings.lockByMediaRoomId(known.getMediaRoomId()).orElse(null);
+    if (binding == null
+        || binding.getEndedAt() != null
+        || !sourceRoomId.equals(binding.getSourceRoomId())
+        || !callId.equals(binding.getCallId())
+        || binding.getChatId() != null
+        || !Objects.equals(binding.getSessionId(), conversation.getSessionId())
+        || !Objects.equals(binding.getTenantId(), conversation.getTenantId())) {
+      return null;
+    }
+    boolean caller = ender.equals(binding.getCallerMatrixId());
+    boolean colleagueInCall =
+        binding.isInCall(ender, now) && lifecycle.isActiveRecipient(actor.getUserId());
+    if (!caller && !colleagueInCall) return null;
+    binding.finish(now);
+    bindings.save(binding);
+    return binding.getMediaRoomId();
+  }
+
+  /**
+   * After the end committed: guest seats end with the call on the US#1477 path, which retries a
+   * failed removal on the next reconcile.
+   */
+  public void revokeGuestsAfterEnd(String mediaRoomId) {
     try {
-      lifecycle.handleRoom(ended, java.util.Map.of());
+      lifecycle.handleRoom(mediaRoomId, java.util.Map.of());
     } catch (RuntimeException unavailable) {
       log.warn("Call guest revocation deferred ({})", unavailable.getClass().getSimpleName());
     }
-    return true;
   }
 
   private enum Result {

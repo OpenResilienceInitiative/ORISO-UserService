@@ -100,6 +100,7 @@ class MatrixCallObservationMariaDbIT {
   @MockitoBean private MatrixSynapseService matrix;
   @MockitoBean private EventNotificationService notifications;
   @MockitoBean private MatrixCallLifecycleService lifecycle;
+  @MockitoBean private MatrixSessionCallBindingService sessionBindings;
 
   private final List<String> matrixCallsInsideTransaction =
       Collections.synchronizedList(new ArrayList<>());

@@ -60,6 +60,8 @@ class MatrixCallObservationServiceTest {
           EventNotificationService.class,
           org.mockito.Mockito.withSettings().invocationListeners(transactionGuard));
   private final MatrixCallLifecycleService lifecycle = mock(MatrixCallLifecycleService.class);
+  private final MatrixSessionCallBindingService sessionBindings =
+      mock(MatrixSessionCallBindingService.class);
   private final java.util.List<MatrixCallObservation> saved = new java.util.ArrayList<>();
   private MatrixCallObservationService service;
   private AuthenticatedUser actor;
@@ -76,6 +78,7 @@ class MatrixCallObservationServiceTest {
             matrix,
             notifications,
             lifecycle,
+            sessionBindings,
             tx);
     actor = new AuthenticatedUser();
     actor.setUserId("creator");
@@ -377,6 +380,70 @@ class MatrixCallObservationServiceTest {
     verify(notifications)
         .createCallEndedNotification(
             any(), eq("other"), eq(false), eq("call"), eq(MEDIA), anyLong(), anyLong());
+  }
+
+  // --- FE#2209 review (CodeRabbit): the session binding ends with the observation ---
+
+  @Test
+  void aSessionCallsBindingEndsInTheObservationsTransactionEvenWhenNotifyingFails() {
+    var session = new MatrixCallConversation(SOURCE, 7L, 16L, null);
+    when(conversations.resolve(SOURCE)).thenReturn(Optional.of(session));
+    long now = System.currentTimeMillis();
+    var row = sessionRow(16L, now - 1000, now + 60_000);
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    when(sessionBindings.boundCallRoom(SOURCE, "call")).thenReturn(Optional.of(MEDIA));
+    var order = new java.util.ArrayList<String>();
+    org.mockito.Mockito.doAnswer(
+            i -> {
+              order.add("lock binding " + tx.isOpen());
+              return null;
+            })
+        .when(sessionBindings)
+        .lockBinding(MEDIA);
+    when(conversations.lockCurrentForWriting(any()))
+        .thenAnswer(
+            i -> {
+              order.add("lock session " + tx.isOpen());
+              return true;
+            });
+    when(sessionBindings.endWhileSessionLocked(any(), eq(session), eq("call"), anyLong()))
+        .thenAnswer(
+            i -> {
+              order.add("end binding " + tx.isOpen());
+              return MEDIA;
+            });
+    org.mockito.Mockito.doThrow(new IllegalStateException("notification store down"))
+        .when(notifications)
+        .createCallEndedNotification(
+            any(), anyString(), anyBoolean(), anyString(), anyString(), anyLong(), anyLong());
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.end(actor, SOURCE, "call"))
+        .isInstanceOf(IllegalStateException.class);
+
+    assertThat(order).containsExactly("lock binding true", "lock session true", "end binding true");
+    assertThat(row.getEndedAt()).isNotNull();
+    verify(sessionBindings).revokeGuestsAfterEnd(MEDIA);
+  }
+
+  @Test
+  void aColleaguesEndOfASessionCallEndsTheBindingEvenWithoutAnObservationOfTheirOwn() {
+    var session = new MatrixCallConversation(SOURCE, 7L, 16L, null);
+    when(conversations.resolve(SOURCE)).thenReturn(Optional.of(session));
+    long now = System.currentTimeMillis();
+    // Registered by the creator; the colleague's end does not end the observation ...
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call"))
+        .thenReturn(Optional.of(sessionRow(16L, now - 1000, now + 60_000)));
+    var colleague = new AuthenticatedUser();
+    colleague.setUserId("other");
+    colleague.setTenantId(7L);
+    when(users.findByUserIdAndDeleteDateIsNull("other"))
+        .thenReturn(Optional.of(user("other", OTHER)));
+    // ... but the binding rule lets a counsellor who is in the call end the call.
+    when(sessionBindings.endWhileSessionLocked(eq(colleague), eq(session), eq("call"), anyLong()))
+        .thenReturn(MEDIA);
+
+    assertThat(service.end(colleague, SOURCE, "call")).isEqualTo(Outcome.OK);
+    verify(sessionBindings).revokeGuestsAfterEnd(MEDIA);
   }
 
   // --- #1630 (a): no database transaction stays open while Matrix is called ---

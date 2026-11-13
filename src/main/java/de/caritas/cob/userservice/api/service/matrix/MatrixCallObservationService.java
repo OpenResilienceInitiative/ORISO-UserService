@@ -61,6 +61,7 @@ public class MatrixCallObservationService {
   private final MatrixSynapseService matrix;
   private final EventNotificationService notifications;
   private final MatrixCallLifecycleService lifecycle;
+  private final MatrixSessionCallBindingService sessionBindings;
   private final PlatformTransactionManager transactionManager;
 
   public Outcome register(
@@ -224,52 +225,94 @@ public class MatrixCallObservationService {
                 () ->
                     new MatrixSynapseService.CallLookupUnavailableException(
                         "call audience unavailable"));
+    // FE#2209 review: a 1:1 session call's binding ends in the same transaction as its observation,
+    // so neither a failing notification nor a binding written meanwhile can leave it live.
+    boolean oneToOne = conversation.getSessionId() != null && conversation.getChatId() == null;
+    String boundRoom =
+        oneToOne ? sessionBindings.boundCallRoom(sourceRoomId, callId).orElse(null) : null;
     Ending ending;
     try {
-      ending = writeEnd(conversation, caller, callId, members);
+      ending = writeEnd(actor, conversation, caller, callId, members, boundRoom);
     } catch (DataIntegrityViolationException | PessimisticLockingFailureException raced) {
       // The registration landed while the tombstone was written: end that row instead.
-      ending = writeEnd(conversation, caller, callId, members);
+      ending = writeEnd(actor, conversation, caller, callId, members, boundRoom);
     }
-    if (ending == null) return Outcome.NOT_FOUND;
+    // After the commit: first the guest seats, then the notifications; neither can undo the end.
+    if (ending.endedCallRoom() != null)
+      sessionBindings.revokeGuestsAfterEnd(ending.endedCallRoom());
+    if (!ending.observed() && ending.endedCallRoom() == null) return Outcome.NOT_FOUND;
     if (ending.endedNow()) notifyEnded(conversation, members, ending.row());
     return Outcome.OK;
   }
 
-  private record Ending(MatrixCallObservation row, boolean endedNow) {}
+  /**
+   * {@code observed}: the observation was ended or tombstoned by this caller; {@code
+   * endedCallRoom}: the call room of the session binding this end closed.
+   */
+  private record Ending(
+      MatrixCallObservation row, boolean endedNow, boolean observed, String endedCallRoom) {}
 
   private Ending writeEnd(
-      MatrixCallConversation conversation, String caller, String callId, List<String> members) {
+      AuthenticatedUser actor,
+      MatrixCallConversation conversation,
+      String caller,
+      String callId,
+      List<String> members,
+      String boundRoom) {
     return new TransactionTemplate(transactionManager)
         .execute(
             status -> {
-              var row =
-                  observations
-                      .findForUpdateBySourceRoomIdAndCallId(conversation.getMatrixRoomId(), callId)
-                      .orElse(null);
+              // Lock order: binding (as the lifecycle takes it), session, observation, as bind and
+              // registration take session before observation.
+              if (boundRoom != null) sessionBindings.lockBinding(boundRoom);
+              // The session's call lock; a closed session still holds it, and ending is always
+              // allowed.
+              conversations.lockCurrentForWriting(conversation);
               long now = System.currentTimeMillis();
-              if (row == null) {
-                if (!members.contains(caller)) return null;
-                observations.saveAndFlush(
-                    MatrixCallObservation.tombstone(
-                        conversation.getMatrixRoomId(),
-                        conversation.getTenantId(),
-                        conversation.getChatId(),
-                        conversation.getSessionId(),
-                        callId,
-                        caller,
-                        now));
-                return new Ending(null, false);
-              }
-              if (!caller.equals(row.getCreatorMatrixId())
-                  || !Objects.equals(row.getTenantId(), conversation.getTenantId())) {
-                return null;
-              }
-              if (row.getEndedAt() != null) return new Ending(row, false);
-              row.finish(now);
-              observations.save(row);
-              return new Ending(row, true);
+              var observed = endObservation(conversation, caller, callId, members, now);
+              String endedCallRoom =
+                  conversation.getSessionId() != null && conversation.getChatId() == null
+                      ? sessionBindings.endWhileSessionLocked(actor, conversation, callId, now)
+                      : null;
+              return observed == null
+                  ? new Ending(null, false, false, endedCallRoom)
+                  : new Ending(observed.row(), observed.endedNow(), true, endedCallRoom);
             });
+  }
+
+  private record ObservationEnd(MatrixCallObservation row, boolean endedNow) {}
+
+  private ObservationEnd endObservation(
+      MatrixCallConversation conversation,
+      String caller,
+      String callId,
+      List<String> members,
+      long now) {
+    var row =
+        observations
+            .findForUpdateBySourceRoomIdAndCallId(conversation.getMatrixRoomId(), callId)
+            .orElse(null);
+    if (row == null) {
+      if (!members.contains(caller)) return null;
+      observations.saveAndFlush(
+          MatrixCallObservation.tombstone(
+              conversation.getMatrixRoomId(),
+              conversation.getTenantId(),
+              conversation.getChatId(),
+              conversation.getSessionId(),
+              callId,
+              caller,
+              now));
+      return new ObservationEnd(null, false);
+    }
+    if (!caller.equals(row.getCreatorMatrixId())
+        || !Objects.equals(row.getTenantId(), conversation.getTenantId())) {
+      return null;
+    }
+    if (row.getEndedAt() != null) return new ObservationEnd(row, false);
+    row.finish(now);
+    observations.save(row);
+    return new ObservationEnd(row, true);
   }
 
   private void notifyEnded(
