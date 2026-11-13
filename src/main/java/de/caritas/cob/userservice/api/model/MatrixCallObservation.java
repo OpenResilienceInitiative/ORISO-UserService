@@ -67,6 +67,25 @@ public class MatrixCallObservation {
   @Column(name = "ended_at")
   private Long endedAt;
 
+  /** #1628: last time the server looked at the MatrixRTC memberships of the media room. */
+  @Column(name = "liveness_checked_at")
+  private Long livenessCheckedAt;
+
+  /**
+   * #1628: somebody is provably still in the call, so the lease is extended even when the creator's
+   * own renewals stopped and it ran out. An ended call never comes back.
+   */
+  public void keepAlive(long now, long expiry) {
+    if (endedAt == null) {
+      lastSeenAt = now;
+      expiresAt = Math.max(expiresAt, expiry);
+    }
+  }
+
+  public void markLivenessChecked(long now) {
+    livenessCheckedAt = now;
+  }
+
   public void renew(long now, long expiry) {
     if (endedAt == null && now < expiresAt) {
       lastSeenAt = now;
@@ -76,6 +95,11 @@ public class MatrixCallObservation {
 
   public void finish(long now) {
     if (endedAt == null) endedAt = Math.min(now, expiresAt);
+  }
+
+  /** Ends at the given moment even when the lease had already run out (#1628 liveness). */
+  public void finishAt(long at) {
+    if (endedAt == null) endedAt = at;
   }
 
   public boolean isLive(long now) {

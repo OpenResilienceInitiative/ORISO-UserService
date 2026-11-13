@@ -278,4 +278,7 @@
   <include file="db/changelog/changeset/20261112_call_observation_session_2237/changeSet.xml"/>
   <include file="db/changelog/changeset/20261112_group_waiting_room_2237/changeSet.xml"/>
   <include file="db/changelog/changeset/20261113_communication_stat/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261113_call_observation_lease_1628/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261113_call_observation_end_1628/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261113_call_observation_chat_nullable_2237/changeSet.xml"/>
 </databaseChangeLog>

@@ -36,7 +36,9 @@ class MatrixCallObservationIsolationTest {
         List.of(
             MatrixCallObservationRepository.class,
             MatrixCallObservationService.class,
-            MatrixCallObservation.class);
+            MatrixCallObservation.class,
+            de.caritas.cob.userservice.api.port.out.MatrixCallObservationEndRepository.class,
+            de.caritas.cob.userservice.api.model.MatrixCallObservationEnd.class);
     for (Field field : consumer.getDeclaredFields()) {
       assertThat(forbidden).as(consumer + "." + field.getName()).doesNotContain(field.getType());
     }
@@ -65,9 +67,14 @@ class MatrixCallObservationIsolationTest {
           Class.forName(candidate.getBeanClassName(), false, getClass().getClassLoader());
       String name = type.getName(); // binary name: also covers nested and anonymous classes
       // Production classes only: the scan also sees test classes on the classpath.
+      // The service's own private nested types (#1628 end/write results) are part of the service.
       if (type == MatrixCallObservationService.class
+          || type.getEnclosingClass() == MatrixCallObservationService.class
           || type == MatrixCallObservation.class
           || type == MatrixCallObservationRepository.class
+          || type == de.caritas.cob.userservice.api.model.MatrixCallObservationEnd.class
+          || type
+              == de.caritas.cob.userservice.api.port.out.MatrixCallObservationEndRepository.class
           || name.matches(".*(IT|Test)(\\$.*)?")) continue;
       boolean holds = false;
       // Walk superclasses too: an abstract parent can carry the field for its subclasses.

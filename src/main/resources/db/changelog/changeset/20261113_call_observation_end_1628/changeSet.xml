@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- #1628: every end or cancellation of an observed call is stored on its own, one row per
+       (source room, call, actor). The END_TOMBSTONE rows in matrix_call_observation allowed only
+       one end per call (unique key on source room + call), so the creator's own cancellation was
+       dropped when another member had ended first. Observation only: no foreign key, no access. -->
+  <changeSet id="20261113-matrix-call-observation-end-1628" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <tableExists tableName="matrix_call_observation_end"/>
+      </not>
+    </preConditions>
+    <createTable tableName="matrix_call_observation_end">
+      <column name="id" type="BIGINT" autoIncrement="true"><constraints primaryKey="true" nullable="false"/></column>
+      <column name="source_room_id" type="VARCHAR(255)"><constraints nullable="false"/></column>
+      <column name="call_id" type="VARCHAR(191)"><constraints nullable="false"/></column>
+      <column name="actor_matrix_id" type="VARCHAR(255)"><constraints nullable="false"/></column>
+      <column name="tenant_id" type="BIGINT"><constraints nullable="false"/></column>
+      <column name="chat_id" type="BIGINT"/>
+      <column name="session_id" type="BIGINT"/>
+      <column name="ended_at" type="BIGINT"><constraints nullable="false"/></column>
+    </createTable>
+    <addUniqueConstraint tableName="matrix_call_observation_end"
+      columnNames="source_room_id, call_id, actor_matrix_id"
+      constraintName="uk_call_observation_end_actor"/>
+    <rollback><dropTable tableName="matrix_call_observation_end"/></rollback>
+  </changeSet>
+  <!-- Moves END_TOMBSTONE rows (only written by unreleased #1628 builds) into the new table.
+       Idempotent: a tombstone that already has its end row is not copied twice. -->
+  <changeSet id="20261113-matrix-call-observation-end-migrate-tombstones-1628" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <tableExists tableName="matrix_call_observation_end"/>
+      <tableExists tableName="matrix_call_observation"/>
+    </preConditions>
+    <sql>
+      INSERT INTO matrix_call_observation_end
+        (source_room_id, call_id, actor_matrix_id, tenant_id, chat_id, session_id, ended_at)
+      SELECT o.source_room_id, o.call_id, o.creator_matrix_id, o.tenant_id, o.chat_id,
+             o.session_id, COALESCE(o.ended_at, o.registered_at)
+      FROM matrix_call_observation o
+      WHERE o.origin = 'END_TOMBSTONE'
+        AND NOT EXISTS (
+          SELECT 1 FROM matrix_call_observation_end e
+          WHERE e.source_room_id = o.source_room_id
+            AND e.call_id = o.call_id
+            AND e.actor_matrix_id = o.creator_matrix_id)
+    </sql>
+    <delete tableName="matrix_call_observation">
+      <where>origin = 'END_TOMBSTONE'</where>
+    </delete>
+    <!-- Tombstones are not recreated on rollback; the ends stay in the end table until it is
+         dropped. -->
+    <rollback/>
+  </changeSet>
+  <!-- With the tombstones gone every observation names its media room again. -->
+  <changeSet id="20261113-matrix-call-observation-media-room-required-1628" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <sqlCheck expectedResult="0">
+        SELECT COUNT(*) FROM matrix_call_observation WHERE media_room_id IS NULL
+      </sqlCheck>
+    </preConditions>
+    <addNotNullConstraint tableName="matrix_call_observation" columnName="media_room_id"
+      columnDataType="VARCHAR(255)"/>
+    <rollback>
+      <dropNotNullConstraint tableName="matrix_call_observation" columnName="media_room_id"
+        columnDataType="VARCHAR(255)"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

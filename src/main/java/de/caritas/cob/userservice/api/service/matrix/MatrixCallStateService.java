@@ -9,7 +9,8 @@ import java.util.Objects;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 @RequiredArgsConstructor
@@ -21,8 +22,13 @@ public class MatrixCallStateService {
   private final MatrixSynapseService matrix;
   private final MatrixCallGuestService callGuests;
   private final MatrixCallObservationService observations;
+  private final PlatformTransactionManager transactionManager;
 
-  @Transactional(readOnly = true)
+  /**
+   * Not {@code @Transactional} (#1630): the Matrix membership lookup and the observation's liveness
+   * check run with no database transaction open; only the binding read below uses a short read-only
+   * one.
+   */
   public Optional<CallState> read(AuthenticatedUser actor, String sourceRoomId, String callId) {
     if (actor.getUserId() == null
         || actor.getTenantId() == null
@@ -47,25 +53,37 @@ public class MatrixCallStateService {
                 .filter(user -> actor.getTenantId().equals(user.getTenantId()))
                 .map(user -> user.getMatrixUserId());
     if (matrixId.isEmpty() || matrixId.get().isBlank()) return Optional.empty();
-    boolean conversationMember =
-        matrix
-            .getCallRoomMembers(sourceRoomId)
-            .map(members -> members.contains(matrixId.get()))
-            .orElse(false);
-    var bound = bindings.findBySourceRoomIdAndCallId(sourceRoomId, callId);
-    if (bound.isEmpty()) {
+    var members = matrix.getCallRoomMembers(sourceRoomId).orElse(java.util.List.of());
+    boolean conversationMember = members.contains(matrixId.get());
+    if (bindings.findBySourceRoomIdAndCallId(sourceRoomId, callId).isEmpty()) {
       // #2166/#2237: encrypted group or session call without a readable invite. Observation only,
       // read by conversation members; never consulted for guests or any access decision.
-      return conversationMember ? observations.readState(conversation, callId) : Optional.empty();
+      return conversationMember
+          ? observations.readState(conversation, callId, members)
+          : Optional.empty();
     }
-    return bound
+    var readOnly = new TransactionTemplate(transactionManager);
+    readOnly.setReadOnly(true);
+    return readOnly.execute(
+        status ->
+            readBound(conversation, sourceRoomId, callId, matrixId.get(), conversationMember));
+  }
+
+  private Optional<CallState> readBound(
+      MatrixCallConversation conversation,
+      String sourceRoomId,
+      String callId,
+      String matrixId,
+      boolean conversationMember) {
+    return bindings
+        .findBySourceRoomIdAndCallId(sourceRoomId, callId)
         .filter(
             binding ->
                 Objects.equals(binding.getTenantId(), conversation.getTenantId())
                     && Objects.equals(binding.getSessionId(), conversation.getSessionId())
                     && Objects.equals(binding.getChatId(), conversation.getChatId()))
         // US#1477: a call guest reads this one call while the seat is held, nothing else.
-        .filter(binding -> conversationMember || callGuests.isActiveGuest(binding, matrixId.get()))
+        .filter(binding -> conversationMember || callGuests.isActiveGuest(binding, matrixId))
         .map(
             binding -> {
               Long started = binding.getStartedAt();

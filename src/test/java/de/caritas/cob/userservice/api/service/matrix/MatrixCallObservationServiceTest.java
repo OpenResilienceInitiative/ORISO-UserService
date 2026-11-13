@@ -16,9 +16,11 @@ import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService.CallR
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.MatrixCallBinding;
 import de.caritas.cob.userservice.api.model.MatrixCallObservation;
+import de.caritas.cob.userservice.api.model.MatrixCallObservationEnd;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.MatrixCallBindingRepository;
+import de.caritas.cob.userservice.api.port.out.MatrixCallObservationEndRepository;
 import de.caritas.cob.userservice.api.port.out.MatrixCallObservationRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService.Outcome;
@@ -34,15 +36,34 @@ class MatrixCallObservationServiceTest {
   private static final String MEDIA = "!media:example";
   private static final String CREATOR = "@creator:example";
   private static final String OTHER = "@other:example";
+  private static final List<String> MEMBERS = List.of(CREATOR, OTHER);
 
   private final MatrixCallObservationRepository repo = mock(MatrixCallObservationRepository.class);
+  private final MatrixCallObservationEndRepository ends =
+      mock(MatrixCallObservationEndRepository.class);
+  private final java.util.List<MatrixCallObservationEnd> storedEnds = new java.util.ArrayList<>();
   private final MatrixCallBindingRepository bindings = mock(MatrixCallBindingRepository.class);
   private final MatrixCallConversationResolver conversations =
       mock(MatrixCallConversationResolver.class);
   private final UserRepository users = mock(UserRepository.class);
   private final ConsultantRepository consultants = mock(ConsultantRepository.class);
-  private final MatrixSynapseService matrix = mock(MatrixSynapseService.class);
-  private final EventNotificationService notifications = mock(EventNotificationService.class);
+  private final RecordingTransactionManager tx = new RecordingTransactionManager();
+  private boolean guardTransactions;
+  private final List<String> callsInsideTransaction = new java.util.ArrayList<>();
+  private final org.mockito.listeners.InvocationListener transactionGuard =
+      report -> {
+        if (guardTransactions && tx.isOpen()) {
+          callsInsideTransaction.add(report.getInvocation().toString());
+        }
+      };
+  private final MatrixSynapseService matrix =
+      mock(
+          MatrixSynapseService.class,
+          org.mockito.Mockito.withSettings().invocationListeners(transactionGuard));
+  private final EventNotificationService notifications =
+      mock(
+          EventNotificationService.class,
+          org.mockito.Mockito.withSettings().invocationListeners(transactionGuard));
   private final MatrixCallLifecycleService lifecycle = mock(MatrixCallLifecycleService.class);
   private final java.util.List<MatrixCallObservation> saved = new java.util.ArrayList<>();
   private MatrixCallObservationService service;
@@ -52,7 +73,16 @@ class MatrixCallObservationServiceTest {
   void setUp() {
     service =
         new MatrixCallObservationService(
-            repo, bindings, conversations, users, consultants, matrix, notifications, lifecycle);
+            repo,
+            ends,
+            bindings,
+            conversations,
+            users,
+            consultants,
+            matrix,
+            notifications,
+            lifecycle,
+            tx);
     actor = new AuthenticatedUser();
     actor.setUserId("creator");
     actor.setTenantId(7L);
@@ -82,6 +112,29 @@ class MatrixCallObservationServiceTest {
               saved.add(i.getArgument(0));
               return i.getArgument(0);
             });
+    // The end table behaves like its unique key (source room, call, actor).
+    when(ends.saveAndFlush(any()))
+        .thenAnswer(
+            i -> {
+              storedEnds.add(i.getArgument(0));
+              return i.getArgument(0);
+            });
+    when(ends.findForUpdateBySourceRoomIdAndCallIdAndActorMatrixId(
+            anyString(), anyString(), anyString()))
+        .thenAnswer(
+            i ->
+                storedEnds.stream()
+                    .filter(e -> e.getSourceRoomId().equals(i.getArgument(0)))
+                    .filter(e -> e.getCallId().equals(i.getArgument(1)))
+                    .filter(e -> e.getActorMatrixId().equals(i.getArgument(2)))
+                    .findFirst());
+    when(ends.findFirstBySourceRoomIdAndCallIdOrderByEndedAtAsc(anyString(), anyString()))
+        .thenAnswer(
+            i ->
+                storedEnds.stream()
+                    .filter(e -> e.getSourceRoomId().equals(i.getArgument(0)))
+                    .filter(e -> e.getCallId().equals(i.getArgument(1)))
+                    .min(java.util.Comparator.comparingLong(MatrixCallObservationEnd::getEndedAt)));
   }
 
   @Test
@@ -189,7 +242,8 @@ class MatrixCallObservationServiceTest {
     long now = System.currentTimeMillis();
     when(repo.findBySourceRoomIdAndCallId(SOURCE, "call"))
         .thenReturn(Optional.of(sessionRow(9L, now - 1000, now + 60_000)));
-    var state = service.readState(new MatrixCallConversation(SOURCE, 7L, 9L, null), "call");
+    var state =
+        service.readState(new MatrixCallConversation(SOURCE, 7L, 9L, null), "call", MEMBERS);
     assertThat(state.orElseThrow().state()).isEqualTo("running");
     assertThat(state.orElseThrow().callRoomId()).isEqualTo(MEDIA);
   }
@@ -199,9 +253,10 @@ class MatrixCallObservationServiceTest {
     long now = System.currentTimeMillis();
     when(repo.findBySourceRoomIdAndCallId(SOURCE, "call"))
         .thenReturn(Optional.of(sessionRow(9L, now - 1000, now + 60_000)));
-    assertThat(service.readState(new MatrixCallConversation(SOURCE, 7L, 10L, null), "call"))
+    assertThat(
+            service.readState(new MatrixCallConversation(SOURCE, 7L, 10L, null), "call", MEMBERS))
         .isEmpty();
-    assertThat(service.readState(new MatrixCallConversation(SOURCE, 7L, null, 9L), "call"))
+    assertThat(service.readState(new MatrixCallConversation(SOURCE, 7L, null, 9L), "call", MEMBERS))
         .isEmpty();
   }
 
@@ -210,9 +265,11 @@ class MatrixCallObservationServiceTest {
     long now = System.currentTimeMillis();
     when(repo.findBySourceRoomIdAndCallId(SOURCE, "call"))
         .thenReturn(Optional.of(row(now - 1000, now + 60_000, null)));
-    assertThat(service.readState(new MatrixCallConversation(SOURCE, 7L, 45L, null), "call"))
+    assertThat(
+            service.readState(new MatrixCallConversation(SOURCE, 7L, 45L, null), "call", MEMBERS))
         .isEmpty();
-    assertThat(service.readState(new MatrixCallConversation(SOURCE, 7L, null, 45L), "call"))
+    assertThat(
+            service.readState(new MatrixCallConversation(SOURCE, 7L, null, 45L), "call", MEMBERS))
         .isPresent();
   }
 
@@ -306,7 +363,8 @@ class MatrixCallObservationServiceTest {
   void expiredObservationReadsAsEndedNeverRunning() {
     when(repo.findBySourceRoomIdAndCallId(SOURCE, "call"))
         .thenReturn(Optional.of(row(1000, 2000, null)));
-    var state = service.readState(new MatrixCallConversation(SOURCE, 7L, null, 45L), "call");
+    var state =
+        service.readState(new MatrixCallConversation(SOURCE, 7L, null, 45L), "call", MEMBERS);
     assertThat(state.orElseThrow().state()).isEqualTo("ended");
     assertThat(state.orElseThrow().endedAt()).isEqualTo(2000L);
   }
@@ -316,7 +374,8 @@ class MatrixCallObservationServiceTest {
     long now = System.currentTimeMillis();
     when(repo.findBySourceRoomIdAndCallId(SOURCE, "call"))
         .thenReturn(Optional.of(row(now - 1000, now + 60_000, null)));
-    var state = service.readState(new MatrixCallConversation(SOURCE, 7L, null, 45L), "call");
+    var state =
+        service.readState(new MatrixCallConversation(SOURCE, 7L, null, 45L), "call", MEMBERS);
     assertThat(state.orElseThrow().state()).isEqualTo("running");
   }
 
@@ -325,7 +384,8 @@ class MatrixCallObservationServiceTest {
     long now = System.currentTimeMillis();
     when(repo.findBySourceRoomIdAndCallId(SOURCE, "call"))
         .thenReturn(Optional.of(row(now, now + 60_000, null)));
-    assertThat(service.readState(new MatrixCallConversation(SOURCE, 9L, null, 45L), "call"))
+    assertThat(
+            service.readState(new MatrixCallConversation(SOURCE, 9L, null, 45L), "call", MEMBERS))
         .isEmpty();
   }
 
@@ -346,6 +406,395 @@ class MatrixCallObservationServiceTest {
     verify(notifications)
         .createCallEndedNotification(
             any(), eq("other"), eq(false), eq("call"), eq(MEDIA), anyLong(), anyLong());
+  }
+
+  // --- #1630 (a): no database transaction stays open while Matrix is called ---
+
+  @Test
+  void registrationCallsMatrixAndNotifiesOutsideAnyTransaction() {
+    failInsideTransaction();
+    assertThat(service.register(actor, SOURCE, "call", MEDIA, true)).isEqualTo(Outcome.OK);
+    assertThat(saved).hasSize(1);
+    assertThat(tx.started()).isPositive();
+    verify(notifications)
+        .createCallInvitationNotification(
+            any(), eq("other"), eq(false), eq("creator"), eq("call"), eq(MEDIA), eq(true));
+  }
+
+  @Test
+  void endingCallsMatrixAndNotifiesOutsideAnyTransaction() {
+    long now = System.currentTimeMillis();
+    var row = row(now - 1000, now + 60_000, null);
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    failInsideTransaction();
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
+    assertThat(row.getEndedAt()).isNotNull();
+    verify(notifications)
+        .createCallEndedNotification(
+            any(), eq("other"), eq(false), eq("call"), eq(MEDIA), anyLong(), anyLong());
+  }
+
+  // --- #1628 (2): ending wins over a registration that arrives late ---
+
+  @Test
+  void endBeforeTheRegistrationLandsIsStoredAndRejectsTheLateRegistration() {
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
+
+    assertThat(storedEnds).hasSize(1);
+    var end = storedEnds.get(0);
+    assertThat(end.getActorMatrixId()).isEqualTo(CREATOR);
+    assertThat(end.getSourceRoomId()).isEqualTo(SOURCE);
+    assertThat(end.getCallId()).isEqualTo("call");
+    assertThat(end.getChatId()).isEqualTo(45L);
+    assertThat(end.getSessionId()).isNull();
+    assertThat(end.getEndedAt()).isPositive();
+    verify(repo, never()).saveAndFlush(any());
+
+    assertThat(service.register(actor, SOURCE, "call", MEDIA, true)).isEqualTo(Outcome.NOT_FOUND);
+    verify(repo, never()).saveAndFlush(any());
+    verify(notifications, never())
+        .createCallInvitationNotification(
+            any(), anyString(), anyBoolean(), any(), any(), any(), anyBoolean());
+    verify(notifications, never())
+        .createCallEndedNotification(
+            any(), any(), anyBoolean(), any(), any(), anyLong(), anyLong());
+  }
+
+  @Test
+  void theCreatorsCancellationAfterAnotherMembersEndIsStoredOnItsOwn() {
+    assertThat(service.end(other(), SOURCE, "call")).isEqualTo(Outcome.OK);
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
+
+    assertThat(storedEnds)
+        .extracting(MatrixCallObservationEnd::getActorMatrixId)
+        .containsExactly(OTHER, CREATOR);
+    assertThat(service.register(actor, SOURCE, "call", MEDIA, true)).isEqualTo(Outcome.NOT_FOUND);
+    verify(repo, never()).saveAndFlush(any());
+  }
+
+  @Test
+  void aRepeatedEndOfTheSamePersonIsStoredOnce() {
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
+    assertThat(storedEnds).hasSize(1);
+  }
+
+  @Test
+  void anEndLeftBySomebodyElseDoesNotBlockTheCreatorsRegistrationAndIsKept() {
+    assertThat(service.end(other(), SOURCE, "call")).isEqualTo(Outcome.OK);
+
+    assertThat(service.register(actor, SOURCE, "call", MEDIA, true)).isEqualTo(Outcome.OK);
+
+    verify(repo, never()).delete(any());
+    verify(ends, never()).delete(any());
+    assertThat(saved).hasSize(1);
+    assertThat(saved.get(0).getMediaRoomId()).isEqualTo(MEDIA);
+    assertThat(storedEnds)
+        .extracting(MatrixCallObservationEnd::getActorMatrixId)
+        .containsExactly(OTHER);
+  }
+
+  @Test
+  void theCreatorsEndOfARegisteredCallIsStoredToo() {
+    var row = row(System.currentTimeMillis() - 1000, System.currentTimeMillis() + 60_000, null);
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
+
+    assertThat(row.getEndedAt()).isNotNull();
+    assertThat(storedEnds)
+        .extracting(MatrixCallObservationEnd::getActorMatrixId)
+        .containsExactly(CREATOR);
+  }
+
+  @Test
+  void anotherMembersEndOfARegisteredCallIsRefusedAndNotStored() {
+    var row = row(System.currentTimeMillis() - 1000, System.currentTimeMillis() + 60_000, null);
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+
+    assertThat(service.end(other(), SOURCE, "call")).isEqualTo(Outcome.NOT_FOUND);
+
+    assertThat(row.getEndedAt()).isNull();
+    assertThat(storedEnds).isEmpty();
+  }
+
+  @Test
+  void onlyACurrentMemberOfTheConversationCanEndACallBeforeItsRegistration() {
+    when(matrix.getCallRoomMembers(SOURCE)).thenReturn(Optional.of(List.of(OTHER)));
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.NOT_FOUND);
+    verify(ends, never()).saveAndFlush(any());
+  }
+
+  @Test
+  void aCallEndedBeforeItsRegistrationReadsAsEnded() {
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
+    var state =
+        service.readState(new MatrixCallConversation(SOURCE, 7L, null, 45L), "call", MEMBERS);
+    assertThat(state.orElseThrow().state()).isEqualTo("ended");
+    verify(matrix, never()).getCallRoomState(anyString(), anyString());
+    // Never through another source that shares the room id's numbers.
+    assertThat(
+            service.readState(new MatrixCallConversation(SOURCE, 7L, 45L, null), "call", MEMBERS))
+        .isEmpty();
+  }
+
+  private AuthenticatedUser other() {
+    var other = new AuthenticatedUser();
+    other.setUserId("other");
+    other.setTenantId(7L);
+    when(users.findByUserIdAndDeleteDateIsNull("other"))
+        .thenReturn(Optional.of(user("other", OTHER)));
+    return other;
+  }
+
+  // --- #1628 (1): a call stays known while anyone is still in it ---
+
+  @Test
+  void callStaysRunningWhileAnotherParticipantIsStillInItAfterTheCreatorWentOffline() {
+    long now = System.currentTimeMillis();
+    // The creator's browser stopped renewing 15 minutes ago; the lease ran out 5 minutes ago.
+    var row = row(now - 20 * 60_000, now - 5 * 60_000, null);
+    when(repo.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    when(matrix.getCallRoomMembers(MEDIA)).thenReturn(Optional.of(List.of(CREATOR, OTHER)));
+    when(matrix.getCallRoomState(MEDIA, CREATOR))
+        .thenReturn(
+            Optional.of(
+                List.of(departed(CREATOR, now - 15 * 60_000), active(OTHER, now - 18 * 60_000))));
+    failInsideTransaction();
+
+    var state =
+        service.readState(new MatrixCallConversation(SOURCE, 7L, null, 45L), "call", MEMBERS);
+
+    assertThat(state.orElseThrow().state()).isEqualTo("running");
+    assertThat(row.getExpiresAt()).isGreaterThan(now + 5 * 60_000);
+    assertThat(row.getEndedAt()).isNull();
+  }
+
+  @Test
+  void callEndsSoonAfterTheLastParticipantLeft() {
+    long now = System.currentTimeMillis();
+    var row = row(now - 20 * 60_000, now + 5 * 60_000, null);
+    when(repo.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    when(matrix.getCallRoomMembers(MEDIA)).thenReturn(Optional.of(List.of(CREATOR, OTHER)));
+    when(matrix.getCallRoomState(MEDIA, CREATOR))
+        .thenReturn(
+            Optional.of(List.of(departed(CREATOR, now - 90_000), departed(OTHER, now - 70_000))));
+    failInsideTransaction();
+
+    var state =
+        service.readState(new MatrixCallConversation(SOURCE, 7L, null, 45L), "call", MEMBERS);
+
+    assertThat(state.orElseThrow().state()).isEqualTo("ended");
+    assertThat(row.getEndedAt()).isNotNull().isLessThanOrEqualTo(System.currentTimeMillis());
+    verify(notifications)
+        .createCallEndedNotification(
+            any(), eq("other"), eq(false), eq("call"), eq(MEDIA), anyLong(), anyLong());
+  }
+
+  @Test
+  void aFreshCallIsNotEndedBeforeItsParticipantsCouldConnect() {
+    long now = System.currentTimeMillis();
+    var row = row(now - 70_000, now + 5 * 60_000, null);
+    when(repo.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    when(matrix.getCallRoomMembers(MEDIA)).thenReturn(Optional.of(List.of(CREATOR)));
+    when(matrix.getCallRoomState(MEDIA, CREATOR))
+        .thenReturn(Optional.of(List.of(departed(CREATOR, now - 65_000))));
+
+    var state =
+        service.readState(new MatrixCallConversation(SOURCE, 7L, null, 45L), "call", MEMBERS);
+
+    assertThat(state.orElseThrow().state()).isEqualTo("running");
+    assertThat(row.getEndedAt()).isNull();
+  }
+
+  @Test
+  void unreadableOrUnknownMembershipNeverEndsACall() {
+    long now = System.currentTimeMillis();
+    var row = row(now - 20 * 60_000, now + 5 * 60_000, null);
+    when(repo.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    when(matrix.getCallRoomMembers(MEDIA)).thenReturn(Optional.of(List.of(CREATOR)));
+    // No membership event this server understands: inconclusive, not "everybody left".
+    when(matrix.getCallRoomState(MEDIA, CREATOR))
+        .thenReturn(Optional.of(List.of(Map.of("type", "m.room.create", "state_key", ""))));
+    var conversation = new MatrixCallConversation(SOURCE, 7L, null, 45L);
+
+    assertThat(service.readState(conversation, "call", MEMBERS).orElseThrow().state())
+        .isEqualTo("running");
+    when(matrix.getCallRoomState(MEDIA, CREATOR))
+        .thenThrow(new MatrixSynapseService.CallLookupUnavailableException("down"));
+    row.markLivenessChecked(0L);
+    assertThat(service.readState(conversation, "call", MEMBERS).orElseThrow().state())
+        .isEqualTo("running");
+    assertThat(row.getEndedAt()).isNull();
+  }
+
+  @Test
+  void membershipOfSomebodyOutsideTheConversationDoesNotKeepTheCallAlive() {
+    long now = System.currentTimeMillis();
+    var row = row(now - 20 * 60_000, now - 60_000, null);
+    when(repo.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    when(matrix.getCallRoomMembers(MEDIA)).thenReturn(Optional.of(List.of(CREATOR, "@out:x")));
+    when(matrix.getCallRoomState(MEDIA, CREATOR))
+        .thenReturn(
+            Optional.of(List.of(departed(CREATOR, now - 90_000), active("@out:x", now - 60_000))));
+
+    var state =
+        service.readState(new MatrixCallConversation(SOURCE, 7L, null, 45L), "call", MEMBERS);
+
+    assertThat(state.orElseThrow().state()).isEqualTo("ended");
+  }
+
+  @Test
+  void aCallMemberEventOfAParticipantThatCannotBeReadIsNoProofTheyLeft() {
+    long now = System.currentTimeMillis();
+    var row = row(now - 20 * 60_000, now + 5 * 60_000, null);
+    when(repo.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    when(matrix.getCallRoomMembers(MEDIA)).thenReturn(Optional.of(List.of(CREATOR, OTHER)));
+    // OTHER's membership has content this server does not understand (no focus_active).
+    Map<String, Object> unreadable =
+        Map.of(
+            "type",
+            "org.matrix.msc3401.call.member",
+            "event_id",
+            "$unreadable",
+            "sender",
+            OTHER,
+            "state_key",
+            "_" + OTHER + "_DEVICE",
+            "origin_server_ts",
+            now - 60_000,
+            "content",
+            Map.of("application", "m.call", "scope", "m.room", "call_id", ""));
+    when(matrix.getCallRoomState(MEDIA, CREATOR))
+        .thenReturn(Optional.of(List.of(departed(CREATOR, now - 90_000), unreadable)));
+
+    var state =
+        service.readState(new MatrixCallConversation(SOURCE, 7L, null, 45L), "call", MEMBERS);
+
+    assertThat(state.orElseThrow().state()).isEqualTo("running");
+    assertThat(row.getEndedAt()).isNull();
+  }
+
+  @Test
+  void aLivenessVerdictOvertakenByANewerRenewalIsDiscarded() {
+    long now = System.currentTimeMillis();
+    // What this reader saw before it asked Matrix ...
+    var seen = row(now - 20 * 60_000, now + 5 * 60_000, null);
+    // ... and the row under the lock: the creator renewed in the meantime.
+    var locked = row(now - 20 * 60_000, now + 5 * 60_000, null);
+    locked.renew(now, now + 5 * 60_000);
+    when(repo.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(seen));
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(locked));
+    when(matrix.getCallRoomMembers(MEDIA)).thenReturn(Optional.of(List.of(CREATOR, OTHER)));
+    when(matrix.getCallRoomState(MEDIA, CREATOR))
+        .thenReturn(
+            Optional.of(List.of(departed(CREATOR, now - 90_000), departed(OTHER, now - 70_000))));
+
+    service.readState(new MatrixCallConversation(SOURCE, 7L, null, 45L), "call", MEMBERS);
+
+    assertThat(locked.getEndedAt()).isNull();
+    verify(notifications, never())
+        .createCallEndedNotification(
+            any(), anyString(), anyBoolean(), anyString(), anyString(), anyLong(), anyLong());
+  }
+
+  @Test
+  void livenessIsCheckedAtMostOncePerMinute() {
+    long now = System.currentTimeMillis();
+    var row = row(now - 20 * 60_000, now + 5 * 60_000, null);
+    when(repo.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    when(matrix.getCallRoomMembers(MEDIA)).thenReturn(Optional.of(List.of(CREATOR, OTHER)));
+    when(matrix.getCallRoomState(MEDIA, CREATOR))
+        .thenReturn(Optional.of(List.of(active(OTHER, now - 60_000))));
+    var conversation = new MatrixCallConversation(SOURCE, 7L, null, 45L);
+
+    service.readState(conversation, "call", MEMBERS);
+    service.readState(conversation, "call", MEMBERS);
+    service.readState(conversation, "call", MEMBERS);
+
+    verify(matrix, org.mockito.Mockito.times(1)).getCallRoomState(MEDIA, CREATOR);
+  }
+
+  @Test
+  void anotherParticipantReadsTheMediaRoomWhenTheCreatorLeftIt() {
+    long now = System.currentTimeMillis();
+    var row = row(now - 20 * 60_000, now - 60_000, null);
+    when(repo.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    when(matrix.getCallRoomMembers(MEDIA)).thenReturn(Optional.of(List.of(OTHER)));
+    when(matrix.getCallRoomState(MEDIA, OTHER))
+        .thenReturn(Optional.of(List.of(active(OTHER, now - 60_000))));
+
+    var state =
+        service.readState(new MatrixCallConversation(SOURCE, 7L, null, 45L), "call", MEMBERS);
+
+    assertThat(state.orElseThrow().state()).isEqualTo("running");
+    verify(matrix, never()).getCallRoomState(MEDIA, CREATOR);
+  }
+
+  /** Every later Matrix or notification call must happen with no transaction open. */
+  private void failInsideTransaction() {
+    guardTransactions = true;
+  }
+
+  @org.junit.jupiter.api.AfterEach
+  void noCallInsideATransaction() {
+    assertThat(callsInsideTransaction).isEmpty();
+  }
+
+  private Map<String, Object> active(String sender, long since) {
+    return Map.of(
+        "type",
+        "org.matrix.msc3401.call.member",
+        "event_id",
+        "$" + sender + since,
+        "sender",
+        sender,
+        "state_key",
+        "_" + sender + "_DEVICE",
+        "origin_server_ts",
+        since,
+        "content",
+        Map.of(
+            "application",
+            "m.call",
+            "scope",
+            "m.room",
+            "call_id",
+            "",
+            "device_id",
+            "DEVICE",
+            "focus_active",
+            Map.of("type", "livekit"),
+            "foci_preferred",
+            List.of(),
+            "created_ts",
+            since,
+            "expires",
+            4 * 60 * 60 * 1000L));
+  }
+
+  private Map<String, Object> departed(String sender, long at) {
+    return Map.of(
+        "type",
+        "org.matrix.msc3401.call.member",
+        "event_id",
+        "$" + sender + at,
+        "sender",
+        sender,
+        "state_key",
+        "_" + sender + "_DEVICE",
+        "origin_server_ts",
+        at,
+        "content",
+        Map.of());
   }
 
   private static MatrixCallObservation row(long registered, long expires, Long ended) {
