@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- ORISO-Frontend#2237: an advice seeker waiting in a group's waiting room is a
+       group_chat_join_request with via = WAITING_ROOM (via is VARCHAR, no change needed). The
+       waiting page says every few seconds that the person is still there; somebody who closed it
+       drops off the moderator's list once waiting_seen_at is old. Null for every other row. -->
+  <changeSet id="20261112-group-waiting-room-2237" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <columnExists tableName="group_chat_join_request" columnName="waiting_seen_at"/>
+      </not>
+    </preConditions>
+    <addColumn tableName="group_chat_join_request">
+      <column name="waiting_seen_at" type="DATETIME"/>
+    </addColumn>
+    <!-- Keep the column on rollback (same rule as 20261110_session_direct_link_name_2170): it is
+         nullable and additive, so an older application ignores it. Waiting-room rows are
+         short-lived presence that grants nothing, and an older application has no WAITING_ROOM
+         value to load them with, so they are removed. No other table references them. -->
+    <rollback>
+      <delete tableName="group_chat_join_request">
+        <where>via = 'WAITING_ROOM'</where>
+      </delete>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

@@ -50,6 +50,8 @@ public class DirectLinkControllerDelegate {
   private static final UsernameTranscoder USERNAMES = new UsernameTranscoder();
 
   private final @NonNull DirectCallKnockService knockService;
+  private final @NonNull de.caritas.cob.userservice.api.service.chat.GroupWaitingRoomService
+      waitingRooms;
   private final @NonNull UserRepository userRepository;
   private final @NonNull de.caritas.cob.userservice.api.service.temporaryaccount
           .TemporaryAccountService
@@ -164,6 +166,12 @@ public class DirectLinkControllerDelegate {
     return ResponseEntity.ok(toKnockDto(knockService.decline(knockId, consultant)));
   }
 
+  /** ORISO-Frontend#2237: the caller waits in a group's waiting room. */
+  ResponseEntity<CallKnockDTO> waitInGroupChat(Long chatId) {
+    var user = userAccountService.retrieveValidatedUser();
+    return ResponseEntity.ok(toKnockDto(waitingRooms.waitIn(chatId, user)));
+  }
+
   ResponseEntity<CallKnockDTO> getOwnCallKnock(Long knockId) {
     var user = userAccountService.retrieveValidatedUser();
     return ResponseEntity.ok(toKnockDto(knockService.getOwn(knockId, user)));
@@ -182,17 +190,15 @@ public class DirectLinkControllerDelegate {
   /** One user lookup for the whole list. */
   private List<CallKnockDTO> toKnockDtos(List<GroupChatJoinRequest> knocks) {
     var ids = knocks.stream().map(GroupChatJoinRequest::getUserId).distinct().toList();
-    var names = new HashMap<String, String>();
-    userRepository.findAllById(ids).forEach(u -> names.put(u.getUserId(), displayName(u)));
-    return knocks.stream().map(k -> toKnockDto(k, names.get(k.getUserId()))).toList();
+    var people = new HashMap<String, User>();
+    userRepository.findAllById(ids).forEach(u -> people.put(u.getUserId(), u));
+    return knocks.stream().map(k -> toKnockDto(k, people.get(k.getUserId()))).toList();
   }
 
   private CallKnockDTO toKnockDto(GroupChatJoinRequest knock) {
-    var name =
-        knock.getUserId() == null
-            ? null
-            : userRepository.findById(knock.getUserId()).map(this::displayName).orElse(null);
-    return toKnockDto(knock, name);
+    var person =
+        knock.getUserId() == null ? null : userRepository.findById(knock.getUserId()).orElse(null);
+    return toKnockDto(knock, person);
   }
 
   /** The pseudonym the person registered with; never the e-mail address. */
@@ -200,9 +206,11 @@ public class DirectLinkControllerDelegate {
     return user.getUsername() == null ? null : USERNAMES.decodeUsername(user.getUsername());
   }
 
-  private CallKnockDTO toKnockDto(GroupChatJoinRequest knock, String displayName) {
+  private CallKnockDTO toKnockDto(GroupChatJoinRequest knock, User person) {
     return new CallKnockDTO()
-        .displayName(displayName)
+        .displayName(person == null ? null : displayName(person))
+        // The picture the person chose, as in the chat (#2237).
+        .avatarId(person == null ? null : person.getAvatarId())
         .id(knock.getId())
         // A call-link guest must never learn the conversation of the call (#1487).
         .sessionId(
