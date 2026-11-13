@@ -1242,14 +1242,22 @@ public class KeycloakService
   }
 
   /**
-   * Deactivates the user account.
+   * Deactivates the user account. A user that no longer exists in Keycloak counts as already
+   * deactivated, so marking an account for deletion does not fail on a missing identity.
    *
    * @param userId the user id to be deactivated
    */
   @Override
   public void deactivateUser(String userId) {
     var userResource = keycloakClient.getUsersResource().get(userId);
-    var userRepresentation = userResource.toRepresentation();
+    final UserRepresentation userRepresentation;
+    try {
+      userRepresentation = userResource.toRepresentation();
+    } catch (NotFoundException e) {
+      // No identity means nobody can log in with it: deactivation has already happened.
+      log.warn("User {} not found in Keycloak, treating it as already deactivated.", userId);
+      return;
+    }
     userRepresentation.setEnabled(false);
     userResource.update(userRepresentation);
   }
