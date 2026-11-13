@@ -29,6 +29,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.workflow.delete.service.AskerEnquiryCloser;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
@@ -58,6 +59,7 @@ class AskerUserAdminFacadeTest {
   @Mock private DeletionLifecycleService deletionLifecycleService;
   @Mock private AdminScope adminScope;
   @Mock private AskerAdminSearchService askerAdminSearchService;
+  @Mock private AskerEnquiryCloser askerEnquiryCloser;
 
   @BeforeEach
   void setUp() {
@@ -121,6 +123,9 @@ class AskerUserAdminFacadeTest {
     ArgumentCaptor<User> saved = ArgumentCaptor.forClass(User.class);
     verify(userService).saveUser(saved.capture());
     assertThat(saved.getValue().getDeleteDate(), notNullValue());
+    var order = org.mockito.Mockito.inOrder(userService, askerEnquiryCloser);
+    order.verify(userService).saveUser(user);
+    order.verify(askerEnquiryCloser).closeOpenEnquiries(user);
   }
 
   @Test

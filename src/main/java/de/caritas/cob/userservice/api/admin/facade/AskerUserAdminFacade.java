@@ -19,6 +19,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.workflow.delete.service.AskerEnquiryCloser;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -40,6 +41,7 @@ public class AskerUserAdminFacade {
   private final @NonNull DeletionLifecycleService deletionLifecycleService;
   private final @NonNull AdminScope adminScope;
   private final @NonNull AskerAdminSearchService askerAdminSearchService;
+  private final @NonNull AskerEnquiryCloser askerEnquiryCloser;
 
   /** Advice seekers within the caller's reach, including those already marked for deletion. */
   public AskerSearchResultDTO findAskers(Integer page, Integer perPage, AskerFilter filter) {
@@ -67,6 +69,7 @@ public class AskerUserAdminFacade {
     this.identityDeactivator.deactivateUser(userId);
     this.deletionLifecycleService.beginUserDeletion(user, null);
     this.userService.saveUser(user);
+    this.askerEnquiryCloser.closeOpenEnquiries(user);
   }
 
   public void pauseAskerDeletion(String userId, String reason, Integer months, String pausedBy) {
