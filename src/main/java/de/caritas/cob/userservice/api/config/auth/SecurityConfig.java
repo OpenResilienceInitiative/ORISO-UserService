@@ -341,6 +341,8 @@ public class SecurityConfig {
                 .hasAuthority(CONSULTANT_DEFAULT)
                 .requestMatchers(HttpMethod.POST, "/users/event-notifications/addon")
                 .hasAuthority(TECHNICAL_DEFAULT)
+                .requestMatchers(HttpMethod.GET, "/users/addon-context")
+                .hasAuthority(TECHNICAL_DEFAULT)
                 .requestMatchers(
                     "/users/email",
                     "/users/drafts",
