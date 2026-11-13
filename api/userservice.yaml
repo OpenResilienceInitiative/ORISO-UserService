@@ -268,6 +268,28 @@ paths:
               schema: {$ref: '#/components/schemas/CallKnockDTO'}
         '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
         '404': {description: No own knock with this id}
+  /users/chat/{chatId}/waiting:
+    put:
+      tags: [direct-link-controller]
+      operationId: waitInGroupChat
+      summary: 'Wait in a group''s waiting room until a moderator lets the caller in [Authorization: Role: user]'
+      description: 'ORISO-Frontend#2237. One open entry per person and group; calling again marks the person as still there (call it every few seconds while waiting, else the entry drops off the moderator''s list). A moderator in the group''s running call sees the entry in GET /users/call-knocks?matrixRoomId=<group room> and admits it there. Returns a fresh admission as it is. Admission grants nothing by itself: the caller then joins with PUT /users/chat/{chatId}/join. Stop waiting with DELETE /users/call-knocks/mine/{knockId}.'
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: chatId
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        '200':
+          description: The caller's waiting-room entry
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CallKnockDTO'}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '403': {description: FORBIDDEN - no permission for this chat}
+        '404': {description: No such chat}
   /users/live-chat-account/conversion:
     get:
       tags: [live-chat-conversion-controller]
@@ -3760,6 +3782,9 @@ components:
         displayName:
           type: string
           description: 'The knocking person''s username (pseudonym), decoded; never the e-mail address or a real name.'
+        avatarId:
+          type: string
+          description: 'The avatar the person picked in their profile (lower-case animal id, e.g. magpie), so the counsellor sees the same picture as in the chat (ORISO-Frontend#2237). Empty when none was picked.'
         status: {$ref: '#/components/schemas/CallKnockStatus'}
         medium: {$ref: '#/components/schemas/DirectLinkMedium'}
         requestedAt: {type: string, format: date-time}
