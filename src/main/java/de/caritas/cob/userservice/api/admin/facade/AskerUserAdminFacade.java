@@ -29,7 +29,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
-import org.springframework.web.server.ResponseStatusException;
 
 /** Wrapper facade to provide admin operations on asker accounts. */
 @Service
@@ -47,7 +46,6 @@ public class AskerUserAdminFacade {
   private final @NonNull AdminScope adminScope;
   private final @NonNull AskerAdminSearchService askerAdminSearchService;
   private final @NonNull AskerEnquiryCloser askerEnquiryCloser;
-  private final @NonNull GroupChatSystemAccounts groupChatSystemAccounts;
 
   /** Advice seekers within the caller's reach, including those already marked for deletion. */
   public AskerSearchResultDTO findAskers(Integer page, Integer perPage, AskerFilter filter) {
@@ -71,7 +69,7 @@ public class AskerUserAdminFacade {
       throw new CustomValidationHttpStatusException(
           HttpStatusExceptionReason.ASKER_ALREADY_MARKED_FOR_DELETION, HttpStatus.CONFLICT);
     }
-    assertNotTechnicalAccountOfExistingTenant(user);
+    assertNotTechnicalAccount(user);
 
     liveChatClaims.claimIntentionalDeletion(userId);
     this.identityDeactivator.deactivateUser(userId);
@@ -80,20 +78,11 @@ public class AskerUserAdminFacade {
     this.askerEnquiryCloser.closeOpenEnquiries(user);
   }
 
-  /** A group-chat system account goes with its Träger, unless the Träger is already gone. */
-  private void assertNotTechnicalAccountOfExistingTenant(User user) {
-    boolean mayDelete;
-    try {
-      mayDelete = groupChatSystemAccounts.mayDelete(user.getUserId(), user.getTenantId());
-    } catch (RuntimeException unavailable) {
-      throw new ResponseStatusException(
-          HttpStatus.BAD_GATEWAY,
-          "Whether the Träger still exists could not be checked",
-          unavailable);
-    }
-    if (!mayDelete) {
+  /** A group-chat system account owns its Träger's group chats and only goes with the Träger. */
+  private static void assertNotTechnicalAccount(User user) {
+    if (GroupChatSystemAccounts.isTechnical(user.getUserId())) {
       throw new CustomValidationHttpStatusException(
-          HttpStatusExceptionReason.TECHNICAL_ACCOUNT_OF_EXISTING_TENANT, HttpStatus.CONFLICT);
+          HttpStatusExceptionReason.TECHNICAL_GROUP_CHAT_ACCOUNT, HttpStatus.CONFLICT);
     }
   }
 

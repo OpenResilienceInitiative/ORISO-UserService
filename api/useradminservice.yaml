@@ -421,7 +421,7 @@ paths:
         (platform, own Träger or own agencies). [Authorization: Role: user-admin]
       description: >-
         Advice seekers marked for deletion are included, with their deletion state, so the admin
-        interface can show them as "in deletion". Usernames are stored encoded, so the username
+        interface can show them as "in deletion". The technical group-chat-system users are not. Usernames are stored encoded, so the username
         filter matches the whole username, not a part of it.
       operationId: getAskers
       parameters:
@@ -513,13 +513,11 @@ paths:
         409:
           description: >-
             CONFLICT - X-Reason ASKER_ALREADY_MARKED_FOR_DELETION: already marked;
-            TECHNICAL_ACCOUNT_OF_EXISTING_TENANT: the technical group-chat account of a Träger that
-            still exists, which goes with the Träger. Without X-Reason: another operation on the
-            account (e.g. a live-chat transition) is in progress.
+            TECHNICAL_GROUP_CHAT_ACCOUNT: a technical group-chat-system account, which only goes
+            with its Träger. Without X-Reason: another operation on the account (e.g. a live-chat
+            transition) is in progress.
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
-        502:
-          description: BAD GATEWAY - whether the Träger of a technical account still exists could not be checked
       security:
         - Bearer: [ ]
   /useradmin/report:
@@ -2901,8 +2899,6 @@ components:
         - username
         - agencyIds
         - deletionState
-        - technical
-        - deletable
       properties:
         id:
           type: string
@@ -2939,15 +2935,6 @@ components:
         deletionFailedAt:
           type: string
           description: When that run failed, ISO-8601 in UTC.
-        technical:
-          type: boolean
-          description: >-
-            A technical group-chat-system account that owns a Träger's group chats, not a person.
-        deletable:
-          type: boolean
-          description: >-
-            Whether an admin may mark this entry now. False for a technical account whose Träger
-            still exists (it is deleted with the Träger) or when that could not be checked.
 
     AskerResponseDTO:
       type: object

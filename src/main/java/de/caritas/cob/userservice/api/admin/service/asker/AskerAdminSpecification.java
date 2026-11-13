@@ -26,6 +26,8 @@ public final class AskerAdminSpecification {
       Collection<String> usernames, Collection<Long> agencyIds, Long tenantId) {
     return (root, query, cb) -> {
       var predicates = new ArrayList<Predicate>();
+      // The group-chat system users own a Träger's group chats; they are no advice seekers.
+      predicates.add(cb.notLike(root.get("userId"), GroupChatSystemAccounts.PREFIX + "%"));
       if (usernames != null && !usernames.isEmpty()) {
         predicates.add(root.get("username").in(usernames));
       }

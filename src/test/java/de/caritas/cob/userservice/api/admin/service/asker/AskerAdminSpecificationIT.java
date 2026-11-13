@@ -48,6 +48,7 @@ class AskerAdminSpecificationIT {
   private User withMembership;
   private User withoutAgency;
   private User otherTenant;
+  private User groupChatSystem;
 
   @BeforeEach
   void persistAskers() {
@@ -55,6 +56,8 @@ class AskerAdminSpecificationIT {
     withMembership = asker("plain-member", TENANT);
     withoutAgency = asker("enc.no-agency", TENANT);
     otherTenant = asker("enc.other-tenant", OTHER_TENANT);
+    groupChatSystem = asker("group-chat-system-" + TENANT, TENANT, "group-chat-system-" + TENANT);
+    session(groupChatSystem, SESSION_AGENCY);
     session(withSession, SESSION_AGENCY);
     session(otherTenant, SESSION_AGENCY);
     membership(withMembership, MEMBERSHIP_AGENCY);
@@ -86,6 +89,19 @@ class AskerAdminSpecificationIT {
     assertThat(
             ids(AskerAdminSpecification.matching(Set.of(), Set.of(SESSION_AGENCY), OTHER_TENANT)))
         .containsExactly(otherTenant.getUserId());
+  }
+
+  @Test
+  void matching_Should_leaveOutTheGroupChatSystemUser() {
+    // It owns every group session of the Träger, so it sits in their agencies: still no advice
+    // seeker.
+    assertThat(ids(AskerAdminSpecification.matching(Set.of(), Set.of(SESSION_AGENCY), TENANT)))
+        .doesNotContain(groupChatSystem.getUserId());
+    assertThat(
+            ids(
+                AskerAdminSpecification.matching(
+                    Set.of(groupChatSystem.getUsername()), Set.of(), TENANT)))
+        .isEmpty();
   }
 
   @Test
@@ -130,8 +146,12 @@ class AskerAdminSpecificationIT {
   }
 
   private User asker(String username, long tenantId) {
+    return asker(username, tenantId, UUID.randomUUID().toString());
+  }
+
+  private User asker(String username, long tenantId, String userId) {
     var user = new User();
-    user.setUserId(UUID.randomUUID().toString());
+    user.setUserId(userId);
     user.setUsername(username);
     user.setEmail(user.getUserId() + "@example.org");
     user.setTenantId(tenantId);

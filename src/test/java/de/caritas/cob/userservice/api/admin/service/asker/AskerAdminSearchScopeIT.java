@@ -154,8 +154,7 @@ class AskerAdminSearchScopeIT {
             sessionRepository,
             userAgencyRepository,
             scope,
-            new UsernameTranscoder(),
-            mock(GroupChatSystemAccounts.class));
+            new UsernameTranscoder());
     return service.findAskers(1, 50, filter);
   }
 
