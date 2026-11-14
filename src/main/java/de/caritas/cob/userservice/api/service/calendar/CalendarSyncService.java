@@ -23,6 +23,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
@@ -33,7 +34,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  * reads the calendar outside any database transaction and then replaces all imported busy times of
  * the counsellor in one. A failed import keeps the busy times of the last good one and records why
  * it failed as a code. Every transaction that reads the connection row and writes it back locks it
- * first, so none of them overwrites what another changed meanwhile.
+ * first, so none of them overwrites what another changed meanwhile. A write that fails rolls back
+ * whole; its code is then recorded in a transaction of its own, so the last good import is not
+ * shown as the latest without an error.
  */
 @Service
 @Slf4j
@@ -51,6 +54,7 @@ public class CalendarSyncService {
   private final CalendarImportFetcher fetcher;
   private final CalendarBusyParser parser;
   private final TransactionTemplate transaction;
+  private final TransactionTemplate ownTransaction;
   private final Clock clock;
   private final String appBaseUrl;
   private final ZoneId zone;
@@ -75,6 +79,8 @@ public class CalendarSyncService {
     this.fetcher = fetcher;
     this.parser = parser;
     this.transaction = new TransactionTemplate(transactionManager);
+    this.ownTransaction = new TransactionTemplate(transactionManager);
+    ownTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     this.clock = clock;
     this.appBaseUrl = appBaseUrl.replaceAll("/+$", "");
     this.zone = ZoneId.of(zone);
@@ -171,8 +177,41 @@ public class CalendarSyncService {
       log.warn("A calendar import failed: {}", failure.getClass().getSimpleName());
       error = CalendarImportError.UNREACHABLE;
     }
-    var failed = error;
-    var imported = slots;
+    try {
+      store(consultantId, address, now, error, slots);
+    } catch (RuntimeException notStored) {
+      // Rolled back: the busy times of the last good import stay, and so would its time without
+      // an error. The caller logs the failure.
+      recordError(consultantId, address, error == null ? CalendarImportError.UNREACHABLE : error);
+      throw notStored;
+    }
+  }
+
+  /** In a transaction of its own; the address must still be the one that was read. */
+  private void recordError(String consultantId, String address, CalendarImportError error) {
+    try {
+      ownTransaction.executeWithoutResult(
+          status -> {
+            var sync = syncs.findForUpdate(consultantId).orElse(null);
+            if (sync == null || !address.equals(sync.getImportUrl())) {
+              return;
+            }
+            sync.setImportError(error.name());
+            syncs.save(sync);
+          });
+    } catch (RuntimeException alsoFailed) {
+      log.warn(
+          "The error of a calendar import could not be recorded: {}",
+          alsoFailed.getClass().getSimpleName());
+    }
+  }
+
+  private void store(
+      String consultantId,
+      String address,
+      Instant now,
+      CalendarImportError failed,
+      List<BusySlot> imported) {
     transaction.executeWithoutResult(
         status -> {
           var sync = syncs.findForUpdate(consultantId).orElse(null);

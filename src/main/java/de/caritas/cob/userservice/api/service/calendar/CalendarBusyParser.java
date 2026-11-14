@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.calendar;
 import de.caritas.cob.userservice.api.service.calendar.CalendarRecurrenceCost.Verdict;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
@@ -33,14 +34,19 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
-import net.fortuna.ical4j.data.CalendarBuilder;
+import net.fortuna.ical4j.data.CalendarParserFactory;
+import net.fortuna.ical4j.data.DefaultContentHandler;
 import net.fortuna.ical4j.data.ParserException;
+import net.fortuna.ical4j.data.UnfoldingReader;
 import net.fortuna.ical4j.model.Calendar;
 import net.fortuna.ical4j.model.Component;
+import net.fortuna.ical4j.model.ComponentList;
 import net.fortuna.ical4j.model.Parameter;
 import net.fortuna.ical4j.model.Property;
+import net.fortuna.ical4j.model.PropertyList;
 import net.fortuna.ical4j.model.Recur;
 import net.fortuna.ical4j.model.TemporalAmountAdapter;
+import net.fortuna.ical4j.model.TimeZoneRegistry;
 import net.fortuna.ical4j.model.component.VEvent;
 import net.fortuna.ical4j.model.parameter.Value;
 import net.fortuna.ical4j.model.property.DateListProperty;
@@ -63,7 +69,8 @@ import net.fortuna.ical4j.model.property.RRule;
  * times in all, more than {@value #MAX_EVENTS} events or more than the time budget refuse the whole
  * document as {@link CalendarImportError#TOO_LARGE}. So do time zones the document defines itself
  * (VTIMEZONE) whose rules would cost too much: ical4j builds their onsets while it reads the
- * document, before any other bound applies.
+ * document, before any other bound applies. So do more than {@value CalendarTimeZones#MAX} of them:
+ * they are read under ids the process keeps ({@link CalendarTimeZones}).
  *
  * <p>An event that is not read is counted, and the count is logged once per document with the kind
  * of failure only: never the event, its UID or the address.
@@ -117,8 +124,16 @@ public class CalendarBusyParser {
    *     to read
    */
   public List<BusySlot> parse(byte[] document, Instant from, Instant to, ZoneId zone) {
+    // A time of a zone the document defines is read only in here: what its id stands for ends here.
+    try (var zones = CalendarTimeZones.open()) {
+      return read(document, from, to, zone, zones);
+    }
+  }
+
+  private List<BusySlot> read(
+      byte[] document, Instant from, Instant to, ZoneId zone, CalendarTimeZones zones) {
     var deadline = new Deadline(timeBudget);
-    var events = eventsOf(document);
+    var events = eventsOf(document, zones);
     // A moved or cancelled single occurrence comes as an event of its own (RECURRENCE-ID); the
     // series must not also report the occurrence it replaces.
     var replaced = new HashMap<String, Set<Instant>>();
@@ -422,7 +437,7 @@ public class CalendarBusyParser {
 
   private record Span(Temporal start, Temporal end) {}
 
-  private static List<VEvent> eventsOf(byte[] document) {
+  private static List<VEvent> eventsOf(byte[] document, TimeZoneRegistry zones) {
     var text = document == null ? null : new String(document, StandardCharsets.UTF_8);
     if (text == null || !text.contains("BEGIN:VCALENDAR")) {
       throw new CalendarImportException(CalendarImportError.NOT_ICS);
@@ -434,8 +449,7 @@ public class CalendarBusyParser {
     requireBoundedTimeZones(text);
     List<VEvent> events;
     try {
-      Calendar calendar = new CalendarBuilder().build(new ByteArrayInputStream(document));
-      events = new ArrayList<>(calendar.<VEvent>getComponents(Component.VEVENT));
+      events = new ArrayList<>(build(document, zones).<VEvent>getComponents(Component.VEVENT));
     } catch (IOException | ParserException | RuntimeException notIcs) {
       throw new CalendarImportException(CalendarImportError.NOT_ICS);
     }
@@ -447,15 +461,53 @@ public class CalendarBusyParser {
   }
 
   /**
+   * As ical4j's CalendarBuilder reads a document, without the time zone provider it registers at
+   * the end of each one for good ({@link CalendarTimeZones}).
+   */
+  private static Calendar build(byte[] document, TimeZoneRegistry zones)
+      throws IOException, ParserException {
+    var handler = new DocumentHandler(zones);
+    CalendarParserFactory.getInstance()
+        .get()
+        .parse(
+            new UnfoldingReader(
+                new InputStreamReader(new ByteArrayInputStream(document), StandardCharsets.UTF_8)),
+            handler);
+    if (handler.calendar == null) {
+      throw notIcs();
+    }
+    return handler.calendar;
+  }
+
+  /** ical4j's handler without its last step, which registers the document's zones for good. */
+  private static final class DocumentHandler extends DefaultContentHandler {
+
+    private Calendar calendar;
+
+    DocumentHandler(TimeZoneRegistry zones) {
+      super(unused -> {}, zones);
+    }
+
+    @Override
+    public void endCalendar() {
+      calendar =
+          new Calendar(
+              new PropertyList(calendarProperties), new ComponentList<>(calendarComponents));
+    }
+  }
+
+  /**
    * Judges the rules of the time zones the document defines (VTIMEZONE) from the text alone. ical4j
    * registers such a zone while it builds the document and walks every rule of an observance (RRULE
    * and EXRULE) from its start to a few years past today, without a cap and before the time budget
    * is checked. A zone this scan could read differently from ical4j is refused: a quote before the
-   * colon of a line, a component inside an observance, or an observance with a second start.
+   * colon of a line, a component inside an observance, or an observance with a second start. So is
+   * a document with more than {@value CalendarTimeZones#MAX} zones.
    */
   private static void requireBoundedTimeZones(String text) {
     var horizon = Instant.now().plus(TIME_ZONE_HORIZON);
     long work = 0;
+    var timeZones = 0;
     var inTimeZone = false;
     String observance = null;
     Instant onset = null;
@@ -475,6 +527,9 @@ public class CalendarBusyParser {
       var component = value.toUpperCase(Locale.ROOT);
       if (!inTimeZone) {
         inTimeZone = "BEGIN".equals(name) && "VTIMEZONE".equals(component);
+        if (inTimeZone && ++timeZones > CalendarTimeZones.MAX) {
+          throw tooLarge();
+        }
       } else if ("BEGIN".equals(name)) {
         if (observance != null) {
           throw notIcs();
