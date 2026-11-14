@@ -11,7 +11,6 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.model.DirectInvitationMember;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.SessionAppointment;
 import de.caritas.cob.userservice.api.model.User;
@@ -23,7 +22,6 @@ import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -37,9 +35,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
@@ -56,9 +52,6 @@ public class DirectInvitationService {
 
   public static final String RENEWED_TYPE = "DIRECT_INVITATION_RENEWED";
 
-  /** How long a join may take before the sweep treats the half-recorded person as due. */
-  static final Duration JOIN_GRACE = Duration.ofMinutes(2);
-
   private static final String COUNSELLOR = InviteLinkKind.COUNSELLOR.name();
   private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -71,7 +64,7 @@ public class DirectInvitationService {
   private final @NonNull MatrixSessionSystemMessageService systemMessages;
   private final @NonNull SessionArchiveService archive;
   private final @NonNull Clock clock;
-  private final @NonNull PlatformTransactionManager transactionManager;
+  private final @NonNull DirectInvitationMemberships memberships;
 
   @Value("${app.base.url:}")
   String appBaseUrl;
@@ -190,7 +183,7 @@ public class DirectInvitationService {
                           HttpStatus.BAD_GATEWAY, "conversation_room_unavailable"));
       appointment.setSession(session);
       appointments.save(appointment);
-      members.save(member(session, user, link));
+      memberships.recordCreator(session, user, link);
       return new Opened(session, true, false);
     }
     if (session.getUser() != null
@@ -198,40 +191,27 @@ public class DirectInvitationService {
       return new Opened(session, false, false);
     }
     var existing = members.findBySessionIdAndUserId(session.getId(), user.getUserId());
-    if (existing.filter(DirectInvitationService::isConfirmedMember).isPresent()) {
+    if (existing.filter(DirectInvitationMemberships::isMember).isPresent()) {
       return new Opened(session, false, false);
     }
     return new Opened(session, false, true);
   }
 
   /**
-   * A later person joins the room, outside any lock. Fail closed against an invitation that ends
-   * meanwhile (switched off, deleted, expired, appointment cancelled):
-   *
-   * <ol>
-   *   <li>before the join, the person is recorded with a removal due after {@link #JOIN_GRACE}, so
-   *       a revoke running during the join sees them and an abandoned join is cleaned up;
-   *   <li>after the join, the invitation is read again under its row lock: still open clears the
-   *       due removal, otherwise the removal is due now and the sweep takes the person out.
-   * </ol>
-   *
-   * Does nothing when {@link #openAppointmentConversation} found them in the conversation already.
+   * A later person joins the room, outside any lock. {@link DirectInvitationMemberships} decides
+   * the membership: the attempt is recorded (removal due) before Matrix is asked, confirmed under
+   * the invitation's row lock afterwards, and abandoned on any failure, so an invitation that ends
+   * during the join, or a join that fails, never leaves a member behind.
    */
   public Opened joinLater(AgencyInviteLink link, User user, Opened opened) {
     if (!opened.joinPending()) {
       return opened;
     }
     var session = opened.session();
-    var row =
-        members
-            .findBySessionIdAndUserId(session.getId(), user.getUserId())
-            .orElseGet(() -> member(session, user, link));
-    row.setRemovedAt(null);
-    row.setRevokeDueAt(now().plus(JOIN_GRACE));
-    row.setGuest(isGuest(user));
-    row.setInviteLinkId(link.getId());
-    row.setJoinedAt(now());
-    var reserved = members.save(row);
+    var attempt = memberships.reserve(session, user, link);
+    if (attempt.isEmpty()) {
+      return new Opened(session, false, false);
+    }
     try {
       if (link.isJoinsExistingSession()) {
         rooms.addInvitedGuestToExistingRoom(session, user);
@@ -239,77 +219,13 @@ public class DirectInvitationService {
         rooms.addToAppointmentRoom(session, user);
       }
     } catch (RuntimeException failure) {
-      abandon(reserved, failure);
+      memberships.abandon(session, user, attempt.get());
       throw failure;
     }
-    var template = new TransactionTemplate(transactionManager);
-    if (!Boolean.TRUE.equals(template.execute(status -> confirmJoin(link, reserved)))) {
+    if (!memberships.confirm(session, user, link.getId(), attempt.get())) {
       throw new DirectLinkInactiveException();
     }
     return new Opened(session, true, false);
-  }
-
-  /**
-   * A person who came in by link and is in the room for good: Matrix confirmed the join and no
-   * removal is due. A row reserved for a join that has not been confirmed (or has failed) never
-   * counts, so the next visit runs every join check again.
-   */
-  private static boolean isConfirmedMember(DirectInvitationMember member) {
-    return member.getRemovedAt() == null && member.getRevokeDueAt() == null;
-  }
-
-  /**
-   * A join that failed leaves no active row. A refusal, or an unknown encryption state, is decided
-   * before anything is sent to Matrix, so the person is simply not in the room. Any other failure
-   * may have reached Matrix (an invite or a join), so the removal is due now and the sweep makes
-   * sure the person is out.
-   */
-  private void abandon(DirectInvitationMember reserved, RuntimeException failure) {
-    try {
-      if (decidedBeforeMatrix(failure)) {
-        reserved.setRevokeDueAt(null);
-        reserved.setRemovedAt(now());
-      } else {
-        reserved.setRemovedAt(null);
-        reserved.setRevokeDueAt(now());
-      }
-      members.save(reserved);
-    } catch (RuntimeException saveFailure) {
-      // The reserved row keeps its due removal after the grace; the sweep cleans it up.
-      log.warn(
-          "Abandoned join of member {} could not be recorded: {}",
-          reserved.getId(),
-          saveFailure.getClass().getSimpleName());
-    }
-  }
-
-  private static boolean decidedBeforeMatrix(RuntimeException failure) {
-    return failure instanceof DirectInvitationRefusedException
-        || (failure instanceof ResponseStatusException status
-            && status.getStatusCode() == HttpStatus.SERVICE_UNAVAILABLE);
-  }
-
-  /** Runs under the invitation's row lock; true when it is still open and the person may stay. */
-  private boolean confirmJoin(AgencyInviteLink opened, DirectInvitationMember reserved) {
-    var linkId = opened.getId();
-    var link = links.findByIdForUpdate(linkId);
-    var member = members.findById(reserved.getId()).orElse(reserved);
-    var open =
-        link.filter(l -> InviteLinkStatus.ACTIVE.name().equals(l.getStatus()))
-            .filter(l -> l.getExpiresAt() == null || l.getExpiresAt().isAfter(now()))
-            .flatMap(this::appointmentOf)
-            .filter(a -> a.getStatus() != SessionAppointment.Status.CANCELLED)
-            .isPresent();
-    // Same rule as the revoke: accounts keep a shared appointment conversation.
-    var leaves = !open && (opened.isJoinsExistingSession() || member.isGuest());
-    member.setRemovedAt(null);
-    member.setRevokeDueAt(leaves ? now() : null);
-    members.save(member);
-    if (!open) {
-      log.warn(
-          "Invitation {} ended while member {} joined; removal is due", linkId, member.getId());
-    }
-    return open;
   }
 
   /**
@@ -448,20 +364,6 @@ public class DirectInvitationService {
     if (!schedule.start().isAfter(now())) {
       throw new BadRequestException("An appointment must start in the future.");
     }
-  }
-
-  private DirectInvitationMember member(Session session, User user, AgencyInviteLink link) {
-    return DirectInvitationMember.builder()
-        .sessionId(session.getId())
-        .userId(user.getUserId())
-        .inviteLinkId(link.getId())
-        .guest(isGuest(user))
-        .joinedAt(now())
-        .build();
-  }
-
-  private static boolean isGuest(User user) {
-    return user.getTemporaryAccountSnapshot() != null;
   }
 
   static LocalDateTime utc(Instant instant) {

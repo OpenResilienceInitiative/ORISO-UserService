@@ -81,7 +81,7 @@ class DirectInvitationServiceTest {
             systemMessages,
             archive,
             Clock.systemUTC(),
-            mock(org.springframework.transaction.PlatformTransactionManager.class));
+            new DirectInvitationMemberships(members, links, appointments, Clock.systemUTC()));
     service.appBaseUrl = "https://app.example";
     owner = new Consultant();
     owner.setId(OWNER_ID);
@@ -115,7 +115,10 @@ class DirectInvitationServiceTest {
               return saved;
             });
     when(links.save(any())).thenAnswer(i -> i.getArgument(0));
-    when(members.save(any())).thenAnswer(i -> i.getArgument(0));
+    storeMembers();
+    // The locked read sees what the plain one sees.
+    when(members.findBySessionIdAndUserIdForUpdate(any(), any()))
+        .thenAnswer(i -> members.findBySessionIdAndUserId(i.getArgument(0), i.getArgument(1)));
     when(links.findByIdForUpdate(LINK_ID)).thenReturn(Optional.of(link));
     when(links.findByIdAndConsultantIdAndLinkKindAndChatTypeIn(
             eq(LINK_ID), eq(OWNER_ID), eq("COUNSELLOR"), any()))
@@ -225,8 +228,14 @@ class DirectInvitationServiceTest {
   }
 
   /** Stores saved member rows, so a second visit reads what the first one left behind. */
+  private java.util.concurrent.atomic.AtomicReference<DirectInvitationMember> storedMember;
+
   private java.util.concurrent.atomic.AtomicReference<DirectInvitationMember> storeMembers() {
+    if (storedMember != null) {
+      return storedMember;
+    }
     var stored = new java.util.concurrent.atomic.AtomicReference<DirectInvitationMember>();
+    storedMember = stored;
     when(members.save(any()))
         .thenAnswer(
             i -> {
@@ -239,7 +248,6 @@ class DirectInvitationServiceTest {
             });
     when(members.findBySessionIdAndUserId(eq(SESSION_ID), anyString()))
         .thenAnswer(i -> Optional.ofNullable(stored.get()));
-    when(members.findById(99L)).thenAnswer(i -> Optional.ofNullable(stored.get()));
     return stored;
   }
 
@@ -262,7 +270,12 @@ class DirectInvitationServiceTest {
       assertThat(opened.joinPending()).as("attempt %s still has to join", attempt).isTrue();
       assertThatThrownBy(() -> service.joinLater(link, interpreter, opened))
           .isInstanceOf(DirectInvitationRefusedException.class);
-      assertThat(stored.get().getRemovedAt()).as("no active row after a refusal").isNotNull();
+      assertThat(DirectInvitationMemberships.isMember(stored.get()))
+          .as("no active row after a refusal")
+          .isFalse();
+      assertThat(stored.get().getRemovedAt()).as("only the sweep marks removed").isNull();
+      assertThat(stored.get().getRevokeDueAt())
+          .isBeforeOrEqualTo(LocalDateTime.now(ZoneOffset.UTC));
     }
     verify(rooms, org.mockito.Mockito.times(2))
         .addInvitedGuestToExistingRoom(oneToOne, interpreter);
@@ -286,7 +299,7 @@ class DirectInvitationServiceTest {
     var first = service.openAppointmentConversation(link, interpreter, () -> null);
     assertThatThrownBy(() -> service.joinLater(link, interpreter, first))
         .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
-    assertThat(stored.get().getRemovedAt()).isNotNull();
+    assertThat(DirectInvitationMemberships.isMember(stored.get())).isFalse();
 
     var second = service.openAppointmentConversation(link, interpreter, () -> null);
     assertThat(second.joinPending()).isTrue();
@@ -323,17 +336,10 @@ class DirectInvitationServiceTest {
     appointment.setSession(conversation);
     var interpreter = user("interpreter", true);
     var dueAtJoin = new java.util.concurrent.atomic.AtomicReference<LocalDateTime>();
-    var saved = new java.util.ArrayList<DirectInvitationMember>();
-    when(members.save(any()))
-        .thenAnswer(
-            i -> {
-              DirectInvitationMember m = i.getArgument(0);
-              saved.add(m);
-              return m;
-            });
+    var stored = storeMembers();
     org.mockito.Mockito.doAnswer(
             i -> {
-              dueAtJoin.set(saved.getLast().getRevokeDueAt());
+              dueAtJoin.set(stored.get().getRevokeDueAt());
               return null;
             })
         .when(rooms)
@@ -343,7 +349,7 @@ class DirectInvitationServiceTest {
         link, interpreter, service.openAppointmentConversation(link, interpreter, () -> null));
 
     assertThat(dueAtJoin.get()).as("due while the join runs").isNotNull();
-    assertThat(saved.getLast().getRevokeDueAt()).as("cleared once still open").isNull();
+    assertThat(stored.get().getRevokeDueAt()).as("cleared once still open").isNull();
   }
 
   /** Switched off while the person joined: they are taken out again by the sweep. */

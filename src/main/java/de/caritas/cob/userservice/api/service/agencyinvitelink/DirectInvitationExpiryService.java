@@ -126,13 +126,14 @@ public class DirectInvitationExpiryService {
   }
 
   /**
-   * One due removal Matrix has not confirmed yet.
+   * One due removal Matrix has not confirmed yet. The row stays locked while Matrix is asked, so a
+   * join attempt of the same person waits and then sees the outcome.
    *
    * @return whether it is confirmed now
    */
   @Transactional
   public boolean retryRemoval(Long memberId) {
-    var member = members.findById(memberId).orElse(null);
+    var member = members.findByIdForUpdate(memberId).orElse(null);
     if (member == null || member.getRemovedAt() != null || member.getRevokeDueAt() == null) {
       return false;
     }
@@ -140,6 +141,7 @@ public class DirectInvitationExpiryService {
     if (session == null) {
       // The conversation is gone, and its room membership with it.
       member.setRemovedAt(now());
+      member.setJoinAttempt(null);
       members.save(member);
       return true;
     }
@@ -168,6 +170,8 @@ public class DirectInvitationExpiryService {
     var removed = matrixId == null || rooms.remove(session, matrixId);
     if (removed) {
       member.setRemovedAt(now());
+      // A join attempt still on record lost the row: its confirmation must not undo this removal.
+      member.setJoinAttempt(null);
     } else {
       member.setRevokeDueAt(now().plus(RETRY_DELAY));
       log.warn(

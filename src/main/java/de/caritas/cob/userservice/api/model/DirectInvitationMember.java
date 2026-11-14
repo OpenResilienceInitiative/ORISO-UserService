@@ -7,6 +7,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
+import jakarta.persistence.Version;
 import java.time.LocalDateTime;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -66,4 +67,17 @@ public class DirectInvitationMember {
   /** Matrix confirmed the person left the room. */
   @Column(name = "removed_at")
   private LocalDateTime removedAt;
+
+  /**
+   * The join attempt that currently owns this row (a random token), set from before the Matrix join
+   * until it is confirmed or abandoned; see {@code DirectInvitationMemberships}.
+   */
+  @Column(name = "join_attempt", length = 36)
+  private String joinAttempt;
+
+  /** Optimistic lock: the sweep never overwrites a change a join made meanwhile. */
+  @Version
+  @Column(name = "version", nullable = false)
+  @Builder.Default
+  private Long version = 0L;
 }

@@ -302,6 +302,17 @@ class CounsellorDirectLinkServiceTest {
     verifyNoInteractions(createNewSessionFacade);
   }
 
+  /** A join confirms its person under the link's lock; switch-off and delete take it as well. */
+  @Test
+  void update_And_Delete_Should_LockTheLink() {
+    ownLink(1L, "VIDEO", "ACTIVE");
+
+    service.update(owner, 1L, new UpdateCommand(null, null, null, false));
+    service.delete(owner, 1L);
+
+    verify(repository, org.mockito.Mockito.times(2)).findByIdForUpdate(1L);
+  }
+
   // --- start conversation ---
 
   @Test
@@ -978,6 +989,7 @@ class CounsellorDirectLinkServiceTest {
     when(repository.findByIdAndConsultantIdAndLinkKindAndChatTypeIn(
             eq(id), eq(OWNER_ID), eq("COUNSELLOR"), eq(InviteLinkChatType.DIRECT_MEDIA)))
         .thenReturn(Optional.of(link));
+    when(repository.findByIdForUpdate(id)).thenReturn(Optional.of(link));
     return link;
   }
 

@@ -106,4 +106,22 @@
       constraintName="fk_direct_invitation_member_session" onDelete="CASCADE"/>
     <rollback><dropTable tableName="direct_invitation_member"/></rollback>
   </changeSet>
+
+  <!-- A join attempt owns its member row (join_attempt), and the sweep never overwrites a change a
+       join made meanwhile (version, optimistic lock). New changeSet with its own precondition, so
+       a database that ran the member table before gets the columns too. -->
+  <changeSet id="20261114-direct-invitation-member-join-attempt-2252" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <columnExists tableName="direct_invitation_member" columnName="join_attempt"/>
+      </not>
+    </preConditions>
+    <addColumn tableName="direct_invitation_member">
+      <column name="join_attempt" type="VARCHAR(36)"/>
+      <column name="version" type="BIGINT" defaultValueNumeric="0">
+        <constraints nullable="false"/>
+      </column>
+    </addColumn>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
 </databaseChangeLog>

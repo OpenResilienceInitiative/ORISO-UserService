@@ -447,10 +447,15 @@ public class CounsellorDirectLinkService {
     return medium != InviteLinkChatType.CHAT;
   }
 
+  /**
+   * The counsellor's own link, locked for the change (ORISO-Frontend#2252): a join confirms its
+   * person under the same lock, so a switch-off or delete and a join never interleave.
+   */
   private AgencyInviteLink requireOwn(Consultant owner, Long linkId) {
     return repository
         .findByIdAndConsultantIdAndLinkKindAndChatTypeIn(
             linkId, owner.getId(), COUNSELLOR, DIRECT_MEDIA)
+        .flatMap(own -> repository.findByIdForUpdate(own.getId()))
         .orElseThrow(() -> new NotFoundException("Direct link %s not found", linkId));
   }
 

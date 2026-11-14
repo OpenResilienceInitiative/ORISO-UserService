@@ -113,8 +113,8 @@ class DirectInvitationExpiryServiceTest {
     when(users.findById("guest-1")).thenReturn(Optional.of(guestUser));
     when(rooms.remove(any(), any())).thenReturn(true);
     when(members.save(any())).thenAnswer(i -> i.getArgument(0));
-    when(members.findById(1L)).thenReturn(Optional.of(guest));
-    when(members.findById(2L)).thenReturn(Optional.of(account));
+    when(members.findByIdForUpdate(1L)).thenReturn(Optional.of(guest));
+    when(members.findByIdForUpdate(2L)).thenReturn(Optional.of(account));
   }
 
   @Test
@@ -195,7 +195,7 @@ class DirectInvitationExpiryServiceTest {
 
     assertThat(guest.getRemovedAt()).isNull();
     assertThat(guest.getRevokeDueAt()).isNotNull();
-    when(members.findById(1L)).thenReturn(Optional.of(guest));
+    when(members.findByIdForUpdate(1L)).thenReturn(Optional.of(guest));
     when(rooms.remove(conversation, "@guest-1:x")).thenReturn(true);
 
     assertThat(service.retryRemoval(1L)).isTrue();
