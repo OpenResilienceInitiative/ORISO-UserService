@@ -1,13 +1,21 @@
 package de.caritas.cob.userservice.api.service.calendar;
 
+import static de.caritas.cob.userservice.api.service.calendar.CalendarImportError.TOO_LARGE;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import net.fortuna.ical4j.util.Configurator;
+import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.Test;
 
 class CalendarBusyParserTest {
@@ -148,17 +156,186 @@ class CalendarBusyParserTest {
   }
 
   @Test
-  void parse_Should_StopAtTheRowLimit() {
+  void parse_Should_RefuseARuleThatAloneYieldsMoreBusyTimesThanAreKept_BeforeExpandingIt() {
+    for (var rule : List.of("RRULE:FREQ=HOURLY", "RRULE:FREQ=DAILY;BYHOUR=" + range(0, 23))) {
+      var document =
+          calendar(event("UID:flood", "DTSTART:20261107T000000Z", "DTEND:20261107T001500Z", rule));
+
+      assertThat(errorOf(() -> parser.parse(document, FROM, TO, BERLIN)))
+          .as(rule)
+          .isEqualTo(TOO_LARGE);
+    }
+  }
+
+  @Test
+  void parse_Should_ExpandAnHourlyRuleThatEnds() {
     var slots =
         parse(
             event(
                 "UID:hourly",
-                "DTSTART:20261107T000000Z",
-                "DTEND:20261107T001500Z",
-                "RRULE:FREQ=HOURLY"));
+                "DTSTART:20261116T080000Z",
+                "DTEND:20261116T081500Z",
+                "RRULE:FREQ=HOURLY;COUNT=8"));
 
-    assertThat(slots).hasSize(CalendarBusyParser.MAX_SLOTS);
-    assertThat(slots.get(0).start()).isEqualTo(Instant.parse("2026-11-07T00:00:00Z"));
+    assertThat(slots).hasSize(8);
+    assertThat(slots.get(7).start()).isEqualTo(Instant.parse("2026-11-16T15:00:00Z"));
+  }
+
+  @Test
+  void parse_Should_SkipRulesThatRepeatMoreOftenThanHourly_WithoutBuildingTheirDates() {
+    var slots =
+        assertTimeoutPreemptively(
+            Duration.ofSeconds(10),
+            () ->
+                parse(
+                    event(
+                        "UID:every-minute-via-lists",
+                        "DTSTART:20261107T000000Z",
+                        "DTEND:20261107T000100Z",
+                        "RRULE:FREQ=DAILY;BYHOUR=" + range(0, 23) + ";BYMINUTE=" + range(0, 59)),
+                    event(
+                        "UID:every-second-via-lists",
+                        "DTSTART:20261107T000000Z",
+                        "DTEND:20261107T000001Z",
+                        "RRULE:FREQ=DAILY;BYHOUR="
+                            + range(0, 23)
+                            + ";BYMINUTE="
+                            + range(0, 59)
+                            + ";BYSECOND="
+                            + range(0, 59)),
+                    event(
+                        "UID:half-hourly",
+                        "DTSTART:20261107T000000Z",
+                        "DTEND:20261107T001000Z",
+                        "RRULE:FREQ=HOURLY;BYMINUTE=0,30"),
+                    event(
+                        "UID:every-90-minutes",
+                        "DTSTART:20261107T000000Z",
+                        "DTEND:20261107T001000Z",
+                        "RRULE:FREQ=MINUTELY;INTERVAL=90"),
+                    event(
+                        "UID:repeated-hours",
+                        "DTSTART:20261107T000000Z",
+                        "DTEND:20261107T001000Z",
+                        "RRULE:FREQ=DAILY;BYHOUR=" + range(0, 23) + ",1,2"),
+                    event("UID:kept", "DTSTART:20261116T090000Z", "DTEND:20261116T100000Z")));
+
+    assertThat(slots).containsExactly(slot("2026-11-16T09:00:00Z", "2026-11-16T10:00:00Z"));
+  }
+
+  @Test
+  void parse_Should_SkipRulesThatCostTooMuchToWalk() {
+    var slots =
+        assertTimeoutPreemptively(
+            Duration.ofSeconds(10),
+            () ->
+                parse(
+                    event(
+                        "UID:a-year-of-hours-per-step",
+                        "DTSTART:20261107T000000Z",
+                        "DTEND:20261107T001000Z",
+                        "RRULE:FREQ=YEARLY;BYMONTH="
+                            + range(1, 12)
+                            + ";BYMONTHDAY="
+                            + range(1, 31)
+                            + ";BYHOUR="
+                            + range(0, 23)
+                            + ";UNTIL=20261108T000000Z"),
+                    event(
+                        "UID:counted-since-1970",
+                        "DTSTART:19700101T000000Z",
+                        "DTEND:19700101T001000Z",
+                        "RRULE:FREQ=HOURLY;COUNT=100000000"),
+                    event(
+                        "UID:walked-since-1900",
+                        "DTSTART:19000101T090000Z",
+                        "DTEND:19000101T100000Z",
+                        "RRULE:FREQ=HOURLY;BYHOUR=9"),
+                    event("UID:kept", "DTSTART:20261116T090000Z", "DTEND:20261116T100000Z")));
+
+    assertThat(slots).containsExactly(slot("2026-11-16T09:00:00Z", "2026-11-16T10:00:00Z"));
+  }
+
+  @Test
+  void parse_Should_NotWalkARuleThatEndedBeforeTheWindow_ButKeepItsExtraDates() {
+    var slots =
+        parse(
+            event(
+                "UID:ended",
+                "DTSTART:19000101T090000Z",
+                "DTEND:19000101T100000Z",
+                "RRULE:FREQ=HOURLY;BYHOUR=9;UNTIL=19100101T000000Z",
+                "RDATE:20261120T090000Z"));
+
+    assertThat(slots).containsExactly(slot("2026-11-20T09:00:00Z", "2026-11-20T10:00:00Z"));
+  }
+
+  @Test
+  void parse_Should_AddExtraDates_And_LeaveOutExcludedOnes() {
+    var slots =
+        parse(
+            event(
+                "UID:series",
+                "DTSTART:20261116T090000Z",
+                "DTEND:20261116T100000Z",
+                "RRULE:FREQ=DAILY;COUNT=5",
+                "EXRULE:FREQ=DAILY;INTERVAL=2;COUNT=3",
+                "RDATE:20261125T090000Z",
+                "RDATE;VALUE=PERIOD:20261126T090000Z/20261126T113000Z"),
+            event(
+                "UID:zoned",
+                "DTSTART;TZID=Europe/Berlin:20261201T090000",
+                "DTEND;TZID=Europe/Berlin:20261201T100000",
+                "RRULE:FREQ=DAILY;COUNT=2",
+                "EXDATE:20261202T080000Z"));
+
+    // The exclusion rule removes the 16th, 18th and 20th; the exclusion in UTC the 2nd December.
+    assertThat(slots)
+        .containsExactly(
+            slot("2026-11-17T09:00:00Z", "2026-11-17T10:00:00Z"),
+            slot("2026-11-19T09:00:00Z", "2026-11-19T10:00:00Z"),
+            slot("2026-11-25T09:00:00Z", "2026-11-25T10:00:00Z"),
+            slot("2026-11-26T09:00:00Z", "2026-11-26T11:30:00Z"),
+            slot("2026-12-01T08:00:00Z", "2026-12-01T09:00:00Z"));
+  }
+
+  @Test
+  void parse_Should_KeepExactlyTheLimit_And_RefuseOneBusyTimeMore() {
+    var limit = CalendarBusyParser.MAX_SLOTS;
+
+    assertThat(parser.parse(manyEvents(limit), FROM, TO, BERLIN)).hasSize(limit);
+    assertThat(errorOf(() -> parser.parse(manyEvents(limit + 1), FROM, TO, BERLIN)))
+        .isEqualTo(TOO_LARGE);
+  }
+
+  @Test
+  void parse_Should_RefuseWhenTheEventsTogetherYieldMoreBusyTimesThanAreKept() {
+    // 8 a day for 97 days: 776 each, under the limit alone, 2328 together.
+    var everyMorning = "RRULE:FREQ=DAILY;BYHOUR=" + range(0, 7);
+    var first = event("UID:a", "DTSTART:20261107T000000Z", "DTEND:20261107T000500Z", everyMorning);
+    var second = event("UID:b", "DTSTART:20261107T000500Z", "DTEND:20261107T001000Z", everyMorning);
+    var third = event("UID:c", "DTSTART:20261107T001000Z", "DTEND:20261107T001500Z", everyMorning);
+
+    assertThat(parse(first)).hasSize(776);
+    assertThat(errorOf(() -> parse(first, second, third))).isEqualTo(TOO_LARGE);
+  }
+
+  @Test
+  void parse_Should_RefuseMoreEventsThanAreRead() {
+    var events = new StringBuilder();
+    for (var i = 0; i <= CalendarBusyParser.MAX_EVENTS; i++) {
+      events.append(event("UID:e" + i, "DTSTART:20261116T090000Z", "DTEND:20261116T100000Z"));
+    }
+
+    assertThat(errorOf(() -> parse(events.toString()))).isEqualTo(TOO_LARGE);
+  }
+
+  @Test
+  void parse_Should_StopOnceTheTimeBudgetIsSpent() {
+    var spent = new CalendarBusyParser(Duration.ZERO);
+    var document = calendar(event("UID:any", "DTSTART:20261116T090000Z", "DTEND:20261116T100000Z"));
+
+    assertThat(errorOf(() -> spent.parse(document, FROM, TO, BERLIN))).isEqualTo(TOO_LARGE);
   }
 
   @Test
@@ -192,6 +369,32 @@ class CalendarBusyParserTest {
   void ical4j_Should_NeverFetchTimeZonesOverTheNetwork() {
     assertThat(Configurator.getProperty("net.fortuna.ical4j.timezone.update.enabled"))
         .contains("false");
+  }
+
+  private static CalendarImportError errorOf(ThrowingCallable parse) {
+    var refusal = catchThrowableOfType(CalendarImportException.class, parse);
+    return refusal == null ? null : refusal.error();
+  }
+
+  /** {@code count} one-hour events, one an hour from the start of the window. */
+  private static byte[] manyEvents(int count) {
+    var format = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'").withZone(ZoneOffset.UTC);
+    var events = new String[count];
+    for (var i = 0; i < count; i++) {
+      var start = FROM.plus(Duration.ofHours(i));
+      events[i] =
+          event(
+              "UID:e" + i,
+              "DTSTART:" + format.format(start),
+              "DTEND:" + format.format(start.plus(Duration.ofMinutes(30))));
+    }
+    return calendar(events);
+  }
+
+  private static String range(int first, int last) {
+    return IntStream.rangeClosed(first, last)
+        .mapToObj(String::valueOf)
+        .collect(Collectors.joining(","));
   }
 
   private List<BusySlot> parse(String... events) {

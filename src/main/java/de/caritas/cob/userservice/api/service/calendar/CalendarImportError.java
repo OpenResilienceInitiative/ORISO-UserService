@@ -6,7 +6,10 @@ public enum CalendarImportError {
   INVALID_URL,
   /** The host has no address, does not answer in time, redirects or answers with an error. */
   UNREACHABLE,
-  /** More than the size limit. */
+  /**
+   * More than the size limit, or more busy times or events than are kept, or more time than one
+   * import may take to read.
+   */
   TOO_LARGE,
   /** Not an iCalendar document. */
   NOT_ICS,
