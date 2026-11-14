@@ -161,8 +161,8 @@ configuration, DTOs, database/wire fields and optional MongoDB access.
 Matrix/Synapse is the sole messaging backbone, the ORISO frontend remains the
 product surface, and LiveKit plus the controlled Element Call/MatrixRTC fork is
 the target calling stack. Remaining Rocket.Chat names are limited to the
-forward-only removal changelogs, removal/migration contracts and historic
-architecture diagrams; they are not a supported runtime or fallback. Jitsi
+forward-only removal changelogs and removal/migration contracts; they are not
+a supported runtime or fallback. Jitsi
 removal is coordinated outside this UserService-only stability change across
 Frontend, call/appointment contracts and deployment.
 
