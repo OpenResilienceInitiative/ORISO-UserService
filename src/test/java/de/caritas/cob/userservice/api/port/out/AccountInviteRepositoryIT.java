@@ -408,33 +408,50 @@ class AccountInviteRepositoryIT {
 
   @Test
   void countOpenInvitesOfTenant_countsOnlyTheTenantsInvitesThatCanStillBeAccepted() {
-    var now = LocalDateTime.now();
-    persistedInviteIn(42L, AccountInviteStatus.EMAIL_SENT, now.plusDays(1));
-    persistedInviteIn(42L, AccountInviteStatus.DRAFT, now.plusDays(1));
-    persistedInviteIn(42L, AccountInviteStatus.WAITING_FOR_UNIT, null);
-    persistedInviteIn(42L, AccountInviteStatus.EMAIL_SENT, now.minusMinutes(1));
-    persistedInviteIn(42L, AccountInviteStatus.ACCEPTED, now.plusDays(1));
-    persistedInviteIn(42L, AccountInviteStatus.REVOKED, now.plusDays(1));
-    persistedInviteIn(42L, AccountInviteStatus.EXPIRED, now.plusDays(1));
-    persistedInviteIn(43L, AccountInviteStatus.EMAIL_SENT, now.plusDays(1));
+    var now = LocalDateTime.now().truncatedTo(ChronoUnit.SECONDS);
+    var counsellor = AccountInviteTargetRole.COUNSELLOR;
+    persistedInviteIn(42L, counsellor, AccountInviteStatus.EMAIL_SENT, now.plusDays(1));
+    persistedInviteIn(42L, counsellor, AccountInviteStatus.DRAFT, now.plusDays(1));
+    persistedInviteIn(42L, counsellor, AccountInviteStatus.WAITING_FOR_UNIT, null);
+    persistedInviteIn(42L, counsellor, AccountInviteStatus.EMAIL_SENT, now.minusMinutes(1));
+    persistedInviteIn(42L, counsellor, AccountInviteStatus.EMAIL_SENT, now);
+    persistedInviteIn(42L, counsellor, AccountInviteStatus.ACCEPTED, now.plusDays(1));
+    persistedInviteIn(42L, counsellor, AccountInviteStatus.REVOKED, now.plusDays(1));
+    persistedInviteIn(42L, counsellor, AccountInviteStatus.EXPIRED, now.plusDays(1));
+    persistedInviteIn(43L, counsellor, AccountInviteStatus.EMAIL_SENT, now.plusDays(1));
 
-    long open =
-        accountInviteRepository.countOpenInvitesOfTenant(
-            42L,
-            List.of(
-                AccountInviteStatus.WAITING_FOR_UNIT,
-                AccountInviteStatus.DRAFT,
-                AccountInviteStatus.EMAIL_SENT),
-            now);
+    // An invite expiring exactly now can no longer be accepted: only the first three count.
+    assertEquals(3, countOpenInvitesOf(42L, now));
+  }
 
-    assertEquals(3, open);
+  @Test
+  void countOpenInvitesOfTenant_countsAnOpenInviteOfEveryTargetRole() {
+    var now = LocalDateTime.now().truncatedTo(ChronoUnit.SECONDS);
+    for (AccountInviteTargetRole role : AccountInviteTargetRole.values()) {
+      persistedInviteIn(42L, role, AccountInviteStatus.EMAIL_SENT, now.plusDays(1));
+    }
+
+    assertEquals(AccountInviteTargetRole.values().length, countOpenInvitesOf(42L, now));
+  }
+
+  private long countOpenInvitesOf(Long tenantId, LocalDateTime now) {
+    return accountInviteRepository.countOpenInvitesOfTenant(
+        tenantId,
+        List.of(
+            AccountInviteStatus.WAITING_FOR_UNIT,
+            AccountInviteStatus.DRAFT,
+            AccountInviteStatus.EMAIL_SENT),
+        now);
   }
 
   private AccountInvite persistedInviteIn(
-      Long tenantId, AccountInviteStatus status, LocalDateTime expiresAt) {
+      Long tenantId,
+      AccountInviteTargetRole targetRole,
+      AccountInviteStatus status,
+      LocalDateTime expiresAt) {
     return accountInviteRepository.save(
         AccountInvite.builder()
-            .targetRole(AccountInviteTargetRole.COUNSELLOR)
+            .targetRole(targetRole)
             .tenantId(tenantId)
             .recipientEmail("invitee@example.org")
             .tokenHash(UUID.randomUUID().toString())

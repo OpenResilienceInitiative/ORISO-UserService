@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.adapters.web.dto.TenantDeletionBlockersDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.admin.service.agency.AgencyAdminService;
@@ -23,9 +24,13 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.Map;
+import java.util.function.Function;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.web.client.RestClientException;
@@ -81,18 +86,67 @@ class TenantDeletionBlockerServiceTest {
   }
 
   @Test
-  void findBlockers_Should_beDeletable_When_nothingIsLeft() {
+  void findBlockers_Should_beDeletable_When_everySourceOfTheTraegerReportsNothingLeft() {
+    givenLeftInTenant(Map.of());
+
     var blockers = service.findBlockers(TENANT_ID);
 
     assertThat(blockers.getDeletable()).isTrue();
+    verify(agencyAdminService).countActiveAgenciesOfTenant(TENANT_ID);
+    verify(consultantRepository).countByTenantIdAndDeleteDateIsNull(TENANT_ID);
+    verify(userRepository).countActiveAdviceSeekersOfTenant(TENANT_ID);
+    verify(adminRepository).countByTenantIdAndType(TENANT_ID, AdminType.AGENCY);
+    verify(adminRepository).countByTenantIdAndType(TENANT_ID, AdminType.TENANT);
+    verify(accountInviteRepository).countOpenInvitesOfTenant(eq(TENANT_ID), any(), any());
   }
 
-  @Test
-  void findBlockers_Should_notBeDeletable_When_onlyOneOpenInviteIsLeft() {
-    when(accountInviteRepository.countOpenInvitesOfTenant(eq(TENANT_ID), any(), any()))
-        .thenReturn(1L);
+  /** Each kind blocks on its own, so a term missing from the verdict fails one of these. */
+  @ParameterizedTest
+  @EnumSource(Kind.class)
+  void findBlockers_Should_notBeDeletableAndReportOnlyThatKind_When_onlyOneKindIsLeft(Kind kind) {
+    givenLeftInTenant(Map.of(kind, 1L));
 
-    assertThat(service.findBlockers(TENANT_ID).getDeletable()).isFalse();
+    var blockers = service.findBlockers(TENANT_ID);
+
+    assertThat(blockers.getDeletable()).isFalse();
+    for (Kind each : Kind.values()) {
+      assertThat(each.of(blockers)).as(each.name()).isEqualTo(each == kind ? 1L : 0L);
+    }
+  }
+
+  enum Kind {
+    AGENCIES(TenantDeletionBlockersDTO::getAgencies),
+    CONSULTANTS(TenantDeletionBlockersDTO::getConsultants),
+    ADVICE_SEEKERS(TenantDeletionBlockersDTO::getAdviceSeekers),
+    AGENCY_ADMINS(TenantDeletionBlockersDTO::getAgencyAdmins),
+    TENANT_ADMINS(TenantDeletionBlockersDTO::getTenantAdmins),
+    OPEN_INVITES(TenantDeletionBlockersDTO::getOpenInvites);
+
+    private final Function<TenantDeletionBlockersDTO, Long> field;
+
+    Kind(Function<TenantDeletionBlockersDTO, Long> field) {
+      this.field = field;
+    }
+
+    Long of(TenantDeletionBlockersDTO blockers) {
+      return field.apply(blockers);
+    }
+  }
+
+  /** Stubs every count source explicitly for {@link #TENANT_ID}; kinds not given are 0. */
+  private void givenLeftInTenant(Map<Kind, Long> left) {
+    when(agencyAdminService.countActiveAgenciesOfTenant(TENANT_ID))
+        .thenReturn(left.getOrDefault(Kind.AGENCIES, 0L));
+    when(consultantRepository.countByTenantIdAndDeleteDateIsNull(TENANT_ID))
+        .thenReturn(left.getOrDefault(Kind.CONSULTANTS, 0L));
+    when(userRepository.countActiveAdviceSeekersOfTenant(TENANT_ID))
+        .thenReturn(left.getOrDefault(Kind.ADVICE_SEEKERS, 0L));
+    when(adminRepository.countByTenantIdAndType(TENANT_ID, AdminType.AGENCY))
+        .thenReturn(left.getOrDefault(Kind.AGENCY_ADMINS, 0L));
+    when(adminRepository.countByTenantIdAndType(TENANT_ID, AdminType.TENANT))
+        .thenReturn(left.getOrDefault(Kind.TENANT_ADMINS, 0L));
+    when(accountInviteRepository.countOpenInvitesOfTenant(eq(TENANT_ID), any(), any()))
+        .thenReturn(left.getOrDefault(Kind.OPEN_INVITES, 0L));
   }
 
   @Test

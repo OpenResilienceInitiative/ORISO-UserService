@@ -43,6 +43,7 @@ import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantDeletionBlockerService;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupIssuer;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
@@ -153,7 +154,7 @@ class UserAdminControllerAuthorizationIT {
 
   @Test
   @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
-  void getTenantDeletionBlockers_Should_ReturnOk_When_callerIsAPlatformTenantAdmin()
+  void getTenantDeletionBlockers_Should_ReturnOk_When_callerHasTenantAdminAuthority()
       throws Exception {
     when(tenantDeletionBlockerService.findBlockers(121L))
         .thenReturn(new TenantDeletionBlockersDTO().deletable(true));
@@ -163,6 +164,33 @@ class UserAdminControllerAuthorizationIT {
         .andExpect(status().isOk());
 
     verify(tenantDeletionBlockerService).findBlockers(121L);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void getTenantDeletionBlockers_Should_ReturnOk_When_callerHasUserAdminAuthority()
+      throws Exception {
+    when(tenantDeletionBlockerService.findBlockers(121L))
+        .thenReturn(new TenantDeletionBlockersDTO().deletable(true));
+
+    mvc.perform(
+            get(TENANT_DELETION_BLOCKERS_PATH).cookie(CSRF_COOKIE).header(CSRF_HEADER, CSRF_VALUE))
+        .andExpect(status().isOk());
+
+    verify(tenantDeletionBlockerService).findBlockers(121L);
+  }
+
+  /** {@code AdminScope} refuses a Träger outside the caller's reach with ForbiddenException. */
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.SINGLE_TENANT_ADMIN})
+  void getTenantDeletionBlockers_Should_ReturnForbidden_When_theTraegerIsOutsideTheCallersReach()
+      throws Exception {
+    when(tenantDeletionBlockerService.findBlockers(121L))
+        .thenThrow(new ForbiddenException("out of scope"));
+
+    mvc.perform(
+            get(TENANT_DELETION_BLOCKERS_PATH).cookie(CSRF_COOKIE).header(CSRF_HEADER, CSRF_VALUE))
+        .andExpect(status().isForbidden());
   }
 
   @Test
