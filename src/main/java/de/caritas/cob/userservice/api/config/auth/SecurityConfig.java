@@ -217,6 +217,11 @@ public class SecurityConfig {
                 .permitAll()
                 .requestMatchers(HttpMethod.GET, "/users/invitelinks/*/context")
                 .permitAll()
+                // Calendar subscription feed (ADR-032): a calendar app sends no token; the signed
+                // address is the credential and CalendarFeedService checks it in constant time.
+                .requestMatchers(
+                    HttpMethod.GET, "/users/calendar/feed/*/*", "/service/users/calendar/feed/*/*")
+                .permitAll()
                 .requestMatchers(HttpMethod.POST, "/users/identity-suggestions")
                 .permitAll()
                 // This cluster-internal endpoint authenticates with its own dedicated shared
@@ -761,7 +766,13 @@ public class SecurityConfig {
                     "/users/calendar/blockers",
                     "/service/users/calendar/blockers",
                     "/users/calendar/blockers/{blockerId}",
-                    "/service/users/calendar/blockers/{blockerId}")
+                    "/service/users/calendar/blockers/{blockerId}",
+                    "/users/calendar/sync",
+                    "/service/users/calendar/sync",
+                    "/users/calendar/sync/feed/reset",
+                    "/service/users/calendar/sync/feed/reset",
+                    "/users/calendar/sync/import",
+                    "/service/users/calendar/sync/import")
                 .hasAuthority(CONSULTANT_DEFAULT)
                 // 1:1 appointments (ORISO-Frontend#1960): who may do what is decided per session in
                 // SessionAppointmentService.

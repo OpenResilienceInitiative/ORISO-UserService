@@ -178,6 +178,121 @@ paths:
           description: NOT FOUND - no such blocker of the caller
       security:
         - Bearer: [ ]
+  /users/calendar/sync:
+    get:
+      tags:
+        - calendar-controller
+      summary: 'The caller''s calendar connections: the subscription feed (its id is created on
+        first use) and the busy import. [Authorization: counsellor]'
+      operationId: getCalendarSync
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarSyncDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization
+      security:
+        - Bearer: [ ]
+  /users/calendar/sync/feed/reset:
+    post:
+      tags:
+        - calendar-controller
+      summary: 'Gives the subscription feed a new address; the old one answers 404 at once.
+        [Authorization: counsellor]'
+      operationId: resetCalendarFeed
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarSyncDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+      security:
+        - Bearer: [ ]
+  /users/calendar/sync/import:
+    put:
+      tags:
+        - calendar-controller
+      summary: 'Sets the address of the caller''s own calendar (ICS over https) and imports its
+        busy times once. A calendar that cannot be read answers 200 with importError.
+        [Authorization: counsellor]'
+      operationId: setCalendarImport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CalendarImportDTO'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarSyncDTO'
+        400:
+          description: BAD REQUEST - not a URL
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+      security:
+        - Bearer: [ ]
+    delete:
+      tags:
+        - calendar-controller
+      summary: 'Removes the import address and every imported busy time.
+        [Authorization: counsellor]'
+      operationId: removeCalendarImport
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarSyncDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+      security:
+        - Bearer: [ ]
+  /users/calendar/feed/{feedId}/{signature}.ics:
+    get:
+      tags:
+        - calendar-controller
+      summary: 'The subscription feed of one counsellor for calendar apps: neutral entries with
+        times only. [Authorization: none; the signed address is the credential]'
+      operationId: getCalendarFeed
+      parameters:
+        - name: feedId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: signature
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: OK
+          content:
+            text/calendar:
+              schema:
+                type: string
+        404:
+          description: NOT FOUND - unknown feed or wrong signature
 components:
   parameters:
     From:
@@ -346,6 +461,43 @@ components:
         end:
           type: string
           format: date-time
+    CalendarSyncDTO:
+      type: object
+      required:
+        - feedUrl
+        - importConfigured
+      properties:
+        feedUrl:
+          description: Absolute address of the subscription feed
+          type: string
+        feedLastFetchedAt:
+          type: string
+          format: date-time
+        importConfigured:
+          type: boolean
+        importHost:
+          description: Host of the import address; the address itself is never returned
+          type: string
+        importLastSyncAt:
+          description: Last successful import
+          type: string
+          format: date-time
+        importError:
+          type: string
+          enum:
+            - INVALID_URL
+            - UNREACHABLE
+            - TOO_LARGE
+            - NOT_ICS
+            - FORBIDDEN_ADDRESS
+    CalendarImportDTO:
+      type: object
+      required:
+        - icsUrl
+      properties:
+        icsUrl:
+          type: string
+          maxLength: 2048
   securitySchemes:
     Bearer:
       type: apiKey

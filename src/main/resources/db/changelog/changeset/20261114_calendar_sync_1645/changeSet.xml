@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- ORISO-UserService#1645 (ADR-032): a counsellor's calendar connections. feed_id names the
+       subscription feed; its address also carries a signature made with a server secret, so this
+       table alone forges no address. import_url is the counsellor's own calendar (ICS), read for
+       busy times only; import_error holds a short code, never a message with the address. -->
+  <changeSet id="20261114-calendar-sync-1645" author="oriso">
+    <createTable tableName="calendar_sync">
+      <column name="consultant_id" type="VARCHAR(36)">
+        <constraints primaryKey="true" nullable="false"/>
+      </column>
+      <column name="tenant_id" type="BIGINT"/>
+      <column name="feed_id" type="CHAR(36)">
+        <constraints nullable="false" unique="true" uniqueConstraintName="uq_calendar_sync_feed_id"/>
+      </column>
+      <column name="feed_last_fetched_at" type="DATETIME(6)"/>
+      <column name="import_url" type="VARCHAR(2048)"/>
+      <column name="import_last_sync_at" type="DATETIME(6)"/>
+      <column name="import_error" type="VARCHAR(32)"/>
+    </createTable>
+    <rollback><dropTable tableName="calendar_sync"/></rollback>
+  </changeSet>
+</databaseChangeLog>
