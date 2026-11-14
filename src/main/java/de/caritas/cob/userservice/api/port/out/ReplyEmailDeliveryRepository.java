@@ -8,14 +8,27 @@ import java.util.Optional;
 import org.springframework.data.domain.Limit;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 public interface ReplyEmailDeliveryRepository extends JpaRepository<ReplyEmailDelivery, Long> {
-  void deleteByRecipientKindAndRecipientUserId(
-      ReplyEmailDelivery.RecipientKind recipientKind, String recipientUserId);
+  // Bulk deletes in their own transaction: the nightly delete workflow calls them outside one,
+  // and a derived delete then fails with "No EntityManager with actual transaction available".
+  @Transactional
+  @Modifying(flushAutomatically = true, clearAutomatically = true)
+  @Query(
+      "delete from ReplyEmailDelivery d where d.recipientKind = :recipientKind"
+          + " and d.recipientUserId = :recipientUserId")
+  int deleteByRecipientKindAndRecipientUserId(
+      @Param("recipientKind") ReplyEmailDelivery.RecipientKind recipientKind,
+      @Param("recipientUserId") String recipientUserId);
 
-  void deleteBySourceMatrixUserId(String sourceMatrixUserId);
+  @Transactional
+  @Modifying(flushAutomatically = true, clearAutomatically = true)
+  @Query("delete from ReplyEmailDelivery d where d.sourceMatrixUserId = :sourceMatrixUserId")
+  int deleteBySourceMatrixUserId(@Param("sourceMatrixUserId") String sourceMatrixUserId);
 
   boolean existsByRecipientKindAndRecipientUserIdAndEventKey(
       ReplyEmailDelivery.RecipientKind recipientKind, String recipientUserId, String eventKey);

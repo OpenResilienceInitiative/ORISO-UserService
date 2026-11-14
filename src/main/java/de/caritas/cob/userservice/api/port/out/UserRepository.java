@@ -55,6 +55,20 @@ public interface UserRepository extends CrudRepository<User, String> {
   @Query("SELECT user FROM User user WHERE user.userId = :userId")
   Optional<User> findByUserIdForUpdate(@Param("userId") String userId);
 
+  /** Stores why the nightly run kept this advice seeker (#1521); a deleted row is not touched. */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      """
+      UPDATE User user
+         SET user.deletionFailureReason = :reason,
+             user.deletionFailedAt = :failedAt
+       WHERE user.userId = :userId
+      """)
+  int recordHardDeleteFailure(
+      @Param("userId") String userId,
+      @Param("reason") String reason,
+      @Param("failedAt") LocalDateTime failedAt);
+
   @Modifying(clearAutomatically = true, flushAutomatically = true)
   @Query(
       """

@@ -63,6 +63,11 @@ public class UserAccountServiceTest {
       liveChatClaims;
 
   @Mock private UserService userService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.workflow.delete.service.AskerEnquiryCloser
+      askerEnquiryCloser;
+
   @Mock private de.caritas.cob.userservice.api.port.out.SessionRepository sessions;
   @Mock private de.caritas.cob.userservice.api.admin.service.tenant.TenantService tenantService;
   @Mock private ConsultantService consultantService;
@@ -576,6 +581,7 @@ public class UserAccountServiceTest {
     accountProvider.deactivateAndFlagUserAccountForDeletion();
 
     verify(userService).saveUser(USER);
+    verify(askerEnquiryCloser).closeOpenEnquiries(USER);
   }
 
   @Test
@@ -591,6 +597,7 @@ public class UserAccountServiceTest {
         () -> accountProvider.deactivateAndFlagUserAccountForDeletion());
     verify(identityDeactivator, never()).deactivateUser(any());
     verify(userService, never()).saveUser(any());
+    verify(askerEnquiryCloser, never()).closeOpenEnquiries(any());
   }
 
   @Test

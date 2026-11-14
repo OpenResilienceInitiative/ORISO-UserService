@@ -55,6 +55,8 @@ public class UserAccountService {
   private final @NonNull SupervisorAddedEmailNotificationService
       supervisorAddedEmailNotificationService;
   private final @NonNull DeletionLifecycleService deletionLifecycleService;
+  private final @NonNull de.caritas.cob.userservice.api.workflow.delete.service.AskerEnquiryCloser
+      askerEnquiryCloser;
 
   public Optional<User> findUserByEmail(String email) {
     return this.userService.findUserByEmail(email);
@@ -239,6 +241,7 @@ public class UserAccountService {
     this.identityDeactivator.deactivateUser(user.getUserId());
     deletionLifecycleService.beginUserDeletion(user, user.getUserId());
     userService.saveUser(user);
+    askerEnquiryCloser.closeOpenEnquiries(user);
     fireAccountDeletionStatisticsEvent(user);
   }
 

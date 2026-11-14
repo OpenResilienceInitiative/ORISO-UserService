@@ -227,6 +227,18 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
    */
   List<Session> findByUserUserId(String userId);
 
+  /** One row per session of the given advice seekers that has an agency. */
+  interface UserAgencyId {
+    String getUserId();
+
+    Long getAgencyId();
+  }
+
+  @Query(
+      "select distinct s.user.userId as userId, s.agencyId as agencyId from Session s"
+          + " where s.user.userId in :userIds and s.agencyId is not null")
+  List<UserAgencyId> findAgencyIdsByUserIds(@Param("userIds") Collection<String> userIds);
+
   /**
    * Find the {@link Session}s by user id and pageable.
    *
@@ -256,6 +268,24 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
    * @param sessionStatus {@link SessionStatus}
    * @return A list of {@link Session}s for the specified agency ID
    */
+  /**
+   * Closes the advice seeker's enquiries nobody has taken yet ({@code INITIAL}/{@code NEW} without
+   * a counsellor). Used when the advice seeker is marked for deletion, so the enquiries leave the
+   * counsellors' lists and no longer block deleting an agency's last counsellor.
+   *
+   * @return how many enquiries were closed
+   */
+  @Transactional
+  @Modifying(flushAutomatically = true)
+  @Query(
+      "update Session s set s.status ="
+          + " de.caritas.cob.userservice.api.model.Session.SessionStatus.DONE,"
+          + " s.updateDate = :now, s.rowVersion = s.rowVersion + 1"
+          + " where s.user = :user and s.consultant is null and s.status in"
+          + " (de.caritas.cob.userservice.api.model.Session.SessionStatus.INITIAL,"
+          + " de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW)")
+  int closeUnassignedEnquiries(@Param("user") User user, @Param("now") LocalDateTime now);
+
   List<Session> findByAgencyIdAndStatusAndConsultantIsNull(
       Long agencyId, SessionStatus sessionStatus);
 

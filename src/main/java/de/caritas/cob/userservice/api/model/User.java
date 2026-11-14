@@ -123,6 +123,13 @@ public class User implements TenantAware, NotificationsAware {
   @Column(name = "deletion_pause_created_at", columnDefinition = "datetime")
   private LocalDateTime deletionPauseCreatedAt;
 
+  /** Why the last nightly run kept this row: step and fixed reason, never content (#1521). */
+  @Column(name = "deletion_failure_reason", length = 512)
+  private String deletionFailureReason;
+
+  @Column(name = "deletion_failed_at", columnDefinition = "datetime")
+  private LocalDateTime deletionFailedAt;
+
   @Column(name = "reactivation_operation_id", length = 36)
   private String reactivationOperationId;
 
