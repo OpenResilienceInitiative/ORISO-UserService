@@ -23,6 +23,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -33,11 +34,13 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDT
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.TenantDeletionBlockersDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
 import de.caritas.cob.userservice.api.admin.facade.AskerUserAdminFacade;
 import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenerator;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantDeletionBlockerService;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupIssuer;
@@ -99,6 +102,68 @@ class UserAdminControllerAuthorizationIT {
   @MockitoBean private AskerUserAdminFacade askerUserAdminFacade;
 
   @MockitoBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
+
+  @MockitoBean private TenantDeletionBlockerService tenantDeletionBlockerService;
+
+  private static final String TENANT_DELETION_BLOCKERS_PATH =
+      "/useradmin/tenants/121/deletion-blockers";
+
+  @Test
+  void getTenantDeletionBlockers_Should_ReturnUnauthorized_When_noKeycloakAuthorizationIsPresent()
+      throws Exception {
+    mvc.perform(
+            get(TENANT_DELETION_BLOCKERS_PATH).cookie(CSRF_COOKIE).header(CSRF_HEADER, CSRF_VALUE))
+        .andExpect(status().isUnauthorized());
+
+    verifyNoMoreInteractions(tenantDeletionBlockerService);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT, AuthorityValue.CONSULTANT_CREATE})
+  void getTenantDeletionBlockers_Should_ReturnForbidden_When_callerIsNoAdmin() throws Exception {
+    mvc.perform(
+            get(TENANT_DELETION_BLOCKERS_PATH).cookie(CSRF_COOKIE).header(CSRF_HEADER, CSRF_VALUE))
+        .andExpect(status().isForbidden());
+
+    verifyNoMoreInteractions(tenantDeletionBlockerService);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.SINGLE_TENANT_ADMIN})
+  void getTenantDeletionBlockers_Should_ReturnTheBlockers_When_callerIsATraegerAdmin()
+      throws Exception {
+    when(tenantDeletionBlockerService.findBlockers(121L))
+        .thenReturn(
+            new TenantDeletionBlockersDTO()
+                .deletable(false)
+                .agencies(2L)
+                .consultants(0L)
+                .adviceSeekers(0L)
+                .agencyAdmins(0L)
+                .tenantAdmins(1L)
+                .openInvites(0L));
+
+    mvc.perform(
+            get(TENANT_DELETION_BLOCKERS_PATH).cookie(CSRF_COOKIE).header(CSRF_HEADER, CSRF_VALUE))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.deletable").value(false))
+        .andExpect(jsonPath("$.agencies").value(2))
+        .andExpect(jsonPath("$.tenantAdmins").value(1));
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
+  void getTenantDeletionBlockers_Should_ReturnOk_When_callerIsAPlatformTenantAdmin()
+      throws Exception {
+    when(tenantDeletionBlockerService.findBlockers(121L))
+        .thenReturn(new TenantDeletionBlockersDTO().deletable(true));
+
+    mvc.perform(
+            get(TENANT_DELETION_BLOCKERS_PATH).cookie(CSRF_COOKIE).header(CSRF_HEADER, CSRF_VALUE))
+        .andExpect(status().isOk());
+
+    verify(tenantDeletionBlockerService).findBlockers(121L);
+  }
 
   @Test
   void reactivateAsker_Should_ReturnUnauthorized_When_noKeycloakAuthorizationIsPresent()

@@ -645,4 +645,15 @@ public interface AccountInviteRepository
       @Param("tenantId") Long tenantId,
       @Param("actorId") String actorId,
       @Param("signedAt") LocalDateTime signedAt);
+
+  /** Invitations of a Träger that can still be accepted, of every target role (#1466). */
+  @Query(
+      "SELECT COUNT(i) FROM AccountInvite i"
+          + " WHERE i.tenantId = :tenantId"
+          + " AND i.status IN :statuses"
+          + " AND (i.expiresAt IS NULL OR i.expiresAt > :now)")
+  long countOpenInvitesOfTenant(
+      @Param("tenantId") Long tenantId,
+      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      @Param("now") LocalDateTime now);
 }

@@ -406,6 +406,44 @@ class AccountInviteRepositoryIT {
     return accountInviteRepository.findById(invite.getId()).orElseThrow();
   }
 
+  @Test
+  void countOpenInvitesOfTenant_countsOnlyTheTenantsInvitesThatCanStillBeAccepted() {
+    var now = LocalDateTime.now();
+    persistedInviteIn(42L, AccountInviteStatus.EMAIL_SENT, now.plusDays(1));
+    persistedInviteIn(42L, AccountInviteStatus.DRAFT, now.plusDays(1));
+    persistedInviteIn(42L, AccountInviteStatus.WAITING_FOR_UNIT, null);
+    persistedInviteIn(42L, AccountInviteStatus.EMAIL_SENT, now.minusMinutes(1));
+    persistedInviteIn(42L, AccountInviteStatus.ACCEPTED, now.plusDays(1));
+    persistedInviteIn(42L, AccountInviteStatus.REVOKED, now.plusDays(1));
+    persistedInviteIn(42L, AccountInviteStatus.EXPIRED, now.plusDays(1));
+    persistedInviteIn(43L, AccountInviteStatus.EMAIL_SENT, now.plusDays(1));
+
+    long open =
+        accountInviteRepository.countOpenInvitesOfTenant(
+            42L,
+            List.of(
+                AccountInviteStatus.WAITING_FOR_UNIT,
+                AccountInviteStatus.DRAFT,
+                AccountInviteStatus.EMAIL_SENT),
+            now);
+
+    assertEquals(3, open);
+  }
+
+  private AccountInvite persistedInviteIn(
+      Long tenantId, AccountInviteStatus status, LocalDateTime expiresAt) {
+    return accountInviteRepository.save(
+        AccountInvite.builder()
+            .targetRole(AccountInviteTargetRole.COUNSELLOR)
+            .tenantId(tenantId)
+            .recipientEmail("invitee@example.org")
+            .tokenHash(UUID.randomUUID().toString())
+            .status(status)
+            .expiresAt(expiresAt)
+            .createDate(LocalDateTime.now())
+            .build());
+  }
+
   private AccountInvite persistedInvite(
       Long tenantId, AccountInviteTargetRole targetRole, LocalDateTime dpaSignedAt) {
     return accountInviteRepository.save(

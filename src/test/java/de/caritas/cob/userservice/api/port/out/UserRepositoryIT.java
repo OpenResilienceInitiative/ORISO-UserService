@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.config.JpaAuditingConfiguration;
 import de.caritas.cob.userservice.api.model.User;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -90,6 +91,38 @@ class UserRepositoryIT {
     givenPersistedUser();
 
     assertEquals(LanguageCode.de, user.getLanguageCode());
+  }
+
+  @Test
+  void countActiveAdviceSeekersOfTenant_leavesOutMarkedAndGroupChatSystemUsersAndOtherTenants() {
+    var tenantId = 9466L;
+    var saved = new ArrayList<User>();
+    saved.add(userRepository.save(userIn(tenantId, UUID.randomUUID().toString(), null)));
+    saved.add(userRepository.save(userIn(tenantId, UUID.randomUUID().toString(), null)));
+    saved.add(
+        userRepository.save(
+            userIn(tenantId, UUID.randomUUID().toString(), LocalDateTime.now().minusDays(1))));
+    saved.add(userRepository.save(userIn(tenantId, "group-chat-system-" + tenantId, null)));
+    saved.add(userRepository.save(userIn(tenantId + 1, UUID.randomUUID().toString(), null)));
+
+    try {
+      assertEquals(2, userRepository.countActiveAdviceSeekersOfTenant(tenantId));
+    } finally {
+      userRepository.deleteAll(saved);
+    }
+  }
+
+  private static User userIn(Long tenantId, String userId, LocalDateTime deleteDate) {
+    var asker =
+        new User(
+            userId,
+            0L,
+            RandomStringUtils.randomAlphabetic(20),
+            RandomStringUtils.randomAlphabetic(20),
+            false);
+    asker.setTenantId(tenantId);
+    asker.setDeleteDate(deleteDate);
+    return asker;
   }
 
   private void givenPersistedUser() {

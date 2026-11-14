@@ -412,6 +412,45 @@ paths:
             in this service where a lock or a downstream step is unavailable.
       security:
         - Bearer: [ ]
+  /useradmin/tenants/{tenantId}/deletion-blockers:
+    get:
+      tags:
+        - admin-user-controller
+      summary: >-
+        Lists what still belongs to a Träger and therefore blocks its deletion.
+        [Authorization: Role: tenant-admin, single-tenant-admin or user-admin, within the caller's
+        reach]
+      description: >-
+        TenantService asks this before it deletes a Träger (ORISO-UserService#1466). Deleting a
+        Träger that still has agencies, accounts or open invitations leaves them pointing at a
+        Träger that no longer exists, and the admin interface can no longer clean them up. Each
+        count is what has to be deleted (or revoked) first. Accounts already marked for deletion
+        and soft-deleted agencies do not count; the nightly job removes them. The technical
+        group-chat-system users do not count either, they go with their Träger.
+      operationId: getTenantDeletionBlockers
+      parameters:
+        - name: tenantId
+          in: path
+          description: Träger (tenant) id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        200:
+          description: OK - successful operation
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/TenantDeletionBlockersDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid role/authorization
+        403:
+          description: FORBIDDEN - the Träger is outside the caller's reach
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
   /useradmin/askers:
     get:
       tags:
@@ -2877,6 +2916,44 @@ components:
           type: integer
           format: int64
           description: Only advice seekers of this Träger. Ignored unless the caller is a platform admin.
+
+    TenantDeletionBlockersDTO:
+      type: object
+      required:
+        - deletable
+        - agencies
+        - consultants
+        - adviceSeekers
+        - agencyAdmins
+        - tenantAdmins
+        - openInvites
+      properties:
+        deletable:
+          type: boolean
+          description: true when every count below is 0
+        agencies:
+          type: integer
+          format: int64
+          description: agencies of the Träger that are not deleted
+        consultants:
+          type: integer
+          format: int64
+          description: counsellors of the Träger that are not marked for deletion
+        adviceSeekers:
+          type: integer
+          format: int64
+          description: advice seekers of the Träger that are not marked for deletion
+        agencyAdmins:
+          type: integer
+          format: int64
+        tenantAdmins:
+          type: integer
+          format: int64
+          description: Träger admins of the Träger
+        openInvites:
+          type: integer
+          format: int64
+          description: account invitations of the Träger that can still be accepted
 
     AskerSearchResultDTO:
       type: object
