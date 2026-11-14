@@ -275,7 +275,7 @@ class AgencyInviteLinkContextHttpTest {
                     """
             {"tenantId":83,"agencyId":99,"consultingTypeId":1,"topicId":11,"chatType":"VIDEO",
              "temporaryAccount":true,"admission":"KNOCK","hidePasswordField":true,
-             "messageRetention":"ALWAYS_PERSISTENT","accessMode":"BOTH","knock":true}
+             "messageRetention":"ALWAYS_PERSISTENT","accessMode":"GUESTS_ONLY","knock":true}
             """,
                     org.springframework.test.json.JsonCompareMode.STRICT));
   }

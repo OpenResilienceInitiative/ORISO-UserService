@@ -165,8 +165,18 @@ class TemporaryAccountLinkResolverTest {
    */
   @Test
   void resolve_Should_LetThePersonChoose_When_TheInvitationIsForBoth() {
+    link.setAccessMode(DirectInvitationAccessMode.BOTH);
     assertThat(resolver.resolve(registration("tok", false))).contains(link);
     assertThat(resolver.resolve(registration("tok", true))).contains(link);
+  }
+
+  @Test
+  void resolve_Should_KeepALegacyTemporaryLinkForGuests() {
+    link.setAccessMode(null);
+    link.setTemporaryAccount(true);
+    assertThat(resolver.resolve(registration("tok", true))).contains(link);
+    assertThatThrownBy(() -> resolver.resolve(registration("tok", false)))
+        .isInstanceOf(BadRequestException.class);
   }
 
   @Test

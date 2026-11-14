@@ -195,7 +195,7 @@ class DirectInvitationServiceTest {
     assertThat(opened.created()).isTrue();
     verify(newSession, never()).get();
     verify(rooms).addToAppointmentRoom(conversation, interpreter);
-    verify(rooms, never()).addInvitedGuestToExistingRoom(any(), any());
+    verify(rooms, never()).addInvitedGuestToExistingRoom(any(), any(), any());
     verify(members).save(any());
   }
 
@@ -240,7 +240,7 @@ class DirectInvitationServiceTest {
     var opened = service.openAppointmentConversation(link, interpreter, () -> null);
 
     assertThat(opened.created()).isTrue();
-    verify(rooms).addInvitedGuestToExistingRoom(oneToOne, interpreter);
+    verify(rooms).addInvitedGuestToExistingRoom(oneToOne, interpreter, link.getId());
     verify(rooms, never()).addToAppointmentRoom(any(), any());
   }
 

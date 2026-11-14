@@ -61,6 +61,8 @@ public class MatrixRoomClient {
   private final LiveChatDiagnosticMetrics diagnosticMetrics;
 
   private static final String ENDPOINT_ROOM_STATE = "/_matrix/client/v3/rooms/{roomId}/state";
+  private static final String ENDPOINT_ROOM_STATE_EVENT =
+      "/_matrix/client/v3/rooms/{roomId}/state/{eventType}/{stateKey}";
   private static final long MAX_SAFE_POWER = 9007199254740991L;
   private static final java.util.Set<String> CLOSED_CONTENT_EVENTS =
       java.util.Set.of(
@@ -1025,6 +1027,100 @@ public class MatrixRoomClient {
       return false;
     } catch (Exception e) {
       log.error("Failed to set events_default in room {}: {}", roomId, e.getMessage());
+      return false;
+    }
+  }
+
+  /**
+   * Raises the power level needed to send the given state event types to at least the given levels,
+   * and the room-wide {@code redact} level to at least {@code minRedact}, so ordinary members can
+   * neither send nor redact those events. Never lowers a level; writes only when something changes.
+   * Needs a token whose holder may change power levels. Never throws.
+   *
+   * @return true when the room requires at least these levels afterwards
+   */
+  @SuppressWarnings("unchecked")
+  public boolean lockStateEventLevels(
+      String roomId, Map<String, Integer> eventLevels, int minRedact, String accessToken) {
+    try {
+      var power = readPowerLevels(roomId, accessToken);
+      var events =
+          power.get("events") instanceof Map<?, ?> current
+              ? new HashMap<String, Object>((Map<String, Object>) current)
+              : new HashMap<String, Object>();
+      boolean changed = false;
+      for (var required : eventLevels.entrySet()) {
+        if (levelOf(events.get(required.getKey()), -1) < required.getValue()) {
+          events.put(required.getKey(), required.getValue());
+          changed = true;
+        }
+      }
+      if (levelOf(power.get("redact"), 50) < minRedact) {
+        power.put("redact", minRedact);
+        changed = true;
+      }
+      if (!changed) {
+        return true;
+      }
+      power.put("events", events);
+      restTemplate.put(
+          buildUrl(ENDPOINT_POWER_LEVELS, Map.of("roomId", roomId)),
+          new HttpEntity<>(power, getClientHttpHeaders(accessToken)));
+      return true;
+    } catch (Exception failure) {
+      log.warn(
+          "Could not lock state event levels in Matrix room {} ({})",
+          roomId,
+          failure.getClass().getSimpleName());
+      return false;
+    }
+  }
+
+  private static int levelOf(Object value, int fallback) {
+    return value instanceof Number number ? number.intValue() : fallback;
+  }
+
+  /**
+   * Writes one room state event ({@code PUT /rooms/{roomId}/state/{eventType}/{stateKey}}) with the
+   * given member's token. Never throws.
+   *
+   * @return true when Matrix accepted the event
+   */
+  public boolean putRoomState(
+      String roomId,
+      String eventType,
+      String stateKey,
+      Map<String, Object> content,
+      String accessToken) {
+    try {
+      var headers = getClientHttpHeaders(accessToken);
+      headers.setContentType(MediaType.APPLICATION_JSON);
+      var url =
+          buildUrl(
+              ENDPOINT_ROOM_STATE_EVENT,
+              Map.of(
+                  "roomId",
+                  roomId,
+                  "eventType",
+                  eventType,
+                  "stateKey",
+                  stateKey == null ? "" : stateKey));
+      var response =
+          restTemplate.exchange(url, HttpMethod.PUT, new HttpEntity<>(content, headers), Map.class);
+      return response.getStatusCode().is2xxSuccessful();
+    } catch (HttpClientErrorException ex) {
+      log.warn(
+          "Matrix refused state event {} in room {} with status {}",
+          eventType,
+          roomId,
+          ex.getStatusCode());
+      return false;
+    } catch (Exception ex) {
+      log.warn(
+          "Matrix state event {} in room {} failed: {}",
+          eventType,
+          roomId,
+          ex.getClass().getSimpleName());
       return false;
     }
   }

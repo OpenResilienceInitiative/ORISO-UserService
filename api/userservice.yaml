@@ -128,9 +128,9 @@ paths:
         '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
         '403': {description: 'Direct invitations are not allowed here, the caller belongs to another Träger, or the access mode excludes the caller: body {"reason":"DIRECT_INVITATION_GUESTS_ONLY"} or {"reason":"DIRECT_INVITATION_ACCOUNTS_ONLY"}'}
         '404': {description: Unknown link}
-        '409': {description: 'Invitation from a 1:1 whose room still shows earlier messages to new members; body {"reason":"DIRECT_INVITATION_HISTORY_SHARED"} (until ORISO-Frontend#2252 checkpoint 3)'}
         '410': {description: 'The link was switched off ({"reason":"DIRECT_LINK_INACTIVE"}), or it expired or was replaced ({"reason":"DIRECT_LINK_EXPIRED"})'}
-        '502': {description: 'The conversation room could not be created or joined'}
+        '502': {description: 'The conversation room could not be created or joined, or (invitation from a 1:1) the room could not be set to hide earlier messages or the person could not be marked as invited by link; nobody joins then'}
+        '503': {description: 'Invitation from a 1:1: Matrix cannot tell whether the room hides earlier messages; try again'}
   /users/call-knocks:
     get:
       tags: [direct-link-controller]
@@ -548,9 +548,12 @@ paths:
         appointments: either an existing appointment (appointmentId, from POST
         /users/sessions/{sessionId}/appointments) or a new one (appointment). People who open the
         link join this conversation as invited members; they are removed when the invitation
-        expires, and the conversation itself is never archived by the expiry. Until
-        ORISO-Frontend#2252 checkpoint 3 a person can only join when the room hides earlier
-        messages; otherwise opening the link answers 409 DIRECT_INVITATION_HISTORY_SHARED.
+        expires, and the conversation itself is never archived by the expiry. Before such a person
+        joins, the technical Matrix admin locks m.room.history_visibility and
+        org.oriso.direct_invitation_member at power level 100 (redact at least 50), sets the 1:1
+        room's m.room.history_visibility to "joined" (kept), and marks the person with
+        org.oriso.direct_invitation_member (state key = their Matrix ID, content {link_id, since});
+        clients must never hand a marked member room keys for earlier messages (checkpoint 3).
       security:
         - Bearer: [ ]
       parameters:
@@ -3839,8 +3842,8 @@ components:
       description: >-
         Who may enter through a direct invitation (ORISO-Frontend#2252). GUESTS_ONLY: only people
         with a temporary account; ACCOUNTS_ONLY: only people with a permanent account; BOTH: the
-        person chooses. Links from before #2252 read BOTH when they created temporary accounts,
-        else ACCOUNTS_ONLY.
+        person chooses. Links from before #2252 read GUESTS_ONLY when they created temporary
+        accounts, else ACCOUNTS_ONLY, so they keep their behaviour.
     DirectInvitationAppointmentInputDTO:
       type: object
       required: [startTime, endTime]

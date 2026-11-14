@@ -27,10 +27,11 @@
     <createIndex tableName="agency_invite_link" indexName="idx_agency_invite_link_appointment">
       <column name="appointment_id"/>
     </createIndex>
-    <!-- Existing direct links read their access mode from the temporary-account switch: a link
-         that created temporary accounts lets both in, one that did not only accounts. -->
+    <!-- Existing direct links keep their behaviour: a link that created temporary accounts lets
+         guests in only, one that did not only accounts (CP3 correction; the changeset has not run
+         on any shared environment yet). -->
     <update tableName="agency_invite_link">
-      <column name="access_mode" value="BOTH"/>
+      <column name="access_mode" value="GUESTS_ONLY"/>
       <where>link_kind = 'COUNSELLOR' AND temporary_account = 1</where>
     </update>
     <update tableName="agency_invite_link">

@@ -51,7 +51,9 @@ class DirectInvitationAppointmentMigrationTest {
       try (var liquibase = new Liquibase(CHANGELOG, new ClassLoaderResourceAccessor(), database)) {
         liquibase.update(new Contexts(), new LabelExpression());
 
-        assertThat(accessMode(c, 1)).isEqualTo("BOTH");
+        assertThat(accessMode(c, 1))
+            .as("legacy temporary links stay guests-only")
+            .isEqualTo("GUESTS_ONLY");
         assertThat(accessMode(c, 2)).isEqualTo("ACCOUNTS_ONLY");
         assertThat(accessMode(c, 3)).as("call share links keep their own rules").isNull();
         try (var sql = c.createStatement()) {

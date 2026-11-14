@@ -4,8 +4,10 @@ import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
-import de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitationRefusedException.Reason;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,6 +26,17 @@ import org.springframework.web.server.ResponseStatusException;
 public class DirectInvitationRoomMembership {
 
   static final String HIDDEN_HISTORY = "joined";
+  static final String HISTORY_VISIBILITY_EVENT = "m.room.history_visibility";
+  private static final int OWNER_LEVEL = 100;
+  private static final int MODERATOR_LEVEL = 50;
+
+  /**
+   * Room state event that marks a member who came in by a direct invitation into an existing 1:1;
+   * state key = the member's Matrix ID, content {@code {"link_id": <invitation id>, "since": <epoch
+   * ms>}}, sent by the technical Matrix admin. Clients read it from the room state they already
+   * hold and treat any such event as a mark, whatever its content; it is never lifted.
+   */
+  public static final String LINK_INVITED_MEMBER_EVENT = "org.oriso.direct_invitation_member";
 
   private final @NonNull MatrixSynapseService matrixSynapseService;
 
@@ -37,24 +50,64 @@ public class DirectInvitationRoomMembership {
 
   /**
    * An invited person joins an existing 1:1 ("Weitere Personen per Link einladen"). They must see
-   * only messages written after they joined (decision 4 of the Direkteinladung record).
+   * only messages written after they joined (decision 4 of the Direkteinladung record), so before
+   * the join, acting as the technical Matrix admin (the backend's own Matrix identity):
    *
-   * <p>TODO(CP3, ORISO-Frontend#2252): set {@code m.room.history_visibility} to "joined" on the 1:1
-   * before the join, keep invited guests out of the frontend room-key transfer and key backup, and
-   * add the privacy test that a guest cannot read earlier messages. Until then this fails closed: a
-   * room that shows earlier messages to new members takes nobody (409
-   * DIRECT_INVITATION_HISTORY_SHARED), as {@code InternalChatInvitationFacade} does.
+   * <ol>
+   *   <li>the admin joins the room with the owner power level;
+   *   <li>the room requires power level 100 for {@code m.room.history_visibility} and {@link
+   *       #LINK_INVITED_MEMBER_EVENT}, and at least 50 for redactions, so no ordinary member can
+   *       show earlier messages again or forge, change or redact a mark;
+   *   <li>{@code m.room.history_visibility} becomes "joined" and stays so: the server then never
+   *       serves earlier events to the newcomer (re-read, never assumed);
+   *   <li>the person is marked with {@link #LINK_INVITED_MEMBER_EVENT} (state key = their Matrix
+   *       ID), so every client can tell, without asking the backend, that this member must never
+   *       receive room keys for earlier messages (frontend {@code matrixRoomHistoryKeyTransfer}).
+   * </ol>
+   *
+   * <p>Fails closed: if any step cannot be confirmed, nobody joins.
    */
-  public void addInvitedGuestToExistingRoom(Session session, User user) {
-    var visibility = matrixSynapseService.getRoomHistoryVisibility(session.getMatrixRoomId());
+  public void addInvitedGuestToExistingRoom(Session session, User user, Long linkId) {
+    var counsellor = counsellorMatrixId(session);
+    if (!hasRoom(session) || counsellor == null || !MatrixIds.isUserId(user.getMatrixUserId())) {
+      throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "conversation_room_unavailable");
+    }
+    var roomId = session.getMatrixRoomId();
+    if (!matrixSynapseService.prepareAdminAsRoomOwner(roomId, counsellor)
+        || !matrixSynapseService.lockRoomStateEvents(
+            roomId,
+            Map.of(HISTORY_VISIBILITY_EVENT, OWNER_LEVEL, LINK_INVITED_MEMBER_EVENT, OWNER_LEVEL),
+            MODERATOR_LEVEL)) {
+      throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "conversation_room_unavailable");
+    }
+    hideEarlierMessages(roomId);
+    var marker = new HashMap<String, Object>();
+    marker.put("link_id", linkId);
+    marker.put("since", System.currentTimeMillis());
+    if (!matrixSynapseService.putRoomStateAsAdmin(
+        roomId, LINK_INVITED_MEMBER_EVENT, user.getMatrixUserId(), marker)) {
+      throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "conversation_room_unavailable");
+    }
+    join(session, user);
+  }
+
+  private void hideEarlierMessages(String roomId) {
+    var visibility = matrixSynapseService.getRoomHistoryVisibility(roomId);
     if (visibility.isEmpty()) {
       // Unknown is not "hidden": the person may try again once Matrix answers.
       throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "room_history_unknown");
     }
-    if (!HIDDEN_HISTORY.equals(visibility.get())) {
-      throw new DirectInvitationRefusedException(Reason.DIRECT_INVITATION_HISTORY_SHARED);
+    if (HIDDEN_HISTORY.equals(visibility.get())) {
+      return;
     }
-    join(session, user);
+    var written =
+        matrixSynapseService.putRoomStateAsAdmin(
+            roomId, HISTORY_VISIBILITY_EVENT, "", Map.of("history_visibility", HIDDEN_HISTORY));
+    if (!written
+        || !Optional.of(HIDDEN_HISTORY)
+            .equals(matrixSynapseService.getRoomHistoryVisibility(roomId))) {
+      throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "room_history_not_hidden");
+    }
   }
 
   /**

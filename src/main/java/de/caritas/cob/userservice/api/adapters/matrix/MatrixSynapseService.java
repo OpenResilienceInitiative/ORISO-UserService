@@ -2081,6 +2081,71 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
   }
 
   /**
+   * Makes the technical Matrix admin a member of the room with the owner power level, so the
+   * backend itself can write protected room state (ORISO-Frontend#2252). The admin is invited by
+   * {@code memberMatrixUserId} if needed and raised through Synapse's {@code make_room_admin},
+   * which acts as the room's highest joined local member. Never throws.
+   *
+   * @return true when the admin is joined and holds power level 100
+   */
+  public boolean prepareAdminAsRoomOwner(String roomId, String memberMatrixUserId) {
+    try {
+      String adminToken = getAdminToken();
+      if (adminToken == null || !ensureAdminInRoom(roomId, memberMatrixUserId)) {
+        return false;
+      }
+      String adminMatrixId = adminMatrixId();
+      var power = matrixRoomClient.findUserPowerLevel(roomId, adminMatrixId, adminToken);
+      if (power.isPresent() && power.get() >= ROOM_OWNER_POWER_LEVEL) {
+        return true;
+      }
+      if (!makeRoomAdmin(roomId, adminMatrixId)) {
+        return false;
+      }
+      var raised = matrixRoomClient.findUserPowerLevel(roomId, adminMatrixId, adminToken);
+      return raised.isPresent() && raised.get() >= ROOM_OWNER_POWER_LEVEL;
+    } catch (RuntimeException failure) {
+      log.warn(
+          "The Matrix admin could not take over room {}: {}",
+          roomId,
+          failure.getClass().getSimpleName());
+      return false;
+    }
+  }
+
+  /**
+   * Writes one room state event as the technical Matrix admin, so clients can tell it came from the
+   * backend (the event sender). Call {@link #prepareAdminAsRoomOwner} first. Never throws.
+   *
+   * @return true when Matrix accepted the event; false means nothing may rely on it
+   */
+  public boolean putRoomStateAsAdmin(
+      String roomId, String eventType, String stateKey, java.util.Map<String, Object> content) {
+    String adminToken = getAdminToken();
+    return adminToken != null
+        && roomId != null
+        && eventType != null
+        && matrixRoomClient.putRoomState(roomId, eventType, stateKey, content, adminToken);
+  }
+
+  /**
+   * As the technical Matrix admin: requires at least the given power levels for the given state
+   * event types and at least {@code minRedact} for redactions, so ordinary members can neither send
+   * nor redact them. Call {@link #prepareAdminAsRoomOwner} first. Never throws.
+   */
+  public boolean lockRoomStateEvents(
+      String roomId, java.util.Map<String, Integer> eventLevels, int minRedact) {
+    String adminToken = getAdminToken();
+    return adminToken != null
+        && roomId != null
+        && matrixRoomClient.lockStateEventLevels(roomId, eventLevels, minRedact, adminToken);
+  }
+
+  private String adminMatrixId() {
+    return "@" + matrixConfig.getAdminUsername() + ":" + matrixConfig.getServerName();
+  }
+
+  /**
    * Whether a moderator banned the user from the room, read from the room state via the Synapse
    * admin API. Empty when the state cannot be read; callers must treat that as "unknown".
    */

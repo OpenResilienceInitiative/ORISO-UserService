@@ -627,6 +627,26 @@ class CounsellorDirectLinkServiceTest {
   }
 
   @Test
+  void create_Should_KeepTheLegacyTemporarySwitch_AsGuestsOnly() {
+    var link =
+        service.create(owner, new CreateCommand(InviteLinkChatType.CHAT, TOPIC, null, true, null));
+
+    assertThat(link.getAccessMode()).isEqualTo(DirectInvitationAccessMode.GUESTS_ONLY);
+    assertThat(link.isTemporaryAccount()).isTrue();
+  }
+
+  @Test
+  void legacyLinkWithoutAccessMode_Should_ReadTheTemporarySwitch() {
+    var guests = new AgencyInviteLink();
+    guests.setTemporaryAccount(true);
+    var accounts = new AgencyInviteLink();
+    accounts.setTemporaryAccount(false);
+
+    assertThat(guests.effectiveAccessMode()).isEqualTo(DirectInvitationAccessMode.GUESTS_ONLY);
+    assertThat(accounts.effectiveAccessMode()).isEqualTo(DirectInvitationAccessMode.ACCOUNTS_ONLY);
+  }
+
+  @Test
   void create_Should_RefuseAValidityWithoutAppointment() {
     assertThatThrownBy(
             () ->
@@ -997,6 +1017,9 @@ class CounsellorDirectLinkServiceTest {
         .consultantId(OWNER_ID)
         .status(status)
         .temporaryAccount(!"CHAT".equals(medium))
+        // These links admit the account holders the tests open them with; a legacy link without
+        // an access mode reads GUESTS_ONLY from the temporary switch (see the legacy tests).
+        .accessMode(DirectInvitationAccessMode.BOTH)
         .build();
   }
 

@@ -78,6 +78,12 @@ public final class FakeSynapseHomeserver extends RestTemplate {
     private final Map<String, Integer> users = new LinkedHashMap<>();
     private int usersDefault;
     private int eventsDefault;
+    private final Map<String, Map<String, Object>> state = new LinkedHashMap<>();
+    private final Map<String, String> stateSenders = new LinkedHashMap<>();
+    // private_chat preset: the history setting needs 100, other state events state_default (50).
+    private final Map<String, Integer> events =
+        new LinkedHashMap<>(Map.of("m.room.power_levels", 100, "m.room.history_visibility", 100));
+    private int redact = 50;
   }
 
   public FakeSynapseHomeserver() {
@@ -206,6 +212,35 @@ public final class FakeSynapseHomeserver extends RestTemplate {
     return makeRoomAdminRequests;
   }
 
+  public String stateSenderOf(String roomId, String type, String stateKey) {
+    return room(roomId).stateSenders.get(type + "|" + stateKey);
+  }
+
+  public int eventLevelOf(String roomId, String type) {
+    return room(roomId).events.getOrDefault(type, 50);
+  }
+
+  public int redactLevelOf(String roomId) {
+    return room(roomId).redact;
+  }
+
+  /** A member sends a state event with their own token; false when Synapse refuses it. */
+  public boolean trySendState(
+      String roomId, String sender, String type, String stateKey, Map<String, Object> content) {
+    account(sender);
+    try {
+      putState(room(roomId), sender, type, stateKey, content);
+      return true;
+    } catch (HttpClientErrorException refused) {
+      return false;
+    }
+  }
+
+  /** A state event's content, or null when the room holds none for that type and key. */
+  public Map<String, Object> stateOf(String roomId, String type, String stateKey) {
+    return room(roomId).state.get(type + "|" + stateKey);
+  }
+
   public Set<String> members(String roomId) {
     return Set.copyOf(room(roomId).joined);
   }
@@ -286,6 +321,25 @@ public final class FakeSynapseHomeserver extends RestTemplate {
     if (method == HttpMethod.GET && path.get(3).equals("rooms") && path.get(5).equals("members")) {
       var members = new ArrayList<>(room(path.get(4)).joined);
       return ResponseEntity.ok(Map.of("members", members, "total", members.size()));
+    }
+    // /_synapse/admin/v1/rooms/{room}/state
+    if (method == HttpMethod.GET && path.get(3).equals("rooms") && path.get(5).equals("state")) {
+      var events = new ArrayList<Map<String, Object>>();
+      room(path.get(4))
+          .state
+          .forEach(
+              (key, content) -> {
+                int split = key.indexOf('|');
+                events.add(
+                    Map.of(
+                        "type",
+                        key.substring(0, split),
+                        "state_key",
+                        key.substring(split + 1),
+                        "content",
+                        content));
+              });
+      return ResponseEntity.ok(Map.of("state", events));
     }
     // /_synapse/admin/v1/join/{room}
     if (method == HttpMethod.POST && path.get(3).equals("join")) {
@@ -388,7 +442,23 @@ public final class FakeSynapseHomeserver extends RestTemplate {
       leaveOrKick(room, caller, target);
       return ResponseEntity.ok(Map.of());
     }
+    if (method == HttpMethod.PUT && action.equals("state") && path.size() >= 7) {
+      // Any other state event: m.room.history_visibility needs 100 (private_chat preset), the
+      // rest state_default (50).
+      putState(room, caller, path.get(6), path.size() >= 8 ? path.get(7) : "", asMap(body));
+      return ResponseEntity.ok(Map.of("event_id", "$state" + room.state.size()));
+    }
     throw new IllegalStateException("FakeSynapseHomeserver has no room route for " + path);
+  }
+
+  private void putState(
+      Room room, String sender, String type, String stateKey, Map<String, Object> content) {
+    requireJoined(room, sender);
+    if (room.users.getOrDefault(sender, room.usersDefault) < room.events.getOrDefault(type, 50)) {
+      throw error(HttpStatus.FORBIDDEN, "M_FORBIDDEN", "You don't have permission to post that");
+    }
+    room.state.put(type + "|" + stateKey, new LinkedHashMap<>(content));
+    room.stateSenders.put(type + "|" + stateKey, sender);
   }
 
   private void putPowerLevels(Room room, String sender, Map<String, Object> content) {
@@ -417,6 +487,13 @@ public final class FakeSynapseHomeserver extends RestTemplate {
     }
     room.users.clear();
     room.users.putAll(next);
+    if (content.get("events") instanceof Map<?, ?> levels) {
+      room.events.clear();
+      levels.forEach((type, level) -> room.events.put((String) type, ((Number) level).intValue()));
+    }
+    if (content.get("redact") instanceof Number level) {
+      room.redact = level.intValue();
+    }
   }
 
   private void leaveOrKick(Room room, String sender, String target) {
@@ -449,8 +526,8 @@ public final class FakeSynapseHomeserver extends RestTemplate {
     content.put("invite", INVITE_LEVEL);
     content.put("kick", KICK_LEVEL);
     content.put("ban", KICK_LEVEL);
-    content.put("redact", 50);
-    content.put("events", new HashMap<String, Object>(Map.of("m.room.power_levels", 100)));
+    content.put("redact", room.redact);
+    content.put("events", new HashMap<String, Object>(room.events));
     return content;
   }
 

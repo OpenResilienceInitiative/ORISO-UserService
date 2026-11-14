@@ -401,7 +401,7 @@ class DirectInvitationControllerIT {
         .andExpect(status().isCreated())
         .andExpect(jsonPath("$.sessionId", is(conversation.getId().intValue())))
         .andExpect(jsonPath("$.knockId").doesNotExist());
-    verify(rooms).addInvitedGuestToExistingRoom(any(), any());
+    verify(rooms).addInvitedGuestToExistingRoom(any(), any(), any());
     verify(createNewSessionFacade, never()).initializeAppointmentSession(any(), any());
 
     // The expiry takes the invited people out, but never archives the 1:1.
