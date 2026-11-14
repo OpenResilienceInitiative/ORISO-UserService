@@ -199,6 +199,74 @@ class DirectInvitationAppointmentMigrationTest {
     }
   }
 
+  /** A table missing although its changeSet ran is no table to create again silently. */
+  @Test
+  void update_Should_Stop_When_TheMemberTableIsGoneAlthoughItsChangeSetRan() throws Exception {
+    try (Connection c = h2WithUpperCaseNames("member-gone")) {
+      givenTheTablesBeforeThisChange(c);
+      try (var liquibase = liquibase(c)) {
+        liquibase.update(new Contexts(), new LabelExpression());
+        try (var sql = c.createStatement()) {
+          sql.execute("DROP TABLE direct_invitation_member");
+        }
+        assertThatThrownBy(() -> liquibase.update(new Contexts(), new LabelExpression()))
+            .hasStackTraceContaining("direct_invitation_member");
+      }
+    }
+  }
+
+  /** The key's name alone is not enough: an index of that name that allows duplicates stops it. */
+  @Test
+  void update_Should_Stop_When_TheMemberKeyIsNotUnique() throws Exception {
+    try (Connection c = h2WithUpperCaseNames("member-not-unique")) {
+      givenTheTablesBeforeThisChange(c);
+      try (var sql = c.createStatement()) {
+        sql.execute(completeMemberTable());
+        sql.execute(
+            "CREATE INDEX uq_direct_invitation_member_session_user ON direct_invitation_member"
+                + " (session_id, user_id)");
+        sql.execute(
+            "ALTER TABLE direct_invitation_member ADD CONSTRAINT"
+                + " fk_direct_invitation_member_session FOREIGN KEY (session_id) REFERENCES"
+                + " session (id) ON DELETE CASCADE");
+      }
+      try (var liquibase = liquibase(c)) {
+        assertThatThrownBy(() -> liquibase.update(new Contexts(), new LabelExpression()))
+            .hasStackTraceContaining("direct_invitation_member");
+      }
+    }
+  }
+
+  /** A session key that keeps member rows of a deleted conversation stops it. */
+  @Test
+  void update_Should_Stop_When_TheMemberSessionKeyDoesNotCascade() throws Exception {
+    try (Connection c = h2WithUpperCaseNames("member-no-cascade")) {
+      givenTheTablesBeforeThisChange(c);
+      try (var sql = c.createStatement()) {
+        sql.execute(completeMemberTable());
+        sql.execute(
+            "ALTER TABLE direct_invitation_member ADD CONSTRAINT"
+                + " uq_direct_invitation_member_session_user UNIQUE (session_id, user_id)");
+        sql.execute(
+            "ALTER TABLE direct_invitation_member ADD CONSTRAINT"
+                + " fk_direct_invitation_member_session FOREIGN KEY (session_id) REFERENCES"
+                + " session (id)");
+      }
+      try (var liquibase = liquibase(c)) {
+        assertThatThrownBy(() -> liquibase.update(new Contexts(), new LabelExpression()))
+            .hasStackTraceContaining("direct_invitation_member");
+      }
+    }
+  }
+
+  private static String completeMemberTable() {
+    return "CREATE TABLE direct_invitation_member (id BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,"
+        + " session_id BIGINT UNSIGNED NOT NULL, user_id VARCHAR(36) NOT NULL,"
+        + " invite_link_id BIGINT UNSIGNED NOT NULL, guest BOOLEAN NOT NULL,"
+        + " joined_at DATETIME NOT NULL, revoke_due_at DATETIME, removed_at DATETIME,"
+        + " PRIMARY KEY (id))";
+  }
+
   private static Connection h2WithUpperCaseNames(String name) throws Exception {
     // H2's default upper-case names, so the table-exists check finds the tables.
     return DriverManager.getConnection(

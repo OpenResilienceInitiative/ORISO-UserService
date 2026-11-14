@@ -11,6 +11,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -100,6 +101,7 @@ class DirectInvitationControllerIT {
   @Autowired private SessionAppointmentRepository appointmentRepository;
   @Autowired private DirectInvitationMemberRepository memberRepository;
   @Autowired private DirectInvitationExpiryService expiryService;
+  @Autowired private de.caritas.cob.userservice.api.service.session.SessionService sessionService;
 
   @MockitoBean private AuthenticatedUser authenticatedUser;
   @MockitoBean private AgencyService agencyService;
@@ -225,6 +227,45 @@ class DirectInvitationControllerIT {
     asConsultant(get("/users/directlinks"))
         .andExpect(jsonPath("$[0].id", is((int) id)))
         .andExpect(jsonPath("$[0].sessionId", is(conversation.getId().intValue())));
+  }
+
+  /**
+   * CodeRabbit on PR #1648: create, open and delete an invitation, then enter directly. The shared
+   * conversation stays out of the 1:1 lookup after its link is gone, so direct entry gets a 1:1 of
+   * its own instead of the archived shared one.
+   */
+  @Test
+  void deletedInvitation_Should_NeverTurnItsSharedConversationIntoTheDirect1to1() throws Exception {
+    int consultingType = conversation.getConsultingTypeId();
+    assertThat(
+            sessionService
+                .findSessionByConsultantAndUserAndConsultingType(owner, asker, consultingType)
+                .map(Session::getId))
+        .as("before the invitation, the conversation reads as the 1:1")
+        .contains(conversation.getId());
+    var start = OffsetDateTime.now(ZoneOffset.UTC).plusDays(1).withNano(0);
+    var created = createInvitation("CHAT", start, 90, "BOTH", null);
+    actAsUser(asker);
+    asUser(post("/users/invitelinks/{token}/conversations", created.get("token").asText()))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.appointmentConversation", is(true)));
+
+    actAsConsultant(owner);
+    asConsultant(delete("/users/directlinks/{id}", created.get("id").asLong()))
+        .andExpect(status().is2xxSuccessful());
+    entityManager.flush();
+    entityManager.clear();
+
+    assertThat(linkRepository.findById(created.get("id").asLong())).isEmpty();
+    assertThat(
+            sessionService
+                .findSessionByConsultantAndUserAndConsultingType(
+                    consultantRepository.findById(owner.getId()).orElseThrow(),
+                    userRepository.findById(asker.getUserId()).orElseThrow(),
+                    consultingType)
+                .map(Session::getId))
+        .as("direct entry creates its own 1:1 instead")
+        .isEmpty();
   }
 
   @Test

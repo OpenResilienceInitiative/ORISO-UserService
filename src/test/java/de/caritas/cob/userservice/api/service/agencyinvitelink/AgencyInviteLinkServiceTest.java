@@ -545,6 +545,39 @@ class AgencyInviteLinkServiceTest {
     verify(repository, org.mockito.Mockito.never()).save(link);
   }
 
+  /** CodeRabbit on PR #1648: once the sweep set EXPIRED, the invitation still answers 410. */
+  @Test
+  void redeem_Should_AnswerExpired_ForAnInvitationTheSweepClosed() {
+    var link = appointmentInvitation(LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(1));
+    link.setStatus(InviteLinkStatus.EXPIRED.name());
+    when(repository.findByTokenAndStatus("direct", InviteLinkStatus.ACTIVE.name()))
+        .thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> service.redeem("direct"))
+        .isInstanceOf(DirectLinkExpiredException.class);
+  }
+
+  /** CodeRabbit on PR #1648: a token "Neuen Link senden" replaced answers 410, not 404. */
+  @Test
+  void redeem_Should_AnswerExpired_ForAReplacedToken() {
+    when(repository.findByTokenAndStatus("old", InviteLinkStatus.ACTIVE.name()))
+        .thenReturn(Optional.empty());
+    when(repository.findByToken("old")).thenReturn(Optional.empty());
+    when(repository.findFirstByPreviousToken("old"))
+        .thenReturn(Optional.of(AgencyInviteLink.builder().id(9L).build()));
+
+    assertThatThrownBy(() -> service.redeem("old")).isInstanceOf(DirectLinkExpiredException.class);
+  }
+
+  @Test
+  void redeem_Should_StillAnswerNotFound_ForAnUnknownToken() {
+    when(repository.findByTokenAndStatus("nope", InviteLinkStatus.ACTIVE.name()))
+        .thenReturn(Optional.empty());
+    when(repository.findByToken("nope")).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> service.redeem("nope")).isInstanceOf(NotFoundException.class);
+  }
+
   private AgencyInviteLink appointmentInvitation(LocalDateTime expiresAt) {
     var link =
         AgencyInviteLink.builder()
@@ -1015,13 +1048,28 @@ class AgencyInviteLinkServiceTest {
         .build();
   }
 
+  /**
+   * CodeRabbit on PR #1648: the link is read under its lock, the one a first visitor holds while
+   * creating the conversation, so the switch-off sees that conversation and ends its access.
+   */
+  @Test
+  void deactivate_Should_ReadTheLinkUnderItsLock() {
+    var link = storedLink("ACTIVE", InviteLinkKind.COUNSELLOR.name(), 1L, null);
+    when(repository.findByIdForUpdate(7L)).thenReturn(Optional.of(link));
+    when(repository.save(any(AgencyInviteLink.class))).thenAnswer(i -> i.getArgument(0));
+
+    service.deactivate(7L);
+
+    verify(repository, Mockito.never()).findById(7L);
+  }
+
   /** ORISO-Frontend#2252: an admin switching an invitation off ends access like its counsellor. */
   @Test
   void deactivate_Should_EndTheAccessOfAnInvitationWithAppointment() {
     var link = storedLink("ACTIVE", InviteLinkKind.COUNSELLOR.name(), 1L, null);
     link.setChatType(InviteLinkChatType.VIDEO.name());
     link.setAppointmentId(java.util.UUID.randomUUID());
-    when(repository.findById(7L)).thenReturn(Optional.of(link));
+    when(repository.findByIdForUpdate(7L)).thenReturn(Optional.of(link));
     when(repository.save(any(AgencyInviteLink.class))).thenAnswer(i -> i.getArgument(0));
     var invitationEnd = mock(DirectInvitationExpiryService.class);
     withInvitationEnd(invitationEnd);
@@ -1065,7 +1113,7 @@ class AgencyInviteLinkServiceTest {
   @Test
   void deactivate_Should_SwitchAnActiveLinkOff() {
     var link = storedLink("ACTIVE", "EXTERNAL_INBOUND", 1L, null);
-    when(repository.findById(7L)).thenReturn(Optional.of(link));
+    when(repository.findByIdForUpdate(7L)).thenReturn(Optional.of(link));
     when(repository.save(any(AgencyInviteLink.class))).thenAnswer(i -> i.getArgument(0));
 
     var result = service.deactivate(7L);
@@ -1077,7 +1125,7 @@ class AgencyInviteLinkServiceTest {
   @Test
   void deactivate_Should_BeIdempotent_When_LinkIsAlreadyDisabled() {
     var link = storedLink("DISABLED", "EXTERNAL_INBOUND", 1L, null);
-    when(repository.findById(7L)).thenReturn(Optional.of(link));
+    when(repository.findByIdForUpdate(7L)).thenReturn(Optional.of(link));
 
     var result = service.deactivate(7L);
 
@@ -1088,7 +1136,7 @@ class AgencyInviteLinkServiceTest {
   @Test
   void deactivate_Should_ThrowConflict_When_LinkWasAlreadyUsedOrExpired() {
     for (String status : List.of("USED", "EXPIRED")) {
-      when(repository.findById(7L))
+      when(repository.findByIdForUpdate(7L))
           .thenReturn(Optional.of(storedLink(status, "EXTERNAL_INBOUND", 1L, null)));
 
       assertThatThrownBy(() -> service.deactivate(7L))
@@ -1100,14 +1148,14 @@ class AgencyInviteLinkServiceTest {
 
   @Test
   void deactivate_Should_ThrowNotFound_When_LinkDoesNotExist() {
-    when(repository.findById(7L)).thenReturn(Optional.empty());
+    when(repository.findByIdForUpdate(7L)).thenReturn(Optional.empty());
 
     assertThatThrownBy(() -> service.deactivate(7L)).isInstanceOf(NotFoundException.class);
   }
 
   @Test
   void deactivate_Should_ThrowNotFound_When_LinkBelongsToAnotherTenant() {
-    when(repository.findById(7L))
+    when(repository.findByIdForUpdate(7L))
         .thenReturn(Optional.of(storedLink("ACTIVE", "EXTERNAL_INBOUND", 2L, null)));
 
     assertThatThrownBy(() -> service.deactivate(7L)).isInstanceOf(NotFoundException.class);
@@ -1116,7 +1164,8 @@ class AgencyInviteLinkServiceTest {
 
   @Test
   void deactivate_Should_ThrowNotFound_When_LinkIsACallShareLink() {
-    when(repository.findById(7L)).thenReturn(Optional.of(storedLink("ACTIVE", "CALL", 1L, null)));
+    when(repository.findByIdForUpdate(7L))
+        .thenReturn(Optional.of(storedLink("ACTIVE", "CALL", 1L, null)));
 
     assertThatThrownBy(() -> service.deactivate(7L)).isInstanceOf(NotFoundException.class);
     Mockito.verify(repository, Mockito.never()).save(any());
@@ -1125,7 +1174,7 @@ class AgencyInviteLinkServiceTest {
   @Test
   void deactivate_Should_ThrowForbidden_When_AgencyAdminTargetsAnotherAgenciesLink() {
     actAsAgencyAdminOfAgencyTen();
-    when(repository.findById(7L))
+    when(repository.findByIdForUpdate(7L))
         .thenReturn(Optional.of(storedLink("ACTIVE", "EXTERNAL_INBOUND", 1L, 11L)));
 
     assertThatThrownBy(() -> service.deactivate(7L)).isInstanceOf(ForbiddenException.class);
@@ -1135,7 +1184,7 @@ class AgencyInviteLinkServiceTest {
   @Test
   void deactivate_Should_ThrowForbidden_When_AgencyAdminTargetsAWholeTraegerLink() {
     actAsAgencyAdminOfAgencyTen();
-    when(repository.findById(7L))
+    when(repository.findByIdForUpdate(7L))
         .thenReturn(Optional.of(storedLink("ACTIVE", "EXTERNAL_INBOUND", 1L, null)));
 
     assertThatThrownBy(() -> service.deactivate(7L)).isInstanceOf(ForbiddenException.class);

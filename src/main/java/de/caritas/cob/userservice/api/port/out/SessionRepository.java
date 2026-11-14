@@ -41,6 +41,13 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
   @Query("SELECT session FROM Session session WHERE session.id = :sessionId")
   Optional<Session> findByIdForUpdate(@Param("sessionId") Long sessionId);
 
+  /**
+   * The conversation's row lock alone, without loading it (ORISO-Frontend#2252): a deletion takes
+   * it before it reads the invited members, a join reservation before it writes one.
+   */
+  @Query(value = "SELECT id FROM session WHERE id = :id FOR UPDATE", nativeQuery = true)
+  Optional<Long> lockById(@Param("id") Long id);
+
   /** Scalar lock avoids returning an earlier managed Session snapshot after remote call lookup. */
   @Query(
       value =

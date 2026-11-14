@@ -133,16 +133,26 @@ public class DirectInvitationExpiryService {
    * invitation leaves now; the conversation's own advice seeker stays, as in any deletion. Fail
    * closed: the deletion waits until Matrix confirmed everybody out.
    *
+   * <p>The conversation's row lock comes first, the one a join reservation takes too: no
+   * reservation commits between this snapshot of the members and the deletion. When the deletion
+   * does not commit (refused here, or failed later), everybody Matrix was asked about stays due in
+   * a transaction of their own, so the sweep confirms or retries each removal.
+   *
    * @throws ServiceUnavailableException while somebody is still in the room or joining it
    */
   @Transactional
   public void requireInvitedOutBeforeDeletion(Session session) {
+    if (sessions.lockById(session.getId()).isEmpty()) {
+      return;
+    }
     var owner = session.getUser() != null ? session.getUser().getUserId() : null;
+    var asked = new ArrayList<Long>();
     var allOut = true;
     for (var member : members.findBySessionIdAndRemovedAtIsNull(session.getId())) {
       if (Objects.equals(member.getUserId(), owner)) {
         continue;
       }
+      asked.add(member.getId());
       if (DirectInvitationMemberships.attemptRunning(member, now())) {
         allOut = false;
         continue;
@@ -150,9 +160,35 @@ public class DirectInvitationExpiryService {
       allOut &= tryRemove(session, member);
       members.save(member);
     }
+    if (!asked.isEmpty()) {
+      unlessCommitted(() -> asked.forEach(this::keepDueInOwnTransaction));
+    }
     if (!allOut) {
       throw new ServiceUnavailableException(
           "Invited people of session " + session.getId() + " are still in its room");
+    }
+  }
+
+  private void keepDueInOwnTransaction(Long memberId) {
+    try {
+      var template = new TransactionTemplate(transactionManager);
+      template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+      template.executeWithoutResult(
+          status ->
+              members
+                  .findByIdForUpdate(memberId)
+                  .filter(member -> member.getRemovedAt() == null)
+                  .ifPresent(
+                      member -> {
+                        var due = member.getRevokeDueAt();
+                        member.setRevokeDueAt(due == null || due.isAfter(now()) ? now() : due);
+                        members.save(member);
+                      }));
+    } catch (RuntimeException failure) {
+      log.warn(
+          "Removal of invited member {} could not be kept due: {}",
+          memberId,
+          failure.getClass().getSimpleName());
     }
   }
 
@@ -219,6 +255,22 @@ public class DirectInvitationExpiryService {
 
   private LocalDateTime now() {
     return LocalDateTime.now(clock);
+  }
+
+  /** After the caller's transaction rolled back; nothing without one, since nothing is undone. */
+  private static void unlessCommitted(Runnable work) {
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      return;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCompletion(int status) {
+            if (status != STATUS_COMMITTED) {
+              work.run();
+            }
+          }
+        });
   }
 
   private static void afterCommit(Runnable work) {

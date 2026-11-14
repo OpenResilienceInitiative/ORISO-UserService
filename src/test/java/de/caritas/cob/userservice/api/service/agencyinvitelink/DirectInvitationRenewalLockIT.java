@@ -52,7 +52,9 @@ class DirectInvitationRenewalLockIT {
   private static final String OWNER_ID = "renewal-lock-owner";
 
   @Autowired private DirectInvitationService invitations;
+
   @Autowired private AgencyInviteLinkRepository links;
+
   @Autowired private SessionAppointmentRepository appointments;
   @Autowired private PlatformTransactionManager transactionManager;
 
@@ -64,16 +66,46 @@ class DirectInvitationRenewalLockIT {
   private Long linkId;
   private UUID appointmentId;
 
+  /** Runs whenever somebody asks for an invitation's row lock; set by the test. */
+  private static volatile Runnable onLockingRead = () -> {};
+
   @TestConfiguration
   static class TestClock {
     @Bean
     Clock clock() {
       return Clock.systemUTC();
     }
+
+    /** Tells the test when a renewal reaches its locking read, instead of guessing with a sleep. */
+    @Bean
+    static org.springframework.beans.factory.config.BeanPostProcessor lockingReadSignal() {
+      return new org.springframework.beans.factory.config.BeanPostProcessor() {
+        @Override
+        public Object postProcessAfterInitialization(Object bean, String name) {
+          if (!(bean instanceof AgencyInviteLinkRepository repository)) {
+            return bean;
+          }
+          return java.lang.reflect.Proxy.newProxyInstance(
+              AgencyInviteLinkRepository.class.getClassLoader(),
+              new Class<?>[] {AgencyInviteLinkRepository.class},
+              (proxy, method, args) -> {
+                if (method.getName().equals("findByIdForUpdate")) {
+                  onLockingRead.run();
+                }
+                try {
+                  return method.invoke(repository, args);
+                } catch (java.lang.reflect.InvocationTargetException e) {
+                  throw e.getCause();
+                }
+              });
+        }
+      };
+    }
   }
 
   @AfterEach
   void removeCommittedRows() {
+    onLockingRead = () -> {};
     var tx = new TransactionTemplate(transactionManager);
     tx.executeWithoutResult(
         status -> {
@@ -112,9 +144,17 @@ class DirectInvitationRenewalLockIT {
 
     var owner = new Consultant();
     owner.setId(OWNER_ID);
+    var asksForTheLock = new CountDownLatch(1);
+    // Set after the other renewal took the lock: only the second renewal gets here.
+    onLockingRead = asksForTheLock::countDown;
     // This renewal starts while the lock is held; it must wait and then see the other token.
     var renewal = CompletableFuture.supplyAsync(() -> invitations.renew(owner, linkId, null));
-    Thread.sleep(500);
+    assertThat(asksForTheLock.await(10, TimeUnit.SECONDS))
+        .as("the second renewal reached its locking read while the first one holds the row")
+        .isTrue();
+    // Everything it read before that read happened under the other renewal's lock, uncommitted.
+    Thread.sleep(200);
+    assertThat(renewal).as("it waits for the other renewal's lock").isNotDone();
     release.countDown();
     other.get(10, TimeUnit.SECONDS);
     var renewed = renewal.get(10, TimeUnit.SECONDS);

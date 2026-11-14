@@ -58,7 +58,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 @DataJpaTest
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
-@Import({DirectInvitationExpiryService.class, DirectInvitationExpiryCommitIT.TestClock.class})
+@Import({
+  DirectInvitationExpiryService.class,
+  DirectInvitationMemberships.class,
+  DirectInvitationExpiryCommitIT.TestClock.class
+})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class DirectInvitationExpiryCommitIT {
 
@@ -66,6 +70,7 @@ class DirectInvitationExpiryCommitIT {
   private static final String GUEST_MATRIX_ID = "@expiry-commit-guest:x";
 
   @Autowired private DirectInvitationExpiryService expiry;
+  @Autowired private DirectInvitationMemberships memberships;
   @Autowired private AgencyInviteLinkRepository links;
   @Autowired private SessionAppointmentRepository appointments;
   @Autowired private DirectInvitationMemberRepository members;
@@ -83,6 +88,7 @@ class DirectInvitationExpiryCommitIT {
   private UUID appointmentId;
   private Long linkId;
   private Long memberId;
+  private Long secondMemberId;
 
   @TestConfiguration
   static class TestClock {
@@ -163,10 +169,14 @@ class DirectInvitationExpiryCommitIT {
   void removeCommittedRows() {
     tx.executeWithoutResult(
         status -> {
-          members.deleteById(memberId);
+          members.findBySessionIdAndRemovedAtIsNull(sessionId).forEach(members::delete);
+          members.findById(memberId).ifPresent(members::delete);
+          if (secondMemberId != null) {
+            members.findById(secondMemberId).ifPresent(members::delete);
+          }
           links.deleteById(linkId);
-          appointments.deleteById(appointmentId);
-          sessions.deleteById(sessionId);
+          appointments.findById(appointmentId).ifPresent(appointments::delete);
+          sessions.findById(sessionId).ifPresent(sessions::delete);
         });
   }
 
@@ -192,6 +202,109 @@ class DirectInvitationExpiryCommitIT {
     assertThat(seenByAnotherConnection).containsExactly(InviteLinkStatus.EXPIRED.name());
     var member = tx.execute(status -> members.findById(memberId).orElseThrow());
     assertThat(member.getRemovedAt()).as("the removal is committed too").isNotNull();
+  }
+
+  /**
+   * CodeRabbit on PR #1648: a deletion refused because Matrix keeps one person in rolls back, yet
+   * both people asked about stay due in the database, so the sweep confirms the one already out and
+   * retries the other.
+   */
+  @Test
+  void requireInvitedOutBeforeDeletion_Should_KeepBothRemovalsDue_When_OneOfThemFails() {
+    var account = new User();
+    account.setUserId("expiry-commit-account");
+    account.setMatrixUserId("@expiry-commit-account:x");
+    when(users.findById("expiry-commit-account")).thenReturn(Optional.of(account));
+    secondMemberId =
+        tx.execute(
+            status ->
+                members
+                    .save(
+                        DirectInvitationMember.builder()
+                            .sessionId(sessionId)
+                            .userId("expiry-commit-account")
+                            .inviteLinkId(linkId)
+                            .guest(false)
+                            .joinedAt(LocalDateTime.now(ZoneOffset.UTC).minusHours(2))
+                            .build())
+                    .getId());
+    when(rooms.remove(any(), org.mockito.ArgumentMatchers.eq(GUEST_MATRIX_ID))).thenReturn(true);
+    when(rooms.remove(any(), org.mockito.ArgumentMatchers.eq("@expiry-commit-account:x")))
+        .thenReturn(false);
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () ->
+                tx.executeWithoutResult(
+                    status ->
+                        expiry.requireInvitedOutBeforeDeletion(
+                            sessions.findById(sessionId).orElseThrow())))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException
+                .class);
+
+    var due =
+        tx.execute(
+            status ->
+                List.of(
+                    members.findById(memberId).orElseThrow().getRevokeDueAt() != null,
+                    members.findById(secondMemberId).orElseThrow().getRevokeDueAt() != null));
+    assertThat(due).containsExactly(true, true);
+  }
+
+  /**
+   * CodeRabbit on PR #1648: a join reserving its place while the conversation is being deleted
+   * waits for the deletion and then lets nobody in, instead of leaving a member row the deletion
+   * never saw.
+   */
+  @Test
+  void reserve_Should_WaitForADeletion_AndLetNobodyIn() throws Exception {
+    var locked = new java.util.concurrent.CountDownLatch(1);
+    var release = new java.util.concurrent.CountDownLatch(1);
+    when(rooms.remove(any(), any())).thenReturn(true);
+    var deletion =
+        CompletableFuture.runAsync(
+            () ->
+                tx.executeWithoutResult(
+                    status -> {
+                      expiry.requireInvitedOutBeforeDeletion(
+                          sessions.findById(sessionId).orElseThrow());
+                      locked.countDown();
+                      awaitQuietly(release);
+                      members.findBySessionIdAndRemovedAtIsNull(sessionId).forEach(members::delete);
+                      members.findById(memberId).ifPresent(members::delete);
+                      appointments.findById(appointmentId).ifPresent(appointments::delete);
+                      sessions.deleteById(sessionId);
+                    }));
+    assertThat(locked.await(10, TimeUnit.SECONDS)).isTrue();
+
+    var latecomer = new User();
+    latecomer.setUserId("expiry-commit-latecomer");
+    var session = tx.execute(status -> sessions.findById(sessionId).orElseThrow());
+    var link = tx.execute(status -> links.findById(linkId).orElseThrow());
+    var join = CompletableFuture.supplyAsync(() -> memberships.reserve(session, latecomer, link));
+    Thread.sleep(300);
+    assertThat(join).as("the reservation waits for the deletion's lock").isNotDone();
+    release.countDown();
+    deletion.get(10, TimeUnit.SECONDS);
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> join.get(10, TimeUnit.SECONDS))
+        .hasCauseInstanceOf(DirectLinkInactiveException.class);
+    Optional<DirectInvitationMember> latecomerRow =
+        tx.execute(
+            status ->
+                members.findBySessionIdAndUserIdForUpdate(sessionId, "expiry-commit-latecomer"));
+    assertThat(latecomerRow).isEmpty();
+  }
+
+  private static void awaitQuietly(java.util.concurrent.CountDownLatch latch) {
+    try {
+      if (!latch.await(10, TimeUnit.SECONDS)) {
+        throw new IllegalStateException("not released");
+      }
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException(e);
+    }
   }
 
   @Test

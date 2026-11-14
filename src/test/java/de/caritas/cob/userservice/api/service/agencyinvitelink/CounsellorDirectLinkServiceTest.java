@@ -333,10 +333,15 @@ class CounsellorDirectLinkServiceTest {
     var foreign = link("foreign", "VIDEO", "ACTIVE");
     foreign.setId(3L);
     foreign.setConsultantId("someone-else");
+    // The preliminary check still saw the link as the owner's; it changed before the lock.
+    when(repository.existsByIdAndConsultantIdAndLinkKindAndChatTypeIn(
+            eq(3L), eq(OWNER_ID), eq("COUNSELLOR"), eq(InviteLinkChatType.DIRECT_MEDIA)))
+        .thenReturn(true);
     when(repository.findByIdForUpdate(3L)).thenReturn(Optional.of(foreign));
 
     assertThatThrownBy(() -> service.update(owner, 3L, new UpdateCommand("x", null, null, null)))
         .isInstanceOf(NotFoundException.class);
+    verify(repository).findByIdForUpdate(3L);
     assertThat(foreign.getName()).isNull();
   }
 

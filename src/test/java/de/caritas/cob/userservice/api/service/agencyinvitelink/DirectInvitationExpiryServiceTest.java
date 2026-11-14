@@ -107,6 +107,9 @@ class DirectInvitationExpiryServiceTest {
     when(members.findByInviteLinkIdAndRemovedAtIsNull(LINK_ID)).thenReturn(List.of(guest, account));
     when(users.findById("account-1")).thenReturn(Optional.of(accountUser));
     when(sessions.findById(SESSION_ID)).thenReturn(Optional.of(conversation));
+    when(sessions.lockById(SESSION_ID)).thenReturn(Optional.of(SESSION_ID));
+    when(members.findByIdForUpdate(1L)).thenAnswer(i -> Optional.of(guest));
+    when(members.findByIdForUpdate(2L)).thenAnswer(i -> Optional.of(account));
     when(users.findById("guest-1")).thenReturn(Optional.of(guestUser));
     when(rooms.remove(any(), any())).thenReturn(true);
     when(members.save(any())).thenAnswer(i -> i.getArgument(0));
@@ -269,6 +272,46 @@ class DirectInvitationExpiryServiceTest {
     verify(rooms).remove(conversation, "@account-1:x");
     assertThat(guest.getRemovedAt()).isEqualTo(NOW);
     assertThat(account.getRemovedAt()).isEqualTo(NOW);
+  }
+
+  /**
+   * CodeRabbit on PR #1648: the conversation's lock before the snapshot of its members, the same
+   * lock a join reservation takes, so no late join slips in between snapshot and deletion.
+   */
+  @Test
+  void requireInvitedOutBeforeDeletion_Should_LockTheConversation_BeforeReadingItsMembers() {
+    when(members.findBySessionIdAndRemovedAtIsNull(SESSION_ID)).thenReturn(List.of(guest));
+    when(rooms.remove(conversation, "@guest-1:x")).thenReturn(true);
+
+    service.requireInvitedOutBeforeDeletion(conversation);
+
+    var order = org.mockito.Mockito.inOrder(sessions, members);
+    order.verify(sessions).lockById(SESSION_ID);
+    order.verify(members).findBySessionIdAndRemovedAtIsNull(SESSION_ID);
+  }
+
+  /**
+   * CodeRabbit on PR #1648: a refused deletion rolls back, but the people Matrix was asked about
+   * stay due in a transaction of their own, so the sweep confirms or retries every one of them.
+   */
+  @Test
+  void requireInvitedOutBeforeDeletion_Should_KeepTheRemovalsDue_When_TheDeletionIsRefused() {
+    when(members.findBySessionIdAndRemovedAtIsNull(SESSION_ID)).thenReturn(List.of(guest, account));
+    when(rooms.remove(conversation, "@guest-1:x")).thenReturn(true);
+    when(rooms.remove(conversation, "@account-1:x")).thenReturn(false);
+    // What the rollback restores: neither row was due before.
+    when(members.findByIdForUpdate(1L))
+        .thenReturn(Optional.of(DirectInvitationMember.builder().id(1L).build()));
+    var restoredAccount = DirectInvitationMember.builder().id(2L).build();
+    when(members.findByIdForUpdate(2L)).thenReturn(Optional.of(restoredAccount));
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException.class,
+        () -> transactional(service).requireInvitedOutBeforeDeletion(conversation));
+
+    assertThat(transactions.rollbacks).isEqualTo(1);
+    assertThat(transactions.commits).as("one transaction per kept removal").isEqualTo(2);
+    assertThat(restoredAccount.getRevokeDueAt()).isEqualTo(NOW);
   }
 
   @Test

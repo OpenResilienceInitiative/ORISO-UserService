@@ -86,17 +86,26 @@
   </changeSet>
 
   <!-- The member table is created with both keys in one changeSet. MariaDB commits each DDL on its
-       own, so a run can stop after the table: the check before it runs on every start and stops
-       the update for a table that exists without its columns and keys, instead of marking it done
-       or repairing a table nobody knows. Such a table is dropped by hand and the update rerun. -->
-  <changeSet id="20261114-direct-invitation-member-verify-2252" author="oriso" runAlways="true">
+       own, so a run can stop after the table. The check before it runs on every start (and again
+       when it changes) and stops the update unless the table is either absent and not created yet,
+       or present with its columns, its unique key on (session_id, user_id) and its session key
+       ON DELETE CASCADE. It never drops or repairs anything: the message names the procedure. -->
+  <changeSet id="20261114-direct-invitation-member-verify-2252" author="oriso" runAlways="true"
+    runOnChange="true">
     <preConditions onFail="HALT"
-      onFailMessage="direct_invitation_member exists without all its columns and keys; drop it and rerun">
+      onFailMessage="direct_invitation_member does not match changeSet 20261114-direct-invitation-member-2252, or is missing although that changeSet ran. Do not drop it, it holds who may be in which room. Compare it with that changeSet (columns; unique uq_direct_invitation_member_session_user on session_id, user_id; fk_direct_invitation_member_session on session_id ON DELETE CASCADE), add what is missing by hand after review (or recreate it and remove that changeSet's DATABASECHANGELOG row if it is missing), then restart.">
       <or>
-        <not>
-          <tableExists tableName="direct_invitation_member"/>
-        </not>
         <and>
+          <not>
+            <tableExists tableName="direct_invitation_member"/>
+          </not>
+          <not>
+            <changeSetExecuted id="20261114-direct-invitation-member-2252" author="oriso"
+              changeLogFile="db/changelog/changeset/20261114_direct_invitation_appointment_2252/changeSet.xml"/>
+          </not>
+        </and>
+        <and>
+          <tableExists tableName="direct_invitation_member"/>
           <columnExists tableName="direct_invitation_member" columnName="id"/>
           <columnExists tableName="direct_invitation_member" columnName="session_id"/>
           <columnExists tableName="direct_invitation_member" columnName="user_id"/>
@@ -105,10 +114,23 @@
           <columnExists tableName="direct_invitation_member" columnName="joined_at"/>
           <columnExists tableName="direct_invitation_member" columnName="revoke_due_at"/>
           <columnExists tableName="direct_invitation_member" columnName="removed_at"/>
-          <indexExists tableName="direct_invitation_member"
-            indexName="uq_direct_invitation_member_session_user"/>
-          <foreignKeyConstraintExists foreignKeyTableName="direct_invitation_member"
-            foreignKeyName="fk_direct_invitation_member_session"/>
+          <sqlCheck expectedResult="1">
+            SELECT CASE WHEN COUNT(*) = 2 AND SUM(CASE WHEN LOWER(k.column_name) IN ('session_id','user_id')
+              THEN 1 ELSE 0 END) = 2 THEN 1 ELSE 0 END
+            FROM information_schema.table_constraints c
+            JOIN information_schema.key_column_usage k ON k.constraint_schema = c.constraint_schema
+              AND k.constraint_name = c.constraint_name AND k.table_name = c.table_name
+            WHERE c.constraint_schema = SCHEMA() AND c.constraint_type = 'UNIQUE'
+              AND LOWER(c.table_name) = 'direct_invitation_member' AND LOWER(c.constraint_name) = 'uq_direct_invitation_member_session_user'
+          </sqlCheck>
+          <sqlCheck expectedResult="1">
+            SELECT COUNT(*) FROM information_schema.referential_constraints r
+            JOIN information_schema.key_column_usage k ON k.constraint_schema = r.constraint_schema
+              AND k.constraint_name = r.constraint_name
+            WHERE r.constraint_schema = SCHEMA() AND r.delete_rule = 'CASCADE'
+              AND LOWER(r.constraint_name) = 'fk_direct_invitation_member_session' AND LOWER(k.table_name) = 'direct_invitation_member'
+              AND LOWER(k.column_name) = 'session_id'
+          </sqlCheck>
         </and>
       </or>
     </preConditions>
@@ -134,12 +156,9 @@
       <column name="revoke_due_at" type="DATETIME"/>
       <column name="removed_at" type="DATETIME"/>
     </createTable>
-    <!-- A unique index: one object to check, the same key in MariaDB. -->
-    <createIndex tableName="direct_invitation_member"
-      indexName="uq_direct_invitation_member_session_user" unique="true">
-      <column name="session_id"/>
-      <column name="user_id"/>
-    </createIndex>
+    <!-- A unique constraint, so the check above can read it from information_schema. -->
+    <addUniqueConstraint tableName="direct_invitation_member" columnNames="session_id, user_id"
+      constraintName="uq_direct_invitation_member_session_user"/>
     <addForeignKeyConstraint baseTableName="direct_invitation_member" baseColumnNames="session_id"
       referencedTableName="session" referencedColumnNames="id"
       constraintName="fk_direct_invitation_member_session" onDelete="CASCADE"/>
@@ -168,20 +187,40 @@
        as expired and still asks for a new one. Same check and single creation as the member
        table. -->
   <changeSet id="20261114-direct-invitation-replaced-token-verify-2252" author="oriso"
-    runAlways="true">
+    runAlways="true" runOnChange="true">
     <preConditions onFail="HALT"
-      onFailMessage="agency_invite_link_replaced_token exists without all its columns and keys; drop it and rerun">
+      onFailMessage="agency_invite_link_replaced_token does not match changeSet 20261114-direct-invitation-replaced-token-2252, or is missing although that changeSet ran. Do not drop it, old links would stop reading as expired. Compare it with that changeSet (columns; unique uq_agency_invite_link_replaced_token on token; fk_agency_invite_link_replaced_token_link on invite_link_id ON DELETE CASCADE), add what is missing by hand after review (or recreate it and remove that changeSet's DATABASECHANGELOG row if it is missing), then restart.">
       <or>
-        <not>
-          <tableExists tableName="agency_invite_link_replaced_token"/>
-        </not>
         <and>
+          <not>
+            <tableExists tableName="agency_invite_link_replaced_token"/>
+          </not>
+          <not>
+            <changeSetExecuted id="20261114-direct-invitation-replaced-token-2252" author="oriso"
+              changeLogFile="db/changelog/changeset/20261114_direct_invitation_appointment_2252/changeSet.xml"/>
+          </not>
+        </and>
+        <and>
+          <tableExists tableName="agency_invite_link_replaced_token"/>
           <columnExists tableName="agency_invite_link_replaced_token" columnName="invite_link_id"/>
           <columnExists tableName="agency_invite_link_replaced_token" columnName="token"/>
-          <indexExists tableName="agency_invite_link_replaced_token"
-            indexName="uq_agency_invite_link_replaced_token"/>
-          <foreignKeyConstraintExists foreignKeyTableName="agency_invite_link_replaced_token"
-            foreignKeyName="fk_agency_invite_link_replaced_token_link"/>
+          <sqlCheck expectedResult="1">
+            SELECT CASE WHEN COUNT(*) = 1 AND SUM(CASE WHEN LOWER(k.column_name) IN ('token')
+              THEN 1 ELSE 0 END) = 1 THEN 1 ELSE 0 END
+            FROM information_schema.table_constraints c
+            JOIN information_schema.key_column_usage k ON k.constraint_schema = c.constraint_schema
+              AND k.constraint_name = c.constraint_name AND k.table_name = c.table_name
+            WHERE c.constraint_schema = SCHEMA() AND c.constraint_type = 'UNIQUE'
+              AND LOWER(c.table_name) = 'agency_invite_link_replaced_token' AND LOWER(c.constraint_name) = 'uq_agency_invite_link_replaced_token'
+          </sqlCheck>
+          <sqlCheck expectedResult="1">
+            SELECT COUNT(*) FROM information_schema.referential_constraints r
+            JOIN information_schema.key_column_usage k ON k.constraint_schema = r.constraint_schema
+              AND k.constraint_name = r.constraint_name
+            WHERE r.constraint_schema = SCHEMA() AND r.delete_rule = 'CASCADE'
+              AND LOWER(r.constraint_name) = 'fk_agency_invite_link_replaced_token_link' AND LOWER(k.table_name) = 'agency_invite_link_replaced_token'
+              AND LOWER(k.column_name) = 'invite_link_id'
+          </sqlCheck>
         </and>
       </or>
     </preConditions>
@@ -199,11 +238,9 @@
       <column name="invite_link_id" type="BIGINT"><constraints nullable="false"/></column>
       <column name="token" type="VARCHAR(64)"><constraints nullable="false"/></column>
     </createTable>
-    <!-- A unique index: one object to check, the same key in MariaDB. -->
-    <createIndex tableName="agency_invite_link_replaced_token"
-      indexName="uq_agency_invite_link_replaced_token" unique="true">
-      <column name="token"/>
-    </createIndex>
+    <!-- A unique constraint, so the check above can read it from information_schema. -->
+    <addUniqueConstraint tableName="agency_invite_link_replaced_token" columnNames="token"
+      constraintName="uq_agency_invite_link_replaced_token"/>
     <addForeignKeyConstraint baseTableName="agency_invite_link_replaced_token"
       baseColumnNames="invite_link_id" referencedTableName="agency_invite_link"
       referencedColumnNames="id" constraintName="fk_agency_invite_link_replaced_token_link"

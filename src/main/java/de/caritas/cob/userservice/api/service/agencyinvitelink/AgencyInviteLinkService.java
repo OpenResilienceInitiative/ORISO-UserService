@@ -230,9 +230,11 @@ public class AgencyInviteLinkService {
   @Transactional
   public AgencyInviteLink deactivate(Long linkId) {
     Long callerTenantId = resolveCallerTenantId();
+    // Locked by the first read (ORISO-Frontend#2252): a first visitor creating the conversation
+    // holds this lock, so the switch-off sees that conversation and ends its access.
     AgencyInviteLink link =
         repository
-            .findById(linkId)
+            .findByIdForUpdate(linkId)
             .filter(l -> Objects.equals(l.getTenantId(), callerTenantId))
             .filter(l -> !InviteLinkKind.CALL.name().equals(l.getLinkKind()))
             .orElseThrow(() -> new NotFoundException("Invite link %s not found", linkId));
@@ -602,12 +604,13 @@ public class AgencyInviteLinkService {
             .orElseGet(() -> null);
 
     if (link == null) {
-      AgencyInviteLink existing =
-          repository
-              .findByToken(token)
-              .orElseThrow(() -> new NotFoundException("Invite link not found"));
+      // A replaced token, or an invitation the sweep closed, still answers 410 (#2252).
+      AgencyInviteLink existing = CounsellorDirectLinkService.findForEntry(repository, token);
       if (InviteLinkStatus.USED.name().equals(existing.getStatus())) {
         throw new BadRequestException("Invite link already used");
+      }
+      if (existing.getAppointmentId() != null) {
+        CounsellorDirectLinkService.requireNotExpired(existing);
       }
       rejectPausedLink(existing);
       throw new BadRequestException("Invite link is not active");

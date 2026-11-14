@@ -81,7 +81,11 @@ class DirectInvitationServiceTest {
             systemMessages,
             archive,
             Clock.systemUTC(),
-            new DirectInvitationMemberships(members, links, appointments, Clock.systemUTC()));
+            new DirectInvitationMemberships(
+                members, links, appointments, sessions, Clock.systemUTC()));
+    org.mockito.Mockito.lenient()
+        .when(sessions.lockById(org.mockito.ArgumentMatchers.anyLong()))
+        .thenAnswer(i -> Optional.of(i.<Long>getArgument(0)));
     service.appBaseUrl = "https://app.example";
     owner = new Consultant();
     owner.setId(OWNER_ID);

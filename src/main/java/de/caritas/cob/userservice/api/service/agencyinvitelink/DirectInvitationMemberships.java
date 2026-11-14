@@ -54,6 +54,7 @@ public class DirectInvitationMemberships {
   private final @NonNull DirectInvitationMemberRepository members;
   private final @NonNull AgencyInviteLinkRepository links;
   private final @NonNull SessionAppointmentRepository appointments;
+  private final @NonNull de.caritas.cob.userservice.api.port.out.SessionRepository sessions;
   private final @NonNull Clock clock;
 
   public static boolean isMember(DirectInvitationMember row) {
@@ -81,9 +82,15 @@ public class DirectInvitationMemberships {
    * the join sees the person and an abandoned attempt is cleaned up by the sweep.
    *
    * @return the attempt token, or empty when the person is a member already
+   * @throws DirectLinkInactiveException when the conversation was deleted meanwhile
    */
   @Transactional
   public Optional<String> reserve(Session session, User user, AgencyInviteLink link) {
+    // The conversation first, the lock a deletion holds while it takes everybody out: a
+    // reservation either commits before that snapshot or finds the conversation gone.
+    if (sessions.lockById(session.getId()).isEmpty()) {
+      throw new DirectLinkInactiveException();
+    }
     var row =
         members
             .findBySessionIdAndUserIdForUpdate(session.getId(), user.getUserId())

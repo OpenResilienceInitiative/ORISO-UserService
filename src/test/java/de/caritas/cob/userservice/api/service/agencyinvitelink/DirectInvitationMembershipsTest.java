@@ -41,6 +41,7 @@ class DirectInvitationMembershipsTest {
   @Mock private DirectInvitationMemberRepository members;
   @Mock private AgencyInviteLinkRepository links;
   @Mock private SessionAppointmentRepository appointments;
+  @Mock private de.caritas.cob.userservice.api.port.out.SessionRepository sessions;
 
   private final AtomicReference<DirectInvitationMember> row = new AtomicReference<>();
   private DirectInvitationMemberships memberships;
@@ -50,7 +51,9 @@ class DirectInvitationMembershipsTest {
 
   @BeforeEach
   void setUp() {
-    memberships = new DirectInvitationMemberships(members, links, appointments, Clock.systemUTC());
+    memberships =
+        new DirectInvitationMemberships(members, links, appointments, sessions, Clock.systemUTC());
+    when(sessions.lockById(SESSION_ID)).thenReturn(Optional.of(SESSION_ID));
     var appointment = new SessionAppointment();
     appointment.setId(UUID.randomUUID());
     appointment.setStatus(SessionAppointment.Status.SCHEDULED);
@@ -79,6 +82,29 @@ class DirectInvitationMembershipsTest {
               row.set(saved);
               return saved;
             });
+  }
+
+  /**
+   * CodeRabbit on PR #1648: the conversation's lock first, the one a deletion takes before it reads
+   * the members, so no reservation commits between that read and the deletion.
+   */
+  @Test
+  void reserve_Should_LockTheConversation_BeforeItsRow() {
+    memberships.reserve(session, user, link);
+
+    var order = org.mockito.Mockito.inOrder(sessions, members);
+    order.verify(sessions).lockById(SESSION_ID);
+    order.verify(members).findBySessionIdAndUserIdForUpdate(SESSION_ID, "interpreter");
+  }
+
+  @Test
+  void reserve_Should_LetNobodyIn_When_TheConversationWasDeletedMeanwhile() {
+    when(sessions.lockById(SESSION_ID)).thenReturn(Optional.empty());
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> memberships.reserve(session, user, link))
+        .isInstanceOf(DirectLinkInactiveException.class);
+    org.mockito.Mockito.verify(members, org.mockito.Mockito.never()).save(any());
   }
 
   @Test
