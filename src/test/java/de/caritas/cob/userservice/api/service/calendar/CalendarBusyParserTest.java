@@ -14,6 +14,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -264,6 +265,90 @@ class CalendarBusyParserTest {
                 "DTEND;TZID=W. Europe Standard Time:20261116T100000"));
 
     assertThat(slots).containsExactly(slot("2026-11-16T08:00:00Z", "2026-11-16T09:00:00Z"));
+  }
+
+  @Test
+  void parse_Should_LeaveTheZonesOfTheProcessAsTheyWere_HoweverOftenADocumentDefinesOne() {
+    // java.time keeps every zone id it was given until the process ends; an import runs every
+    // quarter of an hour.
+    var document =
+        calendar(
+            timeZone(
+                "W. Europe Standard Time",
+                "16010101T030000",
+                "RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=10"),
+            event(
+                "UID:zoned",
+                "DTSTART;TZID=W. Europe Standard Time:20261116T090000",
+                "DTEND;TZID=W. Europe Standard Time:20261116T100000"));
+    parser.parse(document, FROM, TO, BERLIN);
+    var zonesBefore = ZoneId.getAvailableZoneIds().size();
+
+    for (var i = 0; i < 200; i++) {
+      assertThat(parser.parse(document, FROM, TO, BERLIN))
+          .containsExactly(slot("2026-11-16T08:00:00Z", "2026-11-16T09:00:00Z"));
+    }
+
+    assertThat(ZoneId.getAvailableZoneIds()).hasSize(zonesBefore);
+  }
+
+  @Test
+  void parse_Should_ReadEveryDocumentInItsOwnZones_WhenTwoDefineTheSameIdDifferently() {
+    var west =
+        calendar(
+            fixedZone("Synthetic/Shared", "+0100"),
+            event(
+                "UID:zoned",
+                "DTSTART;TZID=Synthetic/Shared:20261116T090000",
+                "DTEND;TZID=Synthetic/Shared:20261116T100000"));
+    var east =
+        calendar(
+            fixedZone("Synthetic/Shared", "+0500"),
+            event(
+                "UID:zoned",
+                "DTSTART;TZID=Synthetic/Shared:20261116T090000",
+                "DTEND;TZID=Synthetic/Shared:20261116T100000"));
+
+    // On several threads at once, as two imports may run.
+    IntStream.range(0, 40)
+        .parallel()
+        .forEach(
+            i ->
+                assertThat(parser.parse(i % 2 == 0 ? west : east, FROM, TO, BERLIN))
+                    .as("document %d", i)
+                    .containsExactly(
+                        i % 2 == 0
+                            ? slot("2026-11-16T08:00:00Z", "2026-11-16T09:00:00Z")
+                            : slot("2026-11-16T04:00:00Z", "2026-11-16T05:00:00Z")));
+  }
+
+  @Test
+  void parse_Should_RefuseMoreTimeZonesThanADocumentMayDefine() {
+    var zones = new String[CalendarTimeZones.MAX + 1];
+    for (var i = 0; i < zones.length; i++) {
+      zones[i] = fixedZone("Synthetic/Zone" + i, "+0100");
+    }
+    var document =
+        calendar(
+            String.join("", zones),
+            event(
+                "UID:zoned",
+                "DTSTART;TZID=Synthetic/Zone0:20261116T090000",
+                "DTEND;TZID=Synthetic/Zone0:20261116T100000"));
+
+    assertThat(errorOf(() -> parser.parse(document, FROM, TO, BERLIN))).isEqualTo(TOO_LARGE);
+    assertThat(
+            parser.parse(
+                calendar(
+                    String.join("", Arrays.copyOf(zones, CalendarTimeZones.MAX)),
+                    event(
+                        "UID:zoned",
+                        "DTSTART;TZID=Synthetic/Zone99:20261116T090000",
+                        "DTEND;TZID=Synthetic/Zone99:20261116T100000")),
+                FROM,
+                TO,
+                BERLIN))
+        .containsExactly(slot("2026-11-16T08:00:00Z", "2026-11-16T09:00:00Z"));
   }
 
   @Test
@@ -613,6 +698,21 @@ class CalendarBusyParserTest {
             "TZOFFSETTO:+0200",
             "RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=3",
             "END:DAYLIGHT",
+            "END:VTIMEZONE")
+        + "\r\n";
+  }
+
+  /** A zone that is always {@code offset}. */
+  private static String fixedZone(String id, String offset) {
+    return String.join(
+            "\r\n",
+            "BEGIN:VTIMEZONE",
+            "TZID:" + id,
+            "BEGIN:STANDARD",
+            "DTSTART:19700101T000000",
+            "TZOFFSETFROM:" + offset,
+            "TZOFFSETTO:" + offset,
+            "END:STANDARD",
             "END:VTIMEZONE")
         + "\r\n";
   }
