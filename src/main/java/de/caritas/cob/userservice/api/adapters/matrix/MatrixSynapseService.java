@@ -2068,6 +2068,26 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
                     .anyMatch("m.megolm.v1.aes-sha2"::equals));
   }
 
+  /**
+   * Whether a user is out of a room by its state (ORISO-Frontend#2252): no {@code m.room.member}
+   * event for them at all (never invited or joined), or their latest one says "leave" or "ban".
+   * Empty when the state cannot be read; callers must treat that as "unknown".
+   */
+  public java.util.Optional<Boolean> isOutOfRoom(String matrixRoomId, String matrixUserId) {
+    return readRoomState(matrixRoomId)
+        .map(
+            events ->
+                events.stream()
+                    .filter(event -> "m.room.member".equals(event.get("type")))
+                    .filter(event -> matrixUserId.equals(event.get("state_key")))
+                    .map(event -> event.get("content"))
+                    .filter(java.util.Map.class::isInstance)
+                    .map(content -> ((java.util.Map<?, ?>) content).get("membership"))
+                    .reduce((first, second) -> second)
+                    .map(membership -> "leave".equals(membership) || "ban".equals(membership))
+                    .orElse(true));
+  }
+
   private java.util.Optional<java.util.List<java.util.Map<?, ?>>> readRoomState(
       String matrixRoomId) {
     String adminToken = getAdminAccessToken();

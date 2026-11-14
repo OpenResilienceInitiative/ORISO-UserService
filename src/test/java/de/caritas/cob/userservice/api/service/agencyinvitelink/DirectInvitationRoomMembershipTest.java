@@ -147,6 +147,19 @@ class DirectInvitationRoomMembershipTest {
     assertThat(membership.remove(session, "@guest:example")).isFalse();
   }
 
+  /** A refused or failed join never reached the room: the room state confirms the person is out. */
+  @Test
+  void remove_Should_CountAsDone_When_TheRoomStateHasNoMembershipOfThePerson() {
+    when(matrix.loginAsUserAccessToken("@counsellor:example")).thenReturn("token");
+    when(matrix.kickUserFromRoom(ROOM, "@guest:example", "token")).thenReturn(false);
+    when(matrix.isOutOfRoom(ROOM, "@guest:example")).thenReturn(Optional.of(true));
+
+    assertThat(membership.remove(session, "@guest:example")).isTrue();
+
+    when(matrix.isOutOfRoom(ROOM, "@guest:example")).thenReturn(Optional.of(false));
+    assertThat(membership.remove(session, "@guest:example")).isFalse();
+  }
+
   /** "History from join" rests on Megolm: a 1:1 without encryption takes nobody by link. */
   @Test
   void existing1to1_Should_RefuseTheJoin_When_TheRoomIsNotEncrypted() {

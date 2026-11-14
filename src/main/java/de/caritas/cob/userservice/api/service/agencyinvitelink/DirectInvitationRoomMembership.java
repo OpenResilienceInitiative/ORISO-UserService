@@ -118,11 +118,13 @@ public class DirectInvitationRoomMembership {
         return false;
       }
       var room = session.getMatrixRoomId();
+      // Confirmed out: kicked now, or Matrix says the person left, was banned or never got in.
       return matrixSynapseService.kickUserFromRoom(room, matrixUserId, token)
           || matrixSynapseService
               .getRoomMembership(room, matrixUserId, token)
               .filter(OUT_OF_ROOM::contains)
-              .isPresent();
+              .isPresent()
+          || matrixSynapseService.isOutOfRoom(room, matrixUserId).orElse(false);
     } catch (RuntimeException failure) {
       log.warn(
           "Invited member could not be removed from the room of session {}: {}",

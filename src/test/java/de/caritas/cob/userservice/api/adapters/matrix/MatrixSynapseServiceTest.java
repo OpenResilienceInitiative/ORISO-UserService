@@ -1363,6 +1363,49 @@ class MatrixSynapseServiceTest {
   }
 
   @Test
+  void isOutOfRoom_Should_BeTrue_When_ThePersonHasNoMembershipEventOrLeft() {
+    // ORISO-Frontend#2252: a refused join never reached the room; the sweep may count it done.
+    stubAdminLogin();
+    stubRoomState(
+        List.of(
+            Map.of("type", "m.room.create", "content", Map.of()),
+            Map.of(
+                "type",
+                "m.room.member",
+                "state_key",
+                "@left:example",
+                "content",
+                Map.of("membership", "leave"))));
+
+    assertThat(matrixSynapseService().isOutOfRoom(MATRIX_ROOM_ID, "@never:example")).contains(true);
+    assertThat(matrixSynapseService().isOutOfRoom(MATRIX_ROOM_ID, "@left:example")).contains(true);
+  }
+
+  @Test
+  void isOutOfRoom_Should_BeFalse_When_ThePersonIsInvitedOrJoined() {
+    stubAdminLogin();
+    stubRoomState(
+        List.of(
+            Map.of(
+                "type",
+                "m.room.member",
+                "state_key",
+                "@guest:example",
+                "content",
+                Map.of("membership", "invite"))));
+
+    assertThat(matrixSynapseService().isOutOfRoom(MATRIX_ROOM_ID, "@guest:example"))
+        .contains(false);
+  }
+
+  @Test
+  void isOutOfRoom_Should_BeUnknown_When_TheStateCannotBeRead() {
+    matrixConfig.setAdminUsername("");
+
+    assertThat(matrixSynapseService().isOutOfRoom(MATRIX_ROOM_ID, "@guest:example")).isEmpty();
+  }
+
+  @Test
   void getRoomMembers_noAdminToken_returnsEmptyOptional() {
     // Room membership cannot be read without admin credentials.
     matrixConfig.setAdminUsername("");
