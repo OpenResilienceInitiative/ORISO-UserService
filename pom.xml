@@ -832,6 +832,9 @@
 									<!-- Optional fields are absent, not null: the colleague view must not even
 									     name the fields it withholds. -->
 									<additionalModelTypeAnnotations>@com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)</additionalModelTypeAnnotations>
+									<!-- holidayRegion is nullable; the MVC mapper has no JsonNullableModule, and
+									     absent and null both mean "no holidays off" (addendum v1.2). -->
+									<openApiNullable>false</openApiNullable>
 								</configOptions>
 							<inputSpec>${project.basedir}/api/calendar.yaml</inputSpec>
 							<generatorName>spring</generatorName>

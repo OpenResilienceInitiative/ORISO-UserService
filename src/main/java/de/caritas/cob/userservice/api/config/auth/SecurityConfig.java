@@ -774,7 +774,9 @@ public class SecurityConfig {
                     "/users/calendar/sync/import",
                     "/service/users/calendar/sync/import",
                     "/users/calendar/working-hours",
-                    "/service/users/calendar/working-hours")
+                    "/service/users/calendar/working-hours",
+                    "/users/calendar/working-hours/exceptions/{date}",
+                    "/service/users/calendar/working-hours/exceptions/{date}")
                 .hasAuthority(CONSULTANT_DEFAULT)
                 // 1:1 appointments (ORISO-Frontend#1960): who may do what is decided per session in
                 // SessionAppointmentService.

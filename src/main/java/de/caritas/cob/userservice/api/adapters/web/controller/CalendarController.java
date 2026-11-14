@@ -8,6 +8,8 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CalendarColleaguesDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarEntryDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarImportDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarSyncDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.CalendarWorkingDayExceptionDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.CalendarWorkingDayExceptionWindowsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarWorkingHoursDTO;
 import de.caritas.cob.userservice.api.service.calendar.CalendarBlockerService;
 import de.caritas.cob.userservice.api.service.calendar.CalendarFeedService;
@@ -17,6 +19,7 @@ import de.caritas.cob.userservice.api.service.calendar.CalendarWorkingHoursServi
 import de.caritas.cob.userservice.generated.api.calendar.controller.UsersApi;
 import io.swagger.annotations.Api;
 import java.time.Duration;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -27,7 +30,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
 
-/** The counsellor calendar (ADR-032, ORISO-UserService#1000 and #1645, addendum v1.1). */
+/** The counsellor calendar (ADR-032, ORISO-UserService#1000 and #1645, addenda v1.1 and v1.2). */
 @RestController
 @RequiredArgsConstructor
 @Api(tags = "calendar-controller")
@@ -103,6 +106,18 @@ public class CalendarController implements UsersApi {
   public ResponseEntity<CalendarWorkingHoursDTO> setCalendarWorkingHours(
       CalendarWorkingHoursDTO request) {
     return ResponseEntity.ok(workingHours.replace(request));
+  }
+
+  @Override
+  public ResponseEntity<CalendarWorkingDayExceptionDTO> setCalendarWorkingDayException(
+      LocalDate date, CalendarWorkingDayExceptionWindowsDTO request) {
+    return ResponseEntity.ok(workingHours.replaceException(date, request));
+  }
+
+  @Override
+  public ResponseEntity<Void> deleteCalendarWorkingDayException(LocalDate date) {
+    workingHours.removeException(date);
+    return ResponseEntity.noContent().build();
   }
 
   /** Public: the signed address is the credential. A calendar app polls it, so it may cache. */
