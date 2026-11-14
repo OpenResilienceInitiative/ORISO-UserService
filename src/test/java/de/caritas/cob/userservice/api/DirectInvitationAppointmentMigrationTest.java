@@ -72,6 +72,23 @@ class DirectInvitationAppointmentMigrationTest {
                               + " '2030-01-01 10:00:00')"))
               .as("one membership per person and conversation")
               .isInstanceOf(java.sql.SQLException.class);
+          sql.execute(
+              "INSERT INTO agency_invite_link_replaced_token (invite_link_id, token)"
+                  + " VALUES (1, 'old')");
+          assertThatThrownBy(
+                  () ->
+                      sql.execute(
+                          "INSERT INTO agency_invite_link_replaced_token (invite_link_id, token)"
+                              + " VALUES (2, 'old')"))
+              .as("a replaced token belongs to one invitation")
+              .isInstanceOf(java.sql.SQLException.class);
+          assertThatThrownBy(
+                  () ->
+                      sql.execute(
+                          "INSERT INTO agency_invite_link_replaced_token (invite_link_id, token)"
+                              + " VALUES (404, 'other')"))
+              .as("only for an existing invitation")
+              .isInstanceOf(java.sql.SQLException.class);
         }
       }
     }
@@ -99,8 +116,7 @@ class DirectInvitationAppointmentMigrationTest {
             "CREATE TABLE agency_invite_link (id BIGINT NOT NULL, link_kind VARCHAR(32) NOT NULL,"
                 + " temporary_account BOOLEAN NOT NULL, appointment_id CHAR(36),"
                 + " validity_after_end_minutes INT, access_mode VARCHAR(16),"
-                + " joins_existing_session BOOLEAN DEFAULT FALSE NOT NULL,"
-                + " previous_token VARCHAR(64), PRIMARY KEY (id))");
+                + " joins_existing_session BOOLEAN DEFAULT FALSE NOT NULL, PRIMARY KEY (id))");
         sql.execute(
             "INSERT INTO agency_invite_link (id, link_kind, temporary_account) VALUES"
                 + " (1, 'COUNSELLOR', TRUE), (2, 'COUNSELLOR', FALSE)");
@@ -115,11 +131,70 @@ class DirectInvitationAppointmentMigrationTest {
         try (var sql = c.createStatement();
             var rs =
                 sql.executeQuery(
-                    "SELECT COUNT(*) FROM information_schema.indexes WHERE index_name IN"
-                        + " ('idx_agency_invite_link_previous_token',"
-                        + " 'idx_agency_invite_link_appointment')")) {
+                    "SELECT COUNT(*) FROM information_schema.indexes WHERE index_name ="
+                        + " 'idx_agency_invite_link_appointment'")) {
           rs.next();
-          assertThat(rs.getInt(1)).isEqualTo(2);
+          assertThat(rs.getInt(1)).isEqualTo(1);
+        }
+      }
+    }
+  }
+
+  /**
+   * A run that stopped right after creating the member table left it without its keys: the next run
+   * installs both instead of marking the table done.
+   */
+  @Test
+  void update_Should_InstallTheMemberKeys_When_AnEarlierRunStoppedAfterTheTable() throws Exception {
+    try (Connection c =
+        DriverManager.getConnection(
+            // H2's default upper-case names, so the table-exists check finds the table.
+            "jdbc:h2:mem:direct-invitation-member-partial-" + UUID.randomUUID() + ";MODE=MariaDB",
+            "sa",
+            "")) {
+      try (var sql = c.createStatement()) {
+        sql.execute("CREATE TABLE session (id BIGINT UNSIGNED NOT NULL, PRIMARY KEY (id))");
+        sql.execute(
+            "CREATE TABLE session_appointment (id CHAR(36) NOT NULL, session_id BIGINT UNSIGNED"
+                + " NOT NULL, start_time DATETIME(6) NOT NULL, end_time DATETIME(6) NOT NULL,"
+                + " status VARCHAR(16) NOT NULL, PRIMARY KEY (id))");
+        sql.execute(
+            "CREATE TABLE agency_invite_link (id BIGINT NOT NULL, link_kind VARCHAR(32) NOT NULL,"
+                + " temporary_account BOOLEAN NOT NULL, PRIMARY KEY (id))");
+        // The state an interrupted run leaves: the table, neither key.
+        sql.execute(
+            "CREATE TABLE direct_invitation_member (id BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,"
+                + " session_id BIGINT UNSIGNED NOT NULL, user_id VARCHAR(36) NOT NULL,"
+                + " invite_link_id BIGINT UNSIGNED NOT NULL, guest BOOLEAN NOT NULL,"
+                + " joined_at DATETIME NOT NULL, revoke_due_at DATETIME, removed_at DATETIME,"
+                + " PRIMARY KEY (id))");
+      }
+      var database =
+          DatabaseFactory.getInstance().findCorrectDatabaseImplementation(new JdbcConnection(c));
+      try (var liquibase = new Liquibase(CHANGELOG, new ClassLoaderResourceAccessor(), database)) {
+        liquibase.update(new Contexts(), new LabelExpression());
+
+        try (var sql = c.createStatement()) {
+          sql.execute("INSERT INTO session (id) VALUES (500)");
+          sql.execute(
+              "INSERT INTO direct_invitation_member (session_id, user_id, invite_link_id, guest,"
+                  + " joined_at) VALUES (500, 'u', 1, TRUE, '2030-01-01 10:00:00')");
+          assertThatThrownBy(
+                  () ->
+                      sql.execute(
+                          "INSERT INTO direct_invitation_member (session_id, user_id,"
+                              + " invite_link_id, guest, joined_at) VALUES (500, 'u', 1, TRUE,"
+                              + " '2030-01-01 10:00:00')"))
+              .as("the unique key was installed")
+              .isInstanceOf(java.sql.SQLException.class);
+          assertThatThrownBy(
+                  () ->
+                      sql.execute(
+                          "INSERT INTO direct_invitation_member (session_id, user_id,"
+                              + " invite_link_id, guest, joined_at) VALUES (404, 'v', 1, TRUE,"
+                              + " '2030-01-01 10:00:00')"))
+              .as("the session key was installed")
+              .isInstanceOf(java.sql.SQLException.class);
         }
       }
     }

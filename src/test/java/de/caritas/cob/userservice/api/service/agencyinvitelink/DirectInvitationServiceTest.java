@@ -167,6 +167,68 @@ class DirectInvitationServiceTest {
     verify(appointments, never()).save(any());
   }
 
+  // --- list ---
+
+  @Test
+  void appointmentsOf_Should_ReadEveryAppointmentInOneQuery() {
+    var other = AgencyInviteLink.builder().id(LINK_ID + 1).appointmentId(UUID.randomUUID()).build();
+    var none = AgencyInviteLink.builder().id(LINK_ID + 2).build();
+    when(appointments.findAllById(any())).thenReturn(List.of(appointment));
+
+    var found = service.appointmentsOf(List.of(link, other, none));
+
+    assertThat(found).containsOnlyKeys(appointment.getId());
+    var ids = ArgumentCaptor.forClass(Iterable.class);
+    verify(appointments).findAllById(ids.capture());
+    assertThat(ids.getValue())
+        .containsExactlyInAnyOrder(appointment.getId(), other.getAppointmentId());
+    verify(appointments, never()).findById(any());
+  }
+
+  // --- change ---
+
+  /** Two invitations to one appointment of a 1:1: moving it moves both expiries. */
+  @Test
+  void change_Should_MoveTheExpiryOfEveryInvitationToTheSameAppointment() {
+    var sibling =
+        AgencyInviteLink.builder()
+            .id(LINK_ID + 1)
+            .linkKind("COUNSELLOR")
+            .status("ACTIVE")
+            .appointmentId(appointment.getId())
+            .validityAfterEndMinutes(30)
+            .build();
+    when(links.findByAppointmentIdForUpdate(appointment.getId()))
+        .thenReturn(List.of(link, sibling));
+    var start = LocalDateTime.now(ZoneOffset.UTC).plusDays(3).withNano(0);
+
+    service.change(link, start, start.plusHours(2), null);
+
+    assertThat(link.getExpiresAt()).isEqualTo(start.plusHours(2).plusMinutes(60));
+    assertThat(sibling.getExpiresAt()).isEqualTo(start.plusHours(2).plusMinutes(30));
+    assertThat(sibling.getScheduledAt()).isEqualTo(start);
+    verify(links).save(sibling);
+  }
+
+  /** A validity change belongs to one invitation; the others keep theirs. */
+  @Test
+  void change_Should_LeaveTheOtherInvitations_When_OnlyTheValidityChanges() {
+    var sibling =
+        AgencyInviteLink.builder()
+            .id(LINK_ID + 1)
+            .appointmentId(appointment.getId())
+            .validityAfterEndMinutes(30)
+            .build();
+    when(links.findByAppointmentIdForUpdate(appointment.getId()))
+        .thenReturn(List.of(link, sibling));
+
+    service.change(link, null, null, 120);
+
+    assertThat(link.getValidityAfterEndMinutes()).isEqualTo(120);
+    assertThat(sibling.getExpiresAt()).isNull();
+    verify(links, never()).save(sibling);
+  }
+
   // --- open ---
 
   @Test
@@ -227,8 +289,19 @@ class DirectInvitationServiceTest {
     verify(members, never()).save(any());
   }
 
-  /** Stores saved member rows, so a second visit reads what the first one left behind. */
+  /**
+   * Stores saved member rows by (session, user), so a second visit reads what the first one left
+   * behind and one person never sees another person's row. {@code storedMember} is the row saved
+   * last.
+   */
   private java.util.concurrent.atomic.AtomicReference<DirectInvitationMember> storedMember;
+
+  private final java.util.Map<String, DirectInvitationMember> memberRows =
+      new java.util.concurrent.ConcurrentHashMap<>();
+
+  private static String key(Object sessionId, Object userId) {
+    return sessionId + "/" + userId;
+  }
 
   private java.util.concurrent.atomic.AtomicReference<DirectInvitationMember> storeMembers() {
     if (storedMember != null) {
@@ -236,19 +309,104 @@ class DirectInvitationServiceTest {
     }
     var stored = new java.util.concurrent.atomic.AtomicReference<DirectInvitationMember>();
     storedMember = stored;
+    var ids = new java.util.concurrent.atomic.AtomicLong(99L);
     when(members.save(any()))
         .thenAnswer(
             i -> {
               DirectInvitationMember m = i.getArgument(0);
               if (m.getId() == null) {
-                m.setId(99L);
+                m.setId(ids.getAndIncrement());
               }
+              memberRows.put(key(m.getSessionId(), m.getUserId()), m);
               stored.set(m);
               return m;
             });
-    when(members.findBySessionIdAndUserId(eq(SESSION_ID), anyString()))
-        .thenAnswer(i -> Optional.ofNullable(stored.get()));
+    when(members.findBySessionIdAndUserId(any(), anyString()))
+        .thenAnswer(
+            i -> Optional.ofNullable(memberRows.get(key(i.getArgument(0), i.getArgument(1)))));
     return stored;
+  }
+
+  /** Each person's own row decides: a third person still joins, a repeat visitor does not. */
+  @Test
+  void thirdOpener_Should_JoinTheRoom_While_ARepeatVisitorDoesNot() {
+    var conversation = session(SESSION_ID, "first-user");
+    appointment.setSession(conversation);
+    var interpreter = user("interpreter", true);
+    var relative = user("relative", true);
+
+    service.joinLater(
+        link, interpreter, service.openAppointmentConversation(link, interpreter, () -> null));
+    var again =
+        service.joinLater(
+            link, interpreter, service.openAppointmentConversation(link, interpreter, () -> null));
+    var third =
+        service.joinLater(
+            link, relative, service.openAppointmentConversation(link, relative, () -> null));
+
+    assertThat(again.created()).isFalse();
+    assertThat(third.created()).isTrue();
+    verify(rooms).addToAppointmentRoom(conversation, interpreter);
+    verify(rooms).addToAppointmentRoom(conversation, relative);
+  }
+
+  /** A guest who created the conversation and was removed at expiry gets back in on renewal. */
+  @Test
+  void removedCreator_Should_JoinAgain_AfterARenewal() {
+    var conversation = session(SESSION_ID, "first-user");
+    var creator = conversation.getUser();
+    creator.setTemporaryAccountSnapshot(new TemporaryAccountSnapshot());
+    appointment.setSession(conversation);
+    var removed = member("first-user", LocalDateTime.now(ZoneOffset.UTC).minusHours(1));
+    memberRows.put(key(SESSION_ID, "first-user"), removed);
+
+    var opened =
+        service.joinLater(
+            link, creator, service.openAppointmentConversation(link, creator, () -> null));
+
+    assertThat(opened.created()).isTrue();
+    verify(rooms).addToAppointmentRoom(conversation, creator);
+    assertThat(removed.getRemovedAt()).isNull();
+  }
+
+  /** The 1:1's own client has no member row and never joins its own room again. */
+  @Test
+  void clientOfThe1to1_Should_GetTheConversation_WithoutJoining() {
+    var oneToOne = session(SESSION_ID, "client");
+    appointment.setSession(oneToOne);
+    link.setJoinsExistingSession(true);
+
+    var opened = service.openAppointmentConversation(link, oneToOne.getUser(), () -> null);
+
+    assertThat(opened.joinPending()).isFalse();
+  }
+
+  /** An expiry that committed while the first person waited for the lock creates nothing. */
+  @Test
+  void firstOpener_Should_CreateNothing_When_TheInvitationEndedMeanwhile() {
+    var ended = AgencyInviteLink.builder().id(LINK_ID).status("EXPIRED").build();
+    when(links.findByIdForUpdate(LINK_ID)).thenReturn(Optional.of(ended));
+    @SuppressWarnings("unchecked")
+    Supplier<NewRegistrationResponseDto> newSession = mock(Supplier.class);
+
+    assertThatThrownBy(
+            () -> service.openAppointmentConversation(link, user("first-user", true), newSession))
+        .isInstanceOf(DirectLinkExpiredException.class);
+    verify(newSession, never()).get();
+    verify(members, never()).save(any());
+  }
+
+  @Test
+  void firstOpener_Should_CreateNothing_When_TheInvitationWasSwitchedOffMeanwhile() {
+    var off = AgencyInviteLink.builder().id(LINK_ID).status("DISABLED").build();
+    when(links.findByIdForUpdate(LINK_ID)).thenReturn(Optional.of(off));
+    @SuppressWarnings("unchecked")
+    Supplier<NewRegistrationResponseDto> newSession = mock(Supplier.class);
+
+    assertThatThrownBy(
+            () -> service.openAppointmentConversation(link, user("first-user", true), newSession))
+        .isInstanceOf(DirectLinkInactiveException.class);
+    verify(newSession, never()).get();
   }
 
   /** A refused join leaves no row that later counts as "already in the conversation". */
@@ -462,7 +620,7 @@ class DirectInvitationServiceTest {
     var renewed = service.renew(owner, LINK_ID, null);
 
     assertThat(renewed.getToken()).isNotEqualTo("old-token").hasSizeGreaterThan(20);
-    assertThat(renewed.getPreviousToken()).isEqualTo("old-token");
+    assertThat(renewed.getReplacedTokens()).containsExactly("old-token");
     assertThat(renewed.getAppointmentId()).isEqualTo(appointmentId);
     assertThat(renewed.getStatus()).isEqualTo("ACTIVE");
     assertThat(renewed.getExpiresAt()).isAfter(LocalDateTime.now(ZoneOffset.UTC));
@@ -505,6 +663,37 @@ class DirectInvitationServiceTest {
         LocalDateTime.now(ZoneOffset.UTC).minusHours(2).toInstant(ZoneOffset.UTC));
     assertThatThrownBy(() -> service.renew(owner, LINK_ID, 0))
         .isInstanceOf(ConflictException.class);
+  }
+
+  /** Every renewal keeps the tokens before it, so the oldest link still reads as expired. */
+  @Test
+  void renew_Should_KeepEveryReplacedToken_AcrossSeveralRenewals() {
+    var first = service.renew(owner, LINK_ID, null).getToken();
+    var renewed = service.renew(owner, LINK_ID, null);
+
+    assertThat(renewed.getReplacedTokens()).containsExactlyInAnyOrder("old-token", first);
+  }
+
+  /** Two renewals at once: the second works on the row the first wrote, under its lock. */
+  @Test
+  void renew_Should_WorkOnTheLockedRow() {
+    var current =
+        AgencyInviteLink.builder()
+            .id(LINK_ID)
+            .token("token-of-a-concurrent-renewal")
+            .linkKind("COUNSELLOR")
+            .chatType("VIDEO")
+            .consultantId(OWNER_ID)
+            .status("ACTIVE")
+            .appointmentId(appointment.getId())
+            .validityAfterEndMinutes(60)
+            .build();
+    when(links.findByIdForUpdate(LINK_ID)).thenReturn(Optional.of(current));
+
+    var renewed = service.renew(owner, LINK_ID, null);
+
+    assertThat(renewed).isSameAs(current);
+    assertThat(renewed.getReplacedTokens()).containsExactly("token-of-a-concurrent-renewal");
   }
 
   @Test

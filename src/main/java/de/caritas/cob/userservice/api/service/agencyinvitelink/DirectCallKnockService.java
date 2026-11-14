@@ -115,6 +115,15 @@ public class DirectCallKnockService {
         .orElseGet(
             () -> {
               var now = LocalDateTime.now();
+              // A knock from before "Anklopfen" was switched off no longer waits.
+              repository
+                  .findPendingCallKnocksForUpdate(sessionId, user.getUserId(), Via.DIRECT_LINK)
+                  .forEach(
+                      waiting -> {
+                        waiting.setStatus(Status.CANCELLED);
+                        waiting.setDecidedAt(now);
+                        repository.save(waiting);
+                      });
               return repository.save(
                   GroupChatJoinRequest.builder()
                       .via(Via.DIRECT_LINK)

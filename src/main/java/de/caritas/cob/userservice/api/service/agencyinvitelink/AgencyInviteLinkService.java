@@ -82,6 +82,9 @@ public class AgencyInviteLinkService {
    */
   private final ObjectProvider<DirectInvitationService> directInvitations;
 
+  /** The end of an invitation with an appointment (#2252); optional for the same reason. */
+  private final ObjectProvider<DirectInvitationExpiryService> invitationEnd;
+
   /** Create a new invite link. All classification fields are optional — defaults are applied. */
   public AgencyInviteLink create(CreateInviteLinkCommand cmd) {
     if (cmd == null) {
@@ -243,7 +246,13 @@ public class AgencyInviteLinkService {
     }
     link.setStatus(InviteLinkStatus.DISABLED.name());
     link.setUpdateDate(LocalDateTime.now());
-    return repository.save(link);
+    var saved = repository.save(link);
+    // ORISO-Frontend#2252: switched off by an admin ends access as when its counsellor does it.
+    var end = invitationEnd == null ? null : invitationEnd.getIfAvailable();
+    if (end != null && link.getAppointmentId() != null) {
+      end.revoke(link);
+    }
+    return saved;
   }
 
   /**
@@ -397,7 +406,10 @@ public class AgencyInviteLinkService {
     if (!InviteLinkStatus.ACTIVE.name().equals(link.getStatus())) {
       throw new BadRequestException("Invite link is not active");
     }
-    if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now())) {
+    // An invitation with an appointment expires in UTC, decided above (410); the rest as before.
+    if (link.getAppointmentId() == null
+        && link.getExpiresAt() != null
+        && link.getExpiresAt().isBefore(LocalDateTime.now())) {
       throw new BadRequestException("Invite link expired");
     }
     requireDirectInviteAllowed(link);
@@ -725,8 +737,13 @@ public class AgencyInviteLinkService {
     return ids.get(0);
   }
 
+  /**
+   * An invitation with an appointment is left to the expiry sweep (ORISO-Frontend#2252): it only
+   * closes ACTIVE ones, and closing removes the guests; marked EXPIRED here it would skip both.
+   */
   private AgencyInviteLink autoExpireIfNeeded(AgencyInviteLink link) {
     if (InviteLinkStatus.ACTIVE.name().equals(link.getStatus())
+        && link.getAppointmentId() == null
         && link.getExpiresAt() != null
         && link.getExpiresAt().isBefore(LocalDateTime.now())) {
       link.setStatus(InviteLinkStatus.EXPIRED.name());

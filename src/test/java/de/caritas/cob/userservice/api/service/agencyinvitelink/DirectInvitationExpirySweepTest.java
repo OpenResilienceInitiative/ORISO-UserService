@@ -49,6 +49,24 @@ class DirectInvitationExpirySweepTest {
   }
 
   @Test
+  void sweep_Should_ReadTheNextRemovalPage_AfterTheLastIdOfAFullPage() {
+    var full =
+        LongStream.rangeClosed(1, DirectInvitationExpirySweep.PAGE_SIZE)
+            .map(id -> id * 10)
+            .boxed()
+            .toList();
+    when(service.pendingRemovalIds(0L, DirectInvitationExpirySweep.PAGE_SIZE)).thenReturn(full);
+    when(service.pendingRemovalIds(
+            DirectInvitationExpirySweep.PAGE_SIZE * 10L, DirectInvitationExpirySweep.PAGE_SIZE))
+        .thenReturn(List.of(5_000L));
+
+    sweep.sweep();
+
+    verify(service).retryRemoval(DirectInvitationExpirySweep.PAGE_SIZE * 10L);
+    verify(service).retryRemoval(5_000L);
+  }
+
+  @Test
   void sweep_Should_RetryEveryDueRemoval_AndGoOnAfterAFailure() {
     when(service.pendingRemovalIds(eq(0L), anyInt())).thenReturn(List.of(7L, 8L));
     when(service.retryRemoval(7L)).thenThrow(new IllegalStateException("boom"));

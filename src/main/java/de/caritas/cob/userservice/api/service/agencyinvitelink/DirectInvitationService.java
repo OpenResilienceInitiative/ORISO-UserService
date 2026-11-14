@@ -25,10 +25,16 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -94,6 +100,21 @@ public class DirectInvitationService {
         : appointments.findById(link.getAppointmentId());
   }
 
+  /** The appointments of many links, read in one query (the counsellor's link list). */
+  public Map<UUID, SessionAppointment> appointmentsOf(Collection<AgencyInviteLink> many) {
+    var ids =
+        many.stream()
+            .map(AgencyInviteLink::getAppointmentId)
+            .filter(Objects::nonNull)
+            .collect(Collectors.toSet());
+    if (ids.isEmpty()) {
+      return Map.of();
+    }
+    var found = new HashMap<UUID, SessionAppointment>();
+    appointments.findAllById(ids).forEach(a -> found.put(a.getId(), a));
+    return found;
+  }
+
   /** A new invitation gets a new appointment that has no conversation yet. */
   public void attachAppointment(
       AgencyInviteLink link, LocalDateTime start, LocalDateTime end, Integer validity) {
@@ -120,13 +141,24 @@ public class DirectInvitationService {
     apply(link, schedule);
   }
 
-  /** Moves the appointment and/or changes the validity; the expiry follows. */
+  /**
+   * Moves the appointment and/or changes the validity; the expiry follows. A moved appointment
+   * moves the expiry of every invitation that meets at it, each with its own validity. Lock order:
+   * the invitations (in id order), then the appointment, as when a person opens one.
+   */
   @Transactional
   public void change(
       AgencyInviteLink link, LocalDateTime start, LocalDateTime end, Integer validity) {
     if (link.getAppointmentId() == null) {
       throw new ConflictException("The link has no appointment.");
     }
+    boolean moves = start != null || end != null;
+    var others =
+        moves
+            ? links.findByAppointmentIdForUpdate(link.getAppointmentId()).stream()
+                .filter(other -> !Objects.equals(other.getId(), link.getId()))
+                .toList()
+            : List.<AgencyInviteLink>of();
     var appointment =
         appointments
             .findByIdForUpdate(link.getAppointmentId())
@@ -141,11 +173,19 @@ public class DirectInvitationService {
             start != null ? start : current.start(),
             end != null ? end : current.end(),
             validity != null ? validity : current.validityAfterEndMinutes());
-    if (start != null || end != null) {
+    if (moves) {
       requireFuture(schedule);
       appointment.setStartTime(schedule.start().toInstant(ZoneOffset.UTC));
       appointment.setEndTime(schedule.end().toInstant(ZoneOffset.UTC));
       appointments.save(appointment);
+      // An invitation that ended stays ended (its status); the sweep sees an earlier expiry.
+      for (var other : others) {
+        apply(
+            other,
+            DirectInvitationSchedule.of(
+                schedule.start(), schedule.end(), other.getValidityAfterEndMinutes()));
+        links.save(other);
+      }
     }
     apply(link, schedule);
   }
@@ -159,6 +199,9 @@ public class DirectInvitationService {
   @Transactional
   public Opened openAppointmentConversation(
       AgencyInviteLink link, User user, Supplier<NewRegistrationResponseDto> newConversation) {
+    // The invitation first, then its appointment: an expiry, switch-off or delete that committed
+    // meanwhile is seen here, so nobody creates a conversation on an ended invitation.
+    requireStillOpen(links.findByIdForUpdate(link.getId()).orElse(null));
     var appointment =
         appointments
             .findByIdForUpdate(link.getAppointmentId())
@@ -186,15 +229,30 @@ public class DirectInvitationService {
       memberships.recordCreator(session, user, link);
       return new Opened(session, true, false);
     }
+    // A row decides, also for the person who created the conversation: a guest removed at expiry
+    // joins again after a renewal. The client of a 1:1 has no row and is in their room already.
+    var existing = members.findBySessionIdAndUserId(session.getId(), user.getUserId());
+    if (existing.isPresent()) {
+      return new Opened(session, false, !DirectInvitationMemberships.isMember(existing.get()));
+    }
     if (session.getUser() != null
         && Objects.equals(session.getUser().getUserId(), user.getUserId())) {
       return new Opened(session, false, false);
     }
-    var existing = members.findBySessionIdAndUserId(session.getId(), user.getUserId());
-    if (existing.filter(DirectInvitationMemberships::isMember).isPresent()) {
-      return new Opened(session, false, false);
-    }
     return new Opened(session, false, true);
+  }
+
+  private void requireStillOpen(AgencyInviteLink locked) {
+    if (locked == null || InviteLinkStatus.DISABLED.name().equals(locked.getStatus())) {
+      throw new DirectLinkInactiveException();
+    }
+    if (InviteLinkStatus.EXPIRED.name().equals(locked.getStatus())
+        || (locked.getExpiresAt() != null && locked.getExpiresAt().isBefore(now()))) {
+      throw new DirectLinkExpiredException();
+    }
+    if (!InviteLinkStatus.ACTIVE.name().equals(locked.getStatus())) {
+      throw new DirectLinkInactiveException();
+    }
   }
 
   /**
@@ -235,10 +293,12 @@ public class DirectInvitationService {
    */
   @Transactional
   public AgencyInviteLink renew(Consultant owner, Long linkId, Integer validity) {
+    // Locked: two renewals at once must not both replace the same token.
     var link =
         links
             .findByIdAndConsultantIdAndLinkKindAndChatTypeIn(
                 linkId, owner.getId(), COUNSELLOR, DIRECT_MEDIA)
+            .flatMap(own -> links.findByIdForUpdate(own.getId()))
             .orElseThrow(() -> new NotFoundException("Direct link %s not found", linkId));
     var appointment =
         appointmentOf(link)
@@ -256,7 +316,7 @@ public class DirectInvitationService {
     if (!expiresAt.isAfter(now)) {
       throw new ConflictException("The new link would already be expired; choose a validity.");
     }
-    link.setPreviousToken(link.getToken());
+    link.getReplacedTokens().add(link.getToken());
     link.setToken(CounsellorDirectLinkService.generateToken());
     link.setValidityAfterEndMinutes(schedule.validityAfterEndMinutes());
     link.setExpiresAt(expiresAt);

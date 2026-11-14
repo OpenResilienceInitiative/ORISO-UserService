@@ -1340,10 +1340,30 @@ class MatrixSynapseServiceTest {
             Map.of(
                 "type",
                 "m.room.encryption",
+                "state_key",
+                "",
                 "content",
                 Map.of("algorithm", "m.megolm.v1.aes-sha2"))));
 
     assertThat(matrixSynapseService().isRoomEncrypted(MATRIX_ROOM_ID)).contains(true);
+  }
+
+  @Test
+  void isRoomEncrypted_Should_BeFalse_When_OnlyANonCanonicalEncryptionEventExists() {
+    // Matrix keeps the room's encryption under the empty state key; any other key is a lookalike.
+    stubAdminLogin();
+    stubRoomState(
+        List.of(
+            Map.of("type", "m.room.create", "content", Map.of()),
+            Map.of(
+                "type",
+                "m.room.encryption",
+                "state_key",
+                "other",
+                "content",
+                Map.of("algorithm", "m.megolm.v1.aes-sha2"))));
+
+    assertThat(matrixSynapseService().isRoomEncrypted(MATRIX_ROOM_ID)).contains(false);
   }
 
   @Test

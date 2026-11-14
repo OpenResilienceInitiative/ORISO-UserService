@@ -23,23 +23,9 @@
       <column name="joins_existing_session" type="BOOLEAN" defaultValueBoolean="false">
         <constraints nullable="false"/>
       </column>
-      <column name="previous_token" type="VARCHAR(64)"/>
     </addColumn>
     <!-- Additive and nullable: an older application ignores the columns. The rollback keeps them
          (same rule as 20261112_direct_link_scheduled_at_2142), since it also runs after MARK_RAN. -->
-    <rollback><sql>SELECT 1</sql></rollback>
-  </changeSet>
-
-  <changeSet id="20261114-direct-invitation-previous-token-index-2252" author="oriso">
-    <preConditions onFail="MARK_RAN">
-      <not>
-        <indexExists tableName="agency_invite_link"
-          indexName="idx_agency_invite_link_previous_token"/>
-      </not>
-    </preConditions>
-    <createIndex tableName="agency_invite_link" indexName="idx_agency_invite_link_previous_token">
-      <column name="previous_token"/>
-    </createIndex>
     <rollback><sql>SELECT 1</sql></rollback>
   </changeSet>
 
@@ -81,7 +67,10 @@
     <rollback/>
   </changeSet>
 
-  <changeSet id="20261114-direct-invitation-member-2252" author="oriso">
+  <!-- The member table, its unique key and its session key are three changeSets, each guarded by
+       its own object: a run that stopped after the table installs the missing key on the next
+       start instead of marking it done. A database whose rows break a key fails here loudly. -->
+  <changeSet id="20261114-direct-invitation-member-table-2252" author="oriso">
     <preConditions onFail="MARK_RAN">
       <not>
         <tableExists tableName="direct_invitation_member"/>
@@ -99,12 +88,41 @@
       <column name="revoke_due_at" type="DATETIME"/>
       <column name="removed_at" type="DATETIME"/>
     </createTable>
-    <addUniqueConstraint tableName="direct_invitation_member" columnNames="session_id, user_id"
-      constraintName="uq_direct_invitation_member_session_user"/>
+    <rollback><dropTable tableName="direct_invitation_member"/></rollback>
+  </changeSet>
+
+  <changeSet id="20261114-direct-invitation-member-unique-2252" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <indexExists tableName="direct_invitation_member"
+          indexName="uq_direct_invitation_member_session_user"/>
+      </not>
+    </preConditions>
+    <!-- A unique index: one object to check, the same key in MariaDB. -->
+    <createIndex tableName="direct_invitation_member"
+      indexName="uq_direct_invitation_member_session_user" unique="true">
+      <column name="session_id"/>
+      <column name="user_id"/>
+    </createIndex>
+    <rollback>
+      <dropIndex tableName="direct_invitation_member" indexName="uq_direct_invitation_member_session_user"/>
+    </rollback>
+  </changeSet>
+
+  <changeSet id="20261114-direct-invitation-member-session-fk-2252" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <foreignKeyConstraintExists foreignKeyTableName="direct_invitation_member"
+          foreignKeyName="fk_direct_invitation_member_session"/>
+      </not>
+    </preConditions>
     <addForeignKeyConstraint baseTableName="direct_invitation_member" baseColumnNames="session_id"
       referencedTableName="session" referencedColumnNames="id"
       constraintName="fk_direct_invitation_member_session" onDelete="CASCADE"/>
-    <rollback><dropTable tableName="direct_invitation_member"/></rollback>
+    <rollback>
+      <dropForeignKeyConstraint baseTableName="direct_invitation_member"
+        constraintName="fk_direct_invitation_member_session"/>
+    </rollback>
   </changeSet>
 
   <!-- A join attempt owns its member row (join_attempt), and the sweep never overwrites a change a
@@ -123,5 +141,54 @@
       </column>
     </addColumn>
     <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+
+  <!-- Every token "Neuen Link senden" replaced, not only the last one: an older link still reads
+       as expired and still asks for a new one. Same three-step guard as the member table. -->
+  <changeSet id="20261114-direct-invitation-replaced-token-table-2252" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <tableExists tableName="agency_invite_link_replaced_token"/>
+      </not>
+    </preConditions>
+    <createTable tableName="agency_invite_link_replaced_token">
+      <column name="invite_link_id" type="BIGINT"><constraints nullable="false"/></column>
+      <column name="token" type="VARCHAR(64)"><constraints nullable="false"/></column>
+    </createTable>
+    <rollback><dropTable tableName="agency_invite_link_replaced_token"/></rollback>
+  </changeSet>
+
+  <changeSet id="20261114-direct-invitation-replaced-token-unique-2252" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <indexExists tableName="agency_invite_link_replaced_token"
+          indexName="uq_agency_invite_link_replaced_token"/>
+      </not>
+    </preConditions>
+    <!-- A unique index: one object to check, the same key in MariaDB. -->
+    <createIndex tableName="agency_invite_link_replaced_token"
+      indexName="uq_agency_invite_link_replaced_token" unique="true">
+      <column name="token"/>
+    </createIndex>
+    <rollback>
+      <dropIndex tableName="agency_invite_link_replaced_token" indexName="uq_agency_invite_link_replaced_token"/>
+    </rollback>
+  </changeSet>
+
+  <changeSet id="20261114-direct-invitation-replaced-token-link-fk-2252" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <foreignKeyConstraintExists foreignKeyTableName="agency_invite_link_replaced_token"
+          foreignKeyName="fk_agency_invite_link_replaced_token_link"/>
+      </not>
+    </preConditions>
+    <addForeignKeyConstraint baseTableName="agency_invite_link_replaced_token"
+      baseColumnNames="invite_link_id" referencedTableName="agency_invite_link"
+      referencedColumnNames="id" constraintName="fk_agency_invite_link_replaced_token_link"
+      onDelete="CASCADE"/>
+    <rollback>
+      <dropForeignKeyConstraint baseTableName="agency_invite_link_replaced_token"
+        constraintName="fk_agency_invite_link_replaced_token_link"/>
+    </rollback>
   </changeSet>
 </databaseChangeLog>

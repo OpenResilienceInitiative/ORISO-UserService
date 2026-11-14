@@ -519,15 +519,21 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
       RegistrationType registrationType);
 
   /**
-   * Find one session by assigned consultant and user.
-   *
-   * @param consultant the consultant
-   * @param user the user
-   * @param consultingTypeId the id of the consulting type
-   * @return an {@link Optional} of the result
+   * The person's 1:1 sessions with the counsellor in a consulting type, oldest first, without the
+   * shared conversations of direct invitations with an appointment (ORISO-Frontend#2252): those are
+   * sessions of the same three, and a person can have several. A 1:1 an invitation was created from
+   * stays in.
    */
-  Optional<Session> findByConsultantAndUserAndConsultingTypeId(
-      Consultant consultant, User user, Integer consultingTypeId);
+  @Query(
+      "SELECT s FROM Session s WHERE s.consultant = :consultant AND s.user = :user"
+          + " AND s.consultingTypeId = :consultingTypeId"
+          + " AND NOT EXISTS (SELECT a.id FROM SessionAppointment a, AgencyInviteLink l"
+          + " WHERE a.session = s AND l.appointmentId = a.id AND l.joinsExistingSession = false)"
+          + " ORDER BY s.id")
+  List<Session> findOneToOneSessions(
+      @Param("consultant") Consultant consultant,
+      @Param("user") User user,
+      @Param("consultingTypeId") Integer consultingTypeId);
 
   /**
    * Find one session by assigned consultant and user.

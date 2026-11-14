@@ -38,6 +38,11 @@ class DirectLinkControllerDelegateScheduledAtTest {
   private final UserAccountService accounts = mock(UserAccountService.class);
   private final TopicService topics = mock(TopicService.class);
   private final Consultant counsellor = new Consultant();
+  private final de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitationService
+      invitations =
+          mock(
+              de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitationService
+                  .class);
   private DirectLinkControllerDelegate delegate;
 
   @BeforeEach
@@ -45,9 +50,7 @@ class DirectLinkControllerDelegateScheduledAtTest {
     delegate =
         new DirectLinkControllerDelegate(
             service,
-            mock(
-                de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitationService
-                    .class),
+            invitations,
             accounts,
             topics,
             mock(DirectCallKnockService.class),
@@ -114,6 +117,30 @@ class DirectLinkControllerDelegateScheduledAtTest {
     assertThat(captor.getAllValues().get(0).clearScheduledAt()).isFalse();
     assertThat(captor.getAllValues().get(1).scheduledAt()).isNull();
     assertThat(captor.getAllValues().get(1).clearScheduledAt()).isTrue();
+  }
+
+  /** ORISO-Frontend#2252: the list reads the appointments of all links at once, not per link. */
+  @Test
+  void list_Should_ReadTheAppointmentsOfAllLinksInOneGo() {
+    var first = link(null);
+    first.setAppointmentId(java.util.UUID.randomUUID());
+    var second = link(null);
+    second.setId(6L);
+    second.setAppointmentId(java.util.UUID.randomUUID());
+    var appointment = new de.caritas.cob.userservice.api.model.SessionAppointment();
+    appointment.setId(first.getAppointmentId());
+    appointment.setStatus(de.caritas.cob.userservice.api.model.SessionAppointment.Status.SCHEDULED);
+    appointment.setStartTime(java.time.Instant.parse("2030-01-01T10:00:00Z"));
+    appointment.setEndTime(java.time.Instant.parse("2030-01-01T11:00:00Z"));
+    when(service.listOwn(counsellor)).thenReturn(java.util.List.of(first, second));
+    when(invitations.appointmentsOf(java.util.List.of(first, second)))
+        .thenReturn(Map.of(appointment.getId(), appointment));
+
+    var response = delegate.getOwnDirectLinks();
+
+    org.mockito.Mockito.verify(invitations, org.mockito.Mockito.never()).appointmentOf(any());
+    assertThat(response.getBody().get(0).getAppointment().getId()).isEqualTo(appointment.getId());
+    assertThat(response.getBody().get(1).getAppointment()).isNull();
   }
 
   private static AgencyInviteLink link(LocalDateTime scheduledAt) {

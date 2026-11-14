@@ -32,7 +32,10 @@ public class DirectInvitationExpirySweep {
         try {
           if (service.expire(id)) expired++;
         } catch (RuntimeException failure) {
-          log.warn("Direct invitation {} could not be expired: {}", id, failure.getMessage());
+          log.warn(
+              "Direct invitation {} could not be expired: {}",
+              id,
+              failure.getClass().getSimpleName());
         }
       }
       if (ids.size() < PAGE_SIZE) break;
@@ -51,7 +54,8 @@ public class DirectInvitationExpirySweep {
         try {
           service.retryRemoval(id);
         } catch (RuntimeException failure) {
-          log.warn("Invited member {} could not be removed: {}", id, failure.getMessage());
+          log.warn(
+              "Invited member {} could not be removed: {}", id, failure.getClass().getSimpleName());
         }
       }
       if (ids.size() < PAGE_SIZE) break;

@@ -343,16 +343,23 @@ class ApiResponseEntityExceptionHandlerTest {
             request);
     assertEquals(HttpStatus.GONE, expired.getStatusCode());
     assertEquals(java.util.Map.of("reason", "DIRECT_LINK_EXPIRED"), expired.getBody());
-    for (var reason :
+    // The API contract (ORISO-Frontend#2252), written out so a swapped mapping fails here.
+    var refusalStatuses =
+        java.util.Map.of(
+            "DIRECT_INVITATION_GUESTS_ONLY", HttpStatus.FORBIDDEN,
+            "DIRECT_INVITATION_ACCOUNTS_ONLY", HttpStatus.FORBIDDEN,
+            "DIRECT_INVITATION_ROOM_NOT_ENCRYPTED", HttpStatus.CONFLICT);
+    var reasons =
         de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitationRefusedException
-            .Reason.values()) {
-      assertTrue(reason.status() == HttpStatus.FORBIDDEN || reason.status() == HttpStatus.CONFLICT);
+            .Reason.values();
+    assertEquals(refusalStatuses.size(), reasons.length);
+    for (var reason : reasons) {
       var refused =
           handler.handleDirectInvitationRefused(
               new de.caritas.cob.userservice.api.service.agencyinvitelink
                   .DirectInvitationRefusedException(reason),
               request);
-      assertEquals(reason.status(), refused.getStatusCode());
+      assertEquals(refusalStatuses.get(reason.name()), refused.getStatusCode(), reason.name());
       assertEquals(java.util.Map.of("reason", reason.name()), refused.getBody());
     }
     assertEquals(

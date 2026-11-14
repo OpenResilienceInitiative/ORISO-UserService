@@ -317,6 +317,60 @@ class SessionRepositoryIT {
     return result;
   }
 
+  /**
+   * ORISO-Frontend#2252: the shared conversation of a direct invitation with an appointment is a
+   * session of the same counsellor, person and consulting type as their 1:1, and a person can have
+   * several. Looking up the 1:1 must neither return one of those nor fail on their number.
+   */
+  @Test
+  void findOneToOneSessions_Should_LeaveOutAppointmentConversations() {
+    givenAUser();
+    var consultant = consultantRepository.findAll().iterator().next();
+    var oneToOne = validSession(null, 1);
+    oneToOne.setConsultant(consultant);
+    oneToOne = underTest.save(oneToOne);
+    // An invitation from the 1:1 meets at an appointment of the 1:1: it stays the 1:1.
+    invitationAt(appointmentOf(oneToOne), true);
+    for (int i = 0; i < 2; i++) {
+      var shared = validSession(null, 1);
+      shared.setConsultant(consultant);
+      invitationAt(appointmentOf(underTest.save(shared)), false);
+    }
+    entityManager.flush();
+
+    var found = underTest.findOneToOneSessions(consultant, user, 1);
+
+    assertEquals(List.of(oneToOne.getId()), found.stream().map(Session::getId).toList());
+  }
+
+  private de.caritas.cob.userservice.api.model.SessionAppointment appointmentOf(Session session) {
+    var appointment = new de.caritas.cob.userservice.api.model.SessionAppointment();
+    appointment.setSession(session);
+    appointment.setStatus(de.caritas.cob.userservice.api.model.SessionAppointment.Status.SCHEDULED);
+    appointment.setStartTime(java.time.Instant.parse("2030-01-01T10:00:00Z"));
+    appointment.setEndTime(java.time.Instant.parse("2030-01-01T11:00:00Z"));
+    entityManager.persist(appointment);
+    return appointment;
+  }
+
+  private void invitationAt(
+      de.caritas.cob.userservice.api.model.SessionAppointment appointment,
+      boolean joinsExistingSession) {
+    entityManager.persist(
+        de.caritas.cob.userservice.api.model.AgencyInviteLink.builder()
+            .token(RandomStringUtils.randomAlphanumeric(40))
+            .tenantId(1L)
+            .linkKind("COUNSELLOR")
+            .chatType("VIDEO")
+            .anonymity("NONE")
+            .createdByUserId("creator")
+            .createDate(java.time.LocalDateTime.now())
+            .status("ACTIVE")
+            .appointmentId(appointment.getId())
+            .joinsExistingSession(joinsExistingSession)
+            .build());
+  }
+
   private void givenValidSession() {
     session = validSession(null, 1);
   }

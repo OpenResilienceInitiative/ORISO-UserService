@@ -29,7 +29,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -40,6 +39,11 @@ class DirectInvitationExpiryServiceTest {
   private static final long LINK_ID = 5L;
   private static final long SESSION_ID = 77L;
 
+  /** One fixed instant: fixture, service and assertions read the same time. */
+  private static final LocalDateTime NOW = LocalDateTime.of(2030, 1, 15, 10, 0);
+
+  private static final Clock CLOCK = Clock.fixed(NOW.toInstant(ZoneOffset.UTC), ZoneOffset.UTC);
+
   @Mock private AgencyInviteLinkRepository links;
   @Mock private SessionAppointmentRepository appointments;
   @Mock private DirectInvitationMemberRepository members;
@@ -48,6 +52,7 @@ class DirectInvitationExpiryServiceTest {
   @Mock private SessionArchiveService archive;
   @Mock private de.caritas.cob.userservice.api.port.out.SessionRepository sessions;
 
+  private final RecordingTransactionManager transactions = new RecordingTransactionManager();
   private DirectInvitationExpiryService service;
   private AgencyInviteLink link;
   private Session conversation;
@@ -58,15 +63,7 @@ class DirectInvitationExpiryServiceTest {
   void setUp() {
     service =
         new DirectInvitationExpiryService(
-            links,
-            appointments,
-            members,
-            sessions,
-            users,
-            rooms,
-            archive,
-            org.mockito.Mockito.mock(PlatformTransactionManager.class),
-            Clock.systemUTC());
+            links, appointments, members, sessions, users, rooms, archive, transactions, CLOCK);
     conversation = new Session();
     conversation.setId(SESSION_ID);
     conversation.setStatus(Session.SessionStatus.IN_PROGRESS);
@@ -79,7 +76,7 @@ class DirectInvitationExpiryServiceTest {
             .linkKind("COUNSELLOR")
             .status("ACTIVE")
             .appointmentId(appointment.getId())
-            .expiresAt(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1))
+            .expiresAt(NOW.minusMinutes(1))
             .build();
     guest =
         DirectInvitationMember.builder()
@@ -88,7 +85,7 @@ class DirectInvitationExpiryServiceTest {
             .sessionId(SESSION_ID)
             .userId("guest-1")
             .guest(true)
-            .joinedAt(LocalDateTime.now(ZoneOffset.UTC).minusDays(1))
+            .joinedAt(NOW.minusDays(1))
             .build();
     var guestUser = new User();
     guestUser.setUserId("guest-1");
@@ -102,7 +99,7 @@ class DirectInvitationExpiryServiceTest {
             .sessionId(SESSION_ID)
             .userId("account-1")
             .guest(false)
-            .joinedAt(LocalDateTime.now(ZoneOffset.UTC).minusDays(1))
+            .joinedAt(NOW.minusDays(1))
             .build();
     var accountUser = new User();
     accountUser.setUserId("account-1");
@@ -140,7 +137,7 @@ class DirectInvitationExpiryServiceTest {
 
   @Test
   void expire_Should_DoNothing_BeforeTheLinkRunsOut() {
-    link.setExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(5));
+    link.setExpiresAt(NOW.plusMinutes(5));
 
     assertThat(service.expire(LINK_ID)).isFalse();
 
@@ -208,9 +205,9 @@ class DirectInvitationExpiryServiceTest {
    */
   @Test
   void retryRemoval_Should_WaitForARunningJoinAttempt_AndCheckItOnceStale() {
-    guest.setRevokeDueAt(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1));
+    guest.setRevokeDueAt(NOW.minusMinutes(1));
     guest.setJoinAttempt("attempt-1");
-    guest.setJoinedAt(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1));
+    guest.setJoinedAt(NOW.minusMinutes(1));
     when(rooms.remove(conversation, "@guest-1:x")).thenReturn(true);
 
     assertThat(service.retryRemoval(1L)).isFalse();
@@ -218,10 +215,7 @@ class DirectInvitationExpiryServiceTest {
     assertThat(guest.getRemovedAt()).isNull();
     assertThat(guest.getJoinAttempt()).isEqualTo("attempt-1");
 
-    guest.setJoinedAt(
-        LocalDateTime.now(ZoneOffset.UTC)
-            .minus(DirectInvitationMemberships.ATTEMPT_CAP)
-            .minusMinutes(1));
+    guest.setJoinedAt(NOW.minus(DirectInvitationMemberships.ATTEMPT_CAP).minusMinutes(1));
     assertThat(service.retryRemoval(1L)).isTrue();
     assertThat(guest.getRemovedAt()).isNotNull();
     assertThat(guest.getJoinAttempt()).as("the stale attempt lost the row").isNull();
@@ -262,12 +256,97 @@ class DirectInvitationExpiryServiceTest {
   /** A lasting Matrix failure is retried with a delay, not on every sweep. */
   @Test
   void retryRemoval_Should_PushTheNextAttempt_When_MatrixStillRefuses() {
-    guest.setRevokeDueAt(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1));
+    guest.setRevokeDueAt(NOW.minusMinutes(1));
     when(rooms.remove(conversation, "@guest-1:x")).thenReturn(false);
 
     assertThat(service.retryRemoval(1L)).isFalse();
 
     assertThat(guest.getRemovedAt()).isNull();
-    assertThat(guest.getRevokeDueAt()).isAfter(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(4));
+    assertThat(guest.getRevokeDueAt())
+        .isEqualTo(NOW.plus(DirectInvitationExpiryService.RETRY_DELAY));
+  }
+
+  /**
+   * Through the service's own transaction boundary ({@code @Transactional}, a real transaction
+   * manager): Matrix is asked only once the expiry committed.
+   */
+  @Test
+  void expire_Should_AskMatrixOnlyAfterItsTransactionCommitted() {
+    var commitsWhenMatrixWasAsked = new java.util.ArrayList<Integer>();
+    when(rooms.remove(conversation, "@guest-1:x"))
+        .thenAnswer(
+            i -> {
+              commitsWhenMatrixWasAsked.add(transactions.commits);
+              return true;
+            });
+
+    assertThat(transactional(service).expire(LINK_ID)).isTrue();
+
+    assertThat(commitsWhenMatrixWasAsked).containsExactly(1);
+    assertThat(guest.getRemovedAt()).isNotNull();
+  }
+
+  /** An expiry whose commit fails is rolled back and never takes anybody out. */
+  @Test
+  void expire_Should_NotAskMatrix_When_ItsCommitFails() {
+    transactions.failNextCommit = true;
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> transactional(service).expire(LINK_ID))
+        .isInstanceOf(org.springframework.transaction.TransactionSystemException.class);
+
+    assertThat(transactions.rollbacks).isEqualTo(1);
+    verify(rooms, never()).remove(any(), any());
+  }
+
+  /** The service as Spring wires it: its {@code @Transactional} methods run in transactions. */
+  private DirectInvitationExpiryService transactional(DirectInvitationExpiryService target) {
+    var factory = new org.springframework.aop.framework.ProxyFactory(target);
+    factory.setProxyTargetClass(true);
+    factory.addAdvice(
+        new org.springframework.transaction.interceptor.TransactionInterceptor(
+            (org.springframework.transaction.TransactionManager) transactions,
+            new org.springframework.transaction.annotation.AnnotationTransactionAttributeSource()));
+    return (DirectInvitationExpiryService) factory.getProxy();
+  }
+
+  /**
+   * A real transaction manager without a database: begin, commit, rollback and the synchronizations
+   * (after-commit work) behave as in production; it only counts the outcomes.
+   */
+  static final class RecordingTransactionManager
+      extends org.springframework.transaction.support.AbstractPlatformTransactionManager {
+
+    int commits;
+    int rollbacks;
+    boolean failNextCommit;
+
+    RecordingTransactionManager() {
+      setRollbackOnCommitFailure(true);
+    }
+
+    @Override
+    protected Object doGetTransaction() {
+      return new Object();
+    }
+
+    @Override
+    protected void doBegin(
+        Object transaction, org.springframework.transaction.TransactionDefinition definition) {}
+
+    @Override
+    protected void doCommit(
+        org.springframework.transaction.support.DefaultTransactionStatus status) {
+      if (failNextCommit) {
+        failNextCommit = false;
+        throw new org.springframework.transaction.TransactionSystemException("commit failed");
+      }
+      commits++;
+    }
+
+    @Override
+    protected void doRollback(
+        org.springframework.transaction.support.DefaultTransactionStatus status) {
+      rollbacks++;
+    }
   }
 }

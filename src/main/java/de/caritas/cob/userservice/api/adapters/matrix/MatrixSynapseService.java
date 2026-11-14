@@ -2062,6 +2062,8 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
             events ->
                 events.stream()
                     .filter(event -> "m.room.encryption".equals(event.get("type")))
+                    // The room's encryption lives under the empty state key only.
+                    .filter(event -> "".equals(event.get("state_key")))
                     .map(event -> event.get("content"))
                     .filter(java.util.Map.class::isInstance)
                     .map(content -> ((java.util.Map<?, ?>) content).get("algorithm"))

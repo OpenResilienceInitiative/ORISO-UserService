@@ -251,9 +251,34 @@ class DirectInvitationControllerIT {
                 .matrixRoomId("!own:example")
                 .status(HttpStatus.CREATED));
 
+    // The second person gets a conversation of their own, not the first person's.
+    var other =
+        StreamSupport.stream(sessionRepository.findAll().spliterator(), false)
+            .filter(found -> !found.getId().equals(conversation.getId()))
+            .findFirst()
+            .orElseThrow();
+    entityManager.flush();
+    when(createNewSessionFacade.initializeNewSession(
+            any(), eq(interpreter), org.mockito.ArgumentMatchers.anyList()))
+        .thenReturn(
+            new NewRegistrationResponseDto()
+                .sessionId(other.getId())
+                .matrixRoomId("!other:example")
+                .status(HttpStatus.CREATED));
+    var token = created.get("token").asText();
+
     actAsUser(asker);
-    asUser(post("/users/invitelinks/{token}/conversations", created.get("token").asText()))
-        .andExpect(status().isCreated());
+    asUser(post("/users/invitelinks/{token}/conversations", token))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.sessionId", is(conversation.getId().intValue())));
+    actAsUser(interpreter);
+    asUser(post("/users/invitelinks/{token}/conversations", token))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.sessionId", is(other.getId().intValue())));
+    verify(createNewSessionFacade)
+        .initializeNewSession(any(), eq(asker), org.mockito.ArgumentMatchers.anyList());
+    verify(createNewSessionFacade)
+        .initializeNewSession(any(), eq(interpreter), org.mockito.ArgumentMatchers.anyList());
     verify(createNewSessionFacade, never()).initializeAppointmentSession(any(), any());
   }
 
@@ -290,7 +315,9 @@ class DirectInvitationControllerIT {
     // No Matrix call inside the transaction that holds the row lock: the removal is only due.
     verify(rooms, never()).remove(any(), any());
     assertThat(guestRow.getRevokeDueAt()).isNotNull();
-    // After the commit (here: as the sweep does) Matrix takes the guest out.
+    // The sweep's retry takes the guest out. This test runs in one rolled-back test transaction,
+    // so it checks the due mark and the retry, not the after-commit dispatch: that ordering is
+    // covered through the real transaction boundary in DirectInvitationExpiryServiceTest.
     assertThat(expiryService.retryRemoval(guestRow.getId())).isTrue();
     verify(rooms).remove(any(), eq(interpreter.getMatrixUserId()));
     assertThat(guestRow.getRemovedAt()).isNotNull();
@@ -347,6 +374,20 @@ class DirectInvitationControllerIT {
         .andExpect(jsonPath("$.reason", is("DIRECT_LINK_EXPIRED")));
     mvc.perform(get("/users/invitelinks/{token}/context", newToken)).andExpect(status().isOk());
     // The person with the old link can still ask again.
+    actAsUser(asker);
+    asUser(post("/users/invitelinks/{token}/renewal-requests", oldToken))
+        .andExpect(status().isNoContent());
+
+    // A second renewal: the oldest link still reads as expired and still asks for a new one.
+    actAsConsultant(owner);
+    asConsultant(post("/users/directlinks/{id}/renewal", id)).andExpect(status().isOk());
+    entityManager.flush();
+    entityManager.clear();
+    for (var replaced : List.of(oldToken, newToken)) {
+      mvc.perform(get("/users/invitelinks/{token}/context", replaced))
+          .andExpect(status().isGone())
+          .andExpect(jsonPath("$.reason", is("DIRECT_LINK_EXPIRED")));
+    }
     actAsUser(asker);
     asUser(post("/users/invitelinks/{token}/renewal-requests", oldToken))
         .andExpect(status().isNoContent());

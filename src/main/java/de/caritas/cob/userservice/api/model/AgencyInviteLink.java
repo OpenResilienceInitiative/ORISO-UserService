@@ -170,11 +170,17 @@ public class AgencyInviteLink {
   private boolean joinsExistingSession = false;
 
   /**
-   * The token before the last "Neuen Link senden" (#2252): it still finds the invitation, which
-   * then answers "expired", so the person can ask for a new link again.
+   * Every token "Neuen Link senden" replaced (#2252): each still finds the invitation, which then
+   * answers "expired", so a person with any older link can ask for a new one again.
    */
-  @Column(name = "previous_token", length = 64)
-  private String previousToken;
+  @jakarta.persistence.ElementCollection(fetch = jakarta.persistence.FetchType.LAZY)
+  @jakarta.persistence.CollectionTable(
+      name = "agency_invite_link_replaced_token",
+      joinColumns = @jakarta.persistence.JoinColumn(name = "invite_link_id"))
+  @Column(name = "token", length = 64, nullable = false, unique = true)
+  @Builder.Default
+  @ToString.Exclude
+  private java.util.Set<String> replacedTokens = new java.util.HashSet<>();
 
   public DirectInvitationAccessMode effectiveAccessMode() {
     if (accessMode != null) {

@@ -35,6 +35,7 @@ import java.time.ZoneOffset;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -90,7 +91,21 @@ public class DirectLinkControllerDelegate {
   ResponseEntity<List<DirectLinkDTO>> getOwnDirectLinks() {
     var owner = userAccountService.retrieveValidatedConsultant();
     var topics = topicService.getAllTopicsMap();
-    return ResponseEntity.ok(service.listOwn(owner).stream().map(l -> toDto(l, topics)).toList());
+    var links = service.listOwn(owner);
+    // One query for every appointment of the list, not one per link.
+    var appointments = invitations.appointmentsOf(links);
+    return ResponseEntity.ok(
+        links.stream()
+            .map(
+                l ->
+                    toDto(
+                        l,
+                        topics,
+                        Optional.ofNullable(
+                            l.getAppointmentId() == null
+                                ? null
+                                : appointments.get(l.getAppointmentId()))))
+            .toList());
   }
 
   ResponseEntity<DirectLinkDTO> createDirectLink(CreateDirectLinkDTO body) {
@@ -293,6 +308,13 @@ public class DirectLinkControllerDelegate {
   }
 
   DirectLinkDTO toDto(AgencyInviteLink link, Map<Long, TopicDTO> topics) {
+    return toDto(link, topics, invitations.appointmentOf(link));
+  }
+
+  private DirectLinkDTO toDto(
+      AgencyInviteLink link,
+      Map<Long, TopicDTO> topics,
+      Optional<de.caritas.cob.userservice.api.model.SessionAppointment> appointmentOfLink) {
     var medium = InviteLinkChatType.valueOf(link.getChatType());
     var topic = link.getTopicId() == null ? null : topics.get(link.getTopicId());
     var dto = baseDto(link, medium, topic);
@@ -306,25 +328,22 @@ public class DirectLinkControllerDelegate {
         dto.admission(DirectLinkDTO.AdmissionEnum.DIRECT);
       }
     }
-    invitations
-        .appointmentOf(link)
-        .ifPresent(
-            appointment -> {
-              var schedule = DirectInvitationService.scheduleOf(link, appointment);
-              dto.appointment(
-                      new DirectInvitationAppointmentDTO()
-                          .id(appointment.getId())
-                          .startTime(appointment.getStartTime().atOffset(ZoneOffset.UTC))
-                          .endTime(appointment.getEndTime().atOffset(ZoneOffset.UTC))
-                          .status(
-                              DirectInvitationAppointmentDTO.StatusEnum.fromValue(
-                                  appointment.getStatus().name())))
-                  .validityAfterEndMinutes(schedule.validityAfterEndMinutes())
-                  .callOpensAt(schedule.callOpensAt().atOffset(ZoneOffset.UTC))
-                  .sessionId(
-                      appointment.getSession() == null ? null : appointment.getSession().getId())
-                  .joinsExistingSession(link.isJoinsExistingSession());
-            });
+    appointmentOfLink.ifPresent(
+        appointment -> {
+          var schedule = DirectInvitationService.scheduleOf(link, appointment);
+          dto.appointment(
+                  new DirectInvitationAppointmentDTO()
+                      .id(appointment.getId())
+                      .startTime(appointment.getStartTime().atOffset(ZoneOffset.UTC))
+                      .endTime(appointment.getEndTime().atOffset(ZoneOffset.UTC))
+                      .status(
+                          DirectInvitationAppointmentDTO.StatusEnum.fromValue(
+                              appointment.getStatus().name())))
+              .validityAfterEndMinutes(schedule.validityAfterEndMinutes())
+              .callOpensAt(schedule.callOpensAt().atOffset(ZoneOffset.UTC))
+              .sessionId(appointment.getSession() == null ? null : appointment.getSession().getId())
+              .joinsExistingSession(link.isJoinsExistingSession());
+        });
     if (link.getExpiresAt() != null) {
       dto.expiresAt(link.getExpiresAt().atOffset(ZoneOffset.UTC))
           .expired(

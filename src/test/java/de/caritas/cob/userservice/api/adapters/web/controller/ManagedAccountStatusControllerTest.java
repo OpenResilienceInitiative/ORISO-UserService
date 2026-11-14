@@ -530,6 +530,7 @@ class ManagedAccountStatusControllerTest {
             mock(de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitePolicy.class),
             mock(
                 de.caritas.cob.userservice.api.service.agencyinvitelink.CallShareLinkService.class),
+            null,
             null);
     var mvc =
         MockMvcBuilders.standaloneSetup(new AgencyInviteLinkController(links, topic))

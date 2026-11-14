@@ -64,6 +64,7 @@ class AgencyInviteLinkContextHttpTest {
             temporaryAccountSettings,
             directInvitePolicy,
             callShareLinks,
+            null,
             null);
     when(temporaryAccountSettings.current())
         .thenReturn(

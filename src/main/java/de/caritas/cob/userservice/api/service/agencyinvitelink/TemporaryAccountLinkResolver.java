@@ -9,7 +9,6 @@ import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
-import java.time.LocalDateTime;
 import java.util.Objects;
 import java.util.Optional;
 import lombok.NonNull;
@@ -58,9 +57,9 @@ public class TemporaryAccountLinkResolver {
     if (InviteLinkStatus.DISABLED.name().equals(link.getStatus())) {
       throw new DirectLinkInactiveException();
     }
+    // The one expiry decision, in UTC (410 DIRECT_LINK_EXPIRED); here only the status is left.
     CounsellorDirectLinkService.requireNotExpired(link);
-    if (!InviteLinkStatus.ACTIVE.name().equals(link.getStatus())
-        || (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now()))) {
+    if (!InviteLinkStatus.ACTIVE.name().equals(link.getStatus())) {
       throw new BadRequestException("Invite link expired");
     }
     requireAdmittedAccountType(userDTO, link.effectiveAccessMode());

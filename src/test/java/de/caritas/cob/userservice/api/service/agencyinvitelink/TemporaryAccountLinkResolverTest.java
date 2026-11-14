@@ -188,6 +188,20 @@ class TemporaryAccountLinkResolverTest {
   }
 
   @Test
+  void resolve_Should_DecideExpiryInUtc_When_TheServerRunsAheadOfUtc() {
+    // One expiry decision, in UTC: a server clock east of UTC must not end the link early.
+    link.setExpiresAt(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).plusMinutes(30));
+    var previous = java.util.TimeZone.getDefault();
+    try {
+      java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Pacific/Kiritimati"));
+
+      assertThat(resolver.resolve(registration("tok", true))).contains(link);
+    } finally {
+      java.util.TimeZone.setDefault(previous);
+    }
+  }
+
+  @Test
   void resolve_Should_ReturnTheLink_ForAPersistentAccount_When_TheLinkCreatesNoTemporaryAccounts() {
     link.setTemporaryAccount(false);
 

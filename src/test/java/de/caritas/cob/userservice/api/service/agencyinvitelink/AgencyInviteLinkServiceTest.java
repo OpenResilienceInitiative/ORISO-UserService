@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -484,6 +485,40 @@ class AgencyInviteLinkServiceTest {
     assertThat(TenantContext.getCurrentTenant()).isNull();
   }
 
+  /** ORISO-Frontend#2252: an invitation's expiry is UTC; a server east of UTC must not end it. */
+  @Test
+  void directInvitationWithAppointment_Should_OpenUntilItsUtcExpiry_OnAServerAheadOfUtc() {
+    var link =
+        AgencyInviteLink.builder()
+            .token("direct")
+            .status(InviteLinkStatus.ACTIVE.name())
+            .tenantId(83L)
+            .linkKind(InviteLinkKind.COUNSELLOR.name())
+            .chatType(InviteLinkChatType.CHAT.name())
+            .consultantId("owner")
+            .agencyId(5L)
+            .consultingTypeId(1)
+            .appointmentId(java.util.UUID.randomUUID())
+            .expiresAt(LocalDateTime.now(java.time.ZoneOffset.UTC).plusMinutes(30))
+            .build();
+    var owner = new Consultant();
+    owner.setId("owner");
+    var membership = new de.caritas.cob.userservice.api.model.ConsultantAgency();
+    membership.setAgencyId(5L);
+    owner.setConsultantAgencies(java.util.Set.of(membership));
+    when(directInvitePolicy.allows(83L, 5L, InviteLinkChatType.CHAT)).thenReturn(true);
+    when(repository.findByToken("direct")).thenReturn(Optional.of(link));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("owner")).thenReturn(Optional.of(owner));
+    var previous = java.util.TimeZone.getDefault();
+    try {
+      java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Pacific/Kiritimati"));
+
+      assertThat(service.getContext("direct").agencyId()).isEqualTo(5L);
+    } finally {
+      java.util.TimeZone.setDefault(previous);
+    }
+  }
+
   /** "Direkteinladung erlauben" withdrawn: the link stays stored, but the page says it is off. */
   @Test
   void directLinkWithWithdrawnPermission_Should_ReadAsNoLongerActive() {
@@ -925,6 +960,53 @@ class AgencyInviteLinkServiceTest {
         .chatType(InviteLinkChatType.LIVE_CHAT.name())
         .status(status)
         .build();
+  }
+
+  /** ORISO-Frontend#2252: an admin switching an invitation off ends access like its counsellor. */
+  @Test
+  void deactivate_Should_EndTheAccessOfAnInvitationWithAppointment() {
+    var link = storedLink("ACTIVE", InviteLinkKind.COUNSELLOR.name(), 1L, null);
+    link.setChatType(InviteLinkChatType.VIDEO.name());
+    link.setAppointmentId(java.util.UUID.randomUUID());
+    when(repository.findById(7L)).thenReturn(Optional.of(link));
+    when(repository.save(any(AgencyInviteLink.class))).thenAnswer(i -> i.getArgument(0));
+    var invitationEnd = mock(DirectInvitationExpiryService.class);
+    withInvitationEnd(invitationEnd);
+
+    var result = service.deactivate(7L);
+
+    assertThat(result.getStatus()).isEqualTo(InviteLinkStatus.DISABLED.name());
+    verify(invitationEnd).revoke(link);
+  }
+
+  /** The list never closes an invitation itself: the sweep must still see it and remove guests. */
+  @Test
+  void list_Should_LeaveAnOverdueInvitationWithAppointmentToTheSweep() {
+    AgencyInviteLink invitation =
+        AgencyInviteLink.builder()
+            .token("t")
+            .status(InviteLinkStatus.ACTIVE.name())
+            .tenantId(1L)
+            .appointmentId(java.util.UUID.randomUUID())
+            .expiresAt(LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1))
+            .build();
+    var page = new org.springframework.data.domain.PageImpl<>(java.util.List.of(invitation));
+    when(repository.findAllByTenantIdAndFilters(any(), any(), any(), any(), any(), any()))
+        .thenReturn(page);
+
+    service.list(null, null, null, null, 0, 20);
+
+    assertThat(invitation.getStatus()).isEqualTo(InviteLinkStatus.ACTIVE.name());
+    verify(repository, org.mockito.Mockito.never()).save(invitation);
+  }
+
+  @SuppressWarnings("unchecked")
+  private void withInvitationEnd(DirectInvitationExpiryService invitationEnd) {
+    var provider =
+        (org.springframework.beans.factory.ObjectProvider<DirectInvitationExpiryService>)
+            mock(org.springframework.beans.factory.ObjectProvider.class);
+    when(provider.getIfAvailable()).thenReturn(invitationEnd);
+    org.springframework.test.util.ReflectionTestUtils.setField(service, "invitationEnd", provider);
   }
 
   @Test
