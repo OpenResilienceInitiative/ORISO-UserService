@@ -42,16 +42,19 @@ class DirectInvitationExpiryServiceTest {
   @Mock private UserRepository users;
   @Mock private DirectInvitationRoomMembership rooms;
   @Mock private SessionArchiveService archive;
+  @Mock private de.caritas.cob.userservice.api.port.out.SessionRepository sessions;
 
   private DirectInvitationExpiryService service;
   private AgencyInviteLink link;
   private Session conversation;
   private DirectInvitationMember guest;
+  private DirectInvitationMember account;
 
   @BeforeEach
   void setUp() {
     service =
-        new DirectInvitationExpiryService(links, appointments, members, users, rooms, archive);
+        new DirectInvitationExpiryService(
+            links, appointments, members, sessions, users, rooms, archive);
     conversation = new Session();
     conversation.setId(SESSION_ID);
     conversation.setStatus(Session.SessionStatus.IN_PROGRESS);
@@ -68,6 +71,8 @@ class DirectInvitationExpiryServiceTest {
             .build();
     guest =
         DirectInvitationMember.builder()
+            .id(1L)
+            .inviteLinkId(LINK_ID)
             .sessionId(SESSION_ID)
             .userId("guest-1")
             .guest(true)
@@ -78,8 +83,21 @@ class DirectInvitationExpiryServiceTest {
     guestUser.setMatrixUserId("@guest-1:x");
     when(links.findByIdForUpdate(LINK_ID)).thenReturn(Optional.of(link));
     when(appointments.findById(appointment.getId())).thenReturn(Optional.of(appointment));
-    when(members.findBySessionIdAndGuestTrueAndRemovedAtIsNull(SESSION_ID))
-        .thenReturn(List.of(guest));
+    account =
+        DirectInvitationMember.builder()
+            .id(2L)
+            .inviteLinkId(LINK_ID)
+            .sessionId(SESSION_ID)
+            .userId("account-1")
+            .guest(false)
+            .joinedAt(LocalDateTime.now(ZoneOffset.UTC).minusDays(1))
+            .build();
+    var accountUser = new User();
+    accountUser.setUserId("account-1");
+    accountUser.setMatrixUserId("@account-1:x");
+    when(members.findByInviteLinkIdAndRemovedAtIsNull(LINK_ID)).thenReturn(List.of(guest, account));
+    when(users.findById("account-1")).thenReturn(Optional.of(accountUser));
+    when(sessions.findById(SESSION_ID)).thenReturn(Optional.of(conversation));
     when(users.findById("guest-1")).thenReturn(Optional.of(guestUser));
     when(rooms.remove(any(), any())).thenReturn(true);
   }
@@ -131,6 +149,66 @@ class DirectInvitationExpiryServiceTest {
     assertThat(service.expire(LINK_ID)).isTrue();
     assertThat(link.getStatus()).isEqualTo("EXPIRED");
     verify(archive, never()).archiveBySystem(any());
+  }
+
+  @Test
+  void expire_Should_KeepAccountsInASharedAppointmentConversation() {
+    service.expire(LINK_ID);
+
+    verify(rooms, never()).remove(conversation, "@account-1:x");
+    assertThat(account.getRemovedAt()).isNull();
+  }
+
+  /** Product rule: anyone who entered an existing 1:1 by link loses access at expiry. */
+  @Test
+  void expire_Should_RemoveEveryoneWhoCameInByLink_FromAnExisting1to1() {
+    link.setJoinsExistingSession(true);
+
+    service.expire(LINK_ID);
+
+    verify(rooms).remove(conversation, "@guest-1:x");
+    verify(rooms).remove(conversation, "@account-1:x");
+    assertThat(account.getRemovedAt()).isNotNull();
+  }
+
+  /** Fail closed: a removal Matrix did not confirm stays due and is tried again. */
+  @Test
+  void expire_Should_KeepAFailedRemovalDue_AndTheRetryFinishesIt() {
+    when(rooms.remove(conversation, "@guest-1:x")).thenReturn(false);
+
+    service.expire(LINK_ID);
+
+    assertThat(guest.getRemovedAt()).isNull();
+    assertThat(guest.getRevokeDueAt()).isNotNull();
+    when(members.findById(1L)).thenReturn(Optional.of(guest));
+    when(rooms.remove(conversation, "@guest-1:x")).thenReturn(true);
+
+    assertThat(service.retryRemoval(1L)).isTrue();
+    assertThat(guest.getRemovedAt()).isNotNull();
+  }
+
+  /** Switched off or deleted: the same removal as at expiry, whatever the link's status. */
+  @Test
+  void revoke_Should_RemoveGuestsAndArchive_When_ALinkIsSwitchedOffOrDeleted() {
+    link.setStatus("DISABLED");
+
+    service.revoke(link);
+
+    verify(rooms).remove(conversation, "@guest-1:x");
+    verify(archive).archiveBySystem(conversation);
+  }
+
+  @Test
+  void sweep_Should_RetryEveryDueRemoval_EvenOfDeletedLinks() {
+    var sweep = new DirectInvitationExpirySweep(service);
+    guest.setRevokeDueAt(LocalDateTime.now(ZoneOffset.UTC).minusHours(1));
+    when(links.findExpiredInvitationIds(any(), any(), any())).thenReturn(List.of());
+    when(members.findPendingRevocationIds(any(), any())).thenReturn(List.of(1L));
+    when(members.findById(1L)).thenReturn(Optional.of(guest));
+
+    sweep.sweep();
+
+    assertThat(guest.getRemovedAt()).isNotNull();
   }
 
   @Test

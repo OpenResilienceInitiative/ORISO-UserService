@@ -55,6 +55,14 @@ public class DirectInvitationMember {
   @Column(name = "joined_at", nullable = false)
   private LocalDateTime joinedAt;
 
+  /**
+   * Set when the person must leave the room (invitation expired, switched off or deleted). Stays
+   * set with {@code removedAt} empty until Matrix confirmed the removal, so the sweep retries.
+   */
+  @Column(name = "revoke_due_at")
+  private LocalDateTime revokeDueAt;
+
+  /** Matrix confirmed the person left the room. */
   @Column(name = "removed_at")
   private LocalDateTime removedAt;
 }

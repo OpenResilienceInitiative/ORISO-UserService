@@ -487,6 +487,11 @@ paths:
       tags: [direct-link-controller]
       operationId: deleteDirectLink
       summary: 'Delete an own direct link; conversations started through it stay [Authorization: Role: consultant]'
+      description: >-
+        For a direct invitation with an appointment (ORISO-Frontend#2252) deleting ends access like
+        an expiry: guests leave the appointment conversation, which is archived, and everybody who
+        came into a 1:1 by the link leaves it. Switching the link off (PATCH active false) does the
+        same; switching it on again reopens the appointment conversation.
       security:
         - Bearer: [ ]
       parameters:

@@ -142,6 +142,7 @@ class DirectInvitationControllerIT {
     when(topicService.getAllTopicsMap())
         .thenReturn(Map.of(TOPIC_ID, new TopicDTO().id(TOPIC_ID).name("Schulden")));
     when(systemMessages.postSystemMessage(any(), anyString(), eq(true))).thenReturn(true);
+    when(rooms.remove(any(), any())).thenReturn(true);
 
     var consultants =
         StreamSupport.stream(consultantRepository.findAll().spliterator(), false)

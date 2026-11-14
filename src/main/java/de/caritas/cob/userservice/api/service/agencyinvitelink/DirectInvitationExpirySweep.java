@@ -7,8 +7,9 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * Expires direct invitations whose appointment validity ran out (ORISO-Frontend#2252), each in its
- * own transaction; one failure does not stop the others.
+ * Expires direct invitations whose appointment validity ran out (ORISO-Frontend#2252), and retries
+ * room removals Matrix did not confirm, each in its own transaction; one failure does not stop the
+ * others.
  */
 @Component
 @RequiredArgsConstructor
@@ -38,5 +39,23 @@ public class DirectInvitationExpirySweep {
       afterId = ids.getLast();
     }
     if (expired > 0) log.info("Direct invitation sweep expired {} invitation(s)", expired);
+    retryDueRemovals();
+  }
+
+  /** Removals Matrix did not confirm, also of invitations switched off or deleted since. */
+  private void retryDueRemovals() {
+    long afterId = 0;
+    while (true) {
+      var ids = service.pendingRemovalIds(afterId, PAGE_SIZE);
+      for (Long id : ids) {
+        try {
+          service.retryRemoval(id);
+        } catch (RuntimeException failure) {
+          log.warn("Invited member {} could not be removed: {}", id, failure.getMessage());
+        }
+      }
+      if (ids.size() < PAGE_SIZE) break;
+      afterId = ids.getLast();
+    }
   }
 }

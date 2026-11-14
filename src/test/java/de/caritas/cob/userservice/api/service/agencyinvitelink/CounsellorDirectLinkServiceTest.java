@@ -63,6 +63,7 @@ class CounsellorDirectLinkServiceTest {
   @Mock private DirectCallKnockService knockService;
   @Mock private de.caritas.cob.userservice.api.port.out.SessionRepository sessionRepository;
   @Mock private DirectInvitationService invitations;
+  @Mock private DirectInvitationExpiryService expiry;
 
   @Mock
   private de.caritas.cob.userservice.api.port.out.SessionAppointmentRepository sessionAppointments;
@@ -84,7 +85,8 @@ class CounsellorDirectLinkServiceTest {
             knockService,
             sessionRepository,
             invitations,
-            sessionAppointments);
+            sessionAppointments,
+            expiry);
     owner = consultantIn(AGENCY);
     when(consultantRepository.findByIdAndDeleteDateIsNull(OWNER_ID)).thenReturn(Optional.of(owner));
     var agency = new AgencyDTO().id(AGENCY).tenantId(TENANT).consultingType(3).postcode("12345");
@@ -692,6 +694,28 @@ class CounsellorDirectLinkServiceTest {
     assertThat(link.getAccessMode()).isEqualTo(DirectInvitationAccessMode.ACCOUNTS_ONLY);
     assertThat(link.isTemporaryAccount()).isFalse();
     verify(invitations).change(link, start, start.plusHours(1), 30);
+  }
+
+  @Test
+  void switchingOffOrDeleting_Should_RemoveTheInvitedPeople_OfAnInvitationWithAppointment() {
+    var link = ownLink(5L, "VIDEO", "ACTIVE");
+    link.setAppointmentId(java.util.UUID.randomUUID());
+
+    service.update(owner, 5L, new UpdateCommand(null, null, null, false));
+    verify(expiry).revoke(link);
+
+    service.delete(owner, 5L);
+    verify(expiry, org.mockito.Mockito.times(2)).revoke(link);
+  }
+
+  @Test
+  void switchingOff_Should_LeaveALinkWithoutAppointmentAlone() {
+    ownLink(6L, "VIDEO", "ACTIVE");
+
+    service.update(owner, 6L, new UpdateCommand(null, null, null, false));
+    service.delete(owner, 6L);
+
+    verify(expiry, never()).revoke(any());
   }
 
   @Test

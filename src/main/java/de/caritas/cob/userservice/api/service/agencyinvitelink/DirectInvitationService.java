@@ -192,6 +192,7 @@ public class DirectInvitationService {
     var conversation = session;
     var row = existing.orElseGet(() -> member(conversation, user, link, guest));
     row.setRemovedAt(null);
+    row.setRevokeDueAt(null);
     row.setGuest(guest);
     row.setInviteLinkId(link.getId());
     row.setJoinedAt(nowUtc());
@@ -244,6 +245,15 @@ public class DirectInvitationService {
       postRenewedNotice(session, saved);
     }
     return saved;
+  }
+
+  /** A switched-off invitation is switched on again: its appointment conversation reopens. */
+  @Transactional
+  public void reopenConversation(AgencyInviteLink link) {
+    if (link.isJoinsExistingSession()) {
+      return;
+    }
+    appointmentOf(link).map(SessionAppointment::getSession).ifPresent(archive::reopenBySystem);
   }
 
   /**

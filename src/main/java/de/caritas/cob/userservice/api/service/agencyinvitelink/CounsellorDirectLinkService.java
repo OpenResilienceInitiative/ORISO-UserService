@@ -61,6 +61,7 @@ public class CounsellorDirectLinkService {
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull DirectInvitationService invitations;
   private final @NonNull SessionAppointmentRepository sessionAppointments;
+  private final @NonNull DirectInvitationExpiryService invitationEnd;
 
   public List<AgencyInviteLink> listOwn(Consultant owner) {
     return repository.findAllByConsultantIdAndLinkKindAndChatTypeInOrderByCreateDateDesc(
@@ -237,8 +238,15 @@ public class CounsellorDirectLinkService {
         throw new ForbiddenException("Direct invitations are not allowed here");
       }
       link.setStatus(InviteLinkStatus.ACTIVE.name());
+      if (link.getAppointmentId() != null) {
+        invitations.reopenConversation(link);
+      }
     } else if (Boolean.FALSE.equals(cmd.active())) {
       link.setStatus(InviteLinkStatus.DISABLED.name());
+      // ORISO-Frontend#2252: switched off ends access like an expiry.
+      if (link.getAppointmentId() != null) {
+        invitationEnd.revoke(link);
+      }
     }
     link.setUpdateDate(LocalDateTime.now());
     return repository.save(link);
@@ -250,6 +258,11 @@ public class CounsellorDirectLinkService {
    */
   public void delete(Consultant owner, Long linkId) {
     var link = requireOwn(owner, linkId);
+    // ORISO-Frontend#2252: deleted ends access like an expiry; the member rows stay, so the sweep
+    // retries a removal Matrix did not confirm.
+    if (link.getAppointmentId() != null) {
+      invitationEnd.revoke(link);
+    }
     repository.delete(link);
     // An appointment nobody met at yet belongs to the link alone (ORISO-Frontend#2252).
     invitations

@@ -68,6 +68,7 @@
       <column name="invite_link_id" type="BIGINT UNSIGNED"><constraints nullable="false"/></column>
       <column name="guest" type="BOOLEAN"><constraints nullable="false"/></column>
       <column name="joined_at" type="DATETIME"><constraints nullable="false"/></column>
+      <column name="revoke_due_at" type="DATETIME"/>
       <column name="removed_at" type="DATETIME"/>
     </createTable>
     <addUniqueConstraint tableName="direct_invitation_member" columnNames="session_id, user_id"
