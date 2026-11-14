@@ -6,7 +6,11 @@
        is the same session_appointment as "Termin anlegen" (ORISO-Frontend#1960); the link expires
        validity_after_end_minutes after its end (expires_at, already present, is set from it). Who
        may enter (access_mode) and the knock switch (knock, already present) are per link. -->
-  <changeSet id="20261114-direct-invitation-appointment-2252" author="oriso">
+  <!-- One step per changeSet, each with its own precondition: MariaDB commits every DDL statement
+       on its own, so a run that stopped half way finishes the rest on the next start. The ids are
+       new (the first version held every step in one changeSet), so a database that already ran
+       that version marks these as ran instead of failing on a changed checksum. -->
+  <changeSet id="20261114-direct-invitation-columns-2252" author="oriso">
     <preConditions onFail="MARK_RAN">
       <not>
         <columnExists tableName="agency_invite_link" columnName="appointment_id"/>
@@ -21,24 +25,48 @@
       </column>
       <column name="previous_token" type="VARCHAR(64)"/>
     </addColumn>
+    <!-- Additive and nullable: an older application ignores the columns. The rollback keeps them
+         (same rule as 20261112_direct_link_scheduled_at_2142), since it also runs after MARK_RAN. -->
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+
+  <changeSet id="20261114-direct-invitation-previous-token-index-2252" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <indexExists tableName="agency_invite_link"
+          indexName="idx_agency_invite_link_previous_token"/>
+      </not>
+    </preConditions>
     <createIndex tableName="agency_invite_link" indexName="idx_agency_invite_link_previous_token">
       <column name="previous_token"/>
     </createIndex>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+
+  <changeSet id="20261114-direct-invitation-appointment-index-2252" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <indexExists tableName="agency_invite_link" indexName="idx_agency_invite_link_appointment"/>
+      </not>
+    </preConditions>
     <createIndex tableName="agency_invite_link" indexName="idx_agency_invite_link_appointment">
       <column name="appointment_id"/>
     </createIndex>
-    <!-- Existing direct links read their access mode from the temporary-account switch: a link
-         that created temporary accounts lets both in, one that did not only accounts. -->
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+
+  <!-- Existing direct links read their access mode from the temporary-account switch: a link
+       that created temporary accounts lets both in, one that did not only accounts. Only rows
+       without a mode change, so a rerun is harmless. -->
+  <changeSet id="20261114-direct-invitation-access-mode-backfill-2252" author="oriso">
     <update tableName="agency_invite_link">
       <column name="access_mode" value="BOTH"/>
-      <where>link_kind = 'COUNSELLOR' AND temporary_account = 1</where>
+      <where>link_kind = 'COUNSELLOR' AND temporary_account = 1 AND access_mode IS NULL</where>
     </update>
     <update tableName="agency_invite_link">
       <column name="access_mode" value="ACCOUNTS_ONLY"/>
-      <where>link_kind = 'COUNSELLOR' AND temporary_account = 0</where>
+      <where>link_kind = 'COUNSELLOR' AND temporary_account = 0 AND access_mode IS NULL</where>
     </update>
-    <!-- Additive and nullable: an older application ignores the columns. The rollback keeps them
-         (same rule as 20261112_direct_link_scheduled_at_2142), since it also runs after MARK_RAN. -->
     <rollback><sql>SELECT 1</sql></rollback>
   </changeSet>
 

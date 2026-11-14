@@ -77,6 +77,54 @@ class DirectInvitationAppointmentMigrationTest {
     }
   }
 
+  /** MariaDB commits every DDL on its own: a rerun after a partial run finishes the rest. */
+  @Test
+  void update_Should_FinishIndexesAndBackfill_When_AnEarlierRunStoppedAfterTheColumns()
+      throws Exception {
+    try (Connection c =
+        DriverManager.getConnection(
+            "jdbc:h2:mem:direct-invitation-partial-"
+                + UUID.randomUUID()
+                + ";MODE=MariaDB;DATABASE_TO_LOWER=TRUE",
+            "sa",
+            "")) {
+      try (var sql = c.createStatement()) {
+        sql.execute("CREATE TABLE session (id BIGINT UNSIGNED NOT NULL, PRIMARY KEY (id))");
+        sql.execute(
+            "CREATE TABLE session_appointment (id CHAR(36) NOT NULL, session_id BIGINT UNSIGNED"
+                + " NOT NULL, start_time DATETIME(6) NOT NULL, end_time DATETIME(6) NOT NULL,"
+                + " status VARCHAR(16) NOT NULL, PRIMARY KEY (id))");
+        // The state an interrupted run leaves: columns added, no index, no backfill.
+        sql.execute(
+            "CREATE TABLE agency_invite_link (id BIGINT NOT NULL, link_kind VARCHAR(32) NOT NULL,"
+                + " temporary_account BOOLEAN NOT NULL, appointment_id CHAR(36),"
+                + " validity_after_end_minutes INT, access_mode VARCHAR(16),"
+                + " joins_existing_session BOOLEAN DEFAULT FALSE NOT NULL,"
+                + " previous_token VARCHAR(64), PRIMARY KEY (id))");
+        sql.execute(
+            "INSERT INTO agency_invite_link (id, link_kind, temporary_account) VALUES"
+                + " (1, 'COUNSELLOR', TRUE), (2, 'COUNSELLOR', FALSE)");
+      }
+      var database =
+          DatabaseFactory.getInstance().findCorrectDatabaseImplementation(new JdbcConnection(c));
+      try (var liquibase = new Liquibase(CHANGELOG, new ClassLoaderResourceAccessor(), database)) {
+        liquibase.update(new Contexts(), new LabelExpression());
+
+        assertThat(accessMode(c, 1)).isEqualTo("BOTH");
+        assertThat(accessMode(c, 2)).isEqualTo("ACCOUNTS_ONLY");
+        try (var sql = c.createStatement();
+            var rs =
+                sql.executeQuery(
+                    "SELECT COUNT(*) FROM information_schema.indexes WHERE index_name IN"
+                        + " ('idx_agency_invite_link_previous_token',"
+                        + " 'idx_agency_invite_link_appointment')")) {
+          rs.next();
+          assertThat(rs.getInt(1)).isEqualTo(2);
+        }
+      }
+    }
+  }
+
   private static String accessMode(Connection c, long id) throws Exception {
     try (var sql = c.createStatement();
         var rs = sql.executeQuery("SELECT access_mode FROM agency_invite_link WHERE id = " + id)) {
