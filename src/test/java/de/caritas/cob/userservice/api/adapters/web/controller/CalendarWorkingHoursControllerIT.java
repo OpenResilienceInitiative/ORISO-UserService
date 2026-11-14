@@ -185,6 +185,9 @@ class CalendarWorkingHoursControllerIT {
             Map.of("windows", List.of(window(1, "8:00", "17:00"))),
             Map.of("windows", List.of(window(1, "08:00", "24:00"))),
             Map.of("windows", List.of(Map.of("weekday", 1, "start", "08:00"))),
+            Map.of("windows", List.of(), "holidayRegion", "XX"),
+            Map.of("windows", List.of(), "holidayRegion", "by"),
+            Map.of("windows", List.of(), "holidayRegion", 1),
             Map.of())) {
       mockMvc.perform(setHours(invalid)).andExpect(status().isBadRequest());
     }

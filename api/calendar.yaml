@@ -311,7 +311,7 @@ paths:
                 $ref: '#/components/schemas/CalendarWorkingHoursDTO'
         400:
           description: BAD REQUEST - more than 14 windows, a weekday outside 0..6, a time not in
-            HH:mm, or a start not before its end
+            HH:mm, a start not before its end, or an unknown holidayRegion
         401:
           description: UNAUTHORIZED - no/invalid Keycloak token
         403:
