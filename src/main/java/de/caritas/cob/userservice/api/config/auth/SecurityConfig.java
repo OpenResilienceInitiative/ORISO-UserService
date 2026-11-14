@@ -608,6 +608,13 @@ public class SecurityConfig {
                     CONSULTANT_UPDATE)
                 .requestMatchers(HttpMethod.GET, "/useradmin/supportadmins/search")
                 .hasAnyAuthority(USER_ADMIN, GLOBAL_SUPPORT_ADMIN)
+                // Asked by TenantService, with the deleting admin's token, before a Träger is
+                // deleted (#1466). The Träger scope is enforced in TenantDeletionBlockerService.
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/useradmin/tenants/{tenantId:[0-9]+}/deletion-blockers",
+                    "/service/useradmin/tenants/{tenantId:[0-9]+}/deletion-blockers")
+                .hasAnyAuthority(USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
                 .requestMatchers(HttpMethod.GET, "/useradmin/tenantadmins/search")
                 .hasAnyAuthority(TENANT_ADMIN, USER_ADMIN)
                 .requestMatchers(

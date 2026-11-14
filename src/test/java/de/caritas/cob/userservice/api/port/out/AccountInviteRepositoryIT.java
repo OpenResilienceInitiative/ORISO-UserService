@@ -406,6 +406,61 @@ class AccountInviteRepositoryIT {
     return accountInviteRepository.findById(invite.getId()).orElseThrow();
   }
 
+  @Test
+  void countOpenInvitesOfTenant_countsOnlyTheTenantsInvitesThatCanStillBeAccepted() {
+    var now = LocalDateTime.now().truncatedTo(ChronoUnit.SECONDS);
+    var counsellor = AccountInviteTargetRole.COUNSELLOR;
+    persistedInviteIn(42L, counsellor, AccountInviteStatus.EMAIL_SENT, now.plusDays(1));
+    persistedInviteIn(42L, counsellor, AccountInviteStatus.DRAFT, now.plusDays(1));
+    persistedInviteIn(42L, counsellor, AccountInviteStatus.WAITING_FOR_UNIT, null);
+    persistedInviteIn(42L, counsellor, AccountInviteStatus.EMAIL_SENT, now.minusMinutes(1));
+    persistedInviteIn(42L, counsellor, AccountInviteStatus.EMAIL_SENT, now);
+    persistedInviteIn(42L, counsellor, AccountInviteStatus.ACCEPTED, now.plusDays(1));
+    persistedInviteIn(42L, counsellor, AccountInviteStatus.REVOKED, now.plusDays(1));
+    persistedInviteIn(42L, counsellor, AccountInviteStatus.EXPIRED, now.plusDays(1));
+    persistedInviteIn(43L, counsellor, AccountInviteStatus.EMAIL_SENT, now.plusDays(1));
+
+    // An invite expiring exactly now can no longer be accepted: only the first three count.
+    assertEquals(3, countOpenInvitesOf(42L, now));
+  }
+
+  @Test
+  void countOpenInvitesOfTenant_countsAnOpenInviteOfEveryTargetRole() {
+    var now = LocalDateTime.now().truncatedTo(ChronoUnit.SECONDS);
+    for (AccountInviteTargetRole role : AccountInviteTargetRole.values()) {
+      persistedInviteIn(42L, role, AccountInviteStatus.EMAIL_SENT, now.plusDays(1));
+    }
+
+    assertEquals(AccountInviteTargetRole.values().length, countOpenInvitesOf(42L, now));
+  }
+
+  private long countOpenInvitesOf(Long tenantId, LocalDateTime now) {
+    return accountInviteRepository.countOpenInvitesOfTenant(
+        tenantId,
+        List.of(
+            AccountInviteStatus.WAITING_FOR_UNIT,
+            AccountInviteStatus.DRAFT,
+            AccountInviteStatus.EMAIL_SENT),
+        now);
+  }
+
+  private AccountInvite persistedInviteIn(
+      Long tenantId,
+      AccountInviteTargetRole targetRole,
+      AccountInviteStatus status,
+      LocalDateTime expiresAt) {
+    return accountInviteRepository.save(
+        AccountInvite.builder()
+            .targetRole(targetRole)
+            .tenantId(tenantId)
+            .recipientEmail("invitee@example.org")
+            .tokenHash(UUID.randomUUID().toString())
+            .status(status)
+            .expiresAt(expiresAt)
+            .createDate(LocalDateTime.now())
+            .build());
+  }
+
   private AccountInvite persistedInvite(
       Long tenantId, AccountInviteTargetRole targetRole, LocalDateTime dpaSignedAt) {
     return accountInviteRepository.save(

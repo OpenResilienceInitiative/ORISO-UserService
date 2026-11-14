@@ -1,10 +1,13 @@
 package de.caritas.cob.userservice.api.admin.report.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.agencyadminserivce.generated.ApiClient;
 import de.caritas.cob.userservice.agencyadminserivce.generated.web.AdminAgencyControllerApi;
+import de.caritas.cob.userservice.agencyadminserivce.generated.web.model.AgencyAdminSearchResultDTO;
 import de.caritas.cob.userservice.api.admin.service.agency.AgencyAdminService;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyAdminServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
@@ -47,5 +50,30 @@ class AgencyAdminServiceTest {
     HttpHeaders defaultHeaders =
         (HttpHeaders) ReflectionTestUtils.getField(apiClient, "defaultHeaders");
     assertEquals("header1", defaultHeaders.get("header1").get(0));
+  }
+
+  @Test
+  void countActiveAgenciesOfTenant_Should_askForTheTenantsUndeletedAgenciesAndReturnTheTotal() {
+    when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders()).thenReturn(new HttpHeaders());
+    var api = mock(AdminAgencyControllerApi.class);
+    when(api.getApiClient()).thenReturn(new ApiClient());
+    when(agencyAdminServiceApiControllerFactory.createControllerApi()).thenReturn(api);
+    when(api.searchAgencies(1, 1, null, null, true, 121L))
+        .thenReturn(new AgencyAdminSearchResultDTO().total(3));
+
+    assertEquals(3L, agencyAdminService.countActiveAgenciesOfTenant(121L));
+  }
+
+  @Test
+  void countActiveAgenciesOfTenant_Should_fail_When_AgencyServiceSendsNoTotal() {
+    when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders()).thenReturn(new HttpHeaders());
+    var api = mock(AdminAgencyControllerApi.class);
+    when(api.getApiClient()).thenReturn(new ApiClient());
+    when(agencyAdminServiceApiControllerFactory.createControllerApi()).thenReturn(api);
+    when(api.searchAgencies(1, 1, null, null, true, 121L))
+        .thenReturn(new AgencyAdminSearchResultDTO());
+
+    assertThrows(
+        IllegalStateException.class, () -> agencyAdminService.countActiveAgenciesOfTenant(121L));
   }
 }
