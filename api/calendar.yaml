@@ -266,6 +266,55 @@ paths:
           description: FORBIDDEN - no/invalid role/authorization or CSRF token
       security:
         - Bearer: [ ]
+  /users/calendar/working-hours:
+    get:
+      tags:
+        - calendar-controller
+      summary: 'The caller''s working hours: weekly windows of local wall-clock time in the
+        platform''s zone (Europe/Berlin); none set is an empty list. Display only: booking, the
+        subscription feed and the busy import do not look at them. [Authorization: counsellor]'
+      operationId: getCalendarWorkingHours
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarWorkingHoursDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization
+      security:
+        - Bearer: [ ]
+    put:
+      tags:
+        - calendar-controller
+      summary: 'Replaces all working hours of the caller; an empty list removes them.
+        [Authorization: counsellor]'
+      operationId: setCalendarWorkingHours
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CalendarWorkingHoursDTO'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarWorkingHoursDTO'
+        400:
+          description: BAD REQUEST - more than 14 windows, a weekday outside 0..6, a time not in
+            HH:mm, or a start not before its end
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+      security:
+        - Bearer: [ ]
   /users/calendar/feed/{feedId}/{signature}.ics:
     get:
       tags:
@@ -498,6 +547,40 @@ components:
         icsUrl:
           type: string
           maxLength: 2048
+    CalendarWorkingHoursWindowDTO:
+      type: object
+      required:
+        - weekday
+        - start
+        - end
+      properties:
+        weekday:
+          description: 0 = Sunday .. 6 = Saturday
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 6
+        start:
+          description: Local wall-clock time, HH:mm
+          type: string
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+          example: '08:00'
+        end:
+          description: Local wall-clock time, HH:mm, after start
+          type: string
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+          example: '17:00'
+    CalendarWorkingHoursDTO:
+      type: object
+      required:
+        - windows
+      properties:
+        windows:
+          description: Ordered by weekday and start; at most 14
+          type: array
+          maxItems: 14
+          items:
+            $ref: '#/components/schemas/CalendarWorkingHoursWindowDTO'
   securitySchemes:
     Bearer:
       type: apiKey
