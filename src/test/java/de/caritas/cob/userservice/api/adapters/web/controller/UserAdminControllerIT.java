@@ -130,6 +130,10 @@ class UserAdminControllerIT {
   @MockitoBean private AdminListPreferenceService adminListPreferenceService;
   @MockitoBean private de.caritas.cob.userservice.api.helper.UserHelper userHelper;
 
+  @MockitoBean
+  private de.caritas.cob.userservice.api.admin.service.tenant.TenantDeletionBlockerService
+      tenantDeletionBlockerService;
+
   @Test
   void getSessions_Should_returnBadRequest_When_requiredPaginationParamsAreMissing()
       throws Exception {
