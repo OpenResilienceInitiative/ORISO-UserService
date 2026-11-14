@@ -100,6 +100,7 @@ public class DeleteUserAccountServiceTest {
     verify(this.actionsRegistry, times(1)).buildContainerForType(AskerDeletionWorkflowDTO.class);
     verify(userHardDeleteClaimService).claim(user.getUserId());
     verify(userHardDeleteClaimService).release(user.getUserId());
+    verify(userHardDeleteClaimService, org.mockito.Mockito.never()).recordFailure(any(), any());
     verify(this.commandMockProvider.getActionMock(DeleteMatrixAskerAction.class), times(1))
         .execute(new AskerDeletionWorkflowDTO(user, emptyList()));
     verify(this.commandMockProvider.getActionMock(DeleteDatabaseAskerAction.class), times(1))
@@ -189,7 +190,15 @@ public class DeleteUserAccountServiceTest {
     doAnswer(
             invocation -> {
               AskerDeletionWorkflowDTO workflow = invocation.getArgument(0);
-              workflow.getDeletionWorkflowErrors().add(DeletionWorkflowError.builder().build());
+              workflow
+                  .getDeletionWorkflowErrors()
+                  .add(
+                      DeletionWorkflowError.builder()
+                          .deletionTargetType(
+                              de.caritas.cob.userservice.api.workflow.delete.model
+                                  .DeletionTargetType.MATRIX)
+                          .reason("Unable to delete Matrix user account")
+                          .build());
               return null;
             })
         .when(this.commandMockProvider.getActionMock(DeleteMatrixAskerAction.class))
@@ -198,5 +207,10 @@ public class DeleteUserAccountServiceTest {
     this.deleteUserAccountService.deleteUserAccounts();
 
     verify(this.workflowErrorMailService, times(1)).buildAndSendErrorMail(anyList());
+    var order = org.mockito.Mockito.inOrder(userHardDeleteClaimService);
+    order
+        .verify(userHardDeleteClaimService)
+        .recordFailure("user-id", "MATRIX: Unable to delete Matrix user account");
+    order.verify(userHardDeleteClaimService).release("user-id");
   }
 }

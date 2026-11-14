@@ -30,6 +30,7 @@ import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteKe
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteMatrixConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionFailureSummary;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -37,9 +38,11 @@ import java.util.List;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /** Service to trigger deletion of user accounts. */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class DeleteUserAccountService {
@@ -74,12 +77,28 @@ public class DeleteUserAccountService {
 
   private List<DeletionWorkflowError> performClaimedUserDeletion(User user) {
     try {
-      return performUserDeletion(user);
+      var errors = performUserDeletion(user);
+      recordFailure(user, errors);
+      return errors;
     } finally {
       // If the final database action deleted the row this is a no-op. Otherwise at least one
       // irreversible step may already have completed, so the retained row is retryable for hard
       // deletion but can never become reactivation-eligible again.
       userHardDeleteClaimService.release(user.getUserId());
+    }
+  }
+
+  /** Best effort: a failure to record must not hide the run's own errors, which go out by mail. */
+  private void recordFailure(User user, List<DeletionWorkflowError> errors) {
+    var summary = DeletionFailureSummary.of(errors);
+    if (summary == null) {
+      return;
+    }
+    try {
+      userHardDeleteClaimService.recordFailure(user.getUserId(), summary);
+    } catch (RuntimeException recordingFailed) {
+      log.error(
+          "Could not record the deletion failure of user {}", user.getUserId(), recordingFailed);
     }
   }
 

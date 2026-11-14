@@ -101,6 +101,28 @@ public class DeleteDatabaseAskerActionTest {
   }
 
   @Test
+  void execute_Should_nameTheBlockingReference_When_aForeignKeyKeepsTheUser() {
+    doThrow(
+            new org.springframework.dao.DataIntegrityViolationException(
+                "could not execute statement",
+                new java.sql.SQLIntegrityConstraintViolationException(
+                    "Cannot delete or update a parent row: a foreign key constraint fails"
+                        + " (`userservice`.`session`, CONSTRAINT `session_ibfk_1` FOREIGN KEY"
+                        + " (`user_id`) REFERENCES `user` (`user_id`))")))
+        .when(this.userRepository)
+        .delete(any());
+    User user = new User();
+    user.setUserId("user id");
+    AskerDeletionWorkflowDTO workflowDTO = new AskerDeletionWorkflowDTO(user, new ArrayList<>());
+
+    this.deleteDatabaseAskerAction.execute(workflowDTO);
+
+    assertThat(
+        workflowDTO.getDeletionWorkflowErrors().get(0).getReason(),
+        is("Unable to delete user: still referenced by session (session_ibfk_1)"));
+  }
+
+  @Test
   public void execute_Should_deleteChatMembershipsAndMobileTokensBeforeUser_When_askerIsDeleted() {
     var user = new User();
     user.setUserId("user id");

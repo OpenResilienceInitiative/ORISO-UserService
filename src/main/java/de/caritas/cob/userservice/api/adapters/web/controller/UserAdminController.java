@@ -7,8 +7,10 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyConsultantResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyTypeDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AskerFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerReactivationRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AskerSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChangeConsultantTenantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAgencyResponseDTO;
@@ -453,6 +455,20 @@ public class UserAdminController implements UseradminApi {
   public ResponseEntity<Void> changeAgencyType(Long agencyId, AgencyTypeDTO agencyTypeDTO) {
     this.consultantAdminFacade.changeAgencyType(agencyId, agencyTypeDTO);
     return new ResponseEntity<>(HttpStatus.OK);
+  }
+
+  /**
+   * GET /useradmin/askers: advice seekers within the caller's reach, newest first.
+   *
+   * @param page page to return, 1-based (required)
+   * @param perPage page size, at most 100 (required)
+   * @param filter username, agency and (platform admins only) Träger
+   * @return the page and the total number of matches
+   */
+  @Override
+  public ResponseEntity<AskerSearchResultDTO> getAskers(
+      Integer page, Integer perPage, AskerFilter filter) {
+    return ResponseEntity.ok(askerUserAdminFacade.findAskers(page, perPage, filter));
   }
 
   /**

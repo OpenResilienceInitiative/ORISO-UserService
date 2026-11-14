@@ -109,5 +109,12 @@ public enum HttpStatusExceptionReason {
    */
   FEATURE_DISABLED,
   /** A guest who arrived earlier is still waiting in the same live-chat queue. */
-  LIVE_CHAT_QUEUE_NOT_FIRST
+  LIVE_CHAT_QUEUE_NOT_FIRST,
+  /**
+   * A technical {@code group-chat-system*} account: it owns its Träger's group chats and is never
+   * deleted on its own, only with the Träger (#1521, #1525).
+   */
+  TECHNICAL_GROUP_CHAT_ACCOUNT,
+  /** The advice seeker is already marked for deletion; marking again changes nothing (#1521). */
+  ASKER_ALREADY_MARKED_FOR_DELETION
 }
