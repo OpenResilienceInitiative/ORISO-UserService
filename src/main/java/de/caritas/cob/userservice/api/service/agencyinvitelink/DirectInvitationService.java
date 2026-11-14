@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -36,7 +37,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
@@ -52,6 +55,10 @@ import org.springframework.web.server.ResponseStatusException;
 public class DirectInvitationService {
 
   public static final String RENEWED_TYPE = "DIRECT_INVITATION_RENEWED";
+
+  /** How long a join may take before the sweep treats the half-recorded person as due. */
+  static final Duration JOIN_GRACE = Duration.ofMinutes(2);
+
   private static final String COUNSELLOR = InviteLinkKind.COUNSELLOR.name();
   private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -64,6 +71,7 @@ public class DirectInvitationService {
   private final @NonNull MatrixSessionSystemMessageService systemMessages;
   private final @NonNull SessionArchiveService archive;
   private final @NonNull Clock clock;
+  private final @NonNull PlatformTransactionManager transactionManager;
 
   @Value("${app.base.url:}")
   String appBaseUrl;
@@ -197,31 +205,66 @@ public class DirectInvitationService {
   }
 
   /**
-   * A later person joins the room, outside any lock, and is recorded as having come in by link once
-   * Matrix confirmed the join. Does nothing when {@link #openAppointmentConversation} found them in
-   * the conversation already.
+   * A later person joins the room, outside any lock. Fail closed against an invitation that ends
+   * meanwhile (switched off, deleted, expired, appointment cancelled):
+   *
+   * <ol>
+   *   <li>before the join, the person is recorded with a removal due after {@link #JOIN_GRACE}, so
+   *       a revoke running during the join sees them and an abandoned join is cleaned up;
+   *   <li>after the join, the invitation is read again under its row lock: still open clears the
+   *       due removal, otherwise the removal is due now and the sweep takes the person out.
+   * </ol>
+   *
+   * Does nothing when {@link #openAppointmentConversation} found them in the conversation already.
    */
   public Opened joinLater(AgencyInviteLink link, User user, Opened opened) {
     if (!opened.joinPending()) {
       return opened;
     }
     var session = opened.session();
-    if (link.isJoinsExistingSession()) {
-      rooms.addInvitedGuestToExistingRoom(session, user);
-    } else {
-      rooms.addToAppointmentRoom(session, user);
-    }
     var row =
         members
             .findBySessionIdAndUserId(session.getId(), user.getUserId())
             .orElseGet(() -> member(session, user, link));
     row.setRemovedAt(null);
-    row.setRevokeDueAt(null);
+    row.setRevokeDueAt(now().plus(JOIN_GRACE));
     row.setGuest(isGuest(user));
     row.setInviteLinkId(link.getId());
     row.setJoinedAt(now());
-    members.save(row);
+    var reserved = members.save(row);
+    if (link.isJoinsExistingSession()) {
+      rooms.addInvitedGuestToExistingRoom(session, user);
+    } else {
+      rooms.addToAppointmentRoom(session, user);
+    }
+    var template = new TransactionTemplate(transactionManager);
+    if (!Boolean.TRUE.equals(template.execute(status -> confirmJoin(link, reserved)))) {
+      throw new DirectLinkInactiveException();
+    }
     return new Opened(session, true, false);
+  }
+
+  /** Runs under the invitation's row lock; true when it is still open and the person may stay. */
+  private boolean confirmJoin(AgencyInviteLink opened, DirectInvitationMember reserved) {
+    var linkId = opened.getId();
+    var link = links.findByIdForUpdate(linkId);
+    var member = members.findById(reserved.getId()).orElse(reserved);
+    var open =
+        link.filter(l -> InviteLinkStatus.ACTIVE.name().equals(l.getStatus()))
+            .filter(l -> l.getExpiresAt() == null || l.getExpiresAt().isAfter(now()))
+            .flatMap(this::appointmentOf)
+            .filter(a -> a.getStatus() != SessionAppointment.Status.CANCELLED)
+            .isPresent();
+    // Same rule as the revoke: accounts keep a shared appointment conversation.
+    var leaves = !open && (opened.isJoinsExistingSession() || member.isGuest());
+    member.setRemovedAt(null);
+    member.setRevokeDueAt(leaves ? now() : null);
+    members.save(member);
+    if (!open) {
+      log.warn(
+          "Invitation {} ended while member {} joined; removal is due", linkId, member.getId());
+    }
+    return open;
   }
 
   /**

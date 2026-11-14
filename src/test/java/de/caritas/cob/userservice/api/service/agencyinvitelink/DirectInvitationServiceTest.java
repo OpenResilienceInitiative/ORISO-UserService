@@ -80,7 +80,8 @@ class DirectInvitationServiceTest {
             notifications,
             systemMessages,
             archive,
-            Clock.systemUTC());
+            Clock.systemUTC(),
+            mock(org.springframework.transaction.PlatformTransactionManager.class));
     service.appBaseUrl = "https://app.example";
     owner = new Consultant();
     owner.setId(OWNER_ID);
@@ -115,6 +116,7 @@ class DirectInvitationServiceTest {
             });
     when(links.save(any())).thenAnswer(i -> i.getArgument(0));
     when(members.save(any())).thenAnswer(i -> i.getArgument(0));
+    when(links.findByIdForUpdate(LINK_ID)).thenReturn(Optional.of(link));
     when(links.findByIdAndConsultantIdAndLinkKindAndChatTypeIn(
             eq(LINK_ID), eq(OWNER_ID), eq("COUNSELLOR"), any()))
         .thenReturn(Optional.of(link));
@@ -207,7 +209,7 @@ class DirectInvitationServiceTest {
     verify(newSession, never()).get();
     verify(rooms).addToAppointmentRoom(conversation, interpreter);
     verify(rooms, never()).addInvitedGuestToExistingRoom(any(), any());
-    verify(members).save(any());
+    verify(members, org.mockito.Mockito.atLeastOnce()).save(any());
   }
 
   /** The appointment lock covers the lookup only; Matrix is called after it was released. */
@@ -222,9 +224,9 @@ class DirectInvitationServiceTest {
     verify(members, never()).save(any());
   }
 
-  /** Recorded only once Matrix confirmed the join. */
+  /** A failed join leaves the person recorded with a due removal, so the sweep cleans up. */
   @Test
-  void laterOpener_Should_NotBeRecorded_When_TheJoinFails() {
+  void laterOpener_Should_StayDueForRemoval_When_TheJoinFails() {
     var conversation = session(SESSION_ID, "first-user");
     appointment.setSession(conversation);
     var interpreter = user("interpreter", true);
@@ -232,10 +234,83 @@ class DirectInvitationServiceTest {
         .when(rooms)
         .addToAppointmentRoom(conversation, interpreter);
     var opened = service.openAppointmentConversation(link, interpreter, () -> null);
+    var row = ArgumentCaptor.forClass(DirectInvitationMember.class);
 
     assertThatThrownBy(() -> service.joinLater(link, interpreter, opened))
         .isInstanceOf(IllegalStateException.class);
-    verify(members, never()).save(any());
+    verify(members).save(row.capture());
+    assertThat(row.getValue().getRevokeDueAt()).isNotNull();
+    assertThat(row.getValue().getRemovedAt()).isNull();
+  }
+
+  /** The person is on record, with a removal due, before Matrix is asked to let them in. */
+  @Test
+  void laterOpener_Should_BeRecordedAsDue_BeforeTheJoin_AndClearedAfterIt() {
+    var conversation = session(SESSION_ID, "first-user");
+    appointment.setSession(conversation);
+    var interpreter = user("interpreter", true);
+    var dueAtJoin = new java.util.concurrent.atomic.AtomicReference<LocalDateTime>();
+    var saved = new java.util.ArrayList<DirectInvitationMember>();
+    when(members.save(any()))
+        .thenAnswer(
+            i -> {
+              DirectInvitationMember m = i.getArgument(0);
+              saved.add(m);
+              return m;
+            });
+    org.mockito.Mockito.doAnswer(
+            i -> {
+              dueAtJoin.set(saved.getLast().getRevokeDueAt());
+              return null;
+            })
+        .when(rooms)
+        .addToAppointmentRoom(conversation, interpreter);
+
+    service.joinLater(
+        link, interpreter, service.openAppointmentConversation(link, interpreter, () -> null));
+
+    assertThat(dueAtJoin.get()).as("due while the join runs").isNotNull();
+    assertThat(saved.getLast().getRevokeDueAt()).as("cleared once still open").isNull();
+  }
+
+  /** Switched off while the person joined: they are taken out again by the sweep. */
+  @Test
+  void laterOpener_Should_BeDueForRemovalNow_When_TheInvitationEndsDuringTheJoin() {
+    var conversation = session(SESSION_ID, "first-user");
+    appointment.setSession(conversation);
+    var interpreter = user("interpreter", true);
+    var opened = service.openAppointmentConversation(link, interpreter, () -> null);
+    org.mockito.Mockito.doAnswer(
+            i -> {
+              link.setStatus("DISABLED"); // a revoke commits between check and join
+              return null;
+            })
+        .when(rooms)
+        .addToAppointmentRoom(conversation, interpreter);
+    var row = ArgumentCaptor.forClass(DirectInvitationMember.class);
+
+    assertThatThrownBy(() -> service.joinLater(link, interpreter, opened))
+        .isInstanceOf(DirectLinkInactiveException.class);
+    verify(members, org.mockito.Mockito.atLeastOnce()).save(row.capture());
+    var last = row.getValue();
+    assertThat(last.getRemovedAt()).isNull();
+    assertThat(last.getRevokeDueAt()).isBeforeOrEqualTo(LocalDateTime.now(ZoneOffset.UTC));
+  }
+
+  @Test
+  void laterOpener_Should_BeDueForRemovalNow_When_TheInvitationIsDeletedDuringTheJoin() {
+    var conversation = session(SESSION_ID, "first-user");
+    appointment.setSession(conversation);
+    var interpreter = user("interpreter", true);
+    var opened = service.openAppointmentConversation(link, interpreter, () -> null);
+    when(links.findByIdForUpdate(LINK_ID)).thenReturn(Optional.empty());
+    var row = ArgumentCaptor.forClass(DirectInvitationMember.class);
+
+    assertThatThrownBy(() -> service.joinLater(link, interpreter, opened))
+        .isInstanceOf(DirectLinkInactiveException.class);
+    verify(members, org.mockito.Mockito.atLeastOnce()).save(row.capture());
+    assertThat(row.getValue().getRevokeDueAt())
+        .isBeforeOrEqualTo(LocalDateTime.now(ZoneOffset.UTC));
   }
 
   @Test
