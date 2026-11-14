@@ -2,8 +2,10 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyIterable;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -22,6 +24,7 @@ import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.CalendarBlocker;
 import de.caritas.cob.userservice.api.model.CalendarBlocker.Source;
+import de.caritas.cob.userservice.api.model.CalendarSync;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Chat.ChatModality;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -36,6 +39,7 @@ import de.caritas.cob.userservice.api.port.out.SessionAppointmentRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.calendar.CalendarImportFetcher;
+import de.caritas.cob.userservice.api.service.calendar.CalendarSyncService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantFixtures;
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
@@ -54,22 +58,30 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Answers;
+import org.mockito.Mockito;
+import org.mockito.invocation.InvocationOnMock;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.test.context.support.WithAnonymousUser;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
@@ -96,6 +108,7 @@ class CalendarSyncControllerIT {
   private static final long AGENCY = 9831L;
   private static final String APP_BASE = "http://localhost:8082";
   private static final String PUBLIC_ADDRESS = "https://93.184.216.34/private/secret-token.ics";
+  private static final String OTHER_ADDRESS = "https://93.184.216.35/private/other-token.ics";
   private static final String CSRF_HEADER = "X-CSRF-Token";
   private static final String CSRF_VALUE = "test";
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
@@ -105,8 +118,10 @@ class CalendarSyncControllerIT {
 
   @Autowired private TenantFixtures fixtures;
   @Autowired private MockMvc mockMvc;
-  @Autowired private CalendarBlockerRepository blockers;
+  @MockitoSpyBean private CalendarBlockerRepository blockers;
   @Autowired private CalendarSyncRepository syncs;
+  @Autowired private CalendarSyncService syncService;
+  @Autowired private JdbcTemplate jdbc;
   @Autowired private SessionAppointmentRepository appointments;
   @Autowired private ChatRepository chats;
 
@@ -298,6 +313,69 @@ class CalendarSyncControllerIT {
   }
 
   @Test
+  void aReplacementThatFailsAfterTheDelete_Should_KeepTheBusyTimesOfTheLastGoodImport()
+      throws Exception {
+    connectImport(PUBLIC_ADDRESS);
+    blockerAt(in(24), in(25), Source.EXTERNAL);
+    blockerAt(in(48), in(49), Source.EXTERNAL);
+    var left = new AtomicReference<Integer>();
+    when(fetcher.fetch(any(), anyList()))
+        .thenReturn(calendar(event(in(72), in(73)), event(in(96), in(97))));
+    doAnswer(
+            call -> {
+              // The database refuses the second new row, after the old ones were deleted.
+              left.set(externalRowsSeenByTheImport());
+              var rows = new ArrayList<CalendarBlocker>();
+              call.<Iterable<CalendarBlocker>>getArgument(0).forEach(rows::add);
+              rows.get(1).setStartTime(null);
+              return callThrough(call);
+            })
+        .when(blockers)
+        .saveAll(anyIterable());
+
+    syncService.importAll();
+
+    assertThat(left.get()).as("the import had deleted the old busy times").isZero();
+    assertThat(busyStarts()).containsExactly(in(24), in(48));
+    assertThat(syncs.findById(counsellor.getId()).orElseThrow().getImportLastSyncAt()).isNull();
+  }
+
+  @Test
+  void anAddressChangedWhileAnImportIsWritten_Should_NotBeOverwrittenByTheImport()
+      throws Exception {
+    connectImport(PUBLIC_ADDRESS);
+    when(fetcher.fetch(any(), anyList())).thenReturn(calendar(event(in(24), in(25))));
+    var change = new AtomicReference<CompletableFuture<Integer>>();
+    doAnswer(
+            call -> {
+              // A second request stores another address while the import writes its result.
+              var update =
+                  CompletableFuture.supplyAsync(
+                      () ->
+                          jdbc.update(
+                              "UPDATE calendar_sync SET import_url = ? WHERE consultant_id = ?",
+                              OTHER_ADDRESS,
+                              counsellor.getId()));
+              change.set(update);
+              try {
+                update.get(300, TimeUnit.MILLISECONDS);
+              } catch (TimeoutException waitsForTheImport) {
+                // The row is locked: the change is applied once the import commits.
+              }
+              return callThrough(call);
+            })
+        .when(blockers)
+        .deleteByConsultantIdAndSource(counsellor.getId(), Source.EXTERNAL);
+
+    syncService.importAll();
+
+    assertThat(change.get().get(10, TimeUnit.SECONDS)).isEqualTo(1);
+    assertThat(busyStarts()).as("the import itself went through").containsExactly(in(24));
+    assertThat(syncs.findById(counsellor.getId()).orElseThrow().getImportUrl())
+        .isEqualTo(OTHER_ADDRESS);
+  }
+
+  @Test
   void asker_Should_NotReachTheConnections() throws Exception {
     Tenants.actAs(caller, asker.getUserId(), TENANT, UserRole.USER);
     caller.setGrantedAuthorities(Set.of(AuthorityValue.USER_DEFAULT));
@@ -413,6 +491,34 @@ class CalendarSyncControllerIT {
                         .build()));
     seededChats.add(chat);
     return chat;
+  }
+
+  /**
+   * Runs the repository behind the spy. A repository is a JDK proxy without a real method Mockito
+   * could call, so the spy delegates to it as its default answer.
+   */
+  private Object callThrough(InvocationOnMock call) throws Throwable {
+    return Mockito.mockingDetails(blockers)
+        .getMockCreationSettings()
+        .getDefaultAnswer()
+        .answer(call);
+  }
+
+  /** Imported busy times of the counsellor as the running import's own transaction sees them. */
+  private Integer externalRowsSeenByTheImport() {
+    return jdbc.queryForObject(
+        "SELECT COUNT(*) FROM calendar_blocker WHERE consultant_id = ? AND source = 'EXTERNAL'",
+        Integer.class,
+        counsellor.getId());
+  }
+
+  private void connectImport(String address) {
+    var sync = new CalendarSync();
+    sync.setConsultantId(counsellor.getId());
+    sync.setTenantId(TENANT);
+    sync.setFeedId(UUID.randomUUID());
+    sync.setImportUrl(address);
+    syncs.save(sync);
   }
 
   private void blockerAt(Instant start, Instant end, Source source) {

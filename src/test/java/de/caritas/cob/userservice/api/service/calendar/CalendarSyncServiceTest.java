@@ -89,6 +89,9 @@ class CalendarSyncServiceTest {
         .when(syncs.findById(any()))
         .thenAnswer(call -> Optional.ofNullable(stored.get(call.<String>getArgument(0))));
     lenient()
+        .when(syncs.findForUpdate(any()))
+        .thenAnswer(call -> Optional.ofNullable(stored.get(call.<String>getArgument(0))));
+    lenient()
         .when(syncs.save(any()))
         .thenAnswer(
             call -> {
