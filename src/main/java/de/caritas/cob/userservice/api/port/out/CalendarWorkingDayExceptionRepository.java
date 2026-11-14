@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.port.out;
 import de.caritas.cob.userservice.api.model.CalendarWorkingDayException;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -11,6 +12,16 @@ import org.springframework.data.repository.query.Param;
 
 public interface CalendarWorkingDayExceptionRepository
     extends CrudRepository<CalendarWorkingDayException, UUID> {
+
+  /**
+   * Locks the counsellor's own row until the transaction ends, so that their exception writes run
+   * one after another: two new dates cannot both pass the limit check, and one date cannot be
+   * stored twice. Empty when there is no such counsellor.
+   */
+  @Query(
+      value = "SELECT consultant_id FROM consultant WHERE consultant_id = :consultantId FOR UPDATE",
+      nativeQuery = true)
+  Optional<String> lockConsultant(@Param("consultantId") String consultantId);
 
   /** The rows of one counsellor from one date onwards. */
   List<CalendarWorkingDayException> findByConsultantIdAndExceptionDateGreaterThanEqual(

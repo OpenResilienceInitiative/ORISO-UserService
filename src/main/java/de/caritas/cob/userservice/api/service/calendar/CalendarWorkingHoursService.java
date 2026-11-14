@@ -116,7 +116,7 @@ public class CalendarWorkingHoursService {
    * Creates or replaces the caller's exception on one date; an empty list makes the whole day off.
    * The date lies at most 400 days from today, and a counsellor keeps at most 400 exceptions; one
    * more date is a conflict, a date they already keep may always be replaced. Exceptions on dates
-   * that can no longer be written are dropped first.
+   * that can no longer be written are dropped first. Writes of one counsellor run one at a time.
    */
   @Transactional
   public CalendarWorkingDayExceptionDTO replaceException(
@@ -126,6 +126,7 @@ public class CalendarWorkingHoursService {
     var windows = dayWindowsOf(request);
     var today = today();
     requireWithinReach(date, today);
+    lockExceptionsOf(consultantId);
     exceptions.deleteByConsultantIdBefore(
         consultantId, today.minusDays(MAX_EXCEPTION_DISTANCE_DAYS));
     if (!exceptions.existsByConsultantIdAndExceptionDate(consultantId, date)
@@ -146,7 +147,19 @@ public class CalendarWorkingHoursService {
     if (date == null) {
       throw new BadRequestException("A day exception names its date.");
     }
-    exceptions.deleteByConsultantIdAndExceptionDate(caller.getUserId(), date);
+    var consultantId = caller.getUserId();
+    lockExceptionsOf(consultantId);
+    exceptions.deleteByConsultantIdAndExceptionDate(consultantId, date);
+  }
+
+  /**
+   * Waits for and holds the counsellor's row until the transaction ends, so that the limit check of
+   * one write sees what a parallel one stored.
+   */
+  private void lockExceptionsOf(String consultantId) {
+    if (exceptions.lockConsultant(consultantId).isEmpty()) {
+      throw new ForbiddenException("Only a counsellor keeps working hours.");
+    }
   }
 
   private static List<CalendarWorkingHours> rowsOf(

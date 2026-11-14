@@ -1,8 +1,10 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.when;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.securityContext;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -36,6 +38,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -46,6 +51,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.security.test.context.TestSecurityContextHolder;
 import org.springframework.security.test.context.support.WithAnonymousUser;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
@@ -361,6 +367,45 @@ class CalendarWorkingHoursControllerIT {
 
     actAsCounsellor(colleague);
     body(setException(next));
+  }
+
+  @Test
+  void putException_Should_LetOnlyOneOfSeveralParallelNewDates_PassTheLimit() throws Exception {
+    actAsCounsellor(counsellor);
+    var rows = new ArrayList<CalendarWorkingDayException>();
+    for (var i = 0; i < 399; i++) {
+      rows.add(dayOff(counsellor.getId(), today.minusDays(62).plusDays(i)));
+    }
+    Tenants.acrossAll(() -> exceptions.saveAll(rows));
+    var parallel = 6;
+    var security = TestSecurityContextHolder.getContext();
+    var start = new CountDownLatch(1);
+    var statuses = new ArrayList<Integer>();
+    try (var pool = Executors.newFixedThreadPool(parallel)) {
+      var answers = new ArrayList<Future<Integer>>();
+      for (var i = 0; i < parallel; i++) {
+        var request =
+            setException(today.plusDays(340 + i).toString()).with(securityContext(security));
+        answers.add(
+            pool.submit(
+                () -> {
+                  start.await();
+                  return mockMvc.perform(request).andReturn().getResponse().getStatus();
+                }));
+      }
+      start.countDown();
+      for (var answer : answers) {
+        statuses.add(answer.get(30, SECONDS));
+      }
+    }
+
+    var expected = new ArrayList<Integer>(List.of(200));
+    while (expected.size() < parallel) {
+      expected.add(409);
+    }
+    assertThat(statuses).containsExactlyInAnyOrderElementsOf(expected);
+    assertThat(Tenants.acrossAll(() -> exceptions.countDatesByConsultantId(counsellor.getId())))
+        .isEqualTo(400);
   }
 
   @Test

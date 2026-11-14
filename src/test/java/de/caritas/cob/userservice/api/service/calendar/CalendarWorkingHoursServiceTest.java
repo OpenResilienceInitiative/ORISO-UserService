@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -65,6 +66,7 @@ class CalendarWorkingHoursServiceTest {
   void setUp() {
     caller.setUserId(ME);
     caller.setRoles(Set.of(UserRole.CONSULTANT.getValue()));
+    lenient().when(exceptions.lockConsultant(ME)).thenReturn(Optional.of(ME));
     service =
         new CalendarWorkingHoursService(
             caller, repository, settings, exceptions, CLOCK, "Europe/Berlin");
@@ -355,6 +357,39 @@ class CalendarWorkingHoursServiceTest {
     assertThatThrownBy(() -> service.replaceException(date, dayRequest()))
         .isInstanceOf(ConflictException.class);
     verify(exceptions, never()).deleteByConsultantIdAndExceptionDate(any(), any());
+    verify(exceptions, never()).saveAll(any());
+  }
+
+  @Test
+  void replaceException_Should_LockTheCounsellor_BeforeCheckingTheLimit() {
+    var date = TODAY.plusDays(1);
+
+    service.replaceException(date, dayRequest());
+
+    var order = inOrder(exceptions);
+    order.verify(exceptions).lockConsultant(ME);
+    order.verify(exceptions).deleteByConsultantIdBefore(any(), any());
+    order.verify(exceptions).countDatesByConsultantId(ME);
+    order.verify(exceptions).saveAll(any());
+  }
+
+  @Test
+  void removeException_Should_LockTheCounsellor_BeforeDeleting() {
+    var date = TODAY.plusDays(1);
+
+    service.removeException(date);
+
+    var order = inOrder(exceptions);
+    order.verify(exceptions).lockConsultant(ME);
+    order.verify(exceptions).deleteByConsultantIdAndExceptionDate(ME, date);
+  }
+
+  @Test
+  void replaceException_Should_Refuse_When_TheCounsellorHasNoRow() {
+    when(exceptions.lockConsultant(ME)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> service.replaceException(TODAY.plusDays(1), dayRequest()))
+        .isInstanceOf(ForbiddenException.class);
     verify(exceptions, never()).saveAll(any());
   }
 
