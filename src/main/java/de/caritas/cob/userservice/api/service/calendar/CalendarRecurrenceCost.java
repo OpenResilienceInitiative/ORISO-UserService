@@ -71,6 +71,7 @@ final class CalendarRecurrenceCost {
       Instant windowEnd,
       long limit) {
     if (repeatsAValue(rule)
+        || usesAPartItsFrequencyForbids(rule)
         || isTooFrequent(rule)
         || candidatesPerStep(rule) > MAX_CANDIDATES_PER_STEP) {
       return Verdict.REFUSED;
@@ -115,6 +116,22 @@ final class CalendarRecurrenceCost {
         || distinct(rule.getSecondList()) > 1
         || distinct(rule.getMinuteList()) > 1
         || perDay(rule) > MAX_PER_DAY;
+  }
+
+  /**
+   * RFC 5545 (3.3.10) allows BYWEEKNO only on a YEARLY rule and BYYEARDAY not on a DAILY, WEEKLY or
+   * MONTHLY one. ical4j still applies them there, and the estimates do not count them for those
+   * frequencies, so such a rule is not read at all.
+   */
+  static boolean usesAPartItsFrequencyForbids(Recur<?> rule) {
+    var frequency = rule.getFrequency();
+    if (!rule.getWeekNoList().isEmpty() && frequency != Frequency.YEARLY) {
+      return true;
+    }
+    return !rule.getYearDayList().isEmpty()
+        && (frequency == Frequency.DAILY
+            || frequency == Frequency.WEEKLY
+            || frequency == Frequency.MONTHLY);
   }
 
   /**

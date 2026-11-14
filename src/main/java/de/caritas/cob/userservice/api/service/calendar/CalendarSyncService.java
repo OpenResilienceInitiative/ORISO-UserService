@@ -100,7 +100,10 @@ public class CalendarSyncService {
             }));
   }
 
-  /** Stores the address, drops what an earlier address imported and imports once. */
+  /**
+   * Stores the address, drops what an earlier address imported and imports once. Saving the address
+   * already stored only refreshes it: its busy times stay until a refresh succeeds.
+   */
   public CalendarSyncDTO configureImport(CalendarImportDTO request) {
     requireConsultant();
     var address = validator.parse(request.getIcsUrl()).toString();
@@ -109,6 +112,9 @@ public class CalendarSyncService {
     transaction.executeWithoutResult(
         status -> {
           var sync = syncs.findById(consultantId).orElseThrow();
+          if (address.equals(sync.getImportUrl())) {
+            return;
+          }
           sync.setImportUrl(address);
           sync.setImportLastSyncAt(null);
           sync.setImportError(null);
