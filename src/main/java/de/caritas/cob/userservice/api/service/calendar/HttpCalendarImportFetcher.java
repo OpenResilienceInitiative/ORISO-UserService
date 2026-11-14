@@ -73,6 +73,7 @@ public class HttpCalendarImportFetcher implements CalendarImportFetcher {
    */
   static byte[] bodyOf(Cancellable request, ClassicHttpResponse response) throws IOException {
     if (response.getCode() != 200 || response.getEntity() == null) {
+      request.cancel();
       throw new CalendarImportException(CalendarImportError.UNREACHABLE);
     }
     var deadline = System.nanoTime() + TOTAL_TIMEOUT.toNanos();

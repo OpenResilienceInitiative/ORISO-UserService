@@ -71,6 +71,22 @@ class HttpCalendarImportFetcherTest {
           }
         });
     server.createContext(
+        "/missing-then-slow",
+        exchange -> {
+          exchange.sendResponseHeaders(404, 0);
+          try (var body = exchange.getResponseBody()) {
+            for (int piece = 0; piece < SLOW_PIECES; piece++) {
+              body.write(new byte[1024]);
+              body.flush();
+              Thread.sleep(SLOW_PIECE_MILLIS);
+            }
+          } catch (java.io.IOException clientGaveUp) {
+            // Expected: the fetcher drops the connection on the error answer.
+          } catch (InterruptedException stopped) {
+            Thread.currentThread().interrupt();
+          }
+        });
+    server.createContext(
         "/large-then-slow",
         exchange -> {
           exchange.sendResponseHeaders(200, 0);
@@ -136,6 +152,16 @@ class HttpCalendarImportFetcherTest {
     assertThat(errorOf("/large-then-slow")).isEqualTo(CalendarImportError.TOO_LARGE);
 
     // Reading the trickle to its end would take SLOW_PIECES x SLOW_PIECE_MILLIS = 4 seconds.
+    assertThat(java.time.Duration.ofNanos(System.nanoTime() - started))
+        .isLessThan(java.time.Duration.ofMillis(SLOW_PIECES * SLOW_PIECE_MILLIS / 2));
+  }
+
+  @Test
+  void fetch_Should_DropTheConnection_When_AnErrorAnswerKeepsSending() {
+    var started = System.nanoTime();
+
+    assertThat(errorOf("/missing-then-slow")).isEqualTo(CalendarImportError.UNREACHABLE);
+
     assertThat(java.time.Duration.ofNanos(System.nanoTime() - started))
         .isLessThan(java.time.Duration.ofMillis(SLOW_PIECES * SLOW_PIECE_MILLIS / 2));
   }
