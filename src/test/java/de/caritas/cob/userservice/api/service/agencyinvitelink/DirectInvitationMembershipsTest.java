@@ -100,7 +100,7 @@ class DirectInvitationMembershipsTest {
     var attempt = memberships.reserve(session, user, link).orElseThrow();
     memberships.confirm(session, user, LINK_ID, attempt);
 
-    memberships.abandon(session, user, attempt);
+    memberships.abandon(session, user, LINK_ID, attempt);
 
     assertThat(DirectInvitationMemberships.isMember(row.get())).isTrue();
   }
@@ -111,7 +111,7 @@ class DirectInvitationMembershipsTest {
     var first = memberships.reserve(session, user, link).orElseThrow();
     var second = memberships.reserve(session, user, link).orElseThrow();
 
-    memberships.abandon(session, user, first);
+    memberships.abandon(session, user, LINK_ID, first);
     assertThat(row.get().getJoinAttempt())
         .as("the first attempt no longer owns the row")
         .isEqualTo(second);
@@ -128,7 +128,7 @@ class DirectInvitationMembershipsTest {
     var second = memberships.reserve(session, user, link).orElseThrow();
 
     assertThat(memberships.confirm(session, user, LINK_ID, second)).isTrue();
-    memberships.abandon(session, user, first);
+    memberships.abandon(session, user, LINK_ID, first);
 
     assertThat(DirectInvitationMemberships.isMember(row.get())).isTrue();
     assertThat(row.get().getRemovedAt()).isNull();
@@ -151,7 +151,7 @@ class DirectInvitationMembershipsTest {
     var attempt = memberships.reserve(session, user, link).orElseThrow();
     assertThat(row.get().getRevokeDueAt()).as("reserve keeps the earlier due").isEqualTo(due);
 
-    memberships.abandon(session, user, attempt);
+    memberships.abandon(session, user, LINK_ID, attempt);
 
     assertThat(row.get().getRevokeDueAt()).isEqualTo(due);
     assertThat(row.get().getRemovedAt()).as("only the sweep marks removed").isNull();
@@ -170,15 +170,59 @@ class DirectInvitationMembershipsTest {
     assertThat(row.get().getRemovedAt()).isNull();
   }
 
-  /** The sweep removed the person while the attempt ran: its late confirmation changes nothing. */
+  /**
+   * Matrix let the person in, but the sweep removed the row meanwhile: the person is in the room
+   * again, so the removal is due again, never silently dropped.
+   */
   @Test
-  void confirm_Should_NotUndoARemoval_ThatTheSweepConfirmedMeanwhile() {
+  void confirm_Should_MarkTheRemovalDueAgain_When_TheSweepRemovedTheRowMeanwhile() {
     var attempt = memberships.reserve(session, user, link).orElseThrow();
     row.get().setRemovedAt(now());
     row.get().setJoinAttempt(null); // what the sweep does when Matrix confirmed
 
     assertThat(memberships.confirm(session, user, LINK_ID, attempt)).isFalse();
-    assertThat(row.get().getRemovedAt()).isNotNull();
+
+    assertThat(row.get().getRemovedAt()).isNull();
+    assertThat(row.get().getRevokeDueAt()).isBeforeOrEqualTo(now());
+    assertThat(DirectInvitationMemberships.isMember(row.get())).isFalse();
+  }
+
+  /** The same for a row that is gone altogether: a due row is written for the joined person. */
+  @Test
+  void confirm_Should_RecordADueRemoval_When_TheRowIsGone() {
+    var attempt = memberships.reserve(session, user, link).orElseThrow();
+    row.set(null);
+
+    assertThat(memberships.confirm(session, user, LINK_ID, attempt)).isFalse();
+
+    assertThat(row.get()).isNotNull();
+    assertThat(row.get().getRevokeDueAt()).isBeforeOrEqualTo(now());
+    assertThat(row.get().getRemovedAt()).isNull();
+  }
+
+  /** A failed join may still have reached Matrix: after a removal meanwhile it is due again. */
+  @Test
+  void abandon_Should_MarkTheRemovalDueAgain_When_TheSweepRemovedTheRowMeanwhile() {
+    var attempt = memberships.reserve(session, user, link).orElseThrow();
+    row.get().setRemovedAt(now());
+    row.get().setJoinAttempt(null);
+
+    memberships.abandon(session, user, LINK_ID, attempt);
+
+    assertThat(row.get().getRemovedAt()).isNull();
+    assertThat(row.get().getRevokeDueAt()).isBeforeOrEqualTo(now());
+  }
+
+  @Test
+  void attemptRunning_Should_HoldOnlyUntilTheCap() {
+    var attempt = memberships.reserve(session, user, link).orElseThrow();
+    assertThat(attempt).isNotBlank();
+    assertThat(DirectInvitationMemberships.attemptRunning(row.get(), now())).isTrue();
+
+    row.get().setJoinedAt(now().minus(DirectInvitationMemberships.ATTEMPT_CAP).minusSeconds(1));
+    assertThat(DirectInvitationMemberships.attemptRunning(row.get(), now()))
+        .as("stale after the cap")
+        .isFalse();
   }
 
   private static LocalDateTime now() {

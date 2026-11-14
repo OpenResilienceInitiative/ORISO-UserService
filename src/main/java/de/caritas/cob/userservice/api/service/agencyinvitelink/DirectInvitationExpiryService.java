@@ -137,6 +137,10 @@ public class DirectInvitationExpiryService {
     if (member == null || member.getRemovedAt() != null || member.getRevokeDueAt() == null) {
       return false;
     }
+    if (DirectInvitationMemberships.attemptRunning(member, now())) {
+      // Not in the room yet reads as "out": wait until the attempt confirmed, failed or is stale.
+      return false;
+    }
     var session = sessions.findById(member.getSessionId()).orElse(null);
     if (session == null) {
       // The conversation is gone, and its room membership with it.

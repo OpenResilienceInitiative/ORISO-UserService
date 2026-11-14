@@ -45,6 +45,12 @@ public class DirectInvitationMemberships {
   /** How long a join may take before the sweep treats the attempt as abandoned. */
   static final Duration JOIN_GRACE = Duration.ofMinutes(2);
 
+  /**
+   * The longest a join attempt counts as running; the sweep leaves its row alone until then, since
+   * a person not yet in the room would read as "out". Afterwards the attempt is stale.
+   */
+  static final Duration ATTEMPT_CAP = Duration.ofMinutes(5);
+
   private final @NonNull DirectInvitationMemberRepository members;
   private final @NonNull AgencyInviteLinkRepository links;
   private final @NonNull SessionAppointmentRepository appointments;
@@ -56,10 +62,17 @@ public class DirectInvitationMemberships {
         && row.getJoinAttempt() == null;
   }
 
+  /** Whether a join attempt is on record and younger than {@link #ATTEMPT_CAP}. */
+  public static boolean attemptRunning(DirectInvitationMember row, LocalDateTime now) {
+    return row.getJoinAttempt() != null
+        && row.getJoinedAt() != null
+        && row.getJoinedAt().isAfter(now.minus(ATTEMPT_CAP));
+  }
+
   /** The first person of an appointment conversation, who created it: a member at once. */
   @Transactional(propagation = Propagation.MANDATORY)
   public void recordCreator(Session session, User user, AgencyInviteLink link) {
-    members.save(newRow(session, user, link));
+    members.save(newRow(session, user, link.getId()));
   }
 
   /**
@@ -74,7 +87,7 @@ public class DirectInvitationMemberships {
     var row =
         members
             .findBySessionIdAndUserIdForUpdate(session.getId(), user.getUserId())
-            .orElseGet(() -> newRow(session, user, link));
+            .orElseGet(() -> newRow(session, user, link.getId()));
     if (row.getId() != null && isMember(row)) {
       return Optional.empty();
     }
@@ -93,7 +106,8 @@ public class DirectInvitationMemberships {
   /**
    * After Matrix confirmed the join: the person becomes a member only if this attempt still owns
    * the row and the invitation is still open (active, not expired, not deleted, appointment not
-   * cancelled), read under the invitation's row lock. Otherwise a removal is due now.
+   * cancelled), read under the invitation's row lock. Otherwise a removal is due now, also when
+   * another attempt or the sweep took the row over: Matrix let the person in.
    *
    * @return whether the person is a member now
    */
@@ -103,7 +117,7 @@ public class DirectInvitationMemberships {
     var open = isOpen(linkId);
     var row = members.findBySessionIdAndUserIdForUpdate(session.getId(), user.getUserId());
     if (row.isEmpty() || !Objects.equals(row.get().getJoinAttempt(), attempt)) {
-      // Another attempt or the sweep took the row over; that one decides.
+      mayBeInRoom(row.orElseGet(() -> newRow(session, user, linkId)));
       return false;
     }
     var member = row.get();
@@ -113,27 +127,40 @@ public class DirectInvitationMemberships {
       members.save(member);
       return true;
     }
-    member.setRevokeDueAt(earliest(member.getRevokeDueAt(), now()));
-    members.save(member);
+    mayBeInRoom(member);
     log.warn("Invitation {} ended while member {} joined; removal is due", linkId, member.getId());
     return false;
   }
 
   /**
-   * A join attempt failed: the removal is due now (or earlier, if it already was). Never marks the
-   * person removed and never cancels a due removal; the sweep checks Matrix and does that.
+   * A join attempt failed, possibly after Matrix let the person in: the removal is due now (or
+   * earlier, if it already was). Never marks the person removed and never cancels a due removal;
+   * the sweep checks Matrix and does that.
    */
   @Transactional
-  public void abandon(Session session, User user, String attempt) {
-    members
-        .findBySessionIdAndUserIdForUpdate(session.getId(), user.getUserId())
-        .filter(row -> Objects.equals(row.getJoinAttempt(), attempt))
-        .ifPresent(
-            row -> {
-              row.setJoinAttempt(null);
-              row.setRevokeDueAt(earliest(row.getRevokeDueAt(), now()));
-              members.save(row);
-            });
+  public void abandon(Session session, User user, Long linkId, String attempt) {
+    var row =
+        members
+            .findBySessionIdAndUserIdForUpdate(session.getId(), user.getUserId())
+            .orElseGet(() -> newRow(session, user, linkId));
+    if (Objects.equals(row.getJoinAttempt(), attempt)) {
+      row.setJoinAttempt(null);
+    }
+    mayBeInRoom(row);
+  }
+
+  /**
+   * The person may be in the room without a confirmed membership: the removal is due now (an
+   * earlier due time is kept) and the row is not removed. A confirmed member of another attempt
+   * stays: that attempt joined an open invitation, and its own revoke takes it out.
+   */
+  private void mayBeInRoom(DirectInvitationMember row) {
+    if (row.getId() != null && isMember(row)) {
+      return;
+    }
+    row.setRemovedAt(null);
+    row.setRevokeDueAt(earliest(row.getRevokeDueAt(), now()));
+    members.save(row);
   }
 
   private boolean isOpen(Long linkId) {
@@ -147,11 +174,11 @@ public class DirectInvitationMemberships {
         .isPresent();
   }
 
-  private DirectInvitationMember newRow(Session session, User user, AgencyInviteLink link) {
+  private DirectInvitationMember newRow(Session session, User user, Long linkId) {
     return DirectInvitationMember.builder()
         .sessionId(session.getId())
         .userId(user.getUserId())
-        .inviteLinkId(link.getId())
+        .inviteLinkId(linkId)
         .guest(isGuest(user))
         .joinedAt(now())
         .build();

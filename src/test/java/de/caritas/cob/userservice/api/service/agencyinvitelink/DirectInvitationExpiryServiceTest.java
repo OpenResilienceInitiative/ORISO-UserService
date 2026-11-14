@@ -202,6 +202,31 @@ class DirectInvitationExpiryServiceTest {
     assertThat(guest.getRemovedAt()).isNotNull();
   }
 
+  /**
+   * A join still running may not have reached the room yet: "no membership event" would read as
+   * out. The sweep leaves the row alone until the attempt's cap, then treats it as stale.
+   */
+  @Test
+  void retryRemoval_Should_WaitForARunningJoinAttempt_AndCheckItOnceStale() {
+    guest.setRevokeDueAt(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1));
+    guest.setJoinAttempt("attempt-1");
+    guest.setJoinedAt(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1));
+    when(rooms.remove(conversation, "@guest-1:x")).thenReturn(true);
+
+    assertThat(service.retryRemoval(1L)).isFalse();
+    verify(rooms, never()).remove(any(), any());
+    assertThat(guest.getRemovedAt()).isNull();
+    assertThat(guest.getJoinAttempt()).isEqualTo("attempt-1");
+
+    guest.setJoinedAt(
+        LocalDateTime.now(ZoneOffset.UTC)
+            .minus(DirectInvitationMemberships.ATTEMPT_CAP)
+            .minusMinutes(1));
+    assertThat(service.retryRemoval(1L)).isTrue();
+    assertThat(guest.getRemovedAt()).isNotNull();
+    assertThat(guest.getJoinAttempt()).as("the stale attempt lost the row").isNull();
+  }
+
   /** Switched off or deleted: the same removal as at expiry, whatever the link's status. */
   @Test
   void revoke_Should_RemoveGuestsAndArchive_When_ALinkIsSwitchedOffOrDeleted() {

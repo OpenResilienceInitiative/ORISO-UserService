@@ -219,7 +219,7 @@ public class DirectInvitationService {
         rooms.addToAppointmentRoom(session, user);
       }
     } catch (RuntimeException failure) {
-      memberships.abandon(session, user, attempt.get());
+      memberships.abandon(session, user, link.getId(), attempt.get());
       throw failure;
     }
     if (!memberships.confirm(session, user, link.getId(), attempt.get())) {
