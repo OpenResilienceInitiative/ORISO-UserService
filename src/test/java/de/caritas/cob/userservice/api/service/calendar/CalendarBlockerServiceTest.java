@@ -139,7 +139,7 @@ class CalendarBlockerServiceTest {
             Instant.parse("2026-11-25T08:00:00Z"));
     assertThat(created).extracting(entry -> entry.getSeriesId()).doesNotContainNull();
     assertThat(created.stream().map(entry -> entry.getSeriesId()).distinct()).hasSize(1);
-    assertThat(saved).allMatch(blocker -> blocker.getSeriesId() != null);
+    assertThat(saved).hasSize(4).allMatch(blocker -> blocker.getSeriesId() != null);
   }
 
   @Test

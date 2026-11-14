@@ -187,6 +187,18 @@ class CalendarRecurrenceCostTest {
   }
 
   @Test
+  void judge_Should_Refuse_When_TheRuleUsesAPartItsFrequencyForbids() {
+    // The estimate of a MONTHLY step ignores BYWEEKNO and BYYEARDAY, but ical4j applies them.
+    assertThat(judge("FREQ=MONTHLY;BYWEEKNO=" + range(1, 53), FROM)).isEqualTo(Verdict.REFUSED);
+    assertThat(judge("FREQ=WEEKLY;BYWEEKNO=47", FROM)).isEqualTo(Verdict.REFUSED);
+    assertThat(judge("FREQ=MONTHLY;BYYEARDAY=" + range(1, 366), FROM)).isEqualTo(Verdict.REFUSED);
+    assertThat(judge("FREQ=DAILY;BYYEARDAY=320", FROM)).isEqualTo(Verdict.REFUSED);
+    // Both stay allowed on a YEARLY rule.
+    assertThat(judge("FREQ=YEARLY;BYWEEKNO=47;BYDAY=MO", FROM)).isEqualTo(Verdict.EXPAND);
+    assertThat(judge("FREQ=YEARLY;BYYEARDAY=320", FROM)).isEqualTo(Verdict.EXPAND);
+  }
+
+  @Test
   void judge_Should_ReportTooMany_When_TheWindowAloneHoldsMoreThanTheLimit() {
     assertThat(judge("FREQ=HOURLY", FROM)).isEqualTo(Verdict.TOO_MANY);
     assertThat(judge("FREQ=DAILY;BYHOUR=" + range(0, 23), FROM)).isEqualTo(Verdict.TOO_MANY);

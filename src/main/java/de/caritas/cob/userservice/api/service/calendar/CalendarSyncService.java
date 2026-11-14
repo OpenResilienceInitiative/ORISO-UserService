@@ -32,7 +32,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <p>The import address is private: it is never logged and never returned, only its host. An import
  * reads the calendar outside any database transaction and then replaces all imported busy times of
  * the counsellor in one. A failed import keeps the busy times of the last good one and records why
- * it failed as a code.
+ * it failed as a code. Every transaction that reads the connection row and writes it back locks it
+ * first, so none of them overwrites what another changed meanwhile.
  */
 @Service
 @Slf4j
@@ -93,14 +94,17 @@ public class CalendarSyncService {
     return toDto(
         transaction.execute(
             status -> {
-              var sync = syncs.findById(consultantId).orElseThrow();
+              var sync = syncs.findForUpdate(consultantId).orElseThrow();
               sync.setFeedId(UUID.randomUUID());
               sync.setFeedLastFetchedAt(null);
               return syncs.save(sync);
             }));
   }
 
-  /** Stores the address, drops what an earlier address imported and imports once. */
+  /**
+   * Stores the address, drops what an earlier address imported and imports once. Saving the address
+   * already stored only refreshes it: its busy times stay until a refresh succeeds.
+   */
   public CalendarSyncDTO configureImport(CalendarImportDTO request) {
     requireConsultant();
     var address = validator.parse(request.getIcsUrl()).toString();
@@ -108,7 +112,10 @@ public class CalendarSyncService {
     var consultantId = caller.getUserId();
     transaction.executeWithoutResult(
         status -> {
-          var sync = syncs.findById(consultantId).orElseThrow();
+          var sync = syncs.findForUpdate(consultantId).orElseThrow();
+          if (address.equals(sync.getImportUrl())) {
+            return;
+          }
           sync.setImportUrl(address);
           sync.setImportLastSyncAt(null);
           sync.setImportError(null);
@@ -127,7 +134,7 @@ public class CalendarSyncService {
     return toDto(
         transaction.execute(
             status -> {
-              var sync = syncs.findById(consultantId).orElseThrow();
+              var sync = syncs.findForUpdate(consultantId).orElseThrow();
               sync.setImportUrl(null);
               sync.setImportLastSyncAt(null);
               sync.setImportError(null);
@@ -168,7 +175,7 @@ public class CalendarSyncService {
     var imported = slots;
     transaction.executeWithoutResult(
         status -> {
-          var sync = syncs.findById(consultantId).orElse(null);
+          var sync = syncs.findForUpdate(consultantId).orElse(null);
           // Removed or pointed elsewhere while the calendar was being read: not this result.
           if (sync == null || !address.equals(sync.getImportUrl())) {
             return;

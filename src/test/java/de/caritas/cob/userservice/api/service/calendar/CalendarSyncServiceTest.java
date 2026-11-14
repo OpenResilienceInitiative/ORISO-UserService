@@ -89,6 +89,9 @@ class CalendarSyncServiceTest {
         .when(syncs.findById(any()))
         .thenAnswer(call -> Optional.ofNullable(stored.get(call.<String>getArgument(0))));
     lenient()
+        .when(syncs.findForUpdate(any()))
+        .thenAnswer(call -> Optional.ofNullable(stored.get(call.<String>getArgument(0))));
+    lenient()
         .when(syncs.save(any()))
         .thenAnswer(
             call -> {
@@ -222,6 +225,22 @@ class CalendarSyncServiceTest {
     assertThat(stored.get(ME).getImportError()).isNull();
     verify(blockers, times(3)).deleteByConsultantIdAndSource(ME, Source.EXTERNAL);
     verify(blockers, times(2)).saveAll(any());
+  }
+
+  @Test
+  void savingTheSameAddressAgain_Should_KeepTheBusyTimes_When_TheRefreshFails() {
+    when(fetcher.fetch(any(), anyList()))
+        .thenReturn(CALENDAR)
+        .thenThrow(new CalendarImportException(CalendarImportError.UNREACHABLE));
+    service.configureImport(new CalendarImportDTO().icsUrl(ADDRESS));
+
+    var status = service.configureImport(new CalendarImportDTO().icsUrl(ADDRESS));
+
+    assertThat(status.getImportError()).isEqualTo(ImportErrorEnum.UNREACHABLE);
+    assertThat(status.getImportLastSyncAt().toInstant()).isEqualTo(NOW);
+    // Only the first import replaced busy times; the failed refresh removed none.
+    verify(blockers, times(2)).deleteByConsultantIdAndSource(ME, Source.EXTERNAL);
+    verify(blockers, times(1)).saveAll(any());
   }
 
   @Test

@@ -16,7 +16,9 @@ import org.springframework.stereotype.Service;
  * The calendar settings that apply to one Träger, read from the TenantService where the setting is
  * resolved (ADR-032). Works like {@code InternalGroupChatRecipientScopeResolver}: the answer is
  * remembered for a minute, a failed read reads as {@link CalendarPolicy#CLOSED} and is remembered
- * for a few seconds only, so an outage never widens access and is never hammered.
+ * for a few seconds only, so an outage never widens access and is never hammered. Both times count
+ * from the end of the read, so a slow failure is not read again at once, and concurrent callers
+ * wait for the one read in progress instead of starting their own.
  */
 @Service
 @RequiredArgsConstructor
@@ -31,6 +33,7 @@ public class CalendarPolicyResolver {
   private final @NonNull Clock clock;
   private final ConcurrentHashMap<Long, Remembered> remembered = new ConcurrentHashMap<>();
   private final ConcurrentHashMap<Long, Object> reading = new ConcurrentHashMap<>();
+  private final Object readingSingleTenant = new Object();
 
   @Value("${multitenancy.enabled:true}")
   private boolean multitenancy;
@@ -55,11 +58,10 @@ public class CalendarPolicyResolver {
       if (known != null) {
         return known;
       }
-      var now = Instant.now(clock);
       try {
         var policy =
             CalendarPolicy.fromPolicies(tenantPolicies.getTenantPermissionPoliciesRaw(tenantId));
-        remembered.put(tenantId, new Remembered(policy, now.plus(REMEMBERED_FOR)));
+        remembered.put(tenantId, new Remembered(policy, Instant.now(clock).plus(REMEMBERED_FOR)));
         return policy;
       } catch (RuntimeException failure) {
         log.warn(
@@ -67,7 +69,8 @@ public class CalendarPolicyResolver {
             tenantId,
             TenantCaseHandoverPolicyReadClient.failureSummary(failure));
         remembered.put(
-            tenantId, new Remembered(CalendarPolicy.CLOSED, now.plus(FAILURE_REMEMBERED_FOR)));
+            tenantId,
+            new Remembered(CalendarPolicy.CLOSED, Instant.now(clock).plus(FAILURE_REMEMBERED_FOR)));
         return CalendarPolicy.CLOSED;
       }
     }
@@ -75,26 +78,37 @@ public class CalendarPolicyResolver {
 
   /** The id of the single configured tenant, remembered like the policy; null when unreadable. */
   private Long singleTenantId() {
-    var known = singleTenant;
-    var now = Instant.now(clock);
-    if (known != null && now.isBefore(known.until())) {
+    var known = freshSingleTenant();
+    if (known != null) {
       return known.id();
     }
-    Long id = null;
-    var keptFor = FAILURE_REMEMBERED_FOR;
-    try {
-      var tenant = tenantService.getSingleTenancyTenantDataFresh();
-      id = tenant == null ? null : tenant.getId();
-      if (id != null) {
-        keptFor = REMEMBERED_FOR;
+    // One read at a time, as for a Traeger's policy.
+    synchronized (readingSingleTenant) {
+      known = freshSingleTenant();
+      if (known != null) {
+        return known.id();
       }
-    } catch (RuntimeException failure) {
-      log.warn(
-          "Single tenant could not be read; the closed calendar default applies: {}",
-          TenantCaseHandoverPolicyReadClient.failureSummary(failure));
+      Long id = null;
+      var keptFor = FAILURE_REMEMBERED_FOR;
+      try {
+        var tenant = tenantService.getSingleTenancyTenantDataFresh();
+        id = tenant == null ? null : tenant.getId();
+        if (id != null) {
+          keptFor = REMEMBERED_FOR;
+        }
+      } catch (RuntimeException failure) {
+        log.warn(
+            "Single tenant could not be read; the closed calendar default applies: {}",
+            TenantCaseHandoverPolicyReadClient.failureSummary(failure));
+      }
+      singleTenant = new RememberedTenant(id, Instant.now(clock).plus(keptFor));
+      return id;
     }
-    singleTenant = new RememberedTenant(id, now.plus(keptFor));
-    return id;
+  }
+
+  private RememberedTenant freshSingleTenant() {
+    var known = singleTenant;
+    return known != null && Instant.now(clock).isBefore(known.until()) ? known : null;
   }
 
   private CalendarPolicy freshAnswer(Long tenantId) {

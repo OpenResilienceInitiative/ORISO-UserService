@@ -71,6 +71,7 @@ final class CalendarRecurrenceCost {
       Instant windowEnd,
       long limit) {
     if (repeatsAValue(rule)
+        || usesAPartItsFrequencyForbids(rule)
         || isTooFrequent(rule)
         || candidatesPerStep(rule) > MAX_CANDIDATES_PER_STEP) {
       return Verdict.REFUSED;
@@ -104,6 +105,18 @@ final class CalendarRecurrenceCost {
   }
 
   /**
+   * What ical4j builds for one rule of a time zone the document defines itself: it walks the rule
+   * from the start of its observance to {@code horizon} while it reads the document. A rule refused
+   * for an event costs too much here as well.
+   */
+  static long timeZoneWork(Recur<?> rule, Instant start, Instant horizon) {
+    if (repeatsAValue(rule) || usesAPartItsFrequencyForbids(rule) || isTooFrequent(rule)) {
+      return Long.MAX_VALUE;
+    }
+    return times(steps(rule, start, horizon), candidatesPerStep(rule));
+  }
+
+  /**
    * A rule that repeats by the second or minute, names more than one second or minute, or yields
    * more than {@value #MAX_PER_DAY} occurrences a day is no appointment.
    */
@@ -115,6 +128,22 @@ final class CalendarRecurrenceCost {
         || distinct(rule.getSecondList()) > 1
         || distinct(rule.getMinuteList()) > 1
         || perDay(rule) > MAX_PER_DAY;
+  }
+
+  /**
+   * RFC 5545 (3.3.10) allows BYWEEKNO only on a YEARLY rule and BYYEARDAY not on a DAILY, WEEKLY or
+   * MONTHLY one. ical4j still applies them there, and the estimates do not count them for those
+   * frequencies, so such a rule is not read at all.
+   */
+  static boolean usesAPartItsFrequencyForbids(Recur<?> rule) {
+    var frequency = rule.getFrequency();
+    if (!rule.getWeekNoList().isEmpty() && frequency != Frequency.YEARLY) {
+      return true;
+    }
+    return !rule.getYearDayList().isEmpty()
+        && (frequency == Frequency.DAILY
+            || frequency == Frequency.WEEKLY
+            || frequency == Frequency.MONTHLY);
   }
 
   /**

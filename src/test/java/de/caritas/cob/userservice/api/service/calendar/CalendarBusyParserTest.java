@@ -5,6 +5,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
@@ -17,6 +20,7 @@ import java.util.stream.IntStream;
 import net.fortuna.ical4j.util.Configurator;
 import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 class CalendarBusyParserTest {
 
@@ -60,6 +64,21 @@ class CalendarBusyParserTest {
         .containsExactly(
             slot("2026-11-19T23:00:00Z", "2026-11-20T23:00:00Z"),
             slot("2026-11-22T23:00:00Z", "2026-11-25T23:00:00Z"));
+  }
+
+  @Test
+  void parse_Should_LetAWholeDayWithoutAnEndLastOneDay() {
+    // RFC 5545 3.6.1: a DATE start without DTEND or DURATION lasts one day.
+    var slots =
+        parse(
+            event("UID:day", "DTSTART;VALUE=DATE:20261120"),
+            event("UID:weekly", "DTSTART;VALUE=DATE:20261123", "RRULE:FREQ=WEEKLY;COUNT=2"));
+
+    assertThat(slots)
+        .containsExactly(
+            slot("2026-11-19T23:00:00Z", "2026-11-20T23:00:00Z"),
+            slot("2026-11-22T23:00:00Z", "2026-11-23T23:00:00Z"),
+            slot("2026-11-29T23:00:00Z", "2026-11-30T23:00:00Z"));
   }
 
   @Test
@@ -125,6 +144,168 @@ class CalendarBusyParserTest {
             slot("2026-11-16T09:00:00Z", "2026-11-16T10:00:00Z"),
             slot("2026-11-17T15:00:00Z", "2026-11-17T16:00:00Z"),
             slot("2026-11-18T09:00:00Z", "2026-11-18T10:00:00Z"));
+  }
+
+  @Test
+  void parse_Should_MoveEveryLaterOccurrence_WithAnOverrideForThisAndFuture() {
+    var slots =
+        parse(
+            event(
+                "UID:series",
+                "DTSTART:20261116T090000Z",
+                "DTEND:20261116T100000Z",
+                "RRULE:FREQ=DAILY;COUNT=5",
+                "EXDATE:20261119T090000Z"),
+            event(
+                "UID:series",
+                "RECURRENCE-ID;RANGE=THISANDFUTURE:20261117T090000Z",
+                "DTSTART:20261117T110000Z",
+                "DTEND:20261117T113000Z"));
+
+    // From the 17th on two hours later and half an hour long; the 19th stays excluded by the time
+    // the rule gave it.
+    assertThat(slots)
+        .containsExactly(
+            slot("2026-11-16T09:00:00Z", "2026-11-16T10:00:00Z"),
+            slot("2026-11-17T11:00:00Z", "2026-11-17T11:30:00Z"),
+            slot("2026-11-18T11:00:00Z", "2026-11-18T11:30:00Z"),
+            slot("2026-11-20T11:00:00Z", "2026-11-20T11:30:00Z"));
+  }
+
+  @Test
+  void parse_Should_LetAPeriodReplaceTheOccurrenceItStarts() {
+    var slots =
+        parse(
+            event(
+                "UID:series",
+                "DTSTART:20261116T090000Z",
+                "DTEND:20261116T100000Z",
+                "RRULE:FREQ=DAILY;COUNT=2",
+                "RDATE;VALUE=PERIOD:20261117T090000Z/20261117T093000Z"));
+
+    assertThat(slots)
+        .containsExactly(
+            slot("2026-11-16T09:00:00Z", "2026-11-16T10:00:00Z"),
+            slot("2026-11-17T09:00:00Z", "2026-11-17T09:30:00Z"));
+  }
+
+  @Test
+  void parse_Should_CountTheEventsItSkips_And_LogNeitherTheirContentNorTheirUid() {
+    var logger = (Logger) LoggerFactory.getLogger(CalendarBusyParser.class);
+    var appender = new ListAppender<ILoggingEvent>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      var slots =
+          parse(
+              event(
+                  "UID:private-uid-1",
+                  "SUMMARY:Private matter",
+                  "DTSTART:20261116T140000Z",
+                  "DTEND:20261116T140001Z",
+                  "RRULE:FREQ=SECONDLY"),
+              event("UID:private-uid-2", "DTSTART:20261116T150000Z", "DTEND:20261116T160000Z"));
+
+      assertThat(slots).containsExactly(slot("2026-11-16T15:00:00Z", "2026-11-16T16:00:00Z"));
+      assertThat(appender.list).hasSize(1);
+      assertThat(appender.list.get(0).getFormattedMessage())
+          .contains("skipped 1 of 2 events")
+          .contains("UnreadableEvent")
+          .doesNotContain("private-uid", "Private matter", "20261116");
+
+      appender.list.clear();
+      parse(event("UID:fine", "DTSTART:20261116T150000Z", "DTEND:20261116T160000Z"));
+      assertThat(appender.list).as("nothing skipped, nothing logged").isEmpty();
+    } finally {
+      logger.detachAppender(appender);
+    }
+  }
+
+  @Test
+  void parse_Should_RefuseATimeZoneWhoseRulesCostTooMuch_BeforeIcal4jBuildsIt() {
+    for (var rule :
+        List.of(
+            "RRULE:FREQ=SECONDLY",
+            "RRULE:FREQ=SEC\r\n ONDLY",
+            "RRULE:FREQ=MINUTELY",
+            "RRULE:FREQ=HOURLY",
+            "RRULE:FREQ=DAILY;BYHOUR=" + range(0, 23),
+            "rrule:FREQ=HOURLY",
+            // ical4j walks an exclusion rule as well.
+            "RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=10\r\nEXRULE:FREQ=SECONDLY")) {
+      var document =
+          calendar(
+              timeZone("Synthetic/Hostile", "19700101T000000", rule),
+              event(
+                  "UID:zoned",
+                  "DTSTART;TZID=Synthetic/Hostile:20261116T090000",
+                  "DTEND;TZID=Synthetic/Hostile:20261116T100000"));
+
+      var error =
+          assertTimeoutPreemptively(
+              Duration.ofSeconds(5), () -> errorOf(() -> parser.parse(document, FROM, TO, BERLIN)));
+
+      assertThat(error).as(rule).isEqualTo(TOO_LARGE);
+    }
+  }
+
+  @Test
+  void parse_Should_ReadAnEventInATimeZoneTheDocumentDefines() {
+    // As Outlook writes its zones: every rule from 1601 on.
+    var slots =
+        parse(
+            timeZone(
+                "W. Europe Standard Time",
+                "16010101T030000",
+                "RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=10"),
+            event(
+                "UID:zoned",
+                "DTSTART;TZID=W. Europe Standard Time:20261116T090000",
+                "DTEND;TZID=W. Europe Standard Time:20261116T100000"));
+
+    assertThat(slots).containsExactly(slot("2026-11-16T08:00:00Z", "2026-11-16T09:00:00Z"));
+  }
+
+  @Test
+  void parse_Should_ReadAZoneThatStartsInYearOne() {
+    // No floor on the year: the estimate counts every step from the start, however early.
+    var slots =
+        parse(
+            timeZone(
+                "Synthetic/Always", "00010101T030000", "RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=10"),
+            event(
+                "UID:zoned",
+                "DTSTART;TZID=Synthetic/Always:20261116T090000",
+                "DTEND;TZID=Synthetic/Always:20261116T100000"));
+
+    assertThat(slots).containsExactly(slot("2026-11-16T08:00:00Z", "2026-11-16T09:00:00Z"));
+  }
+
+  @Test
+  void parse_Should_RefuseAZoneRule_ThatIcal4jCouldReadDifferentlyFromTheEstimate() {
+    for (var rule :
+        List.of(
+            // A colon inside a quoted parameter value does not end the parameters.
+            "RRULE;X-P=\"a:FREQ=YEARLY;X-Q\":FREQ=SECONDLY",
+            "RRULE;X-P=\"a:FREQ=SECONDLY",
+            // A component inside an observance.
+            "RRULE:FREQ=SECONDLY\r\nBEGIN:X-NESTED\r\nEND:X-NESTED",
+            // A second start: ical4j walks the rule from the first one.
+            "DTSTART:20360101T000000\r\nRRULE:FREQ=HOURLY")) {
+      var document =
+          calendar(
+              timeZone("Synthetic/Hostile", "19700101T000000", rule),
+              event(
+                  "UID:zoned",
+                  "DTSTART;TZID=Synthetic/Hostile:20261116T090000",
+                  "DTEND;TZID=Synthetic/Hostile:20261116T100000"));
+
+      var error =
+          assertTimeoutPreemptively(
+              Duration.ofSeconds(5), () -> errorOf(() -> parser.parse(document, FROM, TO, BERLIN)));
+
+      assertThat(error).as(rule).isEqualTo(CalendarImportError.NOT_ICS);
+    }
   }
 
   @Test
@@ -412,6 +593,28 @@ class CalendarBusyParserTest {
     return "BEGIN:VEVENT\r\nDTSTAMP:20261101T000000Z\r\n"
         + String.join("\r\n", lines)
         + "\r\nEND:VEVENT\r\n";
+  }
+
+  /** A zone of standard time {@code +0100} by {@code standardRule} and summer time in March. */
+  private static String timeZone(String id, String start, String standardRule) {
+    return String.join(
+            "\r\n",
+            "BEGIN:VTIMEZONE",
+            "TZID:" + id,
+            "BEGIN:STANDARD",
+            "DTSTART:" + start,
+            "TZOFFSETFROM:+0200",
+            "TZOFFSETTO:+0100",
+            standardRule,
+            "END:STANDARD",
+            "BEGIN:DAYLIGHT",
+            "DTSTART:" + start,
+            "TZOFFSETFROM:+0100",
+            "TZOFFSETTO:+0200",
+            "RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=3",
+            "END:DAYLIGHT",
+            "END:VTIMEZONE")
+        + "\r\n";
   }
 
   private static BusySlot slot(String start, String end) {

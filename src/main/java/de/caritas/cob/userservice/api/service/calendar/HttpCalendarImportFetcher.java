@@ -12,6 +12,7 @@ import org.apache.hc.client5.http.config.ConnectionConfig;
 import org.apache.hc.client5.http.config.RequestConfig;
 import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManagerBuilder;
+import org.apache.hc.core5.concurrent.Cancellable;
 import org.apache.hc.core5.http.ClassicHttpResponse;
 import org.apache.hc.core5.http.HttpHeaders;
 import org.apache.hc.core5.util.Timeout;
@@ -59,15 +60,20 @@ public class HttpCalendarImportFetcher implements CalendarImportFetcher {
       var request = new HttpGet(address);
       request.setHeader(HttpHeaders.ACCEPT, "text/calendar, */*;q=0.1");
       request.setHeader(HttpHeaders.USER_AGENT, "ORISO-Calendar-Import");
-      return client.execute(request, HttpCalendarImportFetcher::bodyOf);
+      return client.execute(request, response -> bodyOf(request, response));
     } catch (IOException unreachable) {
       throw new CalendarImportException(CalendarImportError.UNREACHABLE);
     }
   }
 
-  /** Only a plain 200 carries a calendar; a redirect is refused like any other answer. */
-  static byte[] bodyOf(ClassicHttpResponse response) throws IOException {
+  /**
+   * Only a plain 200 carries a calendar; a redirect is refused like any other answer. Giving up on
+   * a body cancels the request first: closing the stream would otherwise read the rest of it, with
+   * no deadline, before the connection is let go.
+   */
+  static byte[] bodyOf(Cancellable request, ClassicHttpResponse response) throws IOException {
     if (response.getCode() != 200 || response.getEntity() == null) {
+      request.cancel();
       throw new CalendarImportException(CalendarImportError.UNREACHABLE);
     }
     var deadline = System.nanoTime() + TOTAL_TIMEOUT.toNanos();
@@ -78,9 +84,11 @@ public class HttpCalendarImportFetcher implements CalendarImportFetcher {
       while ((read = content.read(buffer)) != -1) {
         body.write(buffer, 0, read);
         if (body.size() > MAX_BYTES) {
+          request.cancel();
           throw new CalendarImportException(CalendarImportError.TOO_LARGE);
         }
         if (System.nanoTime() > deadline) {
+          request.cancel();
           throw new CalendarImportException(CalendarImportError.UNREACHABLE);
         }
       }
