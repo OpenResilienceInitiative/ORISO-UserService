@@ -251,6 +251,41 @@ class CalendarBusyParserTest {
   }
 
   @Test
+  void parse_Should_RefuseATimeZoneWhoseFutureObservancesCostTooMuch_BeforeIcal4jBuildsThem() {
+    // ical4j builds an observance that starts after today up to five years past its start, however
+    // far beyond the horizon of the estimate that start lies: each of these is almost 44,000 dates.
+    var future = new StringBuilder();
+    for (var start : List.of("20900101T000000", "20910101T000000")) {
+      future.append(
+          String.join(
+              "\r\n",
+              "BEGIN:STANDARD",
+              "DTSTART:" + start,
+              "TZOFFSETFROM:+0200",
+              "TZOFFSETTO:+0100",
+              "RRULE:FREQ=DAILY;BYHOUR=" + range(0, 23),
+              "END:STANDARD",
+              ""));
+    }
+    var zone =
+        timeZone("Synthetic/Hostile", "19700101T000000", "RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=10")
+            .replace("END:VTIMEZONE", future + "END:VTIMEZONE");
+    var document =
+        calendar(
+            zone,
+            event(
+                "UID:zoned",
+                "DTSTART;TZID=Synthetic/Hostile:20261116T090000",
+                "DTEND;TZID=Synthetic/Hostile:20261116T100000"));
+
+    var error =
+        assertTimeoutPreemptively(
+            Duration.ofSeconds(5), () -> errorOf(() -> parser.parse(document, FROM, TO, BERLIN)));
+
+    assertThat(error).isEqualTo(TOO_LARGE);
+  }
+
+  @Test
   void parse_Should_ReadAnEventInATimeZoneTheDocumentDefines() {
     // As Outlook writes its zones: every rule from 1601 on.
     var slots =

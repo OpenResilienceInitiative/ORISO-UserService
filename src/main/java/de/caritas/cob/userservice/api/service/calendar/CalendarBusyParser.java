@@ -499,10 +499,11 @@ public class CalendarBusyParser {
   /**
    * Judges the rules of the time zones the document defines (VTIMEZONE) from the text alone. ical4j
    * registers such a zone while it builds the document and walks every rule of an observance (RRULE
-   * and EXRULE) from its start to a few years past today, without a cap and before the time budget
-   * is checked. A zone this scan could read differently from ical4j is refused: a quote before the
-   * colon of a line, a component inside an observance, or an observance with a second start. So is
-   * a document with more than {@value CalendarTimeZones#MAX} zones.
+   * and EXRULE) from its start to a few years past today, or to five years past a start after
+   * today, without a cap and before the time budget is checked. A zone this scan could read
+   * differently from ical4j is refused: a quote before the colon of a line, a component inside an
+   * observance, or an observance with a second start. So is a document with more than {@value
+   * CalendarTimeZones#MAX} zones.
    */
   private static void requireBoundedTimeZones(String text) {
     var horizon = Instant.now().plus(TIME_ZONE_HORIZON);

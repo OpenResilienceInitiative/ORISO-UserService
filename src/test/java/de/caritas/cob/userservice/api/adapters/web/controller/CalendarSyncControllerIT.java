@@ -321,17 +321,7 @@ class CalendarSyncControllerIT {
     var left = new AtomicReference<Integer>();
     when(fetcher.fetch(any(), anyList()))
         .thenReturn(calendar(event(in(72), in(73)), event(in(96), in(97))));
-    doAnswer(
-            call -> {
-              // The database refuses the second new row, after the old ones were deleted.
-              left.set(externalRowsSeenByTheImport());
-              var rows = new ArrayList<CalendarBlocker>();
-              call.<Iterable<CalendarBlocker>>getArgument(0).forEach(rows::add);
-              rows.get(1).setStartTime(null);
-              return callThrough(call);
-            })
-        .when(blockers)
-        .saveAll(anyIterable());
+    refuseTheSecondNewRow(() -> left.set(externalRowsSeenByTheImport()));
 
     syncService.importAll();
 
@@ -340,6 +330,25 @@ class CalendarSyncControllerIT {
     var sync = syncs.findById(counsellor.getId()).orElseThrow();
     assertThat(sync.getImportLastSyncAt()).isNull();
     // Recorded after the rollback: the counsellor sees that the import failed.
+    assertThat(sync.getImportError()).isEqualTo("UNREACHABLE");
+  }
+
+  @Test
+  void aReplacementThatFailsAfterTheDelete_Should_KeepTheTimeOfTheLastGoodImport()
+      throws Exception {
+    connectImport(PUBLIC_ADDRESS);
+    var lastGoodImport = in(-1);
+    var connected = syncs.findById(counsellor.getId()).orElseThrow();
+    connected.setImportLastSyncAt(lastGoodImport);
+    syncs.save(connected);
+    when(fetcher.fetch(any(), anyList()))
+        .thenReturn(calendar(event(in(72), in(73)), event(in(96), in(97))));
+    refuseTheSecondNewRow(() -> {});
+
+    syncService.importAll();
+
+    var sync = syncs.findById(counsellor.getId()).orElseThrow();
+    assertThat(sync.getImportLastSyncAt()).isEqualTo(lastGoodImport);
     assertThat(sync.getImportError()).isEqualTo("UNREACHABLE");
   }
 
@@ -494,6 +503,20 @@ class CalendarSyncControllerIT {
                         .build()));
     seededChats.add(chat);
     return chat;
+  }
+
+  /** The database refuses the second new row of an import, after the old ones were deleted. */
+  private void refuseTheSecondNewRow(Runnable beforeTheWrite) {
+    doAnswer(
+            call -> {
+              beforeTheWrite.run();
+              var rows = new ArrayList<CalendarBlocker>();
+              call.<Iterable<CalendarBlocker>>getArgument(0).forEach(rows::add);
+              rows.get(1).setStartTime(null);
+              return callThrough(call);
+            })
+        .when(blockers)
+        .saveAll(anyIterable());
   }
 
   /**

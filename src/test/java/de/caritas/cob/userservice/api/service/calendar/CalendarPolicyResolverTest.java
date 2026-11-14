@@ -17,6 +17,7 @@ import java.time.ZoneOffset;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
@@ -94,9 +95,11 @@ class CalendarPolicyResolverTest {
             });
     when(tenantPolicies.getTenantPermissionPoliciesRaw(anyLong())).thenReturn(Map.of());
 
-    var first = CompletableFuture.runAsync(() -> resolver.resolve(null));
+    var first = CompletableFuture.supplyAsync(() -> resolver.resolve(null));
     assertThat(firstReadStarted.await(5, TimeUnit.SECONDS)).isTrue();
-    var waiter = new Thread(() -> resolver.resolve(null));
+    // A thread of its own, so the test can see it wait; its result or failure reaches the test.
+    var second = new FutureTask<>(() -> resolver.resolve(null));
+    var waiter = new Thread(second);
     waiter.start();
     // The second caller either waits for the first read or starts a read of its own.
     var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
@@ -106,9 +109,10 @@ class CalendarPolicyResolverTest {
       Thread.onSpinWait();
     }
     release.countDown();
-    first.get(5, TimeUnit.SECONDS);
-    waiter.join(5_000);
+    var firstPolicy = first.get(5, TimeUnit.SECONDS);
+    var secondPolicy = second.get(5, TimeUnit.SECONDS);
 
+    assertThat(secondPolicy).isEqualTo(firstPolicy);
     assertThat(reads.get()).isEqualTo(1);
   }
 

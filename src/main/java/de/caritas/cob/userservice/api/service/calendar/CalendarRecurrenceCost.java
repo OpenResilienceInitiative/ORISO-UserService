@@ -37,7 +37,17 @@ final class CalendarRecurrenceCost {
    */
   static final long MAX_WORK = 2_000_000;
 
+  /**
+   * Years past its start up to which ical4j (ZoneRulesBuilder) builds the onsets of a time zone's
+   * observance that starts after today.
+   */
+  static final int FUTURE_OBSERVANCE_YEARS = 5;
+
   private static final long DAY = Duration.ofDays(1).toSeconds();
+
+  /** {@value #FUTURE_OBSERVANCE_YEARS} years, leap days included. */
+  private static final Duration FUTURE_OBSERVANCE_SPAN =
+      Duration.ofDays(FUTURE_OBSERVANCE_YEARS * 366L);
 
   /** What to do with a rule. */
   enum Verdict {
@@ -106,14 +116,19 @@ final class CalendarRecurrenceCost {
 
   /**
    * What ical4j builds for one rule of a time zone the document defines itself: it walks the rule
-   * from the start of its observance to {@code horizon} while it reads the document. A rule refused
-   * for an event costs too much here as well.
+   * from the start of its observance to {@code horizon} while it reads the document, and an
+   * observance that starts after today on to {@value #FUTURE_OBSERVANCE_YEARS} years past its
+   * start, however late that start is. A rule refused for an event costs too much here as well.
    */
   static long timeZoneWork(Recur<?> rule, Instant start, Instant horizon) {
     if (repeatsAValue(rule) || usesAPartItsFrequencyForbids(rule) || isTooFrequent(rule)) {
       return Long.MAX_VALUE;
     }
-    return times(steps(rule, start, horizon), candidatesPerStep(rule));
+    var end = start.plus(FUTURE_OBSERVANCE_SPAN);
+    if (end.isBefore(horizon)) {
+      end = horizon;
+    }
+    return times(steps(rule, start, end), candidatesPerStep(rule));
   }
 
   /**
