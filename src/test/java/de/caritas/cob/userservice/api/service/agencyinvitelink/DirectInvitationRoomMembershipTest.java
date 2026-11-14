@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.server.ResponseStatusException;
@@ -40,6 +41,7 @@ class DirectInvitationRoomMembershipTest {
     guest = new User();
     guest.setMatrixUserId("@guest:example");
     when(matrix.forceJoinUserToRoom(any(), any(), any())).thenReturn(true);
+    when(matrix.isRoomEncrypted(ROOM)).thenReturn(Optional.of(true));
   }
 
   @Test
@@ -115,13 +117,77 @@ class DirectInvitationRoomMembershipTest {
     assertThat(membership.remove(session, "@guest:example")).isTrue();
   }
 
-  /** No room means nobody is in it: the removal is done, not retried forever. */
+  /** Fail closed: without a room id nobody can check the person is out, so it stays due. */
   @Test
-  void remove_Should_CountAsDone_When_TheConversationHasNoRoom() {
+  void remove_Should_StayDue_When_TheConversationHasNoRoomId() {
     session.setMatrixRoomId(null);
 
-    assertThat(membership.remove(session, "@guest:example")).isTrue();
+    assertThat(membership.remove(session, "@guest:example")).isFalse();
     verify(matrix, never()).kickUserFromRoom(any(), any(), any());
+  }
+
+  @Test
+  void remove_Should_CountAsDone_When_TheKickFailsButThePersonHasLeft() {
+    when(matrix.loginAsUserAccessToken("@counsellor:example")).thenReturn("token");
+    when(matrix.kickUserFromRoom(ROOM, "@guest:example", "token")).thenReturn(false);
+    when(matrix.getRoomMembership(ROOM, "@guest:example", "token"))
+        .thenReturn(Optional.of("leave"));
+
+    assertThat(membership.remove(session, "@guest:example")).isTrue();
+  }
+
+  @Test
+  void remove_Should_StayDue_When_TheKickFailsAndTheMembershipIsUnknownOrJoined() {
+    when(matrix.loginAsUserAccessToken("@counsellor:example")).thenReturn("token");
+    when(matrix.kickUserFromRoom(ROOM, "@guest:example", "token")).thenReturn(false);
+    when(matrix.getRoomMembership(ROOM, "@guest:example", "token")).thenReturn(Optional.empty());
+    assertThat(membership.remove(session, "@guest:example")).isFalse();
+
+    when(matrix.getRoomMembership(ROOM, "@guest:example", "token")).thenReturn(Optional.of("join"));
+    assertThat(membership.remove(session, "@guest:example")).isFalse();
+  }
+
+  /** "History from join" rests on Megolm: a 1:1 without encryption takes nobody by link. */
+  @Test
+  void existing1to1_Should_RefuseTheJoin_When_TheRoomIsNotEncrypted() {
+    when(matrix.isRoomEncrypted(ROOM)).thenReturn(Optional.of(false));
+
+    assertThatThrownBy(() -> membership.addInvitedGuestToExistingRoom(session, guest))
+        .isInstanceOf(DirectInvitationRefusedException.class)
+        .extracting("reason")
+        .isEqualTo(DirectInvitationRefusedException.Reason.DIRECT_INVITATION_ROOM_NOT_ENCRYPTED);
+    verifyNoInvite();
+  }
+
+  @Test
+  void existing1to1_Should_FailClosed_When_EncryptionCannotBeRead() {
+    when(matrix.isRoomEncrypted(ROOM)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> membership.addInvitedGuestToExistingRoom(session, guest))
+        .isInstanceOf(ResponseStatusException.class)
+        .hasMessageContaining("room_encryption_unknown");
+    verifyNoInvite();
+  }
+
+  /** An invite the join did not follow is withdrawn, so nobody is left invited. */
+  @Test
+  void existing1to1_Should_WithdrawTheInvite_When_TheJoinIsNotConfirmed() {
+    when(matrix.loginAsUserAccessToken("@counsellor:example")).thenReturn("counsellor-token");
+    when(matrix.loginAsUserAccessToken("@guest:example")).thenReturn("guest-token");
+    when(matrix.joinRoom(ROOM, "guest-token")).thenReturn(false);
+
+    assertThatThrownBy(() -> membership.addInvitedGuestToExistingRoom(session, guest))
+        .isInstanceOf(ResponseStatusException.class);
+    verify(matrix).kickUserFromRoom(ROOM, "@guest:example", "counsellor-token");
+  }
+
+  private void verifyNoInvite() {
+    try {
+      verify(matrix, never()).inviteUserToRoom(any(), any(), any());
+    } catch (MatrixInviteUserException impossible) {
+      throw new AssertionError(impossible);
+    }
+    verify(matrix, never()).joinRoom(any(), any());
   }
 
   @Test

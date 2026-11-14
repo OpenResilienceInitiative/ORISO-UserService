@@ -370,7 +370,7 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
         request);
   }
 
-  /** 403 with a reason the entry page shows (ORISO-Frontend#2252). */
+  /** 403 or 409 with a reason the entry page shows (ORISO-Frontend#2252). */
   @ExceptionHandler({DirectInvitationRefusedException.class})
   public ResponseEntity<Object> handleDirectInvitationRefused(
       final DirectInvitationRefusedException ex, final WebRequest request) {

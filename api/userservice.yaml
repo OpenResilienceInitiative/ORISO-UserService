@@ -129,8 +129,10 @@ paths:
         '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
         '403': {description: 'Direct invitations are not allowed here, the caller belongs to another Träger, or the access mode excludes the caller: body {"reason":"DIRECT_INVITATION_GUESTS_ONLY"} or {"reason":"DIRECT_INVITATION_ACCOUNTS_ONLY"}'}
         '404': {description: Unknown link}
+        '409': {description: 'Invitation from a 1:1 whose room is not encrypted, so earlier messages would not stay private: body {"reason":"DIRECT_INVITATION_ROOM_NOT_ENCRYPTED"}'}
         '410': {description: 'The link was switched off ({"reason":"DIRECT_LINK_INACTIVE"}), or it expired or was replaced ({"reason":"DIRECT_LINK_EXPIRED"})'}
         '502': {description: 'The conversation room could not be created or joined'}
+        '503': {description: 'Matrix cannot tell whether the 1:1 is encrypted; nobody joins, try again'}
   /users/call-knocks:
     get:
       tags: [direct-link-controller]
@@ -550,7 +552,9 @@ paths:
         link join this conversation as invited members; they are removed when the invitation
         expires, and the conversation itself is never archived by the expiry. They join as plain
         members (invited by the counsellor): no room setting changes; earlier messages stay
-        readable only through the history-key transfer a person in the room approves.
+        readable only through the history-key transfer a person in the room approves. That needs
+        an encrypted 1:1; otherwise opening the link answers 409
+        DIRECT_INVITATION_ROOM_NOT_ENCRYPTED.
       security:
         - Bearer: [ ]
       parameters:

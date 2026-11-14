@@ -1331,6 +1331,38 @@ class MatrixSynapseServiceTest {
   }
 
   @Test
+  void isRoomEncrypted_Should_BeTrue_When_TheRoomHasAMegolmEncryptionEvent() {
+    // ORISO-Frontend#2252: "history from join" for a 1:1 invitation rests on Megolm.
+    stubAdminLogin();
+    stubRoomState(
+        List.of(
+            Map.of("type", "m.room.create", "content", Map.of()),
+            Map.of(
+                "type",
+                "m.room.encryption",
+                "content",
+                Map.of("algorithm", "m.megolm.v1.aes-sha2"))));
+
+    assertThat(matrixSynapseService().isRoomEncrypted(MATRIX_ROOM_ID)).contains(true);
+  }
+
+  @Test
+  void isRoomEncrypted_Should_BeFalse_When_TheRoomHasNoEncryptionEvent() {
+    stubAdminLogin();
+    stubRoomState(List.of(Map.of("type", "m.room.create", "content", Map.of())));
+
+    assertThat(matrixSynapseService().isRoomEncrypted(MATRIX_ROOM_ID)).contains(false);
+  }
+
+  @Test
+  void isRoomEncrypted_Should_BeUnknown_When_TheStateCannotBeRead() {
+    matrixConfig.setAdminUsername("");
+
+    assertThat(matrixSynapseService().isRoomEncrypted(MATRIX_ROOM_ID)).isEmpty();
+    verifyNoInteractions(restTemplate);
+  }
+
+  @Test
   void getRoomMembers_noAdminToken_returnsEmptyOptional() {
     // Room membership cannot be read without admin credentials.
     matrixConfig.setAdminUsername("");

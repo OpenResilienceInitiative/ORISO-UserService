@@ -4,7 +4,8 @@ import org.springframework.http.HttpStatus;
 
 /**
  * A direct invitation refuses the person (ORISO-Frontend#2252), with a reason the entry page can
- * show: the access mode excludes their kind of account (403).
+ * show: the access mode excludes their kind of account (403), or the 1:1 the invitation was created
+ * from is not encrypted, so earlier messages would not stay private (409).
  */
 public class DirectInvitationRefusedException extends RuntimeException {
 
@@ -12,7 +13,8 @@ public class DirectInvitationRefusedException extends RuntimeException {
 
   public enum Reason {
     DIRECT_INVITATION_GUESTS_ONLY(HttpStatus.FORBIDDEN),
-    DIRECT_INVITATION_ACCOUNTS_ONLY(HttpStatus.FORBIDDEN);
+    DIRECT_INVITATION_ACCOUNTS_ONLY(HttpStatus.FORBIDDEN),
+    DIRECT_INVITATION_ROOM_NOT_ENCRYPTED(HttpStatus.CONFLICT);
 
     private final HttpStatus status;
 

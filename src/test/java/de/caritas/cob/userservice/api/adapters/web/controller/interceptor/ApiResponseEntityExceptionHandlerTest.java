@@ -346,12 +346,13 @@ class ApiResponseEntityExceptionHandlerTest {
     for (var reason :
         de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitationRefusedException
             .Reason.values()) {
+      assertTrue(reason.status() == HttpStatus.FORBIDDEN || reason.status() == HttpStatus.CONFLICT);
       var refused =
           handler.handleDirectInvitationRefused(
               new de.caritas.cob.userservice.api.service.agencyinvitelink
                   .DirectInvitationRefusedException(reason),
               request);
-      assertEquals(HttpStatus.FORBIDDEN, refused.getStatusCode());
+      assertEquals(reason.status(), refused.getStatusCode());
       assertEquals(java.util.Map.of("reason", reason.name()), refused.getBody());
     }
     assertEquals(

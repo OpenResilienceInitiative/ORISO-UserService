@@ -2037,6 +2037,39 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
    * never as a policy.
    */
   public java.util.Optional<String> getRoomHistoryVisibility(String matrixRoomId) {
+    return readRoomState(matrixRoomId)
+        .map(
+            events ->
+                events.stream()
+                    .filter(event -> "m.room.history_visibility".equals(event.get("type")))
+                    .map(event -> event.get("content"))
+                    .filter(java.util.Map.class::isInstance)
+                    .map(content -> ((java.util.Map<?, ?>) content).get("history_visibility"))
+                    .filter(String.class::isInstance)
+                    .map(String.class::cast)
+                    .reduce((first, second) -> second)
+                    .orElse("shared"));
+  }
+
+  /**
+   * Whether the room encrypts its messages with Megolm, read from the room state via the Synapse
+   * admin API (ORISO-Frontend#2252). Empty when the state cannot be read; callers must treat that
+   * as "unknown".
+   */
+  public java.util.Optional<Boolean> isRoomEncrypted(String matrixRoomId) {
+    return readRoomState(matrixRoomId)
+        .map(
+            events ->
+                events.stream()
+                    .filter(event -> "m.room.encryption".equals(event.get("type")))
+                    .map(event -> event.get("content"))
+                    .filter(java.util.Map.class::isInstance)
+                    .map(content -> ((java.util.Map<?, ?>) content).get("algorithm"))
+                    .anyMatch("m.megolm.v1.aes-sha2"::equals));
+  }
+
+  private java.util.Optional<java.util.List<java.util.Map<?, ?>>> readRoomState(
+      String matrixRoomId) {
     String adminToken = getAdminAccessToken();
     if (adminToken == null) {
       return java.util.Optional.empty();
@@ -2058,15 +2091,8 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
       return java.util.Optional.of(
           events.stream()
               .filter(java.util.Map.class::isInstance)
-              .map(java.util.Map.class::cast)
-              .filter(event -> "m.room.history_visibility".equals(event.get("type")))
-              .map(event -> event.get("content"))
-              .filter(java.util.Map.class::isInstance)
-              .map(content -> ((java.util.Map<?, ?>) content).get("history_visibility"))
-              .filter(String.class::isInstance)
-              .map(String.class::cast)
-              .reduce((first, second) -> second)
-              .orElse("shared"));
+              .<java.util.Map<?, ?>>map(java.util.Map.class::cast)
+              .toList());
     } catch (Exception ex) {
       if (ex instanceof HttpStatusCodeException status && status.getStatusCode().value() == 401) {
         // The cached admin token is no longer accepted: log in again on the next call.
