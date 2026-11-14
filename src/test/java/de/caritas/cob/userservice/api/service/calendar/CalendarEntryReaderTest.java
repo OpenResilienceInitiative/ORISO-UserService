@@ -127,12 +127,14 @@ class CalendarEntryReaderTest {
   @Test
   void appointments_Should_Fail_When_TheWindowHoldsMoreThanTheLimit() {
     var limit = CalendarEntryReader.APPOINTMENT_LIMIT;
-    var pages = ArgumentCaptor.forClass(Pageable.class);
+    var consultantPages = ArgumentCaptor.forClass(Pageable.class);
+    var askerPages = ArgumentCaptor.forClass(Pageable.class);
     when(appointments.findScheduledOfConsultantBetween(
-            eq(ME), any(), eq(FROM), eq(TO), pages.capture()))
+            eq(ME), any(), eq(FROM), eq(TO), consultantPages.capture()))
         .thenReturn(Collections.nCopies(limit, appointment()))
         .thenReturn(Collections.nCopies(limit + 1, appointment()));
-    when(appointments.findScheduledOfAskerBetween(eq("asker"), eq(FROM), eq(TO), any()))
+    when(appointments.findScheduledOfAskerBetween(
+            eq("asker"), eq(FROM), eq(TO), askerPages.capture()))
         .thenReturn(Collections.nCopies(limit + 1, appointment()));
 
     assertThat(reader.appointmentsOfConsultant(ME, FROM, TO)).hasSize(limit);
@@ -141,7 +143,16 @@ class CalendarEntryReaderTest {
         .isInstanceOf(InternalServerErrorException.class);
     assertThatThrownBy(() -> reader.appointmentsOfAsker("asker", FROM, TO))
         .isInstanceOf(InternalServerErrorException.class);
-    assertThat(pages.getValue().getPageSize()).isEqualTo(limit + 1);
+    // Each query asks for one row more than the limit, from the first row: that row shows overflow.
+    for (var pages : List.of(consultantPages.getAllValues(), askerPages.getAllValues())) {
+      assertThat(pages)
+          .isNotEmpty()
+          .allSatisfy(
+              pageable -> {
+                assertThat(pageable.getPageNumber()).isZero();
+                assertThat(pageable.getPageSize()).isEqualTo(limit + 1);
+              });
+    }
   }
 
   @Test
