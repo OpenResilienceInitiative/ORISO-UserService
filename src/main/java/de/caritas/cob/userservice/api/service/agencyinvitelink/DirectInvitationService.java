@@ -258,9 +258,10 @@ public class DirectInvitationService {
 
   /**
    * "Neuen Link anfragen": only a person in the invitation's conversation may ask; anybody else
-   * learns nothing (404). The expired and the replaced token both work.
+   * learns nothing (404). The expired and the replaced token both work. A notice that could not be
+   * stored answers 503, never "sent".
    */
-  @Transactional(readOnly = true)
+  @Transactional
   public void requestRenewal(String token, User user) {
     var link =
         links
@@ -275,8 +276,17 @@ public class DirectInvitationService {
     if (session == null || !isInConversation(session, user)) {
       throw new NotFoundException("Invite link not found");
     }
-    notifications.createDirectInvitationRenewalRequestedNotification(
-        session, link.getId(), user.getUserId(), token);
+    try {
+      notifications.createDirectInvitationRenewalRequestedNotification(
+          session, link.getId(), user.getUserId(), token);
+    } catch (RuntimeException failure) {
+      log.warn(
+          "The new-link request for invitation {} was not stored: {}",
+          link.getId(),
+          failure.getClass().getSimpleName());
+      throw new ResponseStatusException(
+          HttpStatus.SERVICE_UNAVAILABLE, "renewal_request_not_stored", failure);
+    }
   }
 
   /** The invitation's people: the asker of the conversation and everybody who came in by link. */

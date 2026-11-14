@@ -336,6 +336,24 @@ class ApiResponseEntityExceptionHandlerTest {
           assertEquals(java.util.Map.of("reason", error.getMessage()), result.getBody());
         });
     // Business reason: each domain exception type must map to the documented status code.
+    var expired =
+        handler.handleDirectLinkExpired(
+            new de.caritas.cob.userservice.api.service.agencyinvitelink
+                .DirectLinkExpiredException(),
+            request);
+    assertEquals(HttpStatus.GONE, expired.getStatusCode());
+    assertEquals(java.util.Map.of("reason", "DIRECT_LINK_EXPIRED"), expired.getBody());
+    for (var reason :
+        de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitationRefusedException
+            .Reason.values()) {
+      var refused =
+          handler.handleDirectInvitationRefused(
+              new de.caritas.cob.userservice.api.service.agencyinvitelink
+                  .DirectInvitationRefusedException(reason),
+              request);
+      assertEquals(HttpStatus.FORBIDDEN, refused.getStatusCode());
+      assertEquals(java.util.Map.of("reason", reason.name()), refused.getBody());
+    }
     assertEquals(
         HttpStatus.CONFLICT,
         handler

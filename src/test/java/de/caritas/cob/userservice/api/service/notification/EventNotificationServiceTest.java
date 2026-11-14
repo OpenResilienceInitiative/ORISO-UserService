@@ -559,7 +559,10 @@ class EventNotificationServiceTest {
             "maintenanceEnd",
             "statusUrl",
             // FE#1952: which call the person knocks on (AUDIO / VIDEO). A medium, never content.
-            "medium");
+            "medium",
+            // ORISO-Frontend#2252: which direct invitation a "Neuen Link anfragen" notice is
+            // about, so the card can offer "Neuen Link senden". An id, never content.
+            "linkId");
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
@@ -585,6 +588,8 @@ class EventNotificationServiceTest {
     eventNotificationService.createCounselorRenamedNotification(session, "asker-1");
     eventNotificationService.createCallKnockRequestedNotification(
         directLinkConversation(), knock(31L, "VIDEO"));
+    eventNotificationService.createDirectInvitationRenewalRequestedNotification(
+        directLinkConversation(), 41L, "asker-1", "token-1");
     // Envelope-bearing producers emit `matrixEventId` and take the dedup path,
     // so without this call and the second captor below the sweep would never
     // see the one key #924 added.
@@ -619,6 +624,10 @@ class EventNotificationServiceTest {
                     "service.notice.planned".equals(saved.getEventType())
                         && saved.getParams() != null),
         "the sweep never exercised the planned service notice producer");
+    assertTrue(
+        emitted.stream()
+            .anyMatch(saved -> saved.getParams() != null && saved.getParams().contains("linkId")),
+        "the sweep never exercised the direct invitation renewal request producer");
     for (EventNotification saved : emitted) {
       if (saved.getParams() == null) {
         continue;

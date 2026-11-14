@@ -82,10 +82,11 @@ paths:
           required: true
           schema: {type: string}
       responses:
-        '202': {description: The counsellor was told}
+        '204': {description: The counsellor was told (also when this person asked for this token before)}
         '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
         '404': {description: 'Unknown link, or the caller is not in its conversation'}
         '409': {description: 'The link has no appointment, so it never expires and needs no renewal'}
+        '503': {description: 'The notice to the counsellor could not be stored; nothing was sent, try again'}
   /users/invitelinks/{token}/conversations:
     post:
       tags: [direct-link-controller]

@@ -336,6 +336,23 @@ class DirectInvitationServiceTest {
             conversation, LINK_ID, "interpreter", "old-token");
   }
 
+  /** A notice that was not stored must not read as "Anfrage gesendet". */
+  @Test
+  void requestRenewal_Should_AnswerServiceUnavailable_When_TheNoticeIsNotStored() {
+    appointment.setSession(session(SESSION_ID, "first-user"));
+    when(links.findByToken("old-token")).thenReturn(Optional.of(link));
+    when(members.findBySessionIdAndUserId(SESSION_ID, "interpreter"))
+        .thenReturn(Optional.of(member("interpreter", null)));
+    org.mockito.Mockito.doThrow(new IllegalStateException("db down"))
+        .when(notifications)
+        .createDirectInvitationRenewalRequestedNotification(any(), any(), any(), any());
+
+    assertThatThrownBy(() -> service.requestRenewal("old-token", user("interpreter", true)))
+        .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+        .extracting("statusCode")
+        .isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+  }
+
   @Test
   void requestRenewal_Should_AnswerNotFound_ForSomebodyOutsideTheConversation() {
     appointment.setSession(session(SESSION_ID, "first-user"));

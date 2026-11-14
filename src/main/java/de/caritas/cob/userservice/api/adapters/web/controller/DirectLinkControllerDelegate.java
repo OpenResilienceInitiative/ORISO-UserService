@@ -151,7 +151,7 @@ public class DirectLinkControllerDelegate {
   /** "Neuen Link anfragen" (ORISO-Frontend#2252). */
   ResponseEntity<Void> requestDirectInvitationRenewal(String token) {
     invitations.requestRenewal(token, userAccountService.retrieveValidatedUser());
-    return ResponseEntity.accepted().build();
+    return ResponseEntity.noContent().build();
   }
 
   /** "Weitere Personen per Link einladen" from a 1:1 (ORISO-Frontend#2252). */

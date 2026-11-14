@@ -308,7 +308,7 @@ class DirectInvitationControllerIT {
         .andExpect(status().isCreated());
 
     asUser(post("/users/invitelinks/{token}/renewal-requests", oldToken))
-        .andExpect(status().isAccepted());
+        .andExpect(status().isNoContent());
     verify(notifications)
         .createDirectInvitationRenewalRequestedNotification(
             any(), eq(id), eq(asker.getUserId()), eq(oldToken));
@@ -344,7 +344,7 @@ class DirectInvitationControllerIT {
     // The person with the old link can still ask again.
     actAsUser(asker);
     asUser(post("/users/invitelinks/{token}/renewal-requests", oldToken))
-        .andExpect(status().isAccepted());
+        .andExpect(status().isNoContent());
   }
 
   @Test
