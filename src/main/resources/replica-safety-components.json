@@ -953,6 +953,22 @@
       "status": "safe"
     },
     {
+      "id": "direct-invitation-expiry-sweep",
+      "kind": "scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/agencyinvitelink/DirectInvitationExpirySweep.java",
+      "components": [
+        "sweep"
+      ],
+      "owner": "sessions-matrix",
+      "risk": "correctness",
+      "decision": "Expiry of direct invitations with an appointment (ORISO-Frontend#2252). Each invitation is closed in its own transaction under a pessimistic row lock and only from ACTIVE, so competing replicas close it once; guest removal from the Matrix room is idempotent (a kick of a member who left is a no-op) and archiving an archived conversation changes nothing.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "safe"
+    },
+    {
       "id": "matrix-feed-signal-coalescer",
       "source": "src/main/java/de/caritas/cob/userservice/api/service/matrix/FeedSignalCoalescer.java",
       "kind": "local-state",

@@ -51,6 +51,9 @@ class DirectLinkControllerDelegateCallLinkTest {
     delegate =
         new DirectLinkControllerDelegate(
             mock(CounsellorDirectLinkService.class),
+            mock(
+                de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitationService
+                    .class),
             accounts,
             mock(TopicService.class),
             knocks,

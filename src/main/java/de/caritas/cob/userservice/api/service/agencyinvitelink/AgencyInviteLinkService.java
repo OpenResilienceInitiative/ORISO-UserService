@@ -75,6 +75,9 @@ public class AgencyInviteLinkService {
   /** Call share links (#1487) in the public context; not {@code @NonNull} for older test wiring. */
   private final CallShareLinkService callShareLinkService;
 
+  /** Direct invitations with an appointment (ORISO-Frontend#2252); optional for older wiring. */
+  private final DirectInvitationService directInvitations;
+
   /** Create a new invite link. All classification fields are optional — defaults are applied. */
   public AgencyInviteLink create(CreateInviteLinkCommand cmd) {
     if (cmd == null) {
@@ -338,10 +341,8 @@ public class AgencyInviteLinkService {
    */
   @Transactional(readOnly = true)
   public Object getPublicContext(String token) {
-    AgencyInviteLink link =
-        repository
-            .findByToken(token)
-            .orElseThrow(() -> new NotFoundException("Invite link not found"));
+    // A token replaced by "Neuen Link senden" reads as expired (ORISO-Frontend#2252).
+    AgencyInviteLink link = CounsellorDirectLinkService.findForEntry(repository, token);
     return InviteLinkKind.CALL.name().equals(link.getLinkKind())
         ? callShareContext(link)
         : contextOf(link);
@@ -386,6 +387,9 @@ public class AgencyInviteLinkService {
 
   private InvitationContext contextOf(AgencyInviteLink link) {
     rejectPausedLink(link);
+    if (InviteLinkChatType.isDirectMedium(link.getChatType())) {
+      CounsellorDirectLinkService.requireNotExpired(link);
+    }
     if (!InviteLinkStatus.ACTIVE.name().equals(link.getStatus())) {
       throw new BadRequestException("Invite link is not active");
     }
@@ -415,9 +419,15 @@ public class AgencyInviteLinkService {
           link.getTopicId(),
           link.getChatType(),
           direct ? link.isTemporaryAccount() : null,
-          direct ? InviteLinkChatType.valueOf(link.getChatType()).admission().name() : null,
+          direct ? admissionOf(link) : null,
           settings == null ? null : settings.hidePasswordField(),
-          settings == null ? null : settings.messageRetention().name());
+          settings == null ? null : settings.messageRetention().name(),
+          direct ? link.effectiveAccessMode().name() : null,
+          direct && !InviteLinkChatType.CHAT.name().equals(link.getChatType())
+              ? link.isKnock()
+              : null,
+          direct ? scheduleOf(link) : null,
+          direct && link.getAppointmentId() != null ? link.getExpiresAt() : null);
     } finally {
       if (previousTenant == null) {
         TenantContext.clear();
@@ -489,7 +499,67 @@ public class AgencyInviteLinkService {
       @JsonInclude(JsonInclude.Include.NON_NULL) Boolean temporaryAccount,
       @JsonInclude(JsonInclude.Include.NON_NULL) String admission,
       @JsonInclude(JsonInclude.Include.NON_NULL) Boolean hidePasswordField,
-      @JsonInclude(JsonInclude.Include.NON_NULL) String messageRetention) {}
+      @JsonInclude(JsonInclude.Include.NON_NULL) String messageRetention,
+      @JsonInclude(JsonInclude.Include.NON_NULL) String accessMode,
+      @JsonInclude(JsonInclude.Include.NON_NULL) Boolean knock,
+      @JsonInclude(JsonInclude.Include.NON_NULL) String appointmentStartTime,
+      @JsonInclude(JsonInclude.Include.NON_NULL) String appointmentEndTime,
+      @JsonInclude(JsonInclude.Include.NON_NULL) String callOpensAt,
+      @JsonInclude(JsonInclude.Include.NON_NULL) String expiresAt) {
+
+    InvitationContext(
+        Long tenantId,
+        Long agencyId,
+        Integer consultingTypeId,
+        Long topicId,
+        String chatType,
+        Boolean temporaryAccount,
+        String admission,
+        Boolean hidePasswordField,
+        String messageRetention,
+        String accessMode,
+        Boolean knock,
+        DirectInvitationSchedule schedule,
+        LocalDateTime expiresAt) {
+      this(
+          tenantId,
+          agencyId,
+          consultingTypeId,
+          topicId,
+          chatType,
+          temporaryAccount,
+          admission,
+          hidePasswordField,
+          messageRetention,
+          accessMode,
+          knock,
+          schedule == null ? null : iso(schedule.start()),
+          schedule == null ? null : iso(schedule.end()),
+          schedule == null ? null : iso(schedule.callOpensAt()),
+          expiresAt == null ? null : iso(expiresAt));
+    }
+
+    private static String iso(LocalDateTime utc) {
+      return utc.atOffset(java.time.ZoneOffset.UTC).toString();
+    }
+  }
+
+  private DirectInvitationSchedule scheduleOf(AgencyInviteLink link) {
+    return directInvitations == null || link.getAppointmentId() == null
+        ? null
+        : directInvitations.scheduleOf(link).orElse(null);
+  }
+
+  /** Calls knock, unless an invitation with an appointment switched "Anklopfen" off (#2252). */
+  private static String admissionOf(AgencyInviteLink link) {
+    var admission = InviteLinkChatType.valueOf(link.getChatType()).admission();
+    if (admission == InviteLinkAdmission.KNOCK
+        && link.getAppointmentId() != null
+        && !link.isKnock()) {
+      admission = InviteLinkAdmission.DIRECT;
+    }
+    return admission.name();
+  }
 
   /**
    * Redeem the token: validate, mark USED, return tenant/agency/consulting-type/topic metadata for

@@ -63,7 +63,8 @@ class AgencyInviteLinkContextHttpTest {
             mock(de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class),
             temporaryAccountSettings,
             directInvitePolicy,
-            callShareLinks);
+            callShareLinks,
+            null);
     when(temporaryAccountSettings.current())
         .thenReturn(
             new de.caritas.cob.userservice.api.service.temporaryaccount
@@ -84,6 +85,8 @@ class AgencyInviteLinkContextHttpTest {
   @AfterEach
   void noSideEffects() {
     verify(repository, org.mockito.Mockito.atLeastOnce()).findByToken("token");
+    // An unknown token is also looked up as a replaced one (ORISO-Frontend#2252).
+    verify(repository, org.mockito.Mockito.atMost(1)).findFirstByPreviousToken("token");
     verifyNoMoreInteractions(repository);
     verifyNoInteractions(facade);
     TenantContext.clear();
@@ -272,7 +275,7 @@ class AgencyInviteLinkContextHttpTest {
                     """
             {"tenantId":83,"agencyId":99,"consultingTypeId":1,"topicId":11,"chatType":"VIDEO",
              "temporaryAccount":true,"admission":"KNOCK","hidePasswordField":true,
-             "messageRetention":"ALWAYS_PERSISTENT"}
+             "messageRetention":"ALWAYS_PERSISTENT","accessMode":"BOTH","knock":true}
             """,
                     org.springframework.test.json.JsonCompareMode.STRICT));
   }
@@ -290,7 +293,8 @@ class AgencyInviteLinkContextHttpTest {
                 .json(
                     """
             {"tenantId":83,"agencyId":99,"consultingTypeId":1,"topicId":11,"chatType":"VIDEO",
-             "temporaryAccount":false,"admission":"KNOCK"}
+             "temporaryAccount":false,"admission":"KNOCK","accessMode":"ACCOUNTS_ONLY",
+             "knock":true}
             """,
                     org.springframework.test.json.JsonCompareMode.STRICT));
   }

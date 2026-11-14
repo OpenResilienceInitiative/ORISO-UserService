@@ -26,6 +26,11 @@ public interface SessionAppointmentRepository extends CrudRepository<SessionAppo
   Optional<SessionAppointment> findOfSessionForUpdate(
       @Param("id") UUID id, @Param("sessionId") Long sessionId);
 
+  /** Locked: the first people opening one direct invitation create one conversation (#2252). */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("SELECT a FROM SessionAppointment a WHERE a.id = :id")
+  Optional<SessionAppointment> findByIdForUpdate(@Param("id") UUID id);
+
   @Query(
       "SELECT a FROM SessionAppointment a JOIN FETCH a.session s JOIN FETCH s.user "
           + "WHERE (s.consultant.id = :consultantId OR s.id IN :coAccessSessionIds) "

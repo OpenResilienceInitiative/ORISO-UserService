@@ -438,10 +438,21 @@ public class SecurityConfig {
                     "/users/directlinks/{linkId:[0-9]+}",
                     "/service/users/directlinks/{linkId:[0-9]+}")
                 .hasAuthority(CONSULTANT_DEFAULT)
+                // ORISO-Frontend#2252: "Neuen Link senden" and invitations from a 1:1; ownership
+                // of the link and of the conversation is checked in the service (404 otherwise).
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/users/directlinks/{linkId:[0-9]+}/renewal",
+                    "/service/users/directlinks/{linkId:[0-9]+}/renewal",
+                    "/users/sessions/{sessionId:[0-9]+}/direct-invitations",
+                    "/service/users/sessions/{sessionId:[0-9]+}/direct-invitations")
+                .hasAuthority(CONSULTANT_DEFAULT)
                 .requestMatchers(
                     HttpMethod.POST,
                     "/users/invitelinks/*/conversations",
-                    "/service/users/invitelinks/*/conversations")
+                    "/service/users/invitelinks/*/conversations",
+                    "/users/invitelinks/*/renewal-requests",
+                    "/service/users/invitelinks/*/renewal-requests")
                 .hasAuthority(USER_DEFAULT)
                 .requestMatchers("/users/statistics/registration")
                 .hasAnyAuthority(SINGLE_TENANT_ADMIN, TENANT_ADMIN)

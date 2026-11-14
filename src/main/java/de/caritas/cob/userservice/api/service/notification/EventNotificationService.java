@@ -482,6 +482,59 @@ public class EventNotificationService {
     }
   }
 
+  public static final String DIRECT_INVITATION_RENEWAL_REQUESTED_EVENT =
+      "direct_invitation.renewal_requested";
+
+  /**
+   * "Neuen Link anfragen" (ORISO-Frontend#2252): a person in a direct invitation's conversation
+   * asks its counsellor for a new link. One notice per person and token; the card offers "Neuen
+   * Link senden" with {@code linkId}.
+   */
+  public void createDirectInvitationRenewalRequestedNotification(
+      Session session, Long linkId, String requesterUserId, String token) {
+    if (session == null
+        || session.getId() == null
+        || linkId == null
+        || session.getConsultant() == null
+        || session.getConsultant().getId() == null
+        || session.getConsultant().getId().isBlank()) {
+      return;
+    }
+    Map<String, Object> params = baseParams(session);
+    params.put("linkId", linkId);
+    try {
+      createEventOnce(
+          truncateKey(
+              DIRECT_INVITATION_RENEWAL_REQUESTED_EVENT
+                  + ":"
+                  + linkId
+                  + ":"
+                  + requesterUserId
+                  + ":"
+                  + Integer.toHexString(token == null ? 0 : token.hashCode())),
+          session.getConsultant().getId(),
+          DIRECT_INVITATION_RENEWAL_REQUESTED_EVENT,
+          CATEGORY_SYSTEM,
+          "New link requested",
+          "Someone asks for a new link to your appointment.",
+          serializeParams(params),
+          buildSessionActionPath(session, null, true),
+          session.getId(),
+          session.getTenantId());
+    } catch (RuntimeException ex) {
+      log.warn(
+          "Could not persist direct_invitation.renewal_requested notification for link {}",
+          linkId,
+          ex);
+    }
+  }
+
+  private static String truncateKey(String key) {
+    return key.length() <= MAX_DEDUPLICATION_KEY_LENGTH
+        ? key
+        : key.substring(0, MAX_DEDUPLICATION_KEY_LENGTH);
+  }
+
   private String buildNewClientRequestParams(Session session) {
     Map<String, Object> params = baseParams(session);
     if (session.getAgencyId() != null) {

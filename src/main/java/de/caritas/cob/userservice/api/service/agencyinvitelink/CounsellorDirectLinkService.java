@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationDto;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.facade.CreateNewSessionFacade;
@@ -14,9 +15,11 @@ import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.GroupChatJoinRequest;
+import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.SessionAppointmentRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
@@ -25,10 +28,12 @@ import java.time.LocalDateTime;
 import java.util.Base64;
 import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Counsellor direct links (#1475, ADR-029): a reusable {@link AgencyInviteLink} of kind {@code
@@ -54,6 +59,8 @@ public class CounsellorDirectLinkService {
   private final @NonNull TenantService tenantService;
   private final @NonNull DirectCallKnockService directCallKnockService;
   private final @NonNull SessionRepository sessionRepository;
+  private final @NonNull DirectInvitationService invitations;
+  private final @NonNull SessionAppointmentRepository sessionAppointments;
 
   public List<AgencyInviteLink> listOwn(Consultant owner) {
     return repository.findAllByConsultantIdAndLinkKindAndChatTypeInOrderByCreateDateDesc(
@@ -72,27 +79,116 @@ public class CounsellorDirectLinkService {
     requireTopic(cmd.topicId());
     requireAllowed(agency, medium);
 
-    var now = LocalDateTime.now();
     var link =
-        AgencyInviteLink.builder()
-            .token(generateToken())
-            .tenantId(agency.getTenantId())
-            .agencyId(agency.getId())
-            .consultingTypeId(agency.getConsultingType())
-            .topicId(cmd.topicId())
-            .linkKind(COUNSELLOR)
-            .chatType(medium.name())
-            .anonymity(InviteLinkAnonymity.FULL.name())
-            .consultantId(owner.getId())
-            .name(normalizeName(cmd.name()))
-            .scheduledAt(cmd.scheduledAt())
-            .temporaryAccount(cmd.temporary() != null ? cmd.temporary() : defaultTemporary(medium))
-            .createdByUserId(owner.getId())
-            .createdByUsername(owner.getUsername())
-            .createDate(now)
-            .status(InviteLinkStatus.ACTIVE.name())
-            .build();
+        newLink(
+            owner, agency.getTenantId(), agency.getId(), agency.getConsultingType(), cmd.topicId());
+    link.setChatType(medium.name());
+    link.setName(normalizeName(cmd.name()));
+    link.setScheduledAt(cmd.scheduledAt());
+    var temporary = cmd.temporary() != null ? cmd.temporary() : defaultTemporary(medium);
+    applyAccess(link, cmd.accessMode(), temporary);
+    link.setKnock(cmd.knock() == null || cmd.knock());
+    if (cmd.appointmentStart() != null || cmd.appointmentEnd() != null) {
+      invitations.attachAppointment(
+          link, cmd.appointmentStart(), cmd.appointmentEnd(), cmd.validityAfterEndMinutes());
+    } else if (cmd.validityAfterEndMinutes() != null) {
+      throw new BadRequestException("validityAfterEndMinutes needs an appointment");
+    }
     return repository.save(link);
+  }
+
+  /**
+   * "Weitere Personen per Link einladen" from a 1:1 (ORISO-Frontend#2252): an invitation bound to
+   * the conversation and one of its appointments. Only the conversation's counsellor finds the
+   * conversation; anybody else gets 404.
+   */
+  @Transactional
+  public AgencyInviteLink createForSession(
+      Consultant owner, Long sessionId, SessionInvitationCommand cmd) {
+    if (cmd == null || (cmd.appointmentId() == null) == (cmd.appointmentStart() == null)) {
+      throw new BadRequestException("Exactly one of appointmentId and appointment is required");
+    }
+    var session =
+        sessionRepository
+            .findById(sessionId)
+            .filter(found -> found.getConsultant() != null)
+            .filter(found -> Objects.equals(found.getConsultant().getId(), owner.getId()))
+            .filter(
+                found ->
+                    owner.getTenantId() == null
+                        || found.getTenantId() == null
+                        || Objects.equals(owner.getTenantId(), found.getTenantId()))
+            .orElseThrow(() -> new NotFoundException("Session %s not found", sessionId));
+    if (session.getStatus() == Session.SessionStatus.DONE
+        || session.getStatus() == Session.SessionStatus.IN_ARCHIVE) {
+      throw new ConflictException("A finished conversation takes no invitation.");
+    }
+    var medium = cmd.medium() == null ? InviteLinkChatType.VIDEO : cmd.medium();
+    var tenantId = session.getTenantId() != null ? session.getTenantId() : owner.getTenantId();
+    if (!directInvitePolicy.allows(tenantId, session.getAgencyId(), medium)) {
+      throw new ForbiddenException("Direct invitations are not allowed here");
+    }
+    var link =
+        newLink(
+            owner,
+            tenantId,
+            session.getAgencyId(),
+            session.getConsultingTypeId(),
+            session.getMainTopicId());
+    link.setChatType(medium.name());
+    link.setName(normalizeName(cmd.name()));
+    applyAccess(
+        link, cmd.accessMode() == null ? DirectInvitationAccessMode.BOTH : cmd.accessMode(), true);
+    link.setKnock(cmd.knock() == null || cmd.knock());
+    link.setJoinsExistingSession(true);
+    if (cmd.appointmentId() != null) {
+      var appointment =
+          sessionAppointments
+              .findOfSessionForUpdate(cmd.appointmentId(), session.getId())
+              .orElseThrow(() -> new NotFoundException("Session appointment not found."));
+      invitations.attachExistingAppointment(link, appointment, cmd.validityAfterEndMinutes());
+    } else {
+      invitations.attachAppointment(
+          link, cmd.appointmentStart(), cmd.appointmentEnd(), cmd.validityAfterEndMinutes());
+      var appointment =
+          sessionAppointments
+              .findById(link.getAppointmentId())
+              .orElseThrow(() -> new NotFoundException("Session appointment not found."));
+      appointment.setSession(session);
+      sessionAppointments.save(appointment);
+    }
+    return repository.save(link);
+  }
+
+  private AgencyInviteLink newLink(
+      Consultant owner, Long tenantId, Long agencyId, Integer consultingTypeId, Long topicId) {
+    return AgencyInviteLink.builder()
+        .token(generateToken())
+        .tenantId(tenantId)
+        .agencyId(agencyId)
+        .consultingTypeId(consultingTypeId)
+        .topicId(topicId)
+        .linkKind(COUNSELLOR)
+        .anonymity(InviteLinkAnonymity.FULL.name())
+        .consultantId(owner.getId())
+        .createdByUserId(owner.getId())
+        .createdByUsername(owner.getUsername())
+        .createDate(LocalDateTime.now())
+        .status(InviteLinkStatus.ACTIVE.name())
+        .build();
+  }
+
+  /** The access mode wins over the temporary switch; the switch follows it. */
+  private static void applyAccess(
+      AgencyInviteLink link, DirectInvitationAccessMode mode, boolean temporary) {
+    var effective =
+        mode != null
+            ? mode
+            : temporary
+                ? DirectInvitationAccessMode.BOTH
+                : DirectInvitationAccessMode.ACCOUNTS_ONLY;
+    link.setAccessMode(effective);
+    link.setTemporaryAccount(effective.createsTemporaryAccounts());
   }
 
   /** The medium is fixed after creation; every other field is optional. */
@@ -116,8 +212,19 @@ public class CounsellorDirectLinkService {
       requireTopic(cmd.topicId());
       link.setTopicId(cmd.topicId());
     }
-    if (cmd.temporary() != null) {
-      link.setTemporaryAccount(cmd.temporary());
+    if (cmd.accessMode() != null) {
+      applyAccess(link, cmd.accessMode(), link.isTemporaryAccount());
+    } else if (cmd.temporary() != null) {
+      applyAccess(link, null, cmd.temporary());
+    }
+    if (cmd.knock() != null) {
+      link.setKnock(cmd.knock());
+    }
+    if (cmd.appointmentStart() != null
+        || cmd.appointmentEnd() != null
+        || cmd.validityAfterEndMinutes() != null) {
+      invitations.change(
+          link, cmd.appointmentStart(), cmd.appointmentEnd(), cmd.validityAfterEndMinutes());
     }
     if (Boolean.TRUE.equals(cmd.active())
         && !InviteLinkStatus.ACTIVE.name().equals(link.getStatus())) {
@@ -142,7 +249,13 @@ public class CounsellorDirectLinkService {
    * link's medium (FE#1952) and its name (FE#2170).
    */
   public void delete(Consultant owner, Long linkId) {
-    repository.delete(requireOwn(owner, linkId));
+    var link = requireOwn(owner, linkId);
+    repository.delete(link);
+    // An appointment nobody met at yet belongs to the link alone (ORISO-Frontend#2252).
+    invitations
+        .appointmentOf(link)
+        .filter(appointment -> appointment.getSession() == null)
+        .ifPresent(sessionAppointments::delete);
   }
 
   /**
@@ -150,10 +263,7 @@ public class CounsellorDirectLinkService {
    * for this owner and consulting type.
    */
   public StartedConversation startConversation(String token, User user) {
-    var link =
-        repository
-            .findByToken(token)
-            .orElseThrow(() -> new NotFoundException("Invite link not found"));
+    var link = findForEntry(repository, token);
     if (!COUNSELLOR.equals(link.getLinkKind())
         || !InviteLinkChatType.isDirectMedium(link.getChatType())) {
       throw new BadRequestException("Not a counsellor direct link");
@@ -161,8 +271,8 @@ public class CounsellorDirectLinkService {
     if (InviteLinkStatus.DISABLED.name().equals(link.getStatus())) {
       throw new DirectLinkInactiveException();
     }
-    if (!InviteLinkStatus.ACTIVE.name().equals(link.getStatus())
-        || (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now()))) {
+    requireNotExpired(link);
+    if (!InviteLinkStatus.ACTIVE.name().equals(link.getStatus())) {
       throw new BadRequestException("Invite link expired");
     }
     // A temporary account exists for the one link it was created through (#1476).
@@ -181,18 +291,17 @@ public class CounsellorDirectLinkService {
       throw new DirectLinkInactiveException();
     }
     DirectLinkOwner.requireStillServing(consultantRepository, link);
-
-    var agency = agencyService.getAgencyWithoutCaching(link.getAgencyId());
-    var registration = new NewRegistrationDto();
-    registration.setAgencyId(link.getAgencyId());
-    registration.setConsultingType(String.valueOf(link.getConsultingTypeId()));
-    registration.setMainTopicId(link.getTopicId());
-    registration.setConsultantId(link.getConsultantId());
-    registration.setPostcode(
-        agency != null && agency.getPostcode() != null ? agency.getPostcode() : FALLBACK_POSTCODE);
-
+    // ORISO-Frontend#2252: who may enter is per invitation.
+    var accessMode = link.effectiveAccessMode();
+    if (!accessMode.admits(temporary != null)) {
+      throw DirectInvitationRefusedException.forAccessMode(accessMode);
+    }
+    if (link.getAppointmentId() != null) {
+      return startAppointmentConversation(link, user, medium);
+    }
     var response =
-        createNewSessionFacade.initializeNewSession(registration, user, Lists.newArrayList());
+        createNewSessionFacade.initializeNewSession(
+            registrationFor(link), user, Lists.newArrayList());
     // A conversation without its room is a failed step; the next visit provisions it again.
     if (response.getMatrixRoomId() == null || response.getMatrixRoomId().isBlank()) {
       throw new org.springframework.web.server.ResponseStatusException(
@@ -219,7 +328,93 @@ public class CounsellorDirectLinkService {
         response.getStatus() != HttpStatus.CONFLICT,
         knock == null ? null : knock.getId(),
         knock == null ? null : knock.getStatus().name(),
-        knock == null ? null : knock.getStatus() == GroupChatJoinRequest.Status.ADMITTED);
+        knock == null ? null : knock.getStatus() == GroupChatJoinRequest.Status.ADMITTED,
+        false,
+        null);
+  }
+
+  /**
+   * ORISO-Frontend#2252: everybody shares one appointment conversation (or joins the 1:1 the
+   * invitation came from). The chat works at once; the call admission starts 15 minutes before the
+   * start, by knocking or, with "Anklopfen" off, straight away.
+   */
+  private StartedConversation startAppointmentConversation(
+      AgencyInviteLink link, User user, InviteLinkChatType medium) {
+    var opened =
+        invitations.openAppointmentConversation(
+            link,
+            user,
+            () -> createNewSessionFacade.initializeAppointmentSession(registrationFor(link), user));
+    var session = opened.session();
+    if (opened.created() && !link.isJoinsExistingSession()) {
+      sessionRepository.recordDirectLinkOrigin(session.getId(), medium.name());
+      if (link.getName() != null && !link.getName().isBlank()) {
+        sessionRepository.recordDirectLinkName(session.getId(), link.getName());
+      }
+    }
+    var schedule = invitations.scheduleOf(link).orElse(null);
+    var callOpensAt = schedule == null ? null : schedule.callOpensAt();
+    boolean call = medium != InviteLinkChatType.CHAT;
+    var admission = call && link.isKnock() ? InviteLinkAdmission.KNOCK : InviteLinkAdmission.DIRECT;
+    GroupChatJoinRequest knock = null;
+    if (call && (schedule == null || schedule.callOpen(DirectInvitationService.nowUtc()))) {
+      knock =
+          link.isKnock()
+              ? directCallKnockService.knock(session.getId(), user, link.getId(), medium)
+              : directCallKnockService.admitWithoutKnock(
+                  session.getId(), user, link.getId(), medium);
+    }
+    return new StartedConversation(
+        session.getId(),
+        session.getMatrixRoomId(),
+        medium,
+        admission,
+        opened.created(),
+        knock == null ? null : knock.getId(),
+        knock == null ? null : knock.getStatus().name(),
+        knock == null ? null : knock.getStatus() == GroupChatJoinRequest.Status.ADMITTED,
+        true,
+        callOpensAt);
+  }
+
+  private NewRegistrationDto registrationFor(AgencyInviteLink link) {
+    var agency = agencyService.getAgencyWithoutCaching(link.getAgencyId());
+    var registration = new NewRegistrationDto();
+    registration.setAgencyId(link.getAgencyId());
+    registration.setConsultingType(String.valueOf(link.getConsultingTypeId()));
+    registration.setMainTopicId(link.getTopicId());
+    registration.setConsultantId(link.getConsultantId());
+    registration.setPostcode(
+        agency != null && agency.getPostcode() != null ? agency.getPostcode() : FALLBACK_POSTCODE);
+    return registration;
+  }
+
+  /**
+   * A token as a person opens it: the current token, or one replaced by "Neuen Link senden", which
+   * reads as expired (ORISO-Frontend#2252).
+   */
+  public static AgencyInviteLink findForEntry(AgencyInviteLinkRepository repository, String token) {
+    return repository
+        .findByToken(token)
+        .orElseGet(
+            () -> {
+              if (repository.findFirstByPreviousToken(token).isPresent()) {
+                throw new DirectLinkExpiredException();
+              }
+              throw new NotFoundException("Invite link not found");
+            });
+  }
+
+  /** A counsellor direct link past its validity, or closed by the expiry sweep: 410 expired. */
+  public static void requireNotExpired(AgencyInviteLink link) {
+    if (!COUNSELLOR.equals(link.getLinkKind())) {
+      return;
+    }
+    if (InviteLinkStatus.EXPIRED.name().equals(link.getStatus())
+        || (link.getExpiresAt() != null
+            && link.getExpiresAt().isBefore(DirectInvitationService.nowUtc()))) {
+      throw new DirectLinkExpiredException();
+    }
   }
 
   public static boolean defaultTemporary(InviteLinkChatType medium) {
@@ -282,26 +477,56 @@ public class CounsellorDirectLinkService {
     return trimmed.isEmpty() ? null : trimmed;
   }
 
-  private static String generateToken() {
+  static String generateToken() {
     byte[] buf = new byte[TOKEN_BYTES];
     RANDOM.nextBytes(buf);
     return Base64.getUrlEncoder().withoutPadding().encodeToString(buf);
   }
 
-  /** {@code scheduledAt} is UTC and informational only (ORISO-Frontend#2142). */
+  /**
+   * {@code scheduledAt} is UTC and informational only (ORISO-Frontend#2142). With an appointment
+   * (UTC start and end, ORISO-Frontend#2252) the link becomes a direct invitation that expires
+   * {@code validityAfterEndMinutes} after the end.
+   */
   public record CreateCommand(
       InviteLinkChatType medium,
       Long topicId,
       String name,
       Boolean temporary,
       Long agencyId,
-      LocalDateTime scheduledAt) {
+      LocalDateTime scheduledAt,
+      LocalDateTime appointmentStart,
+      LocalDateTime appointmentEnd,
+      Integer validityAfterEndMinutes,
+      DirectInvitationAccessMode accessMode,
+      Boolean knock) {
 
     public CreateCommand(
         InviteLinkChatType medium, Long topicId, String name, Boolean temporary, Long agencyId) {
       this(medium, topicId, name, temporary, agencyId, null);
     }
+
+    public CreateCommand(
+        InviteLinkChatType medium,
+        Long topicId,
+        String name,
+        Boolean temporary,
+        Long agencyId,
+        LocalDateTime scheduledAt) {
+      this(medium, topicId, name, temporary, agencyId, scheduledAt, null, null, null, null, null);
+    }
   }
+
+  /** An invitation from a 1:1: exactly one of {@code appointmentId} and start/end (UTC). */
+  public record SessionInvitationCommand(
+      UUID appointmentId,
+      LocalDateTime appointmentStart,
+      LocalDateTime appointmentEnd,
+      InviteLinkChatType medium,
+      String name,
+      Integer validityAfterEndMinutes,
+      DirectInvitationAccessMode accessMode,
+      Boolean knock) {}
 
   /**
    * Absent fields stay unchanged. {@code clearScheduledAt} removes the date, since a missing {@code
@@ -313,10 +538,36 @@ public class CounsellorDirectLinkService {
       Boolean temporary,
       Boolean active,
       LocalDateTime scheduledAt,
-      boolean clearScheduledAt) {
+      boolean clearScheduledAt,
+      LocalDateTime appointmentStart,
+      LocalDateTime appointmentEnd,
+      Integer validityAfterEndMinutes,
+      DirectInvitationAccessMode accessMode,
+      Boolean knock) {
 
     public UpdateCommand(String name, Long topicId, Boolean temporary, Boolean active) {
       this(name, topicId, temporary, active, null, false);
+    }
+
+    public UpdateCommand(
+        String name,
+        Long topicId,
+        Boolean temporary,
+        Boolean active,
+        LocalDateTime scheduledAt,
+        boolean clearScheduledAt) {
+      this(
+          name,
+          topicId,
+          temporary,
+          active,
+          scheduledAt,
+          clearScheduledAt,
+          null,
+          null,
+          null,
+          null,
+          null);
     }
   }
 
@@ -328,5 +579,7 @@ public class CounsellorDirectLinkService {
       boolean created,
       Long knockId,
       String knockStatus,
-      Boolean callAdmitted) {}
+      Boolean callAdmitted,
+      boolean appointmentConversation,
+      LocalDateTime callOpensAt) {}
 }

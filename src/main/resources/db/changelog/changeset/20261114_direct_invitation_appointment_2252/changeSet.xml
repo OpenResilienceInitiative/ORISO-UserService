@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- ORISO-Frontend#2252 (Direkteinladung): a direct link can carry an appointment. The appointment
+       is the same session_appointment as "Termin anlegen" (ORISO-Frontend#1960); the link expires
+       validity_after_end_minutes after its end (expires_at, already present, is set from it). Who
+       may enter (access_mode) and the knock switch (knock, already present) are per link. -->
+  <changeSet id="20261114-direct-invitation-appointment-2252" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <columnExists tableName="agency_invite_link" columnName="appointment_id"/>
+      </not>
+    </preConditions>
+    <addColumn tableName="agency_invite_link">
+      <column name="appointment_id" type="CHAR(36)"/>
+      <column name="validity_after_end_minutes" type="INT"/>
+      <column name="access_mode" type="VARCHAR(16)"/>
+      <column name="joins_existing_session" type="BOOLEAN" defaultValueBoolean="false">
+        <constraints nullable="false"/>
+      </column>
+      <column name="previous_token" type="VARCHAR(64)"/>
+    </addColumn>
+    <createIndex tableName="agency_invite_link" indexName="idx_agency_invite_link_previous_token">
+      <column name="previous_token"/>
+    </createIndex>
+    <createIndex tableName="agency_invite_link" indexName="idx_agency_invite_link_appointment">
+      <column name="appointment_id"/>
+    </createIndex>
+    <!-- Existing direct links read their access mode from the temporary-account switch: a link
+         that created temporary accounts lets both in, one that did not only accounts. -->
+    <update tableName="agency_invite_link">
+      <column name="access_mode" value="BOTH"/>
+      <where>link_kind = 'COUNSELLOR' AND temporary_account = 1</where>
+    </update>
+    <update tableName="agency_invite_link">
+      <column name="access_mode" value="ACCOUNTS_ONLY"/>
+      <where>link_kind = 'COUNSELLOR' AND temporary_account = 0</where>
+    </update>
+    <!-- Additive and nullable: an older application ignores the columns. The rollback keeps them
+         (same rule as 20261112_direct_link_scheduled_at_2142), since it also runs after MARK_RAN. -->
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+
+  <!-- The appointment of an invitation nobody opened yet has no conversation: the first person
+       who opens it creates the appointment conversation. -->
+  <changeSet id="20261114-session-appointment-session-nullable-2252" author="oriso">
+    <!-- No precondition: dropping NOT NULL from a column that is nullable already changes
+         nothing, so a database that received it by hand is safe. -->
+    <dropNotNullConstraint tableName="session_appointment" columnName="session_id"
+      columnDataType="BIGINT UNSIGNED"/>
+    <!-- Making it required again would need the open invitations' appointments removed first. -->
+    <rollback/>
+  </changeSet>
+
+  <changeSet id="20261114-direct-invitation-member-2252" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <tableExists tableName="direct_invitation_member"/>
+      </not>
+    </preConditions>
+    <createTable tableName="direct_invitation_member">
+      <column name="id" type="BIGINT UNSIGNED" autoIncrement="true">
+        <constraints primaryKey="true" nullable="false"/>
+      </column>
+      <column name="session_id" type="BIGINT UNSIGNED"><constraints nullable="false"/></column>
+      <column name="user_id" type="VARCHAR(36)"><constraints nullable="false"/></column>
+      <column name="invite_link_id" type="BIGINT UNSIGNED"><constraints nullable="false"/></column>
+      <column name="guest" type="BOOLEAN"><constraints nullable="false"/></column>
+      <column name="joined_at" type="DATETIME"><constraints nullable="false"/></column>
+      <column name="removed_at" type="DATETIME"/>
+    </createTable>
+    <addUniqueConstraint tableName="direct_invitation_member" columnNames="session_id, user_id"
+      constraintName="uq_direct_invitation_member_session_user"/>
+    <addForeignKeyConstraint baseTableName="direct_invitation_member" baseColumnNames="session_id"
+      referencedTableName="session" referencedColumnNames="id"
+      constraintName="fk_direct_invitation_member_session" onDelete="CASCADE"/>
+    <rollback><dropTable tableName="direct_invitation_member"/></rollback>
+  </changeSet>
+</databaseChangeLog>

@@ -16,6 +16,17 @@ public interface AgencyInviteLinkRepository extends JpaRepository<AgencyInviteLi
 
   Optional<AgencyInviteLink> findByToken(String token);
 
+  /** The invitation whose token was replaced by "Neuen Link senden" (ORISO-Frontend#2252). */
+  Optional<AgencyInviteLink> findFirstByPreviousToken(String previousToken);
+
+  /** Direct invitations whose appointment validity ran out and that are still on (#2252). */
+  @Query(
+      "SELECT l.id FROM AgencyInviteLink l WHERE l.linkKind = 'COUNSELLOR'"
+          + " AND l.appointmentId IS NOT NULL AND l.status = 'ACTIVE'"
+          + " AND l.expiresAt < :now AND l.id > :afterId ORDER BY l.id")
+  List<Long> findExpiredInvitationIds(
+      @Param("now") java.time.LocalDateTime now, @Param("afterId") Long afterId, Pageable pageable);
+
   /** A counsellor's own direct links, newest first (#1475). */
   List<AgencyInviteLink> findAllByConsultantIdAndLinkKindAndChatTypeInOrderByCreateDateDesc(
       String consultantId, String linkKind, Collection<String> chatTypes);

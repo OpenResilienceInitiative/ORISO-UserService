@@ -45,10 +45,13 @@ public class SessionAppointment {
   @Column(columnDefinition = "char(36)")
   private UUID id;
 
-  @ManyToOne(fetch = FetchType.LAZY, optional = false)
+  /**
+   * The conversation. Empty only for the appointment of a direct invitation nobody opened yet
+   * (ORISO-Frontend#2252): the first person who opens it creates the appointment conversation.
+   */
+  @ManyToOne(fetch = FetchType.LAZY)
   @JoinColumn(
       name = "session_id",
-      nullable = false,
       foreignKey = @ForeignKey(name = "fk_session_appointment_session"))
   @OnDelete(action = OnDeleteAction.CASCADE)
   private Session session;

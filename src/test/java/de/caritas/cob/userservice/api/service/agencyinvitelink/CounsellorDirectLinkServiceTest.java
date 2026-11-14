@@ -62,6 +62,10 @@ class CounsellorDirectLinkServiceTest {
   @Mock private TenantService tenantService;
   @Mock private DirectCallKnockService knockService;
   @Mock private de.caritas.cob.userservice.api.port.out.SessionRepository sessionRepository;
+  @Mock private DirectInvitationService invitations;
+
+  @Mock
+  private de.caritas.cob.userservice.api.port.out.SessionAppointmentRepository sessionAppointments;
 
   private CounsellorDirectLinkService service;
   private Consultant owner;
@@ -78,7 +82,9 @@ class CounsellorDirectLinkServiceTest {
             consultantRepository,
             tenantService,
             knockService,
-            sessionRepository);
+            sessionRepository,
+            invitations,
+            sessionAppointments);
     owner = consultantIn(AGENCY);
     when(consultantRepository.findByIdAndDeleteDateIsNull(OWNER_ID)).thenReturn(Optional.of(owner));
     var agency = new AgencyDTO().id(AGENCY).tenantId(TENANT).consultingType(3).postcode("12345");
@@ -524,9 +530,10 @@ class CounsellorDirectLinkServiceTest {
     assertThatThrownBy(() -> service.startConversation("live", asker("a")))
         .isInstanceOf(BadRequestException.class);
 
+    // ORISO-Frontend#2252: an expired direct link says so (410 DIRECT_LINK_EXPIRED).
     publicLink("old", "CHAT", "ACTIVE").setExpiresAt(LocalDateTime.now().minusDays(1));
     assertThatThrownBy(() -> service.startConversation("old", asker("a")))
-        .isInstanceOf(BadRequestException.class);
+        .isInstanceOf(DirectLinkExpiredException.class);
 
     assertThatThrownBy(() -> service.startConversation("missing", asker("a")))
         .isInstanceOf(NotFoundException.class);
@@ -575,6 +582,347 @@ class CounsellorDirectLinkServiceTest {
     assertThatThrownBy(() -> service.startConversation("tok", asker("a")))
         .isInstanceOf(ForbiddenException.class);
     verifyNoInteractions(createNewSessionFacade);
+  }
+
+  // --- direct invitation with appointment (ORISO-Frontend#2252) ---
+
+  @Test
+  void create_Should_AttachTheAppointment_AndStoreAccessModeAndKnock() {
+    var start = LocalDateTime.now().plusDays(1);
+    var end = start.plusHours(1);
+
+    var link =
+        service.create(
+            owner,
+            new CreateCommand(
+                InviteLinkChatType.VIDEO,
+                TOPIC,
+                "Termin Frau M.",
+                null,
+                null,
+                null,
+                start,
+                end,
+                120,
+                DirectInvitationAccessMode.GUESTS_ONLY,
+                false));
+
+    verify(invitations).attachAppointment(link, start, end, 120);
+    assertThat(link.getAccessMode()).isEqualTo(DirectInvitationAccessMode.GUESTS_ONLY);
+    assertThat(link.isTemporaryAccount()).isTrue();
+    assertThat(link.isKnock()).isFalse();
+  }
+
+  @Test
+  void create_Should_StayWithoutAppointmentAndExpiry_When_NoneIsGiven() {
+    var link =
+        service.create(owner, new CreateCommand(InviteLinkChatType.CHAT, TOPIC, null, null, null));
+
+    verify(invitations, never()).attachAppointment(any(), any(), any(), any());
+    assertThat(link.getExpiresAt()).isNull();
+    assertThat(link.getAccessMode()).isEqualTo(DirectInvitationAccessMode.ACCOUNTS_ONLY);
+    assertThat(link.isKnock()).isTrue();
+  }
+
+  @Test
+  void create_Should_RefuseAValidityWithoutAppointment() {
+    assertThatThrownBy(
+            () ->
+                service.create(
+                    owner,
+                    new CreateCommand(
+                        InviteLinkChatType.CHAT,
+                        TOPIC,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        60,
+                        null,
+                        null)))
+        .isInstanceOf(BadRequestException.class);
+  }
+
+  @Test
+  void create_Should_LetAccountsOnlySwitchOffTemporaryAccounts() {
+    var link =
+        service.create(
+            owner,
+            new CreateCommand(
+                InviteLinkChatType.VIDEO,
+                TOPIC,
+                null,
+                true,
+                null,
+                null,
+                null,
+                null,
+                null,
+                DirectInvitationAccessMode.ACCOUNTS_ONLY,
+                null));
+
+    assertThat(link.isTemporaryAccount()).isFalse();
+  }
+
+  @Test
+  void update_Should_ChangeKnockAndAccessMode_AndMoveTheAppointment() {
+    var link = ownLink(5L, "VIDEO", "ACTIVE");
+    link.setAppointmentId(java.util.UUID.randomUUID());
+    var start = LocalDateTime.now().plusDays(3);
+
+    service.update(
+        owner,
+        5L,
+        new UpdateCommand(
+            null,
+            null,
+            null,
+            null,
+            null,
+            false,
+            start,
+            start.plusHours(1),
+            30,
+            DirectInvitationAccessMode.ACCOUNTS_ONLY,
+            false));
+
+    assertThat(link.isKnock()).isFalse();
+    assertThat(link.getAccessMode()).isEqualTo(DirectInvitationAccessMode.ACCOUNTS_ONLY);
+    assertThat(link.isTemporaryAccount()).isFalse();
+    verify(invitations).change(link, start, start.plusHours(1), 30);
+  }
+
+  @Test
+  void startConversation_Should_RefuseAPermanentAccount_When_GuestsOnly() {
+    publicLink("tok", "VIDEO", "ACTIVE").setAccessMode(DirectInvitationAccessMode.GUESTS_ONLY);
+
+    assertThatThrownBy(() -> service.startConversation("tok", asker("a")))
+        .isInstanceOf(DirectInvitationRefusedException.class)
+        .extracting("reason")
+        .isEqualTo(DirectInvitationRefusedException.Reason.DIRECT_INVITATION_GUESTS_ONLY);
+    verifyNoInteractions(createNewSessionFacade);
+  }
+
+  @Test
+  void startConversation_Should_RefuseAGuest_When_AccountsOnly() {
+    var link = publicLink("tok", "VIDEO", "ACTIVE");
+    link.setId(9L);
+    link.setAccessMode(DirectInvitationAccessMode.ACCOUNTS_ONLY);
+    var guest = asker("g");
+    guest.setTemporaryAccountSnapshot(
+        de.caritas.cob.userservice.api.model.TemporaryAccountSnapshot.builder()
+            .inviteLinkId(9L)
+            .build());
+
+    assertThatThrownBy(() -> service.startConversation("tok", guest))
+        .isInstanceOf(DirectInvitationRefusedException.class)
+        .extracting("reason")
+        .isEqualTo(DirectInvitationRefusedException.Reason.DIRECT_INVITATION_ACCOUNTS_ONLY);
+  }
+
+  @Test
+  void startConversation_Should_LetBothIn_When_Both() {
+    var link = publicLink("tok", "CHAT", "ACTIVE");
+    link.setId(9L);
+    link.setAccessMode(DirectInvitationAccessMode.BOTH);
+    when(createNewSessionFacade.initializeNewSession(any(), any(), anyList()))
+        .thenReturn(
+            new NewRegistrationResponseDto()
+                .sessionId(1L)
+                .matrixRoomId("!r:x")
+                .status(HttpStatus.CREATED));
+    var guest = asker("g");
+    guest.setTemporaryAccountSnapshot(
+        de.caritas.cob.userservice.api.model.TemporaryAccountSnapshot.builder()
+            .inviteLinkId(9L)
+            .build());
+
+    assertThat(service.startConversation("tok", guest).sessionId()).isEqualTo(1L);
+    assertThat(service.startConversation("tok", asker("a")).sessionId()).isEqualTo(1L);
+  }
+
+  @Test
+  void startConversation_Should_SayExpired_ForATokenReplacedByANewLink() {
+    when(repository.findFirstByPreviousToken("replaced"))
+        .thenReturn(Optional.of(link("new", "VIDEO", "ACTIVE")));
+
+    assertThatThrownBy(() -> service.startConversation("replaced", asker("a")))
+        .isInstanceOf(DirectLinkExpiredException.class);
+  }
+
+  @Test
+  void startConversation_Should_SayExpired_AfterTheSweepClosedTheInvitation() {
+    publicLink("tok", "VIDEO", "EXPIRED");
+
+    assertThatThrownBy(() -> service.startConversation("tok", asker("a")))
+        .isInstanceOf(DirectLinkExpiredException.class);
+  }
+
+  @Test
+  void startConversation_Should_ShareTheAppointmentConversation_AndOpenNoKnockBeforeTheCallOpens() {
+    var link = appointmentLink("tok", "VIDEO", LocalDateTime.now().plusHours(2));
+    var shared = sharedSession(500L);
+    when(invitations.openAppointmentConversation(eq(link), any(), any()))
+        .thenReturn(new DirectInvitationService.Opened(shared, true));
+
+    var started = service.startConversation("tok", asker("interpreter"));
+
+    assertThat(started.sessionId()).isEqualTo(500L);
+    assertThat(started.matrixRoomId()).isEqualTo("!shared:x");
+    assertThat(started.appointmentConversation()).isTrue();
+    assertThat(started.callOpensAt()).isNotNull();
+    assertThat(started.knockId()).isNull();
+    verify(knockService, never()).knock(any(), any(), any(), any());
+    verify(createNewSessionFacade, never()).initializeNewSession(any(), any(), anyList());
+  }
+
+  @Test
+  void startConversation_Should_Knock_FromFifteenMinutesBeforeTheStart() {
+    var link = appointmentLink("tok", "VIDEO", LocalDateTime.now().plusMinutes(10));
+    var shared = sharedSession(500L);
+    when(invitations.openAppointmentConversation(eq(link), any(), any()))
+        .thenReturn(new DirectInvitationService.Opened(shared, false));
+    var knock =
+        GroupChatJoinRequest.builder().id(3L).status(GroupChatJoinRequest.Status.PENDING).build();
+    when(knockService.knock(eq(500L), any(), eq(link.getId()), eq(InviteLinkChatType.VIDEO)))
+        .thenReturn(knock);
+
+    var started = service.startConversation("tok", asker("interpreter"));
+
+    assertThat(started.knockId()).isEqualTo(3L);
+    assertThat(started.admission()).isEqualTo(InviteLinkAdmission.KNOCK);
+  }
+
+  @Test
+  void startConversation_Should_LetInWithoutKnocking_When_KnockIsOff() {
+    var link = appointmentLink("tok", "VIDEO", LocalDateTime.now().plusMinutes(5));
+    link.setKnock(false);
+    var shared = sharedSession(500L);
+    when(invitations.openAppointmentConversation(eq(link), any(), any()))
+        .thenReturn(new DirectInvitationService.Opened(shared, false));
+    var admitted =
+        GroupChatJoinRequest.builder().id(4L).status(GroupChatJoinRequest.Status.ADMITTED).build();
+    when(knockService.admitWithoutKnock(eq(500L), any(), eq(link.getId()), any()))
+        .thenReturn(admitted);
+
+    var started = service.startConversation("tok", asker("interpreter"));
+
+    assertThat(started.callAdmitted()).isTrue();
+    assertThat(started.admission()).isEqualTo(InviteLinkAdmission.DIRECT);
+    verify(knockService, never()).knock(any(), any(), any(), any());
+  }
+
+  @Test
+  void startConversation_Should_CreateTheSharedConversationAsANewOne_ForTheFirstPerson() {
+    var link = appointmentLink("tok", "CHAT", LocalDateTime.now().plusDays(1));
+    when(invitations.openAppointmentConversation(eq(link), any(), any()))
+        .thenAnswer(
+            i -> {
+              java.util.function.Supplier<NewRegistrationResponseDto> create = i.getArgument(2);
+              create.get();
+              return new DirectInvitationService.Opened(sharedSession(500L), true);
+            });
+    when(createNewSessionFacade.initializeAppointmentSession(any(), any()))
+        .thenReturn(new NewRegistrationResponseDto().sessionId(500L).matrixRoomId("!shared:x"));
+
+    service.startConversation("tok", asker("first"));
+
+    var registration = ArgumentCaptor.forClass(NewRegistrationDto.class);
+    verify(createNewSessionFacade).initializeAppointmentSession(registration.capture(), any());
+    assertThat(registration.getValue().getConsultantId()).isEqualTo(OWNER_ID);
+    verify(createNewSessionFacade, never()).initializeNewSession(any(), any(), anyList());
+    verify(sessionRepository).recordDirectLinkOrigin(500L, "CHAT");
+  }
+
+  @Test
+  void createForSession_Should_AnswerNotFound_ForAnotherCounsellorsConversation() {
+    var session = sharedSession(600L);
+    var other = new Consultant();
+    other.setId("other");
+    session.setConsultant(other);
+    when(sessionRepository.findById(600L)).thenReturn(Optional.of(session));
+
+    assertThatThrownBy(
+            () ->
+                service.createForSession(
+                    owner,
+                    600L,
+                    new CounsellorDirectLinkService.SessionInvitationCommand(
+                        java.util.UUID.randomUUID(), null, null, null, null, null, null, null)))
+        .isInstanceOf(NotFoundException.class);
+    verify(repository, never()).save(any());
+  }
+
+  @Test
+  void createForSession_Should_BindTheInvitationToTheConversationAndItsAppointment() {
+    var session = sharedSession(600L);
+    session.setConsultant(owner);
+    session.setAgencyId(AGENCY);
+    session.setMainTopicId(TOPIC);
+    session.setTenantId(TENANT);
+    when(sessionRepository.findById(600L)).thenReturn(Optional.of(session));
+    var appointment = new de.caritas.cob.userservice.api.model.SessionAppointment();
+    appointment.setId(java.util.UUID.randomUUID());
+    when(sessionAppointments.findOfSessionForUpdate(appointment.getId(), 600L))
+        .thenReturn(Optional.of(appointment));
+
+    var link =
+        service.createForSession(
+            owner,
+            600L,
+            new CounsellorDirectLinkService.SessionInvitationCommand(
+                appointment.getId(), null, null, null, "Dolmetscherin", 60, null, null));
+
+    assertThat(link.isJoinsExistingSession()).isTrue();
+    assertThat(link.getChatType()).isEqualTo("VIDEO");
+    assertThat(link.getAccessMode()).isEqualTo(DirectInvitationAccessMode.BOTH);
+    assertThat(link.getTopicId()).isEqualTo(TOPIC);
+    verify(invitations).attachExistingAppointment(link, appointment, 60);
+  }
+
+  @Test
+  void createForSession_Should_RequireExactlyOneAppointmentSource() {
+    assertThatThrownBy(
+            () ->
+                service.createForSession(
+                    owner,
+                    600L,
+                    new CounsellorDirectLinkService.SessionInvitationCommand(
+                        null, null, null, null, null, null, null, null)))
+        .isInstanceOf(BadRequestException.class);
+  }
+
+  private AgencyInviteLink appointmentLink(String token, String medium, LocalDateTime start) {
+    var link = publicLink(token, medium, "ACTIVE");
+    link.setId(21L);
+    link.setAppointmentId(java.util.UUID.randomUUID());
+    link.setAccessMode(DirectInvitationAccessMode.BOTH);
+    link.setExpiresAt(start.plusDays(2));
+    when(invitations.scheduleOf(link))
+        .thenReturn(
+            Optional.of(
+                DirectInvitationSchedule.of(
+                    start
+                        .atZone(java.time.ZoneId.systemDefault())
+                        .withZoneSameInstant(java.time.ZoneOffset.UTC)
+                        .toLocalDateTime(),
+                    start
+                        .plusHours(1)
+                        .atZone(java.time.ZoneId.systemDefault())
+                        .withZoneSameInstant(java.time.ZoneOffset.UTC)
+                        .toLocalDateTime(),
+                    60)));
+    return link;
+  }
+
+  private static de.caritas.cob.userservice.api.model.Session sharedSession(long id) {
+    var session = new de.caritas.cob.userservice.api.model.Session();
+    session.setId(id);
+    session.setMatrixRoomId("!shared:x");
+    session.setStatus(de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_PROGRESS);
+    return session;
   }
 
   // --- fixtures ---

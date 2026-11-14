@@ -273,6 +273,27 @@ public class UserController implements UsersApi {
   }
 
   @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkDTO>
+      renewDirectInvitation(
+          Long linkId,
+          de.caritas.cob.userservice.api.adapters.web.dto.RenewDirectInvitationDTO body) {
+    return directLinkControllerDelegate.renewDirectInvitation(linkId, body);
+  }
+
+  @Override
+  public ResponseEntity<Void> requestDirectInvitationRenewal(String token) {
+    return directLinkControllerDelegate.requestDirectInvitationRenewal(token);
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkDTO>
+      createSessionDirectInvitation(
+          Long sessionId,
+          de.caritas.cob.userservice.api.adapters.web.dto.CreateSessionDirectInvitationDTO body) {
+    return directLinkControllerDelegate.createSessionDirectInvitation(sessionId, body);
+  }
+
+  @Override
   public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkConversationDTO>
       startDirectLinkConversation(String token) {
     return directLinkControllerDelegate.startDirectLinkConversation(token);

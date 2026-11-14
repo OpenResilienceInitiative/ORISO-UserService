@@ -3,9 +3,12 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 import de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CallKnockStatus;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateDirectLinkDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.CreateSessionDirectInvitationDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.DirectInvitationAppointmentDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkConversationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkMedium;
+import de.caritas.cob.userservice.api.adapters.web.dto.RenewDirectInvitationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateDirectLinkDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
@@ -15,8 +18,11 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.CounsellorDirectLinkService;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.CounsellorDirectLinkService.CreateCommand;
+import de.caritas.cob.userservice.api.service.agencyinvitelink.CounsellorDirectLinkService.SessionInvitationCommand;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.CounsellorDirectLinkService.UpdateCommand;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.DirectCallKnockService;
+import de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitationAccessMode;
+import de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitationService;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkChatType;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkStatus;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
@@ -45,6 +51,7 @@ import org.springframework.stereotype.Service;
 public class DirectLinkControllerDelegate {
 
   private final @NonNull CounsellorDirectLinkService service;
+  private final @NonNull DirectInvitationService invitations;
   private final @NonNull UserAccountService userAccountService;
   private final @NonNull TopicService topicService;
   private static final UsernameTranscoder USERNAMES = new UsernameTranscoder();
@@ -101,7 +108,12 @@ public class DirectLinkControllerDelegate {
                 body.getName(),
                 body.getTemporary(),
                 body.getAgencyId(),
-                toUtc(body.getScheduledAt())));
+                toUtc(body.getScheduledAt()),
+                body.getAppointment() == null ? null : toUtc(body.getAppointment().getStartTime()),
+                body.getAppointment() == null ? null : toUtc(body.getAppointment().getEndTime()),
+                body.getValidityAfterEndMinutes(),
+                accessMode(body.getAccessMode()),
+                body.getKnock()));
     return new ResponseEntity<>(toDto(link, topicService.getAllTopicsMap()), HttpStatus.CREATED);
   }
 
@@ -116,9 +128,59 @@ public class DirectLinkControllerDelegate {
                 body.getTemporary(),
                 body.getActive(),
                 toUtc(body.getScheduledAt()),
-                Boolean.TRUE.equals(body.getClearScheduledAt()));
+                Boolean.TRUE.equals(body.getClearScheduledAt()),
+                body.getAppointment() == null ? null : toUtc(body.getAppointment().getStartTime()),
+                body.getAppointment() == null ? null : toUtc(body.getAppointment().getEndTime()),
+                body.getValidityAfterEndMinutes(),
+                accessMode(body.getAccessMode()),
+                body.getKnock());
     var link = service.update(owner, linkId, cmd);
     return ResponseEntity.ok(toDto(link, topicService.getAllTopicsMap()));
+  }
+
+  /** "Neuen Link senden" (ORISO-Frontend#2252). */
+  ResponseEntity<DirectLinkDTO> renewDirectInvitation(Long linkId, RenewDirectInvitationDTO body) {
+    var link =
+        invitations.renew(
+            userAccountService.retrieveValidatedConsultant(),
+            linkId,
+            body == null ? null : body.getValidityAfterEndMinutes());
+    return ResponseEntity.ok(toDto(link, topicService.getAllTopicsMap()));
+  }
+
+  /** "Neuen Link anfragen" (ORISO-Frontend#2252). */
+  ResponseEntity<Void> requestDirectInvitationRenewal(String token) {
+    invitations.requestRenewal(token, userAccountService.retrieveValidatedUser());
+    return ResponseEntity.accepted().build();
+  }
+
+  /** "Weitere Personen per Link einladen" from a 1:1 (ORISO-Frontend#2252). */
+  ResponseEntity<DirectLinkDTO> createSessionDirectInvitation(
+      Long sessionId, CreateSessionDirectInvitationDTO body) {
+    if (body == null) {
+      throw new BadRequestException("Request body is required");
+    }
+    var link =
+        service.createForSession(
+            userAccountService.retrieveValidatedConsultant(),
+            sessionId,
+            new SessionInvitationCommand(
+                body.getAppointmentId(),
+                body.getAppointment() == null ? null : toUtc(body.getAppointment().getStartTime()),
+                body.getAppointment() == null ? null : toUtc(body.getAppointment().getEndTime()),
+                body.getMedium() == null
+                    ? null
+                    : InviteLinkChatType.valueOf(body.getMedium().name()),
+                body.getName(),
+                body.getValidityAfterEndMinutes(),
+                accessMode(body.getAccessMode()),
+                body.getKnock()));
+    return new ResponseEntity<>(toDto(link, topicService.getAllTopicsMap()), HttpStatus.CREATED);
+  }
+
+  private static DirectInvitationAccessMode accessMode(
+      de.caritas.cob.userservice.api.adapters.web.dto.DirectInvitationAccessMode mode) {
+    return mode == null ? null : DirectInvitationAccessMode.valueOf(mode.name());
   }
 
   ResponseEntity<Void> deleteDirectLink(Long linkId) {
@@ -140,7 +202,12 @@ public class DirectLinkControllerDelegate {
                 started.knockStatus() == null
                     ? null
                     : CallKnockStatus.valueOf(started.knockStatus()))
-            .callAdmitted(started.callAdmitted());
+            .callAdmitted(started.callAdmitted())
+            .appointmentConversation(started.appointmentConversation() ? true : null)
+            .callOpensAt(
+                started.callOpensAt() == null
+                    ? null
+                    : started.callOpensAt().atOffset(ZoneOffset.UTC));
     return new ResponseEntity<>(dto, started.created() ? HttpStatus.CREATED : HttpStatus.OK);
   }
 
@@ -227,6 +294,46 @@ public class DirectLinkControllerDelegate {
   DirectLinkDTO toDto(AgencyInviteLink link, Map<Long, TopicDTO> topics) {
     var medium = InviteLinkChatType.valueOf(link.getChatType());
     var topic = link.getTopicId() == null ? null : topics.get(link.getTopicId());
+    var dto = baseDto(link, medium, topic);
+    dto.accessMode(
+        de.caritas.cob.userservice.api.adapters.web.dto.DirectInvitationAccessMode.valueOf(
+            link.effectiveAccessMode().name()));
+    if (medium != InviteLinkChatType.CHAT) {
+      dto.knock(link.isKnock());
+      // With "Anklopfen" off, people of an invitation with an appointment come in directly.
+      if (link.getAppointmentId() != null && !link.isKnock()) {
+        dto.admission(DirectLinkDTO.AdmissionEnum.DIRECT);
+      }
+    }
+    invitations
+        .appointmentOf(link)
+        .ifPresent(
+            appointment -> {
+              var schedule = invitations.scheduleOf(link).orElseThrow();
+              dto.appointment(
+                      new DirectInvitationAppointmentDTO()
+                          .id(appointment.getId())
+                          .startTime(appointment.getStartTime().atOffset(ZoneOffset.UTC))
+                          .endTime(appointment.getEndTime().atOffset(ZoneOffset.UTC))
+                          .status(
+                              DirectInvitationAppointmentDTO.StatusEnum.fromValue(
+                                  appointment.getStatus().name())))
+                  .validityAfterEndMinutes(schedule.validityAfterEndMinutes())
+                  .callOpensAt(schedule.callOpensAt().atOffset(ZoneOffset.UTC))
+                  .sessionId(
+                      appointment.getSession() == null ? null : appointment.getSession().getId())
+                  .joinsExistingSession(link.isJoinsExistingSession());
+            });
+    if (link.getExpiresAt() != null) {
+      dto.expiresAt(link.getExpiresAt().atOffset(ZoneOffset.UTC))
+          .expired(
+              InviteLinkStatus.EXPIRED.name().equals(link.getStatus())
+                  || link.getExpiresAt().isBefore(DirectInvitationService.nowUtc()));
+    }
+    return dto;
+  }
+
+  private DirectLinkDTO baseDto(AgencyInviteLink link, InviteLinkChatType medium, TopicDTO topic) {
     return new DirectLinkDTO()
         .id(link.getId())
         .token(link.getToken())
