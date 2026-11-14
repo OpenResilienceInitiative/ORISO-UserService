@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.calendar;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarEntryType;
+import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.CalendarBlocker;
 import de.caritas.cob.userservice.api.model.Chat;
@@ -39,7 +40,12 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 class CalendarEntryReader {
 
-  static final int APPOINTMENT_LIMIT = 1000;
+  /**
+   * The most appointments one window returns: far more than a counsellor has in the longest window
+   * (the feed's seven months). A window with more fails instead of returning part of it.
+   */
+  static final int APPOINTMENT_LIMIT = 5_000;
+
   // The projector hands out at most 100 occurrences per call; 63 days of a daily series fit.
   private static final Duration SLICE = Duration.ofDays(62);
   private static final int SLICE_LIMIT = 100;
@@ -57,13 +63,13 @@ class CalendarEntryReader {
 
   /** Scheduled appointments of the counsellor's own and co-access sessions; title = asker. */
   List<CalendarEntry> appointmentsOfConsultant(String consultantId, Instant from, Instant to) {
-    return appointments
-        .findScheduledOfConsultantBetween(
-            consultantId,
-            caseHandovers.sessionIdsWithActiveCoAccess(consultantId),
-            from,
-            to,
-            PageRequest.of(0, APPOINTMENT_LIMIT))
+    return complete(
+            appointments.findScheduledOfConsultantBetween(
+                consultantId,
+                caseHandovers.sessionIdsWithActiveCoAccess(consultantId),
+                from,
+                to,
+                PageRequest.of(0, APPOINTMENT_LIMIT + 1)))
         .stream()
         .map(
             appointment ->
@@ -76,13 +82,26 @@ class CalendarEntryReader {
 
   /** Scheduled appointments of the asker's sessions; title = the counsellor's public name. */
   List<CalendarEntry> appointmentsOfAsker(String userId, Instant from, Instant to) {
-    return appointments
-        .findScheduledOfAskerBetween(userId, from, to, PageRequest.of(0, APPOINTMENT_LIMIT))
+    return complete(
+            appointments.findScheduledOfAskerBetween(
+                userId, from, to, PageRequest.of(0, APPOINTMENT_LIMIT + 1)))
         .stream()
         .map(
             appointment ->
                 appointment(appointment, publicNameOf(appointment.getSession().getConsultant())))
         .toList();
+  }
+
+  /**
+   * One more than the limit is read to tell a full window from a cut one: a calendar that shows
+   * free time where an appointment was left out is worse than none.
+   */
+  private static List<SessionAppointment> complete(List<SessionAppointment> found) {
+    if (found.size() > APPOINTMENT_LIMIT) {
+      throw new InternalServerErrorException(
+          "A calendar window holds more than " + APPOINTMENT_LIMIT + " appointments.");
+    }
+    return found;
   }
 
   /** Occurrences of the group chats the counsellor owns or takes part in; title = topic. */
@@ -133,13 +152,22 @@ class CalendarEntryReader {
 
   private List<CalendarEntry> occurrencesOf(Collection<Chat> found, Instant from, Instant to) {
     var series = new LinkedHashMap<Long, Chat>();
-    found.forEach(chat -> series.putIfAbsent(chat.getId(), chat));
+    found.forEach(
+        chat -> {
+          if (isScheduled(chat)) {
+            series.putIfAbsent(chat.getId(), chat);
+          }
+        });
     var result = new ArrayList<CalendarEntry>();
+    if (series.isEmpty()) {
+      return result;
+    }
+    // One read for the exceptions of every series, not one per series.
+    var exceptionsOf =
+        occurrenceExceptions.findBySeries_IdIn(List.copyOf(series.keySet())).stream()
+            .collect(Collectors.groupingBy(exception -> exception.getSeries().getId()));
     for (var chat : series.values()) {
-      if (!isScheduled(chat)) {
-        continue;
-      }
-      var exceptions = occurrenceExceptions.findBySeries_Id(chat.getId());
+      var exceptions = exceptionsOf.getOrDefault(chat.getId(), List.of());
       var cursor = from.minus(LOOK_BACK);
       while (cursor.isBefore(to)) {
         var sliceEnd = cursor.plus(SLICE).isBefore(to) ? cursor.plus(SLICE) : to;

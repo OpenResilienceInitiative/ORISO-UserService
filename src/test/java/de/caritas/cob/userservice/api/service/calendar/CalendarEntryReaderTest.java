@@ -1,13 +1,16 @@
 package de.caritas.cob.userservice.api.service.calendar;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarEntryType;
+import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.model.CalendarBlocker;
 import de.caritas.cob.userservice.api.model.CalendarBlocker.Source;
 import de.caritas.cob.userservice.api.model.Chat;
@@ -29,14 +32,17 @@ import de.caritas.cob.userservice.api.port.out.SessionAppointmentRepository;
 import de.caritas.cob.userservice.api.service.CaseHandoverService;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Pageable;
 
 @ExtendWith(MockitoExtension.class)
 class CalendarEntryReaderTest {
@@ -59,7 +65,7 @@ class CalendarEntryReaderTest {
     reader =
         new CalendarEntryReader(
             appointments, caseHandovers, chats, participants, occurrenceExceptions, blockers);
-    lenient().when(occurrenceExceptions.findBySeries_Id(anyLong())).thenReturn(List.of());
+    lenient().when(occurrenceExceptions.findBySeries_IdIn(any())).thenReturn(List.of());
   }
 
   @Test
@@ -77,9 +83,10 @@ class CalendarEntryReaderTest {
                 GroupChatParticipant.builder().chatId(1L).build()));
     when(chats.findAllById(Set.of(7L, 8L))).thenReturn(List.of(owned, joined));
     var skipped = new ChatOccurrenceException();
+    skipped.setSeries(owned);
     skipped.setOriginalOccurrenceStartUtc(LocalDateTime.parse("2026-11-11T17:00:00"));
     skipped.setExceptionType(ExceptionType.SKIP);
-    when(occurrenceExceptions.findBySeries_Id(7L)).thenReturn(List.of(skipped));
+    when(occurrenceExceptions.findBySeries_IdIn(List.of(7L, 8L))).thenReturn(List.of(skipped));
 
     var entries = reader.groupOccurrencesOfConsultant(ME, FROM, TO);
 
@@ -93,6 +100,48 @@ class CalendarEntryReaderTest {
     assertThat(first.start()).isEqualTo(Instant.parse("2026-11-04T17:00:00Z"));
     assertThat(first.end()).isEqualTo(Instant.parse("2026-11-04T18:30:00Z"));
     assertThat(first.sessionId()).isNull();
+  }
+
+  @Test
+  void groupOccurrences_Should_ReadTheExceptionsOfEverySeriesInOneQuery() {
+    var first = weekly(7L, "First", "2026-11-04T17:00:00", 2);
+    var second = weekly(8L, "Second", "2026-11-05T10:00:00", 2);
+    var third = weekly(9L, "Third", "2026-11-06T10:00:00", 1);
+    when(chats.findByChatOwnerId(ME)).thenReturn(List.of(first, second, third));
+    var skipped = new ChatOccurrenceException();
+    skipped.setSeries(second);
+    skipped.setOriginalOccurrenceStartUtc(LocalDateTime.parse("2026-11-12T10:00:00"));
+    skipped.setExceptionType(ExceptionType.SKIP);
+    when(occurrenceExceptions.findBySeries_IdIn(List.of(7L, 8L, 9L))).thenReturn(List.of(skipped));
+
+    var entries = reader.groupOccurrencesOfConsultant(ME, FROM, TO);
+
+    // The exception skips the second occurrence of its own series only.
+    assertThat(entries)
+        .extracting(CalendarEntry::id)
+        .containsExactlyInAnyOrder("chat-7-0", "chat-7-1", "chat-8-0", "chat-9-0");
+    verify(occurrenceExceptions).findBySeries_IdIn(List.of(7L, 8L, 9L));
+    verifyNoMoreInteractions(occurrenceExceptions);
+  }
+
+  @Test
+  void appointments_Should_Fail_When_TheWindowHoldsMoreThanTheLimit() {
+    var limit = CalendarEntryReader.APPOINTMENT_LIMIT;
+    var pages = ArgumentCaptor.forClass(Pageable.class);
+    when(appointments.findScheduledOfConsultantBetween(
+            eq(ME), any(), eq(FROM), eq(TO), pages.capture()))
+        .thenReturn(Collections.nCopies(limit, appointment()))
+        .thenReturn(Collections.nCopies(limit + 1, appointment()));
+    when(appointments.findScheduledOfAskerBetween(eq("asker"), eq(FROM), eq(TO), any()))
+        .thenReturn(Collections.nCopies(limit + 1, appointment()));
+
+    assertThat(reader.appointmentsOfConsultant(ME, FROM, TO)).hasSize(limit);
+    // A cut window would show free time where an appointment is.
+    assertThatThrownBy(() -> reader.appointmentsOfConsultant(ME, FROM, TO))
+        .isInstanceOf(InternalServerErrorException.class);
+    assertThatThrownBy(() -> reader.appointmentsOfAsker("asker", FROM, TO))
+        .isInstanceOf(InternalServerErrorException.class);
+    assertThat(pages.getValue().getPageSize()).isEqualTo(limit + 1);
   }
 
   @Test
