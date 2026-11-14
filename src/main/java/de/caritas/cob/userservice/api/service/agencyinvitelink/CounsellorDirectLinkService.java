@@ -186,7 +186,7 @@ public class CounsellorDirectLinkService {
         mode != null
             ? mode
             : temporary
-                ? DirectInvitationAccessMode.GUESTS_ONLY
+                ? DirectInvitationAccessMode.BOTH
                 : DirectInvitationAccessMode.ACCOUNTS_ONLY;
     link.setAccessMode(effective);
     link.setTemporaryAccount(effective.createsTemporaryAccounts());

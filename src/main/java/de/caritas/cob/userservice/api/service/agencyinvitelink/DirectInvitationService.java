@@ -185,7 +185,7 @@ public class DirectInvitationService {
       return new Opened(session, false);
     }
     if (link.isJoinsExistingSession()) {
-      rooms.addInvitedGuestToExistingRoom(session, user, link.getId());
+      rooms.addInvitedGuestToExistingRoom(session, user);
     } else {
       rooms.addToAppointmentRoom(session, user);
     }

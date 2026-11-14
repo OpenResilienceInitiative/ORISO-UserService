@@ -181,7 +181,7 @@ public class AgencyInviteLink {
       return accessMode;
     }
     return temporaryAccount
-        ? DirectInvitationAccessMode.GUESTS_ONLY
+        ? DirectInvitationAccessMode.BOTH
         : DirectInvitationAccessMode.ACCOUNTS_ONLY;
   }
 }
