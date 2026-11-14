@@ -330,7 +330,10 @@ class CalendarSyncControllerIT {
 
     assertThat(left.get()).as("the import had deleted the old busy times").isZero();
     assertThat(busyStarts()).containsExactly(in(24), in(48));
-    assertThat(syncs.findById(counsellor.getId()).orElseThrow().getImportLastSyncAt()).isNull();
+    var sync = syncs.findById(counsellor.getId()).orElseThrow();
+    assertThat(sync.getImportLastSyncAt()).isNull();
+    // Recorded after the rollback: the counsellor sees that the import failed.
+    assertThat(sync.getImportError()).isEqualTo("UNREACHABLE");
   }
 
   @Test

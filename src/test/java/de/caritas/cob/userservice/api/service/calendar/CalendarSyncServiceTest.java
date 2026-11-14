@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -41,6 +42,7 @@ import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 
 @ExtendWith(MockitoExtension.class)
 class CalendarSyncServiceTest {
@@ -62,6 +64,7 @@ class CalendarSyncServiceTest {
   @Mock CalendarImportFetcher fetcher;
   @Mock PlatformTransactionManager transactionManager;
   @Captor ArgumentCaptor<List<CalendarBlocker>> imported;
+  @Captor ArgumentCaptor<TransactionDefinition> definitions;
 
   private final AuthenticatedUser caller = new AuthenticatedUser();
   private final Map<String, CalendarSync> stored = new HashMap<>();
@@ -225,6 +228,23 @@ class CalendarSyncServiceTest {
     assertThat(stored.get(ME).getImportError()).isNull();
     verify(blockers, times(3)).deleteByConsultantIdAndSource(ME, Source.EXTERNAL);
     verify(blockers, times(2)).saveAll(any());
+  }
+
+  @Test
+  void anImportWhoseBusyTimesCannotBeStored_Should_SayItFailed_InATransactionOfItsOwn() {
+    when(fetcher.fetch(any(), anyList())).thenReturn(CALENDAR);
+    service.configureImport(new CalendarImportDTO().icsUrl(ADDRESS));
+    when(blockers.saveAll(anyList())).thenThrow(new IllegalStateException("refused"));
+
+    service.importAll();
+
+    // The last good import stays the latest, and the counsellor sees that this one failed.
+    assertThat(stored.get(ME).getImportError()).isEqualTo("UNREACHABLE");
+    assertThat(stored.get(ME).getImportLastSyncAt()).isEqualTo(NOW);
+    verify(transactionManager, times(1)).rollback(any());
+    verify(transactionManager, atLeastOnce()).getTransaction(definitions.capture());
+    assertThat(definitions.getValue().getPropagationBehavior())
+        .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
   }
 
   @Test
