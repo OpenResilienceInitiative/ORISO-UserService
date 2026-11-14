@@ -59,7 +59,8 @@ class CalendarWorkingHoursMigrationTest {
         assertThat(columns(c))
             .containsExactlyInAnyOrder("ID", "CONSULTANT_ID", "WEEKDAY", "START_TIME", "END_TIME");
 
-        liquibase.rollback(1, (String) null);
+        // The index repair changeset and the table changeset.
+        liquibase.rollback(2, (String) null);
         assertThat(columns(c)).isEmpty();
       }
     }

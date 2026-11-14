@@ -7,6 +7,9 @@
        .. 6 = Saturday). Display only: booking, the subscription feed and the busy import do not
        read this table. -->
   <changeSet id="20261114-calendar-working-hours-1000" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not><tableExists tableName="calendar_working_hours"/></not>
+    </preConditions>
     <createTable tableName="calendar_working_hours">
       <column name="id" type="CHAR(36)"><constraints primaryKey="true" nullable="false"/></column>
       <column name="consultant_id" type="VARCHAR(36)"><constraints nullable="false"/></column>
@@ -19,5 +22,20 @@
       <column name="consultant_id"/>
     </createIndex>
     <rollback><dropTable tableName="calendar_working_hours"/></rollback>
+  </changeSet>
+  <!-- As for the blocker table: repairs a table that was created without its index. The table's
+       rollback removes the index with it, so there is nothing to undo here. -->
+  <changeSet id="20261114-calendar-working-hours-1000-index" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <indexExists tableName="calendar_working_hours"
+          indexName="idx_calendar_working_hours_consultant"/>
+      </not>
+    </preConditions>
+    <createIndex tableName="calendar_working_hours"
+      indexName="idx_calendar_working_hours_consultant">
+      <column name="consultant_id"/>
+    </createIndex>
+    <rollback/>
   </changeSet>
 </databaseChangeLog>
