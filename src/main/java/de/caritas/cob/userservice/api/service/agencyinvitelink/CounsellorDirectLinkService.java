@@ -206,7 +206,8 @@ public class CounsellorDirectLinkService {
       // this one, so two moves through two of its invitations never hold one lock each.
       moved =
           repository
-              .findAppointmentIdById(linkId)
+              .findAppointmentIdOfOwnLink(
+                  linkId, owner.getId(), COUNSELLOR, InviteLinkChatType.DIRECT_MEDIA)
               .map(repository::findByAppointmentIdForUpdate)
               .orElse(List.of());
     }
@@ -470,6 +471,11 @@ public class CounsellorDirectLinkService {
    * the first read, so no unlocked copy of the row sits in the persistence context.
    */
   private AgencyInviteLink requireOwn(Consultant owner, Long linkId) {
+    // Check ownership before taking the row lock, so a foreign caller never blocks the owner.
+    if (!repository.existsByIdAndConsultantIdAndLinkKindAndChatTypeIn(
+        linkId, owner.getId(), COUNSELLOR, InviteLinkChatType.DIRECT_MEDIA)) {
+      throw new NotFoundException("Direct link %s not found", linkId);
+    }
     return repository
         .findByIdForUpdate(linkId)
         .filter(found -> DirectInvitationService.isOwnDirectLink(found, owner))

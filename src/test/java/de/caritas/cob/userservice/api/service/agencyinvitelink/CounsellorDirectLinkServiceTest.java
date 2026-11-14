@@ -349,7 +349,9 @@ class CounsellorDirectLinkServiceTest {
     var link = ownLink(5L, "VIDEO", "ACTIVE");
     var appointmentId = java.util.UUID.randomUUID();
     link.setAppointmentId(appointmentId);
-    when(repository.findAppointmentIdById(5L)).thenReturn(Optional.of(appointmentId));
+    when(repository.findAppointmentIdOfOwnLink(
+            eq(5L), eq(OWNER_ID), eq("COUNSELLOR"), eq(InviteLinkChatType.DIRECT_MEDIA)))
+        .thenReturn(Optional.of(appointmentId));
     var start = LocalDateTime.now().plusDays(3);
 
     service.update(
@@ -364,6 +366,37 @@ class CounsellorDirectLinkServiceTest {
   }
 
   /**
+   * Security review on PR #1648: a counsellor who does not own the link must not lock anything,
+   * neither the invitations of its appointment nor the link row itself.
+   */
+  @Test
+  void update_Should_LockNothing_When_TheLinkIsNotOwn() {
+    var start = LocalDateTime.now().plusDays(3);
+
+    assertThatThrownBy(
+            () ->
+                service.update(
+                    owner,
+                    9L,
+                    new UpdateCommand(
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        false,
+                        start,
+                        start.plusHours(1),
+                        null,
+                        null,
+                        null)))
+        .isInstanceOf(NotFoundException.class);
+
+    verify(repository, never()).findByAppointmentIdForUpdate(any());
+    verify(repository, never()).findByIdForUpdate(any());
+  }
+
+  /**
    * CodeRabbit on PR #1648: an invitation whose end passed before the sweep ran must not come back
    * to life with the later end of a move; it ends first, like the sweep would end it.
    */
@@ -374,7 +407,9 @@ class CounsellorDirectLinkServiceTest {
     link.setAppointmentId(appointmentId);
     var sibling = ownLink(6L, "VIDEO", "ACTIVE");
     sibling.setAppointmentId(appointmentId);
-    when(repository.findAppointmentIdById(5L)).thenReturn(Optional.of(appointmentId));
+    when(repository.findAppointmentIdOfOwnLink(
+            eq(5L), eq(OWNER_ID), eq("COUNSELLOR"), eq(InviteLinkChatType.DIRECT_MEDIA)))
+        .thenReturn(Optional.of(appointmentId));
     when(repository.findByAppointmentIdForUpdate(appointmentId))
         .thenReturn(java.util.List.of(link, sibling));
     var start = LocalDateTime.now().plusDays(3);
@@ -1082,6 +1117,9 @@ class CounsellorDirectLinkServiceTest {
     when(repository.findByIdAndConsultantIdAndLinkKindAndChatTypeIn(
             eq(id), eq(OWNER_ID), eq("COUNSELLOR"), eq(InviteLinkChatType.DIRECT_MEDIA)))
         .thenReturn(Optional.of(link));
+    when(repository.existsByIdAndConsultantIdAndLinkKindAndChatTypeIn(
+            eq(id), eq(OWNER_ID), eq("COUNSELLOR"), eq(InviteLinkChatType.DIRECT_MEDIA)))
+        .thenReturn(true);
     when(repository.findByIdForUpdate(id)).thenReturn(Optional.of(link));
     return link;
   }
