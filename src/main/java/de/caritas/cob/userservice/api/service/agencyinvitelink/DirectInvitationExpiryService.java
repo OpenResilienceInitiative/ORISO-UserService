@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.agencyinvitelink;
 
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.model.DirectInvitationMember;
 import de.caritas.cob.userservice.api.model.Session;
@@ -16,6 +17,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -123,6 +125,35 @@ public class DirectInvitationExpiryService {
       archive.archiveBySystem(session);
     }
     afterCommit(() -> due.forEach(this::removeInOwnTransaction));
+  }
+
+  /**
+   * Before a conversation is deleted: its Matrix room stays, and the deletion takes every member
+   * row with it, so nothing would take the invited people out later. Everybody who entered it by
+   * invitation leaves now; the conversation's own advice seeker stays, as in any deletion. Fail
+   * closed: the deletion waits until Matrix confirmed everybody out.
+   *
+   * @throws ServiceUnavailableException while somebody is still in the room or joining it
+   */
+  @Transactional
+  public void requireInvitedOutBeforeDeletion(Session session) {
+    var owner = session.getUser() != null ? session.getUser().getUserId() : null;
+    var allOut = true;
+    for (var member : members.findBySessionIdAndRemovedAtIsNull(session.getId())) {
+      if (Objects.equals(member.getUserId(), owner)) {
+        continue;
+      }
+      if (DirectInvitationMemberships.attemptRunning(member, now())) {
+        allOut = false;
+        continue;
+      }
+      allOut &= tryRemove(session, member);
+      members.save(member);
+    }
+    if (!allOut) {
+      throw new ServiceUnavailableException(
+          "Invited people of session " + session.getId() + " are still in its room");
+    }
   }
 
   /**

@@ -31,6 +31,9 @@ public interface DirectInvitationMemberRepository
 
   List<DirectInvitationMember> findByInviteLinkIdAndRemovedAtIsNull(Long inviteLinkId);
 
+  /** Everybody still in a conversation through an invitation. */
+  List<DirectInvitationMember> findBySessionIdAndRemovedAtIsNull(Long sessionId);
+
   /**
    * Removals Matrix has not confirmed yet whose next attempt is due at {@code now}, for the sweep
    * (#2252). A failed attempt moves {@code revokeDueAt} on, so a lasting failure is retried with a

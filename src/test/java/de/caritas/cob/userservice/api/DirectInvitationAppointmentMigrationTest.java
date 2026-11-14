@@ -56,6 +56,14 @@ class DirectInvitationAppointmentMigrationTest {
         assertThat(accessMode(c, 3)).as("call share links keep their own rules").isNull();
         try (var sql = c.createStatement()) {
           sql.execute("INSERT INTO session (id) VALUES (500)");
+          try (var rs =
+              sql.executeQuery(
+                  "SELECT direct_invitation_conversation FROM session WHERE id = 500")) {
+            rs.next();
+            assertThat(rs.getBoolean(1))
+                .as("an existing conversation is no invitation's")
+                .isFalse();
+          }
           // The appointment of an invitation nobody opened yet has no conversation.
           sql.execute(
               "INSERT INTO session_appointment (id, session_id, start_time, end_time, status)"
@@ -141,27 +149,14 @@ class DirectInvitationAppointmentMigrationTest {
   }
 
   /**
-   * A run that stopped right after creating the member table left it without its keys: the next run
-   * installs both instead of marking the table done.
+   * CodeRabbit on PR #1648: a member table that exists without its keys is no finished migration.
+   * The update stops and names it, instead of marking it done or repairing an unknown table.
    */
   @Test
-  void update_Should_InstallTheMemberKeys_When_AnEarlierRunStoppedAfterTheTable() throws Exception {
-    try (Connection c =
-        DriverManager.getConnection(
-            // H2's default upper-case names, so the table-exists check finds the table.
-            "jdbc:h2:mem:direct-invitation-member-partial-" + UUID.randomUUID() + ";MODE=MariaDB",
-            "sa",
-            "")) {
+  void update_Should_Stop_When_TheMemberTableExistsWithoutItsKeys() throws Exception {
+    try (Connection c = h2WithUpperCaseNames("member-partial")) {
+      givenTheTablesBeforeThisChange(c);
       try (var sql = c.createStatement()) {
-        sql.execute("CREATE TABLE session (id BIGINT UNSIGNED NOT NULL, PRIMARY KEY (id))");
-        sql.execute(
-            "CREATE TABLE session_appointment (id CHAR(36) NOT NULL, session_id BIGINT UNSIGNED"
-                + " NOT NULL, start_time DATETIME(6) NOT NULL, end_time DATETIME(6) NOT NULL,"
-                + " status VARCHAR(16) NOT NULL, PRIMARY KEY (id))");
-        sql.execute(
-            "CREATE TABLE agency_invite_link (id BIGINT NOT NULL, link_kind VARCHAR(32) NOT NULL,"
-                + " temporary_account BOOLEAN NOT NULL, PRIMARY KEY (id))");
-        // The state an interrupted run leaves: the table, neither key.
         sql.execute(
             "CREATE TABLE direct_invitation_member (id BIGINT UNSIGNED AUTO_INCREMENT NOT NULL,"
                 + " session_id BIGINT UNSIGNED NOT NULL, user_id VARCHAR(36) NOT NULL,"
@@ -169,35 +164,66 @@ class DirectInvitationAppointmentMigrationTest {
                 + " joined_at DATETIME NOT NULL, revoke_due_at DATETIME, removed_at DATETIME,"
                 + " PRIMARY KEY (id))");
       }
-      var database =
-          DatabaseFactory.getInstance().findCorrectDatabaseImplementation(new JdbcConnection(c));
-      try (var liquibase = new Liquibase(CHANGELOG, new ClassLoaderResourceAccessor(), database)) {
-        liquibase.update(new Contexts(), new LabelExpression());
-
-        try (var sql = c.createStatement()) {
-          sql.execute("INSERT INTO session (id) VALUES (500)");
-          sql.execute(
-              "INSERT INTO direct_invitation_member (session_id, user_id, invite_link_id, guest,"
-                  + " joined_at) VALUES (500, 'u', 1, TRUE, '2030-01-01 10:00:00')");
-          assertThatThrownBy(
-                  () ->
-                      sql.execute(
-                          "INSERT INTO direct_invitation_member (session_id, user_id,"
-                              + " invite_link_id, guest, joined_at) VALUES (500, 'u', 1, TRUE,"
-                              + " '2030-01-01 10:00:00')"))
-              .as("the unique key was installed")
-              .isInstanceOf(java.sql.SQLException.class);
-          assertThatThrownBy(
-                  () ->
-                      sql.execute(
-                          "INSERT INTO direct_invitation_member (session_id, user_id,"
-                              + " invite_link_id, guest, joined_at) VALUES (404, 'v', 1, TRUE,"
-                              + " '2030-01-01 10:00:00')"))
-              .as("the session key was installed")
-              .isInstanceOf(java.sql.SQLException.class);
-        }
+      try (var liquibase = liquibase(c)) {
+        assertThatThrownBy(() -> liquibase.update(new Contexts(), new LabelExpression()))
+            .hasStackTraceContaining("direct_invitation_member");
       }
     }
+  }
+
+  @Test
+  void update_Should_Stop_When_TheReplacedTokenTableExistsWithoutItsKeys() throws Exception {
+    try (Connection c = h2WithUpperCaseNames("token-partial")) {
+      givenTheTablesBeforeThisChange(c);
+      try (var sql = c.createStatement()) {
+        sql.execute(
+            "CREATE TABLE agency_invite_link_replaced_token (invite_link_id BIGINT NOT NULL,"
+                + " token VARCHAR(64) NOT NULL)");
+      }
+      try (var liquibase = liquibase(c)) {
+        assertThatThrownBy(() -> liquibase.update(new Contexts(), new LabelExpression()))
+            .hasStackTraceContaining("agency_invite_link_replaced_token");
+      }
+    }
+  }
+
+  /** The check runs on every start: complete tables pass it again. */
+  @Test
+  void update_Should_PassAgain_When_TheTablesAreComplete() throws Exception {
+    try (Connection c = h2WithUpperCaseNames("rerun")) {
+      givenTheTablesBeforeThisChange(c);
+      try (var liquibase = liquibase(c)) {
+        liquibase.update(new Contexts(), new LabelExpression());
+        liquibase.update(new Contexts(), new LabelExpression());
+      }
+    }
+  }
+
+  private static Connection h2WithUpperCaseNames(String name) throws Exception {
+    // H2's default upper-case names, so the table-exists check finds the tables.
+    return DriverManager.getConnection(
+        "jdbc:h2:mem:direct-invitation-" + name + "-" + UUID.randomUUID() + ";MODE=MariaDB",
+        "sa",
+        "");
+  }
+
+  private static void givenTheTablesBeforeThisChange(Connection c) throws Exception {
+    try (var sql = c.createStatement()) {
+      sql.execute("CREATE TABLE session (id BIGINT UNSIGNED NOT NULL, PRIMARY KEY (id))");
+      sql.execute(
+          "CREATE TABLE session_appointment (id CHAR(36) NOT NULL, session_id BIGINT UNSIGNED"
+              + " NOT NULL, start_time DATETIME(6) NOT NULL, end_time DATETIME(6) NOT NULL,"
+              + " status VARCHAR(16) NOT NULL, PRIMARY KEY (id))");
+      sql.execute(
+          "CREATE TABLE agency_invite_link (id BIGINT NOT NULL, link_kind VARCHAR(32) NOT NULL,"
+              + " temporary_account BOOLEAN NOT NULL, PRIMARY KEY (id))");
+    }
+  }
+
+  private static Liquibase liquibase(Connection c) throws Exception {
+    var database =
+        DatabaseFactory.getInstance().findCorrectDatabaseImplementation(new JdbcConnection(c));
+    return new Liquibase(CHANGELOG, new ClassLoaderResourceAccessor(), database);
   }
 
   private static String accessMode(Connection c, long id) throws Exception {

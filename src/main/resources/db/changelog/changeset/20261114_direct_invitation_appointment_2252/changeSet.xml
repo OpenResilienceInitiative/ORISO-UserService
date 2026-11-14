@@ -7,7 +7,8 @@
        validity_after_end_minutes after its end (expires_at, already present, is set from it). Who
        may enter (access_mode) and the knock switch (knock, already present) are per link. -->
   <!-- One step per changeSet, each with its own precondition: MariaDB commits every DDL statement
-       on its own, so a run that stopped half way finishes the rest on the next start. The ids are
+       on its own, so a run that stopped half way finishes the rest on the next start; a new table
+       is created with its keys in one step and checked before it on every start. The ids are
        new (the first version held every step in one changeSet), so a database that already ran
        that version marks these as ran instead of failing on a changed checksum. -->
   <changeSet id="20261114-direct-invitation-columns-2252" author="oriso">
@@ -67,10 +68,55 @@
     <rollback/>
   </changeSet>
 
-  <!-- The member table, its unique key and its session key are three changeSets, each guarded by
-       its own object: a run that stopped after the table installs the missing key on the next
-       start instead of marking it done. A database whose rows break a key fails here loudly. -->
-  <changeSet id="20261114-direct-invitation-member-table-2252" author="oriso">
+  <!-- An appointment conversation is marked for good: the 1:1 lookup leaves it out also after
+       its invitation was deleted. Set once when the conversation is created; ordinary sessions keep
+       false. -->
+  <changeSet id="20261114-session-direct-invitation-conversation-2252" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <columnExists tableName="session" columnName="direct_invitation_conversation"/>
+      </not>
+    </preConditions>
+    <addColumn tableName="session">
+      <column name="direct_invitation_conversation" type="BOOLEAN" defaultValueBoolean="false">
+        <constraints nullable="false"/>
+      </column>
+    </addColumn>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+
+  <!-- The member table is created with both keys in one changeSet. MariaDB commits each DDL on its
+       own, so a run can stop after the table: the check before it runs on every start and stops
+       the update for a table that exists without its columns and keys, instead of marking it done
+       or repairing a table nobody knows. Such a table is dropped by hand and the update rerun. -->
+  <changeSet id="20261114-direct-invitation-member-verify-2252" author="oriso" runAlways="true">
+    <preConditions onFail="HALT"
+      onFailMessage="direct_invitation_member exists without all its columns and keys; drop it and rerun">
+      <or>
+        <not>
+          <tableExists tableName="direct_invitation_member"/>
+        </not>
+        <and>
+          <columnExists tableName="direct_invitation_member" columnName="id"/>
+          <columnExists tableName="direct_invitation_member" columnName="session_id"/>
+          <columnExists tableName="direct_invitation_member" columnName="user_id"/>
+          <columnExists tableName="direct_invitation_member" columnName="invite_link_id"/>
+          <columnExists tableName="direct_invitation_member" columnName="guest"/>
+          <columnExists tableName="direct_invitation_member" columnName="joined_at"/>
+          <columnExists tableName="direct_invitation_member" columnName="revoke_due_at"/>
+          <columnExists tableName="direct_invitation_member" columnName="removed_at"/>
+          <indexExists tableName="direct_invitation_member"
+            indexName="uq_direct_invitation_member_session_user"/>
+          <foreignKeyConstraintExists foreignKeyTableName="direct_invitation_member"
+            foreignKeyName="fk_direct_invitation_member_session"/>
+        </and>
+      </or>
+    </preConditions>
+    <sql>SELECT 1</sql>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+
+  <changeSet id="20261114-direct-invitation-member-2252" author="oriso">
     <preConditions onFail="MARK_RAN">
       <not>
         <tableExists tableName="direct_invitation_member"/>
@@ -88,41 +134,16 @@
       <column name="revoke_due_at" type="DATETIME"/>
       <column name="removed_at" type="DATETIME"/>
     </createTable>
-    <rollback><dropTable tableName="direct_invitation_member"/></rollback>
-  </changeSet>
-
-  <changeSet id="20261114-direct-invitation-member-unique-2252" author="oriso">
-    <preConditions onFail="MARK_RAN">
-      <not>
-        <indexExists tableName="direct_invitation_member"
-          indexName="uq_direct_invitation_member_session_user"/>
-      </not>
-    </preConditions>
     <!-- A unique index: one object to check, the same key in MariaDB. -->
     <createIndex tableName="direct_invitation_member"
       indexName="uq_direct_invitation_member_session_user" unique="true">
       <column name="session_id"/>
       <column name="user_id"/>
     </createIndex>
-    <rollback>
-      <dropIndex tableName="direct_invitation_member" indexName="uq_direct_invitation_member_session_user"/>
-    </rollback>
-  </changeSet>
-
-  <changeSet id="20261114-direct-invitation-member-session-fk-2252" author="oriso">
-    <preConditions onFail="MARK_RAN">
-      <not>
-        <foreignKeyConstraintExists foreignKeyTableName="direct_invitation_member"
-          foreignKeyName="fk_direct_invitation_member_session"/>
-      </not>
-    </preConditions>
     <addForeignKeyConstraint baseTableName="direct_invitation_member" baseColumnNames="session_id"
       referencedTableName="session" referencedColumnNames="id"
       constraintName="fk_direct_invitation_member_session" onDelete="CASCADE"/>
-    <rollback>
-      <dropForeignKeyConstraint baseTableName="direct_invitation_member"
-        constraintName="fk_direct_invitation_member_session"/>
-    </rollback>
+    <rollback><dropTable tableName="direct_invitation_member"/></rollback>
   </changeSet>
 
   <!-- A join attempt owns its member row (join_attempt), and the sweep never overwrites a change a
@@ -144,8 +165,31 @@
   </changeSet>
 
   <!-- Every token "Neuen Link senden" replaced, not only the last one: an older link still reads
-       as expired and still asks for a new one. Same three-step guard as the member table. -->
-  <changeSet id="20261114-direct-invitation-replaced-token-table-2252" author="oriso">
+       as expired and still asks for a new one. Same check and single creation as the member
+       table. -->
+  <changeSet id="20261114-direct-invitation-replaced-token-verify-2252" author="oriso"
+    runAlways="true">
+    <preConditions onFail="HALT"
+      onFailMessage="agency_invite_link_replaced_token exists without all its columns and keys; drop it and rerun">
+      <or>
+        <not>
+          <tableExists tableName="agency_invite_link_replaced_token"/>
+        </not>
+        <and>
+          <columnExists tableName="agency_invite_link_replaced_token" columnName="invite_link_id"/>
+          <columnExists tableName="agency_invite_link_replaced_token" columnName="token"/>
+          <indexExists tableName="agency_invite_link_replaced_token"
+            indexName="uq_agency_invite_link_replaced_token"/>
+          <foreignKeyConstraintExists foreignKeyTableName="agency_invite_link_replaced_token"
+            foreignKeyName="fk_agency_invite_link_replaced_token_link"/>
+        </and>
+      </or>
+    </preConditions>
+    <sql>SELECT 1</sql>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+
+  <changeSet id="20261114-direct-invitation-replaced-token-2252" author="oriso">
     <preConditions onFail="MARK_RAN">
       <not>
         <tableExists tableName="agency_invite_link_replaced_token"/>
@@ -155,40 +199,15 @@
       <column name="invite_link_id" type="BIGINT"><constraints nullable="false"/></column>
       <column name="token" type="VARCHAR(64)"><constraints nullable="false"/></column>
     </createTable>
-    <rollback><dropTable tableName="agency_invite_link_replaced_token"/></rollback>
-  </changeSet>
-
-  <changeSet id="20261114-direct-invitation-replaced-token-unique-2252" author="oriso">
-    <preConditions onFail="MARK_RAN">
-      <not>
-        <indexExists tableName="agency_invite_link_replaced_token"
-          indexName="uq_agency_invite_link_replaced_token"/>
-      </not>
-    </preConditions>
     <!-- A unique index: one object to check, the same key in MariaDB. -->
     <createIndex tableName="agency_invite_link_replaced_token"
       indexName="uq_agency_invite_link_replaced_token" unique="true">
       <column name="token"/>
     </createIndex>
-    <rollback>
-      <dropIndex tableName="agency_invite_link_replaced_token" indexName="uq_agency_invite_link_replaced_token"/>
-    </rollback>
-  </changeSet>
-
-  <changeSet id="20261114-direct-invitation-replaced-token-link-fk-2252" author="oriso">
-    <preConditions onFail="MARK_RAN">
-      <not>
-        <foreignKeyConstraintExists foreignKeyTableName="agency_invite_link_replaced_token"
-          foreignKeyName="fk_agency_invite_link_replaced_token_link"/>
-      </not>
-    </preConditions>
     <addForeignKeyConstraint baseTableName="agency_invite_link_replaced_token"
       baseColumnNames="invite_link_id" referencedTableName="agency_invite_link"
       referencedColumnNames="id" constraintName="fk_agency_invite_link_replaced_token_link"
       onDelete="CASCADE"/>
-    <rollback>
-      <dropForeignKeyConstraint baseTableName="agency_invite_link_replaced_token"
-        constraintName="fk_agency_invite_link_replaced_token_link"/>
-    </rollback>
+    <rollback><dropTable tableName="agency_invite_link_replaced_token"/></rollback>
   </changeSet>
 </databaseChangeLog>

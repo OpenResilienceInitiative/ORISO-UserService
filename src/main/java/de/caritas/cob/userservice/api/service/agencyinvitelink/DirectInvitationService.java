@@ -226,6 +226,9 @@ public class DirectInvitationService {
                           HttpStatus.BAD_GATEWAY, "conversation_room_unavailable"));
       appointment.setSession(session);
       appointments.save(appointment);
+      if (!link.isJoinsExistingSession()) {
+        sessions.markDirectInvitationConversation(session.getId());
+      }
       memberships.recordCreator(session, user, link);
       return new Opened(session, true, false);
     }
@@ -293,12 +296,12 @@ public class DirectInvitationService {
    */
   @Transactional
   public AgencyInviteLink renew(Consultant owner, Long linkId, Integer validity) {
-    // Locked: two renewals at once must not both replace the same token.
+    // Locked by the first read: two renewals at once must not both replace the same token, and
+    // an earlier unlocked read would leave a copy the locking query does not refresh.
     var link =
         links
-            .findByIdAndConsultantIdAndLinkKindAndChatTypeIn(
-                linkId, owner.getId(), COUNSELLOR, DIRECT_MEDIA)
-            .flatMap(own -> links.findByIdForUpdate(own.getId()))
+            .findByIdForUpdate(linkId)
+            .filter(found -> isOwnDirectLink(found, owner))
             .orElseThrow(() -> new NotFoundException("Direct link %s not found", linkId));
     var appointment =
         appointmentOf(link)
@@ -333,6 +336,13 @@ public class DirectInvitationService {
       postRenewedNotice(session, saved);
     }
     return saved;
+  }
+
+  /** The counsellor's own counsellor direct link, checked on the row as it was read. */
+  static boolean isOwnDirectLink(AgencyInviteLink link, Consultant owner) {
+    return Objects.equals(owner.getId(), link.getConsultantId())
+        && COUNSELLOR.equals(link.getLinkKind())
+        && DIRECT_MEDIA.contains(link.getChatType());
   }
 
   /** A switched-off invitation is switched on again: its appointment conversation reopens. */

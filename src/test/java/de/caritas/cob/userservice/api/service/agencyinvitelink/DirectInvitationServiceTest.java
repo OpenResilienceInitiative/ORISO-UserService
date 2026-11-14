@@ -255,6 +255,8 @@ class DirectInvitationServiceTest {
     assertThat(member.getValue().isGuest()).isTrue();
     assertThat(member.getValue().getInviteLinkId()).isEqualTo(LINK_ID);
     verify(rooms, never()).addToAppointmentRoom(any(), any());
+    // Durable, on the session itself: it stays a shared conversation after the link is deleted.
+    verify(sessions).markDirectInvitationConversation(SESSION_ID);
   }
 
   @Test
@@ -694,6 +696,15 @@ class DirectInvitationServiceTest {
 
     assertThat(renewed).isSameAs(current);
     assertThat(renewed.getReplacedTokens()).containsExactly("token-of-a-concurrent-renewal");
+  }
+
+  /** The first read is the locked one, so no stale copy of the row is in the context. */
+  @Test
+  void renew_Should_ReadTheLinkUnderItsLockFirst() {
+    service.renew(owner, LINK_ID, null);
+
+    verify(links, never())
+        .findByIdAndConsultantIdAndLinkKindAndChatTypeIn(any(), any(), any(), any());
   }
 
   @Test

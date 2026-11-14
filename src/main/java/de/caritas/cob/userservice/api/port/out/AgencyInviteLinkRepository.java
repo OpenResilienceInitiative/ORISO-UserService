@@ -23,6 +23,10 @@ public interface AgencyInviteLinkRepository extends JpaRepository<AgencyInviteLi
   @Query("SELECT l FROM AgencyInviteLink l JOIN l.replacedTokens t WHERE t = :token")
   Optional<AgencyInviteLink> findFirstByPreviousToken(@Param("token") String token);
 
+  /** The appointment of a link, read without loading (or locking) the link itself (#2252). */
+  @Query("SELECT l.appointmentId FROM AgencyInviteLink l WHERE l.id = :id")
+  Optional<java.util.UUID> findAppointmentIdById(@Param("id") Long id);
+
   /**
    * Every invitation that meets at one appointment, locked in id order: moving the appointment
    * moves all their expiries (ORISO-Frontend#2252).

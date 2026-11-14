@@ -78,6 +78,14 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
           + " WHERE session.id = :sessionId AND session.directLinkName IS NULL")
   int recordDirectLinkName(@Param("sessionId") Long sessionId, @Param("name") String name);
 
+  /** ORISO-Frontend#2252: this session is the shared conversation of a direct invitation. */
+  @Transactional
+  @Modifying(flushAutomatically = true)
+  @Query(
+      "UPDATE Session session SET session.directInvitationConversation = true"
+          + " WHERE session.id = :sessionId")
+  int markDirectInvitationConversation(@Param("sessionId") Long sessionId);
+
   /**
    * Write the independent standing preference without changing ownership or its optimistic version.
    * Callers must first lock the session and validate its owner, tenant and conversation scope.
@@ -521,15 +529,13 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
   /**
    * The person's 1:1 sessions with the counsellor in a consulting type, oldest first, without the
    * shared conversations of direct invitations with an appointment (ORISO-Frontend#2252): those are
-   * sessions of the same three, and a person can have several. A 1:1 an invitation was created from
-   * stays in.
+   * sessions of the same three, and a person can have several. Their mark is on the session, so it
+   * holds after the invitation is deleted; a 1:1 an invitation was created from stays in.
    */
   @Query(
       "SELECT s FROM Session s WHERE s.consultant = :consultant AND s.user = :user"
           + " AND s.consultingTypeId = :consultingTypeId"
-          + " AND NOT EXISTS (SELECT a.id FROM SessionAppointment a, AgencyInviteLink l"
-          + " WHERE a.session = s AND l.appointmentId = a.id AND l.joinsExistingSession = false)"
-          + " ORDER BY s.id")
+          + " AND s.directInvitationConversation = false ORDER BY s.id")
   List<Session> findOneToOneSessions(
       @Param("consultant") Consultant consultant,
       @Param("user") User user,

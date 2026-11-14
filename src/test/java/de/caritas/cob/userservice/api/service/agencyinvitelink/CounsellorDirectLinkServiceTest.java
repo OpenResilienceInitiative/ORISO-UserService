@@ -313,6 +313,99 @@ class CounsellorDirectLinkServiceTest {
     verify(repository, org.mockito.Mockito.times(2)).findByIdForUpdate(1L);
   }
 
+  /**
+   * The row is locked by the first read: an unlocked read first would leave a stale copy in the
+   * persistence context that the locking query does not refresh.
+   */
+  @Test
+  void update_Should_ReadTheLinkUnderItsLockFirst() {
+    ownLink(1L, "VIDEO", "ACTIVE");
+
+    service.update(owner, 1L, new UpdateCommand("x", null, null, null));
+
+    verify(repository, never())
+        .findByIdAndConsultantIdAndLinkKindAndChatTypeIn(any(), any(), any(), any());
+    verify(repository).findByIdForUpdate(1L);
+  }
+
+  @Test
+  void update_Should_Return404_ForALockedLinkOfAnotherCounsellor() {
+    var foreign = link("foreign", "VIDEO", "ACTIVE");
+    foreign.setId(3L);
+    foreign.setConsultantId("someone-else");
+    when(repository.findByIdForUpdate(3L)).thenReturn(Optional.of(foreign));
+
+    assertThatThrownBy(() -> service.update(owner, 3L, new UpdateCommand("x", null, null, null)))
+        .isInstanceOf(NotFoundException.class);
+    assertThat(foreign.getName()).isNull();
+  }
+
+  /**
+   * Moving an appointment locks every invitation to it in one order before the one changed, so two
+   * moves through two invitations of one appointment never hold one lock each.
+   */
+  @Test
+  void update_Should_LockEveryInvitationOfTheAppointment_BeforeTheChangedOne() {
+    var link = ownLink(5L, "VIDEO", "ACTIVE");
+    var appointmentId = java.util.UUID.randomUUID();
+    link.setAppointmentId(appointmentId);
+    when(repository.findAppointmentIdById(5L)).thenReturn(Optional.of(appointmentId));
+    var start = LocalDateTime.now().plusDays(3);
+
+    service.update(
+        owner,
+        5L,
+        new UpdateCommand(
+            null, null, null, null, null, false, start, start.plusHours(1), null, null, null));
+
+    var order = org.mockito.Mockito.inOrder(repository);
+    order.verify(repository).findByAppointmentIdForUpdate(appointmentId);
+    order.verify(repository).findByIdForUpdate(5L);
+  }
+
+  /**
+   * CodeRabbit on PR #1648: an invitation whose end passed before the sweep ran must not come back
+   * to life with the later end of a move; it ends first, like the sweep would end it.
+   */
+  @Test
+  void update_Should_EndOverdueInvitationsOfTheAppointment_BeforeMovingIt() {
+    var link = ownLink(5L, "VIDEO", "ACTIVE");
+    var appointmentId = java.util.UUID.randomUUID();
+    link.setAppointmentId(appointmentId);
+    var sibling = ownLink(6L, "VIDEO", "ACTIVE");
+    sibling.setAppointmentId(appointmentId);
+    when(repository.findAppointmentIdById(5L)).thenReturn(Optional.of(appointmentId));
+    when(repository.findByAppointmentIdForUpdate(appointmentId))
+        .thenReturn(java.util.List.of(link, sibling));
+    var start = LocalDateTime.now().plusDays(3);
+
+    service.update(
+        owner,
+        5L,
+        new UpdateCommand(
+            null, null, null, null, null, false, start, start.plusHours(1), null, null, null));
+
+    var order = org.mockito.Mockito.inOrder(expiry, invitations);
+    order.verify(expiry).expire(5L);
+    order.verify(invitations).change(any(), any(), any(), any());
+    verify(expiry).expire(6L);
+  }
+
+  @Test
+  void update_Should_EndAnOverdueInvitation_BeforeItsValidityChanges() {
+    var link = ownLink(5L, "VIDEO", "ACTIVE");
+    link.setAppointmentId(java.util.UUID.randomUUID());
+
+    service.update(
+        owner,
+        5L,
+        new UpdateCommand(null, null, null, null, null, false, null, null, 120, null, null));
+
+    var order = org.mockito.Mockito.inOrder(expiry, invitations);
+    order.verify(expiry).expire(5L);
+    order.verify(invitations).change(any(), any(), any(), any());
+  }
+
   // --- start conversation ---
 
   @Test

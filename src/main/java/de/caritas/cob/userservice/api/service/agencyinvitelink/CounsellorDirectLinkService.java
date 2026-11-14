@@ -200,6 +200,16 @@ public class CounsellorDirectLinkService {
    */
   @Transactional
   public AgencyInviteLink update(Consultant owner, Long linkId, UpdateCommand cmd) {
+    var moved = List.<AgencyInviteLink>of();
+    if (cmd != null && (cmd.appointmentStart() != null || cmd.appointmentEnd() != null)) {
+      // Moving an appointment moves every invitation to it: lock them all, in id order, before
+      // this one, so two moves through two of its invitations never hold one lock each.
+      moved =
+          repository
+              .findAppointmentIdById(linkId)
+              .map(repository::findByAppointmentIdForUpdate)
+              .orElse(List.of());
+    }
     var link = requireOwn(owner, linkId);
     if (cmd == null) {
       return link;
@@ -230,6 +240,13 @@ public class CounsellorDirectLinkService {
     if (cmd.appointmentStart() != null
         || cmd.appointmentEnd() != null
         || cmd.validityAfterEndMinutes() != null) {
+      // An invitation whose end passed before the sweep ran ends now, as the sweep would end it,
+      // instead of coming back to life with the new end; "Neuen Link senden" reopens it.
+      moved.stream()
+          .map(AgencyInviteLink::getId)
+          .filter(id -> !Objects.equals(id, linkId))
+          .forEach(invitationEnd::expire);
+      invitationEnd.expire(linkId);
       invitations.change(
           link, cmd.appointmentStart(), cmd.appointmentEnd(), cmd.validityAfterEndMinutes());
     }
@@ -449,13 +466,13 @@ public class CounsellorDirectLinkService {
 
   /**
    * The counsellor's own link, locked for the change (ORISO-Frontend#2252): a join confirms its
-   * person under the same lock, so a switch-off or delete and a join never interleave.
+   * person under the same lock, so a switch-off or delete and a join never interleave. Locked by
+   * the first read, so no unlocked copy of the row sits in the persistence context.
    */
   private AgencyInviteLink requireOwn(Consultant owner, Long linkId) {
     return repository
-        .findByIdAndConsultantIdAndLinkKindAndChatTypeIn(
-            linkId, owner.getId(), COUNSELLOR, DIRECT_MEDIA)
-        .flatMap(own -> repository.findByIdForUpdate(own.getId()))
+        .findByIdForUpdate(linkId)
+        .filter(found -> DirectInvitationService.isOwnDirectLink(found, owner))
         .orElseThrow(() -> new NotFoundException("Direct link %s not found", linkId));
   }
 

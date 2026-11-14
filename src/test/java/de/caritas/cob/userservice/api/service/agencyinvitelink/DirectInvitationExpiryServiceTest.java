@@ -253,6 +253,60 @@ class DirectInvitationExpiryServiceTest {
     }
   }
 
+  /**
+   * CodeRabbit on PR #1648: deleting a conversation keeps its Matrix room, and the cascade drops
+   * every member row, so nothing would take the invited people out afterwards.
+   */
+  @Test
+  void requireInvitedOutBeforeDeletion_Should_TakeEveryInvitedPersonOutOfTheRoom() {
+    when(members.findBySessionIdAndRemovedAtIsNull(SESSION_ID)).thenReturn(List.of(guest, account));
+    when(rooms.remove(conversation, "@guest-1:x")).thenReturn(true);
+    when(rooms.remove(conversation, "@account-1:x")).thenReturn(true);
+
+    service.requireInvitedOutBeforeDeletion(conversation);
+
+    verify(rooms).remove(conversation, "@guest-1:x");
+    verify(rooms).remove(conversation, "@account-1:x");
+    assertThat(guest.getRemovedAt()).isEqualTo(NOW);
+    assertThat(account.getRemovedAt()).isEqualTo(NOW);
+  }
+
+  @Test
+  void requireInvitedOutBeforeDeletion_Should_LeaveTheConversationsOwnAdviceSeekerIn() {
+    var owner = new User();
+    owner.setUserId("account-1");
+    conversation.setUser(owner);
+    when(members.findBySessionIdAndRemovedAtIsNull(SESSION_ID)).thenReturn(List.of(guest, account));
+    when(rooms.remove(conversation, "@guest-1:x")).thenReturn(true);
+
+    service.requireInvitedOutBeforeDeletion(conversation);
+
+    verify(rooms, never()).remove(conversation, "@account-1:x");
+  }
+
+  /** Fail closed: the deletion waits until Matrix confirmed everybody out. */
+  @Test
+  void requireInvitedOutBeforeDeletion_Should_RefuseTheDeletion_When_MatrixKeepsSomeoneIn() {
+    when(members.findBySessionIdAndRemovedAtIsNull(SESSION_ID)).thenReturn(List.of(guest));
+    when(rooms.remove(conversation, "@guest-1:x")).thenReturn(false);
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException.class,
+        () -> service.requireInvitedOutBeforeDeletion(conversation));
+  }
+
+  @Test
+  void requireInvitedOutBeforeDeletion_Should_RefuseTheDeletion_WhileAJoinIsRunning() {
+    guest.setJoinAttempt("attempt");
+    guest.setJoinedAt(NOW);
+    when(members.findBySessionIdAndRemovedAtIsNull(SESSION_ID)).thenReturn(List.of(guest));
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException.class,
+        () -> service.requireInvitedOutBeforeDeletion(conversation));
+    verify(rooms, never()).remove(any(), any());
+  }
+
   /** A lasting Matrix failure is retried with a delay, not on every sweep. */
   @Test
   void retryRemoval_Should_PushTheNextAttempt_When_MatrixStillRefuses() {

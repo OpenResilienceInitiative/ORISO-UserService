@@ -617,7 +617,10 @@ public class AgencyInviteLinkService {
       // A call share link opens one running call only (#1487), never a registration context.
       throw new BadRequestException("Not a registration link");
     }
-    if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now())) {
+    // An invitation with an appointment: UTC, 410, and its status stays for the sweep (#2252).
+    if (link.getAppointmentId() != null) {
+      CounsellorDirectLinkService.requireNotExpired(link);
+    } else if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now())) {
       link.setStatus(InviteLinkStatus.EXPIRED.name());
       repository.save(link);
       throw new BadRequestException("Invite link expired");

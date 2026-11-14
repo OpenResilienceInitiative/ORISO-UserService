@@ -519,6 +519,59 @@ class AgencyInviteLinkServiceTest {
     }
   }
 
+  /** Redemption decides an appointment invitation's expiry in UTC too, like the context. */
+  @Test
+  void redeem_Should_DecideAnAppointmentInvitationsExpiryInUtc() {
+    var link = appointmentInvitation(LocalDateTime.now(java.time.ZoneOffset.UTC).plusMinutes(30));
+    var previous = java.util.TimeZone.getDefault();
+    try {
+      java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Pacific/Kiritimati"));
+
+      assertThat(service.redeem("direct").getAgencyId()).isEqualTo(5L);
+    } finally {
+      java.util.TimeZone.setDefault(previous);
+    }
+    assertThat(link.getStatus()).isEqualTo(InviteLinkStatus.ACTIVE.name());
+  }
+
+  /** Overdue: 410 expired, and the status is left to the sweep, which removes the guests. */
+  @Test
+  void redeem_Should_AnswerExpired_AndLeaveTheStatusToTheSweep_ForAnOverdueInvitation() {
+    var link = appointmentInvitation(LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(1));
+
+    assertThatThrownBy(() -> service.redeem("direct"))
+        .isInstanceOf(DirectLinkExpiredException.class);
+    assertThat(link.getStatus()).isEqualTo(InviteLinkStatus.ACTIVE.name());
+    verify(repository, org.mockito.Mockito.never()).save(link);
+  }
+
+  private AgencyInviteLink appointmentInvitation(LocalDateTime expiresAt) {
+    var link =
+        AgencyInviteLink.builder()
+            .token("direct")
+            .status(InviteLinkStatus.ACTIVE.name())
+            .tenantId(83L)
+            .linkKind(InviteLinkKind.COUNSELLOR.name())
+            .chatType(InviteLinkChatType.CHAT.name())
+            .consultantId("owner")
+            .agencyId(5L)
+            .consultingTypeId(1)
+            .appointmentId(java.util.UUID.randomUUID())
+            .expiresAt(expiresAt)
+            .build();
+    var owner = new Consultant();
+    owner.setId("owner");
+    var membership = new de.caritas.cob.userservice.api.model.ConsultantAgency();
+    membership.setAgencyId(5L);
+    owner.setConsultantAgencies(java.util.Set.of(membership));
+    when(directInvitePolicy.allows(83L, 5L, InviteLinkChatType.CHAT)).thenReturn(true);
+    when(repository.findByToken("direct")).thenReturn(Optional.of(link));
+    when(repository.findByTokenAndStatus("direct", InviteLinkStatus.ACTIVE.name()))
+        .thenReturn(Optional.of(link));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("owner")).thenReturn(Optional.of(owner));
+    return link;
+  }
+
   /** "Direkteinladung erlauben" withdrawn: the link stays stored, but the page says it is off. */
   @Test
   void directLinkWithWithdrawnPermission_Should_ReadAsNoLongerActive() {
