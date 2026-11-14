@@ -224,23 +224,96 @@ class DirectInvitationServiceTest {
     verify(members, never()).save(any());
   }
 
-  /** A failed join leaves the person recorded with a due removal, so the sweep cleans up. */
+  /** Stores saved member rows, so a second visit reads what the first one left behind. */
+  private java.util.concurrent.atomic.AtomicReference<DirectInvitationMember> storeMembers() {
+    var stored = new java.util.concurrent.atomic.AtomicReference<DirectInvitationMember>();
+    when(members.save(any()))
+        .thenAnswer(
+            i -> {
+              DirectInvitationMember m = i.getArgument(0);
+              if (m.getId() == null) {
+                m.setId(99L);
+              }
+              stored.set(m);
+              return m;
+            });
+    when(members.findBySessionIdAndUserId(eq(SESSION_ID), anyString()))
+        .thenAnswer(i -> Optional.ofNullable(stored.get()));
+    when(members.findById(99L)).thenAnswer(i -> Optional.ofNullable(stored.get()));
+    return stored;
+  }
+
+  /** A refused join leaves no row that later counts as "already in the conversation". */
   @Test
-  void laterOpener_Should_StayDueForRemoval_When_TheJoinFails() {
+  void refusedJoin_Should_StayRefused_When_ThePersonTriesAgain() {
+    var oneToOne = session(SESSION_ID, "client");
+    appointment.setSession(oneToOne);
+    link.setJoinsExistingSession(true);
+    var interpreter = user("interpreter", true);
+    var stored = storeMembers();
+    org.mockito.Mockito.doThrow(
+            new DirectInvitationRefusedException(
+                DirectInvitationRefusedException.Reason.DIRECT_INVITATION_ROOM_NOT_ENCRYPTED))
+        .when(rooms)
+        .addInvitedGuestToExistingRoom(oneToOne, interpreter);
+
+    for (int attempt = 0; attempt < 2; attempt++) {
+      var opened = service.openAppointmentConversation(link, interpreter, () -> null);
+      assertThat(opened.joinPending()).as("attempt %s still has to join", attempt).isTrue();
+      assertThatThrownBy(() -> service.joinLater(link, interpreter, opened))
+          .isInstanceOf(DirectInvitationRefusedException.class);
+      assertThat(stored.get().getRemovedAt()).as("no active row after a refusal").isNotNull();
+    }
+    verify(rooms, org.mockito.Mockito.times(2))
+        .addInvitedGuestToExistingRoom(oneToOne, interpreter);
+  }
+
+  /** Matrix could not tell: the next visit tries the join again and then gets in. */
+  @Test
+  void unknownEncryption_Should_TryTheJoinAgain_OnTheNextVisit() {
+    var oneToOne = session(SESSION_ID, "client");
+    appointment.setSession(oneToOne);
+    link.setJoinsExistingSession(true);
+    var interpreter = user("interpreter", true);
+    var stored = storeMembers();
+    org.mockito.Mockito.doThrow(
+            new org.springframework.web.server.ResponseStatusException(
+                HttpStatus.SERVICE_UNAVAILABLE, "room_encryption_unknown"))
+        .doNothing()
+        .when(rooms)
+        .addInvitedGuestToExistingRoom(oneToOne, interpreter);
+
+    var first = service.openAppointmentConversation(link, interpreter, () -> null);
+    assertThatThrownBy(() -> service.joinLater(link, interpreter, first))
+        .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+    assertThat(stored.get().getRemovedAt()).isNotNull();
+
+    var second = service.openAppointmentConversation(link, interpreter, () -> null);
+    assertThat(second.joinPending()).isTrue();
+    assertThat(service.joinLater(link, interpreter, second).created()).isTrue();
+    assertThat(stored.get().getRemovedAt()).isNull();
+    assertThat(stored.get().getRevokeDueAt()).isNull();
+  }
+
+  /** A join that may have reached Matrix keeps the removal due, never an active row. */
+  @Test
+  void failedJoin_Should_LeaveNoActiveRow_AndCountAsNotJoinedOnTheNextVisit() {
     var conversation = session(SESSION_ID, "first-user");
     appointment.setSession(conversation);
     var interpreter = user("interpreter", true);
+    var stored = storeMembers();
     org.mockito.Mockito.doThrow(new IllegalStateException("matrix down"))
         .when(rooms)
         .addToAppointmentRoom(conversation, interpreter);
-    var opened = service.openAppointmentConversation(link, interpreter, () -> null);
-    var row = ArgumentCaptor.forClass(DirectInvitationMember.class);
 
+    var opened = service.openAppointmentConversation(link, interpreter, () -> null);
     assertThatThrownBy(() -> service.joinLater(link, interpreter, opened))
         .isInstanceOf(IllegalStateException.class);
-    verify(members).save(row.capture());
-    assertThat(row.getValue().getRevokeDueAt()).isNotNull();
-    assertThat(row.getValue().getRemovedAt()).isNull();
+
+    assertThat(stored.get().getRemovedAt()).isNull();
+    assertThat(stored.get().getRevokeDueAt()).isBeforeOrEqualTo(LocalDateTime.now(ZoneOffset.UTC));
+    assertThat(service.openAppointmentConversation(link, interpreter, () -> null).joinPending())
+        .isTrue();
   }
 
   /** The person is on record, with a removal due, before Matrix is asked to let them in. */

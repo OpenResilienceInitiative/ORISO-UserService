@@ -198,7 +198,7 @@ public class DirectInvitationService {
       return new Opened(session, false, false);
     }
     var existing = members.findBySessionIdAndUserId(session.getId(), user.getUserId());
-    if (existing.isPresent() && existing.get().getRemovedAt() == null) {
+    if (existing.filter(DirectInvitationService::isConfirmedMember).isPresent()) {
       return new Opened(session, false, false);
     }
     return new Opened(session, false, true);
@@ -232,16 +232,61 @@ public class DirectInvitationService {
     row.setInviteLinkId(link.getId());
     row.setJoinedAt(now());
     var reserved = members.save(row);
-    if (link.isJoinsExistingSession()) {
-      rooms.addInvitedGuestToExistingRoom(session, user);
-    } else {
-      rooms.addToAppointmentRoom(session, user);
+    try {
+      if (link.isJoinsExistingSession()) {
+        rooms.addInvitedGuestToExistingRoom(session, user);
+      } else {
+        rooms.addToAppointmentRoom(session, user);
+      }
+    } catch (RuntimeException failure) {
+      abandon(reserved, failure);
+      throw failure;
     }
     var template = new TransactionTemplate(transactionManager);
     if (!Boolean.TRUE.equals(template.execute(status -> confirmJoin(link, reserved)))) {
       throw new DirectLinkInactiveException();
     }
     return new Opened(session, true, false);
+  }
+
+  /**
+   * A person who came in by link and is in the room for good: Matrix confirmed the join and no
+   * removal is due. A row reserved for a join that has not been confirmed (or has failed) never
+   * counts, so the next visit runs every join check again.
+   */
+  private static boolean isConfirmedMember(DirectInvitationMember member) {
+    return member.getRemovedAt() == null && member.getRevokeDueAt() == null;
+  }
+
+  /**
+   * A join that failed leaves no active row. A refusal, or an unknown encryption state, is decided
+   * before anything is sent to Matrix, so the person is simply not in the room. Any other failure
+   * may have reached Matrix (an invite or a join), so the removal is due now and the sweep makes
+   * sure the person is out.
+   */
+  private void abandon(DirectInvitationMember reserved, RuntimeException failure) {
+    try {
+      if (decidedBeforeMatrix(failure)) {
+        reserved.setRevokeDueAt(null);
+        reserved.setRemovedAt(now());
+      } else {
+        reserved.setRemovedAt(null);
+        reserved.setRevokeDueAt(now());
+      }
+      members.save(reserved);
+    } catch (RuntimeException saveFailure) {
+      // The reserved row keeps its due removal after the grace; the sweep cleans it up.
+      log.warn(
+          "Abandoned join of member {} could not be recorded: {}",
+          reserved.getId(),
+          saveFailure.getClass().getSimpleName());
+    }
+  }
+
+  private static boolean decidedBeforeMatrix(RuntimeException failure) {
+    return failure instanceof DirectInvitationRefusedException
+        || (failure instanceof ResponseStatusException status
+            && status.getStatusCode() == HttpStatus.SERVICE_UNAVAILABLE);
   }
 
   /** Runs under the invitation's row lock; true when it is still open and the person may stay. */
