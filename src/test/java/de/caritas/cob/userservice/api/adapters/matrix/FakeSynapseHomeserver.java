@@ -84,6 +84,7 @@ public final class FakeSynapseHomeserver extends RestTemplate {
     private final Map<String, Integer> events =
         new LinkedHashMap<>(Map.of("m.room.power_levels", 100, "m.room.history_visibility", 100));
     private int redact = 50;
+    private final List<Map<String, Object>> timeline = new ArrayList<>();
   }
 
   public FakeSynapseHomeserver() {
@@ -212,6 +213,22 @@ public final class FakeSynapseHomeserver extends RestTemplate {
     return makeRoomAdminRequests;
   }
 
+  /** The room turns on Megolm encryption ({@code m.room.encryption}). */
+  public FakeSynapseHomeserver encrypted(String roomId) {
+    var room = room(roomId);
+    room.state.put("m.room.encryption|", Map.of("algorithm", "m.megolm.v1.aes-sha2"));
+    room.stateSenders.put("m.room.encryption|", room.users.keySet().iterator().next());
+    return this;
+  }
+
+  /** A timeline event of the given type ({@code m.room.message}, {@code m.room.encrypted}). */
+  public FakeSynapseHomeserver message(String roomId, String sender, String type) {
+    var room = room(roomId);
+    room.timeline.add(
+        Map.of("type", type, "sender", sender, "origin_server_ts", room.timeline.size() + 1L));
+    return this;
+  }
+
   public String stateSenderOf(String roomId, String type, String stateKey) {
     return room(roomId).stateSenders.get(type + "|" + stateKey);
   }
@@ -297,7 +314,7 @@ public final class FakeSynapseHomeserver extends RestTemplate {
       return ResponseEntity.ok(Map.of("access_token", tokenOf(target)));
     }
     if (path.size() >= 4 && path.get(0).equals("_synapse")) {
-      return admin(method, path, body, caller);
+      return admin(method, path, body, caller, url.getRawQuery());
     }
     if (path.size() >= 6 && path.get(1).equals("client") && path.get(3).equals("rooms")) {
       return clientRoom(method, path, body, caller, responseType);
@@ -314,13 +331,43 @@ public final class FakeSynapseHomeserver extends RestTemplate {
     return ResponseEntity.ok(Map.of("access_token", tokenOf(mxid)));
   }
 
+  /** The event types of a {@code filter} query parameter, or null when there is none. */
+  private static List<String> filterTypes(String rawQuery) {
+    if (rawQuery == null) {
+      return null;
+    }
+    for (String pair : rawQuery.split("&")) {
+      if (pair.startsWith("filter=")) {
+        String filter = UriUtils.decode(pair.substring(7), StandardCharsets.UTF_8);
+        var matcher =
+            java.util.regex.Pattern.compile("\"([^\"]+)\"")
+                .matcher(filter.substring(filter.indexOf('[') + 1, filter.indexOf(']')));
+        var types = new ArrayList<String>();
+        while (matcher.find()) {
+          types.add(matcher.group(1));
+        }
+        return types;
+      }
+    }
+    return null;
+  }
+
   private ResponseEntity<?> admin(
-      HttpMethod method, List<String> path, Object body, String caller) {
+      HttpMethod method, List<String> path, Object body, String caller, String query) {
     requireAdmin(caller);
     // /_synapse/admin/v1/rooms/{room}/members
     if (method == HttpMethod.GET && path.get(3).equals("rooms") && path.get(5).equals("members")) {
       var members = new ArrayList<>(room(path.get(4)).joined);
       return ResponseEntity.ok(Map.of("members", members, "total", members.size()));
+    }
+    // /_synapse/admin/v1/rooms/{room}/messages?filter={"types":[...]}
+    if (method == HttpMethod.GET && path.get(3).equals("rooms") && path.get(5).equals("messages")) {
+      var types = filterTypes(query);
+      var chunk =
+          room(path.get(4)).timeline.stream()
+              .filter(event -> types == null || types.contains(event.get("type")))
+              .toList();
+      return ResponseEntity.ok(Map.of("chunk", chunk));
     }
     // /_synapse/admin/v1/rooms/{room}/state
     if (method == HttpMethod.GET && path.get(3).equals("rooms") && path.get(5).equals("state")) {

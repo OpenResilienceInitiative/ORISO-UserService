@@ -58,8 +58,11 @@ public class DirectInvitationRoomMembership {
    *   <li>the room requires power level 100 for {@code m.room.history_visibility} and {@link
    *       #LINK_INVITED_MEMBER_EVENT}, and at least 50 for redactions, so no ordinary member can
    *       show earlier messages again or forge, change or redact a mark;
-   *   <li>{@code m.room.history_visibility} becomes "joined" and stays so: the server then never
-   *       serves earlier events to the newcomer (re-read, never assumed);
+   *   <li>the room must have carried only encrypted messages, before and after the switch (else 409
+   *       DIRECT_INVITATION_HISTORY_NOT_ENCRYPTED);
+   *   <li>{@code m.room.history_visibility} becomes "joined" and stays so (re-read, never assumed).
+   *       This hides only events sent after the switch; earlier events, as ciphertext, and the room
+   *       state stay visible to the newcomer;
    *   <li>the person is marked with {@link #LINK_INVITED_MEMBER_EVENT} (state key = their Matrix
    *       ID), so every client can tell, without asking the backend, that this member must never
    *       receive room keys for earlier messages (frontend {@code matrixRoomHistoryKeyTransfer}).
@@ -73,6 +76,7 @@ public class DirectInvitationRoomMembership {
       throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "conversation_room_unavailable");
     }
     var roomId = session.getMatrixRoomId();
+    requireOnlyEncryptedMessages(roomId);
     if (!matrixSynapseService.prepareAdminAsRoomOwner(roomId, counsellor)
         || !matrixSynapseService.lockRoomStateEvents(
             roomId,
@@ -81,6 +85,8 @@ public class DirectInvitationRoomMembership {
       throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "conversation_room_unavailable");
     }
     hideEarlierMessages(roomId);
+    // Again after the switch: a plain message sent meanwhile would stay readable for the newcomer.
+    requireOnlyEncryptedMessages(roomId);
     var marker = new HashMap<String, Object>();
     marker.put("link_id", linkId);
     marker.put("since", System.currentTimeMillis());
@@ -89,6 +95,23 @@ public class DirectInvitationRoomMembership {
       throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "conversation_room_unavailable");
     }
     join(session, user);
+  }
+
+  /**
+   * "joined" history hides only events sent after the switch from the server's answers; earlier
+   * events stay visible to new members as they were. That is acceptable only for ciphertext (whose
+   * keys the frontend never hands to a marked member), so a room that ever carried a plain message
+   * takes nobody.
+   */
+  private void requireOnlyEncryptedMessages(String roomId) {
+    var onlyEncrypted = matrixSynapseService.hasOnlyEncryptedMessages(roomId);
+    if (onlyEncrypted.isEmpty()) {
+      throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "room_history_unknown");
+    }
+    if (!onlyEncrypted.get()) {
+      throw new DirectInvitationRefusedException(
+          DirectInvitationRefusedException.Reason.DIRECT_INVITATION_HISTORY_NOT_ENCRYPTED);
+    }
   }
 
   private void hideEarlierMessages(String roomId) {

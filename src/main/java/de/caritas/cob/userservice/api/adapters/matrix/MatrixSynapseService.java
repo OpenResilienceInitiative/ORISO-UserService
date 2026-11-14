@@ -85,6 +85,8 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
       java.util.List.of("m.room.message", "m.room.encrypted", "m.sticker");
   private static final String MESSAGE_EVENT_FILTER =
       "{\"types\":[\"m.room.message\",\"m.room.encrypted\",\"m.sticker\"]}";
+  private static final String PLAIN_MESSAGE_FILTER =
+      "{\"types\":[\"m.room.message\",\"m.sticker\"]}";
   private static final String ENDPOINT_PURGE_ROOM = "/_synapse/admin/v2/rooms/{roomId}";
   private static final String ENDPOINT_ROOM_MEMBERS = "/_synapse/admin/v1/rooms/{roomId}/members";
   private static final String ENDPOINT_ROOM_ALIAS = "/_matrix/client/v3/directory/room/{roomAlias}";
@@ -2076,6 +2078,66 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
           "Matrix Error: Could not read state of room {}: {}",
           matrixRoomId,
           redactor.scrub(ex.getMessage()));
+      return java.util.Optional.empty();
+    }
+  }
+
+  /**
+   * Whether every message the room ever carried is end-to-end encrypted: the room has {@code
+   * m.room.encryption} and its timeline holds no plain {@code m.room.message} or {@code m.sticker}
+   * event at all (filtered on the server, admin API). Used before a person who must not read the
+   * history joins (ORISO-Frontend#2252): their client is served earlier ciphertext, never earlier
+   * plaintext. Empty when Matrix cannot tell; never throws.
+   */
+  public java.util.Optional<Boolean> hasOnlyEncryptedMessages(String roomId) {
+    try {
+      String adminToken = getAdminToken();
+      if (adminToken == null || roomId == null) {
+        return java.util.Optional.empty();
+      }
+      var headers = new HttpHeaders();
+      headers.setBearerAuth(adminToken);
+      var state =
+          restTemplate
+              .exchange(
+                  MatrixUrlBuilder.buildUrl(
+                      matrixConfig, ENDPOINT_ROOM_STATE, java.util.Map.of("roomId", roomId)),
+                  org.springframework.http.HttpMethod.GET,
+                  new HttpEntity<>(headers),
+                  java.util.Map.class)
+              .getBody();
+      if (state == null || !(state.get("state") instanceof java.util.List<?> events)) {
+        return java.util.Optional.empty();
+      }
+      boolean encrypted =
+          events.stream()
+              .filter(java.util.Map.class::isInstance)
+              .map(java.util.Map.class::cast)
+              .anyMatch(event -> "m.room.encryption".equals(event.get("type")));
+      if (!encrypted) {
+        return java.util.Optional.of(false);
+      }
+      var plain =
+          restTemplate
+              .exchange(
+                  MatrixUrlBuilder.buildUrl(
+                      matrixConfig,
+                      ENDPOINT_ADMIN_ROOM_MESSAGES,
+                      java.util.Map.of("roomId", roomId),
+                      java.util.Map.of("dir", "f", "limit", 1, "filter", PLAIN_MESSAGE_FILTER)),
+                  org.springframework.http.HttpMethod.GET,
+                  new HttpEntity<>(headers),
+                  java.util.Map.class)
+              .getBody();
+      if (plain == null || !(plain.get("chunk") instanceof java.util.List<?> chunk)) {
+        return java.util.Optional.empty();
+      }
+      return java.util.Optional.of(chunk.isEmpty());
+    } catch (RuntimeException ex) {
+      log.warn(
+          "Could not read the encryption history of Matrix room {}: {}",
+          roomId,
+          ex.getClass().getSimpleName());
       return java.util.Optional.empty();
     }
   }

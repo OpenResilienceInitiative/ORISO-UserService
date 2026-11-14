@@ -106,6 +106,32 @@ class MatrixSynapseServiceRoomStateTest {
   }
 
   @Test
+  void aRoomEncryptedFromTheStartWithOnlyEncryptedMessagesCounts() {
+    String room = homeserver.createRoom(COUNSELLOR);
+    homeserver.encrypted(room).message(room, COUNSELLOR, "m.room.encrypted");
+
+    assertThat(gateway.hasOnlyEncryptedMessages(room)).contains(true);
+  }
+
+  @Test
+  void aRoomWithAnyUnencryptedMessageDoesNotCount() {
+    String room = homeserver.createRoom(COUNSELLOR);
+    homeserver
+        .message(room, COUNSELLOR, "m.room.message")
+        .encrypted(room)
+        .message(room, COUNSELLOR, "m.room.encrypted");
+
+    assertThat(gateway.hasOnlyEncryptedMessages(room)).contains(false);
+  }
+
+  @Test
+  void aRoomWithoutEncryptionDoesNotCount() {
+    String room = homeserver.createRoom(COUNSELLOR);
+
+    assertThat(gateway.hasOnlyEncryptedMessages(room)).contains(false);
+  }
+
+  @Test
   void aPersonInvitedIntoAnExisting1to1JoinsOnlyAfterTheRoomHidesEarlierMessages() {
     String guest = FakeSynapseHomeserver.mxid("guest2252");
     homeserver.account(guest);
@@ -122,6 +148,7 @@ class MatrixSynapseServiceRoomStateTest {
     session.setConsultant(counsellor);
     var user = new de.caritas.cob.userservice.api.model.User();
     user.setMatrixUserId(guest);
+    homeserver.encrypted(room).message(room, COUNSELLOR, "m.room.encrypted");
 
     new de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitationRoomMembership(
             gateway)
@@ -132,5 +159,34 @@ class MatrixSynapseServiceRoomStateTest {
         .containsEntry("link_id", 7L)
         .containsKey("since");
     assertThat(homeserver.isMember(room, guest)).isTrue();
+  }
+
+  @Test
+  void aPersonIsRefusedFromA1to1WhoseHistoryWasEverUnencrypted() {
+    String guest = FakeSynapseHomeserver.mxid("guest2252b");
+    homeserver.account(guest);
+    String room = homeserver.createRoom(AGENCY);
+    homeserver
+        .member(room, COUNSELLOR, 0)
+        .message(room, COUNSELLOR, "m.room.message")
+        .encrypted(room);
+    var counsellor = new de.caritas.cob.userservice.api.model.Consultant();
+    counsellor.setMatrixUserId(COUNSELLOR);
+    var session = new de.caritas.cob.userservice.api.model.Session();
+    session.setId(2L);
+    session.setMatrixRoomId(room);
+    session.setConsultant(counsellor);
+    var user = new de.caritas.cob.userservice.api.model.User();
+    user.setMatrixUserId(guest);
+    var membership =
+        new de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitationRoomMembership(
+            gateway);
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> membership.addInvitedGuestToExistingRoom(session, user, 8L))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitationRefusedException
+                .class);
+    assertThat(homeserver.isMember(room, guest)).isFalse();
   }
 }

@@ -54,6 +54,7 @@ class DirectInvitationRoomMembershipTest {
   }
 
   private void matrixAccepts() {
+    when(matrix.hasOnlyEncryptedMessages(any())).thenReturn(Optional.of(true));
     when(matrix.prepareAdminAsRoomOwner(any(), any())).thenReturn(true);
     when(matrix.lockRoomStateEvents(any(), any(), anyInt())).thenReturn(true);
     when(matrix.putRoomStateAsAdmin(any(), any(), any(), any())).thenReturn(true);
@@ -105,6 +106,42 @@ class DirectInvitationRoomMembershipTest {
     verify(matrix, never())
         .putRoomStateAsAdmin(any(), eq("m.room.history_visibility"), any(), any());
     verify(matrix).forceJoinUserToRoom(ROOM, "@guest:example", List.of("@counsellor:example"));
+  }
+
+  @Test
+  void existing1to1_Should_RefuseTheJoin_When_TheRoomEverCarriedUnencryptedMessages() {
+    matrixAccepts();
+    when(matrix.hasOnlyEncryptedMessages(ROOM)).thenReturn(Optional.of(false));
+
+    assertThatThrownBy(() -> membership.addInvitedGuestToExistingRoom(session, guest, 7L))
+        .isInstanceOf(DirectInvitationRefusedException.class)
+        .extracting("reason")
+        .isEqualTo(DirectInvitationRefusedException.Reason.DIRECT_INVITATION_HISTORY_NOT_ENCRYPTED);
+    verify(matrix, never()).prepareAdminAsRoomOwner(any(), any());
+    verify(matrix, never()).forceJoinUserToRoom(any(), any(), any());
+  }
+
+  @Test
+  void existing1to1_Should_RefuseTheJoin_When_AnUnencryptedMessageArrivesBeforeTheSwitch() {
+    matrixAccepts();
+    when(matrix.getRoomHistoryVisibility(ROOM))
+        .thenReturn(Optional.of("shared"), Optional.of("joined"));
+    when(matrix.hasOnlyEncryptedMessages(ROOM)).thenReturn(Optional.of(true), Optional.of(false));
+
+    assertThatThrownBy(() -> membership.addInvitedGuestToExistingRoom(session, guest, 7L))
+        .isInstanceOf(DirectInvitationRefusedException.class);
+    verify(matrix, never()).forceJoinUserToRoom(any(), any(), any());
+  }
+
+  @Test
+  void existing1to1_Should_AnswerUnavailable_When_MatrixCannotTellWhetherTheHistoryIsEncrypted() {
+    matrixAccepts();
+    when(matrix.hasOnlyEncryptedMessages(ROOM)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> membership.addInvitedGuestToExistingRoom(session, guest, 7L))
+        .isInstanceOf(ResponseStatusException.class)
+        .hasMessageContaining("room_history_unknown");
+    verify(matrix, never()).forceJoinUserToRoom(any(), any(), any());
   }
 
   @Test

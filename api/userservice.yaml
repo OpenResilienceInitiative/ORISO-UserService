@@ -128,6 +128,7 @@ paths:
         '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
         '403': {description: 'Direct invitations are not allowed here, the caller belongs to another Träger, or the access mode excludes the caller: body {"reason":"DIRECT_INVITATION_GUESTS_ONLY"} or {"reason":"DIRECT_INVITATION_ACCOUNTS_ONLY"}'}
         '404': {description: Unknown link}
+        '409': {description: 'Invitation from a 1:1 whose room is not end-to-end encrypted or ever carried an unencrypted message; body {"reason":"DIRECT_INVITATION_HISTORY_NOT_ENCRYPTED"}'}
         '410': {description: 'The link was switched off ({"reason":"DIRECT_LINK_INACTIVE"}), or it expired or was replaced ({"reason":"DIRECT_LINK_EXPIRED"})'}
         '502': {description: 'The conversation room could not be created or joined, or (invitation from a 1:1) the room could not be set to hide earlier messages or the person could not be marked as invited by link; nobody joins then'}
         '503': {description: 'Invitation from a 1:1: Matrix cannot tell whether the room hides earlier messages; try again'}
@@ -548,8 +549,10 @@ paths:
         appointments: either an existing appointment (appointmentId, from POST
         /users/sessions/{sessionId}/appointments) or a new one (appointment). People who open the
         link join this conversation as invited members; they are removed when the invitation
-        expires, and the conversation itself is never archived by the expiry. Before such a person
-        joins, the technical Matrix admin locks m.room.history_visibility and
+        expires, and the conversation itself is never archived by the expiry. A person is only let in
+        when the room is encrypted and never carried a plain message (else 409
+        DIRECT_INVITATION_HISTORY_NOT_ENCRYPTED). Before such a person joins, the technical
+        Matrix admin locks m.room.history_visibility and
         org.oriso.direct_invitation_member at power level 100 (redact at least 50), sets the 1:1
         room's m.room.history_visibility to "joined" (kept), and marks the person with
         org.oriso.direct_invitation_member (state key = their Matrix ID, content {link_id, since});
