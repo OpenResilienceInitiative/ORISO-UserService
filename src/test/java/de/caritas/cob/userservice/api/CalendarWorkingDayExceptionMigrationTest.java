@@ -2,12 +2,12 @@ package de.caritas.cob.userservice.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import javax.xml.parsers.DocumentBuilderFactory;
 import liquibase.Contexts;
 import liquibase.LabelExpression;
 import liquibase.Liquibase;
@@ -16,6 +16,7 @@ import liquibase.database.jvm.JdbcConnection;
 import liquibase.resource.ClassLoaderResourceAccessor;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.io.ClassPathResource;
+import org.w3c.dom.Element;
 
 /**
  * The day exception and working hours setting tables (ADR-032, addendum v1.2): created by their
@@ -29,12 +30,16 @@ class CalendarWorkingDayExceptionMigrationTest {
 
   @Test
   void masterChangelog_Should_IncludeTheChangeset_AfterTheWorkingHours() throws Exception {
-    var master =
-        new ClassPathResource("db/changelog/userservice-master.xml")
-            .getContentAsString(StandardCharsets.UTF_8);
+    // Parsed, so an include inside an XML comment does not count.
+    var includes = activeIncludes("db/changelog/userservice-master.xml");
 
-    assertThat(master.indexOf(CHANGELOG))
-        .isGreaterThan(master.indexOf("20261114_calendar_working_hours_1000/changeSet.xml"));
+    var workingHours =
+        includes.indexOf(
+            "db/changelog/changeset/20261114_calendar_working_hours_1000/changeSet.xml");
+    var exceptions = includes.indexOf(CHANGELOG);
+
+    assertThat(workingHours).as("working hours changeset included").isNotNegative();
+    assertThat(exceptions).as("day exception changeset included").isGreaterThan(workingHours);
   }
 
   @Test
@@ -109,6 +114,20 @@ class CalendarWorkingDayExceptionMigrationTest {
         var rs = st.executeQuery(sql)) {
       rs.next();
       return rs.getInt(1);
+    }
+  }
+
+  private static List<String> activeIncludes(String changelog) throws Exception {
+    var factory = DocumentBuilderFactory.newInstance();
+    factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+    factory.setNamespaceAware(true);
+    try (var xml = new ClassPathResource(changelog).getInputStream()) {
+      var elements = factory.newDocumentBuilder().parse(xml).getElementsByTagNameNS("*", "include");
+      var files = new ArrayList<String>();
+      for (int index = 0; index < elements.getLength(); index++) {
+        files.add(((Element) elements.item(index)).getAttribute("file"));
+      }
+      return files;
     }
   }
 
