@@ -205,9 +205,6 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             / "src/main/java/de/caritas/cob/userservice/api/service/agency/"
             "AgencyMatrixCredentialClient.java",
             ROOT
-            / "src/main/java/de/caritas/cob/userservice/api/service/appointment/"
-            "AppointmentService.java",
-            ROOT
             / "src/main/java/de/caritas/cob/userservice/api/service/user/validation/"
             "UserAccountValidator.java",
         )

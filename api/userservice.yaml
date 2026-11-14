@@ -5008,9 +5008,6 @@ components:
           uniqueItems: true
           items:
             $ref: '#/components/schemas/EmailToggle'
-        appointmentFeatureEnabled:
-          type: boolean
-          example: true
         termsAndConditionsConfirmation:
           type: string
           example: 2022-12-07T11:51:01

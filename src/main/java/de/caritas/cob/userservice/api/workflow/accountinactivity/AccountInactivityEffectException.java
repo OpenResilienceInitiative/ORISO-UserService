@@ -7,7 +7,6 @@ public class AccountInactivityEffectException extends RuntimeException {
     MATRIX,
     MEDIA,
     DATABASE,
-    APPOINTMENT_SERVICE,
     ANONYMOUS_REGISTRY_IDS,
     USER_CONTENT,
     OTHER

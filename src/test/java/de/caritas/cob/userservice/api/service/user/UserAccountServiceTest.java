@@ -29,7 +29,6 @@ import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.service.ConsultantService;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.notification.SupervisorAddedEmailNotificationService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.DeleteAccountStatisticsEvent;
@@ -76,8 +75,6 @@ public class UserAccountServiceTest {
   @Mock private IdentityEmailAddressUpdater identityEmailAddressUpdater;
   @Mock private IdentityDeactivator identityDeactivator;
   @Mock private UserHelper userHelper;
-  @Mock private AppointmentService appointmentService;
-
   @Mock private IdentityClientConfig identityClientConfig;
 
   @Mock private StatisticsService statisticsService;
@@ -135,7 +132,7 @@ public class UserAccountServiceTest {
             () -> accountProvider.changeUserAccountEmailAddress(Optional.of("new@example.org")))
         .isInstanceOf(
             de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
-    verifyNoInteractions(identityEmailAddressUpdater, appointmentService);
+    verifyNoInteractions(identityEmailAddressUpdater);
   }
 
   @org.junit.jupiter.params.ParameterizedTest
@@ -164,8 +161,7 @@ public class UserAccountServiceTest {
             () -> accountProvider.changeUserAccountEmailAddress(Optional.of("new@example.org")))
         .isInstanceOf(
             de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
-    verifyNoInteractions(
-        identityEmailAddressUpdater, appointmentService, supervisorAddedEmailNotificationService);
+    verifyNoInteractions(identityEmailAddressUpdater, supervisorAddedEmailNotificationService);
     org.assertj.core.api.Assertions.assertThat(user.getEmail()).isEqualTo("old@example.org");
   }
 
@@ -186,7 +182,7 @@ public class UserAccountServiceTest {
     org.assertj.core.api.Assertions.assertThatThrownBy(
             () -> accountProvider.changeUserAccountEmailAddress(Optional.of("new@example.org")))
         .isInstanceOf(ForbiddenException.class);
-    verifyNoInteractions(identityEmailAddressUpdater, appointmentService);
+    verifyNoInteractions(identityEmailAddressUpdater);
   }
 
   @Test
@@ -339,7 +335,6 @@ public class UserAccountServiceTest {
     this.accountProvider.changeUserAccountEmailAddress(Optional.of(newMail));
 
     verify(identityEmailAddressUpdater).updateCurrentUserEmail(newMail);
-    verify(this.appointmentService, times(1)).updateAskerEmail(user.getUserId(), newMail);
     user.setEmail(newMail);
     verify(this.userService, times(1)).saveUser(user);
     verify(this.consultantService, times(2)).getConsultant(any());
@@ -380,7 +375,6 @@ public class UserAccountServiceTest {
     this.accountProvider.changeUserAccountEmailAddress(Optional.of(newMail));
 
     verify(identityEmailAddressUpdater).updateCurrentUserEmail(newMail);
-    verify(this.appointmentService, times(1)).updateAskerEmail(user.getUserId(), newMail);
     user.setEmail(newMail);
     verify(this.userService, times(1)).saveUser(user);
     verify(this.consultantService, times(2)).getConsultant(any());
@@ -427,7 +421,6 @@ public class UserAccountServiceTest {
 
     verify(identityEmailAddressUpdater).deleteCurrentUserEmail();
     verify(identityEmailAddressUpdater, never()).updateCurrentUserEmail(anyString());
-    verify(this.appointmentService, times(1)).updateAskerEmail(user.getUserId(), dummyEmail);
     user.setEmail(dummyEmail);
     verify(userService).saveUser(user);
     assertAllAdviceSeekerNotificationsAreEnabled(user);

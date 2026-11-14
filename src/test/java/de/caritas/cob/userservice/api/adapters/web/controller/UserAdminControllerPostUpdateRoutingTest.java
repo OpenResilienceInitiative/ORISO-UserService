@@ -17,7 +17,6 @@ import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsu
 import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPreferenceService;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.identity.UserIdentitiesService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -53,7 +52,6 @@ class UserAdminControllerPostUpdateRoutingTest {
             consultantAdminFacade,
             mock(AskerUserAdminFacade.class),
             mock(AdminUserFacade.class),
-            mock(AppointmentService.class),
             mock(AdminDtoMapper.class),
             mock(AuthenticatedUser.class),
             mock(GrantConsultantIdentityService.class),

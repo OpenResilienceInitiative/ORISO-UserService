@@ -19,7 +19,6 @@ import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.helper.PlainCredentialsHolder;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.consultant.ConsultantChatIdentityService;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.Settings;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantDTO;
@@ -32,7 +31,6 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * The incomplete-then-repaired path of #1194, against the real persistence.
@@ -65,7 +63,6 @@ class ConsultantChatIdentityRepairIT
   @MockitoBean private MatrixSynapseService matrixSynapseService;
   @MockitoBean private TenantAdminService tenantAdminService;
   @MockitoBean private RollbackFacade rollbackFacade;
-  @MockitoBean private AppointmentService appointmentService;
 
   @MockitoBean
   private de.caritas.cob.userservice.api.admin.service.tenant.TenantService tenantService;
@@ -74,7 +71,6 @@ class ConsultantChatIdentityRepairIT
 
   @BeforeEach
   void setup() {
-    ReflectionTestUtils.setField(createConsultantSaga, "appointmentFeatureEnabled", false);
     when(tenantService.getRestrictedTenantDataFresh(org.mockito.ArgumentMatchers.anyLong()))
         .thenReturn(de.caritas.cob.userservice.api.testHelper.ChatRecoveryPolicyFixtures.tenant());
     // EasyRandom's default seed is fixed, so a per-test random CreatedIdentity would hand both
