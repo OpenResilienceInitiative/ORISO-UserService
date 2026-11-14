@@ -204,6 +204,21 @@ class CalendarRecurrenceCostTest {
     assertThat(judge("FREQ=DAILY;BYHOUR=" + range(0, 23), FROM)).isEqualTo(Verdict.TOO_MANY);
   }
 
+  @Test
+  void timeZoneWork_Should_CoverFiveYearsPastTheStart_OfAnObservanceAfterTheHorizon() {
+    // ical4j builds an observance that starts after today up to five years past its start.
+    var horizon = Instant.parse("2037-11-01T00:00:00Z");
+    var start = Instant.parse("2090-01-01T00:00:00Z");
+
+    assertThat(
+            CalendarRecurrenceCost.timeZoneWork(
+                recur("FREQ=DAILY;BYHOUR=" + range(0, 23)), start, horizon))
+        .isGreaterThanOrEqualTo(5 * 365 * 24L);
+    assertThat(CalendarRecurrenceCost.timeZoneWork(recur("FREQ=YEARLY"), start, horizon))
+        .isGreaterThanOrEqualTo(5L)
+        .isLessThan(10L);
+  }
+
   private static Verdict judge(String rule, Instant start) {
     var recur = recur(rule);
     var until = recur.getUntil() == null ? null : Instant.from(recur.getUntil());
