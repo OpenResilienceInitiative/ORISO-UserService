@@ -33,6 +33,7 @@ import java.util.Objects;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -75,8 +76,11 @@ public class AgencyInviteLinkService {
   /** Call share links (#1487) in the public context; not {@code @NonNull} for older test wiring. */
   private final CallShareLinkService callShareLinkService;
 
-  /** Direct invitations with an appointment (ORISO-Frontend#2252); optional for older wiring. */
-  private final DirectInvitationService directInvitations;
+  /**
+   * Direct invitations with an appointment (ORISO-Frontend#2252). Optional, so a slim context that
+   * wires only the invite-link beans (for example GuestIdentityHttpTest) still starts.
+   */
+  private final ObjectProvider<DirectInvitationService> directInvitations;
 
   /** Create a new invite link. All classification fields are optional — defaults are applied. */
   public AgencyInviteLink create(CreateInviteLinkCommand cmd) {
@@ -545,9 +549,10 @@ public class AgencyInviteLinkService {
   }
 
   private DirectInvitationSchedule scheduleOf(AgencyInviteLink link) {
-    return directInvitations == null || link.getAppointmentId() == null
+    var invitations = directInvitations == null ? null : directInvitations.getIfAvailable();
+    return invitations == null || link.getAppointmentId() == null
         ? null
-        : directInvitations.scheduleOf(link).orElse(null);
+        : invitations.scheduleOf(link).orElse(null);
   }
 
   /** Calls knock, unless an invitation with an appointment switched "Anklopfen" off (#2252). */
