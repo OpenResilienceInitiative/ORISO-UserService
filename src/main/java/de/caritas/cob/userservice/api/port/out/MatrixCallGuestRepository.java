@@ -10,6 +10,20 @@ public interface MatrixCallGuestRepository extends JpaRepository<MatrixCallGuest
 
   List<MatrixCallGuest> findByBindingIdAndRevokedAtIsNull(Long bindingId);
 
+  /**
+   * FE#2209 round 4: the seats not yet taken back, as a locking read. Under the binding's row lock
+   * it sees every seat committed before, also one a join committed while the caller waited on that
+   * lock, which a plain read of the transaction's REPEATABLE READ snapshot would miss.
+   */
+  @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+  @org.springframework.data.jpa.repository.Query(
+      "select g from MatrixCallGuest g where g.bindingId = :bindingId and g.revokedAt is null"
+          + " order by g.id")
+  List<MatrixCallGuest> lockOutstandingByBindingId(
+      @org.springframework.data.repository.query.Param("bindingId") Long bindingId);
+
+  List<MatrixCallGuest> findByBindingId(Long bindingId);
+
   boolean existsByBindingIdAndMatrixUserIdAndRevokedAtIsNull(Long bindingId, String matrixUserId);
 
   /**

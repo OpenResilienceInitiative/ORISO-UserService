@@ -33,6 +33,30 @@ public class MatrixCallLifecycleService {
   @org.springframework.beans.factory.annotation.Value("${matrix.calls.observation-retry-ms:30000}")
   private long observationRetryMillis = 30000;
 
+  /**
+   * How long after the invite ran out a never-observed session call is given up (FE#2209 review).
+   */
+  public static final long NEVER_OBSERVED_MARGIN_MILLIS = 10 * 60 * 1000L;
+
+  /**
+   * FE#2209 review: a session call whose call room was never observed and in which nobody was ever
+   * seen ends once its invite ran out by {@link #NEVER_OBSERVED_MARGIN_MILLIS}. Without this, share
+   * links and guest seats would outlive it. Rechecked under the row lock.
+   */
+  @Transactional
+  public boolean finishNeverObserved(String room, long now) {
+    var binding = bindings.lockByMediaRoomId(room).orElse(null);
+    if (binding == null
+        || binding.getEndedAt() != null
+        || binding.getSessionId() == null
+        || binding.getStartedAt() != null
+        || binding.getMediaObservedAt() != null
+        || binding.getInviteExpiresAt() + NEVER_OBSERVED_MARGIN_MILLIS > now) return false;
+    binding.finishByLifecycle(now);
+    callGuests.revokeOutstanding(binding);
+    return true;
+  }
+
   @Transactional
   public void loseObservation(String room) {
     bindings
@@ -95,7 +119,7 @@ public class MatrixCallLifecycleService {
     boolean retainedClosure = !conversations.lockCurrentForWriting(session);
     if (retainedClosure && !startedBeforeRejection(binding)) {
       // No call history is retained here; close silently so expiry stops reselecting the row.
-      binding.finish(System.currentTimeMillis());
+      binding.finishByLifecycle(System.currentTimeMillis());
       return;
     }
     long now = System.currentTimeMillis();
@@ -163,7 +187,7 @@ public class MatrixCallLifecycleService {
                   .mapToLong(MatrixCallDevice::getExpiresAt)
                   .max()
                   .orElse(now);
-      binding.finish(lastPresenceEnd);
+      binding.finishByLifecycle(lastPresenceEnd);
       if (retainedClosure) return;
       binding.getDevices().values().stream()
           .filter(MatrixCallDevice::isAttended)

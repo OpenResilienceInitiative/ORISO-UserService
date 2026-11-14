@@ -62,6 +62,63 @@ class MatrixRtcMembershipEventTest {
   }
 
   @Test
+  void aCreationTimeInTheFutureCannotStretchTheMembership() {
+    // FE#2209 review: created_ts is sender-controlled; the server timestamp bounds it.
+    var content = content();
+    content.put("created_ts", 10L * 365 * 24 * 60 * 60 * 1000L);
+    content.put("expires", 60000L);
+    assertThat(MatrixRtcMembershipEvent.parse(event(content)).orElseThrow().expiresAt())
+        .isEqualTo(1000L + 60000L);
+  }
+
+  @Test
+  void aHugeExpiryEndsNoLaterThanTheCapAfterTheServerTimestamp() {
+    var content = content();
+    content.put("expires", Long.MAX_VALUE / 2);
+    assertThat(MatrixRtcMembershipEvent.parse(event(content)).orElseThrow().expiresAt())
+        .isEqualTo(1000L + MatrixRtcMembershipEvent.MAX_MEMBERSHIP_VALIDITY_MILLIS);
+  }
+
+  @Test
+  void aLongCallsRefreshedMembershipStaysValidFromItsNewServerTimestamp() {
+    // Element Call keeps created_ts and grows expires by four hours on each refresh.
+    long fourHours = 4 * 60 * 60 * 1000L;
+    var content = content();
+    content.put("created_ts", 0L);
+    content.put("expires", 3 * fourHours);
+    var refreshed = new HashMap<>(event(content));
+    refreshed.put("origin_server_ts", 2 * fourHours + 1000L);
+    assertThat(MatrixRtcMembershipEvent.parse(refreshed).orElseThrow().expiresAt())
+        .isEqualTo(3 * fourHours);
+  }
+
+  @Test
+  void aStateKeyNamingAnotherUserIsRejectedSoNobodyClaimsSomebodyElsesDevice() {
+    // FE#2209 round 3: MatrixRTC state keys are "_@user:server_DEVICE..." (or the legacy
+    // "@user:server_DEVICE"); the user part must be the sender.
+    var content = content();
+    content.put("expires", 60000L);
+    for (String foreign :
+        List.of(
+            "_@counsellor:example_DEVICE_m.call",
+            "@counsellor:example_DEVICE",
+            "_@user:example.org_DEVICE_m.call",
+            "@counsellor:example")) {
+      var claim = new HashMap<>(event(content));
+      claim.put("state_key", foreign);
+      assertThat(MatrixRtcMembershipEvent.parse(claim)).as(foreign).isEmpty();
+      var departure = new HashMap<>(event(Map.of()));
+      departure.put("state_key", foreign);
+      assertThat(MatrixRtcMembershipEvent.parse(departure)).as("departure " + foreign).isEmpty();
+    }
+    for (String own : List.of("_@user:example_DEVICE_m.call", "@user:example_DEVICE")) {
+      var mine = new HashMap<>(event(content));
+      mine.put("state_key", own);
+      assertThat(MatrixRtcMembershipEvent.parse(mine)).as(own).isPresent();
+    }
+  }
+
+  @Test
   void representsEmptyStateAsDepartureOfTheExactStateKeyNotEveryDeviceOfTheSender() {
     var member = MatrixRtcMembershipEvent.parse(event(Map.of())).orElseThrow();
     assertThat(member.departed()).isTrue();

@@ -22,6 +22,26 @@ record MatrixRtcMembershipEvent(
 
   private static final long DEFAULT_EXPIRE_DURATION = 4 * 60 * 60 * 1000L;
 
+  /**
+   * FE#2209 review: created_ts and expires are sender-controlled. A membership counts as live for
+   * at most this long after its server timestamp. Element Call (matrix-js-sdk MembershipManager)
+   * sends a four-hour expiry and refreshes the event before it runs out, keeping created_ts and
+   * growing expires; each refresh carries a new server timestamp, so long calls stay live.
+   */
+  static final long MAX_MEMBERSHIP_VALIDITY_MILLIS = DEFAULT_EXPIRE_DURATION + 60 * 60 * 1000L;
+
+  /**
+   * FE#2209 round 3: a MatrixRTC state key names its owner, {@code _@user:server_DEVICE...} (or the
+   * legacy {@code @user:server_DEVICE} and {@code @user:server}). A key naming anybody but the
+   * sender is somebody else's device and is ignored, so nobody can claim it first. A server name
+   * never contains "_", so the separator after the sender is unambiguous.
+   */
+  static boolean ownedBy(String stateKey, String sender) {
+    return stateKey.equals(sender)
+        || stateKey.startsWith(sender + "_")
+        || stateKey.startsWith("_" + sender + "_");
+  }
+
   static Optional<MatrixRtcMembershipEvent> parse(Map<String, Object> event) {
     if (!TYPE.equals(event.get("type"))) return Optional.empty();
     if (!(event.get("event_id") instanceof String eventId)
@@ -31,7 +51,8 @@ record MatrixRtcMembershipEvent(
         || !sender.contains(":")
         || !(event.get("state_key") instanceof String stateKey)
         || stateKey.isBlank()
-        || !(event.get("content") instanceof Map<?, ?> content)) return Optional.empty();
+        || !(event.get("content") instanceof Map<?, ?> content)
+        || !ownedBy(stateKey, sender)) return Optional.empty();
     Long timestamp = nonNegativeInteger(event.get("origin_server_ts"));
     if (timestamp == null) return Optional.empty();
     String replaces =
@@ -64,6 +85,11 @@ record MatrixRtcMembershipEvent(
             : Long.valueOf(DEFAULT_EXPIRE_DURATION);
     if (created == null || duration == null) return Optional.empty();
     try {
+      long claimed = Math.addExact(Math.min(created, timestamp), duration);
+      long cap =
+          timestamp > Long.MAX_VALUE - MAX_MEMBERSHIP_VALIDITY_MILLIS
+              ? Long.MAX_VALUE
+              : timestamp + MAX_MEMBERSHIP_VALIDITY_MILLIS;
       return Optional.of(
           new MatrixRtcMembershipEvent(
               eventId,
@@ -71,7 +97,7 @@ record MatrixRtcMembershipEvent(
               stateKey,
               deviceId,
               timestamp,
-              Math.addExact(created, duration),
+              Math.min(claimed, cap),
               false,
               replaces));
     } catch (ArithmeticException overflow) {

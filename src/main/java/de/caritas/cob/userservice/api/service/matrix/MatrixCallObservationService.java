@@ -24,8 +24,15 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * Observation-only registry for encrypted calls whose invite UserService cannot read: internal
  * groups (#2166/#1624) and 1:1 sessions (#2237). Feeds the RTC state lookup and the Activity
- * Timeline only. It must never be read by guest admission, share links, knocks or any other access
- * decision; those read {@code MatrixCallBinding} exclusively.
+ * Timeline only. An observation row is never read by guest admission, share links, knocks or any
+ * other access decision; those read {@code MatrixCallBinding} exclusively.
+ *
+ * <p>FE#2209 (decision of 13 Nov 2026): the one deliberate exception is not this row but the
+ * registration request behind it. When the registering person is the assigned counsellor of a 1:1
+ * session, {@link MatrixSessionCallBindingService} re-checks that request against Matrix on its own
+ * (conversation, assignment, membership, call-room binding and creator) and may then write the
+ * authoritative {@code MatrixCallBinding}. Group chats, advice seekers, other counsellors and
+ * guests never get a binding this way, and nothing here may derive one from a stored observation.
  *
  * <p>#1630: no database transaction is open while Matrix is called. Every Matrix lookup happens
  * first, then one short transaction writes, then the notifications follow (each in its own
@@ -57,6 +64,7 @@ public class MatrixCallObservationService {
   private final MatrixSynapseService matrix;
   private final EventNotificationService notifications;
   private final MatrixCallLifecycleService lifecycle;
+  private final MatrixSessionCallBindingService sessionBindings;
   private final PlatformTransactionManager transactionManager;
 
   public Outcome register(
@@ -79,9 +87,9 @@ public class MatrixCallObservationService {
     }
     // A readable invite already produced the authoritative binding; notifications of both paths
     // share one dedupe key per (room, call), so an observation must never pre-empt that call.
-    if (bindings.findBySourceRoomIdAndCallId(sourceRoomId, callId).isPresent()) {
-      return Outcome.NOT_FOUND;
-    }
+    // FE#2209 round 3: an asker's plaintext invite of the same call id is no such binding; it must
+    // not keep the assigned counsellor's call from being registered.
+    if (preemptedByBinding(sourceRoomId, callId)) return Outcome.NOT_FOUND;
     String creator = matrixIdOf(actor, conversation.getTenantId()).orElse(null);
     // Matrix evidence first, with no transaction open (#1630).
     var members = matrix.getCallRoomMembers(sourceRoomId).orElse(null);
@@ -128,6 +136,9 @@ public class MatrixCallObservationService {
       boolean video) {
     String sourceRoomId = conversation.getMatrixRoomId();
     if (!conversations.lockCurrentForWriting(conversation)) return Registration.REJECTED;
+    // CodeRabbit 4562143169: again under the source lock, which bind and the readable-invite path
+    // hold while they write a binding; one committed during the Matrix lookups wins.
+    if (preemptedByBinding(sourceRoomId, callId)) return Registration.REJECTED;
     long now = System.currentTimeMillis();
     var existing =
         observations.findForUpdateBySourceRoomIdAndCallId(sourceRoomId, callId).orElse(null);
@@ -168,6 +179,17 @@ public class MatrixCallObservationService {
             .expiresAt(now + LEASE_MILLIS)
             .build());
     return Registration.CREATED;
+  }
+
+  /**
+   * A binding of this call that the observation must never pre-empt: a group chat's always, a 1:1
+   * session call's only with the assigned counsellor's authority (FE#2209 round 3).
+   */
+  private boolean preemptedByBinding(String sourceRoomId, String callId) {
+    return bindings
+        .findBySourceRoomIdAndCallId(sourceRoomId, callId)
+        .filter(b -> b.getSessionId() == null || sessionBindings.preemptsRegistration(b))
+        .isPresent();
   }
 
   private void notifyInvited(
@@ -219,45 +241,111 @@ public class MatrixCallObservationService {
                 () ->
                     new MatrixSynapseService.CallLookupUnavailableException(
                         "call audience unavailable"));
+    // FE#2209 review: a 1:1 session call's binding ends in the same transaction as its observation,
+    // so neither a failing notification nor a binding written meanwhile can leave it live.
+    boolean oneToOne = conversation.getSessionId() != null && conversation.getChatId() == null;
     Ending ending;
     try {
-      ending = writeEnd(conversation, caller, callId, members);
+      ending =
+          writeEnd(
+              actor,
+              conversation,
+              caller,
+              callId,
+              members,
+              boundId(oneToOne, sourceRoomId, callId));
     } catch (DataIntegrityViolationException | PessimisticLockingFailureException raced) {
-      // The registration landed while the end was written: end that row instead.
-      ending = writeEnd(conversation, caller, callId, members);
+      // The registration or a binding landed while the end was written: end that one instead,
+      // with the binding (if any now) locked first.
+      ending =
+          writeEnd(
+              actor,
+              conversation,
+              caller,
+              callId,
+              members,
+              boundId(oneToOne, sourceRoomId, callId));
     }
-    if (ending == null) return Outcome.NOT_FOUND;
+    // After the commit: first the guest seats, then the notifications; neither can undo the end.
+    if (ending.endedCallRoom() != null)
+      sessionBindings.revokeGuestsAfterEnd(ending.endedCallRoom());
+    if (!ending.observed() && ending.endedCallRoom() == null) return Outcome.NOT_FOUND;
     if (ending.endedNow()) notifyEnded(conversation, members, ending.row());
     return Outcome.OK;
   }
 
-  private record Ending(MatrixCallObservation row, boolean endedNow) {}
+  /**
+   * {@code observed}: this caller's end was stored (and the observation ended, if registered);
+   * {@code endedCallRoom}: the call room of the session binding this end closed.
+   */
+  private record Ending(
+      MatrixCallObservation row, boolean endedNow, boolean observed, String endedCallRoom) {}
+
+  /** Outside the transaction: the session call's binding, which the end locks first. */
+  private Long boundId(boolean oneToOne, String sourceRoomId, String callId) {
+    return oneToOne ? sessionBindings.boundCallId(sourceRoomId, callId).orElse(null) : null;
+  }
 
   private Ending writeEnd(
-      MatrixCallConversation conversation, String caller, String callId, List<String> members) {
+      AuthenticatedUser actor,
+      MatrixCallConversation conversation,
+      String caller,
+      String callId,
+      List<String> members,
+      Long boundId) {
     return new TransactionTemplate(transactionManager)
         .execute(
             status -> {
-              var row =
-                  observations
-                      .findForUpdateBySourceRoomIdAndCallId(conversation.getMatrixRoomId(), callId)
-                      .orElse(null);
+              // Lock order: binding (as the lifecycle takes it), session, observation, as bind and
+              // registration take session before observation.
+              if (boundId != null) sessionBindings.lockBinding(boundId);
+              // The session's call lock; a closed session still holds it, and ending is always
+              // allowed.
+              conversations.lockCurrentForWriting(conversation);
               long now = System.currentTimeMillis();
-              if (row == null) {
-                if (!members.contains(caller)) return null;
-                recordEnd(conversation, callId, caller, now);
-                return new Ending(null, false);
-              }
-              if (!caller.equals(row.getCreatorMatrixId())
-                  || !Objects.equals(row.getTenantId(), conversation.getTenantId())) {
-                return null;
-              }
-              recordEnd(conversation, callId, caller, now);
-              if (row.getEndedAt() != null) return new Ending(row, false);
-              row.finish(now);
-              observations.save(row);
-              return new Ending(row, true);
+              var observed = endObservation(conversation, caller, callId, members, now);
+              String endedCallRoom =
+                  conversation.getSessionId() != null && conversation.getChatId() == null
+                      ? sessionBindings.endWhileSessionLocked(
+                          actor, conversation, callId, now, boundId)
+                      : null;
+              return observed == null
+                  ? new Ending(null, false, false, endedCallRoom)
+                  : new Ending(observed.row(), observed.endedNow(), true, endedCallRoom);
             });
+  }
+
+  private record ObservationEnd(MatrixCallObservation row, boolean endedNow) {}
+
+  private ObservationEnd endObservation(
+      MatrixCallConversation conversation,
+      String caller,
+      String callId,
+      List<String> members,
+      long now) {
+    var row =
+        observations
+            .findForUpdateBySourceRoomIdAndCallId(conversation.getMatrixRoomId(), callId)
+            .orElse(null);
+    if (row == null) {
+      if (!members.contains(caller)) return null;
+      recordEnd(conversation, callId, caller, now);
+      return new ObservationEnd(null, false);
+    }
+    if (!Objects.equals(row.getTenantId(), conversation.getTenantId())) return null;
+    if (!caller.equals(row.getCreatorMatrixId())) {
+      // CodeRabbit 4563094690: somebody else (an asker) owns the observation of this call id. Their
+      // observation stays as it is, but this member's own end is stored, so a bind of this member
+      // still in flight (and any later one) sees it and does not start a live call.
+      if (!members.contains(caller)) return null;
+      recordEnd(conversation, callId, caller, now);
+      return new ObservationEnd(null, false);
+    }
+    recordEnd(conversation, callId, caller, now);
+    if (row.getEndedAt() != null) return new ObservationEnd(row, false);
+    row.finish(now);
+    observations.save(row);
+    return new ObservationEnd(row, true);
   }
 
   /** One stored end per person and call; a repeated end keeps the first time. */

@@ -64,6 +64,15 @@ public class MatrixCallBinding {
   @Column(name = "ended_at")
   private Long endedAt;
 
+  /**
+   * FE#2209 round 5: how the call ended. {@link #END_CAUSE_ENDPOINT}: a counsellor ended it through
+   * the end endpoint. {@link #END_CAUSE_LIFECYCLE}: the server closed it (invite ran out, never
+   * observed, everybody left, closure). Null for calls ended before this was recorded, and for
+   * running calls; null counts as an explicit end (fail closed).
+   */
+  @Column(name = "end_cause", length = 16)
+  private String endCause;
+
   @Column(name = "media_observed_at")
   private Long mediaObservedAt;
 
@@ -93,7 +102,79 @@ public class MatrixCallBinding {
     if (endedAt == null && (startedAt == null || timestamp < startedAt)) startedAt = timestamp;
   }
 
+  /**
+   * Running or still ringing: not ended, and either nobody has been seen yet and the invite has not
+   * run out, or a seen device's membership has not expired. Share links, knocks and guest seats all
+   * ask this (FE#2209).
+   */
+  public boolean isLive(long now) {
+    if (endedAt != null) return false;
+    if (startedAt == null) return inviteExpiresAt > now;
+    return devices.values().stream().anyMatch(device -> device.getExpiresAt() > now);
+  }
+
+  /**
+   * FE#2209 review: whether {@code matrixId} holds a live MatrixRTC membership in this call room,
+   * the same source {@link #isLive} reads. A departure or an expired membership is not in the call.
+   */
+  public boolean isInCall(String matrixId, long now) {
+    return endedAt == null
+        && matrixId != null
+        && devices.values().stream()
+            .anyMatch(
+                device ->
+                    matrixId.equals(device.getSenderMatrixId()) && device.getExpiresAt() > now);
+  }
+
+  /**
+   * FE#2209 review: the session's assigned counsellor takes over a binding that somebody else's
+   * plaintext invite created for the same call (same source room and call id, so the unique key
+   * stays). It becomes a fresh, not yet observed call in the counsellor's call room; nothing of the
+   * other call room carries over.
+   */
+  public void takeOver(
+      String caller,
+      String mediaRoomId,
+      long now,
+      long inviteExpiresAt,
+      boolean video,
+      java.util.Set<String> invitees) {
+    this.callerMatrixId = caller;
+    this.mediaRoomId = mediaRoomId;
+    this.invitedAt = now;
+    this.inviteExpiresAt = inviteExpiresAt;
+    this.video = video;
+    this.invitedMatrixIds.clear();
+    this.invitedMatrixIds.addAll(invitees);
+    this.devices.clear();
+    this.startedAt = null;
+    this.endedAt = null;
+    this.endCause = null;
+    this.mediaObservedAt = null;
+    this.nextObservationAttemptAt = null;
+  }
+
+  public static final String END_CAUSE_ENDPOINT = "ENDPOINT";
+  public static final String END_CAUSE_LIFECYCLE = "LIFECYCLE";
+
+  /** Ends the call without recording why; such an end counts as explicit (fail closed). */
   public void finish(long timestamp) {
     if (endedAt == null) endedAt = Math.max(startedAt == null ? invitedAt : startedAt, timestamp);
+  }
+
+  /** A counsellor ended the call through the end endpoint. */
+  public void finishExplicitly(long timestamp) {
+    finish(timestamp, END_CAUSE_ENDPOINT);
+  }
+
+  /** The server closed the call: invite ran out, never observed, everybody left, closure. */
+  public void finishByLifecycle(long timestamp) {
+    finish(timestamp, END_CAUSE_LIFECYCLE);
+  }
+
+  private void finish(long timestamp, String cause) {
+    if (endedAt != null) return;
+    finish(timestamp);
+    endCause = cause;
   }
 }

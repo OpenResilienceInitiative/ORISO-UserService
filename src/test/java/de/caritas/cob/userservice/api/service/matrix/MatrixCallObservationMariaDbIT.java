@@ -58,7 +58,8 @@ import org.testcontainers.containers.MariaDBContainer;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class MatrixCallObservationMariaDbIT {
   private static final MariaDBContainer<?> DATABASE =
-      new MariaDBContainer<>("mariadb:10.11").withDatabaseName("userservice");
+      new MariaDBContainer<>(System.getProperty("it.mariadb.image", "mariadb:10.11"))
+          .withDatabaseName("userservice");
 
   static {
     DATABASE.start();
@@ -79,6 +80,10 @@ class MatrixCallObservationMariaDbIT {
         "spring.jpa.properties.hibernate.dialect", () -> "org.hibernate.dialect.MariaDBDialect");
     registry.add("spring.jpa.defer-datasource-initialization", () -> "false");
     registry.add("spring.sql.init.mode", () -> "never");
+    // Deployment isolation level: nothing in the application, Hikari or the MariaDB chart sets one,
+    // so production runs MariaDB's default REPEATABLE READ. Pinned so the race ITs prove that.
+    registry.add(
+        "spring.datasource.hikari.transaction-isolation", () -> "TRANSACTION_REPEATABLE_READ");
     // Fail a blocked lock quickly instead of after MariaDB's default 50 s.
     registry.add(
         "spring.datasource.hikari.connection-init-sql",
@@ -99,6 +104,7 @@ class MatrixCallObservationMariaDbIT {
   @MockitoBean private MatrixSynapseService matrix;
   @MockitoBean private EventNotificationService notifications;
   @MockitoBean private MatrixCallLifecycleService lifecycle;
+  @MockitoBean private MatrixSessionCallBindingService sessionBindings;
 
   private final List<String> matrixCallsInsideTransaction =
       Collections.synchronizedList(new ArrayList<>());
@@ -109,6 +115,7 @@ class MatrixCallObservationMariaDbIT {
   @BeforeEach
   void setUp() {
     jdbc.update("DELETE FROM matrix_call_observation WHERE source_room_id = ?", SOURCE);
+    jdbc.update("DELETE FROM matrix_call_observation_end WHERE source_room_id = ?", SOURCE);
     actor = new AuthenticatedUser();
     actor.setUserId("creator");
     actor.setTenantId(7L);
@@ -127,6 +134,13 @@ class MatrixCallObservationMariaDbIT {
     when(conversations.lockCurrentForWriting(any())).thenReturn(true);
     when(matrix.getCallRoomMembers(SOURCE))
         .thenAnswer(outsideTransaction(Optional.of(List.of(CREATOR, OTHER))));
+  }
+
+  /** CodeRabbit 4562500014: the race ITs run at the deployment's isolation level. */
+  @Test
+  void runsAtTheDeploymentsIsolationLevel() {
+    assertThat(jdbc.queryForObject("SELECT @@tx_isolation", String.class))
+        .isEqualTo("REPEATABLE-READ");
   }
 
   @Test
@@ -176,6 +190,61 @@ class MatrixCallObservationMariaDbIT {
         .createCallInvitationNotification(
             any(), eq("other"), eq(false), eq("creator"), eq("race"), eq(media), eq(true));
     assertThat(matrixCallsInsideTransaction).isEmpty();
+  }
+
+  @Test
+  void anEndRacingTheFirstRegistrationLeavesTheEndStoredAndNoLiveCall() throws Exception {
+    // CodeRabbit 4562143201: end and first registration start together and race on the real
+    // observation and end rows. After the permitted retries the creator's end is stored and no
+    // observation of the call is live, whichever order the database chose.
+    // CI run 43413620072: the start barrier sits before either operation opens its transaction.
+    // A barrier inside the transactions timed out on a slow runner: one thread held a row lock
+    // while the other was blocked on it before reaching the barrier. Never wait on a barrier
+    // while holding a database lock.
+    for (int round = 0; round < 5; round++) {
+      String callId = "end-race-" + round;
+      String media = "!media-end-race-" + round + ":example";
+      stubMediaRoom(callId, media);
+      var start = new CyclicBarrier(2);
+      org.mockito.Mockito.doReturn(true).when(conversations).lockCurrentForWriting(any());
+      var pool = Executors.newFixedThreadPool(2);
+      Callable<Object> register =
+          () -> {
+            start.await(30, TimeUnit.SECONDS);
+            try {
+              return service.register(actor, SOURCE, callId, media, true);
+            } catch (RuntimeException failure) {
+              return failure;
+            }
+          };
+      Callable<Object> end =
+          () -> {
+            start.await(30, TimeUnit.SECONDS);
+            return service.end(actor, SOURCE, callId);
+          };
+      List<Future<Object>> results = pool.invokeAll(List.of(register, end), 60, TimeUnit.SECONDS);
+      pool.shutdown();
+      Object registered = results.get(0).get();
+      assertThat(results.get(1).get()).isEqualTo(Outcome.OK);
+      if (registered instanceof RuntimeException) {
+        assertThat(registered)
+            .isInstanceOfAny(
+                PessimisticLockingFailureException.class, DataIntegrityViolationException.class);
+        // The client's retry: the stored end rejects the late registration.
+        assertThat(service.register(actor, SOURCE, callId, media, true))
+            .isEqualTo(Outcome.NOT_FOUND);
+      }
+      assertThat(enders(callId)).containsExactly(CREATOR);
+      assertThat(
+              jdbc.queryForObject(
+                  "SELECT COUNT(*) FROM matrix_call_observation WHERE source_room_id = ?"
+                      + " AND call_id = ? AND ended_at IS NULL",
+                  Integer.class,
+                  SOURCE,
+                  callId))
+          .as("live observations of " + callId)
+          .isZero();
+    }
   }
 
   @Test

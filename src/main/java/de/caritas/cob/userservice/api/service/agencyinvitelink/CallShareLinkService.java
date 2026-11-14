@@ -140,6 +140,7 @@ public class CallShareLinkService {
   @Transactional
   public ShareLink update(
       Long tenant, String consultantId, Long linkId, Boolean knock, Boolean temporaryAccount) {
+    lockCallOf(linkId);
     var link =
         links
             .findByIdForUpdate(linkId)
@@ -188,7 +189,9 @@ public class CallShareLinkService {
     var unlocked = bindingOf(found);
     requireUsable(found, unlocked);
     requireGuestMayUse(found, unlocked, guest);
-    // Serialise visits on the link, so parallel visits of one guest insert one knock.
+    // Serialise visits on the link, so parallel visits of one guest insert one knock. The call's
+    // binding is locked first (FE#2209 round 3 lock order: binding before link).
+    lockCallOf(found.getId());
     var link = links.findByIdForUpdate(found.getId()).orElseThrow(CallShareLinkEndedException::new);
     var binding = bindingOf(link);
     requireUsable(link, binding);
@@ -234,6 +237,7 @@ public class CallShareLinkService {
    */
   @Transactional
   public void removeGuest(Long tenant, String consultantId, Long linkId, String guestMatrixUserId) {
+    lockCallOf(linkId);
     var link =
         links
             .findByIdForUpdate(linkId)
@@ -308,13 +312,7 @@ public class CallShareLinkService {
    * second half closes the link even when the hang-up event itself was missed.
    */
   static boolean isLive(MatrixCallBinding binding, long now) {
-    if (binding.getEndedAt() != null) {
-      return false;
-    }
-    if (binding.getStartedAt() == null) {
-      return binding.getInviteExpiresAt() > now;
-    }
-    return binding.getDevices().values().stream().anyMatch(device -> device.getExpiresAt() > now);
+    return binding.isLive(now);
   }
 
   /**
@@ -413,9 +411,39 @@ public class CallShareLinkService {
         || !InviteLinkStatus.ACTIVE.name().equals(link.getStatus())
         || outlived(link)
         || !hasSeparateMediaRoom(binding)
-        || !isLive(binding, System.currentTimeMillis())) {
+        || !isLive(binding, System.currentTimeMillis())
+        // FE#2209 review: a 1:1 session call placed by anybody but its assigned, active
+        // counsellor rings, but never takes guests, knocks or links.
+        || !callGuests.grantsGuestAuthority(binding)) {
       throw new CallShareLinkEndedException();
     }
+  }
+
+  /**
+   * FE#2209 round 3: one lock order on session-call paths (binding, session, observation, link,
+   * knocks). The link's call binding, then its session, are locked before the link, so a takeover
+   * or an end, which hold the binding while they retire the link, never wait on a link this
+   * transaction holds.
+   */
+  private void lockCallOf(Long linkId) {
+    links
+        .findCallBindingIdById(linkId)
+        .flatMap(bindings::lockById)
+        .map(MatrixCallBinding::getSessionId)
+        // CodeRabbit 4563094668: the authority check after the locks reads the session's assigned
+        // counsellor. The session is locked and re-read here (binding, session, link), so a
+        // reassignment that committed after the first, unlocked check is seen, and one that comes
+        // later waits for this join.
+        //
+        // Round 6 (F3), a known trade-off: join then seats the guest under these locks, and the
+        // seat goes through Matrix (the call room's members, the admitter's login, the invite). So
+        // a guest's join holds this session's row lock, not only the binding's, for those HTTP
+        // calls; bind, end and registration of calls in the same session wait meanwhile. Moving
+        // the lookup out of the lock is not clean: the invite must follow the seat reservation
+        // under the binding lock (no invited guest the cleanup cannot find, no seat in an ended
+        // call), and the authority decision must read the locked session. The binding lock was
+        // already held across these calls before round 5.
+        .ifPresent(sessions::lockFresh);
   }
 
   private boolean outlived(AgencyInviteLink link) {
@@ -430,8 +458,9 @@ public class CallShareLinkService {
   }
 
   /**
-   * The admitting counsellor, then the link owner, then any other counsellor still in the
-   * conversation vouches: either may have left it while the call runs on.
+   * The admitting counsellor, then the link owner, then any other counsellor still in the call
+   * vouches: either may have left it while the call runs on. Each must be active and in the call
+   * (FE#2209 review), so seating stops once no such counsellor is left.
    */
   private Admission seatOnAuthority(
       AgencyInviteLink link, MatrixCallBinding binding, GroupChatJoinRequest admitted, User guest) {
@@ -447,8 +476,7 @@ public class CallShareLinkService {
         return seat;
       }
     }
-    for (var counsellor :
-        callGuests.counsellorsInConversation(link.getTenantId(), binding.getSourceRoomId())) {
+    for (var counsellor : callGuests.counsellorsInCall(link.getTenantId(), binding)) {
       if (tried.contains(counsellor)) {
         continue;
       }

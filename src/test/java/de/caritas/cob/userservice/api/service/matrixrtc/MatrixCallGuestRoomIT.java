@@ -81,6 +81,8 @@ import org.springframework.transaction.support.TransactionTemplate;
     })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({
+  de.caritas.cob.userservice.api.service.matrix.SessionCallAuthority.class,
+  de.caritas.cob.userservice.api.service.matrix.SessionCallRevival.class,
   EventNotificationService.class,
   ConsultantDisplayNameResolver.class,
   EventNotificationDeduplicationWriter.class,
@@ -410,7 +412,14 @@ class MatrixCallGuestRoomIT {
 
   private MockMvc mvc(AuthenticatedUser actor) {
     return MockMvcBuilders.standaloneSetup(
-            new MatrixCallStateController(callStates, callGuests, observations, actor))
+            new MatrixCallStateController(
+                callStates,
+                callGuests,
+                observations,
+                mock(
+                    de.caritas.cob.userservice.api.service.matrix.MatrixSessionCallBindingService
+                        .class),
+                actor))
         .build();
   }
 
