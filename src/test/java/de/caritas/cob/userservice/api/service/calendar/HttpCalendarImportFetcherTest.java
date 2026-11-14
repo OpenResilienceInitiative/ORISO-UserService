@@ -23,6 +23,9 @@ class HttpCalendarImportFetcherTest {
   private static final byte[] CALENDAR =
       "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n".getBytes(StandardCharsets.UTF_8);
 
+  private static final int SLOW_PIECES = 40;
+  private static final long SLOW_PIECE_MILLIS = 100;
+
   private final HttpCalendarImportFetcher fetcher = new HttpCalendarImportFetcher();
   private final AtomicInteger calendarRequests = new AtomicInteger();
   private HttpServer server;
@@ -67,6 +70,27 @@ class HttpCalendarImportFetcherTest {
             // Expected: the fetcher stops reading at the limit.
           }
         });
+    server.createContext(
+        "/large-then-slow",
+        exchange -> {
+          exchange.sendResponseHeaders(200, 0);
+          var chunk = new byte[64 * 1024];
+          try (var body = exchange.getResponseBody()) {
+            for (int sent = 0; sent <= HttpCalendarImportFetcher.MAX_BYTES; sent += chunk.length) {
+              body.write(chunk);
+            }
+            // Then a trickle, each piece well inside the socket timeout.
+            for (int piece = 0; piece < SLOW_PIECES; piece++) {
+              body.write(new byte[1024]);
+              body.flush();
+              Thread.sleep(SLOW_PIECE_MILLIS);
+            }
+          } catch (java.io.IOException clientGaveUp) {
+            // Expected: the fetcher drops the connection at the limit.
+          } catch (InterruptedException stopped) {
+            Thread.currentThread().interrupt();
+          }
+        });
     server.start();
   }
 
@@ -103,6 +127,17 @@ class HttpCalendarImportFetcherTest {
   @Test
   void fetch_Should_StopAtTheSizeLimit() {
     assertThat(errorOf("/large")).isEqualTo(CalendarImportError.TOO_LARGE);
+  }
+
+  @Test
+  void fetch_Should_DropTheConnection_When_ItGivesUp_InsteadOfReadingTheRest() {
+    var started = System.nanoTime();
+
+    assertThat(errorOf("/large-then-slow")).isEqualTo(CalendarImportError.TOO_LARGE);
+
+    // Reading the trickle to its end would take SLOW_PIECES x SLOW_PIECE_MILLIS = 4 seconds.
+    assertThat(java.time.Duration.ofNanos(System.nanoTime() - started))
+        .isLessThan(java.time.Duration.ofMillis(SLOW_PIECES * SLOW_PIECE_MILLIS / 2));
   }
 
   @Test
