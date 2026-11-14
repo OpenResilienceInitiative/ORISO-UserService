@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.DirectInvitationMember;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Pageable;
@@ -15,9 +16,15 @@ public interface DirectInvitationMemberRepository
 
   List<DirectInvitationMember> findByInviteLinkIdAndRemovedAtIsNull(Long inviteLinkId);
 
-  /** Removals that are due and Matrix has not confirmed yet, for the sweep (#2252). */
+  /**
+   * Removals Matrix has not confirmed yet whose next attempt is due at {@code now}, for the sweep
+   * (#2252). A failed attempt moves {@code revokeDueAt} on, so a lasting failure is retried with a
+   * delay instead of every run.
+   */
   @Query(
       "SELECT m.id FROM DirectInvitationMember m WHERE m.revokeDueAt IS NOT NULL"
-          + " AND m.removedAt IS NULL AND m.id > :afterId ORDER BY m.id")
-  List<Long> findPendingRevocationIds(@Param("afterId") Long afterId, Pageable pageable);
+          + " AND m.revokeDueAt <= :now AND m.removedAt IS NULL AND m.id > :afterId"
+          + " ORDER BY m.id")
+  List<Long> findPendingRevocationIds(
+      @Param("now") LocalDateTime now, @Param("afterId") Long afterId, Pageable pageable);
 }

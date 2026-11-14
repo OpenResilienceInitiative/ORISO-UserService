@@ -25,6 +25,7 @@ import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.Base64;
 import java.util.List;
 import java.util.Objects;
@@ -68,6 +69,7 @@ public class CounsellorDirectLinkService {
         owner.getId(), COUNSELLOR, DIRECT_MEDIA);
   }
 
+  @Transactional
   public AgencyInviteLink create(Consultant owner, CreateCommand cmd) {
     if (cmd == null || cmd.medium() == null) {
       throw new BadRequestException("medium is required");
@@ -192,7 +194,11 @@ public class CounsellorDirectLinkService {
     link.setTemporaryAccount(effective.createsTemporaryAccounts());
   }
 
-  /** The medium is fixed after creation; every other field is optional. */
+  /**
+   * The medium is fixed after creation; every other field is optional. One transaction: a refused
+   * step (for example the policy check) leaves the appointment where it was.
+   */
+  @Transactional
   public AgencyInviteLink update(Consultant owner, Long linkId, UpdateCommand cmd) {
     var link = requireOwn(owner, linkId);
     if (cmd == null) {
@@ -248,14 +254,16 @@ public class CounsellorDirectLinkService {
         invitationEnd.revoke(link);
       }
     }
-    link.setUpdateDate(LocalDateTime.now());
+    link.setUpdateDate(invitations.now());
     return repository.save(link);
   }
 
   /**
    * Conversations started through the link carry no reference to it and stay; they keep only the
-   * link's medium (FE#1952) and its name (FE#2170).
+   * link's medium (FE#1952) and its name (FE#2170). One transaction; the room removals run after
+   * the commit.
    */
+  @Transactional
   public void delete(Consultant owner, Long linkId) {
     var link = requireOwn(owner, linkId);
     // ORISO-Frontend#2252: deleted ends access like an expiry; the member rows stay, so the sweep
@@ -354,10 +362,15 @@ public class CounsellorDirectLinkService {
   private StartedConversation startAppointmentConversation(
       AgencyInviteLink link, User user, InviteLinkChatType medium) {
     var opened =
-        invitations.openAppointmentConversation(
+        invitations.joinLater(
             link,
             user,
-            () -> createNewSessionFacade.initializeAppointmentSession(registrationFor(link), user));
+            invitations.openAppointmentConversation(
+                link,
+                user,
+                () ->
+                    createNewSessionFacade.initializeAppointmentSession(
+                        registrationFor(link), user)));
     var session = opened.session();
     if (opened.created() && !link.isJoinsExistingSession()) {
       sessionRepository.recordDirectLinkOrigin(session.getId(), medium.name());
@@ -370,7 +383,7 @@ public class CounsellorDirectLinkService {
     boolean call = medium != InviteLinkChatType.CHAT;
     var admission = call && link.isKnock() ? InviteLinkAdmission.KNOCK : InviteLinkAdmission.DIRECT;
     GroupChatJoinRequest knock = null;
-    if (call && (schedule == null || schedule.callOpen(DirectInvitationService.nowUtc()))) {
+    if (call && (schedule == null || schedule.callOpen(invitations.now()))) {
       knock =
           link.isKnock()
               ? directCallKnockService.knock(session.getId(), user, link.getId(), medium)
@@ -425,7 +438,7 @@ public class CounsellorDirectLinkService {
     }
     if (InviteLinkStatus.EXPIRED.name().equals(link.getStatus())
         || (link.getExpiresAt() != null
-            && link.getExpiresAt().isBefore(DirectInvitationService.nowUtc()))) {
+            && link.getExpiresAt().isBefore(LocalDateTime.now(ZoneOffset.UTC)))) {
       throw new DirectLinkExpiredException();
     }
   }

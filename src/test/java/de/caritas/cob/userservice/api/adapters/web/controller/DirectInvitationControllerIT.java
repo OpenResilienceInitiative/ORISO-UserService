@@ -283,11 +283,16 @@ class DirectInvitationControllerIT {
     entityManager.flush();
     assertThat(sessionRepository.findById(conversation.getId()).orElseThrow().getStatus())
         .isEqualTo(SessionStatus.IN_ARCHIVE);
-    verify(rooms).remove(any(), eq(interpreter.getMatrixUserId()));
     var guestRow =
         memberRepository
             .findBySessionIdAndUserId(conversation.getId(), interpreter.getUserId())
             .orElseThrow();
+    // No Matrix call inside the transaction that holds the row lock: the removal is only due.
+    verify(rooms, never()).remove(any(), any());
+    assertThat(guestRow.getRevokeDueAt()).isNotNull();
+    // After the commit (here: as the sweep does) Matrix takes the guest out.
+    assertThat(expiryService.retryRemoval(guestRow.getId())).isTrue();
+    verify(rooms).remove(any(), eq(interpreter.getMatrixUserId()));
     assertThat(guestRow.getRemovedAt()).isNotNull();
     var accountRow =
         memberRepository

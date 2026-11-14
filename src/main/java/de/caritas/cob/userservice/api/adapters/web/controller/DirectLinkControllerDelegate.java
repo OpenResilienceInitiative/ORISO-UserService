@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CallKnockStatus;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateDirectLinkDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateSessionDirectInvitationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DirectInvitationAppointmentDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.DirectInvitationAppointmentInputDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkConversationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkMedium;
@@ -109,8 +110,8 @@ public class DirectLinkControllerDelegate {
                 body.getTemporary(),
                 body.getAgencyId(),
                 toUtc(body.getScheduledAt()),
-                body.getAppointment() == null ? null : toUtc(body.getAppointment().getStartTime()),
-                body.getAppointment() == null ? null : toUtc(body.getAppointment().getEndTime()),
+                startOf(body.getAppointment()),
+                endOf(body.getAppointment()),
                 body.getValidityAfterEndMinutes(),
                 accessMode(body.getAccessMode()),
                 body.getKnock()));
@@ -129,8 +130,8 @@ public class DirectLinkControllerDelegate {
                 body.getActive(),
                 toUtc(body.getScheduledAt()),
                 Boolean.TRUE.equals(body.getClearScheduledAt()),
-                body.getAppointment() == null ? null : toUtc(body.getAppointment().getStartTime()),
-                body.getAppointment() == null ? null : toUtc(body.getAppointment().getEndTime()),
+                startOf(body.getAppointment()),
+                endOf(body.getAppointment()),
                 body.getValidityAfterEndMinutes(),
                 accessMode(body.getAccessMode()),
                 body.getKnock());
@@ -166,8 +167,8 @@ public class DirectLinkControllerDelegate {
             sessionId,
             new SessionInvitationCommand(
                 body.getAppointmentId(),
-                body.getAppointment() == null ? null : toUtc(body.getAppointment().getStartTime()),
-                body.getAppointment() == null ? null : toUtc(body.getAppointment().getEndTime()),
+                startOf(body.getAppointment()),
+                endOf(body.getAppointment()),
                 body.getMedium() == null
                     ? null
                     : InviteLinkChatType.valueOf(body.getMedium().name()),
@@ -309,7 +310,7 @@ public class DirectLinkControllerDelegate {
         .appointmentOf(link)
         .ifPresent(
             appointment -> {
-              var schedule = invitations.scheduleOf(link).orElseThrow();
+              var schedule = DirectInvitationService.scheduleOf(link, appointment);
               dto.appointment(
                       new DirectInvitationAppointmentDTO()
                           .id(appointment.getId())
@@ -328,7 +329,7 @@ public class DirectLinkControllerDelegate {
       dto.expiresAt(link.getExpiresAt().atOffset(ZoneOffset.UTC))
           .expired(
               InviteLinkStatus.EXPIRED.name().equals(link.getStatus())
-                  || link.getExpiresAt().isBefore(DirectInvitationService.nowUtc()));
+                  || link.getExpiresAt().isBefore(invitations.now()));
     }
     return dto;
   }
@@ -350,6 +351,14 @@ public class DirectLinkControllerDelegate {
             link.getCreateDate() == null ? null : link.getCreateDate().atOffset(ZoneOffset.UTC))
         .scheduledAt(
             link.getScheduledAt() == null ? null : link.getScheduledAt().atOffset(ZoneOffset.UTC));
+  }
+
+  private static LocalDateTime startOf(DirectInvitationAppointmentInputDTO appointment) {
+    return appointment == null ? null : toUtc(appointment.getStartTime());
+  }
+
+  private static LocalDateTime endOf(DirectInvitationAppointmentInputDTO appointment) {
+    return appointment == null ? null : toUtc(appointment.getEndTime());
   }
 
   /** Link times are stored in UTC, like {@code create_date}. */

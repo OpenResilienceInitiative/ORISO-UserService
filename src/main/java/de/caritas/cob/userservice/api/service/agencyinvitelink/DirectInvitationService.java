@@ -22,6 +22,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -62,21 +63,28 @@ public class DirectInvitationService {
   private final @NonNull EventNotificationService notifications;
   private final @NonNull MatrixSessionSystemMessageService systemMessages;
   private final @NonNull SessionArchiveService archive;
+  private final @NonNull Clock clock;
 
   @Value("${app.base.url:}")
   String appBaseUrl;
 
-  public static LocalDateTime nowUtc() {
-    return LocalDateTime.now(ZoneOffset.UTC);
+  /** The time every invitation field is written and compared in: UTC, from the shared clock. */
+  public LocalDateTime now() {
+    return LocalDateTime.now(clock);
   }
 
   /** The schedule of an invitation with an appointment; empty for a link without one. */
   public Optional<DirectInvitationSchedule> scheduleOf(AgencyInviteLink link) {
-    return appointmentOf(link)
-        .map(
-            a ->
-                DirectInvitationSchedule.of(
-                    utc(a.getStartTime()), utc(a.getEndTime()), link.getValidityAfterEndMinutes()));
+    return appointmentOf(link).map(a -> scheduleOf(link, a));
+  }
+
+  /** The schedule from an appointment already loaded, without reading it again. */
+  public static DirectInvitationSchedule scheduleOf(
+      AgencyInviteLink link, SessionAppointment appointment) {
+    return DirectInvitationSchedule.of(
+        utc(appointment.getStartTime()),
+        utc(appointment.getEndTime()),
+        link.getValidityAfterEndMinutes());
   }
 
   public Optional<SessionAppointment> appointmentOf(AgencyInviteLink link) {
@@ -142,8 +150,10 @@ public class DirectInvitationService {
   }
 
   /**
-   * The first person creates the appointment conversation; everybody after them joins it. The
-   * appointment row is locked, so two first visits create one conversation.
+   * The first person creates the appointment conversation; the appointment row is locked, so two
+   * first visits create one conversation. That creation is the only Matrix work under the lock.
+   * Anybody later is only looked up here and joins through {@link #joinLater}, after this
+   * transaction released the lock.
    */
   @Transactional
   public Opened openAppointmentConversation(
@@ -155,7 +165,6 @@ public class DirectInvitationService {
     if (appointment.getStatus() == SessionAppointment.Status.CANCELLED) {
       throw new DirectLinkInactiveException();
     }
-    boolean guest = user.getTemporaryAccountSnapshot() != null;
     var session = appointment.getSession();
     if (session == null) {
       var created = newConversation.get();
@@ -173,31 +182,46 @@ public class DirectInvitationService {
                           HttpStatus.BAD_GATEWAY, "conversation_room_unavailable"));
       appointment.setSession(session);
       appointments.save(appointment);
-      members.save(member(session, user, link, guest));
-      return new Opened(session, true);
+      members.save(member(session, user, link));
+      return new Opened(session, true, false);
     }
     if (session.getUser() != null
         && Objects.equals(session.getUser().getUserId(), user.getUserId())) {
-      return new Opened(session, false);
+      return new Opened(session, false, false);
     }
     var existing = members.findBySessionIdAndUserId(session.getId(), user.getUserId());
     if (existing.isPresent() && existing.get().getRemovedAt() == null) {
-      return new Opened(session, false);
+      return new Opened(session, false, false);
     }
+    return new Opened(session, false, true);
+  }
+
+  /**
+   * A later person joins the room, outside any lock, and is recorded as having come in by link once
+   * Matrix confirmed the join. Does nothing when {@link #openAppointmentConversation} found them in
+   * the conversation already.
+   */
+  public Opened joinLater(AgencyInviteLink link, User user, Opened opened) {
+    if (!opened.joinPending()) {
+      return opened;
+    }
+    var session = opened.session();
     if (link.isJoinsExistingSession()) {
       rooms.addInvitedGuestToExistingRoom(session, user);
     } else {
       rooms.addToAppointmentRoom(session, user);
     }
-    var conversation = session;
-    var row = existing.orElseGet(() -> member(conversation, user, link, guest));
+    var row =
+        members
+            .findBySessionIdAndUserId(session.getId(), user.getUserId())
+            .orElseGet(() -> member(session, user, link));
     row.setRemovedAt(null);
     row.setRevokeDueAt(null);
-    row.setGuest(guest);
+    row.setGuest(isGuest(user));
     row.setInviteLinkId(link.getId());
-    row.setJoinedAt(nowUtc());
+    row.setJoinedAt(now());
     members.save(row);
-    return new Opened(session, true);
+    return new Opened(session, true, false);
   }
 
   /**
@@ -223,7 +247,7 @@ public class DirectInvitationService {
             utc(appointment.getStartTime()),
             utc(appointment.getEndTime()),
             validity != null ? validity : link.getValidityAfterEndMinutes());
-    var now = nowUtc();
+    var now = now();
     var expiresAt = schedule.renewedExpiry(now);
     if (!expiresAt.isAfter(now)) {
       throw new ConflictException("The new link would already be expired; choose a validity.");
@@ -332,27 +356,33 @@ public class DirectInvitationService {
     link.setScheduledAt(schedule.start());
   }
 
-  private static void requireFuture(DirectInvitationSchedule schedule) {
-    if (!schedule.start().isAfter(nowUtc())) {
+  private void requireFuture(DirectInvitationSchedule schedule) {
+    if (!schedule.start().isAfter(now())) {
       throw new BadRequestException("An appointment must start in the future.");
     }
   }
 
-  private static DirectInvitationMember member(
-      Session session, User user, AgencyInviteLink link, boolean guest) {
+  private DirectInvitationMember member(Session session, User user, AgencyInviteLink link) {
     return DirectInvitationMember.builder()
         .sessionId(session.getId())
         .userId(user.getUserId())
         .inviteLinkId(link.getId())
-        .guest(guest)
-        .joinedAt(nowUtc())
+        .guest(isGuest(user))
+        .joinedAt(now())
         .build();
+  }
+
+  private static boolean isGuest(User user) {
+    return user.getTemporaryAccountSnapshot() != null;
   }
 
   static LocalDateTime utc(Instant instant) {
     return instant == null ? null : LocalDateTime.ofInstant(instant, ZoneOffset.UTC);
   }
 
-  /** The conversation the person is in now, and whether this visit put them there. */
-  public record Opened(Session session, boolean created) {}
+  /**
+   * The conversation the person is in now, whether this visit put them there, and whether they
+   * still have to join its room ({@link #joinLater}).
+   */
+  public record Opened(Session session, boolean created, boolean joinPending) {}
 }

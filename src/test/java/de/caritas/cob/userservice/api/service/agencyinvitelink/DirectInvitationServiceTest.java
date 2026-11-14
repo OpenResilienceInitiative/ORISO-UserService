@@ -29,6 +29,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -71,7 +72,15 @@ class DirectInvitationServiceTest {
   void setUp() {
     service =
         new DirectInvitationService(
-            links, appointments, members, sessions, rooms, notifications, systemMessages, archive);
+            links,
+            appointments,
+            members,
+            sessions,
+            rooms,
+            notifications,
+            systemMessages,
+            archive,
+            Clock.systemUTC());
     service.appBaseUrl = "https://app.example";
     owner = new Consultant();
     owner.setId(OWNER_ID);
@@ -189,7 +198,9 @@ class DirectInvitationServiceTest {
     Supplier<NewRegistrationResponseDto> newSession = mock(Supplier.class);
     var interpreter = user("interpreter", true);
 
-    var opened = service.openAppointmentConversation(link, interpreter, newSession);
+    var opened =
+        service.joinLater(
+            link, interpreter, service.openAppointmentConversation(link, interpreter, newSession));
 
     assertThat(opened.session()).isSameAs(conversation);
     assertThat(opened.created()).isTrue();
@@ -197,6 +208,34 @@ class DirectInvitationServiceTest {
     verify(rooms).addToAppointmentRoom(conversation, interpreter);
     verify(rooms, never()).addInvitedGuestToExistingRoom(any(), any());
     verify(members).save(any());
+  }
+
+  /** The appointment lock covers the lookup only; Matrix is called after it was released. */
+  @Test
+  void laterOpener_Should_NotJoinTheRoom_WhileTheAppointmentIsLocked() {
+    appointment.setSession(session(SESSION_ID, "first-user"));
+
+    var opened = service.openAppointmentConversation(link, user("interpreter", true), () -> null);
+
+    assertThat(opened.joinPending()).isTrue();
+    verify(rooms, never()).addToAppointmentRoom(any(), any());
+    verify(members, never()).save(any());
+  }
+
+  /** Recorded only once Matrix confirmed the join. */
+  @Test
+  void laterOpener_Should_NotBeRecorded_When_TheJoinFails() {
+    var conversation = session(SESSION_ID, "first-user");
+    appointment.setSession(conversation);
+    var interpreter = user("interpreter", true);
+    org.mockito.Mockito.doThrow(new IllegalStateException("matrix down"))
+        .when(rooms)
+        .addToAppointmentRoom(conversation, interpreter);
+    var opened = service.openAppointmentConversation(link, interpreter, () -> null);
+
+    assertThatThrownBy(() -> service.joinLater(link, interpreter, opened))
+        .isInstanceOf(IllegalStateException.class);
+    verify(members, never()).save(any());
   }
 
   @Test
@@ -223,7 +262,9 @@ class DirectInvitationServiceTest {
         .thenReturn(Optional.of(removed));
     var interpreter = user("interpreter", true);
 
-    var opened = service.openAppointmentConversation(link, interpreter, () -> null);
+    var opened =
+        service.joinLater(
+            link, interpreter, service.openAppointmentConversation(link, interpreter, () -> null));
 
     assertThat(opened.created()).isTrue();
     verify(rooms).addToAppointmentRoom(conversation, interpreter);
@@ -231,13 +272,15 @@ class DirectInvitationServiceTest {
   }
 
   @Test
-  void invitationFromAnExisting1to1_Should_AddThePersonThroughTheExistingRoomSeam() {
+  void invitationFromAnExisting1to1_Should_AddThePersonAsAPlainMemberOfThe1to1() {
     var oneToOne = session(SESSION_ID, "client");
     appointment.setSession(oneToOne);
     link.setJoinsExistingSession(true);
     var interpreter = user("interpreter", true);
 
-    var opened = service.openAppointmentConversation(link, interpreter, () -> null);
+    var opened =
+        service.joinLater(
+            link, interpreter, service.openAppointmentConversation(link, interpreter, () -> null));
 
     assertThat(opened.created()).isTrue();
     verify(rooms).addInvitedGuestToExistingRoom(oneToOne, interpreter);

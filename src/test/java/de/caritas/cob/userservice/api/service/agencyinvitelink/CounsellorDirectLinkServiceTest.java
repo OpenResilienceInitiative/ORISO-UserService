@@ -31,6 +31,7 @@ import de.caritas.cob.userservice.api.service.agencyinvitelink.CounsellorDirectL
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -94,6 +95,8 @@ class CounsellorDirectLinkServiceTest {
     when(topicService.getTopicById(TOPIC)).thenReturn(new TopicDTO().id(TOPIC));
     when(policy.allows(any(), any(), any())).thenReturn(true);
     when(repository.save(any())).thenAnswer(i -> i.getArgument(0));
+    when(invitations.now()).thenAnswer(i -> LocalDateTime.now(ZoneOffset.UTC));
+    when(invitations.joinLater(any(), any(), any())).thenAnswer(i -> i.getArgument(2));
   }
 
   // --- create ---
@@ -789,7 +792,7 @@ class CounsellorDirectLinkServiceTest {
     var link = appointmentLink("tok", "VIDEO", LocalDateTime.now().plusHours(2));
     var shared = sharedSession(500L);
     when(invitations.openAppointmentConversation(eq(link), any(), any()))
-        .thenReturn(new DirectInvitationService.Opened(shared, true));
+        .thenReturn(new DirectInvitationService.Opened(shared, true, false));
 
     var started = service.startConversation("tok", asker("interpreter"));
 
@@ -807,7 +810,7 @@ class CounsellorDirectLinkServiceTest {
     var link = appointmentLink("tok", "VIDEO", LocalDateTime.now().plusMinutes(10));
     var shared = sharedSession(500L);
     when(invitations.openAppointmentConversation(eq(link), any(), any()))
-        .thenReturn(new DirectInvitationService.Opened(shared, false));
+        .thenReturn(new DirectInvitationService.Opened(shared, false, false));
     var knock =
         GroupChatJoinRequest.builder().id(3L).status(GroupChatJoinRequest.Status.PENDING).build();
     when(knockService.knock(eq(500L), any(), eq(link.getId()), eq(InviteLinkChatType.VIDEO)))
@@ -825,7 +828,7 @@ class CounsellorDirectLinkServiceTest {
     link.setKnock(false);
     var shared = sharedSession(500L);
     when(invitations.openAppointmentConversation(eq(link), any(), any()))
-        .thenReturn(new DirectInvitationService.Opened(shared, false));
+        .thenReturn(new DirectInvitationService.Opened(shared, false, false));
     var admitted =
         GroupChatJoinRequest.builder().id(4L).status(GroupChatJoinRequest.Status.ADMITTED).build();
     when(knockService.admitWithoutKnock(eq(500L), any(), eq(link.getId()), any()))
@@ -846,7 +849,7 @@ class CounsellorDirectLinkServiceTest {
             i -> {
               java.util.function.Supplier<NewRegistrationResponseDto> create = i.getArgument(2);
               create.get();
-              return new DirectInvitationService.Opened(sharedSession(500L), true);
+              return new DirectInvitationService.Opened(sharedSession(500L), true, false);
             });
     when(createNewSessionFacade.initializeAppointmentSession(any(), any()))
         .thenReturn(new NewRegistrationResponseDto().sessionId(500L).matrixRoomId("!shared:x"));

@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.port.out.DirectInvitationMemberRepository;
 import de.caritas.cob.userservice.api.port.out.SessionAppointmentRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -28,6 +29,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -54,7 +58,15 @@ class DirectInvitationExpiryServiceTest {
   void setUp() {
     service =
         new DirectInvitationExpiryService(
-            links, appointments, members, sessions, users, rooms, archive);
+            links,
+            appointments,
+            members,
+            sessions,
+            users,
+            rooms,
+            archive,
+            org.mockito.Mockito.mock(PlatformTransactionManager.class),
+            Clock.systemUTC());
     conversation = new Session();
     conversation.setId(SESSION_ID);
     conversation.setStatus(Session.SessionStatus.IN_PROGRESS);
@@ -100,6 +112,9 @@ class DirectInvitationExpiryServiceTest {
     when(sessions.findById(SESSION_ID)).thenReturn(Optional.of(conversation));
     when(users.findById("guest-1")).thenReturn(Optional.of(guestUser));
     when(rooms.remove(any(), any())).thenReturn(true);
+    when(members.save(any())).thenAnswer(i -> i.getArgument(0));
+    when(members.findById(1L)).thenReturn(Optional.of(guest));
+    when(members.findById(2L)).thenReturn(Optional.of(account));
   }
 
   @Test
@@ -109,7 +124,7 @@ class DirectInvitationExpiryServiceTest {
     assertThat(link.getStatus()).isEqualTo("EXPIRED");
     verify(rooms).remove(conversation, "@guest-1:x");
     assertThat(guest.getRemovedAt()).isNotNull();
-    verify(members).save(guest);
+    verify(members, org.mockito.Mockito.atLeastOnce()).save(guest);
     verify(archive).archiveBySystem(conversation);
   }
 
@@ -198,27 +213,36 @@ class DirectInvitationExpiryServiceTest {
     verify(archive).archiveBySystem(conversation);
   }
 
+  /** The status and the due marks commit first; Matrix is called only after the commit. */
   @Test
-  void sweep_Should_RetryEveryDueRemoval_EvenOfDeletedLinks() {
-    var sweep = new DirectInvitationExpirySweep(service);
-    guest.setRevokeDueAt(LocalDateTime.now(ZoneOffset.UTC).minusHours(1));
-    when(links.findExpiredInvitationIds(any(), any(), any())).thenReturn(List.of());
-    when(members.findPendingRevocationIds(any(), any())).thenReturn(List.of(1L));
-    when(members.findById(1L)).thenReturn(Optional.of(guest));
+  void expire_Should_CallMatrixOnlyAfterTheCommit() {
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      service.expire(LINK_ID);
 
-    sweep.sweep();
+      assertThat(link.getStatus()).isEqualTo("EXPIRED");
+      assertThat(guest.getRevokeDueAt()).isNotNull();
+      verify(rooms, never()).remove(any(), any());
 
-    assertThat(guest.getRemovedAt()).isNotNull();
+      TransactionSynchronizationManager.getSynchronizations()
+          .forEach(TransactionSynchronization::afterCommit);
+
+      verify(rooms).remove(conversation, "@guest-1:x");
+      assertThat(guest.getRemovedAt()).isNotNull();
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
   }
 
+  /** A lasting Matrix failure is retried with a delay, not on every sweep. */
   @Test
-  void sweep_Should_ExpireEveryDueInvitation_AndGoOnAfterAFailure() {
-    var sweep = new DirectInvitationExpirySweep(service);
-    when(links.findExpiredInvitationIds(any(), any(), any())).thenReturn(List.of(LINK_ID, 6L));
-    when(links.findByIdForUpdate(6L)).thenThrow(new IllegalStateException("boom"));
+  void retryRemoval_Should_PushTheNextAttempt_When_MatrixStillRefuses() {
+    guest.setRevokeDueAt(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1));
+    when(rooms.remove(conversation, "@guest-1:x")).thenReturn(false);
 
-    sweep.sweep();
+    assertThat(service.retryRemoval(1L)).isFalse();
 
-    assertThat(link.getStatus()).isEqualTo("EXPIRED");
+    assertThat(guest.getRemovedAt()).isNull();
+    assertThat(guest.getRevokeDueAt()).isAfter(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(4));
   }
 }

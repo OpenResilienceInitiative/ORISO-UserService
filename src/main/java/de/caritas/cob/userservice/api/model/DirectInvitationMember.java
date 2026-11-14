@@ -56,8 +56,9 @@ public class DirectInvitationMember {
   private LocalDateTime joinedAt;
 
   /**
-   * Set when the person must leave the room (invitation expired, switched off or deleted). Stays
-   * set with {@code removedAt} empty until Matrix confirmed the removal, so the sweep retries.
+   * Set when the person must leave the room (invitation expired, switched off or deleted): the time
+   * of the next removal attempt. Stays set with {@code removedAt} empty until Matrix confirmed the
+   * removal; a failed attempt moves it on, so the sweep retries with a delay.
    */
   @Column(name = "revoke_due_at")
   private LocalDateTime revokeDueAt;
