@@ -448,13 +448,16 @@ public class CalendarBusyParser {
 
   /**
    * Judges the rules of the time zones the document defines (VTIMEZONE) from the text alone. ical4j
-   * registers such a zone while it builds the document and walks every rule of it from the start of
-   * the rule to a few years past today, without a cap and before the time budget is checked.
+   * registers such a zone while it builds the document and walks every rule of an observance (RRULE
+   * and EXRULE) from its start to a few years past today, without a cap and before the time budget
+   * is checked. A zone this scan could read differently from ical4j is refused: a quote before the
+   * colon of a line, a component inside an observance, or an observance with a second start.
    */
   private static void requireBoundedTimeZones(String text) {
     var horizon = Instant.now().plus(TIME_ZONE_HORIZON);
     long work = 0;
     var inTimeZone = false;
+    String observance = null;
     Instant onset = null;
     var rules = new ArrayList<String>();
     for (var line : LINE.split(FOLD.matcher(text).replaceAll(""))) {
@@ -462,28 +465,44 @@ public class CalendarBusyParser {
       if (colon < 0) {
         continue;
       }
-      var head = line.substring(0, colon);
-      var name = head.split(";", 2)[0].trim().toUpperCase(Locale.ROOT);
+      var quote = line.indexOf('"');
+      if (inTimeZone && quote >= 0 && quote < colon) {
+        // ical4j skips a colon inside a quoted parameter value (RFC 5545, 3.1).
+        throw notIcs();
+      }
+      var name = line.substring(0, colon).split(";", 2)[0].trim().toUpperCase(Locale.ROOT);
       var value = line.substring(colon + 1).trim();
-      if ("VTIMEZONE".equalsIgnoreCase(value) && ("BEGIN".equals(name) || "END".equals(name))) {
-        inTimeZone = "BEGIN".equals(name);
-      } else if (!inTimeZone) {
-        continue;
+      var component = value.toUpperCase(Locale.ROOT);
+      if (!inTimeZone) {
+        inTimeZone = "BEGIN".equals(name) && "VTIMEZONE".equals(component);
       } else if ("BEGIN".equals(name)) {
+        if (observance != null) {
+          throw notIcs();
+        }
+        observance = component;
         onset = null;
         rules.clear();
       } else if ("END".equals(name)) {
-        // An observance (STANDARD or DAYLIGHT): its rules repeat from its own start.
-        for (var rule : rules) {
-          work += Math.min(MAX_TIME_ZONE_WORK + 1, timeZoneWorkOf(rule, onset, horizon));
-          if (work > MAX_TIME_ZONE_WORK) {
-            throw tooLarge();
+        if (component.equals(observance)) {
+          for (var rule : rules) {
+            work += Math.min(MAX_TIME_ZONE_WORK + 1, timeZoneWorkOf(rule, onset, horizon));
+            if (work > MAX_TIME_ZONE_WORK) {
+              throw tooLarge();
+            }
           }
+          observance = null;
+        } else if (observance == null && "VTIMEZONE".equals(component)) {
+          inTimeZone = false;
+        } else {
+          throw notIcs();
         }
-        rules.clear();
-      } else if ("DTSTART".equals(name)) {
+      } else if (observance != null && "DTSTART".equals(name)) {
+        if (onset != null) {
+          // ical4j walks the rules from the first start.
+          throw notIcs();
+        }
         onset = localTimeOf(value);
-      } else if ("RRULE".equals(name)) {
+      } else if (observance != null && ("RRULE".equals(name) || "EXRULE".equals(name))) {
         rules.add(value);
       }
     }
@@ -569,6 +588,10 @@ public class CalendarBusyParser {
       return day.atStartOfDay(zone).toInstant();
     }
     throw new IllegalArgumentException("Unsupported time value");
+  }
+
+  private static CalendarImportException notIcs() {
+    return new CalendarImportException(CalendarImportError.NOT_ICS);
   }
 
   private static CalendarImportException tooLarge() {

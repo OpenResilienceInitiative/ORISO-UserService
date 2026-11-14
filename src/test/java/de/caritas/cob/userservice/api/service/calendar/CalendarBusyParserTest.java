@@ -230,7 +230,9 @@ class CalendarBusyParserTest {
             "RRULE:FREQ=MINUTELY",
             "RRULE:FREQ=HOURLY",
             "RRULE:FREQ=DAILY;BYHOUR=" + range(0, 23),
-            "rrule:FREQ=HOURLY")) {
+            "rrule:FREQ=HOURLY",
+            // ical4j walks an exclusion rule as well.
+            "RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=10\r\nEXRULE:FREQ=SECONDLY")) {
       var document =
           calendar(
               timeZone("Synthetic/Hostile", "19700101T000000", rule),
@@ -262,6 +264,48 @@ class CalendarBusyParserTest {
                 "DTEND;TZID=W. Europe Standard Time:20261116T100000"));
 
     assertThat(slots).containsExactly(slot("2026-11-16T08:00:00Z", "2026-11-16T09:00:00Z"));
+  }
+
+  @Test
+  void parse_Should_ReadAZoneThatStartsInYearOne() {
+    // No floor on the year: the estimate counts every step from the start, however early.
+    var slots =
+        parse(
+            timeZone(
+                "Synthetic/Always", "00010101T030000", "RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=10"),
+            event(
+                "UID:zoned",
+                "DTSTART;TZID=Synthetic/Always:20261116T090000",
+                "DTEND;TZID=Synthetic/Always:20261116T100000"));
+
+    assertThat(slots).containsExactly(slot("2026-11-16T08:00:00Z", "2026-11-16T09:00:00Z"));
+  }
+
+  @Test
+  void parse_Should_RefuseAZoneRule_ThatIcal4jCouldReadDifferentlyFromTheEstimate() {
+    for (var rule :
+        List.of(
+            // A colon inside a quoted parameter value does not end the parameters.
+            "RRULE;X-P=\"a:FREQ=YEARLY;X-Q\":FREQ=SECONDLY",
+            "RRULE;X-P=\"a:FREQ=SECONDLY",
+            // A component inside an observance.
+            "RRULE:FREQ=SECONDLY\r\nBEGIN:X-NESTED\r\nEND:X-NESTED",
+            // A second start: ical4j walks the rule from the first one.
+            "DTSTART:20360101T000000\r\nRRULE:FREQ=HOURLY")) {
+      var document =
+          calendar(
+              timeZone("Synthetic/Hostile", "19700101T000000", rule),
+              event(
+                  "UID:zoned",
+                  "DTSTART;TZID=Synthetic/Hostile:20261116T090000",
+                  "DTEND;TZID=Synthetic/Hostile:20261116T100000"));
+
+      var error =
+          assertTimeoutPreemptively(
+              Duration.ofSeconds(5), () -> errorOf(() -> parser.parse(document, FROM, TO, BERLIN)));
+
+      assertThat(error).as(rule).isEqualTo(CalendarImportError.NOT_ICS);
+    }
   }
 
   @Test
