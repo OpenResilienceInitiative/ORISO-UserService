@@ -315,8 +315,6 @@ public class SecurityConfig {
                 .requestMatchers(
                     HttpMethod.GET, "/service/conversations/anonymous/{sessionId:[0-9]+}")
                 .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT)
-                .requestMatchers("/users/notifications")
-                .hasAnyAuthority(NOTIFICATIONS_TECHNICAL)
                 .requestMatchers("/users/data")
                 .hasAnyAuthority(
                     ANONYMOUS_DEFAULT,

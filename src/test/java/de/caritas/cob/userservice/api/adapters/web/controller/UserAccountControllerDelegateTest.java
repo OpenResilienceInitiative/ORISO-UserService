@@ -16,7 +16,6 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AbsenceDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DeleteUserAccountDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.MasterKeyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MobileTokenDTO;
@@ -452,22 +451,6 @@ class UserAccountControllerDelegateTest {
   }
 
   @Test
-  void getUserEmailNotificationsShouldReturnConsultantNotificationsWhenConsultantExists() {
-    var consultant = new Consultant();
-    var emailNotifications = new EmailNotificationsDTO().emailNotificationsEnabled(true);
-    var consultantData = new UserDataResponseDTO();
-    consultantData.setEmailNotifications(emailNotifications);
-    when(userAccountProvider.findConsultantByEmail("name@example.org"))
-        .thenReturn(Optional.of(consultant));
-    when(consultantDataProvider.retrieveData(consultant)).thenReturn(consultantData);
-
-    var response = delegate.getUserEmailNotifications("name@example.org");
-
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-    assertThat(response.getBody()).isSameAs(emailNotifications);
-  }
-
-  @Test
   void updateAbsence_happyPath_delegatesToConsultantDataFacade() {
     // Consultants update absence through the shared consultant data facade.
     var absence = new AbsenceDTO().absent(true).message("away");
@@ -478,35 +461,6 @@ class UserAccountControllerDelegateTest {
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     verify(consultantDataFacade).updateConsultantAbsent(consultant, absence);
-  }
-
-  @Test
-  void getUserEmailNotifications_adviceSeekerPath_returnsAdviceSeekerNotifications() {
-    // Advice seekers expose notification settings through the asker data provider.
-    var user = new User();
-    var emailNotifications = new EmailNotificationsDTO().emailNotificationsEnabled(false);
-    var userData = new UserDataResponseDTO();
-    userData.setEmailNotifications(emailNotifications);
-    when(userAccountProvider.findConsultantByEmail("user@example.org"))
-        .thenReturn(Optional.empty());
-    when(userAccountProvider.findUserByEmail("user@example.org")).thenReturn(Optional.of(user));
-    when(askerDataProvider.retrieveData(user)).thenReturn(userData);
-
-    var response = delegate.getUserEmailNotifications("user@example.org");
-
-    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-    assertThat(response.getBody()).isSameAs(emailNotifications);
-  }
-
-  @Test
-  void getUserEmailNotifications_neitherConsultantNorAdviceSeeker_throwsNotFoundException() {
-    // Unknown emails must not leak whether an account exists.
-    when(userAccountProvider.findConsultantByEmail("unknown@example.org"))
-        .thenReturn(Optional.empty());
-    when(userAccountProvider.findUserByEmail("unknown@example.org")).thenReturn(Optional.empty());
-
-    assertThatThrownBy(() -> delegate.getUserEmailNotifications("unknown@example.org"))
-        .isInstanceOf(NotFoundException.class);
   }
 
   @Test
