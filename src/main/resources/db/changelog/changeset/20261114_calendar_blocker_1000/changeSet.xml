@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- ORISO-UserService#1000 (ADR-032): time a counsellor is not available. Source ORISO is a
+       blocker the counsellor entered (with an optional note and series); source EXTERNAL is a
+       busy time imported from their own calendar, of which only start and end are kept. -->
+  <changeSet id="20261114-calendar-blocker-1000" author="oriso">
+    <createTable tableName="calendar_blocker">
+      <column name="id" type="CHAR(36)"><constraints primaryKey="true" nullable="false"/></column>
+      <column name="consultant_id" type="VARCHAR(36)"><constraints nullable="false"/></column>
+      <column name="tenant_id" type="BIGINT"/>
+      <column name="start_time" type="DATETIME(6)"><constraints nullable="false"/></column>
+      <column name="end_time" type="DATETIME(6)"><constraints nullable="false"/></column>
+      <column name="all_day" type="BOOLEAN" defaultValueBoolean="false">
+        <constraints nullable="false"/>
+      </column>
+      <column name="note" type="VARCHAR(255)"/>
+      <column name="series_id" type="CHAR(36)"/>
+      <column name="source" type="VARCHAR(16)"><constraints nullable="false"/></column>
+      <column name="create_date" type="DATETIME(6)"><constraints nullable="false"/></column>
+    </createTable>
+    <createIndex tableName="calendar_blocker" indexName="idx_calendar_blocker_consultant_start">
+      <column name="consultant_id"/>
+      <column name="start_time"/>
+    </createIndex>
+    <rollback><dropTable tableName="calendar_blocker"/></rollback>
+  </changeSet>
+</databaseChangeLog>

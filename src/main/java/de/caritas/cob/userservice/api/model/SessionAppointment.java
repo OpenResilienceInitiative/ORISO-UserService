@@ -38,6 +38,14 @@ public class SessionAppointment {
     CANCELLED
   }
 
+  /** How the appointment takes place (ADR-032); null on rows made before the kind existed. */
+  public enum Kind {
+    ONSITE,
+    VIDEO,
+    PHONE,
+    CHAT
+  }
+
   @Id
   @GeneratedValue(generator = "UUID")
   @GenericGenerator(name = "UUID", strategy = "org.hibernate.id.UUIDGenerator")
@@ -62,4 +70,8 @@ public class SessionAppointment {
   @Enumerated(EnumType.STRING)
   @Column(length = 16, nullable = false)
   private Status status;
+
+  @Enumerated(EnumType.STRING)
+  @Column(length = 16)
+  private Kind kind;
 }

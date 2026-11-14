@@ -805,6 +805,32 @@
 							<output>target/generated-sources</output>
 						</configuration>
 					</execution>
+					<!-- Generate calendar API (ADR-032, ORISO-UserService#1000, #1645) -->
+					<execution>
+						<id>calendar-service</id>
+						<goals>
+							<goal>generate</goal>
+						</goals>
+						<configuration>
+								<configOptions>
+									<interfaceOnly>true</interfaceOnly>
+									<sourceFolder>/</sourceFolder>
+									<useJakartaEe>true</useJakartaEe>
+									<useSpringBoot3>true</useSpringBoot3>
+									<!-- Optional fields are absent, not null: the colleague view must not even
+									     name the fields it withholds. -->
+									<additionalModelTypeAnnotations>@com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)</additionalModelTypeAnnotations>
+								</configOptions>
+							<inputSpec>${project.basedir}/api/calendar.yaml</inputSpec>
+							<generatorName>spring</generatorName>
+							<apiPackage>
+								${project.groupId}.${project.artifactId}.generated.api.calendar.controller
+							</apiPackage>
+							<modelPackage>${adapters.web.dto.path}</modelPackage>
+							<generateSupportingFiles>true</generateSupportingFiles>
+							<output>target/generated-sources</output>
+						</configuration>
+					</execution>
 					<!-- Generate conversations API -->
 					<execution>
 						<id>conversation-service</id>

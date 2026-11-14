@@ -748,6 +748,21 @@ public class SecurityConfig {
                 .access(this::canReportDeletion)
                 .requestMatchers("/users/deletion-audit-logs", "/service/users/deletion-audit-logs")
                 .access(this::canAccessPlatformAuditLogs)
+                // Calendar (ADR-032): an asker reads only their own; everything else is a
+                // counsellor's, and CalendarService decides whose calendar may be looked at.
+                .requestMatchers(
+                    HttpMethod.GET, "/users/calendar/entries", "/service/users/calendar/entries")
+                .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
+                .requestMatchers(
+                    "/users/calendar/colleagues",
+                    "/service/users/calendar/colleagues",
+                    "/users/calendar/colleagues/{consultantId}/entries",
+                    "/service/users/calendar/colleagues/{consultantId}/entries",
+                    "/users/calendar/blockers",
+                    "/service/users/calendar/blockers",
+                    "/users/calendar/blockers/{blockerId}",
+                    "/service/users/calendar/blockers/{blockerId}")
+                .hasAuthority(CONSULTANT_DEFAULT)
                 // 1:1 appointments (ORISO-Frontend#1960): who may do what is decided per session in
                 // SessionAppointmentService.
                 .requestMatchers(
