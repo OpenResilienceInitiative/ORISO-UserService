@@ -44,6 +44,13 @@ class CalendarImportUrlValidatorTest {
     "https://224.0.0.1/cal.ics,                      FORBIDDEN_ADDRESS",
     "https://255.255.255.255/cal.ics,                FORBIDDEN_ADDRESS",
     "https://198.18.0.1/cal.ics,                     FORBIDDEN_ADDRESS",
+    "https://198.18.0.0/cal.ics,                     FORBIDDEN_ADDRESS",
+    "https://198.19.255.255/cal.ics,                 FORBIDDEN_ADDRESS",
+    "https://100.64.0.0/cal.ics,                     FORBIDDEN_ADDRESS",
+    "https://100.127.255.255/cal.ics,                FORBIDDEN_ADDRESS",
+    "https://192.0.0.0/cal.ics,                      FORBIDDEN_ADDRESS",
+    "https://192.0.0.255/cal.ics,                    FORBIDDEN_ADDRESS",
+    "https://240.0.0.0/cal.ics,                      FORBIDDEN_ADDRESS",
     "https://[::1]/cal.ics,                          FORBIDDEN_ADDRESS",
     "https://[::]/cal.ics,                           FORBIDDEN_ADDRESS",
     "https://[fc00::1]/cal.ics,                      FORBIDDEN_ADDRESS",
@@ -76,18 +83,27 @@ class CalendarImportUrlValidatorTest {
   }
 
   @ParameterizedTest
-  @ValueSource(
-      strings = {
-        "https://calendar.example.org/private/abc.ics?token=1",
-        "https://dual.example.org:8443/cal.ics",
-        "https://93.184.216.34/cal.ics",
-        "https://[2606:2800:220:1:248:1893:25c8:1946]/cal.ics",
-        "HTTPS://calendar.example.org/cal.ics"
-      })
-  void publicAddressesOf_Should_ReturnTheAddressesToConnectTo(String address) {
+  @CsvSource({
+    "https://calendar.example.org/private/abc.ics?token=1, 93.184.216.34",
+    "https://dual.example.org:8443/cal.ics,                93.184.216.34",
+    "https://93.184.216.34/cal.ics,                        93.184.216.34",
+    "https://[2606:2800:220:1:248:1893:25c8:1946]/cal.ics, 2606:2800:220:1:248:1893:25c8:1946",
+    "HTTPS://calendar.example.org/cal.ics,                 93.184.216.34",
+    // The public addresses right next to a reserved range.
+    "https://100.63.255.255/cal.ics,                       100.63.255.255",
+    "https://100.128.0.0/cal.ics,                          100.128.0.0",
+    "https://198.17.255.255/cal.ics,                       198.17.255.255",
+    "https://198.20.0.0/cal.ics,                           198.20.0.0",
+    "https://192.0.1.0/cal.ics,                            192.0.1.0"
+  })
+  void publicAddressesOf_Should_ReturnTheAddressesToConnectTo(String address, String expected) {
     var addresses = validator.publicAddressesOf(validator.parse(address));
 
-    assertThat(addresses).isNotEmpty().allMatch(CalendarImportUrlValidator::isPublic);
+    assertThat(addresses)
+        .extracting(InetAddress::getHostAddress)
+        .first()
+        .as(address)
+        .isEqualTo(expected);
   }
 
   @Test

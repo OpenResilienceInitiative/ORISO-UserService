@@ -29,8 +29,11 @@ class CalendarWorkingHoursMigrationTest {
         new ClassPathResource("db/changelog/userservice-master.xml")
             .getContentAsString(StandardCharsets.UTF_8);
 
-    assertThat(master.indexOf(CHANGELOG))
-        .isGreaterThan(master.indexOf("20261114_calendar_blocker_1000/changeSet.xml"));
+    var blockers = master.indexOf("20261114_calendar_blocker_1000/changeSet.xml");
+    var workingHours = master.indexOf(CHANGELOG);
+
+    assertThat(blockers).as("blocker changeset included").isNotNegative();
+    assertThat(workingHours).as("working hours changeset included").isGreaterThan(blockers);
   }
 
   @Test
