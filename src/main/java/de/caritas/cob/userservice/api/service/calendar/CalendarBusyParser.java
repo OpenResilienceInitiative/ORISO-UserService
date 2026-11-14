@@ -9,19 +9,30 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.time.Period;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.time.temporal.Temporal;
 import java.time.temporal.TemporalAmount;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.NavigableMap;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.regex.Pattern;
+import lombok.extern.slf4j.Slf4j;
 import net.fortuna.ical4j.data.CalendarBuilder;
 import net.fortuna.ical4j.data.ParserException;
 import net.fortuna.ical4j.model.Calendar;
@@ -50,14 +61,34 @@ import net.fortuna.ical4j.model.property.RRule;
  * that repeats more often than hourly or costs too much to walk makes its event unread; a rule that
  * alone would yield more than {@value #MAX_SLOTS} busy times, more than {@value #MAX_SLOTS} busy
  * times in all, more than {@value #MAX_EVENTS} events or more than the time budget refuse the whole
- * document as {@link CalendarImportError#TOO_LARGE}.
+ * document as {@link CalendarImportError#TOO_LARGE}. So do time zones the document defines itself
+ * (VTIMEZONE) whose rules would cost too much: ical4j builds their onsets while it reads the
+ * document, before any other bound applies.
+ *
+ * <p>An event that is not read is counted, and the count is logged once per document with the kind
+ * of failure only: never the event, its UID or the address.
  */
 @org.springframework.stereotype.Component
+@Slf4j
 public class CalendarBusyParser {
 
   static final int MAX_SLOTS = 2000;
   static final int MAX_EVENTS = 10_000;
   static final Duration TIME_BUDGET = Duration.ofSeconds(5);
+
+  /**
+   * Dates ical4j may build for the rules of all time zones a document defines itself. A real zone
+   * repeats once a year: from 1601 to the horizon below that is about 440 a rule.
+   */
+  static final long MAX_TIME_ZONE_WORK = 50_000;
+
+  /** ical4j builds the onsets of a time zone up to a few years past today; this covers that. */
+  private static final Duration TIME_ZONE_HORIZON = Duration.ofDays(11 * 366L);
+
+  private static final Pattern FOLD = Pattern.compile("(\\r\\n|\\r|\\n)[ \\t]");
+  private static final Pattern LINE = Pattern.compile("\\r\\n|\\r|\\n");
+  private static final DateTimeFormatter LOCAL_TIME =
+      DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss");
 
   /**
    * Dates of one rule that may fall outside the window without being busy times: the window of a
@@ -91,15 +122,21 @@ public class CalendarBusyParser {
     // A moved or cancelled single occurrence comes as an event of its own (RECURRENCE-ID); the
     // series must not also report the occurrence it replaces.
     var replaced = new HashMap<String, Set<Instant>>();
+    // One with RANGE=THISANDFUTURE also moves every later occurrence (RFC 5545, 3.8.4.4).
+    var movedOnwards = new HashMap<String, NavigableMap<Instant, Shift>>();
     for (var event : events) {
       var recurrenceId = dateOf(event, Property.RECURRENCE_ID);
       if (recurrenceId != null) {
-        replaced
-            .computeIfAbsent(uidOf(event), uid -> new HashSet<>())
-            .add(toInstant(recurrenceId, zone));
+        var original = toInstant(recurrenceId, zone);
+        replaced.computeIfAbsent(uidOf(event), uid -> new HashSet<>()).add(original);
+        var shift = isThisAndFuture(event) ? shiftOf(event, original, zone) : null;
+        if (shift != null) {
+          movedOnwards.computeIfAbsent(uidOf(event), uid -> new TreeMap<>()).put(original, shift);
+        }
       }
     }
     var slots = new TreeSet<>(BY_START);
+    var skipped = new TreeMap<String, Integer>();
     for (var event : events) {
       deadline.check();
       if (isFree(event)) {
@@ -108,19 +145,59 @@ public class CalendarBusyParser {
       var isOverride = dateOf(event, Property.RECURRENCE_ID) != null;
       var replacedHere =
           isOverride ? Set.<Instant>of() : replaced.getOrDefault(uidOf(event), Set.of());
+      var movedHere =
+          isOverride
+              ? new TreeMap<Instant, Shift>()
+              : movedOnwards.getOrDefault(uidOf(event), new TreeMap<>());
       try {
-        slots.addAll(new EventExpansion(event, from, to, zone, replacedHere, deadline).slots());
+        slots.addAll(
+            new EventExpansion(event, from, to, zone, replacedHere, movedHere, deadline).slots());
       } catch (CalendarImportException refused) {
         throw refused;
       } catch (RuntimeException unreadable) {
         // One event that cannot be read, or whose rule is refused, does not cost the counsellor
-        // the rest of the calendar.
+        // the rest of the calendar. Only the kind of failure is kept.
+        skipped.merge(unreadable.getClass().getSimpleName(), 1, Integer::sum);
       }
       if (slots.size() > MAX_SLOTS) {
         throw tooLarge();
       }
     }
+    if (!skipped.isEmpty()) {
+      log.warn(
+          "Calendar import skipped {} of {} events: {}",
+          skipped.values().stream().mapToInt(Integer::intValue).sum(),
+          events.size(),
+          skipped);
+    }
     return List.copyOf(slots);
+  }
+
+  /** How a RANGE=THISANDFUTURE override moves later occurrences: by its offset, to its length. */
+  private record Shift(Duration offset, Duration length) {}
+
+  private static boolean isThisAndFuture(VEvent event) {
+    return event.getProperties(Property.RECURRENCE_ID).stream()
+        .anyMatch(
+            id ->
+                id.<Parameter>getParameter(Parameter.RANGE)
+                    .map(range -> "THISANDFUTURE".equalsIgnoreCase(range.getValue()))
+                    .orElse(false));
+  }
+
+  /** {@code null} when the override cannot be read; the event loop below then skips it. */
+  private static Shift shiftOf(VEvent override, Instant original, ZoneId zone) {
+    try {
+      var start = dateOf(override, Property.DTSTART);
+      if (start == null) {
+        return null;
+      }
+      var startsAt = toInstant(start, zone);
+      var endsAt = toInstant(start.plus(lengthOf(override, start)), zone);
+      return new Shift(Duration.between(original, startsAt), Duration.between(startsAt, endsAt));
+    } catch (RuntimeException unreadable) {
+      return null;
+    }
   }
 
   /** The busy times of one event; every expansion bounded before it starts. */
@@ -132,7 +209,9 @@ public class CalendarBusyParser {
     private final ZoneId zone;
     private final Deadline deadline;
     private final Set<Instant> excluded;
-    private final TreeSet<BusySlot> found = new TreeSet<>(BY_START);
+    private final NavigableMap<Instant, Shift> movedOnwards;
+    // By the start the rule gives an occurrence: one occurrence per start (RFC 5545, 3.8.5.3).
+    private final Map<Instant, BusySlot> found = new LinkedHashMap<>();
 
     EventExpansion(
         VEvent event,
@@ -140,6 +219,7 @@ public class CalendarBusyParser {
         Instant to,
         ZoneId zone,
         Set<Instant> replaced,
+        NavigableMap<Instant, Shift> movedOnwards,
         Deadline deadline) {
       this.event = event;
       this.from = from;
@@ -147,16 +227,29 @@ public class CalendarBusyParser {
       this.zone = zone;
       this.deadline = deadline;
       this.excluded = new HashSet<>(replaced);
+      this.movedOnwards = movedOnwards;
     }
 
-    /** Mirrors ical4j's recurrence set (RRULE or DTSTART, plus RDATE, minus EXDATE and EXRULE). */
-    Set<BusySlot> slots() {
+    /**
+     * Mirrors ical4j's recurrence set (RRULE or DTSTART, plus RDATE, minus EXDATE and EXRULE), and
+     * moves the occurrences a RANGE=THISANDFUTURE override moves, which ical4j does not.
+     */
+    Collection<BusySlot> slots() {
       var start = dateOf(event, Property.DTSTART);
       if (start == null) {
         return Set.of();
       }
       var length = lengthOf(event, start);
-      var window = windowFor(start, from, to, zone);
+      // A moved occurrence may come from outside the window: its original is searched that far.
+      var reachFrom = from;
+      var reachTo = to;
+      for (var shift : movedOnwards.values()) {
+        var earliest = from.minus(shift.offset()).minus(shift.length());
+        var latest = to.minus(shift.offset());
+        reachFrom = earliest.isBefore(reachFrom) ? earliest : reachFrom;
+        reachTo = latest.isAfter(reachTo) ? latest : reachTo;
+      }
+      var window = windowFor(start, reachFrom, reachTo, zone);
       // An occurrence that starts up to one length before the window still reaches into it.
       var expandFrom = window.start().minus(length);
       var expandTo = window.end();
@@ -220,7 +313,9 @@ public class CalendarBusyParser {
           continue;
         }
         if (Optional.of(Value.PERIOD).equals(property.getParameter(Parameter.VALUE))) {
+          // A period gives the occurrence that starts then its own end, also one the rule made.
           for (var period : rdate.getPeriods().orElse(Set.of())) {
+            found.remove(toInstant(period.getStart(), zone));
             add(period.getStart(), period.getEnd());
           }
         } else {
@@ -229,7 +324,7 @@ public class CalendarBusyParser {
           }
         }
       }
-      return found;
+      return found.values();
     }
 
     private Verdict judge(Recur<?> rule, Temporal start, Temporal expandFrom, Temporal expandTo) {
@@ -244,15 +339,22 @@ public class CalendarBusyParser {
           MAX_SLOTS);
     }
 
+    /** An occurrence by its original start, which exclusions and moves refer to. */
     private void add(Temporal start, Temporal end) {
       deadline.check();
-      var startsAt = toInstant(start, zone);
+      var original = toInstant(start, zone);
+      if (excluded.contains(original) || found.containsKey(original)) {
+        return;
+      }
+      var startsAt = original;
       var endsAt = toInstant(end, zone);
-      if (endsAt.isAfter(startsAt)
-          && startsAt.isBefore(to)
-          && endsAt.isAfter(from)
-          && !excluded.contains(startsAt)) {
-        found.add(new BusySlot(startsAt, endsAt));
+      var moved = movedOnwards.floorEntry(original);
+      if (moved != null) {
+        startsAt = original.plus(moved.getValue().offset());
+        endsAt = startsAt.plus(moved.getValue().length());
+      }
+      if (endsAt.isAfter(startsAt) && startsAt.isBefore(to) && endsAt.isAfter(from)) {
+        found.put(original, new BusySlot(startsAt, endsAt));
         if (found.size() > MAX_SLOTS) {
           throw tooLarge();
         }
@@ -282,7 +384,10 @@ public class CalendarBusyParser {
     return ((Recur<Temporal>) rule).getDates(seed, from, to, maxCount);
   }
 
-  /** As ical4j measures an event: DTEND minus DTSTART, else DURATION, else nothing. */
+  /**
+   * As RFC 5545 (3.6.1) measures an event: DTEND minus DTSTART, else DURATION, else one day for a
+   * whole-day start and nothing for a time.
+   */
   private static TemporalAmount lengthOf(VEvent event, Temporal start) {
     var end = dateOf(event, Property.DTEND);
     if (end != null) {
@@ -294,7 +399,7 @@ public class CalendarBusyParser {
         return duration.getDuration();
       }
     }
-    return Duration.ZERO;
+    return start instanceof LocalDate ? Period.ofDays(1) : Duration.ZERO;
   }
 
   /**
@@ -326,6 +431,7 @@ public class CalendarBusyParser {
     if (countOf(text.toUpperCase(Locale.ROOT), "BEGIN:VEVENT") > MAX_EVENTS) {
       throw tooLarge();
     }
+    requireBoundedTimeZones(text);
     List<VEvent> events;
     try {
       Calendar calendar = new CalendarBuilder().build(new ByteArrayInputStream(document));
@@ -338,6 +444,78 @@ public class CalendarBusyParser {
       throw tooLarge();
     }
     return events;
+  }
+
+  /**
+   * Judges the rules of the time zones the document defines (VTIMEZONE) from the text alone. ical4j
+   * registers such a zone while it builds the document and walks every rule of it from the start of
+   * the rule to a few years past today, without a cap and before the time budget is checked.
+   */
+  private static void requireBoundedTimeZones(String text) {
+    var horizon = Instant.now().plus(TIME_ZONE_HORIZON);
+    long work = 0;
+    var inTimeZone = false;
+    Instant onset = null;
+    var rules = new ArrayList<String>();
+    for (var line : LINE.split(FOLD.matcher(text).replaceAll(""))) {
+      var colon = line.indexOf(':');
+      if (colon < 0) {
+        continue;
+      }
+      var head = line.substring(0, colon);
+      var name = head.split(";", 2)[0].trim().toUpperCase(Locale.ROOT);
+      var value = line.substring(colon + 1).trim();
+      if ("VTIMEZONE".equalsIgnoreCase(value) && ("BEGIN".equals(name) || "END".equals(name))) {
+        inTimeZone = "BEGIN".equals(name);
+      } else if (!inTimeZone) {
+        continue;
+      } else if ("BEGIN".equals(name)) {
+        onset = null;
+        rules.clear();
+      } else if ("END".equals(name)) {
+        // An observance (STANDARD or DAYLIGHT): its rules repeat from its own start.
+        for (var rule : rules) {
+          work += Math.min(MAX_TIME_ZONE_WORK + 1, timeZoneWorkOf(rule, onset, horizon));
+          if (work > MAX_TIME_ZONE_WORK) {
+            throw tooLarge();
+          }
+        }
+        rules.clear();
+      } else if ("DTSTART".equals(name)) {
+        onset = localTimeOf(value);
+      } else if ("RRULE".equals(name)) {
+        rules.add(value);
+      }
+    }
+  }
+
+  private static long timeZoneWorkOf(String value, Instant onset, Instant horizon) {
+    Recur<?> rule;
+    try {
+      rule = new Recur<>(value);
+    } catch (RuntimeException unreadable) {
+      throw new CalendarImportException(CalendarImportError.NOT_ICS);
+    }
+    if (onset == null) {
+      // ical4j refuses an observance without a start, too.
+      throw new CalendarImportException(CalendarImportError.NOT_ICS);
+    }
+    return CalendarRecurrenceCost.timeZoneWork(rule, onset, horizon);
+  }
+
+  /** The start of an observance: a local time (RFC 5545, 3.6.5), read as UTC for the estimate. */
+  private static Instant localTimeOf(String value) {
+    var local =
+        value.endsWith("Z") || value.endsWith("z") ? value.substring(0, value.length() - 1) : value;
+    try {
+      return local.length() == 8
+          ? LocalDate.parse(local, DateTimeFormatter.BASIC_ISO_DATE)
+              .atStartOfDay(ZoneOffset.UTC)
+              .toInstant()
+          : LocalDateTime.parse(local, LOCAL_TIME).toInstant(ZoneOffset.UTC);
+    } catch (DateTimeParseException unreadable) {
+      throw new CalendarImportException(CalendarImportError.NOT_ICS);
+    }
   }
 
   private static int countOf(String text, String needle) {
