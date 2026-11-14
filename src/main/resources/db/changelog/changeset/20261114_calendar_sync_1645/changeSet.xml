@@ -7,6 +7,7 @@
        table alone forges no address. import_url is the counsellor's own calendar (ICS), read for
        busy times only; import_error holds a short code, never a message with the address. -->
   <changeSet id="20261114-calendar-sync-1645" author="oriso">
+    <preConditions onFail="MARK_RAN"><not><tableExists tableName="calendar_sync"/></not></preConditions>
     <createTable tableName="calendar_sync">
       <column name="consultant_id" type="VARCHAR(36)">
         <constraints primaryKey="true" nullable="false"/>

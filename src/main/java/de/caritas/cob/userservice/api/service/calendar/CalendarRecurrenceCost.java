@@ -105,6 +105,18 @@ final class CalendarRecurrenceCost {
   }
 
   /**
+   * What ical4j builds for one rule of a time zone the document defines itself: it walks the rule
+   * from the start of its observance to {@code horizon} while it reads the document. A rule refused
+   * for an event costs too much here as well.
+   */
+  static long timeZoneWork(Recur<?> rule, Instant start, Instant horizon) {
+    if (repeatsAValue(rule) || usesAPartItsFrequencyForbids(rule) || isTooFrequent(rule)) {
+      return Long.MAX_VALUE;
+    }
+    return times(steps(rule, start, horizon), candidatesPerStep(rule));
+  }
+
+  /**
    * A rule that repeats by the second or minute, names more than one second or minute, or yields
    * more than {@value #MAX_PER_DAY} occurrences a day is no appointment.
    */

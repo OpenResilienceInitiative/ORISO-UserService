@@ -5,6 +5,9 @@
   <!-- ORISO-UserService#1000 (ADR-032): how a 1:1 appointment takes place (ONSITE, VIDEO, PHONE,
        CHAT). Nullable: appointments made before the kind existed keep none. -->
   <changeSet id="20261114-session-appointment-kind-1000" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not><columnExists tableName="session_appointment" columnName="kind"/></not>
+    </preConditions>
     <addColumn tableName="session_appointment">
       <column name="kind" type="VARCHAR(16)"/>
     </addColumn>

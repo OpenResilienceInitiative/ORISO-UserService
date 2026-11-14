@@ -163,6 +163,7 @@ class CalendarControllerIT {
     var legacy = appointment(null, in(30), in(31));
     assertThat(list(get("/users/appointments/upcoming")))
         .filteredOn(row -> row.get("id").equals(legacy))
+        .hasSize(1)
         .allMatch(row -> row.get("kind") == null);
   }
 
