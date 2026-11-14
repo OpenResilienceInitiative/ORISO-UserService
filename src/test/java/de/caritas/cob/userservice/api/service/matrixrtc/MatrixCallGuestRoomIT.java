@@ -468,7 +468,6 @@ class MatrixCallGuestRoomIT {
     consultant.setFirstName("Synthetic");
     consultant.setLastName("C" + id.substring(0, 8));
     consultant.setEmail(id.substring(0, 8) + "@synthetic.oriso.test");
-    consultant.setAppointments(null);
     consultant.setConsultantAgencies(new HashSet<>());
     consultant.setConsultantMobileTokens(new HashSet<>());
     consultant.setEncourage2fa(true);

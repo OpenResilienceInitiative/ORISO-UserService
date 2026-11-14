@@ -6,12 +6,11 @@ The self-help group implementation in this PR continues to use its Series-specif
 
 ## Source and ownership
 
-`AppointmentController` currently creates and updates an `Appointment` through `Organizer` and
-deletes it by UUID. The persisted `Appointment` has a UUID, optional external `bookingId`, a
-consultant, an `Instant datetime`, and `CREATED` / `STARTED` / `PAUSED` status. It does **not**
-contain an advice seeker, tenant, time zone, monotonic revision, or cancellation status. The
-future producer must obtain those facts from authoritative booking/session state. It must not
-infer them from a browser request, email address, or a missing-field fallback.
+The legacy `AppointmentController` / `Appointment` boundary and the external cal.com
+AppointmentService were removed with ADR-032. 1:1 appointments now live in `SessionAppointment`
+(ADR-020, ADR-032), which is the source a future producer reads. The future producer must obtain
+advice seeker, tenant, time zone and revision from authoritative booking/session state. It must
+not infer them from a browser request, email address, or a missing-field fallback.
 
 ## Normalized event handed to the adapter
 
@@ -49,7 +48,7 @@ existing `group_appointment_mail_outbox` directly: that table's unique key is ba
 
 ## Producer work deferred by product direction
 
-Before connecting `AppointmentController` or an external AppointmentService event source, define
+Before connecting the `SessionAppointment` lifecycle as an event source, define
 where the missing advice-seeker/tenant/timezone mapping and monotonic revision are maintained,
 and how deletion emits a cancellation snapshot before the appointment disappears. Add the
 booking-specific durable outbox and authenticated return route, then prove both roles, all seven

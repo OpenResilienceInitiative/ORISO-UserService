@@ -56,7 +56,6 @@ mariadb_owned_tests=(
   ProvisioningCompensationMariaDbIT
   ScheduledTaskClaimMariaDbIT
   TutorialProgressServiceMariaDbReplicaIT
-  OrganizerMariaDbReplicaIT
   DeactivateGroupChatSchedulerMariaDbReplicaIT
   DeleteUserAccountSchedulerMariaDbReplicaIT
   DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT
@@ -95,7 +94,6 @@ reports = sorted(Path("target/surefire-reports").glob("TEST-*IT.xml"))
 minimum_reports = 75
 minimum_tests = 830
 required_e2e = {
-    "AppointmentControllerE2EIT",
     "ConversationControllerAuthorizationIT",
     "ConversationControllerIT",
     "UserAdminControllerE2EIT",

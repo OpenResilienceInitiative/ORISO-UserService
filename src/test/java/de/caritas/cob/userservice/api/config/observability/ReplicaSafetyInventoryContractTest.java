@@ -47,7 +47,6 @@ class ReplicaSafetyInventoryContractTest {
           "enquiry-rejection-repair",
           "inquiry-acceptance-notice-retry",
           "call-share-link-sweep",
-          "appointment-cleanup-scheduler",
           "enquiry-notification-scheduler",
           "group-chat-deactivation-scheduler",
           "group-chat-admission-retry",

@@ -59,9 +59,8 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "and exceptions.",
         )
 
-    def test_user_and_appointment_web_slices_depend_on_input_ports(self):
+    def test_user_web_slices_depend_on_input_ports(self):
         sources = [
-            CONTROLLERS / "AppointmentController.java",
             CONTROLLERS / "ConversationController.java",
             CONTROLLERS / "UserController.java",
             *CONTROLLERS.glob("User*ControllerDelegate.java"),
@@ -69,7 +68,6 @@ class ModuleBoundaryContractTest(unittest.TestCase):
         forbidden = (
             "import de.caritas.cob.userservice.api.AccountManager;",
             "import de.caritas.cob.userservice.api.Messenger;",
-            "import de.caritas.cob.userservice.api.Organizer;",
             "import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;",
             "import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;",
         )
