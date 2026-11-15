@@ -8,6 +8,7 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
@@ -26,10 +27,14 @@ class HttpCalendarImportFetcherTest {
   private static final int SLOW_PIECES = 40;
   private static final long SLOW_PIECE_MILLIS = 100;
 
+  /** A host that sends one byte, then waits this long before each next one. */
+  private static final long TRICKLE_MILLIS = 3_000;
+
   private final HttpCalendarImportFetcher fetcher = new HttpCalendarImportFetcher();
   private final AtomicInteger calendarRequests = new AtomicInteger();
   private HttpServer server;
   private List<InetAddress> loopback;
+  private volatile boolean stopping;
 
   @BeforeEach
   void startServer() throws Exception {
@@ -107,11 +112,31 @@ class HttpCalendarImportFetcherTest {
             Thread.currentThread().interrupt();
           }
         });
+    server.createContext(
+        "/trickle",
+        exchange -> {
+          exchange.sendResponseHeaders(200, 0);
+          try (var body = exchange.getResponseBody()) {
+            // Each byte comes well inside the socket timeout, so only a deadline ends this.
+            for (int piece = 0; piece < 10 && !stopping; piece++) {
+              body.write('A');
+              body.flush();
+              for (long waited = 0; waited < TRICKLE_MILLIS && !stopping; waited += 50) {
+                Thread.sleep(50);
+              }
+            }
+          } catch (java.io.IOException clientGaveUp) {
+            // Expected: the fetcher drops the connection at its deadline.
+          } catch (InterruptedException stopped) {
+            Thread.currentThread().interrupt();
+          }
+        });
     server.start();
   }
 
   @AfterEach
   void stopServer() {
+    stopping = true;
     server.stop(0);
   }
 
@@ -152,8 +177,8 @@ class HttpCalendarImportFetcherTest {
     assertThat(errorOf("/large-then-slow")).isEqualTo(CalendarImportError.TOO_LARGE);
 
     // Reading the trickle to its end would take SLOW_PIECES x SLOW_PIECE_MILLIS = 4 seconds.
-    assertThat(java.time.Duration.ofNanos(System.nanoTime() - started))
-        .isLessThan(java.time.Duration.ofMillis(SLOW_PIECES * SLOW_PIECE_MILLIS / 2));
+    assertThat(Duration.ofNanos(System.nanoTime() - started))
+        .isLessThan(Duration.ofMillis(SLOW_PIECES * SLOW_PIECE_MILLIS / 2));
   }
 
   @Test
@@ -162,8 +187,42 @@ class HttpCalendarImportFetcherTest {
 
     assertThat(errorOf("/missing-then-slow")).isEqualTo(CalendarImportError.UNREACHABLE);
 
-    assertThat(java.time.Duration.ofNanos(System.nanoTime() - started))
-        .isLessThan(java.time.Duration.ofMillis(SLOW_PIECES * SLOW_PIECE_MILLIS / 2));
+    assertThat(Duration.ofNanos(System.nanoTime() - started))
+        .isLessThan(Duration.ofMillis(SLOW_PIECES * SLOW_PIECE_MILLIS / 2));
+  }
+
+  @Test
+  void fetch_Should_CutOffAHostThatTricklesBytes_AtTheDeadline_NotAtTheNextByte() {
+    // The socket timeout is far longer than the gap between two bytes, as with a host that sends
+    // a byte every 9 seconds against a 10 second socket timeout.
+    var strict =
+        new HttpCalendarImportFetcher(
+            Duration.ofMillis(800), Duration.ofSeconds(10), Duration.ofSeconds(1));
+    var started = System.nanoTime();
+
+    var refusal =
+        catchThrowableOfType(
+            CalendarImportException.class,
+            () -> strict.fetch(address("localhost", "/trickle"), loopback));
+
+    assertThat(refusal.error()).isEqualTo(CalendarImportError.UNREACHABLE);
+    // Checking only after each read would end it with the second byte, after TRICKLE_MILLIS.
+    assertThat(Duration.ofNanos(System.nanoTime() - started))
+        .isLessThan(Duration.ofMillis(TRICKLE_MILLIS / 2));
+  }
+
+  @Test
+  void connectTimeoutPerAddress_Should_ShareTheBudget_SoAllAddressesTogetherStayWithinIt() {
+    var budget = HttpCalendarImportFetcher.CONNECT_BUDGET;
+    for (int addresses = 1; addresses <= HttpCalendarImportFetcher.MAX_ADDRESSES; addresses++) {
+      var each = HttpCalendarImportFetcher.connectTimeoutPerAddress(budget, addresses);
+
+      assertThat(each.toMilliseconds() * addresses)
+          .as("%d addresses", addresses)
+          .isLessThanOrEqualTo(budget.toMillis());
+    }
+    assertThat(HttpCalendarImportFetcher.connectTimeoutPerAddress(budget, 1).toMilliseconds())
+        .isEqualTo(budget.toMillis());
   }
 
   @Test
