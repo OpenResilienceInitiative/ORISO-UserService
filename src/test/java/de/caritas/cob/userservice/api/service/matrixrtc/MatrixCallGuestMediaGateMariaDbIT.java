@@ -279,6 +279,143 @@ class MatrixCallGuestMediaGateMariaDbIT {
     assertThat(admitted()).isFalse();
   }
 
+  @Test
+  void theSweepRevokesAReassignedCallBehindMoreThanAPageOfHealthyCalls() {
+    // Round 8 (F2): more running session calls with a seat than one sweep page, all healthy
+    // (their assigned counsellor is in the call), and they sort before the reassigned one.
+    healthyCallsWithASeat(MatrixCallGuestService.SWEEP_PAGE_SIZE + 1);
+    new JdbcTemplate(dataSource)
+        .update("UPDATE session SET consultant_id = ? WHERE id = ?", colleague.getId(), sessionId);
+
+    reconciler.reconcileMediaRooms();
+
+    assertSeatRevokedAndKept();
+  }
+
+  @Test
+  void theSweepRetriesAFailedRevocationBehindMoreThanAPageOfHealthyCalls() {
+    healthyCallsWithASeat(MatrixCallGuestService.SWEEP_PAGE_SIZE + 1);
+    new JdbcTemplate(dataSource)
+        .update("UPDATE session SET consultant_id = ? WHERE id = ?", colleague.getId(), sessionId);
+    // The first removal fails: the guest is still in the call room.
+    when(matrix.removeUserFromRoom(media, guestMatrixId, "counsellor-token")).thenReturn(false);
+    when(matrix.getRoomMembership(media, guestMatrixId, "counsellor-token"))
+        .thenReturn(Optional.of("join"));
+    lifecycle.handleRoom(media, Map.of());
+    assertThat(guests.findByBindingId(bindingId))
+        .singleElement()
+        .satisfies(
+            seat -> {
+              assertThat(seat.getRevokedAt()).isNull();
+              assertThat(seat.getLastRevokeAttemptAt()).isNotNull();
+            });
+
+    when(matrix.removeUserFromRoom(media, guestMatrixId, "counsellor-token")).thenReturn(true);
+    when(matrix.getRoomMembership(media, guestMatrixId, "counsellor-token"))
+        .thenReturn(Optional.of("leave"));
+    reconciler.reconcileMediaRooms();
+
+    assertSeatRevokedAndKept();
+  }
+
+  @Test
+  void theSweepReachesALessRecentlySweptCandidateBehindAFullPageOfCandidates() {
+    // More candidates than one page whose seats stay (their counsellor dropped out seconds ago,
+    // within the grace window). This test's reassigned call was swept once long ago, so it sorts
+    // after the never-swept ones; the stamps of the first sweep put it first in the second.
+    new JdbcTemplate(dataSource)
+        .update("UPDATE matrix_call_binding SET last_swept_at = 1 WHERE id = ?", bindingId);
+    callsWithASeat(MatrixCallGuestService.SWEEP_PAGE_SIZE + 1, System.currentTimeMillis() - 5_000);
+    new JdbcTemplate(dataSource)
+        .update("UPDATE session SET consultant_id = ? WHERE id = ?", colleague.getId(), sessionId);
+    new JdbcTemplate(dataSource)
+        .update("UPDATE matrix_call_binding SET last_swept_at = NULL WHERE id <> ?", bindingId);
+
+    reconciler.reconcileMediaRooms();
+    reconciler.reconcileMediaRooms();
+
+    assertSeatRevokedAndKept();
+  }
+
+  @Test
+  void aDeletedCounsellorClosesTheGate() {
+    new JdbcTemplate(dataSource)
+        .update(
+            "UPDATE consultant SET delete_date = NOW() WHERE consultant_id = ?",
+            counsellor.getId());
+
+    assertThat(admitted()).as("a deleted counsellor vouches for nobody").isFalse();
+    reconciler.reconcileMediaRooms();
+
+    assertSeatRevokedAndKept();
+  }
+
+  /**
+   * Running 1:1 calls of another session whose assigned counsellor is in the call, each holding an
+   * unrevoked guest seat. Their media rooms sort before this test's room by id.
+   */
+  private void healthyCallsWithASeat(int count) {
+    callsWithASeat(count, System.currentTimeMillis() + 3_600_000);
+  }
+
+  /**
+   * As {@link #healthyCallsWithASeat}, with the counsellor's membership ending at the given time.
+   */
+  private void callsWithASeat(int count, long counsellorExpiresAt) {
+    String suffix = UUID.randomUUID().toString().substring(0, 8);
+    var transaction = new TransactionTemplate(transactionManager);
+    transaction.executeWithoutResult(
+        status -> {
+          var asker =
+              users.save(user("healthy-asker-" + suffix, "@healthy-asker-" + suffix + ":e"));
+          var assigned = consultants.save(consultant());
+          var session =
+              new Session(asker, 1, "12345", 1L, Session.SessionStatus.IN_PROGRESS, false);
+          session.setTenantId(7L);
+          session.setMatrixRoomId("!healthy-source-" + suffix + ":example");
+          session.setLanguageCode(LanguageCode.de);
+          session.setIsConsultantDirectlySet(false);
+          session.setConsultant(assigned);
+          session.setCreateDate(LocalDateTime.now());
+          session.setUpdateDate(LocalDateTime.now());
+          session.setSupervisionOptedOut(false);
+          Long healthySession = sessions.save(session).getId();
+          long now = System.currentTimeMillis();
+          String caller = assigned.getMatrixUserId();
+          for (int index = 0; index < count; index++) {
+            var binding =
+                MatrixCallBinding.builder()
+                    .sourceRoomId("!healthy-source-" + suffix + ":example")
+                    .callId("call-" + index)
+                    .mediaRoomId(String.format("!0-healthy-%s-%04d:example", suffix, index))
+                    .callerMatrixId(caller)
+                    .sessionId(healthySession)
+                    .tenantId(7L)
+                    .invitedAt(now - 60_000)
+                    .inviteExpiresAt(now + 60_000)
+                    .startedAt(now - 50_000)
+                    .mediaObservedAt(now - 50_000)
+                    .video(true)
+                    .build();
+            binding.getDevices().put("_" + caller + "_C", device(caller, counsellorExpiresAt));
+            // The asker stays in the call, so the call itself keeps running.
+            binding
+                .getDevices()
+                .put(
+                    "_" + asker.getMatrixUserId() + "_A",
+                    device(asker.getMatrixUserId(), now + 3_600_000));
+            Long id = bindings.save(binding).getId();
+            guests.save(
+                de.caritas.cob.userservice.api.model.MatrixCallGuest.builder()
+                    .bindingId(id)
+                    .matrixUserId("@healthy-guest-" + index + ":example")
+                    .admittedByMatrixId(caller)
+                    .admittedAt(now - 40_000)
+                    .build());
+          }
+        });
+  }
+
   private boolean admitted() {
     return !gate.resolve(source, guestMatrixId, media).equals(CallMediaPolicy.denied());
   }

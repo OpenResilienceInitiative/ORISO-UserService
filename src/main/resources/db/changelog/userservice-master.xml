@@ -283,4 +283,5 @@
   <include file="db/changelog/changeset/20261113_call_observation_chat_nullable_2237/changeSet.xml"/>
   <include file="db/changelog/changeset/20261113_user_deletion_failure_1521/changeSet.xml"/>
   <include file="db/changelog/changeset/20261113_call_binding_end_cause_2209/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261115_call_binding_last_swept_2209/changeSet.xml"/>
 </databaseChangeLog>

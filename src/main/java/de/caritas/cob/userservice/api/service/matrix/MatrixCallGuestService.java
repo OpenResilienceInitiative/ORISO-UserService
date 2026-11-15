@@ -37,6 +37,14 @@ public class MatrixCallGuestService {
   private final SessionCallAuthority authority;
   private final org.springframework.transaction.PlatformTransactionManager transactionManager;
 
+  /**
+   * FE#2209 round 8 (F1): takes a revoked guest out of the call's LiveKit room through the
+   * MatrixRTC gateway. Absent in slices that do not wire HTTP; then only the call room is left.
+   */
+  private final org.springframework.beans.factory.ObjectProvider<
+          de.caritas.cob.userservice.api.service.matrixrtc.CallParticipantEviction>
+      liveKitEviction;
+
   /** Failed removals after which every further failure is logged at ERROR for alerting. */
   public static final int REVOKE_ALERT_THRESHOLD = 10;
 
@@ -132,10 +140,14 @@ public class MatrixCallGuestService {
    */
   @Transactional(readOnly = true)
   public List<String> counsellorsInCall(Long tenant, MatrixCallBinding binding) {
+    return counsellorsInCall(tenant, binding, System.currentTimeMillis());
+  }
+
+  /** {@link #counsellorsInCall(Long, MatrixCallBinding)} at the instant {@code now}. */
+  private List<String> counsellorsInCall(Long tenant, MatrixCallBinding binding, long now) {
     if (tenant == null || binding == null || !tenant.equals(binding.getTenantId()))
       return List.of();
     if (binding.getSessionId() == null) return counsellorsInConversation(tenant, binding);
-    long now = System.currentTimeMillis();
     return binding.getDevices().values().stream()
         .map(device -> device.getSenderMatrixId())
         .distinct()
@@ -227,6 +239,7 @@ public class MatrixCallGuestService {
     if (token == null) {
       log.warn(
           "Call guest seat revoked without call-room removal in {} (no moderator token)", room);
+      evictFromLiveKit(room, guestMatrixId);
       return true;
     }
     matrix.removeUserFromRoom(room, guestMatrixId, token);
@@ -237,6 +250,7 @@ public class MatrixCallGuestService {
     }
     if (!matrix.clearUserPowerLevel(room, guestMatrixId, token))
       log.warn("Call guest power level could not be cleared in call room {}", room);
+    evictFromLiveKit(room, guestMatrixId);
     return true;
   }
 
@@ -325,7 +339,8 @@ public class MatrixCallGuestService {
         || binding.getSessionId() == null) return;
     boolean lapsed =
         !grantsGuestAuthority(binding)
-            || (counsellorsInCall(binding.getTenantId(), binding).isEmpty()
+            // Round 8 (F4): presence and grace read the same instant.
+            || (counsellorsInCall(binding.getTenantId(), binding, now).isEmpty()
                 && now - lastCounsellorPresence(binding) >= COUNSELLOR_ABSENCE_GRACE_MILLIS);
     if (lapsed) revokeAll(binding);
   }
@@ -383,6 +398,7 @@ public class MatrixCallGuestService {
     String room = seen.getMediaRoomId();
     for (MatrixCallGuest guest : guests.findByBindingIdAndRevokedAtIsNull(seen.getId())) {
       Removal removal = remove(seen, guest);
+      evictFromLiveKit(room, guest.getMatrixUserId());
       Boolean recorded =
           new org.springframework.transaction.support.TransactionTemplate(transactionManager)
               .execute(
@@ -435,6 +451,17 @@ public class MatrixCallGuestService {
 
   private void revoke(MatrixCallBinding binding, MatrixCallGuest guest) {
     apply(guest, binding.getMediaRoomId(), remove(binding, guest));
+    evictFromLiveKit(binding.getMediaRoomId(), guest.getMatrixUserId());
+  }
+
+  /**
+   * FE#2209 round 8 (F1): the call-room kick does not end an open LiveKit connection, and LiveKit
+   * refreshes a connected participant's token by itself, so the media gate is never asked again.
+   * Also on a deferred removal: the seat is gone for the gate either way. Best effort.
+   */
+  private void evictFromLiveKit(String mediaRoomId, String guestMatrixId) {
+    var eviction = liveKitEviction == null ? null : liveKitEviction.getIfAvailable();
+    if (eviction != null) eviction.evictFromCallRoom(mediaRoomId, guestMatrixId);
   }
 
   private enum Removal {
@@ -505,21 +532,26 @@ public class MatrixCallGuestService {
     }
   }
 
+  /** Rooms one reconcile sweep passes through the lifecycle at most, per kind. */
+  public static final int SWEEP_PAGE_SIZE = 100;
+
   /** Media rooms of ended calls that still hold an unrevoked guest seat (reconcile sweep). */
   public List<String> endedRoomsWithOutstandingGuests() {
     return guests.findEndedMediaRoomsWithOutstandingGuests(
         System.currentTimeMillis() - guestRevokeRetryMillis,
-        org.springframework.data.domain.PageRequest.of(0, 100));
+        org.springframework.data.domain.PageRequest.of(0, SWEEP_PAGE_SIZE));
   }
 
   /**
-   * Running 1:1 session calls that still hold an unrevoked seat (reconcile sweep, review
-   * 5901360577).
+   * Running 1:1 session calls that still hold an unrevoked seat and whose rule may have lapsed at
+   * {@code now}, least recently swept first (reconcile sweep, review 5901360577, round 8). Calls
+   * whose assigned counsellor's authority holds and that have a counsellor in them are left out.
    */
-  public List<String> runningSessionRoomsWithOutstandingGuests() {
-    return guests.findRunningSessionMediaRoomsWithOutstandingGuests(
+  public List<String> runningSessionRoomsWithOutstandingGuests(long now) {
+    return guests.findRunningSessionMediaRoomsWhoseRuleMayHaveLapsed(
         System.currentTimeMillis() - guestRevokeRetryMillis,
-        org.springframework.data.domain.PageRequest.of(0, 100));
+        now,
+        org.springframework.data.domain.PageRequest.of(0, SWEEP_PAGE_SIZE));
   }
 
   /** Empty also when the lookup fails transiently, so callers answer "Matrix unavailable". */

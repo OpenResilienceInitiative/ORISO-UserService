@@ -68,9 +68,11 @@ public class MatrixCallInviteNotificationService {
       lifecycle.handleRoom(room, Map.of());
     }
     // Security review 5901360577: a running session call whose rule lapsed without any call-room
-    // event (reassignment, suspension, a counsellor whose membership simply ran out).
-    for (String room : callGuests.runningSessionRoomsWithOutstandingGuests()) {
-      lifecycle.handleRoom(room, Map.of());
+    // event (reassignment, suspension, a counsellor whose membership simply ran out). Round 8:
+    // only calls whose rule may have lapsed, least recently swept first, each stamped as swept.
+    long sweptAt = System.currentTimeMillis();
+    for (String room : callGuests.runningSessionRoomsWithOutstandingGuests(sweptAt)) {
+      lifecycle.sweepRunningSessionCall(room, sweptAt);
     }
   }
 

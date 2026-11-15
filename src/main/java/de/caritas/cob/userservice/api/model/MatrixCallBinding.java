@@ -79,6 +79,17 @@ public class MatrixCallBinding {
   @Column(name = "next_observation_attempt_at")
   private Long nextObservationAttemptAt;
 
+  /**
+   * FE#2209 round 8: when the reconcile sweep last passed this running session call through the
+   * lifecycle; the sweep takes the least recently swept candidates first. Null: never swept.
+   */
+  @Column(name = "last_swept_at")
+  private Long lastSweptAt;
+
+  public void recordSweep(long timestamp) {
+    lastSweptAt = timestamp;
+  }
+
   public void deferObservationAttempt(long timestamp) {
     nextObservationAttemptAt = timestamp;
   }

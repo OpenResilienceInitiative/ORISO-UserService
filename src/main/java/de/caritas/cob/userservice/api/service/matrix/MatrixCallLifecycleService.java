@@ -98,6 +98,28 @@ public class MatrixCallLifecycleService {
   public boolean handleRoom(String room, Map<String, Object> roomData) {
     var binding = bindings.lockByMediaRoomId(room).orElse(null);
     if (binding == null) return false;
+    handleLockedRoom(binding, roomData);
+    return true;
+  }
+
+  /**
+   * FE#2209 round 8 (F2): the reconcile sweep's pass of a running session call whose rule may have
+   * lapsed. Stamps the sweep under the binding lock, so the next sweep takes other candidates
+   * first, then runs the same pass as an event-less {@link #handleRoom}. Lock order unchanged:
+   * binding, then session.
+   */
+  @Transactional
+  public boolean sweepRunningSessionCall(String room, long now) {
+    var binding = bindings.lockByMediaRoomId(room).orElse(null);
+    if (binding == null) return false;
+    binding.recordSweep(now);
+    handleLockedRoom(binding, Map.of());
+    return true;
+  }
+
+  private void handleLockedRoom(
+      de.caritas.cob.userservice.api.model.MatrixCallBinding binding,
+      Map<String, Object> roomData) {
     handleBoundRoom(binding, roomData);
     // US#1477: a guest's call-room seat ends with the call; a failed removal retries on the
     // next event for this room.
@@ -106,7 +128,6 @@ public class MatrixCallLifecycleService {
     // holding (authority lost: at once; no counsellor in the call: after the absence grace), with
     // the memberships of this batch applied and the binding still locked.
     callGuests.revokeOnceTheSessionCallRuleLapsed(binding, System.currentTimeMillis());
-    return true;
   }
 
   private void handleBoundRoom(

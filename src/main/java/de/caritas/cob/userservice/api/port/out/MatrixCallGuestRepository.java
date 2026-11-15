@@ -42,18 +42,41 @@ public interface MatrixCallGuestRepository extends JpaRepository<MatrixCallGuest
       org.springframework.data.domain.Pageable page);
 
   /**
-   * Security review 5901360577: running 1:1 session calls that still hold an unrevoked seat. The
-   * reconcile sweep passes each through the lifecycle, which takes the seats back once the session
-   * rule stops holding, also when the call room sends no event (reassignment, suspension).
+   * Security review 5901360577, round 8 (F2): running 1:1 session calls that still hold an
+   * unrevoked seat (not tried after {@code retryBefore}) and whose rule may have lapsed at {@code
+   * now}. A call whose caller is the session's assigned counsellor (same Träger, not deleted, not
+   * inactive) and that has an active, not deleted counsellor of the Träger with a live membership
+   * in it is left out: the lifecycle would keep its seats. This is the exact complement of the rule
+   * in MatrixCallGuestService.revokeOnceTheSessionCallRuleLapsed, so every call that rule would
+   * take seats from stays a candidate. A missing account_inactivity row counts as active, as in
+   * AccountInactivityService. Least recently swept first (never swept first), so no candidate
+   * starves behind others; the sweep stamps last_swept_at.
    */
   @org.springframework.data.jpa.repository.Query(
-      "select b.mediaRoomId from MatrixCallBinding b, MatrixCallGuest g"
-          + " where g.bindingId = b.id and b.endedAt is null and b.sessionId is not null"
-          + " and g.revokedAt is null"
-          + " and (g.lastRevokeAttemptAt is null or g.lastRevokeAttemptAt <= :retryBefore)"
-          + " group by b.mediaRoomId"
-          + " order by coalesce(max(g.lastRevokeAttemptAt), 0), b.mediaRoomId")
-  List<String> findRunningSessionMediaRoomsWithOutstandingGuests(
+      nativeQuery = true,
+      value =
+          "select b.media_room_id from matrix_call_binding b"
+              + " where b.ended_at is null and b.session_id is not null"
+              + " and exists (select 1 from matrix_call_guest g where g.binding_id = b.id"
+              + "   and g.revoked_at is null"
+              + "   and (g.last_revoke_attempt_at is null"
+              + "     or g.last_revoke_attempt_at <= :retryBefore))"
+              + " and not ("
+              + "   exists (select 1 from session s, consultant c"
+              + "     where s.id = b.session_id and s.tenant_id = b.tenant_id"
+              + "     and c.consultant_id = s.consultant_id and c.delete_date is null"
+              + "     and c.tenant_id = b.tenant_id and c.matrix_user_id = b.caller_matrix_id"
+              + "     and not exists (select 1 from account_inactivity a"
+              + "       where a.identity_id = c.consultant_id and a.status <> 'ACTIVE'))"
+              + "   and exists (select 1 from matrix_call_device d, consultant p"
+              + "     where d.binding_id = b.id and d.expires_at > :now"
+              + "     and p.matrix_user_id = d.sender_matrix_id and p.delete_date is null"
+              + "     and p.tenant_id = b.tenant_id"
+              + "     and not exists (select 1 from account_inactivity a2"
+              + "       where a2.identity_id = p.consultant_id and a2.status <> 'ACTIVE')))"
+              + " order by coalesce(b.last_swept_at, 0), b.id")
+  List<String> findRunningSessionMediaRoomsWhoseRuleMayHaveLapsed(
       @org.springframework.data.repository.query.Param("retryBefore") long retryBefore,
+      @org.springframework.data.repository.query.Param("now") long now,
       org.springframework.data.domain.Pageable page);
 }

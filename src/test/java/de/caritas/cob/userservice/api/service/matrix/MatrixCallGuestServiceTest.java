@@ -44,6 +44,8 @@ class MatrixCallGuestServiceTest {
   private final AccountInactivityService accounts = mock(AccountInactivityService.class);
   private final SessionCallAuthority authority = mock(SessionCallAuthority.class);
   private final List<MatrixCallGuest> saved = new ArrayList<>();
+  private final de.caritas.cob.userservice.api.service.matrixrtc.CallParticipantEviction eviction =
+      mock(de.caritas.cob.userservice.api.service.matrixrtc.CallParticipantEviction.class);
 
   private MatrixCallGuestService service;
   private AuthenticatedUser counsellor;
@@ -61,7 +63,8 @@ class MatrixCallGuestServiceTest {
             matrix,
             accounts,
             authority,
-            mock(org.springframework.transaction.PlatformTransactionManager.class));
+            mock(org.springframework.transaction.PlatformTransactionManager.class),
+            evictionProvider());
     counsellor = new AuthenticatedUser();
     counsellor.setUserId("counsellor");
     counsellor.setTenantId(7L);
@@ -268,6 +271,67 @@ class MatrixCallGuestServiceTest {
 
     assertThat(guest.getRevokedAt()).isNull();
     verify(guests, never()).lockOutstandingByBindingId(any());
+  }
+
+  @Test
+  void theMediaGateRefusesASessionCallSeatOnceTheCounsellorInTheCallIsDeleted() {
+    // Round 8: a deleted counsellor's membership vouches for nobody, even with authority intact.
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull(COUNSELLOR))
+        .thenReturn(Optional.empty());
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull(GUEST)).thenReturn(Optional.empty());
+    when(bindings.findById(11L)).thenReturn(Optional.of(binding(null)));
+
+    assertThat(service.sessionCallAdmitsGuests(11L)).isFalse();
+  }
+
+  @Test
+  void theLapseCheckReadsCounsellorPresenceAtTheSameInstantAsTheGrace() {
+    // Round 8 (F4): one clock. At the instant passed in, the counsellor's membership ran out longer
+    // ago than the grace window, although it is still live on the wall clock.
+    counsellorIsAConsultant();
+    var guest = seatThatCanBeRemoved();
+    long wallClock = System.currentTimeMillis();
+    var call = counsellorLeftAt(wallClock + 10 * 60_000L);
+    long now =
+        wallClock + 10 * 60_000L + MatrixCallGuestService.COUNSELLOR_ABSENCE_GRACE_MILLIS + 1;
+
+    service.revokeOnceTheSessionCallRuleLapsed(call, now);
+
+    assertThat(guest.getRevokedAt()).isNotNull();
+  }
+
+  @Test
+  void aRevokedSeatIsAlsoTakenOutOfTheLiveKitRoom() {
+    // Round 8 (F1): the call-room kick does not end an open LiveKit connection.
+    counsellorIsAConsultant();
+    seatThatCanBeRemoved();
+    when(authority.grantsGuestAuthority(any())).thenReturn(false);
+
+    service.revokeOnceTheSessionCallRuleLapsed(binding(null), System.currentTimeMillis());
+
+    verify(eviction).evictFromCallRoom(MEDIA, GUEST);
+  }
+
+  @Test
+  void aGuestACounsellorRemovesIsAlsoTakenOutOfTheLiveKitRoom() {
+    when(guests.findByBindingIdAndMatrixUserId(11L, GUEST)).thenReturn(Optional.of(guest()));
+    when(matrix.removeUserFromRoom(MEDIA, GUEST, "counsellor-token")).thenReturn(true);
+    when(matrix.getRoomMembership(MEDIA, GUEST, "counsellor-token"))
+        .thenReturn(Optional.of("leave"));
+    when(matrix.clearUserPowerLevel(MEDIA, GUEST, "counsellor-token")).thenReturn(true);
+
+    assertThat(service.revokeSeat(binding(null), GUEST, COUNSELLOR)).isTrue();
+
+    verify(eviction).evictFromCallRoom(MEDIA, GUEST);
+  }
+
+  @SuppressWarnings("unchecked")
+  private org.springframework.beans.factory.ObjectProvider<
+          de.caritas.cob.userservice.api.service.matrixrtc.CallParticipantEviction>
+      evictionProvider() {
+    var provider = mock(org.springframework.beans.factory.ObjectProvider.class);
+    when(provider.getIfAvailable()).thenReturn(eviction);
+    return provider;
   }
 
   private void counsellorIsAConsultant() {

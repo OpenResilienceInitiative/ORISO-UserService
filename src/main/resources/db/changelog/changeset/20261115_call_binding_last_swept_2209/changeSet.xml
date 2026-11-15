@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- FE#2209 round 8: when the reconcile sweep last passed a running 1:1 session call that holds
+       a guest seat through the lifecycle. The sweep takes the least recently swept candidates
+       first, so no candidate waits behind others for longer than a few sweeps. NULL: never
+       swept. -->
+  <changeSet id="20261115-matrix-call-binding-last-swept-at-2209" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <tableExists tableName="matrix_call_binding"/>
+      <not>
+        <columnExists tableName="matrix_call_binding" columnName="last_swept_at"/>
+      </not>
+    </preConditions>
+    <addColumn tableName="matrix_call_binding">
+      <column name="last_swept_at" type="BIGINT"/>
+    </addColumn>
+    <rollback>
+      <dropColumn tableName="matrix_call_binding" columnName="last_swept_at"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>
