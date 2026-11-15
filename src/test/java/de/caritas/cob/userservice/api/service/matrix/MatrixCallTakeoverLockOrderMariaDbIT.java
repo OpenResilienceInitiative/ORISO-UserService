@@ -208,18 +208,87 @@ class MatrixCallTakeoverLockOrderMariaDbIT {
     // Round 6 (F4): the server closed the asker's binding unseen, so bind's gate (outside any
     // transaction) finds it revivable. Before bind's transaction locks it, the counsellor's own
     // explicit end commits. The checks under the lock see that fresh state and refuse.
+    serverClosedTheAskersBinding();
+    boolean bound =
+        bindWithACommitBetweenTheGateAndTheLock(
+            () -> {
+              // Commits completely while bind waits: bind holds no lock yet.
+              assertThat(observations.end(actor, source, "call"))
+                  .isEqualTo(MatrixCallObservationService.Outcome.OK);
+              assertThat(endRows(counsellor.getMatrixUserId())).isEqualTo(1);
+            });
+    assertThat(bound).isFalse();
+    var binding = bindings.findBySourceRoomIdAndCallId(source, "call").orElseThrow();
+    assertThat(binding.getEndedAt()).isNotNull();
+    assertThat(binding.getEndCause()).isEqualTo(MatrixCallBinding.END_CAUSE_LIFECYCLE);
+    assertThat(binding.getCallerMatrixId()).isEqualTo(askerMatrixId);
+    assertThat(binding.getMediaRoomId()).isEqualTo(askerMedia);
+  }
+
+  @Test
+  void aBindingWhoseEndCauseTurnsToEndpointBetweenTheGateAndTheLockIsNotTakenOver()
+      throws Exception {
+    // CodeRabbit 4573425474: only the binding's own state changes between the gate and the lock,
+    // end_cause LIFECYCLE -> ENDPOINT, and no observation end is written. Only the in-lock
+    // revival.revivableBy re-check can see that; the end-row check under the lock finds nothing.
+    serverClosedTheAskersBinding();
+    boolean bound =
+        bindWithACommitBetweenTheGateAndTheLock(
+            () -> {
+              assertThat(
+                      new JdbcTemplate(dataSource)
+                          .update(
+                              "UPDATE matrix_call_binding SET end_cause = 'ENDPOINT'"
+                                  + " WHERE source_room_id = ? AND call_id = 'call'",
+                              source))
+                  .isEqualTo(1);
+              assertThat(endRows(null)).as("no observation end").isZero();
+            });
+    assertThat(bound).isFalse();
+    var binding = bindings.findBySourceRoomIdAndCallId(source, "call").orElseThrow();
+    assertThat(binding.getEndedAt()).isNotNull();
+    assertThat(binding.getEndCause()).isEqualTo(MatrixCallBinding.END_CAUSE_ENDPOINT);
+    assertThat(binding.getCallerMatrixId()).as("the old binding is kept").isEqualTo(askerMatrixId);
+    assertThat(binding.getMediaRoomId()).isEqualTo(askerMedia);
+    assertThat(endRows(null)).isZero();
+  }
+
+  private void serverClosedTheAskersBinding() {
     new JdbcTemplate(dataSource)
         .update(
             "UPDATE matrix_call_binding SET ended_at = ?, end_cause = 'LIFECYCLE'"
                 + " WHERE source_room_id = ? AND call_id = 'call'",
             System.currentTimeMillis(),
             source);
+  }
+
+  /** End rows of this call, of one actor or ({@code null}) of anybody. */
+  private int endRows(String actorMatrixId) {
+    var jdbc = new JdbcTemplate(dataSource);
+    return actorMatrixId == null
+        ? jdbc.queryForObject(
+            "SELECT COUNT(*) FROM matrix_call_observation_end WHERE source_room_id = ?"
+                + " AND call_id = 'call'",
+            Integer.class,
+            source)
+        : jdbc.queryForObject(
+            "SELECT COUNT(*) FROM matrix_call_observation_end WHERE source_room_id = ?"
+                + " AND call_id = 'call' AND actor_matrix_id = ?",
+            Integer.class,
+            source,
+            actorMatrixId);
+  }
+
+  /**
+   * Runs bind, pauses it right after its gate and before its transaction (revoking the old call's
+   * guests is the gate's last step and runs with no transaction open), lets {@code meanwhile}
+   * commit, and returns bind's answer.
+   */
+  private boolean bindWithACommitBetweenTheGateAndTheLock(Runnable meanwhile) throws Exception {
     var gatePassed = new CountDownLatch(1);
     var release = new CountDownLatch(1);
     var bindThread = new java.util.concurrent.atomic.AtomicReference<Thread>();
     var outsideTransaction = new AtomicBoolean();
-    // The barrier: right after the gate, before bind's transaction; revoking the old call's
-    // guests is the gate's last step and runs with no transaction open.
     org.mockito.Mockito.doAnswer(
             invocation -> {
               if (Thread.currentThread() == bindThread.get()) {
@@ -242,29 +311,13 @@ class MatrixCallTakeoverLockOrderMariaDbIT {
               });
       assertThat(gatePassed.await(15, TimeUnit.SECONDS)).isTrue();
       assertThat(outsideTransaction).as("barrier outside any transaction").isTrue();
-      // Commits completely while bind waits: bind holds no lock yet.
-      assertThat(observations.end(actor, source, "call"))
-          .isEqualTo(MatrixCallObservationService.Outcome.OK);
-      assertThat(
-              new JdbcTemplate(dataSource)
-                  .queryForObject(
-                      "SELECT COUNT(*) FROM matrix_call_observation_end WHERE source_room_id = ?"
-                          + " AND call_id = 'call' AND actor_matrix_id = ?",
-                      Integer.class,
-                      source,
-                      counsellor.getMatrixUserId()))
-          .isEqualTo(1);
+      meanwhile.run();
       release.countDown();
-      assertThat(bound.get(30, TimeUnit.SECONDS)).isFalse();
+      return bound.get(30, TimeUnit.SECONDS);
     } finally {
       release.countDown();
       pool.shutdownNow();
     }
-    var binding = bindings.findBySourceRoomIdAndCallId(source, "call").orElseThrow();
-    assertThat(binding.getEndedAt()).isNotNull();
-    assertThat(binding.getEndCause()).isEqualTo(MatrixCallBinding.END_CAUSE_LIFECYCLE);
-    assertThat(binding.getCallerMatrixId()).isEqualTo(askerMatrixId);
-    assertThat(binding.getMediaRoomId()).isEqualTo(askerMedia);
   }
 
   private <T> T runWhileTheTakeOverHoldsItsLocks(java.util.concurrent.Callable<T> concurrent)
