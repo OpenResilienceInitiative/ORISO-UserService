@@ -28,7 +28,9 @@ import java.net.InetAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -319,6 +321,35 @@ class CalendarSyncServiceTest {
   }
 
   @Test
+  void aRunThatUsesUpItsBudget_Should_Stop_And_TheNextRunStartsWithTheCalendarsItDidNotReach() {
+    var clock = new MovableClock(NOW);
+    var budgeted = serviceWith(clock);
+    for (var name : List.of("a", "b", "c")) {
+      connect(name, "https://93.184.216.34/" + name + ".ics");
+    }
+    var fetched = new ArrayList<String>();
+    when(fetcher.fetch(any(), anyList()))
+        .thenAnswer(
+            call -> {
+              fetched.add(call.<URI>getArgument(0).getPath());
+              clock.advance(Duration.ofMinutes(3));
+              return CALENDAR;
+            });
+
+    budgeted.startImportRun(clock.instant().plus(Duration.ofMinutes(4))).work();
+
+    // The third import would start after the budget.
+    assertThat(fetched).containsExactly("/a.ics", "/b.ics");
+    assertThat(stored.get("c").getImportLastSyncAt()).isNull();
+
+    fetched.clear();
+    budgeted.startImportRun(clock.instant().plus(Duration.ofMinutes(4))).work();
+
+    // Never synced first, then the least recently synced.
+    assertThat(fetched).containsExactly("/c.ics", "/a.ics");
+  }
+
+  @Test
   void anImportThatFinishesAfterTheAddressChanged_Should_BeDropped() {
     service.status();
     stored.get(ME).setImportUrl(ADDRESS);
@@ -388,4 +419,32 @@ class CalendarSyncServiceTest {
     return sync;
   }
 
+  /** A clock the test moves on, as the time an import takes. */
+  private static final class MovableClock extends Clock {
+
+    private Instant now;
+
+    MovableClock(Instant start) {
+      now = start;
+    }
+
+    void advance(Duration by) {
+      now = now.plus(by);
+    }
+
+    @Override
+    public Instant instant() {
+      return now;
+    }
+
+    @Override
+    public ZoneId getZone() {
+      return ZoneOffset.UTC;
+    }
+
+    @Override
+    public Clock withZone(ZoneId zone) {
+      return this;
+    }
+  }
 }

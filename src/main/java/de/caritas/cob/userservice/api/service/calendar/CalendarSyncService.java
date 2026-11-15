@@ -17,6 +17,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.UUID;
@@ -157,20 +158,25 @@ public class CalendarSyncService {
 
   /** Imports every configured calendar once; one that fails does not stop the others. */
   public void importAll() {
-    for (var sync : dueImports()) {
-      try {
-        importOnce(sync.getConsultantId(), sync.getImportUrl());
-      } catch (RuntimeException failure) {
-        // Neither the address nor a message that may quote it goes into the log.
-        log.warn("A calendar import failed: {}", failure.getClass().getSimpleName());
-      }
-    }
+    startImportRun(Instant.MAX).work();
   }
 
   /**
-   * The configured calendars of counsellors who exist and are not deleted. The connection of a
-   * deleted counsellor is dropped here, so the private address is not kept and the calendar is not
-   * read again.
+   * A run over the configured calendars, the least recently synced first, that starts no import
+   * once the deadline has passed. Nothing is read before the run is worked on.
+   */
+  public CalendarImportRun startImportRun(Instant deadline) {
+    return new CalendarImportRun(
+        this::dueImports,
+        sync -> importOnce(sync.getConsultantId(), sync.getImportUrl()),
+        deadline,
+        clock);
+  }
+
+  /**
+   * The configured calendars of counsellors who exist and are not deleted, those never synced
+   * first, then the least recently synced. The connection of a deleted counsellor is dropped here,
+   * so the private address is not kept and the calendar is not read again.
    */
   List<CalendarSync> dueImports() {
     var configured = syncs.findByImportUrlIsNotNull();
@@ -189,6 +195,9 @@ public class CalendarSyncService {
         forgetDeleted(sync.getConsultantId());
       }
     }
+    due.sort(
+        Comparator.comparing(
+            CalendarSync::getImportLastSyncAt, Comparator.nullsFirst(Comparator.naturalOrder())));
     return due;
   }
 
