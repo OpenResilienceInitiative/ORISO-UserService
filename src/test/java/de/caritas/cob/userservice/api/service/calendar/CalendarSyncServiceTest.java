@@ -171,7 +171,6 @@ class CalendarSyncServiceTest {
     var cases = new HashMap<String, ImportErrorEnum>();
     cases.put("https://127.0.0.1/cal.ics", ImportErrorEnum.FORBIDDEN_ADDRESS);
     cases.put("https://169.254.169.254/latest", ImportErrorEnum.FORBIDDEN_ADDRESS);
-    cases.put("http://93.184.216.34/cal.ics", ImportErrorEnum.INVALID_URL);
     cases.forEach(
         (address, expected) -> {
           var status = service.configureImport(new CalendarImportDTO().icsUrl(address));
@@ -200,7 +199,15 @@ class CalendarSyncServiceTest {
 
   @Test
   void configureImport_Should_RefuseWhatIsNoUrl_And_ChangeNothing() {
-    for (var text : new String[] {"", "not a url", "file:///etc/passwd", null}) {
+    for (var text :
+        new String[] {
+          "",
+          "not a url",
+          "file:///etc/passwd",
+          null,
+          "http://93.184.216.34/cal.ics",
+          "https://alice:secret@93.184.216.34/cal.ics"
+        }) {
       assertThatThrownBy(() -> service.configureImport(new CalendarImportDTO().icsUrl(text)))
           .isInstanceOf(BadRequestException.class);
     }

@@ -286,8 +286,7 @@ class CalendarSyncControllerIT {
                 "https://127.0.0.1/cal.ics", "FORBIDDEN_ADDRESS",
                 "https://169.254.169.254/latest/meta-data", "FORBIDDEN_ADDRESS",
                 "https://[::1]/cal.ics", "FORBIDDEN_ADDRESS",
-                "https://10.0.0.5/cal.ics", "FORBIDDEN_ADDRESS",
-                "http://93.184.216.34/cal.ics", "INVALID_URL")
+                "https://10.0.0.5/cal.ics", "FORBIDDEN_ADDRESS")
             .entrySet()) {
       var status = body(setImport(refused.getKey()));
       assertThat(status.get("importError")).as(refused.getKey()).isEqualTo(refused.getValue());
@@ -296,6 +295,31 @@ class CalendarSyncControllerIT {
     }
     mockMvc.perform(setImport("not a url")).andExpect(status().isBadRequest());
     mockMvc.perform(setImport("")).andExpect(status().isBadRequest());
+    verifyNoInteractions(fetcher);
+  }
+
+  @Test
+  void import_Should_RefuseAPlainOrCredentialedAddress_With400_AndStoreNothing() throws Exception {
+    actAsCounsellor();
+
+    for (var refused :
+        List.of(
+            "http://93.184.216.34/private/secret-token.ics",
+            "https://alice:secret@93.184.216.34/private/secret-token.ics")) {
+      var answer =
+          mockMvc
+              .perform(setImport(refused))
+              .andExpect(status().isBadRequest())
+              .andReturn()
+              .getResponse();
+      assertThat(answer.getContentAsString()).doesNotContain("secret", "alice");
+    }
+
+    assertThat(syncs.findById(counsellor.getId())).isEmpty();
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT COUNT(*) FROM calendar_sync WHERE import_url IS NOT NULL", Integer.class))
+        .isZero();
     verifyNoInteractions(fetcher);
   }
 
