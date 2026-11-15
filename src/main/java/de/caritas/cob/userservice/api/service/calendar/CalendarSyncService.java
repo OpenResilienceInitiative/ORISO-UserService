@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.model.CalendarBlocker.Source;
 import de.caritas.cob.userservice.api.model.CalendarSync;
 import de.caritas.cob.userservice.api.port.out.CalendarBlockerRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarSyncRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import java.net.URI;
 import java.time.Clock;
 import java.time.Duration;
@@ -16,6 +17,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
@@ -36,7 +38,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  * it failed as a code. Every transaction that reads the connection row and writes it back locks it
  * first, so none of them overwrites what another changed meanwhile. A write that fails rolls back
  * whole; its code is then recorded in a transaction of its own, so the last good import is not
- * shown as the latest without an error.
+ * shown as the latest without an error. The connection of a counsellor who is deleted is dropped by
+ * the next import run instead of being read.
  */
 @Service
 @Slf4j
@@ -49,6 +52,7 @@ public class CalendarSyncService {
   private final AuthenticatedUser caller;
   private final CalendarSyncRepository syncs;
   private final CalendarBlockerRepository blockers;
+  private final ConsultantRepository consultants;
   private final CalendarFeedSigner signer;
   private final CalendarImportUrlValidator validator;
   private final CalendarImportFetcher fetcher;
@@ -63,6 +67,7 @@ public class CalendarSyncService {
       AuthenticatedUser caller,
       CalendarSyncRepository syncs,
       CalendarBlockerRepository blockers,
+      ConsultantRepository consultants,
       CalendarFeedSigner signer,
       CalendarImportUrlValidator validator,
       CalendarImportFetcher fetcher,
@@ -74,6 +79,7 @@ public class CalendarSyncService {
     this.caller = caller;
     this.syncs = syncs;
     this.blockers = blockers;
+    this.consultants = consultants;
     this.signer = signer;
     this.validator = validator;
     this.fetcher = fetcher;
@@ -151,13 +157,57 @@ public class CalendarSyncService {
 
   /** Imports every configured calendar once; one that fails does not stop the others. */
   public void importAll() {
-    for (var sync : syncs.findByImportUrlIsNotNull()) {
+    for (var sync : dueImports()) {
       try {
         importOnce(sync.getConsultantId(), sync.getImportUrl());
       } catch (RuntimeException failure) {
         // Neither the address nor a message that may quote it goes into the log.
         log.warn("A calendar import failed: {}", failure.getClass().getSimpleName());
       }
+    }
+  }
+
+  /**
+   * The configured calendars of counsellors who exist and are not deleted. The connection of a
+   * deleted counsellor is dropped here, so the private address is not kept and the calendar is not
+   * read again.
+   */
+  List<CalendarSync> dueImports() {
+    var configured = syncs.findByImportUrlIsNotNull();
+    if (configured.isEmpty()) {
+      return List.of();
+    }
+    var active =
+        new HashSet<>(
+            consultants.findIdsNotDeletedAmong(
+                configured.stream().map(CalendarSync::getConsultantId).toList()));
+    var due = new ArrayList<CalendarSync>();
+    for (var sync : configured) {
+      if (active.contains(sync.getConsultantId())) {
+        due.add(sync);
+      } else {
+        forgetDeleted(sync.getConsultantId());
+      }
+    }
+    return due;
+  }
+
+  /** Drops the connection of a deleted counsellor and the busy times imported with it. */
+  private void forgetDeleted(String consultantId) {
+    try {
+      transaction.executeWithoutResult(
+          status ->
+              syncs
+                  .findForUpdate(consultantId)
+                  .ifPresent(
+                      sync -> {
+                        blockers.deleteByConsultantIdAndSource(consultantId, Source.EXTERNAL);
+                        syncs.delete(sync);
+                      }));
+    } catch (RuntimeException notDropped) {
+      log.warn(
+          "The calendar connection of a deleted counsellor could not be dropped: {}",
+          notDropped.getClass().getSimpleName());
     }
   }
 

@@ -29,4 +29,9 @@ public interface CalendarSyncRepository extends CrudRepository<CalendarSync, Str
   @Modifying(clearAutomatically = true, flushAutomatically = true)
   @Query("UPDATE CalendarSync s SET s.feedLastFetchedAt = :at WHERE s.consultantId = :consultantId")
   int markFeedFetched(@Param("consultantId") String consultantId, @Param("at") Instant at);
+
+  /** Removes the connections of a counsellor whose account is deleted. */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query("DELETE FROM CalendarSync s WHERE s.consultantId = :consultantId")
+  int deleteByConsultantId(@Param("consultantId") String consultantId);
 }

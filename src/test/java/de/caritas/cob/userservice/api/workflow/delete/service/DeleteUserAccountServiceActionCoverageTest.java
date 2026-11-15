@@ -28,6 +28,7 @@ import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteMatrixA
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteAppointmentServiceConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteCaseHandoverRequestsForConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteChatAction;
+import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantCalendarAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantDraftMessagesAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantEventNotificationsAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantMessageEmailDeliveriesAction;
@@ -88,6 +89,7 @@ class DeleteUserAccountServiceActionCoverageTest {
           DeleteConsultantEventNotificationsAction.class,
           DeleteConsultantMessageEmailDeliveriesAction.class,
           DeleteConsultantMessageStatsAction.class,
+          DeleteConsultantCalendarAction.class,
           DeleteDatabaseConsultantAction.class);
 
   @InjectMocks private DeleteUserAccountService deleteUserAccountService;

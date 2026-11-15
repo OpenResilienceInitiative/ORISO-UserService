@@ -23,13 +23,17 @@ import de.caritas.cob.userservice.api.model.CalendarBlocker.Source;
 import de.caritas.cob.userservice.api.model.CalendarSync;
 import de.caritas.cob.userservice.api.port.out.CalendarBlockerRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarSyncRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import java.net.InetAddress;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -61,13 +65,17 @@ class CalendarSyncServiceTest {
 
   @Mock CalendarSyncRepository syncs;
   @Mock CalendarBlockerRepository blockers;
+  @Mock ConsultantRepository consultants;
   @Mock CalendarImportFetcher fetcher;
   @Mock PlatformTransactionManager transactionManager;
   @Captor ArgumentCaptor<List<CalendarBlocker>> imported;
   @Captor ArgumentCaptor<TransactionDefinition> definitions;
 
   private final AuthenticatedUser caller = new AuthenticatedUser();
-  private final Map<String, CalendarSync> stored = new HashMap<>();
+
+  /** In the order the database hands them out. */
+  private final Map<String, CalendarSync> stored = new LinkedHashMap<>();
+
   private CalendarSyncService service;
 
   @BeforeEach
@@ -75,19 +83,15 @@ class CalendarSyncServiceTest {
     caller.setUserId(ME);
     caller.setTenantId(3L);
     caller.setRoles(Set.of(UserRole.CONSULTANT.getValue()));
-    service =
-        new CalendarSyncService(
-            caller,
-            syncs,
-            blockers,
-            new CalendarFeedSigner("synthetic-secret"),
-            new CalendarImportUrlValidator(host -> new InetAddress[] {InetAddress.getByName(host)}),
-            fetcher,
-            new CalendarBusyParser(),
-            transactionManager,
-            Clock.fixed(NOW, ZoneOffset.UTC),
-            "https://app.synthetic.oriso.test",
-            "Europe/Berlin");
+    service = serviceWith(Clock.fixed(NOW, ZoneOffset.UTC));
+    // Every counsellor exists unless a test says otherwise.
+    lenient()
+        .when(consultants.findIdsNotDeletedAmong(any()))
+        .thenAnswer(call -> List.copyOf(call.<Collection<String>>getArgument(0)));
+    lenient()
+        .doAnswer(call -> stored.remove(call.<CalendarSync>getArgument(0).getConsultantId()))
+        .when(syncs)
+        .delete(any());
     lenient()
         .when(syncs.findById(any()))
         .thenAnswer(call -> Optional.ofNullable(stored.get(call.<String>getArgument(0))));
@@ -297,6 +301,24 @@ class CalendarSyncServiceTest {
   }
 
   @Test
+  void importAll_Should_NotReadTheCalendarOfADeletedCounsellor_And_DropTheConnection() {
+    var gone = connect("gone", "https://93.184.216.35/gone-token.ics");
+    connect(ME, ADDRESS);
+    // "gone" has a delete date or no row at all.
+    org.mockito.Mockito.doReturn(List.of(ME)).when(consultants).findIdsNotDeletedAmong(any());
+    when(fetcher.fetch(any(), anyList())).thenReturn(CALENDAR);
+
+    service.importAll();
+
+    verify(fetcher, times(1)).fetch(any(), anyList());
+    verify(fetcher).fetch(org.mockito.ArgumentMatchers.eq(URI.create(ADDRESS)), anyList());
+    verify(syncs).delete(gone);
+    verify(blockers).deleteByConsultantIdAndSource("gone", Source.EXTERNAL);
+    assertThat(stored).containsOnlyKeys(ME);
+    assertThat(stored.get(ME).getImportLastSyncAt()).isEqualTo(NOW);
+  }
+
+  @Test
   void anImportThatFinishesAfterTheAddressChanged_Should_BeDropped() {
     service.status();
     stored.get(ME).setImportUrl(ADDRESS);
@@ -341,4 +363,29 @@ class CalendarSyncServiceTest {
         .isInstanceOf(ForbiddenException.class);
     assertThat(new ArrayList<>(stored.values())).isEmpty();
   }
+
+  private CalendarSyncService serviceWith(Clock clock) {
+    return new CalendarSyncService(
+        caller,
+        syncs,
+        blockers,
+        consultants,
+        new CalendarFeedSigner("synthetic-secret"),
+        new CalendarImportUrlValidator(host -> new InetAddress[] {InetAddress.getByName(host)}),
+        fetcher,
+        new CalendarBusyParser(),
+        transactionManager,
+        clock,
+        "https://app.synthetic.oriso.test",
+        "Europe/Berlin");
+  }
+
+  private CalendarSync connect(String consultantId, String address) {
+    var sync = new CalendarSync();
+    sync.setConsultantId(consultantId);
+    sync.setImportUrl(address);
+    stored.put(consultantId, sync);
+    return sync;
+  }
+
 }
