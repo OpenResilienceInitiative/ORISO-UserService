@@ -92,6 +92,8 @@ import org.springframework.transaction.support.TransactionTemplate;
   MatrixCallGuestService.class,
   de.caritas.cob.userservice.api.service.matrix.MatrixCallBindingService.class,
   de.caritas.cob.userservice.api.service.matrix.MatrixCallBindingWriter.class,
+  de.caritas.cob.userservice.api.service.matrix.DedicatedCallRoom.class,
+  de.caritas.cob.userservice.api.service.matrix.OrisoRoomRegistry.class,
   de.caritas.cob.userservice.api.service.matrix.MatrixCallInviteNotificationService.class,
   MatrixCallGuestRoomIT.AccountFixture.class
 })
@@ -442,7 +444,8 @@ class MatrixCallGuestRoomIT {
         tenants,
         matrix,
         hasher,
-        new JdbcTemplate(dataSource));
+        new JdbcTemplate(dataSource),
+        callGuests);
   }
 
   private AuthenticatedUser actor(String id, String role) {

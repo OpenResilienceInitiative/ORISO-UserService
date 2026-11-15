@@ -277,8 +277,76 @@ public class MatrixCallGuestService {
         && guests.existsByBindingIdAndMatrixUserIdAndRevokedAtIsNull(binding.getId(), matrixUserId)
         // FE#2209 round 4: in a 1:1 session call a seat counts only while a counsellor is in the
         // call; a guest's own refreshed membership keeps nothing open after every counsellor left.
-        && (binding.getSessionId() == null
-            || !counsellorsInCall(binding.getTenantId(), binding).isEmpty());
+        // The media gate applies the same rule (sessionCallAdmitsGuests).
+        && opensToGuests(binding);
+  }
+
+  /**
+   * Security review 5901360577: how long a running 1:1 session call keeps its guest seats while no
+   * counsellor holds a live MatrixRTC membership in it. The same grace a call gets before anybody
+   * connects (START_GRACE_MILLIS, two minutes), so a counsellor's brief reconnect does not kick the
+   * guests. The media gate refuses the seat during that window already; only the seat record and
+   * the call-room membership wait for it.
+   */
+  public static final long COUNSELLOR_ABSENCE_GRACE_MILLIS =
+      MatrixSessionCallBindingService.START_GRACE_MILLIS;
+
+  /**
+   * The media gate's rule for a seat of binding {@code bindingId} (security review 5901360577): a
+   * running 1:1 session call is open to its guests only while it carries authority (its caller is
+   * the session's assigned, active counsellor of the Träger) and at least one counsellor is in the
+   * call. A group chat's call keeps its rule: an unended binding.
+   */
+  @Transactional(readOnly = true)
+  public boolean sessionCallAdmitsGuests(Long bindingId) {
+    if (bindingId == null) return false;
+    var binding = bindings.findById(bindingId).orElse(null);
+    return binding != null && binding.getEndedAt() == null && opensToGuests(binding);
+  }
+
+  /** The 1:1 rule of {@link #sessionCallAdmitsGuests}; always true for a group chat's call. */
+  private boolean opensToGuests(MatrixCallBinding binding) {
+    return binding.getSessionId() == null
+        || (grantsGuestAuthority(binding)
+            && !counsellorsInCall(binding.getTenantId(), binding).isEmpty());
+  }
+
+  /**
+   * Security review 5901360577: a running 1:1 session call takes its guest seats back as soon as
+   * the rule stops holding, not only once the binding ends. Lost authority (reassignment,
+   * suspension, deactivation, another Träger) revokes at once; no counsellor in the call revokes
+   * once no counsellor's membership was live for {@link #COUNSELLOR_ABSENCE_GRACE_MILLIS}. Call
+   * with the binding locked (lock order: binding, then session); the revoked rows stay.
+   */
+  public void revokeOnceTheSessionCallRuleLapsed(MatrixCallBinding binding, long now) {
+    if (binding == null
+        || binding.getId() == null
+        || binding.getEndedAt() != null
+        || binding.getSessionId() == null) return;
+    boolean lapsed =
+        !grantsGuestAuthority(binding)
+            || (counsellorsInCall(binding.getTenantId(), binding).isEmpty()
+                && now - lastCounsellorPresence(binding) >= COUNSELLOR_ABSENCE_GRACE_MILLIS);
+    if (lapsed) revokeAll(binding);
+  }
+
+  /**
+   * When the last active counsellor of the Träger was seen in the call: the latest end of such a
+   * counsellor's membership (a departure ends it at its own timestamp), else the invite.
+   */
+  private long lastCounsellorPresence(MatrixCallBinding binding) {
+    Long tenant = binding.getTenantId();
+    return binding.getDevices().values().stream()
+        .filter(
+            device ->
+                consultants
+                    .findByMatrixUserIdAndDeleteDateIsNull(device.getSenderMatrixId())
+                    .filter(value -> tenant != null && tenant.equals(value.getTenantId()))
+                    .filter(value -> isActive(value.getId()))
+                    .isPresent())
+        .mapToLong(device -> device.getExpiresAt())
+        .max()
+        .orElse(binding.getInvitedAt());
   }
 
   /**
@@ -287,6 +355,10 @@ public class MatrixCallGuestService {
    */
   public void revokeOutstanding(MatrixCallBinding binding) {
     if (binding == null || binding.getEndedAt() == null || binding.getId() == null) return;
+    revokeAll(binding);
+  }
+
+  private void revokeAll(MatrixCallBinding binding) {
     // Locking read: a seat committed while this transaction waited on the binding lock is seen.
     List<MatrixCallGuest> outstanding = guests.lockOutstandingByBindingId(binding.getId());
     long retryBefore = System.currentTimeMillis() - guestRevokeRetryMillis;
@@ -436,6 +508,16 @@ public class MatrixCallGuestService {
   /** Media rooms of ended calls that still hold an unrevoked guest seat (reconcile sweep). */
   public List<String> endedRoomsWithOutstandingGuests() {
     return guests.findEndedMediaRoomsWithOutstandingGuests(
+        System.currentTimeMillis() - guestRevokeRetryMillis,
+        org.springframework.data.domain.PageRequest.of(0, 100));
+  }
+
+  /**
+   * Running 1:1 session calls that still hold an unrevoked seat (reconcile sweep, review
+   * 5901360577).
+   */
+  public List<String> runningSessionRoomsWithOutstandingGuests() {
+    return guests.findRunningSessionMediaRoomsWithOutstandingGuests(
         System.currentTimeMillis() - guestRevokeRetryMillis,
         org.springframework.data.domain.PageRequest.of(0, 100));
   }

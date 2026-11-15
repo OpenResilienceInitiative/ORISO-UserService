@@ -107,6 +107,7 @@ import org.springframework.transaction.support.TransactionTemplate;
   DirectCallKnockService.class,
   EffectiveDirectInvitePolicy.class,
   ConfiguredTemporaryAccountPolicy.class,
+  de.caritas.cob.userservice.api.service.matrix.DedicatedCallRoom.class,
   de.caritas.cob.userservice.api.service.matrix.MatrixSessionCallBindingService.class,
   de.caritas.cob.userservice.api.service.matrix.MatrixCallBindingService.class,
   de.caritas.cob.userservice.api.service.matrix.MatrixCallBindingWriter.class,
@@ -192,6 +193,17 @@ class CallShareLinkIT {
 
   @BeforeEach
   void setUp() {
+    // Security review 5901360577: the invite path checks the call room's origin as bind() does.
+    // The Frontend creates every call room with the caller as creator and binding sender.
+    org.mockito.Mockito.lenient()
+        .when(
+            matrix.getCallRoomOrigin(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
+        .thenAnswer(
+            call ->
+                java.util.Optional.of(
+                    new de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService
+                        .CallRoomOrigin(call.getArgument(1), call.getArgument(1))));
     transaction = new TransactionTemplate(transactionManager);
     allowDirectInvites(true, true, true);
     var jdbc = new JdbcTemplate(dataSource);
@@ -1229,7 +1241,8 @@ class CallShareLinkIT {
         tenants,
         matrix,
         hasher,
-        new JdbcTemplate(dataSource));
+        new JdbcTemplate(dataSource),
+        callGuests);
   }
 
   private String device() {

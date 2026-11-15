@@ -89,7 +89,7 @@ class MatrixSessionCallBindingServiceTest {
             callBindings,
             matrix,
             lifecycle,
-            rooms,
+            new DedicatedCallRoom(rooms, matrix),
             authority,
             observations,
             ends,

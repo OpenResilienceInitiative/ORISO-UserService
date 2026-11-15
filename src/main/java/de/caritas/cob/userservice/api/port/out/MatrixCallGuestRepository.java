@@ -40,4 +40,20 @@ public interface MatrixCallGuestRepository extends JpaRepository<MatrixCallGuest
   List<String> findEndedMediaRoomsWithOutstandingGuests(
       @org.springframework.data.repository.query.Param("retryBefore") long retryBefore,
       org.springframework.data.domain.Pageable page);
+
+  /**
+   * Security review 5901360577: running 1:1 session calls that still hold an unrevoked seat. The
+   * reconcile sweep passes each through the lifecycle, which takes the seats back once the session
+   * rule stops holding, also when the call room sends no event (reassignment, suspension).
+   */
+  @org.springframework.data.jpa.repository.Query(
+      "select b.mediaRoomId from MatrixCallBinding b, MatrixCallGuest g"
+          + " where g.bindingId = b.id and b.endedAt is null and b.sessionId is not null"
+          + " and g.revokedAt is null"
+          + " and (g.lastRevokeAttemptAt is null or g.lastRevokeAttemptAt <= :retryBefore)"
+          + " group by b.mediaRoomId"
+          + " order by coalesce(max(g.lastRevokeAttemptAt), 0), b.mediaRoomId")
+  List<String> findRunningSessionMediaRoomsWithOutstandingGuests(
+      @org.springframework.data.repository.query.Param("retryBefore") long retryBefore,
+      org.springframework.data.domain.Pageable page);
 }

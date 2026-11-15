@@ -64,7 +64,7 @@ public class MatrixSessionCallBindingService {
   private final MatrixCallBindingService callBindings;
   private final MatrixSynapseService matrix;
   private final MatrixCallLifecycleService lifecycle;
-  private final OrisoRoomRegistry rooms;
+  private final DedicatedCallRoom callRoom;
   private final SessionCallAuthority authority;
   private final de.caritas.cob.userservice.api.port.out.MatrixCallObservationRepository
       observations;
@@ -120,23 +120,14 @@ public class MatrixSessionCallBindingService {
     }
     // Only a dedicated call room can be bound: never one of ORISO's own conversation rooms, or a
     // counsellor could bind one session's call to another session's room.
-    if (rooms.isKnownConversationRoom(mediaRoomId)) return false;
+    if (callRoom.isConversationRoom(sourceRoomId, mediaRoomId)) return false;
 
     // Matrix evidence first, with no transaction open (#1630).
     var members = matrix.getCallRoomMembers(sourceRoomId).orElse(null);
     if (members == null || !members.contains(caller)) return false;
-    var roomBinding = matrix.getCallRoomBinding(mediaRoomId, caller).orElse(null);
-    if (roomBinding == null
-        || !callId.equals(roomBinding.get("call_id"))
-        || !sourceRoomId.equals(roomBinding.get("source_room_id"))) {
-      return false;
-    }
-    var origin = matrix.getCallRoomOrigin(mediaRoomId, caller).orElse(null);
-    if (origin == null
-        || !caller.equals(origin.creatorMatrixId())
-        || !caller.equals(origin.bindingSenderMatrixId())) {
-      return false;
-    }
+    // The call room names this call and conversation, and the caller created it and wrote that
+    // binding (shared with the plaintext-invite path).
+    if (!callRoom.isBoundBy(sourceRoomId, callId, mediaRoomId, caller)) return false;
     Set<String> invitees = invitees(members, caller, conversation.getTenantId());
 
     Result written = null;
@@ -352,8 +343,9 @@ public class MatrixSessionCallBindingService {
 
   /**
    * FE#2209 review: the same call (source room and call id) already has a binding from somebody
-   * else's plaintext invite. It does not block the assigned counsellor once its invite lapsed
-   * (round 3: an asker could otherwise send lifetime=1 for the counsellor's call id): the row is
+   * else's plaintext invite. It does not block the assigned counsellor, whether its invite is still
+   * live or lapsed (R1, round 3: an asker who decrypted the counsellor's call id could otherwise
+   * block the counsellor with a long-lived invite, or with lifetime=1, of their own): the row is
    * taken over in place (so the unique key on source room and call id holds), starts the
    * counsellor's call afresh and points at the counsellor's verified call room from now on. Refused
    * when that call room belongs to another binding, when the counsellor already ended the call, and

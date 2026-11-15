@@ -165,6 +165,172 @@ class MatrixCallGuestServiceTest {
     assertThat(service.isActiveGuest(guestOnly, GUEST)).isTrue();
   }
 
+  // --- Security review 5901360577 (Shirloin), point 1: the media gate and seat revocation ---
+
+  @Test
+  void theMediaGateRefusesASessionCallSeatOnceTheCallLostItsAuthority() {
+    // Reassignment, suspension, deactivation or another Träger: the caller is no longer the
+    // session's assigned, active counsellor, although a counsellor is still in the call.
+    counsellorIsAConsultant();
+    when(bindings.findById(11L)).thenReturn(Optional.of(binding(null)));
+    when(authority.grantsGuestAuthority(any())).thenReturn(false);
+
+    assertThat(service.sessionCallAdmitsGuests(11L)).isFalse();
+  }
+
+  @Test
+  void theMediaGateRefusesASessionCallSeatWhileNoCounsellorIsInTheCall() {
+    counsellorIsAConsultant();
+    var guestOnly = callBinding(null);
+    guestOnly
+        .getDevices()
+        .put(
+            "_" + GUEST + "_device",
+            new de.caritas.cob.userservice.api.model.MatrixCallDevice(
+                GUEST, 1200L, Long.MAX_VALUE, true, "$guest"));
+    guestOnly
+        .getDevices()
+        .put(
+            "device",
+            new de.caritas.cob.userservice.api.model.MatrixCallDevice(
+                COUNSELLOR, 1200L, System.currentTimeMillis() - 1, true, "$start"));
+    when(bindings.findById(11L)).thenReturn(Optional.of(guestOnly));
+
+    assertThat(service.sessionCallAdmitsGuests(11L)).isFalse();
+  }
+
+  @Test
+  void theMediaGateAdmitsASessionCallSeatWhileTheAssignedCounsellorsCallHasACounsellorInIt() {
+    counsellorIsAConsultant();
+    when(bindings.findById(11L)).thenReturn(Optional.of(binding(null)));
+
+    assertThat(service.sessionCallAdmitsGuests(11L)).isTrue();
+    assertThat(service.sessionCallAdmitsGuests(12L)).as("no such binding").isFalse();
+    when(bindings.findById(11L)).thenReturn(Optional.of(binding(5000L)));
+    assertThat(service.sessionCallAdmitsGuests(11L)).as("ended").isFalse();
+  }
+
+  @Test
+  void theMediaGateKeepsTheGroupChatRule() {
+    var group = groupCall(System.currentTimeMillis() - 1);
+    when(bindings.findById(11L)).thenReturn(Optional.of(group));
+    when(authority.grantsGuestAuthority(any())).thenReturn(false);
+
+    assertThat(service.sessionCallAdmitsGuests(11L)).isTrue();
+    verify(matrix, never()).getCallRoomMembers(anyString());
+  }
+
+  @Test
+  void aRunningSessionCallThatLostItsAuthorityLosesItsSeatsAtOnce() {
+    counsellorIsAConsultant();
+    var guest = seatThatCanBeRemoved();
+    when(authority.grantsGuestAuthority(any())).thenReturn(false);
+
+    service.revokeOnceTheSessionCallRuleLapsed(binding(null), System.currentTimeMillis());
+
+    assertThat(guest.getRevokedAt()).as("revoked, the row stays").isNotNull();
+  }
+
+  @Test
+  void aCounsellorsBriefAbsenceKeepsTheSeatsForTheGraceWindow() {
+    counsellorIsAConsultant();
+    var guest = seatThatCanBeRemoved();
+    long now = System.currentTimeMillis();
+    var call =
+        counsellorLeftAt(now - MatrixCallGuestService.COUNSELLOR_ABSENCE_GRACE_MILLIS + 5_000);
+
+    service.revokeOnceTheSessionCallRuleLapsed(call, now);
+
+    assertThat(guest.getRevokedAt()).as("within the grace window").isNull();
+    verify(guests, never()).lockOutstandingByBindingId(any());
+  }
+
+  @Test
+  void seatsAreTakenBackOnceNoCounsellorWasInTheCallForTheGraceWindow() {
+    counsellorIsAConsultant();
+    var guest = seatThatCanBeRemoved();
+    long now = System.currentTimeMillis();
+    var call = counsellorLeftAt(now - MatrixCallGuestService.COUNSELLOR_ABSENCE_GRACE_MILLIS);
+
+    service.revokeOnceTheSessionCallRuleLapsed(call, now);
+
+    assertThat(guest.getRevokedAt()).isNotNull();
+  }
+
+  @Test
+  void aSessionCallWithItsCounsellorInItOrAGroupCallKeepsItsSeats() {
+    counsellorIsAConsultant();
+    var guest = seatThatCanBeRemoved();
+
+    service.revokeOnceTheSessionCallRuleLapsed(binding(null), System.currentTimeMillis());
+    var group = groupCall(0L);
+    service.revokeOnceTheSessionCallRuleLapsed(group, System.currentTimeMillis());
+
+    assertThat(guest.getRevokedAt()).isNull();
+    verify(guests, never()).lockOutstandingByBindingId(any());
+  }
+
+  private void counsellorIsAConsultant() {
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull(COUNSELLOR))
+        .thenReturn(Optional.of(consultant("counsellor", COUNSELLOR, 7L)));
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull(GUEST)).thenReturn(Optional.empty());
+  }
+
+  private MatrixCallGuest seatThatCanBeRemoved() {
+    var guest = guest();
+    when(guests.lockOutstandingByBindingId(11L)).thenReturn(List.of(guest));
+    when(matrix.removeUserFromRoom(MEDIA, GUEST, "counsellor-token")).thenReturn(true);
+    when(matrix.clearUserPowerLevel(MEDIA, GUEST, "counsellor-token")).thenReturn(true);
+    when(matrix.getRoomMembership(MEDIA, GUEST, "counsellor-token"))
+        .thenReturn(Optional.of("leave"));
+    return guest;
+  }
+
+  /** A group chat's running call: only the guest's membership is live. */
+  private MatrixCallBinding groupCall(long counsellorExpiresAt) {
+    var call =
+        MatrixCallBinding.builder()
+            .id(11L)
+            .sourceRoomId(SOURCE)
+            .callId("call")
+            .mediaRoomId(MEDIA)
+            .callerMatrixId(COUNSELLOR)
+            .chatId(3L)
+            .tenantId(7L)
+            .invitedAt(1000L)
+            .inviteExpiresAt(61000L)
+            .startedAt(1200L)
+            .video(true)
+            .build();
+    call.getDevices()
+        .put(
+            "_" + GUEST + "_device",
+            new de.caritas.cob.userservice.api.model.MatrixCallDevice(
+                GUEST, 1200L, Long.MAX_VALUE, true, "$guest"));
+    call.getDevices()
+        .put(
+            "device",
+            new de.caritas.cob.userservice.api.model.MatrixCallDevice(
+                COUNSELLOR, 1200L, counsellorExpiresAt, true, "$start"));
+    return call;
+  }
+
+  /** A running session call: the asker and the guest are in it, the counsellor left. */
+  private MatrixCallBinding counsellorLeftAt(long departedAt) {
+    var call = callBinding(null);
+    call.getDevices()
+        .put(
+            "_" + GUEST + "_device",
+            new de.caritas.cob.userservice.api.model.MatrixCallDevice(
+                GUEST, 1200L, Long.MAX_VALUE, true, "$guest"));
+    call.getDevices()
+        .put(
+            "device",
+            new de.caritas.cob.userservice.api.model.MatrixCallDevice(
+                COUNSELLOR, 1200L, departedAt, true, "$start"));
+    return call;
+  }
+
   @Test
   void aTakeOverRevokesOnlySeatsOfTheRoomItSaw_NotOfACallThatMovedMeanwhile() {
     // CodeRabbit 4562143165: a concurrent takeover committed and moved the row to a new call

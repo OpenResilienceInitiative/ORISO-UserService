@@ -102,6 +102,10 @@ public class MatrixCallLifecycleService {
     // US#1477: a guest's call-room seat ends with the call; a failed removal retries on the
     // next event for this room.
     callGuests.revokeOutstanding(binding);
+    // Security review 5901360577: a running 1:1 session call loses its seats once its rule stops
+    // holding (authority lost: at once; no counsellor in the call: after the absence grace), with
+    // the memberships of this batch applied and the binding still locked.
+    callGuests.revokeOnceTheSessionCallRuleLapsed(binding, System.currentTimeMillis());
     return true;
   }
 

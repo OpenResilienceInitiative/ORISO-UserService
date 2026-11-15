@@ -60,6 +60,7 @@ import org.testcontainers.containers.MariaDBContainer;
   de.caritas.cob.userservice.api.service.matrix.SessionCallAuthority.class,
   de.caritas.cob.userservice.api.service.matrix.SessionCallRevival.class,
   MatrixCallObservationService.class,
+  de.caritas.cob.userservice.api.service.matrix.DedicatedCallRoom.class,
   MatrixSessionCallBindingService.class,
   MatrixCallBindingService.class,
   MatrixCallBindingWriter.class,
