@@ -70,9 +70,18 @@ public class MatrixCallInviteNotificationService {
     // Security review 5901360577: a running session call whose rule lapsed without any call-room
     // event (reassignment, suspension, a counsellor whose membership simply ran out). Round 8:
     // only calls whose rule may have lapsed, least recently swept first, each stamped as swept.
+    // Round 9 (F2): the stamp commits before the pass, and a room whose pass fails is logged and
+    // skipped, so one room that always fails neither sorts first forever nor stops the others.
     long sweptAt = System.currentTimeMillis();
     for (String room : callGuests.runningSessionRoomsWithOutstandingGuests(sweptAt)) {
-      lifecycle.sweepRunningSessionCall(room, sweptAt);
+      try {
+        if (lifecycle.recordSweep(room, sweptAt)) lifecycle.sweepRunningSessionCall(room, sweptAt);
+      } catch (RuntimeException failure) {
+        // No room ids or user ids in the log.
+        log.warn(
+            "Running session call sweep failed for one call ({})",
+            failure.getClass().getSimpleName());
+      }
     }
   }
 

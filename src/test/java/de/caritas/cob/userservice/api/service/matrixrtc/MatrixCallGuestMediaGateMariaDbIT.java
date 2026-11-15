@@ -130,6 +130,7 @@ class MatrixCallGuestMediaGateMariaDbIT {
   @MockitoBean private MatrixSynapseService matrix;
   @MockitoBean private EventNotificationService notifications;
   @MockitoBean private AccountInactivityService accountLifecycle;
+  @MockitoBean private CallParticipantEviction eviction;
 
   private final TenantService tenants = mock(TenantService.class);
   private MatrixRtcCallPolicyService gate;
@@ -141,6 +142,8 @@ class MatrixCallGuestMediaGateMariaDbIT {
   private Consultant colleague;
   private Long sessionId;
   private Long bindingId;
+  private String lateMedia;
+  private Long lateBindingId;
 
   @BeforeEach
   void setUp() {
@@ -282,27 +285,30 @@ class MatrixCallGuestMediaGateMariaDbIT {
   @Test
   void theSweepRevokesAReassignedCallBehindMoreThanAPageOfHealthyCalls() {
     // Round 8 (F2): more running session calls with a seat than one sweep page, all healthy
-    // (their assigned counsellor is in the call), and they sort before the reassigned one.
+    // (their assigned counsellor is in the call). Round 9 (F3): the reassigned call has the highest
+    // id, so it sorts after all of them by b.id and is reached only if they are left out.
     healthyCallsWithASeat(MatrixCallGuestService.SWEEP_PAGE_SIZE + 1);
+    lateCallWithTheHighestId();
     new JdbcTemplate(dataSource)
         .update("UPDATE session SET consultant_id = ? WHERE id = ?", colleague.getId(), sessionId);
 
     reconciler.reconcileMediaRooms();
 
-    assertSeatRevokedAndKept();
+    assertSeatRevokedAndKept(lateBindingId);
   }
 
   @Test
   void theSweepRetriesAFailedRevocationBehindMoreThanAPageOfHealthyCalls() {
     healthyCallsWithASeat(MatrixCallGuestService.SWEEP_PAGE_SIZE + 1);
+    lateCallWithTheHighestId();
     new JdbcTemplate(dataSource)
         .update("UPDATE session SET consultant_id = ? WHERE id = ?", colleague.getId(), sessionId);
     // The first removal fails: the guest is still in the call room.
-    when(matrix.removeUserFromRoom(media, guestMatrixId, "counsellor-token")).thenReturn(false);
-    when(matrix.getRoomMembership(media, guestMatrixId, "counsellor-token"))
+    when(matrix.removeUserFromRoom(lateMedia, guestMatrixId, "counsellor-token")).thenReturn(false);
+    when(matrix.getRoomMembership(lateMedia, guestMatrixId, "counsellor-token"))
         .thenReturn(Optional.of("join"));
-    lifecycle.handleRoom(media, Map.of());
-    assertThat(guests.findByBindingId(bindingId))
+    lifecycle.handleRoom(lateMedia, Map.of());
+    assertThat(guests.findByBindingId(lateBindingId))
         .singleElement()
         .satisfies(
             seat -> {
@@ -310,31 +316,33 @@ class MatrixCallGuestMediaGateMariaDbIT {
               assertThat(seat.getLastRevokeAttemptAt()).isNotNull();
             });
 
-    when(matrix.removeUserFromRoom(media, guestMatrixId, "counsellor-token")).thenReturn(true);
-    when(matrix.getRoomMembership(media, guestMatrixId, "counsellor-token"))
+    when(matrix.removeUserFromRoom(lateMedia, guestMatrixId, "counsellor-token")).thenReturn(true);
+    when(matrix.getRoomMembership(lateMedia, guestMatrixId, "counsellor-token"))
         .thenReturn(Optional.of("leave"));
     reconciler.reconcileMediaRooms();
 
-    assertSeatRevokedAndKept();
+    assertSeatRevokedAndKept(lateBindingId);
   }
 
   @Test
   void theSweepReachesALessRecentlySweptCandidateBehindAFullPageOfCandidates() {
     // More candidates than one page whose seats stay (their counsellor dropped out seconds ago,
-    // within the grace window). This test's reassigned call was swept once long ago, so it sorts
-    // after the never-swept ones; the stamps of the first sweep put it first in the second.
-    new JdbcTemplate(dataSource)
-        .update("UPDATE matrix_call_binding SET last_swept_at = 1 WHERE id = ?", bindingId);
+    // within the grace window). This test's reassigned call has the highest id and was swept once
+    // long ago, so it sorts after the never-swept ones; the stamps of the first sweep put it first
+    // in the second.
     callsWithASeat(MatrixCallGuestService.SWEEP_PAGE_SIZE + 1, System.currentTimeMillis() - 5_000);
+    lateCallWithTheHighestId();
+    new JdbcTemplate(dataSource)
+        .update("UPDATE matrix_call_binding SET last_swept_at = 1 WHERE id = ?", lateBindingId);
     new JdbcTemplate(dataSource)
         .update("UPDATE session SET consultant_id = ? WHERE id = ?", colleague.getId(), sessionId);
     new JdbcTemplate(dataSource)
-        .update("UPDATE matrix_call_binding SET last_swept_at = NULL WHERE id <> ?", bindingId);
+        .update("UPDATE matrix_call_binding SET last_swept_at = NULL WHERE id <> ?", lateBindingId);
 
     reconciler.reconcileMediaRooms();
     reconciler.reconcileMediaRooms();
 
-    assertSeatRevokedAndKept();
+    assertSeatRevokedAndKept(lateBindingId);
   }
 
   @Test
@@ -350,9 +358,278 @@ class MatrixCallGuestMediaGateMariaDbIT {
     assertSeatRevokedAndKept();
   }
 
+  // Round 9 (F3): one test per predicate of the sweep's "rule holds" clause. The assigned
+  // counsellor's membership ran out, so the call's only live counsellor is the colleague; with one
+  // change to the colleague, the call must stay a candidate.
+
+  @Test
+  void aCallWithAnActiveColleagueOfTheTraegerInItIsNoCandidate() {
+    liveColleagueOnly();
+
+    assertThat(candidate()).as("control: the rule holds, the sweep leaves the call out").isFalse();
+  }
+
+  @Test
+  void aColleagueOfAnotherTraegerKeepsTheCallACandidate() {
+    liveColleagueOnly();
+    new JdbcTemplate(dataSource)
+        .update("UPDATE consultant SET tenant_id = 8 WHERE consultant_id = ?", colleague.getId());
+
+    assertThat(candidate()).isTrue();
+  }
+
+  @Test
+  void aSuspendedColleagueKeepsTheCallACandidate() {
+    liveColleagueOnly();
+    new JdbcTemplate(dataSource)
+        .update(
+            "INSERT INTO account_inactivity(identity_id,tenant_id,assigned_months,revision,"
+                + "last_activity,due_at,status) VALUES (?,7,24,0,NOW(6),NOW(6),'SUSPENDED')",
+            colleague.getId());
+
+    assertThat(candidate()).isTrue();
+  }
+
+  @Test
+  void aDeletedColleagueKeepsTheCallACandidate() {
+    liveColleagueOnly();
+    new JdbcTemplate(dataSource)
+        .update(
+            "UPDATE consultant SET delete_date = NOW() WHERE consultant_id = ?", colleague.getId());
+
+    assertThat(candidate()).isTrue();
+  }
+
+  @Test
+  void theCounsellorsExpiredMembershipKeepsTheCallACandidate() {
+    expireCounsellorMembership(System.currentTimeMillis() - 5_000);
+
+    assertThat(candidate()).isTrue();
+  }
+
+  @Test
+  void theCounsellorsDepartureKeepsTheCallACandidate() {
+    // A departure ends the membership at the departure's own timestamp.
+    new JdbcTemplate(dataSource)
+        .update(
+            "UPDATE matrix_call_device SET expires_at = event_timestamp WHERE binding_id = ?"
+                + " AND sender_matrix_id = ?",
+            bindingId,
+            counsellor.getMatrixUserId());
+
+    assertThat(candidate()).isTrue();
+  }
+
+  @Test
+  void theLiveKitEvictionRunsOnlyOnceTheRevokedSeatIsCommitted() throws Exception {
+    // Round 9 (F1): the gate reads revoked_at without a lock; an eviction before the commit lets a
+    // client fetch a new token at once. The stub reads the seat through its own connection.
+    var revokedAtEviction = new java.util.concurrent.atomic.AtomicReference<Object>("not evicted");
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              revokedAtEviction.set(committedRevokedAt());
+              return null;
+            })
+        .when(eviction)
+        .evictFromCallRoom(media, guestMatrixId);
+    new JdbcTemplate(dataSource)
+        .update("UPDATE session SET consultant_id = ? WHERE id = ?", colleague.getId(), sessionId);
+
+    assertThat(lifecycle.handleRoom(media, Map.of())).isTrue();
+
+    assertSeatRevokedAndKept();
+    assertThat(revokedAtEviction.get())
+        .as("the eviction sees the revocation committed")
+        .isNotNull()
+        .isNotEqualTo("not evicted");
+  }
+
+  @Test
+  void aModeratorRemovalEvictsOnlyAfterItsCommit() throws Exception {
+    var revokedAtEviction = new java.util.concurrent.atomic.AtomicReference<Object>("not evicted");
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              revokedAtEviction.set(committedRevokedAt());
+              return null;
+            })
+        .when(eviction)
+        .evictFromCallRoom(media, guestMatrixId);
+
+    assertThat(
+            callGuests.revokeSeat(
+                bindings.findById(bindingId).orElseThrow(),
+                guestMatrixId,
+                counsellor.getMatrixUserId()))
+        .isTrue();
+
+    assertThat(revokedAtEviction.get()).isNotNull().isNotEqualTo("not evicted");
+  }
+
+  @Test
+  void aRolledBackRevocationEvictsNobody() {
+    new TransactionTemplate(transactionManager)
+        .executeWithoutResult(
+            status -> {
+              callGuests.revokeSeat(
+                  bindings.findById(bindingId).orElseThrow(),
+                  guestMatrixId,
+                  counsellor.getMatrixUserId());
+              status.setRollbackOnly();
+            });
+
+    org.mockito.Mockito.verify(eviction, org.mockito.Mockito.never())
+        .evictFromCallRoom(anyString(), anyString());
+    assertThat(guests.findByBindingId(bindingId))
+        .singleElement()
+        .satisfies(seat -> assertThat(seat.getRevokedAt()).isNull());
+  }
+
+  @Test
+  void aRoomThatAlwaysFailsDoesNotStopTheSweepAndItsStampAdvances() {
+    // Round 9 (F2): consultant.matrix_user_id is not unique. Two accounts of another Träger share
+    // the Matrix id of a live member of this test's call, so every pass of it throws. It sorts
+    // before the reassigned call; the sweep must still reach that one.
+    String shared = "@gate-shared-" + UUID.randomUUID().toString().substring(0, 8) + ":example";
+    var transaction = new TransactionTemplate(transactionManager);
+    var twins =
+        transaction.execute(
+            status ->
+                List.of(
+                    consultants.save(consultantOfTenant(8L, shared)).getId(),
+                    consultants.save(consultantOfTenant(8L, shared)).getId()));
+    lateCallWithTheHighestId();
+    addLiveDevice(bindingId, shared);
+    expireCounsellorMembership(System.currentTimeMillis() - 5_000);
+    new JdbcTemplate(dataSource)
+        .update(
+            "UPDATE matrix_call_binding SET last_swept_at = NULL WHERE id IN (?, ?)",
+            bindingId,
+            lateBindingId);
+    // The late call lost its rule: its caller is not the session's assigned counsellor.
+    new JdbcTemplate(dataSource)
+        .update(
+            "UPDATE matrix_call_binding SET caller_matrix_id = ? WHERE id = ?",
+            colleague.getMatrixUserId(),
+            lateBindingId);
+    try {
+      reconciler.reconcileMediaRooms();
+
+      assertSeatRevokedAndKept(lateBindingId);
+      assertThat(bindings.findById(bindingId).orElseThrow().getLastSweptAt())
+          .as("the failing room is stamped, so it does not sort first forever")
+          .isNotNull();
+    } finally {
+      for (String id : twins)
+        new JdbcTemplate(dataSource)
+            .update("UPDATE consultant SET delete_date = NOW() WHERE consultant_id = ?", id);
+    }
+  }
+
+  /** The assigned counsellor's membership ran out; an active colleague of the Träger is live. */
+  private void liveColleagueOnly() {
+    expireCounsellorMembership(System.currentTimeMillis() - 5_000);
+    addLiveDevice(bindingId, colleague.getMatrixUserId());
+  }
+
+  private boolean candidate() {
+    long now = System.currentTimeMillis();
+    return guests
+        .findRunningSessionMediaRoomsWhoseRuleMayHaveLapsed(
+            now, now, org.springframework.data.domain.PageRequest.of(0, 100_000))
+        .contains(media);
+  }
+
+  private void addLiveDevice(Long binding, String sender) {
+    new TransactionTemplate(transactionManager)
+        .executeWithoutResult(
+            status -> {
+              var row = bindings.findById(binding).orElseThrow();
+              row.getDevices()
+                  .put("_" + sender + "_X", device(sender, System.currentTimeMillis() + 3_600_000));
+              bindings.save(row);
+            });
+  }
+
+  /** revoked_at of the guest's seat as committed, read through a connection of its own. */
+  private Object committedRevokedAt() throws java.sql.SQLException {
+    try (var connection = dataSource.getConnection();
+        var statement =
+            connection.prepareStatement(
+                "SELECT revoked_at FROM matrix_call_guest WHERE binding_id = ?"
+                    + " AND matrix_user_id = ?")) {
+      connection.setAutoCommit(true);
+      statement.setLong(1, bindingId);
+      statement.setString(2, guestMatrixId);
+      try (var result = statement.executeQuery()) {
+        result.next();
+        return result.getObject(1);
+      }
+    }
+  }
+
+  /**
+   * A second running call of this test's session, created after every other binding of the test, so
+   * it has the highest id. The counsellor and the asker are in it, and the guest holds a seat.
+   */
+  private void lateCallWithTheHighestId() {
+    lateMedia = "!gate-late-" + UUID.randomUUID().toString().substring(0, 8) + ":example";
+    long now = System.currentTimeMillis();
+    String caller = counsellor.getMatrixUserId();
+    var transaction = new TransactionTemplate(transactionManager);
+    lateBindingId =
+        transaction.execute(
+            status -> {
+              var binding =
+                  MatrixCallBinding.builder()
+                      .sourceRoomId(source)
+                      .callId("late-call")
+                      .mediaRoomId(lateMedia)
+                      .callerMatrixId(caller)
+                      .sessionId(sessionId)
+                      .tenantId(7L)
+                      .invitedAt(now - 60_000)
+                      .inviteExpiresAt(now + 60_000)
+                      .startedAt(now - 50_000)
+                      .mediaObservedAt(now - 50_000)
+                      .video(true)
+                      .build();
+              binding.getDevices().put("_" + caller + "_C", device(caller, now + 3_600_000));
+              for (var device : bindings.findById(bindingId).orElseThrow().getDevices().values())
+                if (!device.getSenderMatrixId().equals(caller)
+                    && !device.getSenderMatrixId().equals(guestMatrixId))
+                  binding
+                      .getDevices()
+                      .put(
+                          "_" + device.getSenderMatrixId() + "_A",
+                          device(device.getSenderMatrixId(), now + 3_600_000));
+              Long id = bindings.save(binding).getId();
+              guests.save(
+                  de.caritas.cob.userservice.api.model.MatrixCallGuest.builder()
+                      .bindingId(id)
+                      .matrixUserId(guestMatrixId)
+                      .admittedByMatrixId(caller)
+                      .admittedAt(now - 40_000)
+                      .build());
+              return id;
+            });
+    assertThat(lateBindingId).isGreaterThan(bindingId);
+    when(matrix.removeUserFromRoom(lateMedia, guestMatrixId, "counsellor-token")).thenReturn(true);
+    when(matrix.getRoomMembership(lateMedia, guestMatrixId, "counsellor-token"))
+        .thenReturn(Optional.of("leave"));
+    when(matrix.clearUserPowerLevel(lateMedia, guestMatrixId, "counsellor-token")).thenReturn(true);
+  }
+
+  private void assertSeatRevokedAndKept(Long binding) {
+    assertThat(guests.findByBindingId(binding))
+        .as("revoked seats stay as records")
+        .singleElement()
+        .satisfies(seat -> assertThat(seat.getRevokedAt()).isNotNull());
+  }
+
   /**
    * Running 1:1 calls of another session whose assigned counsellor is in the call, each holding an
-   * unrevoked guest seat. Their media rooms sort before this test's room by id.
+   * unrevoked guest seat. They get higher binding ids than this test's first call, so a test that
+   * needs a candidate behind them uses {@link #lateCallWithTheHighestId}.
    */
   private void healthyCallsWithASeat(int count) {
     callsWithASeat(count, System.currentTimeMillis() + 3_600_000);
@@ -468,6 +745,13 @@ class MatrixCallGuestMediaGateMariaDbIT {
         .createDate(LocalDateTime.now())
         .updateDate(LocalDateTime.now())
         .build();
+  }
+
+  private static Consultant consultantOfTenant(Long tenant, String matrixId) {
+    var consultant = consultant();
+    consultant.setTenantId(tenant);
+    consultant.setMatrixUserId(matrixId);
+    return consultant;
   }
 
   private static Consultant consultant() {

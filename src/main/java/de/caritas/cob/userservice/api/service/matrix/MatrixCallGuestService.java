@@ -458,10 +458,42 @@ public class MatrixCallGuestService {
    * FE#2209 round 8 (F1): the call-room kick does not end an open LiveKit connection, and LiveKit
    * refreshes a connected participant's token by itself, so the media gate is never asked again.
    * Also on a deferred removal: the seat is gone for the gate either way. Best effort.
+   *
+   * <p>Round 9 (F1): only after the revocation commits. The media gate reads revoked_at without a
+   * lock, so a client that asks for a new token right after an earlier eviction would still be
+   * admitted, and nothing would evict it again. After the commit, the HTTP call also holds neither
+   * the binding lock nor the seat locks. A rolled back revocation evicts nobody. Without a
+   * transaction (the takeover's removal), it runs at once.
    */
   private void evictFromLiveKit(String mediaRoomId, String guestMatrixId) {
     var eviction = liveKitEviction == null ? null : liveKitEviction.getIfAvailable();
-    if (eviction != null) eviction.evictFromCallRoom(mediaRoomId, guestMatrixId);
+    if (eviction == null) return;
+    Runnable evict = () -> evictQuietly(eviction, mediaRoomId, guestMatrixId);
+    if (org.springframework.transaction.support.TransactionSynchronizationManager
+        .isSynchronizationActive()) {
+      org.springframework.transaction.support.TransactionSynchronizationManager
+          .registerSynchronization(
+              new org.springframework.transaction.support.TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                  evict.run();
+                }
+              });
+    } else {
+      evict.run();
+    }
+  }
+
+  private static void evictQuietly(
+      de.caritas.cob.userservice.api.service.matrixrtc.CallParticipantEviction eviction,
+      String mediaRoomId,
+      String guestMatrixId) {
+    try {
+      eviction.evictFromCallRoom(mediaRoomId, guestMatrixId);
+    } catch (RuntimeException failure) {
+      // The revocation has committed and stands; no identifiers in the log.
+      log.warn("Call guest LiveKit eviction failed ({})", failure.getClass().getSimpleName());
+    }
   }
 
   private enum Removal {

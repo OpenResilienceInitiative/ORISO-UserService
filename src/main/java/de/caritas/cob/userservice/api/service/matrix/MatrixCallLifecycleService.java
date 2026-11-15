@@ -103,16 +103,28 @@ public class MatrixCallLifecycleService {
   }
 
   /**
+   * FE#2209 round 9 (F2): stamps a sweep candidate as swept, in a transaction of its own that
+   * commits before the pass, so the next sweep takes other candidates first even when the pass
+   * fails. Locks only the binding and commits, so the pass that follows takes the locks again in
+   * the usual order (binding, then session).
+   */
+  @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+  public boolean recordSweep(String room, long now) {
+    var binding = bindings.lockByMediaRoomId(room).orElse(null);
+    if (binding == null) return false;
+    binding.recordSweep(now);
+    return true;
+  }
+
+  /**
    * FE#2209 round 8 (F2): the reconcile sweep's pass of a running session call whose rule may have
-   * lapsed. Stamps the sweep under the binding lock, so the next sweep takes other candidates
-   * first, then runs the same pass as an event-less {@link #handleRoom}. Lock order unchanged:
-   * binding, then session.
+   * lapsed: the same pass as an event-less {@link #handleRoom}. The sweep stamp is written before,
+   * by {@link #recordSweep}. Lock order unchanged: binding, then session.
    */
   @Transactional
   public boolean sweepRunningSessionCall(String room, long now) {
     var binding = bindings.lockByMediaRoomId(room).orElse(null);
     if (binding == null) return false;
-    binding.recordSweep(now);
     handleLockedRoom(binding, Map.of());
     return true;
   }

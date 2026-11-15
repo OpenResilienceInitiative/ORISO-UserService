@@ -325,6 +325,54 @@ class MatrixCallGuestServiceTest {
     verify(eviction).evictFromCallRoom(MEDIA, GUEST);
   }
 
+  @Test
+  void theLiveKitEvictionWaitsForTheRevocationToCommit() {
+    // Round 9 (F1): the media gate reads revoked_at without a lock. An eviction before the commit
+    // lets a scripted client fetch a new token while the seat still reads as live.
+    removableSeatForTheModerator();
+    org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+    try {
+      assertThat(service.revokeSeat(binding(null), GUEST, COUNSELLOR)).isTrue();
+      verify(eviction, never()).evictFromCallRoom(anyString(), anyString());
+
+      org.springframework.transaction.support.TransactionSynchronizationUtils.triggerAfterCommit();
+
+      verify(eviction).evictFromCallRoom(MEDIA, GUEST);
+    } finally {
+      org.springframework.transaction.support.TransactionSynchronizationManager
+          .clearSynchronization();
+    }
+  }
+
+  @Test
+  void aRolledBackRevocationEvictsNobody() {
+    counsellorIsAConsultant();
+    seatThatCanBeRemoved();
+    when(authority.grantsGuestAuthority(any())).thenReturn(false);
+    org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+    try {
+      service.revokeOnceTheSessionCallRuleLapsed(binding(null), System.currentTimeMillis());
+
+      org.springframework.transaction.support.TransactionSynchronizationUtils.invokeAfterCompletion(
+          org.springframework.transaction.support.TransactionSynchronizationManager
+              .getSynchronizations(),
+          org.springframework.transaction.support.TransactionSynchronization.STATUS_ROLLED_BACK);
+
+      verify(eviction, never()).evictFromCallRoom(anyString(), anyString());
+    } finally {
+      org.springframework.transaction.support.TransactionSynchronizationManager
+          .clearSynchronization();
+    }
+  }
+
+  private void removableSeatForTheModerator() {
+    when(guests.findByBindingIdAndMatrixUserId(11L, GUEST)).thenReturn(Optional.of(guest()));
+    when(matrix.removeUserFromRoom(MEDIA, GUEST, "counsellor-token")).thenReturn(true);
+    when(matrix.getRoomMembership(MEDIA, GUEST, "counsellor-token"))
+        .thenReturn(Optional.of("leave"));
+    when(matrix.clearUserPowerLevel(MEDIA, GUEST, "counsellor-token")).thenReturn(true);
+  }
+
   @SuppressWarnings("unchecked")
   private org.springframework.beans.factory.ObjectProvider<
           de.caritas.cob.userservice.api.service.matrixrtc.CallParticipantEviction>
