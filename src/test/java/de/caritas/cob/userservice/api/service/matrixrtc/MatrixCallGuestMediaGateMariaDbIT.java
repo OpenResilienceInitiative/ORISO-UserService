@@ -764,6 +764,57 @@ class MatrixCallGuestMediaGateMariaDbIT {
   }
 
   @Test
+  void aRedeliveredMembershipAfterTheMarkerDoesNotReviveTheStalePresence() throws Exception {
+    // #1656: a rejoin or a full-state sync re-sends the counsellor's stored membership (same
+    // event_id, same server timestamp). It is the stale presence itself, not a new membership, so
+    // the gate stays closed: the device row keeps its capped expiry.
+    assertARedeliveredMembershipKeepsTheGateClosed(false);
+  }
+
+  @Test
+  void aRedeliveredMembershipClaimingToReplaceItselfDoesNotReviveTheStalePresence()
+      throws Exception {
+    // #1656: the same, with unsigned.replaces_state naming the event itself. The equal-timestamp
+    // rule would accept that as a successor; only the event_id check rejects it.
+    assertARedeliveredMembershipKeepsTheGateClosed(true);
+  }
+
+  private void assertARedeliveredMembershipKeepsTheGateClosed(boolean claimsToReplaceItself)
+      throws Exception {
+    var listener = callRoomMarkedUnobservedThroughALostBatch();
+    String caller = counsellor.getMatrixUserId();
+    String key = "_" + caller + "_C";
+    var stored = bindings.findById(bindingId).orElseThrow().getDevices().get(key);
+    long cappedExpiry = stored.getExpiresAt();
+    assertThat(cappedExpiry).isLessThanOrEqualTo(System.currentTimeMillis());
+    var redelivered = new java.util.HashMap<>(membership(caller, key));
+    redelivered.put("event_id", stored.getEventId());
+    redelivered.put("origin_server_ts", stored.getEventTimestamp());
+    if (claimsToReplaceItself)
+      redelivered.put("unsigned", Map.of("replaces_state", stored.getEventId()));
+    serveSyncBatch(
+        "batch-with-the-redelivered-membership",
+        Map.of(
+            media,
+            Map.of(
+                "state",
+                Map.of("events", List.of(redelivered)),
+                "timeline",
+                Map.of("events", List.of(redelivered)))));
+
+    syncCycle(listener);
+
+    var device = bindings.findById(bindingId).orElseThrow().getDevices().get(key);
+    assertThat(device.getEventId()).isEqualTo(stored.getEventId());
+    assertThat(device.getExpiresAt()).as("the capped expiry is kept").isEqualTo(cappedExpiry);
+    assertThat(callGuests.sessionCallAdmitsGuests(bindingId))
+        .as("the re-delivered membership keeps the rule from holding")
+        .isFalse();
+    assertThat(admitted()).isFalse();
+    assertSeatRevokedAndKept();
+  }
+
+  @Test
   void aNewCounsellorMembershipAfterTheMarkerProvesPresenceAgain() throws Exception {
     // Round 11 (F1), control: the cap only drops stale presence; a new membership event counts.
     var listener = callRoomMarkedUnobservedThroughALostBatch();
