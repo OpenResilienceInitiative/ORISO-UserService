@@ -65,10 +65,6 @@ class CalendarImportUrlValidatorTest {
     "https://intranet.example.org/cal.ics,           FORBIDDEN_ADDRESS",
     "https://metadata.example.org/cal.ics,           FORBIDDEN_ADDRESS",
     "https://rebind.example.org/cal.ics,             FORBIDDEN_ADDRESS",
-    "http://calendar.example.org/cal.ics,            INVALID_URL",
-    "http://127.0.0.1/cal.ics,                       INVALID_URL",
-    "ftp://calendar.example.org/cal.ics,             INVALID_URL",
-    "https://user:secret@calendar.example.org/c.ics, INVALID_URL",
     "https://unknown.example.org/cal.ics,            UNREACHABLE"
   })
   void publicAddressesOf_Should_Refuse(String address, CalendarImportError expected) {
@@ -128,6 +124,39 @@ class CalendarImportUrlValidatorTest {
       })
   void parse_Should_RefuseWhatIsNoUrl(String text) {
     assertThatThrownBy(() -> validator.parse(text)).isInstanceOf(BadRequestException.class);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "http://calendar.example.org/cal.ics",
+        "HTTP://calendar.example.org/cal.ics",
+        "http://127.0.0.1/cal.ics",
+        "ftp://calendar.example.org/cal.ics",
+        "https://alice:secret@calendar.example.org/cal.ics",
+        "https://alice@calendar.example.org/cal.ics",
+        "webcal://alice:secret@calendar.example.org/cal.ics"
+      })
+  void parse_Should_RefuseAnAddressThatIsNotPlainHttps_WithoutQuotingIt(String text) {
+    assertThatThrownBy(() -> validator.parse(text))
+        .isInstanceOf(BadRequestException.class)
+        .message()
+        .doesNotContain("calendar.example.org", "alice", "secret", "127.0.0.1");
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "http://calendar.example.org/cal.ics",
+        "ftp://calendar.example.org/cal.ics",
+        "https://alice:secret@calendar.example.org/cal.ics"
+      })
+  void publicAddressesOf_Should_StillRefuse_AnAddressThatWasNotParsed(String text) {
+    var refusal =
+        catchThrowableOfType(
+            CalendarImportException.class, () -> validator.publicAddressesOf(URI.create(text)));
+
+    assertThat(refusal.error()).isEqualTo(CalendarImportError.INVALID_URL);
   }
 
   @Test

@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -23,13 +25,19 @@ import de.caritas.cob.userservice.api.model.CalendarBlocker.Source;
 import de.caritas.cob.userservice.api.model.CalendarSync;
 import de.caritas.cob.userservice.api.port.out.CalendarBlockerRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarSyncRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import java.net.InetAddress;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -61,13 +69,17 @@ class CalendarSyncServiceTest {
 
   @Mock CalendarSyncRepository syncs;
   @Mock CalendarBlockerRepository blockers;
+  @Mock ConsultantRepository consultants;
   @Mock CalendarImportFetcher fetcher;
   @Mock PlatformTransactionManager transactionManager;
   @Captor ArgumentCaptor<List<CalendarBlocker>> imported;
   @Captor ArgumentCaptor<TransactionDefinition> definitions;
 
   private final AuthenticatedUser caller = new AuthenticatedUser();
-  private final Map<String, CalendarSync> stored = new HashMap<>();
+
+  /** In the order the database hands them out. */
+  private final Map<String, CalendarSync> stored = new LinkedHashMap<>();
+
   private CalendarSyncService service;
 
   @BeforeEach
@@ -75,19 +87,18 @@ class CalendarSyncServiceTest {
     caller.setUserId(ME);
     caller.setTenantId(3L);
     caller.setRoles(Set.of(UserRole.CONSULTANT.getValue()));
-    service =
-        new CalendarSyncService(
-            caller,
-            syncs,
-            blockers,
-            new CalendarFeedSigner("synthetic-secret"),
-            new CalendarImportUrlValidator(host -> new InetAddress[] {InetAddress.getByName(host)}),
-            fetcher,
-            new CalendarBusyParser(),
-            transactionManager,
-            Clock.fixed(NOW, ZoneOffset.UTC),
-            "https://app.synthetic.oriso.test",
-            "Europe/Berlin");
+    service = serviceWith(Clock.fixed(NOW, ZoneOffset.UTC));
+    // Every counsellor exists and is not deleted unless a test says otherwise.
+    lenient()
+        .when(consultants.findIdsAmong(any()))
+        .thenAnswer(call -> List.copyOf(call.<Collection<String>>getArgument(0)));
+    lenient()
+        .when(consultants.findIdsNotDeletedAmong(any()))
+        .thenAnswer(call -> List.copyOf(call.<Collection<String>>getArgument(0)));
+    lenient()
+        .doAnswer(call -> stored.remove(call.<CalendarSync>getArgument(0).getConsultantId()))
+        .when(syncs)
+        .delete(any());
     lenient()
         .when(syncs.findById(any()))
         .thenAnswer(call -> Optional.ofNullable(stored.get(call.<String>getArgument(0))));
@@ -171,7 +182,6 @@ class CalendarSyncServiceTest {
     var cases = new HashMap<String, ImportErrorEnum>();
     cases.put("https://127.0.0.1/cal.ics", ImportErrorEnum.FORBIDDEN_ADDRESS);
     cases.put("https://169.254.169.254/latest", ImportErrorEnum.FORBIDDEN_ADDRESS);
-    cases.put("http://93.184.216.34/cal.ics", ImportErrorEnum.INVALID_URL);
     cases.forEach(
         (address, expected) -> {
           var status = service.configureImport(new CalendarImportDTO().icsUrl(address));
@@ -200,7 +210,15 @@ class CalendarSyncServiceTest {
 
   @Test
   void configureImport_Should_RefuseWhatIsNoUrl_And_ChangeNothing() {
-    for (var text : new String[] {"", "not a url", "file:///etc/passwd", null}) {
+    for (var text :
+        new String[] {
+          "",
+          "not a url",
+          "file:///etc/passwd",
+          null,
+          "http://93.184.216.34/cal.ics",
+          "https://alice:secret@93.184.216.34/cal.ics"
+        }) {
       assertThatThrownBy(() -> service.configureImport(new CalendarImportDTO().icsUrl(text)))
           .isInstanceOf(BadRequestException.class);
     }
@@ -290,6 +308,87 @@ class CalendarSyncServiceTest {
   }
 
   @Test
+  void importAll_Should_NotReadASoftDeletedCounsellorsCalendar_And_KeepIt() {
+    var deleted = connect("deleted", "https://93.184.216.35/deleted-token.ics");
+    connect(ME, ADDRESS);
+    // "deleted" still has a row, with a delete date: the deletion can still be cancelled.
+    doReturn(List.of(ME)).when(consultants).findIdsNotDeletedAmong(any());
+    when(fetcher.fetch(any(), anyList())).thenReturn(CALENDAR);
+
+    service.importAll();
+
+    verify(fetcher, times(1)).fetch(eq(URI.create(ADDRESS)), anyList());
+    verify(syncs, never()).delete(any());
+    verify(blockers, never()).deleteByConsultantIdAndSource(eq("deleted"), any());
+    assertThat(stored).containsKeys(ME, "deleted");
+    assertThat(stored.get("deleted")).isSameAs(deleted);
+    assertThat(deleted.getImportUrl()).isEqualTo("https://93.184.216.35/deleted-token.ics");
+    assertThat(deleted.getImportLastSyncAt()).isNull();
+    assertThat(stored.get(ME).getImportLastSyncAt()).isEqualTo(NOW);
+  }
+
+  @Test
+  void importAll_Should_ReadTheCalendarAgain_OnceTheDeletionIsCancelled() {
+    connect(ME, ADDRESS);
+    when(fetcher.fetch(any(), anyList())).thenReturn(CALENDAR);
+    doReturn(List.of()).when(consultants).findIdsNotDeletedAmong(any());
+    service.importAll();
+    verify(fetcher, never()).fetch(any(), anyList());
+
+    // Cancelling the deletion clears the delete date.
+    doReturn(List.of(ME)).when(consultants).findIdsNotDeletedAmong(any());
+    service.importAll();
+
+    verify(fetcher, times(1)).fetch(eq(URI.create(ADDRESS)), anyList());
+    assertThat(stored.get(ME).getImportLastSyncAt()).isEqualTo(NOW);
+  }
+
+  @Test
+  void importAll_Should_DropAConnectionWhoseCounsellorHasNoRow_WithoutReadingIt() {
+    var orphan = connect("orphan", "https://93.184.216.35/orphan-token.ics");
+    connect(ME, ADDRESS);
+    doReturn(List.of(ME)).when(consultants).findIdsAmong(any());
+    doReturn(List.of(ME)).when(consultants).findIdsNotDeletedAmong(any());
+    when(fetcher.fetch(any(), anyList())).thenReturn(CALENDAR);
+
+    service.importAll();
+
+    verify(fetcher, times(1)).fetch(eq(URI.create(ADDRESS)), anyList());
+    verify(syncs).delete(orphan);
+    verify(blockers).deleteByConsultantIdAndSource("orphan", Source.EXTERNAL);
+    assertThat(stored).containsOnlyKeys(ME);
+  }
+
+  @Test
+  void aRunThatUsesUpItsBudget_Should_Stop_And_TheNextRunStartsWithTheCalendarsItDidNotReach() {
+    var clock = new MovableClock(NOW);
+    var budgeted = serviceWith(clock);
+    for (var name : List.of("a", "b", "c")) {
+      connect(name, "https://93.184.216.34/" + name + ".ics");
+    }
+    var fetched = new ArrayList<String>();
+    when(fetcher.fetch(any(), anyList()))
+        .thenAnswer(
+            call -> {
+              fetched.add(call.<URI>getArgument(0).getPath());
+              clock.advance(Duration.ofMinutes(3));
+              return CALENDAR;
+            });
+
+    budgeted.startImportRun(clock.instant().plus(Duration.ofMinutes(4))).work();
+
+    // The third import would start after the budget.
+    assertThat(fetched).containsExactly("/a.ics", "/b.ics");
+    assertThat(stored.get("c").getImportLastSyncAt()).isNull();
+
+    fetched.clear();
+    budgeted.startImportRun(clock.instant().plus(Duration.ofMinutes(4))).work();
+
+    // Never synced first, then the least recently synced.
+    assertThat(fetched).containsExactly("/c.ics", "/a.ics");
+  }
+
+  @Test
   void anImportThatFinishesAfterTheAddressChanged_Should_BeDropped() {
     service.status();
     stored.get(ME).setImportUrl(ADDRESS);
@@ -333,5 +432,58 @@ class CalendarSyncServiceTest {
     assertThatThrownBy(() -> service.configureImport(new CalendarImportDTO().icsUrl(ADDRESS)))
         .isInstanceOf(ForbiddenException.class);
     assertThat(new ArrayList<>(stored.values())).isEmpty();
+  }
+
+  private CalendarSyncService serviceWith(Clock clock) {
+    return new CalendarSyncService(
+        caller,
+        syncs,
+        blockers,
+        consultants,
+        new CalendarFeedSigner("synthetic-secret"),
+        new CalendarImportUrlValidator(host -> new InetAddress[] {InetAddress.getByName(host)}),
+        fetcher,
+        new CalendarBusyParser(),
+        transactionManager,
+        clock,
+        "https://app.synthetic.oriso.test",
+        "Europe/Berlin");
+  }
+
+  private CalendarSync connect(String consultantId, String address) {
+    var sync = new CalendarSync();
+    sync.setConsultantId(consultantId);
+    sync.setImportUrl(address);
+    stored.put(consultantId, sync);
+    return sync;
+  }
+
+  /** A clock the test moves on, as the time an import takes. */
+  private static final class MovableClock extends Clock {
+
+    private Instant now;
+
+    MovableClock(Instant start) {
+      now = start;
+    }
+
+    void advance(Duration by) {
+      now = now.plus(by);
+    }
+
+    @Override
+    public Instant instant() {
+      return now;
+    }
+
+    @Override
+    public ZoneId getZone() {
+      return ZoneOffset.UTC;
+    }
+
+    @Override
+    public Clock withZone(ZoneId zone) {
+      return this;
+    }
   }
 }

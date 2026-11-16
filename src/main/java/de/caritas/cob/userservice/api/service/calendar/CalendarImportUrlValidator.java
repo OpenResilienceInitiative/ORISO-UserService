@@ -43,9 +43,11 @@ public class CalendarImportUrlValidator {
 
   /**
    * The address as a URI. {@code webcal://}, the scheme calendar apps hand out for subscriptions,
-   * reads as https.
+   * reads as https. What can be told from the text alone is checked here, so an address that could
+   * never be read is refused before it is stored: https only, and no user name or password in it.
    *
-   * @throws BadRequestException when the text is no URL with a scheme and a host
+   * @throws BadRequestException when the text is no URL with a host, not https or carries
+   *     credentials; the message never quotes the address
    */
   public URI parse(String raw) {
     if (raw == null || raw.isBlank() || raw.trim().length() > MAX_LENGTH) {
@@ -63,6 +65,14 @@ public class CalendarImportUrlValidator {
       if (uri.getScheme() == null || uri.getHost() == null || uri.getHost().isBlank()) {
         throw new BadRequestException("The calendar address is not a URL.");
       }
+      if (!"https".equalsIgnoreCase(uri.getScheme())) {
+        throw new BadRequestException(
+            "The calendar address must start with https:// or webcal://.");
+      }
+      if (uri.getRawUserInfo() != null) {
+        throw new BadRequestException(
+            "The calendar address must not contain a user name or password.");
+      }
       return uri;
     } catch (URISyntaxException invalid) {
       throw new BadRequestException("The calendar address is not a URL.");
@@ -70,7 +80,8 @@ public class CalendarImportUrlValidator {
   }
 
   /**
-   * The public addresses of the host.
+   * The public addresses of the host. The scheme and the credentials are checked again, for an
+   * address that reached the database some other way than {@link #parse}.
    *
    * @throws CalendarImportException {@code INVALID_URL} unless plain https without credentials,
    *     {@code UNREACHABLE} when the host has no address, {@code FORBIDDEN_ADDRESS} when one of its
