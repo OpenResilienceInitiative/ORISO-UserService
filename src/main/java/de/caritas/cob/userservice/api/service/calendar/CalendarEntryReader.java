@@ -80,6 +80,13 @@ class CalendarEntryReader {
         .toList();
   }
 
+  /** One appointment as a counsellor's own calendar shows it; title = asker. */
+  CalendarEntry appointmentOfConsultant(SessionAppointment appointment) {
+    return appointment(
+        appointment,
+        usernameTranscoder.decodeUsername(appointment.getSession().getUser().getUsername()));
+  }
+
   /** Scheduled appointments of the asker's sessions; title = the counsellor's public name. */
   List<CalendarEntry> appointmentsOfAsker(String userId, Instant from, Instant to) {
     return complete(

@@ -7,12 +7,16 @@ import de.caritas.cob.userservice.api.adapters.web.dto.BlockerTimeDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarColleaguesDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarEntryDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarImportDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.CalendarMoveProposalCreateDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.CalendarMoveProposalDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.CalendarMoveProposalsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarSyncDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarWorkingDayExceptionDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarWorkingDayExceptionWindowsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarWorkingHoursDTO;
 import de.caritas.cob.userservice.api.service.calendar.CalendarBlockerService;
 import de.caritas.cob.userservice.api.service.calendar.CalendarFeedService;
+import de.caritas.cob.userservice.api.service.calendar.CalendarMoveProposalService;
 import de.caritas.cob.userservice.api.service.calendar.CalendarService;
 import de.caritas.cob.userservice.api.service.calendar.CalendarSyncService;
 import de.caritas.cob.userservice.api.service.calendar.CalendarWorkingHoursService;
@@ -30,7 +34,10 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
 
-/** The counsellor calendar (ADR-032, ORISO-UserService#1000 and #1645, addenda v1.1 and v1.2). */
+/**
+ * The counsellor calendar (ADR-032, ORISO-UserService#1000 and #1645, addenda v1.1 and v1.2, move
+ * proposals v1).
+ */
 @RestController
 @RequiredArgsConstructor
 @Api(tags = "calendar-controller")
@@ -43,6 +50,7 @@ public class CalendarController implements UsersApi {
   private final CalendarSyncService sync;
   private final CalendarFeedService feed;
   private final CalendarWorkingHoursService workingHours;
+  private final CalendarMoveProposalService proposals;
 
   @Override
   public ResponseEntity<List<CalendarEntryDTO>> getCalendarEntries(
@@ -117,6 +125,34 @@ public class CalendarController implements UsersApi {
   @Override
   public ResponseEntity<Void> deleteCalendarWorkingDayException(LocalDate date) {
     workingHours.removeException(date);
+    return ResponseEntity.noContent().build();
+  }
+
+  @Override
+  public ResponseEntity<CalendarMoveProposalsDTO> getCalendarMoveProposals() {
+    return ResponseEntity.ok(proposals.open());
+  }
+
+  @Override
+  public ResponseEntity<CalendarMoveProposalDTO> createCalendarMoveProposal(
+      CalendarMoveProposalCreateDTO request) {
+    return new ResponseEntity<>(proposals.create(request), HttpStatus.CREATED);
+  }
+
+  @Override
+  public ResponseEntity<Void> withdrawCalendarMoveProposal(UUID proposalId) {
+    proposals.withdraw(proposalId);
+    return ResponseEntity.noContent().build();
+  }
+
+  @Override
+  public ResponseEntity<CalendarEntryDTO> acceptCalendarMoveProposal(UUID proposalId) {
+    return ResponseEntity.ok(proposals.accept(proposalId));
+  }
+
+  @Override
+  public ResponseEntity<Void> declineCalendarMoveProposal(UUID proposalId) {
+    proposals.decline(proposalId);
     return ResponseEntity.noContent().build();
   }
 

@@ -26,6 +26,14 @@ public interface SessionAppointmentRepository extends CrudRepository<SessionAppo
   Optional<SessionAppointment> findOfSessionForUpdate(
       @Param("id") UUID id, @Param("sessionId") Long sessionId);
 
+  /**
+   * Locked like {@link #findOfSessionForUpdate}, by the appointment alone: a move proposal
+   * (ADR-032) names only the appointment. The session is not locked with it.
+   */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("SELECT a FROM SessionAppointment a WHERE a.id = :id")
+  Optional<SessionAppointment> findByIdForUpdate(@Param("id") UUID id);
+
   @Query(
       "SELECT a FROM SessionAppointment a JOIN FETCH a.session s JOIN FETCH s.user "
           + "WHERE (s.consultant.id = :consultantId OR s.id IN :coAccessSessionIds) "

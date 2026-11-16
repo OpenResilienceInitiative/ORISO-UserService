@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.CalendarBlockerRepository;
+import de.caritas.cob.userservice.api.port.out.CalendarMoveProposalRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarSyncRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarWorkingDayExceptionRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarWorkingHoursRepository;
@@ -32,6 +33,7 @@ class DeleteConsultantCalendarActionTest {
   @Mock private CalendarWorkingHoursRepository calendarWorkingHoursRepository;
   @Mock private CalendarWorkingDayExceptionRepository calendarWorkingDayExceptionRepository;
   @Mock private CalendarWorkingHoursSettingRepository calendarWorkingHoursSettingRepository;
+  @Mock private CalendarMoveProposalRepository calendarMoveProposalRepository;
   @Mock private PlatformTransactionManager transactionManager;
 
   private DeleteConsultantCalendarAction action;
@@ -45,6 +47,7 @@ class DeleteConsultantCalendarActionTest {
             calendarWorkingHoursRepository,
             calendarWorkingDayExceptionRepository,
             calendarWorkingHoursSettingRepository,
+            calendarMoveProposalRepository,
             transactionManager);
   }
 
@@ -59,8 +62,23 @@ class DeleteConsultantCalendarActionTest {
     verify(calendarWorkingHoursRepository).deleteByConsultantId(CONSULTANT_ID);
     verify(calendarWorkingDayExceptionRepository).deleteByConsultantId(CONSULTANT_ID);
     verify(calendarWorkingHoursSettingRepository).deleteByConsultantId(CONSULTANT_ID);
+    // Proposals they made and proposals they were asked to decide: one query covers both roles.
+    verify(calendarMoveProposalRepository).deleteByConsultantId(CONSULTANT_ID);
     verify(transactionManager).commit(any());
     assertThat(workflow.getDeletionWorkflowErrors()).isEmpty();
+  }
+
+  @Test
+  void execute_Should_RollBackEveryCalendarRow_When_TheProposalsCannotBeDeleted() {
+    var workflow = workflow();
+    doThrow(new IllegalStateException("db down"))
+        .when(calendarMoveProposalRepository)
+        .deleteByConsultantId(CONSULTANT_ID);
+
+    action.execute(workflow);
+
+    verify(transactionManager).rollback(any());
+    assertThat(workflow.getDeletionWorkflowErrors()).hasSize(1);
   }
 
   @Test
