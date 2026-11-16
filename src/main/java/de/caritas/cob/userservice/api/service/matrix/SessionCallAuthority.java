@@ -49,7 +49,24 @@ public class SessionCallAuthority {
         .filter(consultant -> tenantId.equals(consultant.getTenantId()))
         .filter(consultant -> matrixId.equals(consultant.getMatrixUserId()))
         .filter(consultant -> isActive(consultant.getId()))
+        // CodeRabbit 4585785683: the same unique-identity rule as the media gate. A Matrix id that
+        // another not deleted account of the Träger also holds stands for nobody (SoleCounsellor),
+        // so it never opens a call to guests the gate would then refuse.
+        .filter(
+            consultant -> SoleCounsellor.is(consultants, matrixId, tenantId, consultant.getId()))
         .isPresent();
+  }
+
+  /**
+   * CodeRabbit 4585785672: locks the binding's session and re-reads it, so the authority check that
+   * follows reads a reassignment that committed meanwhile, not the transaction's snapshot. Call
+   * with the binding locked (lock order: binding, then session). Nothing for a group chat's
+   * binding.
+   */
+  public void lockSessionOf(MatrixCallBinding binding) {
+    if (binding != null && binding.getSessionId() != null) {
+      sessions.lockFresh(binding.getSessionId());
+    }
   }
 
   private boolean isActive(String identityId) {

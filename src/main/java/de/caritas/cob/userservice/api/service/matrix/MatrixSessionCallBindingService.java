@@ -12,7 +12,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -456,23 +455,33 @@ public class MatrixSessionCallBindingService {
         .filter(value -> !blank(value.getMatrixUserId(), 255));
   }
 
-  /** The other people of this session, from live membership, as the invite path does. */
+  /**
+   * The other people of this session, from live membership, as the invite path does. CodeRabbit
+   * 4585785768/4585785779: one query per table for the whole room, not up to two per member, and
+   * with the invite path's identity rule: only rows of the session's tenant count, and a Matrix id
+   * held by more than one not deleted account of the tenant stands for nobody (SoleCounsellor; fail
+   * closed). The single-row finders threw on such an id, which aborted the registration.
+   */
   private Set<String> invitees(List<String> members, String caller, Long tenantId) {
-    return members.stream()
-        .filter(member -> !member.equals(caller))
-        .filter(member -> isTenantPerson(member, tenantId))
-        .collect(Collectors.toSet());
-  }
-
-  private boolean isTenantPerson(String matrixId, Long tenantId) {
-    return users
-            .findByMatrixUserIdAndDeleteDateIsNull(matrixId)
-            .filter(value -> Objects.equals(value.getTenantId(), tenantId))
-            .isPresent()
-        || consultants
-            .findByMatrixUserIdAndDeleteDateIsNull(matrixId)
-            .filter(value -> Objects.equals(value.getTenantId(), tenantId))
-            .isPresent();
+    var others = new java.util.LinkedHashSet<String>();
+    for (String member : members) if (member != null && !member.equals(caller)) others.add(member);
+    if (others.isEmpty() || tenantId == null) return Set.of();
+    var askerRows = new java.util.HashMap<String, Integer>();
+    for (var user : users.findAllByMatrixUserIdInAndDeleteDateIsNull(others)) {
+      if (user == null
+          || !Objects.equals(user.getTenantId(), tenantId)
+          || !others.contains(user.getMatrixUserId())) continue;
+      askerRows.merge(user.getMatrixUserId(), 1, Integer::sum);
+    }
+    var result = new java.util.HashSet<String>();
+    askerRows.forEach(
+        (matrixId, rows) -> {
+          if (rows == 1) result.add(matrixId);
+        });
+    var rest = new java.util.LinkedHashSet<>(others);
+    rest.removeAll(askerRows.keySet());
+    if (!rest.isEmpty()) result.addAll(SoleCounsellor.allOf(consultants, rest, tenantId).keySet());
+    return result;
   }
 
   /**

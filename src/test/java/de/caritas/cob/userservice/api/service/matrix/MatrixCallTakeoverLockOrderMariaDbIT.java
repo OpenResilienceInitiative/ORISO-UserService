@@ -120,6 +120,7 @@ class MatrixCallTakeoverLockOrderMariaDbIT {
   @MockitoBean private EventNotificationService notifications;
   @MockitoBean private AccountInactivityService accountLifecycle;
   @MockitoSpyBean private MatrixCallGuestService callGuests;
+  @MockitoSpyBean private MatrixCallConversationResolver conversations;
 
   private String source;
   private String askerMedia;
@@ -277,6 +278,83 @@ class MatrixCallTakeoverLockOrderMariaDbIT {
             Integer.class,
             source,
             actorMatrixId);
+  }
+
+  /**
+   * CodeRabbit 4585785816: an overlapping schedule. The takeover is paused while it holds the
+   * binding lock and is about to take the session lock; the end, which locks the binding first,
+   * must then wait on the binding row. A takeover that took the session first would hold nothing
+   * there (the end would not wait) or, swapped the other way, hold the session the end needs next
+   * (deadlock). The post-commit case above keeps checking the state after both committed.
+   */
+  @Test
+  void anEndOverlappingTheTakeOversLockAcquisitionWaitsOnTheBinding() throws Exception {
+    var other =
+        runWhileTheTakeOverHoldsOnlyItsFirstLock(() -> observations.end(actor, source, "call"));
+    assertThat(other).isEqualTo(MatrixCallObservationService.Outcome.OK);
+    var binding = bindings.findBySourceRoomIdAndCallId(source, "call").orElseThrow();
+    assertThat(binding.getMediaRoomId()).isEqualTo(counsellorMedia);
+    assertThat(binding.getEndedAt()).isNotNull();
+  }
+
+  @Test
+  void theLifecycleOverlappingTheTakeOversLockAcquisitionWaitsOnTheBinding() throws Exception {
+    var other =
+        runWhileTheTakeOverHoldsOnlyItsFirstLock(() -> lifecycle.handleRoom(askerMedia, Map.of()));
+    assertThat(other).isEqualTo(false);
+  }
+
+  /**
+   * Pauses bind's write transaction right before it takes the session's call lock, so it holds the
+   * binding lock only, then runs {@code concurrent}. The concurrent operation must block on the
+   * binding row; released, both finish without an InnoDB deadlock.
+   */
+  private <T> T runWhileTheTakeOverHoldsOnlyItsFirstLock(
+      java.util.concurrent.Callable<T> concurrent) throws Exception {
+    long deadlocksBefore = deadlocks();
+    var between = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    var paused = new AtomicBoolean();
+    var bindThread = new java.util.concurrent.atomic.AtomicReference<Thread>();
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              if (Thread.currentThread() == bindThread.get()
+                  && TransactionSynchronizationManager.isActualTransactionActive()
+                  && paused.compareAndSet(false, true)) {
+                between.countDown();
+                release.await(20, TimeUnit.SECONDS);
+              }
+              return invocation.callRealMethod();
+            })
+        .when(conversations)
+        .lockCurrentForWriting(org.mockito.ArgumentMatchers.any());
+    var pool = Executors.newFixedThreadPool(2);
+    var otherThread = new java.util.concurrent.atomic.AtomicReference<Thread>();
+    try (var connections =
+        MariaDbLockWaits.TransactionConnections.watch(transactionManager, dataSource)) {
+      Future<Boolean> bound =
+          pool.submit(
+              () -> {
+                bindThread.set(Thread.currentThread());
+                return sessionBindings.bind(actor, source, "call", counsellorMedia, true);
+              });
+      assertThat(between.await(15, TimeUnit.SECONDS)).isTrue();
+      Future<T> other =
+          pool.submit(
+              () -> {
+                otherThread.set(Thread.currentThread());
+                return concurrent.call();
+              });
+      MariaDbLockWaits.awaitLockWait(DATABASE, connections.of(otherThread), "matrix_call_binding");
+      release.countDown();
+      assertThat(bound.get(30, TimeUnit.SECONDS)).isTrue();
+      T result = other.get(30, TimeUnit.SECONDS);
+      assertThat(deadlocks()).as("InnoDB deadlocks").isEqualTo(deadlocksBefore);
+      return result;
+    } finally {
+      release.countDown();
+      pool.shutdownNow();
+    }
   }
 
   /**

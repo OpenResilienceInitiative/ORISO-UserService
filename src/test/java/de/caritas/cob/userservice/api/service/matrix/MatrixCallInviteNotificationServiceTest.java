@@ -351,21 +351,46 @@ class MatrixCallInviteNotificationServiceTest {
               }
               return true;
             });
-    var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+    var failures = new java.util.concurrent.ConcurrentLinkedQueue<Throwable>();
+    Runnable pass =
+        () -> {
+          try {
+            service.handleMediaRooms(Map.of(HEALTHY, roomData));
+          } catch (Throwable failure) {
+            failures.add(failure);
+          }
+        };
+    var first = new Thread(pass, "first-pass");
+    var second = new Thread(pass, "second-pass");
     try {
-      var first = pool.submit(() -> service.handleMediaRooms(Map.of(HEALTHY, roomData)));
+      first.start();
       assertThat(firstInside.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-      var second = pool.submit(() -> service.handleMediaRooms(Map.of(HEALTHY, roomData)));
-      Thread.sleep(300);
+      second.start();
+      // CodeRabbit 4585785802: no sleep. Wait, bounded, until the second pass either overlaps the
+      // first or is blocked on a monitor the first pass holds (the pass lock).
+      var threads = java.lang.management.ManagementFactory.getThreadMXBean();
+      long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+      boolean blockedByFirst = false;
+      while (!overlapped.get() && !blockedByFirst && System.nanoTime() < deadline) {
+        var info = threads.getThreadInfo(second.getId());
+        blockedByFirst =
+            info != null
+                && info.getThreadState() == Thread.State.BLOCKED
+                && info.getLockOwnerId() == first.getId();
+        if (!blockedByFirst) Thread.onSpinWait();
+      }
       assertThat(overlapped).as("the second pass waits for the first").isFalse();
+      assertThat(blockedByFirst).as("the second pass blocks on the first pass's lock").isTrue();
       releaseFirst.countDown();
-      first.get(5, java.util.concurrent.TimeUnit.SECONDS);
-      second.get(5, java.util.concurrent.TimeUnit.SECONDS);
+      first.join(5_000);
+      second.join(5_000);
+      assertThat(failures).isEmpty();
       assertThat(overlapped).isFalse();
       verify(lifecycle, org.mockito.Mockito.times(2)).handleRoom(HEALTHY, roomData);
     } finally {
       releaseFirst.countDown();
-      pool.shutdownNow();
+      first.join(5_000);
+      second.join(5_000);
     }
   }
 }

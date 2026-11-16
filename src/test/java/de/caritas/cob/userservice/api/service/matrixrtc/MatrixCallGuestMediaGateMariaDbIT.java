@@ -561,6 +561,10 @@ class MatrixCallGuestMediaGateMariaDbIT {
     try {
       reconciler.reconcileMediaRooms();
 
+      assertThat(poisonFailures.get()).as("the poison room's pass did fail").isPositive();
+      assertThat(bindings.findByMediaRoomId(poisonMedia).orElseThrow().getEndedAt())
+          .as("its failed pass was rolled back")
+          .isNull();
       assertThat(bindings.findById(bindingId).orElseThrow().getEndedAt())
           .as("the expiry loop still reaches the call after the poison room")
           .isNotNull();
@@ -589,14 +593,26 @@ class MatrixCallGuestMediaGateMariaDbIT {
             org.mockito.ArgumentMatchers.any()))
         .thenReturn(Map.of("next_batch", "batch-after-poison", "rooms", Map.of("join", joined)));
     try {
-      org.assertj.core.api.Assertions.assertThatCode(
-              () -> ReflectionTestUtils.invokeMethod(listener, "executeObservedMatrixSyncCycle"))
-          .doesNotThrowAnyException();
-
-      org.mockito.Mockito.verify(cursor).write("batch-after-poison");
+      // Round 11: a failing room holds the batch for at most LIVE_ROOM_RETRIES replays; the room
+      // after it is handled in every one of them.
+      for (int replay = 0; replay < MatrixCallInviteNotificationService.LIVE_ROOM_RETRIES; replay++)
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> syncCycle(listener))
+            .isInstanceOf(MatrixCallInviteNotificationService.CallRoomBatchReplay.class);
+      assertThat(poisonFailures.get())
+          .as("the poison room's pass did fail in each replay")
+          .isGreaterThanOrEqualTo(MatrixCallInviteNotificationService.LIVE_ROOM_RETRIES);
       assertThat(bindings.findById(bindingId).orElseThrow().getMediaObservedAt())
           .as("the call room after the poison room is handled from this batch")
           .isGreaterThanOrEqualTo(before);
+      org.mockito.Mockito.verify(cursor, org.mockito.Mockito.never()).write(anyString());
+
+      org.assertj.core.api.Assertions.assertThatCode(() -> syncCycle(listener))
+          .doesNotThrowAnyException();
+
+      org.mockito.Mockito.verify(cursor).write("batch-after-poison");
+      assertThat(bindings.findByMediaRoomId(poisonMedia).orElseThrow().getMediaObservedAt())
+          .as("the room that kept failing is marked unobserved")
+          .isNull();
     } finally {
       softDelete(twins);
     }
@@ -649,6 +665,7 @@ class MatrixCallGuestMediaGateMariaDbIT {
   private List<String> poisonRoomThatRanOut() {
     String suffix = UUID.randomUUID().toString().substring(0, 8);
     String shared = "@gate-twin-" + suffix + ":example";
+    String poisoned = "@gate-poison-" + suffix + ":example";
     poisonMedia = "!0-a-poison-" + suffix + ":example";
     long now = System.currentTimeMillis();
     String caller = counsellor.getMatrixUserId();
@@ -671,12 +688,29 @@ class MatrixCallGuestMediaGateMariaDbIT {
                       .build();
               binding.getDevices().put("_" + caller + "_C", device(caller, now - 10_000));
               binding.getDevices().put("_" + shared + "_T", device(shared, now - 10_000));
+              binding.getDevices().put("_" + poisoned + "_P", device(poisoned, now - 10_000));
               bindings.save(binding);
+              String poisonId = consultants.save(consultantOfTenant(7L, poisoned)).getId();
+              // CodeRabbit 4585785859: the ambiguous id no longer throws (it resolves to nobody),
+              // so the room's pass is made to fail on purpose: the account check of a counsellor
+              // only this room holds throws. Only the poison room's pass reaches it.
+              when(accountLifecycle.snapshot(poisonId))
+                  .thenAnswer(
+                      ignored -> {
+                        poisonFailures.incrementAndGet();
+                        throw new org.springframework.dao.TransientDataAccessResourceException(
+                            "poison room");
+                      });
               return List.of(
                   consultants.save(consultantOfTenant(7L, shared)).getId(),
-                  consultants.save(consultantOfTenant(7L, shared)).getId());
+                  consultants.save(consultantOfTenant(7L, shared)).getId(),
+                  poisonId);
             });
   }
+
+  /** How often the poison room's pass hit its injected failure. */
+  private final java.util.concurrent.atomic.AtomicInteger poisonFailures =
+      new java.util.concurrent.atomic.AtomicInteger();
 
   private void expireAllMemberships(Long binding) {
     new JdbcTemplate(dataSource)

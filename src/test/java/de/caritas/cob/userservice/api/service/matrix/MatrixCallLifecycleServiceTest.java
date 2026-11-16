@@ -134,6 +134,26 @@ class MatrixCallLifecycleServiceTest {
     assertThat(binding.getDevices().get(VICTIM_KEY).getExpiresAt()).isLessThan(victimExpiry);
   }
 
+  @org.junit.jupiter.api.Test
+  void aBatchWithMembershipEventsFailsWhenTheConversationMembersAreUnknown() {
+    // CodeRabbit 4585785745: a definitive Synapse error answers "unknown" (empty). The departure in
+    // the batch must not be dropped as handled: the pass fails, so the batch replay bound applies.
+    when(matrix.getCallRoomMembers(SOURCE)).thenReturn(Optional.empty());
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> lifecycle.handleRoom(MEDIA, batch(shortening(VICTIM, VICTIM_KEY, true))))
+        .isInstanceOf(MatrixCallLifecycleService.CallRoomMembersUnknown.class);
+    assertVictimStillPresent(VICTIM_KEY);
+  }
+
+  @org.junit.jupiter.api.Test
+  void anEventlessPassWithUnknownMembersStillCompletes() {
+    // The reconcile sweeps pass no events; nothing can be dropped there, so they keep returning.
+    when(matrix.getCallRoomMembers(SOURCE)).thenReturn(Optional.empty());
+
+    assertThat(lifecycle.handleRoom(MEDIA, Map.of())).isTrue();
+  }
+
   private void assertVictimStillPresent(String key) {
     var device = binding.getDevices().get(key);
     assertThat(device.getSenderMatrixId()).isEqualTo(VICTIM);
