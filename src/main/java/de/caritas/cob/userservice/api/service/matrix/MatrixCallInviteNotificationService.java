@@ -53,9 +53,26 @@ public class MatrixCallInviteNotificationService {
    * failing rooms than the per-room count tracks cannot keep the batch unacknowledged forever.
    * Round 11 (F1): the marker also caps the room's memberships (see {@link
    * MatrixCallLifecycleService#loseBatch}).
+   *
+   * <p>#1656, threading: the replay count and the per-room failure counts describe one stream of
+   * sync batches. The Matrix sync loop is their only caller and runs on one thread; a pass holds
+   * {@link #batchLock} so that a second caller waits instead of sharing the counts. Both counts
+   * live in memory: a restart (or another pod) starts again at zero, so the same batch can be
+   * replayed up to {@link #LIVE_ROOM_RETRIES} more times after each restart. That delays
+   * acknowledging the batch (liveness); once the bound is reached, the failing rooms are marked
+   * unobserved and their presence is capped as before (fail closed).
    */
-  @SuppressWarnings("unchecked")
   public void handleMediaRooms(Map<String, Object> joinedRooms) {
+    synchronized (batchLock) {
+      handleMediaRoomsOfOneBatch(joinedRooms);
+    }
+  }
+
+  /** Guards {@link #replaysOfThisBatch} and {@link #liveRoomFailures} (#1656). */
+  private final Object batchLock = new Object();
+
+  @SuppressWarnings("unchecked")
+  private void handleMediaRoomsOfOneBatch(Map<String, Object> joinedRooms) {
     var known = callBindings.knownMediaRooms(joinedRooms.keySet());
     boolean exhausted = replaysOfThisBatch >= LIVE_ROOM_RETRIES;
     boolean replay = false;
@@ -87,10 +104,13 @@ public class MatrixCallInviteNotificationService {
     replaysOfThisBatch = 0;
   }
 
-  /** How often the current batch was replayed in a row; written by the sync worker only. */
+  /**
+   * How often the current batch was replayed in a row. Guarded by {@link #batchLock}; in memory, so
+   * it restarts at zero with the pod (#1656).
+   */
   private int replaysOfThisBatch;
 
-  /** Consecutive live pass failures per room; bounded, written by the sync worker only. */
+  /** Consecutive live pass failures per room; bounded, guarded by {@link #batchLock}. */
   private final Map<String, Integer> liveRoomFailures =
       java.util.Collections.synchronizedMap(
           new java.util.LinkedHashMap<>() {
