@@ -105,6 +105,15 @@ class LiveChatFurtherCounsellingGateTest {
   }
 
   @Test
+  void registeredLiveChatIsGatedByItsModality() {
+    liveChat.setRegistrationType(RegistrationType.REGISTERED);
+    when(lookup.findEffectiveSettings(AGENCY_ID, TENANT_ID))
+        .thenReturn(Optional.of(new Settings().featureLiveChatFurtherCounsellingEnabled(false)));
+
+    assertFeatureDisabled();
+  }
+
+  @Test
   void liveChatWithoutAgencyIsRefused() {
     liveChat.setAgencyId(null);
 
