@@ -227,6 +227,25 @@
     </rollback>
   </changeSet>
 
+  <!-- FE#2252: without a consent text of the advice centre the platform text counts, as for askers
+       today. The member then agreed without a version: consent_given marks it. No timestamp and no
+       actor beside it (ADR-022). Own changeSet and guard, like the one above. -->
+  <changeSet id="20261116-direct-invitation-member-consent-given-2252" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <columnExists tableName="direct_invitation_member" columnName="consent_given"/>
+      </not>
+    </preConditions>
+    <addColumn tableName="direct_invitation_member">
+      <column name="consent_given" type="BOOLEAN" defaultValueBoolean="false">
+        <constraints nullable="false"/>
+      </column>
+    </addColumn>
+    <rollback>
+      <dropColumn tableName="direct_invitation_member" columnName="consent_given"/>
+    </rollback>
+  </changeSet>
+
   <!-- Every token "Neuen Link senden" replaced, not only the last one: an older link still reads
        as expired and still asks for a new one. Same check and single creation as the member
        table. -->

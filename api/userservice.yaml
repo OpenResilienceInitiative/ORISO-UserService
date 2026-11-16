@@ -1081,13 +1081,13 @@ paths:
         204:
           description: NO CONTENT - successful operation
         400:
-          description: BAD REQUEST - no legal version supplied
+          description: BAD REQUEST - the session's own help-seeker supplied no legal version
         401:
           description: UNAUTHORIZED - no/invalid Keycloak token
         403:
           description: FORBIDDEN - no/invalid role/authorization or CSRF token, or the session
-            does not belong to the authenticated help-seeker and they are no member of its shared
-            appointment conversation (ORISO-Frontend#2252, where each member agrees for themselves)
+            does not belong to the authenticated help-seeker and they are no confirmed invitation
+            member of it (ORISO-Frontend#2252, where each member agrees for themselves)
         404:
           description: NOT FOUND - session not found
         409:
@@ -4035,7 +4035,7 @@ components:
           description: True when the conversation is shared by everybody who opened the invitation (ORISO-Frontend#2252)
         consentRequired:
           type: boolean
-          description: 'Shared appointment conversations only (ORISO-Frontend#2252): true while this person has not passed the consent gate (ADR-022) themselves. Each person agrees on their own; the owner''s consent does not count for anybody else. Record it with PUT /users/sessions/{sessionId}/consent.'
+          description: 'Appointment invitations only (ORISO-Frontend#2252), for the shared conversation and for an existing 1:1 alike: true while this person has not passed the consent gate (ADR-022) themselves. Each person agrees on their own; the owner''s consent does not count for anybody else. Record it with PUT /users/sessions/{sessionId}/consent; legalVersionId may be left out when the advice centre has no consent text of its own.'
         callOpensAt:
           type: string
           format: date-time
@@ -4610,8 +4610,6 @@ components:
 
     SessionConsentDTO:
       type: object
-      required:
-        - legalVersionId
       properties:
         legalVersionId:
           type: integer
@@ -4620,7 +4618,10 @@ components:
           description: >-
             The legal-text version the help-seeker agreed to, as published by ORISO-AgencyService.
             A public document version - no personal data. Stored as a pointer that is overwritten
-            on re-consent (ADR-022 decision 2); no consent log is kept.
+            on re-consent (ADR-022 decision 2); no consent log is kept. Required for the session's
+            own help-seeker (400 without it). A confirmed invitation member (ORISO-Frontend#2252)
+            may leave it out or send null when the advice centre has no consent text of its own:
+            agreeing to the platform text then counts and is stored as "agreed, no version".
 
     SessionAttachmentDTO:
       type: object

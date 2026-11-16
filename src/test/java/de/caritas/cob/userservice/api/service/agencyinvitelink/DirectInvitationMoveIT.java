@@ -89,6 +89,7 @@ class DirectInvitationMoveIT {
   @MockitoBean private EventNotificationService notifications;
   @MockitoBean private MatrixSessionSystemMessageService systemMessages;
   @MockitoBean private SessionArchiveService archive;
+  @MockitoBean private de.caritas.cob.userservice.api.port.out.UserRepository users;
 
   private TransactionTemplate tx;
   private Consultant owner;
@@ -98,7 +99,9 @@ class DirectInvitationMoveIT {
   private Long openId;
   private Long memberId;
 
-  /** Runs after every locking read of an invitation; set by the concurrency test. */
+  /** Run before and after every locking read of an invitation; set by the concurrency test. */
+  private static volatile Runnable beforeLockingRead = () -> {};
+
   private static volatile Runnable afterLockingRead = () -> {};
 
   @TestConfiguration
@@ -122,6 +125,9 @@ class DirectInvitationMoveIT {
               new Class<?>[] {AgencyInviteLinkRepository.class},
               (proxy, method, args) -> {
                 Object result;
+                if (method.getName().endsWith("ForUpdate")) {
+                  beforeLockingRead.run();
+                }
                 try {
                   result = method.invoke(repository, args);
                 } catch (java.lang.reflect.InvocationTargetException e) {
@@ -189,6 +195,7 @@ class DirectInvitationMoveIT {
 
   @AfterEach
   void removeCommittedRows() {
+    beforeLockingRead = () -> {};
     afterLockingRead = () -> {};
     tx.executeWithoutResult(
         status -> {
@@ -203,6 +210,13 @@ class DirectInvitationMoveIT {
   @Test
   void move_Should_EndAnOverdueInvitation_AndCommitItsRevocation() {
     var start = LocalDateTime.now(ZoneOffset.UTC).plusDays(1).withNano(0);
+    var guest = new User();
+    guest.setUserId("move-guest");
+    guest.setMatrixUserId("@move-guest:oriso");
+    org.mockito.Mockito.when(users.findById("move-guest")).thenReturn(java.util.Optional.of(guest));
+    org.mockito.Mockito.when(
+            rooms.remove(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(true);
 
     directLinks.update(owner, openId, move(start));
 
@@ -213,6 +227,10 @@ class DirectInvitationMoveIT {
     assertThat(open.getStatus()).isEqualTo(InviteLinkStatus.ACTIVE.name());
     assertThat(open.getExpiresAt()).isEqualTo(start.plusHours(1).plusMinutes(600));
     assertThat(member.getRemovedAt()).as("the revocation is committed").isNotNull();
+    org.mockito.Mockito.verify(rooms)
+        .remove(
+            org.mockito.ArgumentMatchers.argThat(session -> sessionId.equals(session.getId())),
+            org.mockito.ArgumentMatchers.eq("@move-guest:oriso"));
   }
 
   /**
@@ -228,11 +246,23 @@ class DirectInvitationMoveIT {
     var holding = new CountDownLatch(1);
     var release = new CountDownLatch(1);
     var heldOnce = new java.util.concurrent.atomic.AtomicBoolean();
+    var holder = new java.util.concurrent.atomic.AtomicInteger();
+    var waiter = new java.util.concurrent.atomic.AtomicInteger();
+    var secondAsks = new CountDownLatch(1);
     afterLockingRead =
         () -> {
           if (heldOnce.compareAndSet(false, true)) {
+            holder.set(LockWaits.currentSession(dataSource));
             holding.countDown();
             await(release);
+          }
+        };
+    // Set once the first move is held: the next locking read is the second move's first one.
+    beforeLockingRead =
+        () -> {
+          if (heldOnce.get() && secondAsks.getCount() > 0) {
+            waiter.set(LockWaits.currentSession(dataSource));
+            secondAsks.countDown();
           }
         };
     var firstMove =
@@ -243,7 +273,10 @@ class DirectInvitationMoveIT {
 
     var secondMove =
         CompletableFuture.runAsync(() -> directLinks.update(owner, openId, move(second)));
-    LockWaits.awaitALockWait(dataSource);
+    assertThat(secondAsks.await(10, TimeUnit.SECONDS))
+        .as("the second move reached its locking read")
+        .isTrue();
+    LockWaits.awaitBlockedBy(dataSource, waiter.get(), holder.get());
     assertThat(secondMove).as("waits for the first move's locks").isNotDone();
     release.countDown();
     firstMove.get(10, TimeUnit.SECONDS);

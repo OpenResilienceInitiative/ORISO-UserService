@@ -128,6 +128,8 @@ class DirectInvitationRenewalLockIT {
 
     var locked = new CountDownLatch(1);
     var release = new CountDownLatch(1);
+    var holder = new java.util.concurrent.atomic.AtomicInteger();
+    var waiter = new java.util.concurrent.atomic.AtomicInteger();
     // The other renewal: holds the row lock, writes its token, commits when released.
     var other =
         CompletableFuture.runAsync(
@@ -138,6 +140,7 @@ class DirectInvitationRenewalLockIT {
                       row.getReplacedTokens().add(row.getToken());
                       row.setToken("token-of-the-other-renewal");
                       links.save(row);
+                      holder.set(LockWaits.currentSession(dataSource));
                       locked.countDown();
                       await(release);
                     }));
@@ -147,14 +150,18 @@ class DirectInvitationRenewalLockIT {
     owner.setId(OWNER_ID);
     var asksForTheLock = new CountDownLatch(1);
     // Set after the other renewal took the lock: only the second renewal gets here.
-    onLockingRead = asksForTheLock::countDown;
+    onLockingRead =
+        () -> {
+          waiter.set(LockWaits.currentSession(dataSource));
+          asksForTheLock.countDown();
+        };
     // This renewal starts while the lock is held; it must wait and then see the other token.
     var renewal = CompletableFuture.supplyAsync(() -> invitations.renew(owner, linkId, null));
     assertThat(asksForTheLock.await(10, TimeUnit.SECONDS))
         .as("the second renewal reached its locking read while the first one holds the row")
         .isTrue();
-    // The database itself reports the wait: the locking query runs and waits for the other lock.
-    LockWaits.awaitALockWait(dataSource);
+    // The database itself reports the wait: this renewal's session, blocked by the other one's.
+    LockWaits.awaitBlockedBy(dataSource, waiter.get(), holder.get());
     assertThat(renewal).as("it waits for the other renewal's lock").isNotDone();
     release.countDown();
     other.get(10, TimeUnit.SECONDS);

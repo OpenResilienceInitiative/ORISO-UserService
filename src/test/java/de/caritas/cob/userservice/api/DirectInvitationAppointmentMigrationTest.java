@@ -212,17 +212,20 @@ class DirectInvitationAppointmentMigrationTest {
         try (var sql = c.createStatement()) {
           sql.execute(
               "ALTER TABLE direct_invitation_member DROP COLUMN consented_legal_version_id");
+          sql.execute("ALTER TABLE direct_invitation_member DROP COLUMN consent_given");
           sql.execute(
-              "DELETE FROM DATABASECHANGELOG WHERE ID = '20261116-direct-invitation-member-consent-2252'");
+              "DELETE FROM DATABASECHANGELOG WHERE ID IN"
+                  + " ('20261116-direct-invitation-member-consent-2252',"
+                  + " '20261116-direct-invitation-member-consent-given-2252')");
         }
         liquibase.update(new Contexts(), new LabelExpression());
         // Read before closing: closing Liquibase closes its connection.
-        assertConsentColumnIsNullable(c);
+        assertTheMembersConsentColumns(c);
       }
     }
   }
 
-  private static void assertConsentColumnIsNullable(Connection c) throws Exception {
+  private static void assertTheMembersConsentColumns(Connection c) throws Exception {
     try (var sql = c.createStatement();
         var rs =
             sql.executeQuery(
@@ -231,6 +234,15 @@ class DirectInvitationAppointmentMigrationTest {
                     + " AND COLUMN_NAME = 'CONSENTED_LEGAL_VERSION_ID'")) {
       assertThat(rs.next()).as("the column exists").isTrue();
       assertThat(rs.getString(1)).isEqualTo("YES");
+    }
+    try (var sql = c.createStatement();
+        var rs =
+            sql.executeQuery(
+                "SELECT IS_NULLABLE, COLUMN_DEFAULT FROM INFORMATION_SCHEMA.COLUMNS WHERE"
+                    + " TABLE_NAME = 'DIRECT_INVITATION_MEMBER' AND COLUMN_NAME = 'CONSENT_GIVEN'")) {
+      assertThat(rs.next()).as("the agreed-without-version marker exists").isTrue();
+      assertThat(rs.getString(1)).isEqualTo("NO");
+      assertThat(rs.getString(2)).isEqualToIgnoringCase("FALSE");
     }
   }
 

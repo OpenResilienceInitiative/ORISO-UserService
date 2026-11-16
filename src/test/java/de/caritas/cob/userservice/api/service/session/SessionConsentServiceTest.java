@@ -92,10 +92,12 @@ class SessionConsentServiceTest {
     // The pointer must always point at something: a null would be indistinguishable from
     // "never consented" and would silently reopen the gate.
     var asker = askerWithId("asker-1");
+    when(sessionRepository.findById(42L)).thenReturn(Optional.of(sessionOf(42L, "asker-1", 6L)));
 
     assertThatThrownBy(() -> sessionConsentService.recordConsent(42L, asker, null))
         .isInstanceOf(BadRequestException.class);
     verify(sessionRepository, never()).save(any());
+    verify(members, never()).save(any());
   }
 
   @Test
@@ -183,10 +185,107 @@ class SessionConsentServiceTest {
   @Test
   void recordConsent_Should_StillRefuseAStranger_InAnOrdinary1to1() {
     when(sessionRepository.findById(42L)).thenReturn(Optional.of(sessionOf(42L, "asker-1", null)));
+    when(members.findBySessionIdAndUserIdForUpdate(42L, "stranger")).thenReturn(Optional.empty());
 
-    assertThatThrownBy(() -> sessionConsentService.recordConsent(42L, askerWithId("joiner-1"), 7L))
+    assertThatThrownBy(
+            () -> sessionConsentService.recordConsent(42L, askerWithId("stranger"), null))
         .isInstanceOf(ForbiddenException.class);
-    verify(members, never()).findBySessionIdAndUserIdForUpdate(any(), any());
+    verify(members, never()).save(any());
+  }
+
+  // --- an invitation into an EXISTING 1:1 (createForSession): the session stays unmarked ---
+
+  @Test
+  void recordConsent_Should_StoreTheVersion_ForAnInviteeOfAnExisting1to1() {
+    var oneToOne = sessionOf(42L, "asker-1", 6L);
+    var row = memberRow(42L, "joiner-1");
+    when(sessionRepository.findById(42L)).thenReturn(Optional.of(oneToOne));
+    when(members.findBySessionIdAndUserIdForUpdate(42L, "joiner-1")).thenReturn(Optional.of(row));
+
+    sessionConsentService.recordConsent(42L, askerWithId("joiner-1"), 7L);
+
+    assertThat(row.getConsentedLegalVersionId()).isEqualTo(7L);
+    assertThat(row.isConsentGiven()).isTrue();
+    verify(members).save(row);
+    assertThat(oneToOne.isDirectInvitationConversation()).as("stays an ordinary 1:1").isFalse();
+    verify(sessionRepository, never()).save(any());
+  }
+
+  @Test
+  void consentRequired_Should_Clear_ForAnInviteeOfAnExisting1to1_WithAVersion() {
+    var row = memberRow(42L, "joiner-1");
+    row.setConsentedLegalVersionId(7L);
+    row.setConsentGiven(true);
+    when(members.findBySessionIdAndUserId(42L, "joiner-1")).thenReturn(Optional.of(row));
+
+    assertThat(sessionConsentService.consentRequired(sessionOf(42L, "asker-1", null), "joiner-1"))
+        .isFalse();
+  }
+
+  @Test
+  void consentRequired_Should_StayOpen_ForAnInviteeOfAnExisting1to1_WhoHasNotAgreed() {
+    when(members.findBySessionIdAndUserId(42L, "joiner-1"))
+        .thenReturn(Optional.of(memberRow(42L, "joiner-1")));
+
+    assertThat(sessionConsentService.consentRequired(sessionOf(42L, "asker-1", 6L), "joiner-1"))
+        .isTrue();
+  }
+
+  // --- the advice centre has no consent text of its own: "agreed, no version" (Frank) ---
+
+  @Test
+  void recordConsent_Should_AcceptAMemberWithoutAVersion_AndClearTheirGate() {
+    var oneToOne = sessionOf(42L, "asker-1", null);
+    var row = memberRow(42L, "joiner-1");
+    when(sessionRepository.findById(42L)).thenReturn(Optional.of(oneToOne));
+    when(members.findBySessionIdAndUserIdForUpdate(42L, "joiner-1")).thenReturn(Optional.of(row));
+    when(members.findBySessionIdAndUserId(42L, "joiner-1")).thenReturn(Optional.of(row));
+
+    sessionConsentService.recordConsent(42L, askerWithId("joiner-1"), null);
+
+    assertThat(row.isConsentGiven()).isTrue();
+    assertThat(row.getConsentedLegalVersionId()).isNull();
+    verify(members).save(row);
+    assertThat(sessionConsentService.consentRequired(oneToOne, "joiner-1")).isFalse();
+  }
+
+  @Test
+  void recordConsent_Should_AcceptASharedConversationMemberWithoutAVersion() {
+    var row = memberRow(42L, "joiner-1");
+    row.setConsentedLegalVersionId(5L);
+    when(sessionRepository.findById(42L))
+        .thenReturn(Optional.of(sharedConversation(42L, "asker-1", null)));
+    when(members.findBySessionIdAndUserIdForUpdate(42L, "joiner-1")).thenReturn(Optional.of(row));
+
+    sessionConsentService.recordConsent(42L, askerWithId("joiner-1"), null);
+
+    assertThat(row.isConsentGiven()).isTrue();
+    assertThat(row.getConsentedLegalVersionId()).as("overwritten, never kept").isNull();
+  }
+
+  @Test
+  void consentRequired_Should_Clear_ForAMemberMarkedAsAgreedWithoutAVersion() {
+    var row = memberRow(42L, "joiner-1");
+    row.setConsentGiven(true);
+    when(members.findBySessionIdAndUserId(42L, "joiner-1")).thenReturn(Optional.of(row));
+
+    assertThat(
+            sessionConsentService.consentRequired(
+                sharedConversation(42L, "asker-1", null), "joiner-1"))
+        .isFalse();
+  }
+
+  @Test
+  void consentRequired_Should_StayOpen_ForAMemberWhoWasTakenOut() {
+    var row = memberRow(42L, "joiner-1");
+    row.setConsentGiven(true);
+    row.setRemovedAt(java.time.LocalDateTime.of(2030, 1, 1, 10, 0));
+    when(members.findBySessionIdAndUserId(42L, "joiner-1")).thenReturn(Optional.of(row));
+
+    assertThat(
+            sessionConsentService.consentRequired(
+                sharedConversation(42L, "asker-1", null), "joiner-1"))
+        .isTrue();
   }
 
   @Test

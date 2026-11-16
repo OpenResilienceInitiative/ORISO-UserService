@@ -84,6 +84,16 @@ public class DirectInvitationMember {
   @Column(name = "consented_legal_version_id")
   private Long consentedLegalVersionId;
 
+  /**
+   * This person agreed themselves (FE#2252): with a version above, or "agreed, no version" when the
+   * advice centre has no consent text of its own and the platform text counts. No timestamp
+   * (ADR-022).
+   */
+  @Column(name = "consent_given", nullable = false)
+  @org.hibernate.annotations.ColumnDefault("false")
+  @Builder.Default
+  private boolean consentGiven = false;
+
   /** Optimistic lock: the sweep never overwrites a change a join made meanwhile. */
   @Version
   @Column(name = "version", nullable = false)

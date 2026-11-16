@@ -49,12 +49,12 @@ class DirectInvitationAppointmentMigrationMariaDbIT {
                       + " AND column_name = 'consented_legal_version_id' AND is_nullable = 'YES'"))
           .as("each member's own consent pointer (FE#2252, decision B)")
           .isEqualTo(1);
-      assertThatThrownBy(
-              () -> {
-                exec(c, "INSERT INTO session (id) VALUES (1)");
-                exec(c, member(1, "u"));
-                exec(c, member(1, "u"));
-              })
+      exec(c, "INSERT INTO session (id) VALUES (1)");
+      exec(c, member(1, "u"));
+      assertThat(count(c, "direct_invitation_member", "consent_given = FALSE"))
+          .as("nobody agreed for a new member (FE#2252)")
+          .isEqualTo(1);
+      assertThatThrownBy(() -> exec(c, member(1, "u")))
           .as("one membership per person and conversation")
           .isInstanceOf(SQLException.class);
     }
