@@ -35,7 +35,6 @@ import de.caritas.cob.userservice.api.port.out.CalendarMoveProposalRepository;
 import de.caritas.cob.userservice.api.port.out.SessionAppointmentRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.calendar.CalendarPolicy;
 import de.caritas.cob.userservice.api.service.calendar.CalendarPolicyResolver;
 import de.caritas.cob.userservice.api.service.calendar.CalendarVisibilityScope;
@@ -115,7 +114,6 @@ class CalendarMoveProposalControllerIT {
   @MockitoBean TenantResolverService tenantResolverService;
   @MockitoBean AgencyService agencyService;
   @MockitoBean MatrixSynapseService matrixSynapseService;
-  @MockitoBean AppointmentService appointmentService;
   @MockitoBean CalendarPolicyResolver policies;
   @MockitoBean CalendarMoveProposalMailSender mailSender;
   @MockitoSpyBean SessionAppointmentService sessionAppointments;
