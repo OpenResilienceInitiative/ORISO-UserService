@@ -24,6 +24,12 @@ public interface UserRepository extends CrudRepository<User, String> {
 
   Optional<User> findByMatrixUserIdAndDeleteDateIsNull(String matrixUserId);
 
+  /**
+   * Every not deleted user row holding one of the given Matrix ids, in one query. The call code
+   * resolves a whole conversation's members at once (#1656) and decides ambiguity itself.
+   */
+  List<User> findAllByMatrixUserIdInAndDeleteDateIsNull(Collection<String> matrixUserIds);
+
   List<User> findAllByDeleteDateNotNull();
 
   List<User> findAllByDeletionLifecycleStateOrderByCreateDateAsc(

@@ -67,6 +67,30 @@ The listener advances its sync cursor only after batch processing succeeds.
 revalidates the binding and an active source member, and does not enable expiry
 until fresh media-room state has been received.
 
+A call room whose pass fails holds its sync batch for a replay, at most three
+times per room and three times per batch (`LIVE_ROOM_RETRIES`). Both counts are
+kept in memory, so each restart allows up to three more replays of the same
+batch. **Operations note (#1656):** the replay bound marks rooms unobserved
+only when that marker can be written. Three cases differ:
+
+- If `knownMediaRooms` already fails (for example, the database is down when
+  the batch starts), no replay is counted. The batch is not acknowledged and is
+  replayed until the lookup succeeds again; no room is marked.
+- Once the bound is reached, only the rooms whose pass still fails are marked
+  unobserved and get their stored presence capped
+  (`MatrixCallLifecycleService.loseBatch`). Rooms of the batch whose pass
+  succeeds are handled normally and are not marked.
+- If `loseBatch` cannot write its marker, the batch stays unacknowledged and
+  keeps being replayed, however often it was replayed before.
+
+So three failed replays do not by themselves end every call of a batch. A
+call whose room was marked ends at its room's next update unless a new
+membership event arrives, and its admitted guests lose their seat. This fails
+closed; affected users start or rejoin the call after the database is back.
+A call room pass whose conversation members cannot be read (a definitive
+Synapse error) while the batch holds membership events for it also fails, so
+it follows the same replay bound instead of dropping the departures.
+
 A successful state read is not a complete offline event-history reconstruction.
 Neither a local test, a stored membership, nor a built artifact proves deployment
 or working media. Delivery acceptance separately requires authenticated,

@@ -328,4 +328,69 @@ class MatrixCallInviteNotificationServiceTest {
         "content",
         Map.of("call_id", "call", "call_room_id", callRoom, "lifetime", 60000, "is_video", true));
   }
+
+  @Test
+  void twoCallRoomPassesNeverRunAtOnceSoTheReplayCountStaysThatOfOneBatch() throws Exception {
+    // #1656: the replay count and the per-room failure counts are plain fields of one sync worker.
+    // A second caller must wait for the running pass instead of sharing them.
+    Map<String, Object> roomData = Map.of("timeline", Map.of("events", List.of()));
+    when(callBindings.knownMediaRooms(any())).thenReturn(java.util.Set.of(HEALTHY));
+    var firstInside = new java.util.concurrent.CountDownLatch(1);
+    var releaseFirst = new java.util.concurrent.CountDownLatch(1);
+    var inside = new java.util.concurrent.atomic.AtomicInteger();
+    var overlapped = new java.util.concurrent.atomic.AtomicBoolean();
+    when(lifecycle.handleRoom(HEALTHY, roomData))
+        .thenAnswer(
+            ignored -> {
+              if (inside.incrementAndGet() > 1) overlapped.set(true);
+              firstInside.countDown();
+              try {
+                releaseFirst.await(5, java.util.concurrent.TimeUnit.SECONDS);
+              } finally {
+                inside.decrementAndGet();
+              }
+              return true;
+            });
+    var failures = new java.util.concurrent.ConcurrentLinkedQueue<Throwable>();
+    Runnable pass =
+        () -> {
+          try {
+            service.handleMediaRooms(Map.of(HEALTHY, roomData));
+          } catch (Throwable failure) {
+            failures.add(failure);
+          }
+        };
+    var first = new Thread(pass, "first-pass");
+    var second = new Thread(pass, "second-pass");
+    try {
+      first.start();
+      assertThat(firstInside.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+      second.start();
+      // CodeRabbit 4585785802: no sleep. Wait, bounded, until the second pass either overlaps the
+      // first or is blocked on a monitor the first pass holds (the pass lock).
+      var threads = java.lang.management.ManagementFactory.getThreadMXBean();
+      long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+      boolean blockedByFirst = false;
+      while (!overlapped.get() && !blockedByFirst && System.nanoTime() < deadline) {
+        var info = threads.getThreadInfo(second.getId());
+        blockedByFirst =
+            info != null
+                && info.getThreadState() == Thread.State.BLOCKED
+                && info.getLockOwnerId() == first.getId();
+        if (!blockedByFirst) Thread.onSpinWait();
+      }
+      assertThat(overlapped).as("the second pass waits for the first").isFalse();
+      assertThat(blockedByFirst).as("the second pass blocks on the first pass's lock").isTrue();
+      releaseFirst.countDown();
+      first.join(5_000);
+      second.join(5_000);
+      assertThat(failures).isEmpty();
+      assertThat(overlapped).isFalse();
+      verify(lifecycle, org.mockito.Mockito.times(2)).handleRoom(HEALTHY, roomData);
+    } finally {
+      releaseFirst.countDown();
+      first.join(5_000);
+      second.join(5_000);
+    }
+  }
 }

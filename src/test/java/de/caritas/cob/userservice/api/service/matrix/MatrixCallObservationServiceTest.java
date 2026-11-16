@@ -14,6 +14,7 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService.CallRoomOrigin;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.MatrixCallBinding;
 import de.caritas.cob.userservice.api.model.MatrixCallObservation;
 import de.caritas.cob.userservice.api.model.MatrixCallObservationEnd;
@@ -70,6 +71,8 @@ class MatrixCallObservationServiceTest {
   private final java.util.List<MatrixCallObservation> saved = new java.util.ArrayList<>();
   private MatrixCallObservationService service;
   private AuthenticatedUser actor;
+  private final List<User> directoryUsers = new java.util.ArrayList<>();
+  private final List<Consultant> directoryConsultants = new java.util.ArrayList<>();
 
   @BeforeEach
   void setUp() {
@@ -100,6 +103,25 @@ class MatrixCallObservationServiceTest {
     when(users.findByMatrixUserIdAndDeleteDateIsNull(OTHER)).thenReturn(Optional.of(otherUser));
     when(consultants.findByMatrixUserIdAndDeleteDateIsNull(anyString()))
         .thenReturn(Optional.empty());
+    // #1656: recipients are resolved in one batched query per table from this directory.
+    directoryUsers.add(creatorUser);
+    directoryUsers.add(otherUser);
+    when(users.findAllByMatrixUserIdInAndDeleteDateIsNull(any()))
+        .thenAnswer(
+            i -> {
+              java.util.Collection<String> ids = i.getArgument(0);
+              return directoryUsers.stream()
+                  .filter(u -> ids.contains(u.getMatrixUserId()))
+                  .toList();
+            });
+    when(consultants.findAllByMatrixUserIdInAndDeleteDateIsNull(any()))
+        .thenAnswer(
+            i -> {
+              java.util.Collection<String> ids = i.getArgument(0);
+              return directoryConsultants.stream()
+                  .filter(c -> ids.contains(c.getMatrixUserId()))
+                  .toList();
+            });
     when(lifecycle.isActiveRecipient(anyString())).thenReturn(true);
     when(matrix.getCallRoomMembers(SOURCE)).thenReturn(Optional.of(List.of(CREATOR, OTHER)));
     when(matrix.getCallRoomBinding(MEDIA, CREATOR))
@@ -942,6 +964,108 @@ class MatrixCallObservationServiceTest {
         .lastSeenAt(registered)
         .expiresAt(expires)
         .build();
+  }
+
+  // --- #1656: recipients of a group call are resolved in one query per table ---
+
+  /** A group chat at its size limit: the creator plus 50 members, half askers, half counsellors. */
+  private List<String> fullGroup() {
+    var members = new java.util.ArrayList<String>(List.of(CREATOR));
+    for (int index = 0; index < 50; index++) {
+      String matrixId = "@member-" + index + ":example";
+      members.add(matrixId);
+      if (index % 2 == 0) directoryUsers.add(user("member-" + index, matrixId));
+      else directoryConsultants.add(consultant("counsellor-" + index, matrixId, 7L));
+    }
+    when(matrix.getCallRoomMembers(SOURCE)).thenReturn(Optional.of(members));
+    return members;
+  }
+
+  private void assertResolvedInOneQueryPerTable() {
+    verify(users, org.mockito.Mockito.times(1)).findAllByMatrixUserIdInAndDeleteDateIsNull(any());
+    verify(consultants, org.mockito.Mockito.times(1))
+        .findAllByMatrixUserIdInAndDeleteDateIsNull(any());
+    verify(users, never()).findByMatrixUserIdAndDeleteDateIsNull(anyString());
+    verify(consultants, never()).findByMatrixUserIdAndDeleteDateIsNull(anyString());
+    verify(consultants, never()).findAllByMatrixUserIdAndDeleteDateIsNull(anyString());
+  }
+
+  @Test
+  void aFullGroupsInvitationsResolveTheirRecipientsInOneQueryPerTable() {
+    fullGroup();
+
+    assertThat(service.register(actor, SOURCE, "call", MEDIA, true)).isEqualTo(Outcome.OK);
+
+    assertResolvedInOneQueryPerTable();
+    verify(notifications, org.mockito.Mockito.times(25))
+        .createCallInvitationNotification(
+            any(), anyString(), eq(false), eq("creator"), eq("call"), eq(MEDIA), eq(true));
+    verify(notifications, org.mockito.Mockito.times(25))
+        .createCallInvitationNotification(
+            any(), anyString(), eq(true), eq("creator"), eq("call"), eq(MEDIA), eq(true));
+    verify(notifications)
+        .createCallInvitationNotification(
+            any(), eq("counsellor-1"), eq(true), eq("creator"), any(), any(), anyBoolean());
+  }
+
+  @Test
+  void aFullGroupsEndNotificationsResolveTheirRecipientsInOneQueryPerTable() {
+    fullGroup();
+    long now = System.currentTimeMillis();
+    var row = row(now - 1000, now + 60_000, null);
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
+
+    assertResolvedInOneQueryPerTable();
+    verify(notifications, org.mockito.Mockito.times(51))
+        .createCallEndedNotification(
+            any(), anyString(), anyBoolean(), eq("call"), eq(MEDIA), anyLong(), anyLong());
+  }
+
+  @Test
+  void batchedRecipientsKeepTheTenantTheUserFirstRuleAndTreatAnAmbiguousCounsellorAsNobody() {
+    String foreign = "@foreign:example";
+    String twin = "@twin:example";
+    String both = "@both:example";
+    String moved = "@moved:example";
+    var foreignUser = user("foreign", foreign);
+    foreignUser.setTenantId(9L);
+    directoryUsers.add(foreignUser);
+    // Two counsellors of the Träger share one Matrix id: it stands for nobody (SoleCounsellor).
+    directoryConsultants.add(consultant("twin-a", twin, 7L));
+    directoryConsultants.add(consultant("twin-b", twin, 7L));
+    // An asker and a counsellor of the Träger hold one id: the asker wins, as before.
+    directoryUsers.add(user("both-user", both));
+    directoryConsultants.add(consultant("both-counsellor", both, 7L));
+    // The asker row of another tenant does not hide this tenant's counsellor.
+    var movedUser = user("moved-user", moved);
+    movedUser.setTenantId(9L);
+    directoryUsers.add(movedUser);
+    directoryConsultants.add(consultant("moved-counsellor", moved, 7L));
+    directoryConsultants.add(consultant("moved-elsewhere", moved, 9L));
+    when(matrix.getCallRoomMembers(SOURCE))
+        .thenReturn(Optional.of(List.of(CREATOR, foreign, twin, both, moved)));
+
+    assertThat(service.register(actor, SOURCE, "call", MEDIA, true)).isEqualTo(Outcome.OK);
+
+    verify(notifications)
+        .createCallInvitationNotification(
+            any(), eq("both-user"), eq(false), eq("creator"), any(), any(), anyBoolean());
+    verify(notifications)
+        .createCallInvitationNotification(
+            any(), eq("moved-counsellor"), eq(true), eq("creator"), any(), any(), anyBoolean());
+    verify(notifications, org.mockito.Mockito.times(2))
+        .createCallInvitationNotification(
+            any(), anyString(), anyBoolean(), any(), any(), any(), anyBoolean());
+  }
+
+  private static Consultant consultant(String id, String matrixId, long tenantId) {
+    var consultant = new Consultant();
+    consultant.setId(id);
+    consultant.setTenantId(tenantId);
+    consultant.setMatrixUserId(matrixId);
+    return consultant;
   }
 
   private static User user(String id, String matrixId) {
