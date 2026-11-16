@@ -316,6 +316,135 @@ paths:
           description: FORBIDDEN - no/invalid role/authorization or CSRF token
       security:
         - Bearer: [ ]
+  /users/calendar/proposals:
+    get:
+      tags:
+        - calendar-controller
+      summary: 'The caller''s open move proposals (ADR-032): those they sent to colleagues and
+        those colleagues sent them. A proposal whose appointment was moved or cancelled after it
+        was made, or whose proposed start has passed, is void and not listed.
+        [Authorization: counsellor]'
+      operationId: getCalendarMoveProposals
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarMoveProposalsDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization
+      security:
+        - Bearer: [ ]
+    post:
+      tags:
+        - calendar-controller
+      summary: 'Proposes a new time for a colleague''s 1:1 appointment that the caller sees in
+        that colleague''s calendar. The colleague whose conversation it is decides; they are told
+        by e-mail. A second proposal from the caller for the same appointment replaces their open
+        one. [Authorization: counsellor who sees the appointment in a colleague''s calendar]'
+      operationId: createCalendarMoveProposal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CalendarMoveProposalCreateDTO'
+      responses:
+        201:
+          description: CREATED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarMoveProposalDTO'
+        400:
+          description: BAD REQUEST - end not after start, start in the past, the entry is not
+            an appointment, it has already begun, or it is the caller's own (moved directly)
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token, or the
+            appointment is not in a calendar the caller may look at
+        404:
+          description: NOT FOUND - no such appointment
+      security:
+        - Bearer: [ ]
+  /users/calendar/proposals/{proposalId}:
+    delete:
+      tags:
+        - calendar-controller
+      summary: 'Withdraws a proposal; one that was already decided stays as it is.
+        [Authorization: counsellor who proposed it]'
+      operationId: withdrawCalendarMoveProposal
+      parameters:
+        - $ref: '#/components/parameters/ProposalId'
+      responses:
+        204:
+          description: NO CONTENT
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token, or the caller did
+            not propose it
+        404:
+          description: NOT FOUND - no such proposal
+      security:
+        - Bearer: [ ]
+  /users/calendar/proposals/{proposalId}/accept:
+    post:
+      tags:
+        - calendar-controller
+      summary: 'Accepts a proposal: the appointment moves through the conversation''s appointment
+        path (the same checks as a move by the counsellor), every other open proposal for it is
+        superseded. Answers the moved appointment as the caller''s own calendar shows it; the
+        caller''s app tells the advice seeker in the conversation, as for any move.
+        [Authorization: counsellor who was asked]'
+      operationId: acceptCalendarMoveProposal
+      parameters:
+        - $ref: '#/components/parameters/ProposalId'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarEntryDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token, or the caller was
+            not asked
+        404:
+          description: NOT FOUND - no such proposal
+        409:
+          description: CONFLICT - the proposal is no longer open, or void because the appointment
+            was moved or cancelled meanwhile or the proposed start has passed, or the conversation
+            is finished
+      security:
+        - Bearer: [ ]
+  /users/calendar/proposals/{proposalId}/decline:
+    post:
+      tags:
+        - calendar-controller
+      summary: 'Declines a proposal; the appointment stays. One that was already decided stays as
+        it is. [Authorization: counsellor who was asked]'
+      operationId: declineCalendarMoveProposal
+      parameters:
+        - $ref: '#/components/parameters/ProposalId'
+      responses:
+        204:
+          description: NO CONTENT
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token, or the caller was
+            not asked
+        404:
+          description: NOT FOUND - no such proposal
+      security:
+        - Bearer: [ ]
   /users/calendar/feed/{feedId}/{signature}.ics:
     get:
       tags:
@@ -363,6 +492,13 @@ components:
         format: date-time
     BlockerId:
       name: blockerId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ProposalId:
+      name: proposalId
       in: path
       required: true
       schema:
@@ -582,6 +718,90 @@ components:
           maxItems: 14
           items:
             $ref: '#/components/schemas/CalendarWorkingHoursWindowDTO'
+    CalendarMoveProposalCreateDTO:
+      type: object
+      required:
+        - entryId
+        - start
+        - end
+      properties:
+        entryId:
+          description: Id of the colleague's appointment, as their calendar lists it
+          type: string
+          maxLength: 64
+        start:
+          type: string
+          format: date-time
+        end:
+          type: string
+          format: date-time
+    CalendarMoveProposalDTO:
+      type: object
+      required:
+        - id
+        - entryId
+        - start
+        - end
+        - entryStart
+        - entryEnd
+        - proposerId
+        - proposerName
+        - approverId
+        - approverName
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        entryId:
+          description: The appointment to move
+          type: string
+        start:
+          description: Proposed start
+          type: string
+          format: date-time
+        end:
+          description: Proposed end
+          type: string
+          format: date-time
+        entryStart:
+          description: The appointment's start when the proposal was made
+          type: string
+          format: date-time
+        entryEnd:
+          description: The appointment's end when the proposal was made
+          type: string
+          format: date-time
+        proposerId:
+          type: string
+        proposerName:
+          description: The name colleagues see
+          type: string
+        approverId:
+          description: The counsellor whose conversation it is and who decides
+          type: string
+        approverName:
+          description: The name colleagues see
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    CalendarMoveProposalsDTO:
+      type: object
+      required:
+        - sent
+        - received
+      properties:
+        sent:
+          description: Open proposals of the caller, oldest first
+          type: array
+          items:
+            $ref: '#/components/schemas/CalendarMoveProposalDTO'
+        received:
+          description: Open proposals the caller is asked to decide, oldest first
+          type: array
+          items:
+            $ref: '#/components/schemas/CalendarMoveProposalDTO'
   securitySchemes:
     Bearer:
       type: apiKey
