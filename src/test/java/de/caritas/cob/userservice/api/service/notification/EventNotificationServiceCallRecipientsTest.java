@@ -53,6 +53,11 @@ class EventNotificationServiceCallRecipientsTest {
   @Mock private SessionRepository sessionRepository;
   @Mock private UserRepository userRepository;
   @Mock private MatrixCaseReplyActorAuthorizer caseWriterAuthorizer;
+
+  @Mock
+  private org.springframework.beans.factory.ObjectProvider<MatrixCaseReplyActorAuthorizer>
+      caseWriterAuthorizerProvider;
+
   @Mock private ConsultantRepository consultantRepository;
   @Mock private IdentityTombstoneService identityTombstoneService;
   @Mock private EventNotificationDeduplicationWriter deduplicationWriter;
@@ -76,6 +81,7 @@ class EventNotificationServiceCallRecipientsTest {
     when(session.getConsultant()).thenReturn(counsellor);
     when(session.getTenantId()).thenReturn(TENANT_ID);
     lenient().when(session.getId()).thenReturn(SESSION_ID);
+    when(caseWriterAuthorizerProvider.getIfAvailable()).thenReturn(caseWriterAuthorizer);
     when(counsellor.getTenantId()).thenReturn(TENANT_ID);
     var silent = mock(Consultant.class);
     when(silent.getTenantId()).thenReturn(TENANT_ID);

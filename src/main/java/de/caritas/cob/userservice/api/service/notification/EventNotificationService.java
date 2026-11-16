@@ -59,7 +59,10 @@ public class EventNotificationService {
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull UserRepository userRepository;
   private final @NonNull ConsultantRepository consultantRepository;
-  private final @NonNull MatrixCaseReplyActorAuthorizer caseWriterAuthorizer;
+  // Optional so slim contexts that only need notifications still start; production always has it.
+  private final @NonNull org.springframework.beans.factory.ObjectProvider<
+          MatrixCaseReplyActorAuthorizer>
+      caseWriterAuthorizer;
   private final @NonNull IdentityTombstoneService identityTombstoneService;
   private final @NonNull EventNotificationDeduplicationWriter deduplicationWriter;
   private final @NonNull MatrixFeedUpdateSignalService feedUpdateSignalService;
@@ -1286,10 +1289,18 @@ public class EventNotificationService {
             session ->
                 counsellor.get().getDeleteDate() == null
                     && Objects.equals(counsellor.get().getTenantId(), session.getTenantId()))
-        .map(
-            session ->
-                caseWriterAuthorizer.isCurrentAssignedOrTeamWriter(session, counsellor.get()))
+        .map(session -> isCaseWriter(session, counsellor.get()))
         .orElse(false);
+  }
+
+  /** Without the case-writer rule (a slim context), only the assigned counsellor qualifies. */
+  private boolean isCaseWriter(
+      de.caritas.cob.userservice.api.model.Session session,
+      de.caritas.cob.userservice.api.model.Consultant counsellor) {
+    var authorizer = caseWriterAuthorizer.getIfAvailable();
+    return authorizer != null
+        ? authorizer.isCurrentAssignedOrTeamWriter(session, counsellor)
+        : session.isAdvisedBy(counsellor);
   }
 
   private Map<String, Object> callParams(

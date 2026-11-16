@@ -477,9 +477,7 @@ class EventNotificationServiceReplicaIT {
         sessionRepository,
         userRepository,
         consultantRepository,
-        org.mockito.Mockito.mock(
-            de.caritas.cob.userservice.api.service.notification.MatrixCaseReplyActorAuthorizer
-                .class),
+        org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class),
         identityTombstoneService,
         deduplicationWriter,
         feedUpdateSignalService,

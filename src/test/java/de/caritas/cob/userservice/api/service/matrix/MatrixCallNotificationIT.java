@@ -219,6 +219,18 @@ class MatrixCallNotificationIT {
     assertInviteNotifications(System.currentTimeMillis(), 1, false);
   }
 
+  /** Whether the invited counsellor may write in the case (assigned); false = silent colleague. */
+  private boolean recipientWritesInTheCase = true;
+
+  @Test
+  void aSilentAgencyColleagueInTheSessionRoomGetsNoCallInvitation() {
+    // ADR-002 §1: the agency's counsellors sit silently in a 1:1 session room. FE#2274: they got
+    // "invitation to an internal group call" for a case they cannot open.
+    recipientWritesInTheCase = false;
+
+    assertInviteNotifications(System.currentTimeMillis(), 0, false);
+  }
+
   @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.EnumSource(AccountInactivityService.Status.class)
   void onlyAnActiveCallerCanCreateANewCallInvitation(AccountInactivityService.Status status) {
@@ -1689,6 +1701,9 @@ class MatrixCallNotificationIT {
     when(session.getMatrixRoomId()).thenReturn(sourceRoom);
     when(session.getUser()).thenReturn(asker);
     when(session.getConsultant()).thenReturn(consultant);
+    // CodeRabbit on US#1661: reach the case-writer gate with the recipient's real identity.
+    when(consultants.findById("call-consultant")).thenReturn(Optional.of(consultant));
+    when(session.isAdvisedBy(consultant)).thenReturn(recipientWritesInTheCase);
     when(sessions.findByMatrixRoomId(sourceRoom))
         .thenReturn(sourceChat == null ? Optional.of(session) : Optional.empty());
     when(chats.findByMatrixRoomId(sourceRoom)).thenReturn(Optional.ofNullable(sourceChat));
