@@ -45,7 +45,6 @@ import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyServic
 import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantDTO;
 import java.nio.charset.StandardCharsets;
@@ -87,20 +86,14 @@ public class CreateConsultantSaga {
 
   private final @NonNull RollbackFacade rollbackFacade;
 
-  @Value("${feature.appointment.enabled}")
-  private boolean appointmentFeatureEnabled;
-
   @Value("${multitenancy.enabled}")
   private boolean multiTenancyEnabled;
 
   private final @NonNull AuthenticatedUser authenticatedUser;
 
-  private final @NonNull AppointmentService appointmentService;
-
   private final ObjectMapper objectMapper = new ObjectMapper();
 
-  private Consultant createNewConsultantWithoutAppointment(
-      CreateConsultantDTO createConsultantDTO) {
+  private Consultant createNewConsultantFromDto(CreateConsultantDTO createConsultantDTO) {
     setCurrentTenant(createConsultantDTO);
     validateTenantId(createConsultantDTO);
     ensureTenantIdResolved(createConsultantDTO);
@@ -131,8 +124,7 @@ public class CreateConsultantSaga {
 
   /**
    * Creates a new {@link Consultant} by {@link CreateConsultantDTO} in the database, identity
-   * provider and Matrix, and optionally in the appointment service, provided the appointment
-   * feature is enabled.
+   * provider and Matrix.
    *
    * @param createConsultantDTO the input used for creation
    * @return the generated {@link Consultant}
@@ -140,45 +132,12 @@ public class CreateConsultantSaga {
   @Transactional
   public ConsultantAdminResponseDTO createNewConsultant(CreateConsultantDTO createConsultantDTO)
       throws DistributedTransactionException {
-    Consultant newConsultant = this.createNewConsultantWithoutAppointment(createConsultantDTO);
+    Consultant newConsultant = this.createNewConsultantFromDto(createConsultantDTO);
 
-    // adminRemarks intentionally stays at the builder's fail-closed default (null) here: this
-    // DTO is also the appointment-service payload. ConsultantAdminService#createNewConsultant
-    // re-attaches the submitted remarks to the outgoing response for tenant-level admins.
-    ConsultantAdminResponseDTO consultantAdminResponseDTO =
-        ConsultantResponseDTOBuilder.getInstance(newConsultant).buildResponseDTO();
-
-    if (appointmentFeatureEnabled) {
-      createConsultantInAppointmentServiceOrRollback(newConsultant, consultantAdminResponseDTO);
-    }
-    return consultantAdminResponseDTO;
-  }
-
-  private void createConsultantInAppointmentServiceOrRollback(
-      Consultant newConsultant, ConsultantAdminResponseDTO consultantAdminResponseDTO) {
-    try {
-      this.appointmentService.createConsultant(consultantAdminResponseDTO);
-    } catch (Exception e) {
-      log.error(
-          "User with id {}, who has roles {}, has created a consultant with id {} but the appointment service returned an error: {}",
-          authenticatedUser.getUserId(),
-          authenticatedUser.getRoles(),
-          newConsultant.getId(),
-          e.getMessage());
-      this.rollbackCreateNewConsultant(newConsultant);
-      throw new DistributedTransactionException(
-          e,
-          DistributedTransactionInfo.builder()
-              .name("createNewConsultant")
-              .completedTransactionalOperations(
-                  newArrayList(
-                      TransactionalStep.CREATE_ACCOUNT_IN_KEYCLOAK,
-                      TransactionalStep.UPDATE_USER_PASSWORD_IN_KEYCLOAK,
-                      TransactionalStep.UPDATE_USER_ROLES_IN_KEYCLOAK,
-                      TransactionalStep.CREATE_CONSULTANT_IN_MARIADB))
-              .failedStep(TransactionalStep.CREATE_ACCOUNT_IN_CALCOM_OR_APPOINTMENTSERVICE)
-              .build());
-    }
+    // adminRemarks intentionally stays at the builder's fail-closed default (null) here.
+    // ConsultantAdminService#createNewConsultant re-attaches the submitted remarks to the outgoing
+    // response for tenant-level admins.
+    return ConsultantResponseDTOBuilder.getInstance(newConsultant).buildResponseDTO();
   }
 
   private void validateTenantId(CreateConsultantDTO createConsultantDTO) {

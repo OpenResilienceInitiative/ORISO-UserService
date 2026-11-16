@@ -18,7 +18,6 @@ import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.matrix.ConsultantRenameSystemMessageService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
@@ -182,7 +181,6 @@ class AccountManagerTest {
   @Mock SessionRepository sessionRepository;
   @Mock UsernameTranscoder usernameTranscoder;
   @Mock AuthenticatedUser authenticatedUser;
-  @Mock AppointmentService appointmentService;
   @Mock PatchConsultantSaga patchConsultantSaga;
   @Mock ConsultantRenameSystemMessageService consultantRenameSystemMessageService;
 

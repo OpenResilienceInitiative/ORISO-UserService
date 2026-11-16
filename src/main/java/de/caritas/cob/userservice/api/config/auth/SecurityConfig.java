@@ -63,8 +63,6 @@ public class SecurityConfig {
           + PublicSlugFormat.REGEX
           + ")";
 
-  public static final String APPOINTMENTS_APPOINTMENT_ID = "/appointments/{appointmentId:";
-
   private final JwtGrantedAuthoritiesConverter jwtGrantedAuthoritiesConverter =
       new JwtGrantedAuthoritiesConverter();
 
@@ -317,8 +315,6 @@ public class SecurityConfig {
                 .requestMatchers(
                     HttpMethod.GET, "/service/conversations/anonymous/{sessionId:[0-9]+}")
                 .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT)
-                .requestMatchers("/users/notifications")
-                .hasAnyAuthority(NOTIFICATIONS_TECHNICAL)
                 .requestMatchers("/users/data")
                 .hasAnyAuthority(
                     ANONYMOUS_DEFAULT,
@@ -327,8 +323,6 @@ public class SecurityConfig {
                     SINGLE_TENANT_ADMIN,
                     TENANT_ADMIN,
                     RESTRICTED_AGENCY_ADMIN)
-                .requestMatchers(HttpMethod.GET, APPOINTMENTS_APPOINTMENT_ID + UUID_PATTERN + "}")
-                .permitAll()
                 // Call share links (#1487), ahead of /matrix/**: guests join, counsellors manage;
                 // membership of the call is checked in the service.
                 .requestMatchers(
@@ -469,7 +463,6 @@ public class SecurityConfig {
                 .hasAuthority(USER_DEFAULT)
                 .requestMatchers(
                     "/users/sessions/{sessionId:[0-9]+}/enquiry/new",
-                    "/appointments/sessions/{sessionId:[0-9]+}/enquiry/new",
                     "/users/askers/consultingType/new",
                     "/users/askers/session/new",
                     "/users/account",
@@ -801,15 +794,6 @@ public class SecurityConfig {
                     "/users/sessions/{sessionId:[0-9]+}/archive",
                     "/users/sessions/{sessionId:[0-9]+}")
                 .hasAnyAuthority(CONSULTANT_DEFAULT)
-                .requestMatchers("/appointments")
-                .hasAnyAuthority(CONSULTANT_DEFAULT, TECHNICAL_DEFAULT)
-                .requestMatchers("/appointments/booking/{id:[0-9]+}")
-                .hasAnyAuthority(CONSULTANT_DEFAULT, TECHNICAL_DEFAULT)
-                .requestMatchers(HttpMethod.PUT, APPOINTMENTS_APPOINTMENT_ID + UUID_PATTERN + "}")
-                .hasAuthority(CONSULTANT_DEFAULT)
-                .requestMatchers(
-                    HttpMethod.DELETE, APPOINTMENTS_APPOINTMENT_ID + UUID_PATTERN + "}")
-                .hasAuthority(CONSULTANT_DEFAULT)
                 .requestMatchers(
                     "/users/sessions/{sessionId:[0-9]+}/dearchive", "/users/mails/reassignment")
                 .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)

@@ -315,22 +315,6 @@
       "status": "bounded"
     },
     {
-      "id": "appointment-cleanup-scheduler",
-      "source": "src/main/java/de/caritas/cob/userservice/api/Organizer.java",
-      "kind": "scheduler",
-      "owner": "sessions-appointments",
-      "risk": "duplicate-side-effect",
-      "components": [
-        "deleteObsoleteAppointments"
-      ],
-      "decision": "Prove database-level idempotency under concurrent execution or add a lease.",
-      "signals": [
-        "userservice.scheduler.executions",
-        "userservice.scheduler.duration"
-      ],
-      "status": "blocker"
-    },
-    {
       "id": "account-invite-reservation-release-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/service/accountinvite/allocation/IdReservationReleaseScheduler.java",
       "kind": "scheduler",

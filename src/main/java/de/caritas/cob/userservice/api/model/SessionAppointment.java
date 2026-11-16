@@ -23,8 +23,8 @@ import org.hibernate.annotations.OnDeleteAction;
 import org.hibernate.type.SqlTypes;
 
 /**
- * A 1:1 appointment of one conversation (ADR-020). Owned by UserService alone, independent of the
- * legacy {@link Appointment} and of the AppointmentService. Holds times and references only.
+ * A 1:1 appointment of one conversation (ADR-020). Owned by UserService alone. Holds times and
+ * references only.
  */
 @Entity
 @Table(name = "session_appointment")

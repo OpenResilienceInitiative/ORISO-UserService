@@ -2,7 +2,6 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -27,7 +26,6 @@ import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.tenant.TenantFixtures;
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
 import de.caritas.cob.userservice.api.tenant.Tenants;
@@ -67,7 +65,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 @AutoConfigureMockMvc
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@TestPropertySource(properties = {"multitenancy.enabled=true", "feature.appointment.enabled=false"})
+@TestPropertySource(properties = {"multitenancy.enabled=true"})
 @Import(TenantFixtures.class)
 @WithTenant(SessionAppointmentControllerIT.TENANT)
 @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT, AuthorityValue.USER_DEFAULT})
@@ -91,7 +89,6 @@ class SessionAppointmentControllerIT {
   @MockitoBean TenantResolverService tenantResolverService;
   @MockitoBean AgencyService agencyService;
   @MockitoBean MatrixSynapseService matrixSynapseService;
-  @MockitoBean AppointmentService appointmentService;
 
   @MockitoBean(answers = Answers.CALLS_REAL_METHODS)
   AuthenticatedUser caller;
@@ -135,8 +132,6 @@ class SessionAppointmentControllerIT {
         .andExpect(jsonPath("$.endTime").isNotEmpty())
         .andExpect(jsonPath("$.status").value("SCHEDULED"))
         .andExpect(jsonPath("$.counterpart.username").isNotEmpty());
-
-    verifyNoInteractions(appointmentService);
   }
 
   @Test
