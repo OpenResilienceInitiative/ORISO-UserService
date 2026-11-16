@@ -26,6 +26,14 @@ public interface SessionAppointmentRepository extends CrudRepository<SessionAppo
   Optional<SessionAppointment> findOfSessionForUpdate(
       @Param("id") UUID id, @Param("sessionId") Long sessionId);
 
+  /**
+   * Locked like {@link #findOfSessionForUpdate}, by the appointment alone: a move proposal
+   * (ADR-032) names only the appointment. The session is not locked with it.
+   */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("SELECT a FROM SessionAppointment a WHERE a.id = :id")
+  Optional<SessionAppointment> findByIdForUpdate(@Param("id") UUID id);
+
   @Query(
       "SELECT a FROM SessionAppointment a JOIN FETCH a.session s JOIN FETCH s.user "
           + "WHERE (s.consultant.id = :consultantId OR s.id IN :coAccessSessionIds) "
@@ -43,4 +51,31 @@ public interface SessionAppointmentRepository extends CrudRepository<SessionAppo
           + "ORDER BY a.startTime")
   List<SessionAppointment> findUpcomingOfAsker(
       @Param("userId") String userId, @Param("now") Instant now, Pageable pageable);
+
+  /**
+   * The scheduled appointments of a counsellor's own and co-access sessions that overlap the window
+   * (calendar, ADR-032).
+   */
+  @Query(
+      "SELECT a FROM SessionAppointment a JOIN FETCH a.session s JOIN FETCH s.user "
+          + "WHERE (s.consultant.id = :consultantId OR s.id IN :coAccessSessionIds) "
+          + "AND a.status = 'SCHEDULED' AND a.startTime < :to AND a.endTime > :from "
+          + "ORDER BY a.startTime")
+  List<SessionAppointment> findScheduledOfConsultantBetween(
+      @Param("consultantId") String consultantId,
+      @Param("coAccessSessionIds") Collection<Long> coAccessSessionIds,
+      @Param("from") Instant from,
+      @Param("to") Instant to,
+      Pageable pageable);
+
+  @Query(
+      "SELECT a FROM SessionAppointment a JOIN FETCH a.session s LEFT JOIN FETCH s.consultant "
+          + "WHERE s.user.userId = :userId AND a.status = 'SCHEDULED' "
+          + "AND a.startTime < :to AND a.endTime > :from "
+          + "ORDER BY a.startTime")
+  List<SessionAppointment> findScheduledOfAskerBetween(
+      @Param("userId") String userId,
+      @Param("from") Instant from,
+      @Param("to") Instant to,
+      Pageable pageable);
 }

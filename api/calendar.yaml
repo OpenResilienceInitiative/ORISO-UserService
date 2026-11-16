@@ -1,0 +1,956 @@
+openapi: 3.0.1
+info:
+  title: will be replaced
+  description: This information will be replaced by the SpringFox config information
+  version: 0.0.1
+paths:
+  /users/calendar/entries:
+    get:
+      tags:
+        - calendar-controller
+      summary: 'The caller''s own calendar in a window of at most 62 days. A counsellor gets the
+        scheduled 1:1 appointments of their own and co-access sessions, the occurrences of the
+        group chats they own or take part in, their blockers and their imported busy times. An
+        asker gets their own appointments and the occurrences of the group chats they joined,
+        read-only. [Authorization: counsellor or asker]'
+      operationId: getCalendarEntries
+      parameters:
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CalendarEntryDTO'
+        400:
+          description: BAD REQUEST - from not before to, or a window of more than 62 days
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization
+      security:
+        - Bearer: [ ]
+  /users/calendar/colleagues:
+    get:
+      tags:
+        - calendar-controller
+      summary: 'The colleagues whose calendar the caller may look at, as the Träger setting
+        calendar.visibilityScope allows; without the caller, sorted by name, at most 200.
+        [Authorization: counsellor]'
+      operationId: getCalendarColleagues
+      parameters:
+        - name: search
+          in: query
+          description: Case-insensitive part of the display name
+          required: false
+          schema:
+            type: string
+            maxLength: 100
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarColleaguesDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization
+      security:
+        - Bearer: [ ]
+  /users/calendar/colleagues/{consultantId}/entries:
+    get:
+      tags:
+        - calendar-controller
+      summary: 'The redacted calendar of one colleague in a window of at most 62 days: times,
+        type and kind only; the asker''s username only where the Träger shows it. Imported busy
+        times read as blockers. [Authorization: counsellor with the colleague in scope]'
+      operationId: getCalendarColleagueEntries
+      parameters:
+        - name: consultantId
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CalendarEntryDTO'
+        400:
+          description: BAD REQUEST - from not before to, or a window of more than 62 days
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization
+        404:
+          description: NOT FOUND - no such colleague, or not within the caller's scope
+      security:
+        - Bearer: [ ]
+  /users/calendar/blockers:
+    post:
+      tags:
+        - calendar-controller
+      summary: 'Blocks time in the caller''s calendar. A repeat is expanded on the server into
+        single blockers of one series, at most 120. [Authorization: counsellor]'
+      operationId: createCalendarBlockers
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BlockerCreateDTO'
+      responses:
+        201:
+          description: CREATED
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CalendarEntryDTO'
+        400:
+          description: BAD REQUEST - end not after start, start more than a day ago, an invalid
+            repeat, or more than 120 blockers
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+      security:
+        - Bearer: [ ]
+  /users/calendar/blockers/{blockerId}:
+    put:
+      tags:
+        - calendar-controller
+      summary: 'Moves one blocker of the caller. [Authorization: counsellor who owns it]'
+      operationId: moveCalendarBlocker
+      parameters:
+        - $ref: '#/components/parameters/BlockerId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BlockerTimeDTO'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarEntryDTO'
+        400:
+          description: BAD REQUEST - end not after start, or start more than a day ago
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+        404:
+          description: NOT FOUND - no such blocker of the caller
+      security:
+        - Bearer: [ ]
+    delete:
+      tags:
+        - calendar-controller
+      summary: 'Removes one blocker of the caller. [Authorization: counsellor who owns it]'
+      operationId: deleteCalendarBlocker
+      parameters:
+        - $ref: '#/components/parameters/BlockerId'
+      responses:
+        204:
+          description: NO CONTENT
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+        404:
+          description: NOT FOUND - no such blocker of the caller
+      security:
+        - Bearer: [ ]
+  /users/calendar/sync:
+    get:
+      tags:
+        - calendar-controller
+      summary: 'The caller''s calendar connections: the subscription feed (its id is created on
+        first use) and the busy import. [Authorization: counsellor]'
+      operationId: getCalendarSync
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarSyncDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization
+      security:
+        - Bearer: [ ]
+  /users/calendar/sync/feed/reset:
+    post:
+      tags:
+        - calendar-controller
+      summary: 'Gives the subscription feed a new address; the old one answers 404 at once.
+        [Authorization: counsellor]'
+      operationId: resetCalendarFeed
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarSyncDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+      security:
+        - Bearer: [ ]
+  /users/calendar/sync/import:
+    put:
+      tags:
+        - calendar-controller
+      summary: 'Sets the address of the caller''s own calendar (ICS over https) and imports its
+        busy times once. A calendar that cannot be read answers 200 with importError.
+        [Authorization: counsellor]'
+      operationId: setCalendarImport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CalendarImportDTO'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarSyncDTO'
+        400:
+          description: BAD REQUEST - not a URL, not https (webcal:// counts as https), or it
+            carries a user name or password; nothing is stored
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+      security:
+        - Bearer: [ ]
+    delete:
+      tags:
+        - calendar-controller
+      summary: 'Removes the import address and every imported busy time.
+        [Authorization: counsellor]'
+      operationId: removeCalendarImport
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarSyncDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+      security:
+        - Bearer: [ ]
+  /users/calendar/working-hours:
+    get:
+      tags:
+        - calendar-controller
+      summary: 'The caller''s working hours: weekly windows of local wall-clock time in the
+        platform''s zone (Europe/Berlin), none set is an empty list; the Bundesland whose public
+        holidays count as days off; the day exceptions from 62 days before today onwards. Display
+        only: booking, the subscription feed and the busy import do not look at them.
+        [Authorization: counsellor]'
+      operationId: getCalendarWorkingHours
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarWorkingHoursDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization
+      security:
+        - Bearer: [ ]
+    put:
+      tags:
+        - calendar-controller
+      summary: 'Replaces all weekly working hours and the holiday region of the caller; an empty
+        list removes the windows, an absent or null holidayRegion switches holidays off. The day
+        exceptions in the body are ignored. [Authorization: counsellor]'
+      operationId: setCalendarWorkingHours
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CalendarWorkingHoursDTO'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarWorkingHoursDTO'
+        400:
+          description: BAD REQUEST - more than 14 windows, a weekday outside 0..6, a time not in
+            HH:mm, a start not before its end, or an unknown holidayRegion
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+      security:
+        - Bearer: [ ]
+  /users/calendar/working-hours/exceptions/{date}:
+    put:
+      tags:
+        - calendar-controller
+      summary: 'Creates or replaces the caller''s working hours on one date; they take the place
+        of the weekly windows and of a public holiday on that date. An empty list makes the whole
+        day off. The date lies from 62 days before to 400 days after today, the dates GET shows;
+        older exceptions are dropped. [Authorization: counsellor]'
+      operationId: setCalendarWorkingDayException
+      parameters:
+        - $ref: '#/components/parameters/ExceptionDate'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CalendarWorkingDayExceptionWindowsDTO'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarWorkingDayExceptionDTO'
+        400:
+          description: BAD REQUEST - more than 4 windows, a time not in HH:mm, an end not after
+            its start, overlapping windows, or a date before 62 days ago or more than 400 days
+            ahead; nothing is stored
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+        409:
+          description: CONFLICT - the caller already keeps 400 day exceptions from 62 days
+            before today onwards and this date is not one of them
+      security:
+        - Bearer: [ ]
+    delete:
+      tags:
+        - calendar-controller
+      summary: 'Removes the caller''s exception on one date, so the weekly windows apply again;
+        also 204 when there was none, for any date. [Authorization: counsellor]'
+      operationId: deleteCalendarWorkingDayException
+      parameters:
+        - $ref: '#/components/parameters/ExceptionDate'
+      responses:
+        204:
+          description: NO CONTENT
+        400:
+          description: BAD REQUEST - not a date
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+      security:
+        - Bearer: [ ]
+  /users/calendar/proposals:
+    get:
+      tags:
+        - calendar-controller
+      summary: 'The caller''s open move proposals (ADR-032): those they sent to colleagues and
+        those colleagues sent them. A proposal whose appointment was moved or cancelled after it
+        was made, or whose proposed start has passed, is void and not listed.
+        [Authorization: counsellor]'
+      operationId: getCalendarMoveProposals
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarMoveProposalsDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization
+      security:
+        - Bearer: [ ]
+    post:
+      tags:
+        - calendar-controller
+      summary: 'Proposes a new time for a colleague''s 1:1 appointment that the caller sees in
+        that colleague''s calendar. The colleague whose conversation it is decides; they are told
+        by e-mail. A second proposal from the caller for the same appointment replaces their open
+        one. [Authorization: counsellor who sees the appointment in a colleague''s calendar]'
+      operationId: createCalendarMoveProposal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CalendarMoveProposalCreateDTO'
+      responses:
+        201:
+          description: CREATED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarMoveProposalDTO'
+        400:
+          description: BAD REQUEST - end not after start, start in the past, the entry is not
+            an appointment, it has already begun, or it is the caller's own (moved directly)
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token, or the
+            appointment is not in a calendar the caller may look at
+        404:
+          description: NOT FOUND - no such appointment
+      security:
+        - Bearer: [ ]
+  /users/calendar/proposals/{proposalId}:
+    delete:
+      tags:
+        - calendar-controller
+      summary: 'Withdraws a proposal; one that was already decided stays as it is.
+        [Authorization: counsellor who proposed it]'
+      operationId: withdrawCalendarMoveProposal
+      parameters:
+        - $ref: '#/components/parameters/ProposalId'
+      responses:
+        204:
+          description: NO CONTENT
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token, or the caller did
+            not propose it
+        404:
+          description: NOT FOUND - no such proposal
+      security:
+        - Bearer: [ ]
+  /users/calendar/proposals/{proposalId}/accept:
+    post:
+      tags:
+        - calendar-controller
+      summary: 'Accepts a proposal: the appointment moves through the conversation''s appointment
+        path (the same checks as a move by the counsellor), every other open proposal for it is
+        superseded. Answers the moved appointment as the caller''s own calendar shows it; the
+        caller''s app tells the advice seeker in the conversation, as for any move.
+        [Authorization: counsellor who was asked]'
+      operationId: acceptCalendarMoveProposal
+      parameters:
+        - $ref: '#/components/parameters/ProposalId'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarEntryDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token, or the caller was
+            not asked
+        404:
+          description: NOT FOUND - no such proposal
+        409:
+          description: CONFLICT - the proposal is no longer open, or void because the appointment
+            was moved or cancelled meanwhile or the proposed start has passed, or the conversation
+            is finished
+      security:
+        - Bearer: [ ]
+  /users/calendar/proposals/{proposalId}/decline:
+    post:
+      tags:
+        - calendar-controller
+      summary: 'Declines a proposal; the appointment stays. One that was already decided stays as
+        it is. [Authorization: counsellor who was asked]'
+      operationId: declineCalendarMoveProposal
+      parameters:
+        - $ref: '#/components/parameters/ProposalId'
+      responses:
+        204:
+          description: NO CONTENT
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token, or the caller was
+            not asked
+        404:
+          description: NOT FOUND - no such proposal
+      security:
+        - Bearer: [ ]
+  /users/calendar/feed/{feedId}/{signature}.ics:
+    get:
+      tags:
+        - calendar-controller
+      summary: 'The subscription feed of one counsellor for calendar apps: neutral entries with
+        times only. [Authorization: none; the signed address is the credential]'
+      operationId: getCalendarFeed
+      parameters:
+        - name: feedId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: signature
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: OK
+          content:
+            text/calendar:
+              schema:
+                type: string
+        404:
+          description: NOT FOUND - unknown feed or wrong signature
+components:
+  parameters:
+    From:
+      name: from
+      in: query
+      description: Start of the window (inclusive), ISO-8601
+      required: true
+      schema:
+        type: string
+        format: date-time
+    To:
+      name: to
+      in: query
+      description: End of the window (exclusive), ISO-8601, at most 62 days after from
+      required: true
+      schema:
+        type: string
+        format: date-time
+    BlockerId:
+      name: blockerId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ExceptionDate:
+      name: date
+      in: path
+      description: Local date in the platform's zone (Europe/Berlin)
+      required: true
+      schema:
+        type: string
+        format: date
+        example: '2026-11-16'
+    ProposalId:
+      name: proposalId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    CalendarEntryType:
+      type: string
+      enum:
+        - APPOINTMENT
+        - GROUP
+        - BLOCKER
+        - BUSY
+    AppointmentKind:
+      description: How the appointment takes place. Absent on appointments made before the kind
+        existed; a reschedule without a kind keeps the stored one.
+      type: string
+      enum:
+        - ONSITE
+        - VIDEO
+        - PHONE
+        - CHAT
+    CalendarEntryDTO:
+      type: object
+      required:
+        - id
+        - type
+        - start
+        - end
+        - ownerId
+        - movable
+      properties:
+        id:
+          description: Appointment id, "chat-{chatId}-{occurrenceIndex}" or blocker id
+          type: string
+        type:
+          $ref: '#/components/schemas/CalendarEntryType'
+        start:
+          type: string
+          format: date-time
+        end:
+          type: string
+          format: date-time
+        ownerId:
+          description: The counsellor whose calendar this is; in an asker's view the asker
+          type: string
+        kind:
+          $ref: '#/components/schemas/AppointmentKind'
+        title:
+          description: Own view - asker username, group topic or blocker note. Asker view -
+            the counsellor's display name. Colleague view - the asker username where the Träger
+            shows it, else absent.
+          type: string
+        sessionId:
+          description: Own and asker view only
+          type: integer
+          format: int64
+        seriesId:
+          description: Blockers created as a series
+          type: string
+        movable:
+          type: boolean
+    CalendarColleagueDTO:
+      type: object
+      required:
+        - id
+        - displayName
+        - agencyName
+        - relation
+      properties:
+        id:
+          type: string
+        displayName:
+          type: string
+        agencyName:
+          type: string
+        relation:
+          type: string
+          enum:
+            - SAME_AGENCY
+            - SAME_TENANT
+            - OTHER_TENANT
+    CalendarColleaguesDTO:
+      type: object
+      required:
+        - visibilityScope
+        - showAskerUsernames
+        - colleagues
+      properties:
+        visibilityScope:
+          type: string
+          enum:
+            - AGENCY
+            - TENANT
+            - PLATFORM
+        showAskerUsernames:
+          type: boolean
+        colleagues:
+          type: array
+          items:
+            $ref: '#/components/schemas/CalendarColleagueDTO'
+    BlockerRepeatDTO:
+      type: object
+      required:
+        - weekdays
+        - until
+      properties:
+        weekdays:
+          description: 0 = Sunday .. 6 = Saturday
+          type: array
+          items:
+            type: integer
+            format: int32
+        until:
+          description: Last day of the series (inclusive)
+          type: string
+          format: date
+    BlockerCreateDTO:
+      type: object
+      required:
+        - start
+        - end
+      properties:
+        start:
+          type: string
+          format: date-time
+        end:
+          type: string
+          format: date-time
+        allDay:
+          type: boolean
+        note:
+          type: string
+          maxLength: 255
+        repeat:
+          $ref: '#/components/schemas/BlockerRepeatDTO'
+    BlockerTimeDTO:
+      type: object
+      required:
+        - start
+        - end
+      properties:
+        start:
+          type: string
+          format: date-time
+        end:
+          type: string
+          format: date-time
+    CalendarSyncDTO:
+      type: object
+      required:
+        - feedUrl
+        - importConfigured
+      properties:
+        feedUrl:
+          description: Absolute address of the subscription feed
+          type: string
+        feedLastFetchedAt:
+          type: string
+          format: date-time
+        importConfigured:
+          type: boolean
+        importHost:
+          description: Host of the import address; the address itself is never returned
+          type: string
+        importLastSyncAt:
+          description: Last successful import
+          type: string
+          format: date-time
+        importError:
+          type: string
+          enum:
+            - INVALID_URL
+            - UNREACHABLE
+            - TOO_LARGE
+            - NOT_ICS
+            - FORBIDDEN_ADDRESS
+    CalendarImportDTO:
+      type: object
+      required:
+        - icsUrl
+      properties:
+        icsUrl:
+          type: string
+          maxLength: 2048
+    CalendarWorkingHoursWindowDTO:
+      type: object
+      required:
+        - weekday
+        - start
+        - end
+      properties:
+        weekday:
+          description: 0 = Sunday .. 6 = Saturday
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 6
+        start:
+          description: Local wall-clock time, HH:mm
+          type: string
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+          example: '08:00'
+        end:
+          description: Local wall-clock time, HH:mm, after start
+          type: string
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+          example: '17:00'
+    CalendarWorkingHoursDTO:
+      type: object
+      required:
+        - windows
+      properties:
+        windows:
+          description: Ordered by weekday and start; at most 14
+          type: array
+          maxItems: 14
+          items:
+            $ref: '#/components/schemas/CalendarWorkingHoursWindowDTO'
+        holidayRegion:
+          description: Bundesland whose public holidays count as days off (ISO 3166-2:DE suffix).
+            Absent or null = holidays are not treated as days off.
+          type: string
+          nullable: true
+          enum:
+            - BW
+            - BY
+            - BE
+            - BB
+            - HB
+            - HH
+            - HE
+            - MV
+            - NI
+            - NW
+            - RP
+            - SL
+            - SN
+            - ST
+            - SH
+            - TH
+            - null
+        exceptions:
+          description: Read-only. Day exceptions from 62 days before today onwards, ordered by
+            date, at most 400. Ignored on PUT; change them with
+            /users/calendar/working-hours/exceptions/{date}.
+          type: array
+          readOnly: true
+          maxItems: 400
+          items:
+            $ref: '#/components/schemas/CalendarWorkingDayExceptionDTO'
+    CalendarWorkingTimeWindowDTO:
+      description: A window of local wall-clock time on one date; a weekly window without weekday
+      type: object
+      required:
+        - start
+        - end
+      properties:
+        start:
+          description: Local wall-clock time, HH:mm
+          type: string
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+          example: '08:00'
+        end:
+          description: Local wall-clock time, HH:mm, after start
+          type: string
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+          example: '12:00'
+    CalendarWorkingDayExceptionDTO:
+      type: object
+      required:
+        - date
+        - windows
+      properties:
+        date:
+          description: Local date in the platform's zone (Europe/Berlin)
+          type: string
+          format: date
+          example: '2026-11-16'
+        windows:
+          description: Working windows on that date, ordered by start, non-overlapping, at most 4.
+            Empty = the whole day off.
+          type: array
+          maxItems: 4
+          items:
+            $ref: '#/components/schemas/CalendarWorkingTimeWindowDTO'
+    CalendarWorkingDayExceptionWindowsDTO:
+      type: object
+      required:
+        - windows
+      properties:
+        windows:
+          description: Working windows on that date, non-overlapping, at most 4; stored and
+            returned ordered by start. Empty = the whole day off.
+          type: array
+          maxItems: 4
+          items:
+            $ref: '#/components/schemas/CalendarWorkingTimeWindowDTO'
+    CalendarMoveProposalCreateDTO:
+      type: object
+      required:
+        - entryId
+        - start
+        - end
+      properties:
+        entryId:
+          description: Id of the colleague's appointment, as their calendar lists it
+          type: string
+          maxLength: 64
+        start:
+          type: string
+          format: date-time
+        end:
+          type: string
+          format: date-time
+    CalendarMoveProposalDTO:
+      type: object
+      required:
+        - id
+        - entryId
+        - start
+        - end
+        - entryStart
+        - entryEnd
+        - proposerId
+        - proposerName
+        - approverId
+        - approverName
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        entryId:
+          description: The appointment to move
+          type: string
+        start:
+          description: Proposed start
+          type: string
+          format: date-time
+        end:
+          description: Proposed end
+          type: string
+          format: date-time
+        entryStart:
+          description: The appointment's start when the proposal was made
+          type: string
+          format: date-time
+        entryEnd:
+          description: The appointment's end when the proposal was made
+          type: string
+          format: date-time
+        proposerId:
+          type: string
+        proposerName:
+          description: The name colleagues see
+          type: string
+        approverId:
+          description: The counsellor whose conversation it is and who decides
+          type: string
+        approverName:
+          description: The name colleagues see
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    CalendarMoveProposalsDTO:
+      type: object
+      required:
+        - sent
+        - received
+      properties:
+        sent:
+          description: Open proposals of the caller, oldest first
+          type: array
+          items:
+            $ref: '#/components/schemas/CalendarMoveProposalDTO'
+        received:
+          description: Open proposals the caller is asked to decide, oldest first
+          type: array
+          items:
+            $ref: '#/components/schemas/CalendarMoveProposalDTO'
+  securitySchemes:
+    Bearer:
+      type: apiKey
+      name: Authorization
+      in: header

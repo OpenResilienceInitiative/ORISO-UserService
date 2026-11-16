@@ -6,10 +6,8 @@ import com.sun.net.httpserver.HttpServer;
 import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
 import de.caritas.cob.userservice.api.config.apiclient.*;
 import de.caritas.cob.userservice.api.config.auth.*;
-import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.*;
 import de.caritas.cob.userservice.api.port.out.*;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.httpheader.*;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.*;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
@@ -21,7 +19,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.context.support.StaticApplicationContext;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.RestTemplate;
 
 @DataJpaTest
@@ -57,9 +54,8 @@ class KeycloakOnlyAskerDeletionTest {
             .createDate(now)
             .build());
     entityManager.flush();
-    var failAppointment = new AtomicBoolean(true);
+    var failIdentity = new AtomicBoolean(true);
     var identityPresent = new AtomicBoolean(true);
-    var appointmentCalls = new AtomicInteger();
     var identityCalls = new AtomicInteger();
     var remote = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
     remote.createContext(
@@ -68,10 +64,9 @@ class KeycloakOnlyAskerDeletionTest {
           int status;
           if (exchange.getRequestURI().getPath().startsWith("/identity/")) {
             identityCalls.incrementAndGet();
-            status = identityPresent.getAndSet(false) ? 204 : 404;
+            status = failIdentity.get() ? 503 : identityPresent.getAndSet(false) ? 204 : 404;
           } else {
-            appointmentCalls.incrementAndGet();
-            status = failAppointment.get() ? 503 : 204;
+            status = 204;
           }
           exchange.sendResponseHeaders(status, -1);
           exchange.close();
@@ -80,45 +75,6 @@ class KeycloakOnlyAskerDeletionTest {
     try (var context = new StaticApplicationContext()) {
       String url = "http://127.0.0.1:" + remote.getAddress().getPort();
       var transport = new RestTemplate();
-      var factory = new AppointmentAskerServiceApiControllerFactory();
-      ReflectionTestUtils.setField(factory, "appointmentServiceApiUrl", url);
-      ReflectionTestUtils.setField(factory, "restTemplate", transport);
-      var config = new IdentityConfig();
-      var tech = new TechnicalUserConfig();
-      tech.setClientId("test");
-      tech.setClientSecret("test");
-      config.setTechnicalUser(tech);
-      var security = new SecurityHeaderSupplier(new AuthenticatedUser());
-      ReflectionTestUtils.setField(security, "csrfHeaderProperty", "X-CSRF");
-      ReflectionTestUtils.setField(security, "csrfCookieProperty", "CSRF");
-      var authentication =
-          new IdentityAuthentication() {
-            public IdentityLogin login(String u, String p) {
-              return new IdentityLogin("external-test-token", 60, 60, "unused");
-            }
-
-            public IdentityLogin loginService(String clientId, String clientSecret) {
-              return new IdentityLogin("external-test-token", 60, 60, "unused");
-            }
-
-            public boolean logout(String token) {
-              throw new UnsupportedOperationException();
-            }
-
-            public boolean verifyPasswordIgnoringSecondFactor(String u, String p) {
-              throw new UnsupportedOperationException();
-            }
-          };
-      var appointments =
-          new AppointmentService(
-              new AppointmentConsultantServiceApiControllerFactory(),
-              new AppointmentAgencyServiceApiControllerFactory(),
-              factory,
-              security,
-              new TenantHeaderSupplier(new HttpHeadersResolver()),
-              authentication,
-              config);
-      ReflectionTestUtils.setField(appointments, "appointmentFeatureEnabled", true);
       var remover =
           new IdentityAccountRemover() {
             public void deleteUser(String subject) {
@@ -129,9 +85,6 @@ class KeycloakOnlyAskerDeletionTest {
               throw new UnsupportedOperationException();
             }
           };
-      context
-          .getBeanFactory()
-          .registerSingleton("appointment", new DeleteAppointmentServiceAskerAction(appointments));
       context
           .getBeanFactory()
           .registerSingleton("drafts", new DeleteAskerDraftMessagesAction(drafts));
@@ -147,19 +100,17 @@ class KeycloakOnlyAskerDeletionTest {
           .singleElement()
           .satisfies(
               error ->
-                  assertThat(error.getDeletionTargetType())
-                      .isEqualTo(DeletionTargetType.APPOINTMENT_SERVICE));
-      assertThat(identityCalls).hasValue(0);
-      assertThat(drafts.findAll().stream().anyMatch(d -> id.equals(d.getUserId()))).isTrue();
-      failAppointment.set(false);
+                  assertThat(error.getDeletionTargetType()).isEqualTo(DeletionTargetType.KEYCLOAK));
+      assertThat(identityCalls).hasValue(1);
+      assertThat(identityPresent).isTrue();
+      failIdentity.set(false);
       assertThat(service.delete(id)).isEmpty();
       assertThat(identityPresent).isFalse();
       assertThat(drafts.findAll().stream().anyMatch(d -> id.equals(d.getUserId()))).isFalse();
       assertThat(notifications.findAll().stream().anyMatch(n -> id.equals(n.getRecipientUserId())))
           .isFalse();
       assertThat(service.delete(id)).isEmpty();
-      assertThat(appointmentCalls).hasValue(3);
-      assertThat(identityCalls).hasValue(2);
+      assertThat(identityCalls).hasValue(3);
       assertThat(users.findById(id)).isEmpty();
     } finally {
       remote.stop(0);

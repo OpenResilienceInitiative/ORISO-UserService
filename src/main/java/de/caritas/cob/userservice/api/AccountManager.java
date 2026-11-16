@@ -23,7 +23,6 @@ import de.caritas.cob.userservice.api.port.out.SearchSort;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.matrix.ConsultantRenameSystemMessageService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.nio.charset.StandardCharsets;
@@ -70,8 +69,6 @@ public class AccountManager implements AccountManaging {
   private final AuthenticatedUser authenticatedUser;
 
   private final SessionRepository sessionRepository;
-
-  private final AppointmentService appointmentService;
 
   private final PatchConsultantSaga patchConsultantSaga;
 

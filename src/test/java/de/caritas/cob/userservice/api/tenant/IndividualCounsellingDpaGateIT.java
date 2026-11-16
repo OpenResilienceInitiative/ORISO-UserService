@@ -340,25 +340,6 @@ class IndividualCounsellingDpaGateIT {
   @org.junit.jupiter.params.provider.EnumSource(
       value = de.caritas.cob.userservice.api.model.Session.SessionStatus.class,
       names = {"INITIAL", "NEW"})
-  void expiredRenewalBlocksAnAppointmentStartingUnbegunCounselling(
-      de.caritas.cob.userservice.api.model.Session.SessionStatus status) throws Exception {
-    var session = storedSession(status);
-    var result =
-        request(
-            "/appointments/sessions/" + session.getId() + "/enquiry/new",
-            asker.getUserId(),
-            asker.getUsername(),
-            "user",
-            "{\"counselorEmail\":\"synthetic-consultant@synthetic.oriso.test\"}");
-    org.junit.jupiter.api.Assertions.assertEquals(403, result.statusCode(), result.body());
-    org.junit.jupiter.api.Assertions.assertTrue(
-        result.body().contains("DPA_NEW_COUNSELLING_NOT_ALLOWED"), result.body());
-  }
-
-  @org.junit.jupiter.params.ParameterizedTest
-  @org.junit.jupiter.params.provider.EnumSource(
-      value = de.caritas.cob.userservice.api.model.Session.SessionStatus.class,
-      names = {"INITIAL", "NEW"})
   void expiredRenewalBlocksAssigningAStoredUnbegunSession(
       de.caritas.cob.userservice.api.model.Session.SessionStatus status) throws Exception {
     var session = storedSession(status);

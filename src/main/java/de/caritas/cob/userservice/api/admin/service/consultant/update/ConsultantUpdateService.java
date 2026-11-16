@@ -25,7 +25,6 @@ import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.matrix.ConsultantRenameSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import java.time.LocalDateTime;
@@ -54,7 +53,6 @@ public class ConsultantUpdateService {
   private final @NonNull ConsultantPublicSlugService consultantPublicSlugService;
   private final @NonNull UserAccountInputValidator userAccountInputValidator;
   private final @NonNull MatrixUserClient matrixUserClient;
-  private final @NonNull AppointmentService appointmentService;
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull EventNotificationService eventNotificationService;
   private final @NonNull ConsultantTopicAgencyCompatibilityValidator
@@ -98,10 +96,6 @@ public class ConsultantUpdateService {
     rejectRemovingTheLastTopic(consultant, topicIdsByAgencyId);
 
     boolean identityDataChanged = identityDataChanged(consultant, updateConsultantDTO);
-    boolean appointmentDataChanged =
-        identityDataChanged
-            || !Objects.equals(consultant.isAbsent(), updateConsultantDTO.getAbsent());
-
     if (identityDataChanged) {
       UserDTO userDTO = buildValidatedUserDTO(updateConsultantDTO, consultant);
       this.identityProfileUpdater.updateProfile(
@@ -131,9 +125,6 @@ public class ConsultantUpdateService {
     var updatedConsultant = updateDatabaseConsultant(updateConsultantDTO, consultant, adminEdit);
     // updateDatabaseConsultant mutates this very entity, so it already carries the new values.
     scheduleMatrixDisplayNameUpdate(consultant, identityDataChanged, previousPublishedName);
-    if (appointmentDataChanged) {
-      appointmentService.syncConsultantData(updatedConsultant);
-    }
     emitCounselorRenameNotificationsIfNeeded(
         consultant,
         previousPublishedName,

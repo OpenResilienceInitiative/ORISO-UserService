@@ -51,6 +51,9 @@ public class HttpTenantFilter extends OncePerRequestFilter {
               "(/service)?/users/account-invites/[^/]+(/(accept|setup|onboarding(/(register|two-factor(/email)?|dpa-forward|dpa-mail-preview))?))?",
               "(/service)?/users/invitelinks/[^/]+/(context|redeem)",
               "(/service)?/users/identity-suggestions",
+              // Calendar subscription feed: a calendar app sends neither token nor tenant; the
+              // signed feed id settles whose calendar it is (CalendarFeedService).
+              "(/service)?/users/calendar/feed/[^/]+/[^/]+\\.ics",
               // TenantService's callback; DpaSignedNoticeService takes the tenant from the path.
               "(/service)?/users/tenants/[^/]+/dpa-signed-notices",
               // A Träger admin reports the deletion of its own Träger after it is gone, so its

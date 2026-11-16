@@ -33,7 +33,6 @@ import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.matrix.ConsultantRenameSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import java.util.HashSet;
@@ -84,7 +83,6 @@ class AdminEditKeepsKeycloakUserIdAttributeTest {
   @Mock private ConsultantService consultantService;
   @Mock private ConsultantPublicSlugService consultantPublicSlugService;
   @Mock private MatrixUserClient matrixUserClient;
-  @Mock private AppointmentService appointmentService;
   @Mock private SessionRepository sessionRepository;
   @Mock private EventNotificationService eventNotificationService;
   @Mock private ConsultantTopicAgencyCompatibilityValidator topicAgencyCompatibilityValidator;
@@ -118,7 +116,6 @@ class AdminEditKeepsKeycloakUserIdAttributeTest {
             consultantPublicSlugService,
             userAccountInputValidator,
             matrixUserClient,
-            appointmentService,
             sessionRepository,
             eventNotificationService,
             topicAgencyCompatibilityValidator,

@@ -23,6 +23,38 @@ public interface ConsultantRepository
 
   boolean existsByIdAndManagedPausedTrue(String id);
 
+  /**
+   * Which of the ids belong to a counsellor who has a row, deleted or not. Native, so that no
+   * tenant filter hides the counsellors of another Träger: a background job that drops what an
+   * account left behind must not take those for gone.
+   */
+  @Query(
+      value = "SELECT consultant_id FROM consultant WHERE consultant_id IN (:ids)",
+      nativeQuery = true)
+  List<String> findIdsAmong(@Param("ids") Collection<String> ids);
+
+  /**
+   * Which of the ids belong to a counsellor who has a row and is not deleted. Native for the same
+   * reason as {@link #findIdsAmong}.
+   */
+  @Query(
+      value =
+          "SELECT consultant_id FROM consultant"
+              + " WHERE consultant_id IN (:ids) AND delete_date IS NULL",
+      nativeQuery = true)
+  List<String> findIdsNotDeletedAmong(@Param("ids") Collection<String> ids);
+
+  /**
+   * Locks the counsellor's own row until the transaction ends, so that their calendar writes run
+   * one after another: two new day exceptions cannot both pass the limit check, and two first
+   * writes of the holiday region cannot both insert its row. Empty when there is no such
+   * counsellor.
+   */
+  @Query(
+      value = "SELECT consultant_id FROM consultant WHERE consultant_id = :consultantId FOR UPDATE",
+      nativeQuery = true)
+  Optional<String> lockConsultant(@Param("consultantId") String consultantId);
+
   @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
   @Query("select c from Consultant c where c.id = :id")
   Optional<Consultant> findPictureOwnerForUpdate(@Param("id") String id);

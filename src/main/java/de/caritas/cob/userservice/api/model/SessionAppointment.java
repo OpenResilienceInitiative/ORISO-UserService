@@ -23,8 +23,8 @@ import org.hibernate.annotations.OnDeleteAction;
 import org.hibernate.type.SqlTypes;
 
 /**
- * A 1:1 appointment of one conversation (ADR-020). Owned by UserService alone, independent of the
- * legacy {@link Appointment} and of the AppointmentService. Holds times and references only.
+ * A 1:1 appointment of one conversation (ADR-020). Owned by UserService alone. Holds times and
+ * references only.
  */
 @Entity
 @Table(name = "session_appointment")
@@ -36,6 +36,14 @@ public class SessionAppointment {
   public enum Status {
     SCHEDULED,
     CANCELLED
+  }
+
+  /** How the appointment takes place (ADR-032); null on rows made before the kind existed. */
+  public enum Kind {
+    ONSITE,
+    VIDEO,
+    PHONE,
+    CHAT
   }
 
   @Id
@@ -62,4 +70,8 @@ public class SessionAppointment {
   @Enumerated(EnumType.STRING)
   @Column(length = 16, nullable = false)
   private Status status;
+
+  @Enumerated(EnumType.STRING)
+  @Column(length = 16)
+  private Kind kind;
 }
