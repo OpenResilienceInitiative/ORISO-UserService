@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.service.contactperson.ContactPersonReferences;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditOutcome;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditTargetType;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionAuditService;
@@ -23,12 +24,14 @@ public class DeleteAdminService {
   private final @NonNull AdminAgencyRepository adminAgencyRepository;
   private final @NonNull IdentityAccountRemover identityAccountRemover;
   private final @NonNull DeletionAuditService deletionAuditService;
+  private final @NonNull ContactPersonReferences contactPersonReferences;
 
   public void deleteAgencyAdmin(String adminId) {
     var tenantId = tenantIdOf(adminId);
     this.adminAgencyRepository.deleteByAdminId(adminId);
     this.identityAccountRemover.deleteUser(adminId);
     this.adminRepository.deleteById(adminId);
+    this.contactPersonReferences.forgetAdmin(adminId);
     logExecuted(DeletionAuditTargetType.AGENCY_ADMIN, adminId, tenantId);
   }
 
@@ -36,6 +39,7 @@ public class DeleteAdminService {
     var tenantId = tenantIdOf(adminId);
     this.identityAccountRemover.deleteUser(adminId);
     this.adminRepository.deleteById(adminId);
+    this.contactPersonReferences.forgetAdmin(adminId);
     logExecuted(DeletionAuditTargetType.TENANT_ADMIN, adminId, tenantId);
   }
 
