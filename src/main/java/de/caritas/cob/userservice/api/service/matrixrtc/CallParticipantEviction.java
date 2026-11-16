@@ -43,10 +43,30 @@ public class CallParticipantEviction {
     this.token = token == null ? "" : token.trim();
   }
 
+  /**
+   * FE#2209 round 8 (F1): a guest whose seat was revoked is also taken out of the LiveKit room of
+   * that one call. The media gate already refuses a new token; this ends the open connection. Best
+   * effort, like {@link #evictFromRunningCalls}: the revocation stands either way.
+   */
+  public void evictFromCallRoom(String mediaRoomId, String matrixUserId) {
+    if (mediaRoomId == null || mediaRoomId.isBlank()) return;
+    evict(matrixUserId, List.of(mediaRoomId));
+  }
+
   public void evictFromRunningCalls(String sourceRoomId, String matrixUserId) {
+    List<String> mediaRoomIds;
     try {
-      List<String> mediaRoomIds = bindings.findRunningMediaRoomIds(sourceRoomId);
-      if (mediaRoomIds.isEmpty()) return;
+      mediaRoomIds = bindings.findRunningMediaRoomIds(sourceRoomId);
+    } catch (RuntimeException failure) {
+      log.warn("Call eviction failed ({})", failure.getClass().getSimpleName());
+      return;
+    }
+    if (mediaRoomIds.isEmpty()) return;
+    evict(matrixUserId, mediaRoomIds);
+  }
+
+  private void evict(String matrixUserId, List<String> mediaRoomIds) {
+    try {
       if (baseUrl.isBlank() || token.length() < 32) {
         log.warn(
             "Call eviction is not configured; a removed participant may stay in a running call");

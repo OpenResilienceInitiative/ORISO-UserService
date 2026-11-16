@@ -12,6 +12,12 @@ import org.springframework.data.repository.query.Param;
 
 public interface TeamDiscussionRepository extends JpaRepository<TeamDiscussion, Long> {
 
+  /** FE#2209: tenant-independent, see {@code SessionRepository#countAnyTenantByMatrixRoomId}. */
+  @Query(
+      value = "SELECT COUNT(*) FROM team_discussion WHERE matrix_room_id = :room",
+      nativeQuery = true)
+  long countAnyTenantByMatrixRoomId(@Param("room") String room);
+
   Optional<TeamDiscussion> findBySessionId(Long sessionId);
 
   Optional<TeamDiscussion> findByMatrixRoomId(String matrixRoomId);

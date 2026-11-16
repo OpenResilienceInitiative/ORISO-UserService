@@ -65,6 +65,8 @@ class MatrixCallObservationServiceTest {
           EventNotificationService.class,
           org.mockito.Mockito.withSettings().invocationListeners(transactionGuard));
   private final MatrixCallLifecycleService lifecycle = mock(MatrixCallLifecycleService.class);
+  private final MatrixSessionCallBindingService sessionBindings =
+      mock(MatrixSessionCallBindingService.class);
   private final java.util.List<MatrixCallObservation> saved = new java.util.ArrayList<>();
   private MatrixCallObservationService service;
   private AuthenticatedUser actor;
@@ -82,6 +84,7 @@ class MatrixCallObservationServiceTest {
             matrix,
             notifications,
             lifecycle,
+            sessionBindings,
             tx);
     actor = new AuthenticatedUser();
     actor.setUserId("creator");
@@ -150,6 +153,34 @@ class MatrixCallObservationServiceTest {
     verify(notifications, never())
         .createCallInvitationNotification(
             any(), eq("creator"), anyBoolean(), any(), any(), any(), anyBoolean());
+  }
+
+  @Test
+  void aBindingCommittedWhileMatrixWasAskedIsSeenUnderTheLockAndWins() {
+    // CodeRabbit 4562143169: the check runs again under the source lock, so an authoritative
+    // binding written during the Matrix lookups is never pre-empted by this registration.
+    var openAtRead = new java.util.ArrayList<Boolean>();
+    when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call"))
+        .thenAnswer(
+            invocation -> {
+              openAtRead.add(tx.isOpen());
+              return openAtRead.size() == 1
+                  ? Optional.empty()
+                  : Optional.of(MatrixCallBinding.builder().sourceRoomId(SOURCE).build());
+            });
+
+    assertThat(service.register(actor, SOURCE, "call", MEDIA, true)).isEqualTo(Outcome.NOT_FOUND);
+    // CodeRabbit 4563094725: the second read follows the source lock, inside the transaction; two
+    // reads before the lock would pass the stubbing above but bring the race back.
+    var order = org.mockito.Mockito.inOrder(bindings, conversations);
+    order.verify(bindings).findBySourceRoomIdAndCallId(SOURCE, "call");
+    order.verify(conversations).lockCurrentForWriting(any());
+    order.verify(bindings).findBySourceRoomIdAndCallId(SOURCE, "call");
+    assertThat(openAtRead).containsExactly(false, true);
+    verify(repo, never()).saveAndFlush(any());
+    verify(notifications, never())
+        .createCallInvitationNotification(
+            any(), any(), anyBoolean(), any(), any(), any(), anyBoolean());
   }
 
   @Test
@@ -399,13 +430,79 @@ class MatrixCallObservationServiceTest {
     stranger.setTenantId(7L);
     var otherUser = user("other", OTHER);
     when(users.findByUserIdAndDeleteDateIsNull("other")).thenReturn(Optional.of(otherUser));
-    assertThat(service.end(stranger, SOURCE, "call")).isEqualTo(Outcome.NOT_FOUND);
+    // A member who did not create the observation stores only their own end (4563094690).
+    assertThat(service.end(stranger, SOURCE, "call")).isEqualTo(Outcome.OK);
     assertThat(row.getEndedAt()).isNull();
     assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
     assertThat(row.getEndedAt()).isNotNull();
     verify(notifications)
         .createCallEndedNotification(
             any(), eq("other"), eq(false), eq("call"), eq(MEDIA), anyLong(), anyLong());
+  }
+
+  // --- FE#2209 review (CodeRabbit): the session binding ends with the observation ---
+
+  @Test
+  void aSessionCallsBindingEndsInTheObservationsTransactionEvenWhenNotifyingFails() {
+    var session = new MatrixCallConversation(SOURCE, 7L, 16L, null);
+    when(conversations.resolve(SOURCE)).thenReturn(Optional.of(session));
+    long now = System.currentTimeMillis();
+    var row = sessionRow(16L, now - 1000, now + 60_000);
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    when(sessionBindings.boundCallId(SOURCE, "call")).thenReturn(Optional.of(5L));
+    var order = new java.util.ArrayList<String>();
+    org.mockito.Mockito.doAnswer(
+            i -> {
+              order.add("lock binding " + tx.isOpen());
+              return null;
+            })
+        .when(sessionBindings)
+        .lockBinding(5L);
+    when(conversations.lockCurrentForWriting(any()))
+        .thenAnswer(
+            i -> {
+              order.add("lock session " + tx.isOpen());
+              return true;
+            });
+    when(sessionBindings.endWhileSessionLocked(any(), eq(session), eq("call"), anyLong(), eq(5L)))
+        .thenAnswer(
+            i -> {
+              order.add("end binding " + tx.isOpen());
+              return MEDIA;
+            });
+    org.mockito.Mockito.doThrow(new IllegalStateException("notification store down"))
+        .when(notifications)
+        .createCallEndedNotification(
+            any(), anyString(), anyBoolean(), anyString(), anyString(), anyLong(), anyLong());
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.end(actor, SOURCE, "call"))
+        .isInstanceOf(IllegalStateException.class);
+
+    assertThat(order).containsExactly("lock binding true", "lock session true", "end binding true");
+    assertThat(row.getEndedAt()).isNotNull();
+    verify(sessionBindings).revokeGuestsAfterEnd(MEDIA);
+  }
+
+  @Test
+  void aColleaguesEndOfASessionCallEndsTheBindingEvenWithoutAnObservationOfTheirOwn() {
+    var session = new MatrixCallConversation(SOURCE, 7L, 16L, null);
+    when(conversations.resolve(SOURCE)).thenReturn(Optional.of(session));
+    long now = System.currentTimeMillis();
+    // Registered by the creator; the colleague's end does not end the observation ...
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call"))
+        .thenReturn(Optional.of(sessionRow(16L, now - 1000, now + 60_000)));
+    var colleague = new AuthenticatedUser();
+    colleague.setUserId("other");
+    colleague.setTenantId(7L);
+    when(users.findByUserIdAndDeleteDateIsNull("other"))
+        .thenReturn(Optional.of(user("other", OTHER)));
+    // ... but the binding rule lets a counsellor who is in the call end the call.
+    when(sessionBindings.endWhileSessionLocked(
+            eq(colleague), eq(session), eq("call"), anyLong(), any()))
+        .thenReturn(MEDIA);
+
+    assertThat(service.end(colleague, SOURCE, "call")).isEqualTo(Outcome.OK);
+    verify(sessionBindings).revokeGuestsAfterEnd(MEDIA);
   }
 
   // --- #1630 (a): no database transaction stays open while Matrix is called ---
@@ -508,9 +605,28 @@ class MatrixCallObservationServiceTest {
   }
 
   @Test
-  void anotherMembersEndOfARegisteredCallIsRefusedAndNotStored() {
+  void anotherMembersEndOfARegisteredCallKeepsTheObservationButStoresTheirOwnEnd() {
+    // CodeRabbit 4563094690: the observation stays the creator's; the member's own end is kept, so
+    // the member's bind that is still in flight does not start a live call.
     var row = row(System.currentTimeMillis() - 1000, System.currentTimeMillis() + 60_000, null);
     when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+
+    assertThat(service.end(other(), SOURCE, "call")).isEqualTo(Outcome.OK);
+
+    assertThat(row.getEndedAt()).isNull();
+    assertThat(storedEnds)
+        .extracting(MatrixCallObservationEnd::getActorMatrixId)
+        .containsExactly(OTHER);
+    verify(notifications, never())
+        .createCallEndedNotification(
+            any(), any(), anyBoolean(), any(), any(), anyLong(), anyLong());
+  }
+
+  @Test
+  void aNonMembersEndOfARegisteredCallIsRefusedAndNotStored() {
+    var row = row(System.currentTimeMillis() - 1000, System.currentTimeMillis() + 60_000, null);
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    when(matrix.getCallRoomMembers(SOURCE)).thenReturn(Optional.of(List.of(CREATOR)));
 
     assertThat(service.end(other(), SOURCE, "call")).isEqualTo(Outcome.NOT_FOUND);
 

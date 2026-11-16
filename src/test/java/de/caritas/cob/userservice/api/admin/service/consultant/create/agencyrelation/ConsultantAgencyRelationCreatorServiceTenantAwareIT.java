@@ -199,7 +199,6 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
 
   private Consultant createConsultantWithoutAgencyAndSession() {
     Consultant consultant = easyRandom.nextObject(Consultant.class);
-    consultant.setAppointments(null);
     consultant.setTenantId(1L);
     consultant.setConsultantAgencies(null);
     consultant.setSessions(null);

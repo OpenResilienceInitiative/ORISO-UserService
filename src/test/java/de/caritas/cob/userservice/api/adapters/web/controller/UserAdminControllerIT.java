@@ -38,7 +38,6 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NoContentException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.identity.UserIdentitiesService;
 import java.util.ArrayList;
 import java.util.UUID;
@@ -111,8 +110,6 @@ class UserAdminControllerIT {
 
   @MockitoBean private AskerUserAdminFacade askerUserAdminFacade;
 
-  @MockitoBean private AppointmentService appointmentService;
-
   @MockitoBean private AdminUserFacade adminUserFacade;
 
   @MockitoBean
@@ -129,6 +126,10 @@ class UserAdminControllerIT {
   @MockitoBean private IdentityObservationHttpAdapter identityObservationHttpAdapter;
   @MockitoBean private AdminListPreferenceService adminListPreferenceService;
   @MockitoBean private de.caritas.cob.userservice.api.helper.UserHelper userHelper;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.admin.service.tenant.TenantDeletionBlockerService
+      tenantDeletionBlockerService;
 
   @Test
   void getSessions_Should_returnBadRequest_When_requiredPaginationParamsAreMissing()

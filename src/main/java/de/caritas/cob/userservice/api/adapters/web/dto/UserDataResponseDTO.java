@@ -120,8 +120,6 @@ public class UserDataResponseDTO {
 
   private Set<EmailToggle> emailToggles;
 
-  private Boolean appointmentFeatureEnabled;
-
   private LanguageCode preferredLanguage;
 
   private LocalDateTime termsAndConditionsConfirmation;

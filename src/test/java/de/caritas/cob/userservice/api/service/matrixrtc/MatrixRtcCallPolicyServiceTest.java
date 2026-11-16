@@ -66,7 +66,9 @@ class MatrixRtcCallPolicyServiceTest {
             tenantService,
             matrixSynapseService,
             correlationIdHasher(),
-            jdbc);
+            jdbc,
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService.class));
     org.mockito.Mockito.lenient()
         .when(matrixSynapseService.getRoomMembers(ROOM_ID))
         .thenReturn(Optional.of(List.of(MATRIX_USER_ID)));

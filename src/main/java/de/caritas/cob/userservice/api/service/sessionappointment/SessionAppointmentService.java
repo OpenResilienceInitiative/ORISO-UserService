@@ -30,8 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Lifecycle of the 1:1 appointments of a conversation (ADR-020, ORISO-Frontend#1960). Works from
- * this service's own table alone: no cal.com, no AppointmentService, independent of {@code
- * feature.appointment.enabled}.
+ * this service's own table alone.
  *
  * <p>The responsible counsellors are the session's counsellor and whoever holds a live co-access
  * grant through a case handover. They create and move; they and the asker read and cancel. Anybody

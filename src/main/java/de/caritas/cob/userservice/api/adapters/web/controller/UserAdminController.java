@@ -28,6 +28,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.RootDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionAdminResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
+import de.caritas.cob.userservice.api.adapters.web.dto.TenantDeletionBlockersDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAgencyAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantAdminDTO;
@@ -43,13 +44,13 @@ import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsu
 import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPreferenceService;
 import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPreferenceService.ListSort;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantDeletionBlockerService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.PasswordPolicy;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.SearchFilter;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.identity.UserIdentitiesService;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UseradminApi;
 import io.swagger.annotations.Api;
@@ -96,7 +97,6 @@ public class UserAdminController implements UseradminApi {
   private final @NonNull ConsultantAdminFacade consultantAdminFacade;
   private final @NonNull AskerUserAdminFacade askerUserAdminFacade;
   private final @NonNull AdminUserFacade adminUserFacade;
-  private final @NonNull AppointmentService appointmentService;
   private final @NonNull AdminDtoMapper adminDtoMapper;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull GrantConsultantIdentityService grantConsultantIdentityService;
@@ -106,6 +106,7 @@ public class UserAdminController implements UseradminApi {
           .ExistingAccountSetupIssuer
       accountSetupIssuer;
   private final @NonNull UserHelper userHelper;
+  private final @NonNull TenantDeletionBlockerService tenantDeletionBlockerService;
 
   /** Never typed by anyone and valid until the setup link expires, so length costs nothing. */
   static final int SETUP_ONLY_PASSWORD_LENGTH = 32;
@@ -549,6 +550,12 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<List<AdminResponseDTO>> getTenantAdmins(final Integer tenantId) {
     return new ResponseEntity<>(this.adminUserFacade.findTenantAdmins(tenantId), HttpStatus.OK);
+  }
+
+  /** What still blocks deleting the Träger; asked by TenantService before it deletes (#1466). */
+  @Override
+  public ResponseEntity<TenantDeletionBlockersDTO> getTenantDeletionBlockers(final Long tenantId) {
+    return ResponseEntity.ok(tenantDeletionBlockerService.findBlockers(tenantId));
   }
 
   @Override

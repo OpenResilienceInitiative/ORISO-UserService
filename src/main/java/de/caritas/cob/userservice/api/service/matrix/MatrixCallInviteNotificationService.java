@@ -26,37 +26,153 @@ public class MatrixCallInviteNotificationService {
   private final MatrixCallBindingService callBindings;
   private final MatrixCallLifecycleService lifecycle;
   private final MatrixCallGuestService callGuests;
+  private final SessionCallAuthority authority;
+  private final DedicatedCallRoom callRoom;
+
+  /** How often a live room whose pass failed may hold its sync batch for a replay. */
+  public static final int LIVE_ROOM_RETRIES = 3;
 
   public boolean handleMediaRoom(String room, Map<String, Object> roomData) {
     return lifecycle.handleRoom(room, roomData);
   }
 
+  /**
+   * Live sync path. FE#2209 round 10 (F1): each room is handled on its own, so a room whose pass
+   * throws no longer keeps the rooms after it in the batch from being handled. The failed room's
+   * membership events exist only in this batch, so it is retried by replaying the batch: once every
+   * room was handled, the sync is told not to acknowledge it (the established behaviour for a
+   * transient Matrix lookup failure). That replay is bounded per room: once a room failed more than
+   * {@link #LIVE_ROOM_RETRIES} times in a row, it is marked unobserved (its memberships then count
+   * as absent, so its guests lose the gate and their seats) and no longer holds the batch; the
+   * sweeps and the observation restore take it from there. If even that marker cannot be written,
+   * the batch keeps being replayed. A success resets the count.
+   *
+   * <p>Round 11 (F3): the replay is also bounded per batch. A replay leaves the sync cursor where
+   * it was, so consecutive replays are replays of the same batch. Once it was replayed {@link
+   * #LIVE_ROOM_RETRIES} times, every room that still fails is marked unobserved at once, so more
+   * failing rooms than the per-room count tracks cannot keep the batch unacknowledged forever.
+   * Round 11 (F1): the marker also caps the room's memberships (see {@link
+   * MatrixCallLifecycleService#loseBatch}).
+   */
   @SuppressWarnings("unchecked")
   public void handleMediaRooms(Map<String, Object> joinedRooms) {
     var known = callBindings.knownMediaRooms(joinedRooms.keySet());
+    boolean exhausted = replaysOfThisBatch >= LIVE_ROOM_RETRIES;
+    boolean replay = false;
     for (var entry : joinedRooms.entrySet()) {
-      if (known.contains(entry.getKey())) {
-        lifecycle.handleRoom(entry.getKey(), (Map<String, Object>) entry.getValue());
+      String room = entry.getKey();
+      if (!known.contains(room)) continue;
+      var roomData = (Map<String, Object>) entry.getValue();
+      if (passed("Call room event pass", () -> lifecycle.handleRoom(room, roomData))) {
+        liveRoomFailures.remove(room);
+        continue;
       }
+      int failures = liveRoomFailures.merge(room, 1, Integer::sum);
+      if (failures <= LIVE_ROOM_RETRIES && !exhausted) {
+        replay = true;
+      } else if (passed("Call room observation reset", () -> lifecycle.loseBatch(room))) {
+        // Round 10 security scan: the dropped batch may hold a departure. The durable marker
+        // (media observation lost) makes the room's memberships count as absent until the room
+        // is observed again, so a stale counsellor membership keeps nothing open (fail closed).
+        log.warn("Call room event pass keeps failing for one room; marked unobserved");
+      } else {
+        // Without the marker the batch is never acknowledged.
+        replay = true;
+      }
+    }
+    if (replay) {
+      replaysOfThisBatch++;
+      throw new CallRoomBatchReplay();
+    }
+    replaysOfThisBatch = 0;
+  }
+
+  /** How often the current batch was replayed in a row; written by the sync worker only. */
+  private int replaysOfThisBatch;
+
+  /** Consecutive live pass failures per room; bounded, written by the sync worker only. */
+  private final Map<String, Integer> liveRoomFailures =
+      java.util.Collections.synchronizedMap(
+          new java.util.LinkedHashMap<>() {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<String, Integer> eldest) {
+              return size() > MAX_TRACKED_FAILING_ROOMS;
+            }
+          });
+
+  static final int MAX_TRACKED_FAILING_ROOMS = 256;
+
+  /** Tells the sync not to acknowledge the batch, so a failed live room is retried. No ids. */
+  public static final class CallRoomBatchReplay extends RuntimeException {
+    CallRoomBatchReplay() {
+      super("A call room pass failed; the sync batch is replayed", null, false, false);
     }
   }
 
+  /**
+   * A leave arrives once. Recording it is the marker that makes the room's memberships count as
+   * absent, so a leave that cannot be recorded holds the batch for a replay (round 10 security
+   * scan); it only writes the binding row, so it fails only while the database does.
+   */
   public void handleMediaRoomLeft(String room) {
-    lifecycle.loseObservation(room);
+    if (!passed("Call room leave", () -> lifecycle.loseObservation(room)))
+      throw new CallRoomBatchReplay();
   }
 
   public void reconcileMediaRooms() {
+    // Round 10 (F1): every loop handles each room through passed(), so a room whose pass always
+    // throws (e.g. a lookup that cannot decide) is logged and skipped, and the sync still
+    // acknowledges its batch. Retry bound: the rule-lapse sweep stamps each candidate before its
+    // pass and takes the least recently swept first, so with N candidates a room that keeps
+    // failing is retried within about ceil(N/100) sweep cycles. The other loops keep their order
+    // and retry such a room every cycle; they reach the rooms behind it as long as fewer than a
+    // page (100) of rooms keep failing.
     // Each room is locked in its own transaction. Only call after a successful sync has
     // applied current membership renewals, never on a transport failure.
     for (String room : callBindings.unobservedMediaRooms(System.currentTimeMillis())) {
-      lifecycle.restoreObservation(room);
+      passed("Call room observation restore", () -> lifecycle.restoreObservation(room));
     }
     for (String room : callBindings.expiredMediaRooms(System.currentTimeMillis())) {
-      lifecycle.handleRoom(room, Map.of());
+      passed("Call room expiry pass", () -> lifecycle.handleRoom(room, Map.of()));
+    }
+    // FE#2209 review: a session call that was never observed would otherwise never end.
+    long now = System.currentTimeMillis();
+    for (String room :
+        callBindings.neverObservedSessionCalls(
+            now - MatrixCallLifecycleService.NEVER_OBSERVED_MARGIN_MILLIS)) {
+      passed("Never observed call end", () -> lifecycle.finishNeverObserved(room, now));
     }
     // US#1477: an ended call can still hold a guest whose removal failed; retry without an event.
     for (String room : callGuests.endedRoomsWithOutstandingGuests()) {
-      lifecycle.handleRoom(room, Map.of());
+      passed("Ended call guest removal", () -> lifecycle.handleRoom(room, Map.of()));
+    }
+    // Security review 5901360577: a running session call whose rule lapsed without any call-room
+    // event (reassignment, suspension, a counsellor whose membership simply ran out). Round 8:
+    // only calls whose rule may have lapsed, least recently swept first, each stamped as swept.
+    // Round 9 (F2): the stamp commits before the pass, so one room that always fails neither
+    // sorts first forever nor stops the others.
+    long sweptAt = System.currentTimeMillis();
+    for (String room : callGuests.runningSessionRoomsWithOutstandingGuests(sweptAt)) {
+      passed(
+          "Running session call sweep",
+          () -> {
+            if (lifecycle.recordSweep(room, sweptAt))
+              lifecycle.sweepRunningSessionCall(room, sweptAt);
+          });
+    }
+  }
+
+  /**
+   * Runs one room's pass. A failure is logged with its exception class only (no room or user ids)
+   * and reported, never thrown, so it cannot stop the other rooms or the sync acknowledgement.
+   */
+  private static boolean passed(String pass, Runnable work) {
+    try {
+      work.run();
+      return true;
+    } catch (RuntimeException failure) {
+      log.warn("{} failed for one call room ({})", pass, failure.getClass().getSimpleName());
+      return false;
     }
   }
 
@@ -89,14 +205,25 @@ public class MatrixCallInviteNotificationService {
     boolean expired = now - timestamp >= lifetime;
     var session = conversations.resolveForWriting(sourceRoom).orElse(null);
     if (session == null) return false;
+    // Security review 5901360577 (point 2): the same evidence bind() requires. Only a dedicated
+    // call
+    // room: never the conversation or another ORISO conversation room.
+    if (callRoom.isConversationRoom(sourceRoom, mediaRoom)) return false;
+    // FE#2209 round 3: an already expired invite of anybody but the assigned counsellor never
+    // creates a 1:1 session call's binding. Its only effect would be a lapsed row on the call id
+    // (an asker could send lifetime=1 for the counsellor's call). The counsellor's own late sync
+    // and group chats keep the recovery below.
+    if (expired
+        && session.getSessionId() != null
+        && !authority.isAssignedCounsellor(session.getSessionId(), session.getTenantId(), sender))
+      return false;
     var members = matrix.getCallRoomMembers(sourceRoom).orElse(null);
     if (members == null || !members.contains(sender)) return false;
     var actor = identity(sender, session.getTenantId()).orElse(null);
     if (actor == null || !lifecycle.isActiveRecipient(actor.id())) return false;
-    var binding = matrix.getCallRoomBinding(mediaRoom, sender).orElse(null);
-    if (binding == null
-        || !callId.equals(binding.get("call_id"))
-        || !sourceRoom.equals(binding.get("source_room_id"))) return false;
+    // The room names this call of this conversation, and the sender created it and wrote that
+    // binding (shared with bind()).
+    if (!callRoom.isBoundBy(sourceRoom, callId, mediaRoom, sender)) return false;
     if (!conversations.lockCurrentForWriting(session)) return false;
     var proposed =
         de.caritas.cob.userservice.api.model.MatrixCallBinding.builder()

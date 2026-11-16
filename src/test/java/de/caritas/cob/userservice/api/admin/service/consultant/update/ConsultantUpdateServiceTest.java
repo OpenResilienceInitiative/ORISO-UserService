@@ -28,7 +28,6 @@ import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdate;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.matrix.ConsultantRenameSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import java.util.HashSet;
@@ -56,8 +55,6 @@ public class ConsultantUpdateServiceTest {
   @Mock private ConsultantPublicSlugService consultantPublicSlugService;
 
   @Mock private UserAccountInputValidator userAccountInputValidator;
-
-  @Mock private AppointmentService appointmentService;
 
   @Mock private MatrixSynapseService matrixSynapseService;
 
@@ -257,12 +254,10 @@ public class ConsultantUpdateServiceTest {
     assertEquals(profileCaptor.getValue().firstName(), updateConsultant.getFirstname());
     assertEquals(profileCaptor.getValue().lastName(), updateConsultant.getLastname());
     verify(this.consultantService, times(1)).saveConsultant(any());
-    verify(this.appointmentService, times(1)).syncConsultantData(any());
   }
 
   @Test
-  public void
-      updateConsultant_Should_skipIdentityAndAppointmentSync_When_selfServiceOnlyRequestsPublicSlug() {
+  public void updateConsultant_Should_skipIdentitySync_When_selfServiceOnlyRequestsPublicSlug() {
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);
     // EasyRandom fills random topics; these fixtures model a consultant without any.
     consultant.setConsultantTopics(new HashSet<>());
@@ -290,7 +285,6 @@ public class ConsultantUpdateServiceTest {
     verify(this.keycloakService, Mockito.never()).updateProfile(any(), any());
     verify(this.keycloakService, Mockito.never()).updateRole(any(), any(String.class));
     verify(this.keycloakService, Mockito.never()).removeRoleIfPresent(any(), any());
-    verify(this.appointmentService, Mockito.never()).syncConsultantData(any());
     verify(this.consultantPublicSlugService).requestSlug(consultant, "nikunnj-rohit");
     verify(this.consultantService, times(1)).saveConsultant(any());
   }
@@ -315,7 +309,6 @@ public class ConsultantUpdateServiceTest {
     verify(this.keycloakService, times(1))
         .updateProfile(eq(consultant.getId()), any(IdentityProfileUpdate.class));
     verify(this.consultantService, times(1)).saveConsultant(any());
-    verify(this.appointmentService, times(1)).syncConsultantData(any());
   }
 
   @Test
@@ -338,7 +331,6 @@ public class ConsultantUpdateServiceTest {
     verify(this.keycloakService, times(1))
         .updateProfile(eq(consultant.getId()), any(IdentityProfileUpdate.class));
     verify(this.consultantService, times(1)).saveConsultant(any());
-    verify(this.appointmentService, times(1)).syncConsultantData(any());
   }
 
   @Test
@@ -368,7 +360,6 @@ public class ConsultantUpdateServiceTest {
     verify(this.keycloakService, Mockito.never())
         .updateProfile(anyString(), any(IdentityProfileUpdate.class));
     verify(this.consultantService, Mockito.never()).saveConsultant(any());
-    verify(this.appointmentService, Mockito.never()).syncConsultantData(any());
   }
 
   @Test

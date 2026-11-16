@@ -2,7 +2,6 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AbsenceDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DeleteUserAccountDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MasterKeyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MobileTokenDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PasswordDTO;
@@ -26,8 +25,6 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.PasswordPolicy;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
-import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityPolicy;
@@ -78,30 +75,6 @@ class UserAccountControllerDelegate {
     this.consultantDataFacade.updateConsultantAbsent(consultant, absence);
 
     return new ResponseEntity<>(HttpStatus.OK);
-  }
-
-  ResponseEntity<EmailNotificationsDTO> getUserEmailNotifications(String email) {
-    Optional<Consultant> consultantByEmail = userAccountProvider.findConsultantByEmail(email);
-    if (consultantByEmail.isPresent()) {
-      return new ResponseEntity<>(getEmailNotifications(consultantByEmail.get()), HttpStatus.OK);
-    } else {
-      Optional<User> userByEmail = userAccountProvider.findUserByEmail(email);
-      if (userByEmail.isPresent()) {
-        return new ResponseEntity<>(getEmailNotifications(userByEmail.get()), HttpStatus.OK);
-      } else {
-        throw new NotFoundException("No adviceseeker nor consultant with given email found.");
-      }
-    }
-  }
-
-  private EmailNotificationsDTO getEmailNotifications(Consultant consultant) {
-    var consultantDTO = consultantDataProvider.retrieveData(consultant);
-    return consultantDTO.getEmailNotifications();
-  }
-
-  private EmailNotificationsDTO getEmailNotifications(User user) {
-    var userDTO = askerDataProvider.retrieveData(user);
-    return userDTO.getEmailNotifications();
   }
 
   ResponseEntity<UserDataResponseDTO> getUserData() {

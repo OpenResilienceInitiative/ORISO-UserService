@@ -44,7 +44,6 @@ import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionAppointmentRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.calendar.CalendarImportFetcher;
 import de.caritas.cob.userservice.api.service.calendar.CalendarSyncService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -107,12 +106,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @AutoConfigureMockMvc
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@TestPropertySource(
-    properties = {
-      "multitenancy.enabled=true",
-      "feature.appointment.enabled=false",
-      "calendar.import.enabled=false"
-    })
+@TestPropertySource(properties = {"multitenancy.enabled=true", "calendar.import.enabled=false"})
 @Import(TenantFixtures.class)
 @WithTenant(CalendarSyncControllerIT.TENANT)
 @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT, AuthorityValue.USER_DEFAULT})
@@ -150,7 +144,6 @@ class CalendarSyncControllerIT {
   @MockitoBean TenantResolverService tenantResolverService;
   @MockitoBean AgencyService agencyService;
   @MockitoBean MatrixSynapseService matrixSynapseService;
-  @MockitoBean AppointmentService appointmentService;
   @MockitoBean CalendarImportFetcher fetcher;
 
   @MockitoBean(answers = Answers.CALLS_REAL_METHODS)

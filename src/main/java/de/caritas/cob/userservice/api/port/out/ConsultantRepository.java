@@ -120,6 +120,12 @@ public interface ConsultantRepository
   Optional<Consultant> findByMatrixUserIdAndDeleteDateIsNull(String matrixUserId);
 
   /**
+   * Every not deleted consultant row holding the given Matrix id. The column is not unique, so the
+   * call code reads all of them and decides itself (FE#2209 round 10).
+   */
+  List<Consultant> findAllByMatrixUserIdAndDeleteDateIsNull(String matrixUserId);
+
+  /**
    * Every consultant row referencing the given chat (Matrix) identity, <em>including soft-deleted
    * ones</em>. Uniqueness here is by username, so a soft-deleted consultant keeps owning their chat
    * account while freeing the username — the repair has to see that row or it would adopt a
@@ -129,6 +135,16 @@ public interface ConsultantRepository
    * @return the rows holding it, empty when it is free
    */
   List<Consultant> findByMatrixUserId(String matrixUserId);
+
+  /**
+   * FE#2209 round 6: how many consultant rows of any tenant, soft-deleted ones included, hold this
+   * Matrix id. Native, so the Hibernate tenant filter does not apply: a counsellor moved to another
+   * tenant keeps their Matrix id and is still a counsellor.
+   */
+  @Query(
+      value = "SELECT COUNT(*) FROM consultant WHERE matrix_user_id = :matrixUserId",
+      nativeQuery = true)
+  long countAnyTenantByMatrixUserId(@Param("matrixUserId") String matrixUserId);
 
   /**
    * Every active consultant that owns no chat (Matrix) identity. Such a record looks complete to an
