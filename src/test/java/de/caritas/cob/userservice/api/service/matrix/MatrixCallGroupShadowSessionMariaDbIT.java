@@ -95,6 +95,10 @@ class MatrixCallGroupShadowSessionMariaDbIT {
   @MockitoBean private EventNotificationService notifications;
   @MockitoBean private MatrixCallLifecycleService lifecycle;
   @MockitoBean private MatrixCallGuestService callGuests;
+  // #1642 added these dependencies of the observation and state services; this group call has no
+  // session binding to bind or revive.
+  @MockitoBean private MatrixSessionCallBindingService sessionBindings;
+  @MockitoBean private SessionCallRevival revival;
 
   @Test
   void aCallInAGroupChatRoomWithItsShadowSessionRegistersAndReadsAsTheChatsCall() {
