@@ -35,13 +35,20 @@ public class DeleteAdminServiceTest {
   private de.caritas.cob.userservice.api.service.contactperson.ContactPersonReferences
       contactPersonReferences;
 
-  /** ORISO-Admin#1534: a deleted admin is no longer anybody's contact person or deputy. */
+  /** ORISO-Admin#1534: a deleted agency admin is no longer anybody's contact person or deputy. */
   @Test
-  void deleteAgencyAndTenantAdmin_Should_removeTheAdminFromEveryContactPerson() {
+  void deleteAgencyAdmin_Should_removeTheAdminFromEveryContactPerson() {
     deleteAdminService.deleteAgencyAdmin(VALID_ADMIN_ID);
+
+    verify(contactPersonReferences).forgetAdmin(VALID_ADMIN_ID);
+  }
+
+  /** ORISO-Admin#1534: a deleted tenant admin is no longer anybody's contact person or deputy. */
+  @Test
+  void deleteTenantAdmin_Should_removeTheAdminFromEveryContactPerson() {
     deleteAdminService.deleteTenantAdmin(VALID_ADMIN_ID);
 
-    verify(contactPersonReferences, org.mockito.Mockito.times(2)).forgetAdmin(VALID_ADMIN_ID);
+    verify(contactPersonReferences).forgetAdmin(VALID_ADMIN_ID);
   }
 
   @Test

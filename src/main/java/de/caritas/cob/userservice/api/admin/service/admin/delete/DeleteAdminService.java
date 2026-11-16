@@ -11,10 +11,13 @@ import de.caritas.cob.userservice.api.workflow.delete.service.DeletionAuditServi
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Deletes agency and tenant admins. Admins have no safeguarding window: the deletion is executed at
- * once, and leaves an {@code EXECUTED} entry in the deletion log.
+ * once, and leaves an {@code EXECUTED} entry in the deletion log. The row deletion, the
+ * contact-person cleanup and the audit entry share one transaction; the identity-provider call
+ * cannot be rolled back.
  */
 @Service
 @RequiredArgsConstructor
@@ -26,6 +29,7 @@ public class DeleteAdminService {
   private final @NonNull DeletionAuditService deletionAuditService;
   private final @NonNull ContactPersonReferences contactPersonReferences;
 
+  @Transactional
   public void deleteAgencyAdmin(String adminId) {
     var tenantId = tenantIdOf(adminId);
     this.adminAgencyRepository.deleteByAdminId(adminId);
@@ -35,6 +39,7 @@ public class DeleteAdminService {
     logExecuted(DeletionAuditTargetType.AGENCY_ADMIN, adminId, tenantId);
   }
 
+  @Transactional
   public void deleteTenantAdmin(String adminId) {
     var tenantId = tenantIdOf(adminId);
     this.identityAccountRemover.deleteUser(adminId);
