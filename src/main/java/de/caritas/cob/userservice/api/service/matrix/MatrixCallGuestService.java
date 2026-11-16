@@ -148,6 +148,9 @@ public class MatrixCallGuestService {
     if (tenant == null || binding == null || !tenant.equals(binding.getTenantId()))
       return List.of();
     if (binding.getSessionId() == null) return counsellorsInConversation(tenant, binding);
+    // Round 10 security scan: once the call room's observation is lost (the listener left it, or
+    // a batch that may hold a departure was dropped), its memberships may be stale: nobody counts.
+    if (binding.getMediaObservedAt() == null) return List.of();
     return binding.getDevices().values().stream()
         .map(device -> device.getSenderMatrixId())
         .distinct()
@@ -339,6 +342,8 @@ public class MatrixCallGuestService {
         || binding.getSessionId() == null) return;
     boolean lapsed =
         !grantsGuestAuthority(binding)
+            // Round 10 security scan: unobserved, presence is unknown; no grace (fail closed).
+            || binding.getMediaObservedAt() == null
             // Round 8 (F4): presence and grace read the same instant.
             || (counsellorsInCall(binding.getTenantId(), binding, now).isEmpty()
                 && now - lastCounsellorPresence(binding) >= COUNSELLOR_ABSENCE_GRACE_MILLIS);

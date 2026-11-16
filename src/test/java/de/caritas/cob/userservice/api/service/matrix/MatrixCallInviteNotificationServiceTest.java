@@ -210,6 +210,57 @@ class MatrixCallInviteNotificationServiceTest {
         .handleRoom(HEALTHY, healthyData);
   }
 
+  @Test
+  void aLiveRoomLeftToTheSweepsIsFirstMarkedUnobserved() {
+    // Round 10 security scan: the dropped batch may hold a departure; the durable marker makes the
+    // room's stale memberships count as absent until the room is observed again.
+    Map<String, Object> poisonData = Map.of("timeline", Map.of("events", List.of()));
+    when(callBindings.knownMediaRooms(any())).thenReturn(java.util.Set.of(POISON));
+    when(lifecycle.handleRoom(POISON, poisonData))
+        .thenThrow(new org.springframework.dao.IncorrectResultSizeDataAccessException(1, 2));
+    for (int attempt = 0;
+        attempt < MatrixCallInviteNotificationService.LIVE_ROOM_RETRIES;
+        attempt++)
+      org.assertj.core.api.Assertions.assertThatThrownBy(
+              () -> service.handleMediaRooms(Map.of(POISON, poisonData)))
+          .isInstanceOf(MatrixCallInviteNotificationService.CallRoomBatchReplay.class);
+    verify(lifecycle, never()).loseObservation(POISON);
+
+    service.handleMediaRooms(Map.of(POISON, poisonData));
+
+    verify(lifecycle).loseObservation(POISON);
+  }
+
+  @Test
+  void aLiveRoomWhoseMarkerCannotBeWrittenKeepsHoldingTheBatch() {
+    Map<String, Object> poisonData = Map.of("timeline", Map.of("events", List.of()));
+    when(callBindings.knownMediaRooms(any())).thenReturn(java.util.Set.of(POISON));
+    when(lifecycle.handleRoom(POISON, poisonData))
+        .thenThrow(new org.springframework.dao.IncorrectResultSizeDataAccessException(1, 2));
+    org.mockito.Mockito.doThrow(new org.springframework.dao.CannotAcquireLockException("down"))
+        .when(lifecycle)
+        .loseObservation(POISON);
+
+    for (int attempt = 0;
+        attempt < MatrixCallInviteNotificationService.LIVE_ROOM_RETRIES + 3;
+        attempt++)
+      org.assertj.core.api.Assertions.assertThatThrownBy(
+              () -> service.handleMediaRooms(Map.of(POISON, poisonData)))
+          .as("never acknowledged without the marker")
+          .isInstanceOf(MatrixCallInviteNotificationService.CallRoomBatchReplay.class);
+  }
+
+  @Test
+  void aLeaveThatCannotBeRecordedHoldsTheBatch() {
+    // The leave arrives once; dropping it would leave the room observed with stale memberships.
+    org.mockito.Mockito.doThrow(new org.springframework.dao.CannotAcquireLockException("down"))
+        .when(lifecycle)
+        .loseObservation(POISON);
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.handleMediaRoomLeft(POISON))
+        .isInstanceOf(MatrixCallInviteNotificationService.CallRoomBatchReplay.class);
+  }
+
   private static Map<String, Object> invite(String callRoom) {
     return Map.of(
         "type",

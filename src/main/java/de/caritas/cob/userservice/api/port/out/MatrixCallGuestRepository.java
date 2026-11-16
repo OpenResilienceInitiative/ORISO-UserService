@@ -49,8 +49,10 @@ public interface MatrixCallGuestRepository extends JpaRepository<MatrixCallGuest
    * in it is left out: the lifecycle would keep its seats. This is the exact complement of the rule
    * in MatrixCallGuestService.revokeOnceTheSessionCallRuleLapsed, so every call that rule would
    * take seats from stays a candidate. A missing account_inactivity row counts as active, as in
-   * AccountInactivityService. Least recently swept first (never swept first), so no candidate
-   * starves behind others; the sweep stamps last_swept_at.
+   * AccountInactivityService. Round 10: as in the lifecycle, an unobserved call room has no
+   * counsellor in it, and a Matrix id two not deleted accounts of the Träger share is nobody
+   * (SoleCounsellor). Least recently swept first (never swept first), so no candidate starves
+   * behind others; the sweep stamps last_swept_at.
    */
   @org.springframework.data.jpa.repository.Query(
       nativeQuery = true,
@@ -68,10 +70,14 @@ public interface MatrixCallGuestRepository extends JpaRepository<MatrixCallGuest
               + "     and c.tenant_id = b.tenant_id and c.matrix_user_id = b.caller_matrix_id"
               + "     and not exists (select 1 from account_inactivity a"
               + "       where a.identity_id = c.consultant_id and a.status <> 'ACTIVE'))"
+              + "   and b.media_observed_at is not null"
               + "   and exists (select 1 from matrix_call_device d, consultant p"
               + "     where d.binding_id = b.id and d.expires_at > :now"
               + "     and p.matrix_user_id = d.sender_matrix_id and p.delete_date is null"
               + "     and p.tenant_id = b.tenant_id"
+              + "     and not exists (select 1 from consultant q"
+              + "       where q.matrix_user_id = p.matrix_user_id and q.delete_date is null"
+              + "       and q.tenant_id = b.tenant_id and q.consultant_id <> p.consultant_id)"
               + "     and not exists (select 1 from account_inactivity a2"
               + "       where a2.identity_id = p.consultant_id and a2.status <> 'ACTIVE')))"
               + " order by coalesce(b.last_swept_at, 0), b.id")

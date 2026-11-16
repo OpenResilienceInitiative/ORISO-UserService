@@ -41,10 +41,11 @@ public class MatrixCallInviteNotificationService {
    * throws no longer keeps the rooms after it in the batch from being handled. The failed room's
    * membership events exist only in this batch, so it is retried by replaying the batch: once every
    * room was handled, the sync is told not to acknowledge it (the established behaviour for a
-   * transient Matrix lookup failure). That replay is bounded per room: once a room failed {@link
-   * #LIVE_ROOM_RETRIES} times in a row it no longer holds the batch, it is logged and left to the
-   * sweeps, which cover it from its persisted state (expiry, rule lapse, guest removal). A success
-   * resets the count.
+   * transient Matrix lookup failure). That replay is bounded per room: once a room failed more than
+   * {@link #LIVE_ROOM_RETRIES} times in a row, it is marked unobserved (its memberships then count
+   * as absent, so its guests lose the gate and their seats) and no longer holds the batch; the
+   * sweeps and the observation restore take it from there. If even that marker cannot be written,
+   * the batch keeps being replayed. A success resets the count.
    */
   @SuppressWarnings("unchecked")
   public void handleMediaRooms(Map<String, Object> joinedRooms) {
@@ -59,8 +60,17 @@ public class MatrixCallInviteNotificationService {
         continue;
       }
       int failures = liveRoomFailures.merge(room, 1, Integer::sum);
-      if (failures <= LIVE_ROOM_RETRIES) replay = true;
-      else log.warn("Call room event pass keeps failing for one room; left to the sweeps");
+      if (failures <= LIVE_ROOM_RETRIES) {
+        replay = true;
+      } else if (passed("Call room observation reset", () -> lifecycle.loseObservation(room))) {
+        // Round 10 security scan: the dropped batch may hold a departure. The durable marker
+        // (media observation lost) makes the room's memberships count as absent until the room
+        // is observed again, so a stale counsellor membership keeps nothing open (fail closed).
+        log.warn("Call room event pass keeps failing for one room; marked unobserved");
+      } else {
+        // Without the marker the batch is never acknowledged.
+        replay = true;
+      }
     }
     if (replay) throw new CallRoomBatchReplay();
   }
@@ -84,8 +94,14 @@ public class MatrixCallInviteNotificationService {
     }
   }
 
+  /**
+   * A leave arrives once. Recording it is the marker that makes the room's memberships count as
+   * absent, so a leave that cannot be recorded holds the batch for a replay (round 10 security
+   * scan); it only writes the binding row, so it fails only while the database does.
+   */
   public void handleMediaRoomLeft(String room) {
-    passed("Call room leave", () -> lifecycle.loseObservation(room));
+    if (!passed("Call room leave", () -> lifecycle.loseObservation(room)))
+      throw new CallRoomBatchReplay();
   }
 
   public void reconcileMediaRooms() {

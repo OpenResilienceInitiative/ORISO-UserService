@@ -966,6 +966,21 @@ class MatrixCallGuestServiceTest {
     assertThat(service.counsellorsInCall(7L, group)).isEmpty();
   }
 
+  @Test
+  void anUnobservedRunningSessionCallHasNoCounsellorInItAndLosesItsSeatsAtOnce() {
+    // Round 10 security scan: an unobserved call room's memberships may be stale (a dropped
+    // departure). Presence then counts as absent and there is no grace to wait for.
+    counsellorIsAConsultant();
+    var guest = seatThatCanBeRemoved();
+    var call = binding(null);
+    call.loseMediaObservation();
+
+    assertThat(service.counsellorsInCall(7L, call)).isEmpty();
+    service.revokeOnceTheSessionCallRuleLapsed(call, 1300L);
+
+    assertThat(guest.getRevokedAt()).isNotNull();
+  }
+
   private MatrixCallBinding binding(Long endedAt) {
     var binding = callBinding(endedAt);
     // A running call: one device whose membership has not expired (FE#2209 review: admission
@@ -991,6 +1006,7 @@ class MatrixCallGuestServiceTest {
         .invitedAt(1000L)
         .inviteExpiresAt(61000L)
         .startedAt(1200L)
+        .mediaObservedAt(1200L)
         .endedAt(endedAt)
         .video(true)
         .build();

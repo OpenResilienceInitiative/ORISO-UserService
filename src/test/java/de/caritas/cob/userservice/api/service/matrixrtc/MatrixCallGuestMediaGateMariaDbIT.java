@@ -578,30 +578,7 @@ class MatrixCallGuestMediaGateMariaDbIT {
     long before = System.currentTimeMillis();
     var cursor =
         mock(de.caritas.cob.userservice.api.service.matrix.MatrixEmailSyncCursorStore.class);
-    var listener =
-        new de.caritas.cob.userservice.api.service.matrix.MatrixEventListenerService(
-            matrix,
-            mock(de.caritas.cob.userservice.api.service.session.SessionService.class),
-            mock(
-                de.caritas.cob.userservice.api.service.mobilepushmessage
-                    .MobilePushNotificationService.class),
-            notifications,
-            Optional.empty(),
-            mock(UserRepository.class),
-            mock(ConsultantRepository.class),
-            mock(SessionRepository.class),
-            mock(
-                de.caritas.cob.userservice.api.service.statistics.ConsultantMessageStatService
-                    .class),
-            mock(de.caritas.cob.userservice.api.service.statistics.CommunicationStatService.class),
-            reconciler,
-            mock(
-                de.caritas.cob.userservice.api.service.notification.AdviceSeekerReplyEmailService
-                    .class),
-            cursor,
-            mock(
-                de.caritas.cob.userservice.api.service.notification.InternalChatEmailService
-                    .class));
+    var listener = listener(cursor);
     var joined = new java.util.LinkedHashMap<String, Object>();
     joined.put(poisonMedia, Map.of("timeline", Map.of("events", List.of())));
     joined.put(media, Map.of("timeline", Map.of("events", List.of())));
@@ -623,6 +600,43 @@ class MatrixCallGuestMediaGateMariaDbIT {
     } finally {
       softDelete(twins);
     }
+  }
+
+  private de.caritas.cob.userservice.api.service.matrix.MatrixEventListenerService listener(
+      de.caritas.cob.userservice.api.service.matrix.MatrixEmailSyncCursorStore cursor) {
+    return new de.caritas.cob.userservice.api.service.matrix.MatrixEventListenerService(
+        matrix,
+        mock(de.caritas.cob.userservice.api.service.session.SessionService.class),
+        mock(
+            de.caritas.cob.userservice.api.service.mobilepushmessage.MobilePushNotificationService
+                .class),
+        notifications,
+        Optional.empty(),
+        mock(UserRepository.class),
+        mock(ConsultantRepository.class),
+        mock(SessionRepository.class),
+        mock(de.caritas.cob.userservice.api.service.statistics.ConsultantMessageStatService.class),
+        mock(de.caritas.cob.userservice.api.service.statistics.CommunicationStatService.class),
+        reconciler,
+        mock(
+            de.caritas.cob.userservice.api.service.notification.AdviceSeekerReplyEmailService
+                .class),
+        cursor,
+        mock(de.caritas.cob.userservice.api.service.notification.InternalChatEmailService.class));
+  }
+
+  private void serveSyncBatch(String nextBatch, Map<String, Object> joined) {
+    when(matrix.makeMatrixRequest(
+            anyString(),
+            org.mockito.ArgumentMatchers.eq("GET"),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any()))
+        .thenReturn(Map.of("next_batch", nextBatch, "rooms", Map.of("join", joined)));
+  }
+
+  private static Object syncCycle(
+      de.caritas.cob.userservice.api.service.matrix.MatrixEventListenerService listener) {
+    return ReflectionTestUtils.invokeMethod(listener, "executeObservedMatrixSyncCycle");
   }
 
   private String poisonMedia;
@@ -676,6 +690,63 @@ class MatrixCallGuestMediaGateMariaDbIT {
     for (String id : consultantIds)
       new JdbcTemplate(dataSource)
           .update("UPDATE consultant SET delete_date = NOW() WHERE consultant_id = ?", id);
+  }
+
+  @Test
+  void aCallRoomWhoseLivePassKeepsFailingIsMarkedUnobservedAndNoLongerOpensToGuests()
+      throws Exception {
+    // Round 10 security scan: the batch whose pass keeps failing may carry the counsellor's
+    // departure. Once the room no longer holds the batch, its memberships cannot be trusted: the
+    // counsellor's stale membership must not keep the gate open or the seat.
+    var failing = new java.util.concurrent.atomic.AtomicBoolean(true);
+    String caller = counsellor.getMatrixUserId();
+    when(matrix.getCallRoomMembers(source))
+        .thenAnswer(
+            ignored -> {
+              if (failing.get())
+                throw new org.springframework.dao.TransientDataAccessResourceException("down");
+              return Optional.of(List.of(caller, guestMatrixId.replace("guest", "asker")));
+            });
+    var cursor =
+        mock(de.caritas.cob.userservice.api.service.matrix.MatrixEmailSyncCursorStore.class);
+    var listener = listener(cursor);
+    serveSyncBatch(
+        "batch-with-a-lost-departure",
+        Map.of(media, Map.of("timeline", Map.of("events", List.of()))));
+
+    for (int replay = 0; replay < MatrixCallInviteNotificationService.LIVE_ROOM_RETRIES; replay++)
+      org.assertj.core.api.Assertions.assertThatThrownBy(() -> syncCycle(listener))
+          .isInstanceOf(MatrixCallInviteNotificationService.CallRoomBatchReplay.class);
+    org.mockito.Mockito.verify(cursor, org.mockito.Mockito.never()).write(anyString());
+    syncCycle(listener);
+    org.mockito.Mockito.verify(cursor).write("batch-with-a-lost-departure");
+
+    failing.set(false);
+    assertThat(admitted()).as("stale presence keeps nothing open").isFalse();
+    reconciler.reconcileMediaRooms();
+    assertSeatRevokedAndKept();
+  }
+
+  @Test
+  void anUnobservedRunningCallIsASweepCandidate() {
+    new JdbcTemplate(dataSource)
+        .update("UPDATE matrix_call_binding SET media_observed_at = NULL WHERE id = ?", bindingId);
+
+    assertThat(candidate()).isTrue();
+  }
+
+  @Test
+  void aLiveCounsellorWhoseMatrixIdIsAmbiguousKeepsTheCallACandidate() {
+    var twin =
+        new TransactionTemplate(transactionManager)
+            .execute(
+                status ->
+                    consultants.save(consultantOfTenant(7L, counsellor.getMatrixUserId())).getId());
+    try {
+      assertThat(candidate()).isTrue();
+    } finally {
+      softDelete(List.of(twin));
+    }
   }
 
   /** The assigned counsellor's membership ran out; an active colleague of the Träger is live. */
