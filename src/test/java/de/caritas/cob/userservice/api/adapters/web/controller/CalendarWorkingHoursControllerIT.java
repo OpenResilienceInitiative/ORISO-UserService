@@ -253,9 +253,10 @@ class CalendarWorkingHoursControllerIT {
             today.plusDays(5).toString(),
             dayWindow("13:00", "17:00"),
             dayWindow("08:00", "12:00")));
-    body(setException(today.minusDays(63).toString(), dayWindow("08:00", "12:00")));
     body(setException(today.plusDays(1).toString()));
     body(setException(today.minusDays(62).toString(), dayWindow("10:00", "11:00")));
+    // Written when it was still in the window: kept until the next PUT, but no longer shown.
+    Tenants.acrossAll(() -> exceptions.save(dayOff(counsellor.getId(), today.minusDays(63))));
 
     assertThat(body(get(PATH)).get("exceptions"))
         .isEqualTo(
@@ -291,22 +292,34 @@ class CalendarWorkingHoursControllerIT {
   }
 
   @Test
-  void putException_Should_AcceptDatesUpTo400DaysAway_AndRefuseFurtherOnes() throws Exception {
+  void putException_Should_AcceptTheDatesGetShows_From62DaysAgoTo400DaysAhead() throws Exception {
     actAsCounsellor(counsellor);
+    var first = today.minusDays(62).toString();
+    var last = today.plusDays(400).toString();
 
-    body(setException(today.minusDays(400).toString()));
-    body(setException(today.plusDays(400).toString()));
+    assertThat(body(setException(first))).isEqualTo(exception(first));
+    assertThat(body(setException(last))).isEqualTo(exception(last));
     mockMvc
-        .perform(setException(today.minusDays(401).toString()))
+        .perform(setException(today.minusDays(63).toString()))
         .andExpect(status().isBadRequest());
     mockMvc
         .perform(setException(today.plusDays(401).toString()))
         .andExpect(status().isBadRequest());
 
-    var stored = Tenants.acrossAll(() -> exceptions.findAll());
-    var dates = new ArrayList<LocalDate>();
-    stored.forEach(row -> dates.add(row.getExceptionDate()));
-    assertThat(dates).containsExactlyInAnyOrder(today.minusDays(400), today.plusDays(400));
+    assertThat(body(get(PATH)).get("exceptions"))
+        .isEqualTo(List.of(exception(first), exception(last)));
+    assertThat(storedDates()).containsExactlyInAnyOrder(today.minusDays(62), today.plusDays(400));
+  }
+
+  @Test
+  void removeException_Should_Answer204_ForAnyDate_AndRemoveAnOldOne() throws Exception {
+    actAsCounsellor(counsellor);
+    Tenants.acrossAll(() -> exceptions.save(dayOff(counsellor.getId(), today.minusDays(63))));
+
+    for (var date : List.of(today.minusDays(63), today.minusDays(500), today.plusDays(401))) {
+      mockMvc.perform(removeException(date.toString())).andExpect(status().isNoContent());
+    }
+    assertThat(storedDates()).isEmpty();
   }
 
   @Test
@@ -409,26 +422,36 @@ class CalendarWorkingHoursControllerIT {
   }
 
   @Test
-  void putException_Should_DropExceptionsThatCanNoLongerBeWritten_BeforeCounting()
-      throws Exception {
+  void putException_Should_DropExceptionsOlderThan62Days_OnTheNextPut() throws Exception {
+    actAsCounsellor(counsellor);
+    Tenants.acrossAll(
+        () ->
+            exceptions.saveAll(
+                List.of(
+                    dayOff(counsellor.getId(), today.minusDays(63)),
+                    dayOff(counsellor.getId(), today.minusDays(62)))));
+
+    body(setException(today.plusDays(1).toString()));
+
+    assertThat(storedDates()).containsExactlyInAnyOrder(today.minusDays(62), today.plusDays(1));
+  }
+
+  @Test
+  void putException_Should_CountOnlyTheDatesGetShows_AgainstTheLimit() throws Exception {
     actAsCounsellor(counsellor);
     var rows = new ArrayList<CalendarWorkingDayException>();
-    rows.add(dayOff(counsellor.getId(), today.minusDays(401)));
-    for (var i = 0; i < 399; i++) {
+    for (var i = 0; i < 300; i++) {
+      rows.add(dayOff(counsellor.getId(), today.minusDays(63 + i)));
+    }
+    for (var i = 0; i < 100; i++) {
       rows.add(dayOff(counsellor.getId(), today.plusDays(i)));
     }
     Tenants.acrossAll(() -> exceptions.saveAll(rows));
 
-    body(setException(today.plusDays(399).toString()));
+    body(setException(today.plusDays(100).toString()));
 
-    assertThat(Tenants.acrossAll(() -> exceptions.countDatesByConsultantId(counsellor.getId())))
-        .isEqualTo(400);
-    assertThat(
-            Tenants.acrossAll(
-                () ->
-                    exceptions.existsByConsultantIdAndExceptionDate(
-                        counsellor.getId(), today.minusDays(401))))
-        .isFalse();
+    assertThat((List<?>) body(get(PATH)).get("exceptions")).hasSize(101);
+    assertThat(storedDates()).hasSize(101);
   }
 
   @Test
@@ -525,6 +548,12 @@ class CalendarWorkingHoursControllerIT {
       body.put("holidayRegion", region);
     }
     return body;
+  }
+
+  private List<LocalDate> storedDates() {
+    var dates = new ArrayList<LocalDate>();
+    Tenants.acrossAll(() -> exceptions.findAll()).forEach(row -> dates.add(row.getExceptionDate()));
+    return dates;
   }
 
   private static CalendarWorkingDayException dayOff(String consultantId, LocalDate date) {

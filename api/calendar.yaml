@@ -325,7 +325,8 @@ paths:
         - calendar-controller
       summary: 'Creates or replaces the caller''s working hours on one date; they take the place
         of the weekly windows and of a public holiday on that date. An empty list makes the whole
-        day off. [Authorization: counsellor]'
+        day off. The date lies from 62 days before to 400 days after today, the dates GET shows;
+        older exceptions are dropped. [Authorization: counsellor]'
       operationId: setCalendarWorkingDayException
       parameters:
         - $ref: '#/components/parameters/ExceptionDate'
@@ -344,21 +345,22 @@ paths:
                 $ref: '#/components/schemas/CalendarWorkingDayExceptionDTO'
         400:
           description: BAD REQUEST - more than 4 windows, a time not in HH:mm, an end not after
-            its start, overlapping windows, or a date more than 400 days from today
+            its start, overlapping windows, or a date before 62 days ago or more than 400 days
+            ahead; nothing is stored
         401:
           description: UNAUTHORIZED - no/invalid Keycloak token
         403:
           description: FORBIDDEN - no/invalid role/authorization or CSRF token
         409:
-          description: CONFLICT - the caller already keeps 400 day exceptions and this date is
-            not one of them
+          description: CONFLICT - the caller already keeps 400 day exceptions from 62 days
+            before today onwards and this date is not one of them
       security:
         - Bearer: [ ]
     delete:
       tags:
         - calendar-controller
       summary: 'Removes the caller''s exception on one date, so the weekly windows apply again;
-        also 204 when there was none. [Authorization: counsellor]'
+        also 204 when there was none, for any date. [Authorization: counsellor]'
       operationId: deleteCalendarWorkingDayException
       parameters:
         - $ref: '#/components/parameters/ExceptionDate'

@@ -40,7 +40,8 @@ import org.springframework.transaction.annotation.Transactional;
  * only: the calendar shades the time outside the windows and warns when something is put there;
  * booking, the subscription feed and the busy import do not look at them. The server computes no
  * holidays, it only keeps the region. A PUT of the working hours replaces every weekly window and
- * the region at once; the exceptions change one date at a time.
+ * the region at once; the exceptions change one date at a time, from 62 days before to 400 days
+ * after today.
  */
 @Service
 public class CalendarWorkingHoursService {
@@ -48,8 +49,13 @@ public class CalendarWorkingHoursService {
   static final int MAX_WINDOWS = 14;
   static final int MAX_DAY_WINDOWS = 4;
   static final int MAX_EXCEPTIONS = 400;
-  static final int MAX_EXCEPTION_DISTANCE_DAYS = 400;
-  static final int EXCEPTIONS_SHOWN_PAST_DAYS = 62;
+
+  /** The first date a day exception is written for and shown: this many days before today. */
+  static final int EXCEPTION_DAYS_BACK = 62;
+
+  /** The last date a day exception is written for: this many days after today. */
+  static final int EXCEPTION_DAYS_AHEAD = 400;
+
   private static final Pattern CLOCK = Pattern.compile("([01][0-9]|2[0-3]):[0-5][0-9]");
   private static final DateTimeFormatter HH_MM = DateTimeFormatter.ofPattern("HH:mm");
   private static final Comparator<CalendarWorkingHours> IN_ORDER =
@@ -114,9 +120,10 @@ public class CalendarWorkingHoursService {
 
   /**
    * Creates or replaces the caller's exception on one date; an empty list makes the whole day off.
-   * The date lies at most 400 days from today, and a counsellor keeps at most 400 exceptions; one
-   * more date is a conflict, a date they already keep may always be replaced. Exceptions on dates
-   * that can no longer be written are dropped first. Writes of one counsellor run one at a time.
+   * The date lies from 62 days before to 400 days after today, the dates GET shows, and a
+   * counsellor keeps at most 400 exceptions; one more date is a conflict, a date they already keep
+   * may always be replaced. Exceptions before that window are dropped first, so the limit counts
+   * only dates the counsellor sees. Writes of one counsellor run one at a time.
    */
   @Transactional
   public CalendarWorkingDayExceptionDTO replaceException(
@@ -125,10 +132,9 @@ public class CalendarWorkingHoursService {
     var consultantId = caller.getUserId();
     var windows = dayWindowsOf(request);
     var today = today();
-    requireWithinReach(date, today);
+    requireWithinWindow(date, today);
     lockExceptionsOf(consultantId);
-    exceptions.deleteByConsultantIdBefore(
-        consultantId, today.minusDays(MAX_EXCEPTION_DISTANCE_DAYS));
+    exceptions.deleteByConsultantIdBefore(consultantId, today.minusDays(EXCEPTION_DAYS_BACK));
     if (!exceptions.existsByConsultantIdAndExceptionDate(consultantId, date)
         && exceptions.countDatesByConsultantId(consultantId) >= MAX_EXCEPTIONS) {
       throw new ConflictException(
@@ -140,7 +146,10 @@ public class CalendarWorkingHoursService {
     return exceptionDto(date, windows);
   }
 
-  /** Removes the caller's exception on one date, if there is one; the weekly windows apply. */
+  /**
+   * Removes the caller's exception on one date, if there is one; the weekly windows apply. Any date
+   * may be named, also one outside the window a PUT accepts.
+   */
   @Transactional
   public void removeException(LocalDate date) {
     requireConsultant();
@@ -222,12 +231,17 @@ public class CalendarWorkingHoursService {
     return windows;
   }
 
-  private static void requireWithinReach(LocalDate date, LocalDate today) {
+  /** A PUT writes only the dates GET shows, so no stored exception is out of the caller's sight. */
+  private static void requireWithinWindow(LocalDate date, LocalDate today) {
     if (date == null
-        || date.isBefore(today.minusDays(MAX_EXCEPTION_DISTANCE_DAYS))
-        || date.isAfter(today.plusDays(MAX_EXCEPTION_DISTANCE_DAYS))) {
+        || date.isBefore(today.minusDays(EXCEPTION_DAYS_BACK))
+        || date.isAfter(today.plusDays(EXCEPTION_DAYS_AHEAD))) {
       throw new BadRequestException(
-          "A day exception lies at most " + MAX_EXCEPTION_DISTANCE_DAYS + " days from today.");
+          "A day exception lies from "
+              + EXCEPTION_DAYS_BACK
+              + " days before to "
+              + EXCEPTION_DAYS_AHEAD
+              + " days after today.");
     }
   }
 
@@ -271,7 +285,7 @@ public class CalendarWorkingHoursService {
     var byDate = new TreeMap<LocalDate, List<Window>>();
     for (var row :
         exceptions.findByConsultantIdAndExceptionDateGreaterThanEqual(
-            consultantId, today().minusDays(EXCEPTIONS_SHOWN_PAST_DAYS))) {
+            consultantId, today().minusDays(EXCEPTION_DAYS_BACK))) {
       var windows = byDate.computeIfAbsent(row.getExceptionDate(), date -> new ArrayList<>());
       if (!row.isDayOff()) {
         windows.add(new Window(row.getStartTime(), row.getEndTime()));

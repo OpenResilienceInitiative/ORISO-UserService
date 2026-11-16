@@ -252,7 +252,7 @@ class CalendarWorkingHoursServiceTest {
 
   @Test
   @SuppressWarnings("unchecked")
-  void replaceException_Should_DropUnreachableDates_ReplaceTheDate_AndStoreTheWindowsByStart() {
+  void replaceException_Should_DropDatesBeforeTheWindow_ReplaceTheDate_AndStoreWindowsByStart() {
     var date = TODAY.plusDays(1);
     var saved = ArgumentCaptor.forClass(Iterable.class);
 
@@ -261,7 +261,7 @@ class CalendarWorkingHoursServiceTest {
             date, dayRequest(dayWindow("13:00", "17:00"), dayWindow("08:00", "12:00")));
 
     var order = inOrder(exceptions);
-    order.verify(exceptions).deleteByConsultantIdBefore(ME, TODAY.minusDays(400));
+    order.verify(exceptions).deleteByConsultantIdBefore(ME, TODAY.minusDays(62));
     order.verify(exceptions).deleteByConsultantIdAndExceptionDate(ME, date);
     order.verify(exceptions).saveAll(saved.capture());
     var rows = new ArrayList<CalendarWorkingDayException>();
@@ -306,8 +306,8 @@ class CalendarWorkingHoursServiceTest {
   }
 
   @Test
-  void replaceException_Should_AcceptDatesUpTo400DaysAway_InThePlatformsZone() {
-    for (var date : List.of(TODAY.minusDays(400), TODAY.plusDays(400))) {
+  void replaceException_Should_AcceptDatesFrom62DaysAgoTo400DaysAhead_InThePlatformsZone() {
+    for (var date : List.of(TODAY.minusDays(62), TODAY.plusDays(400))) {
       assertThat(service.replaceException(date, dayRequest()).getDate()).isEqualTo(date);
     }
   }
@@ -339,7 +339,8 @@ class CalendarWorkingHoursServiceTest {
     }
     assertThatThrownBy(() -> service.replaceException(date, null))
         .isInstanceOf(BadRequestException.class);
-    for (var unreachable : new LocalDate[] {TODAY.minusDays(401), TODAY.plusDays(401), null}) {
+    for (var unreachable :
+        new LocalDate[] {TODAY.minusDays(63), TODAY.minusDays(400), TODAY.plusDays(401), null}) {
       assertThatThrownBy(() -> service.replaceException(unreachable, dayRequest()))
           .as(String.valueOf(unreachable))
           .isInstanceOf(BadRequestException.class);
