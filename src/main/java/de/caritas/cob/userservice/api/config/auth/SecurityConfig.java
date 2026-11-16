@@ -775,6 +775,8 @@ public class SecurityConfig {
                     "/service/users/calendar/sync/import",
                     "/users/calendar/working-hours",
                     "/service/users/calendar/working-hours",
+                    "/users/calendar/working-hours/exceptions/{date}",
+                    "/service/users/calendar/working-hours/exceptions/{date}",
                     "/users/calendar/proposals",
                     "/service/users/calendar/proposals",
                     "/users/calendar/proposals/{proposalId}",
