@@ -6,6 +6,9 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AdminListSortDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyConsultantResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyContactCoverageDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyContactCoverageRequestDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyContactPersonAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyTypeDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerReactivationRequestDTO;
@@ -17,6 +20,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAgencyResponseD
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantTenantChangeResultDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ContactAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminAgencyRelationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
@@ -28,10 +32,13 @@ import de.caritas.cob.userservice.api.adapters.web.dto.RootDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionAdminResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
+import de.caritas.cob.userservice.api.adapters.web.dto.TenantContactPersonDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.TenantDeletionBlockersDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAgencyAdminDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.UpdateContactPersonDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantAdminDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantContactPersonDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserIdentitiesDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ViolationDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.AdminDtoMapper;
@@ -41,6 +48,7 @@ import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.hallink.RootDTOBuilder;
 import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenerator;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService;
+import de.caritas.cob.userservice.api.admin.service.contactperson.ContactPersonAdminService;
 import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPreferenceService;
 import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPreferenceService.ListSort;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
@@ -109,6 +117,7 @@ public class UserAdminController implements UseradminApi {
       accountSetupIssuer;
   private final @NonNull UserHelper userHelper;
   private final @NonNull TenantDeletionBlockerService tenantDeletionBlockerService;
+  private final @NonNull ContactPersonAdminService contactPersonAdminService;
 
   /** Never typed by anyone and valid until the setup link expires, so length costs nothing. */
   static final int SETUP_ONLY_PASSWORD_LENGTH = 32;
@@ -558,6 +567,55 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<TenantDeletionBlockersDTO> getTenantDeletionBlockers(final Long tenantId) {
     return ResponseEntity.ok(tenantDeletionBlockerService.findBlockers(tenantId));
+  }
+
+  /** Contact person of a counselling centre (ORISO-Admin#1534). */
+  @Override
+  public ResponseEntity<AgencyContactPersonAdminDTO> getAgencyContactPerson(
+      Long agencyId, Long tenantId) {
+    return ResponseEntity.ok(contactPersonAdminService.getAgencyContactPerson(agencyId, tenantId));
+  }
+
+  @Override
+  public ResponseEntity<AgencyContactPersonAdminDTO> updateAgencyContactPerson(
+      Long agencyId, UpdateContactPersonDTO updateContactPersonDTO, Long tenantId) {
+    return ResponseEntity.ok(
+        contactPersonAdminService.updateAgencyContactPerson(
+            agencyId, tenantId, updateContactPersonDTO));
+  }
+
+  @Override
+  public ResponseEntity<List<ContactAdminDTO>> getAgencyContactPersonCandidates(
+      Long agencyId, Long tenantId) {
+    return ResponseEntity.ok(
+        contactPersonAdminService.getAgencyContactPersonCandidates(agencyId, tenantId));
+  }
+
+  /** Träger default contact person and general contact e-mail (ORISO-Admin#1534). */
+  @Override
+  public ResponseEntity<TenantContactPersonDTO> getTenantContactPerson(Long tenantId) {
+    return ResponseEntity.ok(contactPersonAdminService.getTenantContactPerson(tenantId));
+  }
+
+  @Override
+  public ResponseEntity<TenantContactPersonDTO> updateTenantContactPerson(
+      Long tenantId, UpdateTenantContactPersonDTO updateTenantContactPersonDTO) {
+    return ResponseEntity.ok(
+        contactPersonAdminService.updateTenantContactPerson(
+            tenantId, updateTenantContactPersonDTO));
+  }
+
+  @Override
+  public ResponseEntity<List<ContactAdminDTO>> getTenantContactPersonCandidates(Long tenantId) {
+    return ResponseEntity.ok(contactPersonAdminService.getTenantContactPersonCandidates(tenantId));
+  }
+
+  /** Which centres have a contact person, for the admin dashboard (ORISO-Admin#1534). */
+  @Override
+  public ResponseEntity<List<AgencyContactCoverageDTO>> getAgencyContactCoverage(
+      AgencyContactCoverageRequestDTO agencyContactCoverageRequestDTO) {
+    return ResponseEntity.ok(
+        contactPersonAdminService.getAgencyContactCoverage(agencyContactCoverageRequestDTO));
   }
 
   @Override
