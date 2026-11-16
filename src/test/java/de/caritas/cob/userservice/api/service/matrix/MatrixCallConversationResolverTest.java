@@ -136,6 +136,51 @@ class MatrixCallConversationResolverTest {
     assertThat(conversation.getChatId()).isNull();
   }
 
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void aChatWithoutIdStaysUnresolved(boolean withShadowSession) {
+    var chat = chat(ConversationType.INTERNAL_GROUP, TENANT);
+    chat.setId(null);
+    stubIncomplete(chat, withShadowSession);
+
+    assertThat(resolver.resolve(ROOM)).isEmpty();
+    assertThat(resolver.resolveForWriting(ROOM)).isEmpty();
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void aChatWithoutOwnerStaysUnresolved(boolean withShadowSession) {
+    var chat = chat(ConversationType.INTERNAL_GROUP, TENANT);
+    chat.setChatOwner(null);
+    stubIncomplete(chat, withShadowSession);
+
+    assertThat(resolver.resolve(ROOM)).isEmpty();
+    assertThat(resolver.resolveForWriting(ROOM)).isEmpty();
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void aChatOwnerWithoutTenantStaysUnresolved(boolean withShadowSession) {
+    var chat = chat(ConversationType.INTERNAL_GROUP, TENANT);
+    chat.getChatOwner().setTenantId(null);
+    stubIncomplete(chat, withShadowSession);
+
+    assertThat(resolver.resolve(ROOM)).isEmpty();
+    assertThat(resolver.resolveForWriting(ROOM)).isEmpty();
+  }
+
+  /** The shadow session shares the owner's tenant, so a missing owner tenant is a missing both. */
+  private void stubIncomplete(Chat chat, boolean withShadowSession) {
+    Long tenant =
+        chat.getChatOwner() == null ? Long.valueOf(TENANT) : chat.getChatOwner().getTenantId();
+    Optional<Session> shadow =
+        withShadowSession
+            ? Optional.of(session("group-chat-system-7", ConversationType.INTERNAL_GROUP, tenant))
+            : Optional.empty();
+    when(sessions.findByMatrixRoomId(ROOM)).thenReturn(shadow);
+    when(chats.findByMatrixRoomId(ROOM)).thenReturn(Optional.of(chat));
+  }
+
   private void stub(Session session, Chat chat) {
     when(sessions.findByMatrixRoomId(ROOM)).thenReturn(Optional.of(session));
     when(chats.findByMatrixRoomId(ROOM)).thenReturn(Optional.of(chat));
