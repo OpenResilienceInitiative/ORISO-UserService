@@ -2,7 +2,10 @@ package de.caritas.cob.userservice.api.service.calendar;
 
 /** Why a calendar import failed, as the API reports it ({@code CalendarSyncDTO.importError}). */
 public enum CalendarImportError {
-  /** Not an https address, or one that carries credentials. */
+  /**
+   * Not an https address, or one that carries credentials. Setting such an address is refused with
+   * 400, so this marks one that reached the database some other way.
+   */
   INVALID_URL,
   /**
    * The host has no address, does not answer in time, redirects or answers with an error. Also an

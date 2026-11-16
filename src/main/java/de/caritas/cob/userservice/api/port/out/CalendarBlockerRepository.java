@@ -31,4 +31,9 @@ public interface CalendarBlockerRepository extends CrudRepository<CalendarBlocke
       "DELETE FROM CalendarBlocker b WHERE b.consultantId = :consultantId AND b.source = :source")
   int deleteByConsultantIdAndSource(
       @Param("consultantId") String consultantId, @Param("source") Source source);
+
+  /** Removes every blocker and busy time of a counsellor whose account is deleted. */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query("DELETE FROM CalendarBlocker b WHERE b.consultantId = :consultantId")
+  int deleteByConsultantId(@Param("consultantId") String consultantId);
 }

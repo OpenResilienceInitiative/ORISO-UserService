@@ -993,7 +993,7 @@
       "components": [
         "importBusyTimes"
       ],
-      "decision": "Leases each run through ScheduledTaskClaimService (calendar.import.claim.duration, default ten minutes), so one replica refreshes the counsellors' imported busy times per run and the others find the claim taken. Each counsellor's import replaces that counsellor's imported rows in one transaction, so a run that overlaps after a lease expiry rewrites the same rows instead of duplicating them.",
+      "decision": "Leases each run through ScheduledTaskClaimService (calendar.import.claim.duration, default ten minutes), so one replica refreshes the counsellors' imported busy times per run and the others find the claim taken. The scheduled method only claims the run and hands it to the import's own bounded pool (calendarImportExecutor, calendar.import.threads), so the shared scheduler thread is not held. A run starts no import after its budget (calendar.import.budget, default four minutes), and one import is cut off after 30 seconds, so a run ends well inside the lease; the calendars it did not reach are the least recently synced and go first in the next run. Each counsellor's import replaces that counsellor's imported rows in one transaction, so a run that overlaps after a lease expiry rewrites the same rows instead of duplicating them.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
