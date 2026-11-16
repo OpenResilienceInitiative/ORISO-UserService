@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.stereotype.Service;
@@ -38,6 +39,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * first, then one short transaction writes, then the notifications follow (each in its own
  * transaction). The methods are therefore deliberately not {@code @Transactional}.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class MatrixCallObservationService {
@@ -74,45 +76,50 @@ public class MatrixCallObservationService {
       String mediaRoomId,
       boolean video) {
     if (blank(sourceRoomId, 255) || blank(callId, 191) || blank(mediaRoomId, 255)) {
-      return Outcome.NOT_FOUND;
+      return notFound("invalid request parameters");
     }
     var conversation = conversations.resolveForWriting(sourceRoomId).orElse(null);
     // Exactly one source: an internal group (chat) or a 1:1 session (#2237). The conversation
     // type already enforces this; the explicit check keeps a row from ever naming both or neither.
     if (conversation == null
-        || (conversation.getChatId() == null) == (conversation.getSessionId() == null)
-        || actor.getTenantId() == null
-        || !actor.getTenantId().equals(conversation.getTenantId())) {
-      return Outcome.NOT_FOUND;
+        || (conversation.getChatId() == null) == (conversation.getSessionId() == null)) {
+      return notFound("source room resolves to no single conversation");
+    }
+    if (actor.getTenantId() == null || !actor.getTenantId().equals(conversation.getTenantId())) {
+      return notFound("actor tenant differs from conversation tenant");
     }
     // A readable invite already produced the authoritative binding; notifications of both paths
     // share one dedupe key per (room, call), so an observation must never pre-empt that call.
     // FE#2209 round 3: an asker's plaintext invite of the same call id is no such binding; it must
     // not keep the assigned counsellor's call from being registered.
-    if (preemptedByBinding(sourceRoomId, callId)) return Outcome.NOT_FOUND;
+    if (preemptedByBinding(sourceRoomId, callId)) {
+      return notFound("call already has an authoritative binding");
+    }
     String creator = matrixIdOf(actor, conversation.getTenantId()).orElse(null);
     // Matrix evidence first, with no transaction open (#1630).
     var members = matrix.getCallRoomMembers(sourceRoomId).orElse(null);
-    if (creator == null || members == null || !members.contains(creator)) {
-      return Outcome.NOT_FOUND;
-    }
+    if (creator == null) return notFound("actor has no Matrix identity in the tenant");
+    if (members == null) return notFound("source room members unavailable");
+    if (!members.contains(creator)) return notFound("actor is not a source room member");
     var binding = matrix.getCallRoomBinding(mediaRoomId, creator).orElse(null);
     if (binding == null
         || !callId.equals(binding.get("call_id"))
         || !sourceRoomId.equals(binding.get("source_room_id"))) {
-      return Outcome.NOT_FOUND;
+      return notFound("media room binding missing or for another call");
     }
     var origin = matrix.getCallRoomOrigin(mediaRoomId, creator).orElse(null);
     if (origin == null
         || !creator.equals(origin.creatorMatrixId())
         || !creator.equals(origin.bindingSenderMatrixId())) {
-      return Outcome.NOT_FOUND;
+      return notFound("media room origin is not the actor");
     }
     Registration written =
         new TransactionTemplate(transactionManager)
             .execute(
                 status -> writeRegistration(conversation, creator, callId, mediaRoomId, video));
-    if (written == Registration.REJECTED) return Outcome.NOT_FOUND;
+    if (written == Registration.REJECTED) {
+      return notFound("registration rejected (ended, superseded or source locked)");
+    }
     if (written == Registration.CREATED) {
       // Verified evidence: creator is a current member, the media room binding and creator match.
       // Audience: current members of this exact room, same tenant, active accounts, not the
@@ -120,6 +127,12 @@ public class MatrixCallObservationService {
       notifyInvited(conversation, members, creator, callId, mediaRoomId, video);
     }
     return Outcome.OK;
+  }
+
+  /** US#1628: name why a registration was refused; reason only, never ids or personal data. */
+  private static Outcome notFound(String reason) {
+    log.debug("Call observation registration not found: {}", reason);
+    return Outcome.NOT_FOUND;
   }
 
   private enum Registration {
