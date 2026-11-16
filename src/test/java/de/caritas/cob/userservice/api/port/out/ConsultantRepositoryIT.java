@@ -9,7 +9,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.google.api.client.util.Sets;
 import com.google.common.collect.Lists;
 import com.neovisionaries.i18n.LanguageCode;
-import de.caritas.cob.userservice.api.model.Appointment;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
@@ -58,8 +57,6 @@ class ConsultantRepositoryIT {
   @Autowired private EntityManager entityManager;
 
   @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
-
-  @Autowired private AppointmentRepository appointmentRepository;
 
   @BeforeEach
   public void backup() {
@@ -136,22 +133,6 @@ class ConsultantRepositoryIT {
     var byBothAgencies =
         underTest.findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(List.of(900003L, 900004L));
     assertTrue(byBothAgencies.stream().anyMatch(found -> found.getId().equals(consultantId)));
-  }
-
-  @Test
-  void deleteShouldDeleteConsultantAndAppointment() {
-    givenACreatedConsultantWithAnAppointment();
-
-    assertTrue(underTest.existsById(consultant.getId()));
-    var appointment = consultant.getAppointments().iterator().next();
-    assertTrue(appointmentRepository.existsById(appointment.getId()));
-    var countConsultants = underTest.count();
-
-    underTest.delete(consultant);
-
-    assertEquals(countConsultants - 1, underTest.count());
-    assertFalse(underTest.existsById(consultant.getId()));
-    assertFalse(appointmentRepository.existsById(appointment.getId()));
   }
 
   @Test
@@ -738,30 +719,6 @@ class ConsultantRepositoryIT {
       underTest.save(consultant);
       nonMatchingIds.add(consultant.getId());
     }
-  }
-
-  private void givenACreatedConsultantWithAnAppointment() {
-    var dbConsultant = underTest.findAll().iterator().next();
-    consultant = new Consultant();
-    BeanUtils.copyProperties(dbConsultant, consultant);
-    consultant.setId(UUID.randomUUID().toString());
-    consultant.setUsername(RandomStringUtils.randomAlphabetic(8));
-    consultant.setEmail(aValidEmail());
-    consultant.setMatrixUserId(RandomStringUtils.randomAlphabetic(8));
-    underTest.save(consultant);
-
-    var appointment = easyRandom.nextObject(Appointment.class);
-    appointment.setConsultant(consultant);
-    appointment.setId(null);
-    var desc = appointment.getDescription();
-    if (desc.length() > 300) {
-      appointment.setDescription(desc.substring(0, 300));
-    }
-
-    consultant.setAppointments(Set.of(appointment));
-    underTest.save(consultant);
-
-    consultant = underTest.findById(consultant.getId()).orElseThrow();
   }
 
   private String aValidEmail() {

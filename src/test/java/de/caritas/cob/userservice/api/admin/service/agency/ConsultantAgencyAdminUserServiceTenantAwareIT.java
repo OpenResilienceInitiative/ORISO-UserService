@@ -251,7 +251,6 @@ public class ConsultantAgencyAdminUserServiceTenantAwareIT {
 
   private Consultant givenAValidConsultant(String id, boolean isTeamConsultant) {
     Consultant consultant = new Consultant();
-    consultant.setAppointments(null);
     consultant.setTenantId(1L);
     consultant.setId(id);
     consultant.setConsultantAgencies(Sets.newHashSet());

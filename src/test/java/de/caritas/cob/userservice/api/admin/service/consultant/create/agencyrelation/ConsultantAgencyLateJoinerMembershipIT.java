@@ -226,7 +226,6 @@ class ConsultantAgencyLateJoinerMembershipIT {
     consultant.setMatrixUserId(CONSULTANT_MATRIX_USER_ID);
     consultant.setDeleteDate(null);
     consultant.setLanguages(null);
-    consultant.setAppointments(null);
     return consultantRepository.save(consultant);
   }
 

@@ -8,7 +8,6 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAnonymousRegistryIdAction;
-import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAppointmentServiceAskerAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAskerDraftMessagesAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAskerEventNotificationsAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAskerReplyEmailDeliveriesAction;
@@ -17,9 +16,9 @@ import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteDatabas
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteDatabaseAskerAgencyAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteKeycloakAskerAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteMatrixAskerAction;
-import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteAppointmentServiceConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteCaseHandoverRequestsForConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteChatAction;
+import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantCalendarAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantDraftMessagesAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantEventNotificationsAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantMessageEmailDeliveriesAction;
@@ -113,7 +112,6 @@ public class DeleteUserAccountService {
         .addActionToExecute(DeleteAskerRoomsAndSessionsAction.class)
         .addActionToExecute(DeleteDatabaseAskerAgencyAction.class)
         .addActionToExecute(DeleteAnonymousRegistryIdAction.class)
-        .addActionToExecute(DeleteAppointmentServiceAskerAction.class)
         .addActionToExecute(DeleteAskerDraftMessagesAction.class)
         .addActionToExecute(DeleteAskerEventNotificationsAction.class)
         .addActionToExecute(DeleteAskerReplyEmailDeliveriesAction.class)
@@ -153,12 +151,12 @@ public class DeleteUserAccountService {
         .addActionToExecute(DeleteMatrixConsultantAction.class)
         .addActionToExecute(DeleteDatabaseConsultantAgencyAction.class)
         .addActionToExecute(DeleteChatAction.class)
-        .addActionToExecute(DeleteAppointmentServiceConsultantAction.class)
         .addActionToExecute(DeleteCaseHandoverRequestsForConsultantAction.class)
         .addActionToExecute(DeleteConsultantDraftMessagesAction.class)
         .addActionToExecute(DeleteConsultantEventNotificationsAction.class)
         .addActionToExecute(DeleteConsultantMessageEmailDeliveriesAction.class)
         .addActionToExecute(DeleteConsultantMessageStatsAction.class)
+        .addActionToExecute(DeleteConsultantCalendarAction.class)
         .addActionToExecute(DeleteDatabaseConsultantAction.class)
         .executeActions(deletionWorkflowDTO);
 

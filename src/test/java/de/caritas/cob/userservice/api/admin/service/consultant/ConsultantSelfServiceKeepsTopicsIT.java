@@ -13,7 +13,6 @@ import de.caritas.cob.userservice.api.admin.service.consultant.update.Consultant
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -42,7 +41,6 @@ class ConsultantSelfServiceKeepsTopicsIT {
   @Autowired private ConsultantRepository consultantRepository;
 
   @MockitoBean private AgencyService agencyService;
-  @MockitoBean private AppointmentService appointmentService;
 
   @BeforeEach
   void everyAgencyOffersTheTopic() {
