@@ -46,10 +46,18 @@ public class MatrixCallInviteNotificationService {
    * as absent, so its guests lose the gate and their seats) and no longer holds the batch; the
    * sweeps and the observation restore take it from there. If even that marker cannot be written,
    * the batch keeps being replayed. A success resets the count.
+   *
+   * <p>Round 11 (F3): the replay is also bounded per batch. A replay leaves the sync cursor where
+   * it was, so consecutive replays are replays of the same batch. Once it was replayed {@link
+   * #LIVE_ROOM_RETRIES} times, every room that still fails is marked unobserved at once, so more
+   * failing rooms than the per-room count tracks cannot keep the batch unacknowledged forever.
+   * Round 11 (F1): the marker also caps the room's memberships (see {@link
+   * MatrixCallLifecycleService#loseBatch}).
    */
   @SuppressWarnings("unchecked")
   public void handleMediaRooms(Map<String, Object> joinedRooms) {
     var known = callBindings.knownMediaRooms(joinedRooms.keySet());
+    boolean exhausted = replaysOfThisBatch >= LIVE_ROOM_RETRIES;
     boolean replay = false;
     for (var entry : joinedRooms.entrySet()) {
       String room = entry.getKey();
@@ -60,9 +68,9 @@ public class MatrixCallInviteNotificationService {
         continue;
       }
       int failures = liveRoomFailures.merge(room, 1, Integer::sum);
-      if (failures <= LIVE_ROOM_RETRIES) {
+      if (failures <= LIVE_ROOM_RETRIES && !exhausted) {
         replay = true;
-      } else if (passed("Call room observation reset", () -> lifecycle.loseObservation(room))) {
+      } else if (passed("Call room observation reset", () -> lifecycle.loseBatch(room))) {
         // Round 10 security scan: the dropped batch may hold a departure. The durable marker
         // (media observation lost) makes the room's memberships count as absent until the room
         // is observed again, so a stale counsellor membership keeps nothing open (fail closed).
@@ -72,8 +80,15 @@ public class MatrixCallInviteNotificationService {
         replay = true;
       }
     }
-    if (replay) throw new CallRoomBatchReplay();
+    if (replay) {
+      replaysOfThisBatch++;
+      throw new CallRoomBatchReplay();
+    }
+    replaysOfThisBatch = 0;
   }
+
+  /** How often the current batch was replayed in a row; written by the sync worker only. */
+  private int replaysOfThisBatch;
 
   /** Consecutive live pass failures per room; bounded, written by the sync worker only. */
   private final Map<String, Integer> liveRoomFailures =

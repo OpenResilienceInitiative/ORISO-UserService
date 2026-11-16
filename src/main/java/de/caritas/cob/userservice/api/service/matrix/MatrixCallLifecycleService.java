@@ -65,6 +65,26 @@ public class MatrixCallLifecycleService {
         .ifPresent(binding -> binding.loseMediaObservation());
   }
 
+  /**
+   * FE#2209 round 11 (F1): a live room whose sync batch is dropped. Besides the unobserved marker,
+   * every device's membership is capped at the loss time: the next incremental batch re-observes
+   * the room, but it cannot carry a departure the dropped batch held, so a stale membership must
+   * not count again once the room is observed. Presence then needs a new membership event. A leave
+   * keeps {@link #loseObservation}: the rejoin delivers the room's full current state.
+   */
+  @Transactional
+  public void loseBatch(String room) {
+    long now = System.currentTimeMillis();
+    bindings
+        .lockByMediaRoomId(room)
+        .filter(binding -> binding.getEndedAt() == null)
+        .ifPresent(
+            binding -> {
+              binding.loseMediaObservation();
+              binding.losePresence(now);
+            });
+  }
+
   @Transactional
   public void restoreObservation(String room) {
     var binding = bindings.lockByMediaRoomId(room).orElse(null);
@@ -166,10 +186,18 @@ public class MatrixCallLifecycleService {
     }
     for (var event : memberships(roomData)) {
       if (retainedClosure && !event.departed()) continue;
-      if (event.eventTimestamp() > now
-          || !members.contains(event.sender())
-          || identity(event.sender(), binding.getTenantId()).isEmpty()) continue;
       var previous = binding.getDevices().get(event.stateKey());
+      // Round 11 (F2): a departure or a shorter membership of a device row the same sender holds
+      // only removes presence, so it applies whatever the room membership and the identity lookup
+      // say (an ambiguous Matrix id resolves to nobody). Fail closed.
+      boolean known =
+          members.contains(event.sender())
+              && identity(event.sender(), binding.getTenantId()).isPresent();
+      boolean shortens =
+          previous != null
+              && previous.getSenderMatrixId().equals(event.sender())
+              && (event.departed() || event.expiresAt() < previous.getExpiresAt());
+      if (event.eventTimestamp() > now || (!known && !shortens)) continue;
       if (previous != null
           && (!previous.getSenderMatrixId().equals(event.sender())
               || previous.getEventId().equals(event.eventId())
@@ -177,7 +205,7 @@ public class MatrixCallLifecycleService {
               || (previous.getEventTimestamp() == event.eventTimestamp()
                   && !previous.getEventId().equals(event.replacesEventId())))) continue;
       boolean attended = previous != null && previous.isAttended();
-      if (!event.departed() && event.expiresAt() > now) {
+      if (known && !event.departed() && event.expiresAt() > now) {
         attended = true;
         binding.recordAttendance(event.eventTimestamp());
       }
@@ -188,7 +216,7 @@ public class MatrixCallLifecycleService {
               new MatrixCallDevice(
                   event.sender(),
                   event.eventTimestamp(),
-                  event.expiresAt(),
+                  known ? event.expiresAt() : Math.min(event.expiresAt(), previous.getExpiresAt()),
                   attended,
                   event.eventId()));
     }

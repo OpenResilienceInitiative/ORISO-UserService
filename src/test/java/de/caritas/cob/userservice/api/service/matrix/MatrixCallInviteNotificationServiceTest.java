@@ -224,11 +224,65 @@ class MatrixCallInviteNotificationServiceTest {
       org.assertj.core.api.Assertions.assertThatThrownBy(
               () -> service.handleMediaRooms(Map.of(POISON, poisonData)))
           .isInstanceOf(MatrixCallInviteNotificationService.CallRoomBatchReplay.class);
-    verify(lifecycle, never()).loseObservation(POISON);
+    verify(lifecycle, never()).loseBatch(POISON);
 
     service.handleMediaRooms(Map.of(POISON, poisonData));
 
-    verify(lifecycle).loseObservation(POISON);
+    verify(lifecycle).loseBatch(POISON);
+  }
+
+  @Test
+  void aSuccessfulPassResetsTheRoomsFailureCount() {
+    // Round 11 (F4): only consecutive failures count. After a success, a new failure holds the
+    // batch again instead of marking the room unobserved at once.
+    Map<String, Object> roomData = Map.of("timeline", Map.of("events", List.of()));
+    when(callBindings.knownMediaRooms(any())).thenReturn(java.util.Set.of(POISON));
+    var pass = new java.util.concurrent.atomic.AtomicInteger();
+    when(lifecycle.handleRoom(POISON, roomData))
+        .thenAnswer(
+            ignored -> {
+              if (pass.incrementAndGet()
+                  == MatrixCallInviteNotificationService.LIVE_ROOM_RETRIES + 1) return true;
+              throw new org.springframework.dao.CannotAcquireLockException("lock wait");
+            });
+    for (int attempt = 0;
+        attempt < MatrixCallInviteNotificationService.LIVE_ROOM_RETRIES;
+        attempt++)
+      org.assertj.core.api.Assertions.assertThatThrownBy(
+              () -> service.handleMediaRooms(Map.of(POISON, roomData)))
+          .isInstanceOf(MatrixCallInviteNotificationService.CallRoomBatchReplay.class);
+    service.handleMediaRooms(Map.of(POISON, roomData));
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> service.handleMediaRooms(Map.of(POISON, roomData)))
+        .as("the first failure after a success holds the batch again")
+        .isInstanceOf(MatrixCallInviteNotificationService.CallRoomBatchReplay.class);
+    verify(lifecycle, never()).loseBatch(POISON);
+  }
+
+  @Test
+  void moreFailingRoomsThanTrackedAreMarkedOnceTheBatchWasReplayedOftenEnough() {
+    // Round 11 (F3): with more failing rooms than the per-room count tracks, each room's count is
+    // evicted before it reaches the bound. The per-batch bound still acknowledges the batch, with
+    // every failing room marked unobserved.
+    var batch = new java.util.LinkedHashMap<String, Object>();
+    for (int index = 0;
+        index <= MatrixCallInviteNotificationService.MAX_TRACKED_FAILING_ROOMS;
+        index++) batch.put("!failing-" + index + ":example", Map.of("timeline", Map.of()));
+    assertThat(batch).hasSize(257);
+    when(callBindings.knownMediaRooms(any())).thenReturn(batch.keySet());
+    when(lifecycle.handleRoom(anyString(), any()))
+        .thenThrow(new org.springframework.dao.CannotAcquireLockException("lock wait"));
+    for (int attempt = 0;
+        attempt < MatrixCallInviteNotificationService.LIVE_ROOM_RETRIES;
+        attempt++)
+      org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.handleMediaRooms(batch))
+          .isInstanceOf(MatrixCallInviteNotificationService.CallRoomBatchReplay.class);
+
+    org.assertj.core.api.Assertions.assertThatCode(() -> service.handleMediaRooms(batch))
+        .as("acknowledged after the bound")
+        .doesNotThrowAnyException();
+    for (String room : batch.keySet()) verify(lifecycle).loseBatch(room);
   }
 
   @Test
@@ -239,7 +293,7 @@ class MatrixCallInviteNotificationServiceTest {
         .thenThrow(new org.springframework.dao.IncorrectResultSizeDataAccessException(1, 2));
     org.mockito.Mockito.doThrow(new org.springframework.dao.CannotAcquireLockException("down"))
         .when(lifecycle)
-        .loseObservation(POISON);
+        .loseBatch(POISON);
 
     for (int attempt = 0;
         attempt < MatrixCallInviteNotificationService.LIVE_ROOM_RETRIES + 3;

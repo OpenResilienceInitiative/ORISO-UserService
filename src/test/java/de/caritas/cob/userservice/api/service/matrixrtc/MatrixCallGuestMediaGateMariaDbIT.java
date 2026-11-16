@@ -728,6 +728,163 @@ class MatrixCallGuestMediaGateMariaDbIT {
   }
 
   @Test
+  void anIncrementalBatchAfterTheMarkerDoesNotReviveTheStalePresence() throws Exception {
+    // Round 11 (F1): the listener stays joined, so the next batch is incremental. It observes the
+    // room again but cannot carry the departure the dropped batch held: the counsellor's stale
+    // membership must not reopen the gate. Presence needs a new membership event.
+    var listener = callRoomMarkedUnobservedThroughALostBatch();
+    serveSyncBatch(
+        "batch-after-the-marker",
+        Map.of(
+            media,
+            Map.of(
+                "timeline",
+                Map.of(
+                    "events",
+                    List.of(
+                        Map.of(
+                            "type",
+                            "m.room.message",
+                            "event_id",
+                            "$unrelated-" + UUID.randomUUID(),
+                            "sender",
+                            guestMatrixId.replace("guest", "asker"),
+                            "origin_server_ts",
+                            System.currentTimeMillis(),
+                            "content",
+                            Map.of("msgtype", "m.text", "body", "unrelated")))))));
+
+    syncCycle(listener);
+
+    assertThat(callGuests.sessionCallAdmitsGuests(bindingId))
+        .as("the stale membership keeps the rule from holding")
+        .isFalse();
+    assertThat(admitted()).isFalse();
+    assertSeatRevokedAndKept();
+  }
+
+  @Test
+  void aNewCounsellorMembershipAfterTheMarkerProvesPresenceAgain() throws Exception {
+    // Round 11 (F1), control: the cap only drops stale presence; a new membership event counts.
+    var listener = callRoomMarkedUnobservedThroughALostBatch();
+    String caller = counsellor.getMatrixUserId();
+    serveSyncBatch(
+        "batch-with-a-new-membership",
+        Map.of(
+            media,
+            Map.of(
+                "timeline", Map.of("events", List.of(membership(caller, "_" + caller + "_C2"))))));
+
+    syncCycle(listener);
+
+    assertThat(bindings.findById(bindingId).orElseThrow().getEndedAt()).isNull();
+    assertThat(callGuests.sessionCallAdmitsGuests(bindingId)).isTrue();
+  }
+
+  @Test
+  void aDepartureWhileTheMatrixIdIsAmbiguousStillEndsTheDevice() {
+    // Round 11 (F2): a departure only removes presence. It applies to the sender's device row even
+    // while the sender's Matrix id resolves to nobody (two counsellors of the Träger share it), so
+    // the stale membership does not count again once the duplicate is gone.
+    String caller = counsellor.getMatrixUserId();
+    var twin =
+        new TransactionTemplate(transactionManager)
+            .execute(status -> consultants.save(consultantOfTenant(7L, caller)).getId());
+    var departure = new java.util.HashMap<>(membership(caller, "_" + caller + "_C"));
+    departure.put("content", Map.of());
+    assertThat(
+            lifecycle.handleRoom(media, Map.of("timeline", Map.of("events", List.of(departure)))))
+        .isTrue();
+    softDelete(List.of(twin));
+
+    assertThat(
+            bindings.findById(bindingId).orElseThrow().isInCall(caller, System.currentTimeMillis()))
+        .as("the departed device does not count")
+        .isFalse();
+    assertThat(callGuests.sessionCallAdmitsGuests(bindingId)).isFalse();
+  }
+
+  @Test
+  void aDuplicateMatrixIdInAnotherTraegerLeavesTheLiveColleagueTheSoleCounsellor() {
+    // Round 11 (F4): only accounts of the call's Träger make a Matrix id ambiguous. Dropping
+    // q.tenant_id = b.tenant_id from the sweep query turns this red.
+    liveColleagueOnly();
+    var twin =
+        new TransactionTemplate(transactionManager)
+            .execute(
+                status ->
+                    consultants.save(consultantOfTenant(8L, colleague.getMatrixUserId())).getId());
+    try {
+      assertThat(candidate()).as("the rule holds; the call is no candidate").isFalse();
+    } finally {
+      softDelete(List.of(twin));
+    }
+  }
+
+  /**
+   * Round 10 security scan setup: the call room's live pass fails until the batch is acknowledged
+   * with the room marked unobserved; then the failure ends. The listener stays joined.
+   */
+  private de.caritas.cob.userservice.api.service.matrix.MatrixEventListenerService
+      callRoomMarkedUnobservedThroughALostBatch() {
+    var failing = new java.util.concurrent.atomic.AtomicBoolean(true);
+    String caller = counsellor.getMatrixUserId();
+    String asker = guestMatrixId.replace("guest", "asker");
+    when(matrix.getCallRoomMembers(source))
+        .thenAnswer(
+            ignored -> {
+              if (failing.get())
+                throw new org.springframework.dao.TransientDataAccessResourceException("down");
+              return Optional.of(List.of(caller, asker));
+            });
+    var cursor =
+        mock(de.caritas.cob.userservice.api.service.matrix.MatrixEmailSyncCursorStore.class);
+    var listener = listener(cursor);
+    serveSyncBatch(
+        "batch-with-a-lost-departure",
+        Map.of(media, Map.of("timeline", Map.of("events", List.of()))));
+    for (int replay = 0; replay < MatrixCallInviteNotificationService.LIVE_ROOM_RETRIES; replay++)
+      org.assertj.core.api.Assertions.assertThatThrownBy(() -> syncCycle(listener))
+          .isInstanceOf(MatrixCallInviteNotificationService.CallRoomBatchReplay.class);
+    syncCycle(listener);
+    org.mockito.Mockito.verify(cursor).write("batch-with-a-lost-departure");
+    assertThat(bindings.findById(bindingId).orElseThrow().getMediaObservedAt()).isNull();
+    failing.set(false);
+    return listener;
+  }
+
+  /** A current MatrixRTC membership event of {@code sender}, sent now, valid for an hour. */
+  private static Map<String, Object> membership(String sender, String stateKey) {
+    return Map.of(
+        "type",
+        "org.matrix.msc3401.call.member",
+        "event_id",
+        "$membership-" + UUID.randomUUID(),
+        "sender",
+        sender,
+        "state_key",
+        stateKey,
+        "origin_server_ts",
+        System.currentTimeMillis(),
+        "content",
+        Map.of(
+            "application",
+            "m.call",
+            "scope",
+            "m.room",
+            "call_id",
+            "",
+            "device_id",
+            "DEVICE",
+            "expires",
+            3_600_000,
+            "focus_active",
+            Map.of("type", "livekit"),
+            "foci_preferred",
+            List.of()));
+  }
+
+  @Test
   void anUnobservedRunningCallIsASweepCandidate() {
     new JdbcTemplate(dataSource)
         .update("UPDATE matrix_call_binding SET media_observed_at = NULL WHERE id = ?", bindingId);

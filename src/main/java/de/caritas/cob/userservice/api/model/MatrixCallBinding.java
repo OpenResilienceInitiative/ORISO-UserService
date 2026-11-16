@@ -103,6 +103,27 @@ public class MatrixCallBinding {
     nextObservationAttemptAt = null;
   }
 
+  /**
+   * FE#2209 round 11 (F1): a dropped sync batch may hold any device's departure, so no membership
+   * seen before {@code at} proves presence any more: every device's membership ends at {@code at}
+   * at the latest. Only a new membership event makes a device live again (an event already stored
+   * is never applied twice). Attendance is kept.
+   */
+  public void losePresence(long at) {
+    for (var key : java.util.List.copyOf(devices.keySet())) {
+      var device = devices.get(key);
+      if (device.getExpiresAt() > at)
+        devices.put(
+            key,
+            new MatrixCallDevice(
+                device.getSenderMatrixId(),
+                device.getEventTimestamp(),
+                at,
+                device.isAttended(),
+                device.getEventId()));
+    }
+  }
+
   @ElementCollection(fetch = FetchType.EAGER)
   @CollectionTable(name = "matrix_call_device", joinColumns = @JoinColumn(name = "binding_id"))
   @MapKeyColumn(name = "state_key", length = 255)
