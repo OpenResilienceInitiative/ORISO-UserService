@@ -344,9 +344,6 @@ public class Consultant implements TenantAware, NotificationsAware {
   @Field
   private Long tenantId;
 
-  @OneToMany(mappedBy = "consultant", cascade = CascadeType.ALL)
-  private Set<Appointment> appointments;
-
   @Column(name = "status", length = 11)
   @Enumerated(EnumType.STRING)
   @Field

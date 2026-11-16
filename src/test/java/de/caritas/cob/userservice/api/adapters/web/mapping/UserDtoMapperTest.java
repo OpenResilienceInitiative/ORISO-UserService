@@ -23,7 +23,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 class UserDtoMapperTest {
@@ -37,7 +36,6 @@ class UserDtoMapperTest {
   @BeforeEach
   void setUp() {
     mapper = new UserDtoMapper(identityPolicy);
-    ReflectionTestUtils.setField(mapper, "appointmentFeatureEnabled", true);
   }
 
   @Test
@@ -52,7 +50,6 @@ class UserDtoMapperTest {
     assertThat(result.getTwoFactorAuth().getIsToEncourage()).isTrue();
     assertThat(result.getE2eEncryptionEnabled()).isTrue();
     assertThat(result.getIsDisplayNameEditable()).isTrue();
-    assertThat(result.getAppointmentFeatureEnabled()).isTrue();
   }
 
   @Test

@@ -315,22 +315,6 @@
       "status": "bounded"
     },
     {
-      "id": "appointment-cleanup-scheduler",
-      "source": "src/main/java/de/caritas/cob/userservice/api/Organizer.java",
-      "kind": "scheduler",
-      "owner": "sessions-appointments",
-      "risk": "duplicate-side-effect",
-      "components": [
-        "deleteObsoleteAppointments"
-      ],
-      "decision": "Prove database-level idempotency under concurrent execution or add a lease.",
-      "signals": [
-        "userservice.scheduler.executions",
-        "userservice.scheduler.duration"
-      ],
-      "status": "blocker"
-    },
-    {
       "id": "account-invite-reservation-release-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/service/accountinvite/allocation/IdReservationReleaseScheduler.java",
       "kind": "scheduler",
@@ -1015,6 +999,38 @@
         "userservice.scheduler.duration"
       ],
       "status": "safe"
+    },
+    {
+      "id": "calendar-import-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/calendarimport/scheduler/CalendarImportScheduler.java",
+      "kind": "scheduler",
+      "owner": "calendar",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "importBusyTimes"
+      ],
+      "decision": "Leases each run through ScheduledTaskClaimService (calendar.import.claim.duration, default ten minutes), so one replica refreshes the counsellors' imported busy times per run and the others find the claim taken. The scheduled method only claims the run and hands it to the import's own bounded pool (calendarImportExecutor, calendar.import.threads), so the shared scheduler thread is not held. A run starts no import after its budget (calendar.import.budget, default four minutes), and one import is cut off after 30 seconds, so a run ends well inside the lease; the calendars it did not reach are the least recently synced and go first in the next run. Each counsellor's import replaces that counsellor's imported rows in one transaction, so a run that overlaps after a lease expiry rewrites the same rows instead of duplicating them.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "safe"
+    },
+    {
+      "id": "calendar-visibility-policy-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/calendar/CalendarPolicyResolver.java",
+      "kind": "local-state",
+      "owner": "calendar",
+      "risk": "correctness",
+      "components": [
+        "remembered",
+        "reading"
+      ],
+      "decision": "Retain locally per Traeger with a one-minute TTL on the hot path that decides how far a counsellor may look into colleagues' calendars (calendar.visibilityScope) and whether asker usernames are shown; a miss re-reads the policy from TenantService. A replica with an older copy applies a changed Traeger setting up to one minute late (a widening and a narrowing alike). A failed read is kept for ten seconds only and is always the narrowest reach (own counselling centre, no usernames), so an outage never widens access. Cardinality is the number of Traeger that have a counsellor, and the per-Traeger read lock objects are bounded the same way.",
+      "signals": [
+        "userservice.replica.local_state"
+      ],
+      "status": "bounded"
     }
   ]
 }
