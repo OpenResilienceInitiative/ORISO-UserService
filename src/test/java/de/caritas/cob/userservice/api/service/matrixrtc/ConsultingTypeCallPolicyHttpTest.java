@@ -99,7 +99,14 @@ class ConsultingTypeCallPolicyHttpTest {
         new MatrixRtcPolicyContextResolver(
             sessionRepository, chatRepository, supervisorRepository, discussionRepository);
     var service =
-        new MatrixRtcCallPolicyService(resolver, tenantService, matrixSynapseService, hasher, jdbc);
+        new MatrixRtcCallPolicyService(
+            resolver,
+            tenantService,
+            matrixSynapseService,
+            hasher,
+            jdbc,
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService.class));
     mvc =
         MockMvcBuilders.standaloneSetup(
                 new MatrixRtcCallPolicyController(

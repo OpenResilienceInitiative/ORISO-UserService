@@ -99,4 +99,38 @@ class CallParticipantEvictionTest {
             () -> eviction("http://gateway:3010", TOKEN).evictFromRunningCalls(SOURCE_ROOM, ANNA))
         .doesNotThrowAnyException();
   }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void asksTheGatewayToRemoveARevokedGuestFromOneCallRoom() {
+    // FE#2209 round 8 (F1): a revoked guest seat also ends the guest's LiveKit connection.
+    when(http.exchange(anyString(), any(), any(), eq(Void.class)))
+        .thenReturn(ResponseEntity.noContent().build());
+
+    eviction("http://gateway:3010", TOKEN).evictFromCallRoom("!media:oriso.test", ANNA);
+
+    ArgumentCaptor<HttpEntity<Map<String, Object>>> request =
+        ArgumentCaptor.forClass(HttpEntity.class);
+    verify(http)
+        .exchange(
+            eq("http://gateway:3010/internal/matrixrtc/evict"),
+            eq(HttpMethod.POST),
+            request.capture(),
+            eq(Void.class));
+    assertThat(request.getValue().getBody())
+        .isEqualTo(Map.of("matrixUserId", ANNA, "mediaRoomIds", List.of("!media:oriso.test")));
+  }
+
+  @Test
+  void aRevokedGuestsEvictionStaysOffWhileTheGatewayIsNotConfiguredAndNeverThrows() {
+    eviction("", TOKEN).evictFromCallRoom("!media:oriso.test", ANNA);
+    verify(http, never()).exchange(anyString(), any(), any(), eq(Void.class));
+
+    when(http.exchange(anyString(), any(), any(), eq(Void.class)))
+        .thenThrow(new ResourceAccessException("down"));
+    assertThatCode(
+            () ->
+                eviction("http://gateway:3010", TOKEN).evictFromCallRoom("!media:oriso.test", ANNA))
+        .doesNotThrowAnyException();
+  }
 }

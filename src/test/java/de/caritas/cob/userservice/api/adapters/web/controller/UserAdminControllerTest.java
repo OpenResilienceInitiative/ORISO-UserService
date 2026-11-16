@@ -101,7 +101,10 @@ class UserAdminControllerTest {
             userIdentitiesService,
             adminListPreferenceService,
             accountSetupIssuer,
-            mock(de.caritas.cob.userservice.api.helper.UserHelper.class));
+            mock(de.caritas.cob.userservice.api.helper.UserHelper.class),
+            mock(
+                de.caritas.cob.userservice.api.admin.service.tenant.TenantDeletionBlockerService
+                    .class));
   }
 
   @Test
