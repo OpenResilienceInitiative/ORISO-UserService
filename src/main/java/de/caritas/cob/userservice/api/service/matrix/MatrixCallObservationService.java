@@ -11,7 +11,11 @@ import de.caritas.cob.userservice.api.port.out.MatrixCallObservationRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -212,11 +216,12 @@ public class MatrixCallObservationService {
       String callId,
       String mediaRoomId,
       boolean video) {
-    var creatorIdentity = identity(creator, conversation.getTenantId()).orElse(null);
+    var identities = identities(members, creator, conversation.getTenantId());
+    var creatorIdentity = identities.get(creator);
     if (creatorIdentity == null) return;
     for (String member : members) {
       if (member.equals(creator)) continue;
-      var recipient = identity(member, conversation.getTenantId()).orElse(null);
+      var recipient = identities.get(member);
       if (recipient == null || !lifecycle.isActiveRecipient(recipient.id())) continue;
       notifications.createCallInvitationNotification(
           conversation,
@@ -384,8 +389,9 @@ public class MatrixCallObservationService {
 
   private void notifyEnded(
       MatrixCallConversation conversation, List<String> members, MatrixCallObservation row) {
+    var identities = identities(members, null, row.getTenantId());
     for (String member : members) {
-      var recipient = identity(member, row.getTenantId()).orElse(null);
+      var recipient = identities.get(member);
       if (recipient == null || !lifecycle.isActiveRecipient(recipient.id())) continue;
       notifications.createCallEndedNotification(
           conversation,
@@ -596,17 +602,52 @@ public class MatrixCallObservationService {
     return id.filter(value -> !value.isBlank());
   }
 
-  private Optional<Identity> identity(String matrixId, Long tenantId) {
-    return users
-        .findByMatrixUserIdAndDeleteDateIsNull(matrixId)
-        .filter(u -> Objects.equals(u.getTenantId(), tenantId) && u.getUserId() != null)
-        .map(u -> new Identity(u.getUserId(), false))
-        .or(
-            () ->
-                consultants
-                    .findByMatrixUserIdAndDeleteDateIsNull(matrixId)
-                    .filter(c -> Objects.equals(c.getTenantId(), tenantId) && c.getId() != null)
-                    .map(c -> new Identity(c.getId(), true)));
+  /**
+   * #1656: the identities of a whole conversation (a group chat holds up to 51 members, a self-help
+   * room up to 255) in one query per table instead of up to two per member. Same rules as the
+   * single lookup: only rows of the conversation's tenant count, an asker row wins over a
+   * counsellor row, and a Matrix id held by more than one row of the tenant stands for nobody (the
+   * SoleCounsellor rule; fail closed). {@code alsoResolve} adds an id outside {@code members}.
+   */
+  private Map<String, Identity> identities(
+      Collection<String> members, String alsoResolve, Long tenantId) {
+    var wanted = new LinkedHashSet<String>();
+    for (String member : members) if (member != null && !member.isBlank()) wanted.add(member);
+    if (alsoResolve != null && !alsoResolve.isBlank()) wanted.add(alsoResolve);
+    var result = new HashMap<String, Identity>();
+    if (wanted.isEmpty() || tenantId == null) return result;
+    var askers = new HashMap<String, List<String>>();
+    for (var user : users.findAllByMatrixUserIdInAndDeleteDateIsNull(wanted)) {
+      if (user == null
+          || user.getUserId() == null
+          || !Objects.equals(user.getTenantId(), tenantId)
+          || !wanted.contains(user.getMatrixUserId())) continue;
+      askers
+          .computeIfAbsent(user.getMatrixUserId(), key -> new ArrayList<>())
+          .add(user.getUserId());
+    }
+    var rest = new LinkedHashSet<>(wanted);
+    rest.removeAll(askers.keySet());
+    askers.forEach(
+        (matrixId, ids) -> {
+          if (ids.size() == 1) result.put(matrixId, new Identity(ids.get(0), false));
+        });
+    if (rest.isEmpty()) return result;
+    var counsellors = new HashMap<String, List<String>>();
+    for (var consultant : consultants.findAllByMatrixUserIdInAndDeleteDateIsNull(rest)) {
+      if (consultant == null
+          || consultant.getId() == null
+          || !Objects.equals(consultant.getTenantId(), tenantId)
+          || !rest.contains(consultant.getMatrixUserId())) continue;
+      counsellors
+          .computeIfAbsent(consultant.getMatrixUserId(), key -> new ArrayList<>())
+          .add(consultant.getId());
+    }
+    counsellors.forEach(
+        (matrixId, ids) -> {
+          if (ids.size() == 1) result.put(matrixId, new Identity(ids.get(0), true));
+        });
+    return result;
   }
 
   private static boolean blank(String value, int max) {

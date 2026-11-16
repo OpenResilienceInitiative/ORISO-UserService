@@ -94,6 +94,12 @@ public interface ConsultantRepository
   List<Consultant> findAllByMatrixUserIdAndDeleteDateIsNull(String matrixUserId);
 
   /**
+   * Batched form of {@link #findAllByMatrixUserIdAndDeleteDateIsNull}: every not deleted consultant
+   * row holding one of the given Matrix ids, in one query (#1656).
+   */
+  List<Consultant> findAllByMatrixUserIdInAndDeleteDateIsNull(Collection<String> matrixUserIds);
+
+  /**
    * Every consultant row referencing the given chat (Matrix) identity, <em>including soft-deleted
    * ones</em>. Uniqueness here is by username, so a soft-deleted consultant keeps owning their chat
    * account while freeing the username — the repair has to see that row or it would adopt a
