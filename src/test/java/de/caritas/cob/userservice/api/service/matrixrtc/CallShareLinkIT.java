@@ -606,7 +606,10 @@ class CallShareLinkIT {
     assertThat(seated.callRoomId()).isEqualTo(encryptedMedia);
     verify(matrix).inviteUserToRoom(encryptedMedia, GUEST, "c-token");
 
-    // Never observed and nobody seen: once the invite ran out by the margin, the call ends.
+    // The room's observation is lost (CodeRabbit 4585987235: admission needs it, so the guest was
+    // seated while it held); with no observation and nobody seen, once the invite ran out by the
+    // margin, the call ends.
+    lifecycle.loseObservation(encryptedMedia);
     long later =
         bound.getInviteExpiresAt()
             + de.caritas.cob.userservice.api.service.matrix.MatrixCallLifecycleService
@@ -1304,6 +1307,8 @@ class CallShareLinkIT {
     transaction.executeWithoutResult(
         status -> {
           var binding = bindings.lockByMediaRoomId(media).orElseThrow();
+          // The lifecycle records the room as observed with every membership it applies.
+          binding.recordMediaObservation(System.currentTimeMillis());
           binding
               .getDevices()
               .put(
