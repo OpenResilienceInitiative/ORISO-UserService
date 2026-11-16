@@ -153,9 +153,52 @@ class TemporaryAccountLinkResolverTest {
   }
 
   @Test
-  void resolve_Should_RequireTheTemporaryFlag_When_TheLinkCreatesTemporaryAccounts() {
+  void resolve_Should_RequireTheTemporaryFlag_When_TheInvitationIsForGuestsOnly() {
+    link.setAccessMode(DirectInvitationAccessMode.GUESTS_ONLY);
     assertThatThrownBy(() -> resolver.resolve(registration("tok", false)))
         .isInstanceOf(BadRequestException.class);
+  }
+
+  /**
+   * ORISO-Frontend#2252: a link that creates temporary accounts reads "both" (the person chooses),
+   * so a permanent registration through it is allowed as well.
+   */
+  @Test
+  void resolve_Should_LetThePersonChoose_When_TheInvitationIsForBoth() {
+    assertThat(resolver.resolve(registration("tok", false))).contains(link);
+    assertThat(resolver.resolve(registration("tok", true))).contains(link);
+  }
+
+  @Test
+  void resolve_Should_RefuseATemporaryRegistration_When_TheInvitationIsForAccountsOnly() {
+    link.setAccessMode(DirectInvitationAccessMode.ACCOUNTS_ONLY);
+    assertThatThrownBy(() -> resolver.resolve(registration("tok", true)))
+        .isInstanceOf(BadRequestException.class);
+  }
+
+  @Test
+  void resolve_Should_SayExpired_ForAnExpiredInvitation_AndAReplacedToken() {
+    link.setExpiresAt(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(1));
+    assertThatThrownBy(() -> resolver.resolve(registration("tok", true)))
+        .isInstanceOf(DirectLinkExpiredException.class);
+
+    when(repository.findFirstByPreviousToken("old")).thenReturn(Optional.of(link));
+    assertThatThrownBy(() -> resolver.resolve(registration("old", true)))
+        .isInstanceOf(DirectLinkExpiredException.class);
+  }
+
+  @Test
+  void resolve_Should_DecideExpiryInUtc_When_TheServerRunsAheadOfUtc() {
+    // One expiry decision, in UTC: a server clock east of UTC must not end the link early.
+    link.setExpiresAt(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).plusMinutes(30));
+    var previous = java.util.TimeZone.getDefault();
+    try {
+      java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Pacific/Kiritimati"));
+
+      assertThat(resolver.resolve(registration("tok", true))).contains(link);
+    } finally {
+      java.util.TimeZone.setDefault(previous);
+    }
   }
 
   @Test

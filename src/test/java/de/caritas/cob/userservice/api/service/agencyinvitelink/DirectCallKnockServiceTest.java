@@ -175,6 +175,21 @@ class DirectCallKnockServiceTest {
     }
   }
 
+  /** ORISO-Frontend#2252: "Anklopfen" switched off while the person was still waiting. */
+  @Test
+  void admitWithoutKnock_Should_CloseTheWaitingKnock_When_ThePersonIsLetIn() {
+    var open = pending(1L, LocalDateTime.now().minusMinutes(1));
+    when(repository.findPendingCallKnocksForUpdate(SESSION_ID, "asker-1", Via.DIRECT_LINK))
+        .thenReturn(List.of(open));
+
+    var admission = service.admitWithoutKnock(SESSION_ID, asker, 9L, InviteLinkChatType.VIDEO);
+
+    assertThat(admission.getStatus()).isEqualTo(Status.ADMITTED);
+    assertThat(open.getStatus()).isEqualTo(Status.CANCELLED);
+    assertThat(open.getDecidedAt()).isNotNull();
+    verify(repository).save(open);
+  }
+
   @Test
   void knock_Should_NotTellTheCounsellorAgain_When_ThePersonKnocksAgain() {
     var open = pending(1L, LocalDateTime.now().minusMinutes(5));

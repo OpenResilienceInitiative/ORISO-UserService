@@ -28,7 +28,8 @@ public interface SessionAppointmentRepository extends CrudRepository<SessionAppo
 
   /**
    * Locked like {@link #findOfSessionForUpdate}, by the appointment alone: a move proposal
-   * (ADR-032) names only the appointment. The session is not locked with it.
+   * (ADR-032) names only the appointment, and the first people opening one direct invitation create
+   * one conversation (#2252). The session is not locked with it.
    */
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("SELECT a FROM SessionAppointment a WHERE a.id = :id")
@@ -64,6 +65,23 @@ public interface SessionAppointmentRepository extends CrudRepository<SessionAppo
   List<SessionAppointment> findScheduledOfConsultantBetween(
       @Param("consultantId") String consultantId,
       @Param("coAccessSessionIds") Collection<Long> coAccessSessionIds,
+      @Param("from") Instant from,
+      @Param("to") Instant to,
+      Pageable pageable);
+
+  /**
+   * The scheduled appointments of the counsellor's own direct invitations that nobody opened yet
+   * (ORISO-Frontend#2252): they have no conversation, so {@link #findScheduledOfConsultantBetween}
+   * cannot find them, yet the counsellor's time is taken all the same.
+   */
+  @Query(
+      "SELECT a FROM SessionAppointment a WHERE a.session IS NULL AND a.status = 'SCHEDULED' "
+          + "AND a.startTime < :to AND a.endTime > :from "
+          + "AND EXISTS (SELECT l.id FROM AgencyInviteLink l WHERE l.appointmentId = a.id "
+          + "AND l.consultantId = :consultantId AND l.linkKind = 'COUNSELLOR') "
+          + "ORDER BY a.startTime")
+  List<SessionAppointment> findUnopenedInvitationsOfConsultantBetween(
+      @Param("consultantId") String consultantId,
       @Param("from") Instant from,
       @Param("to") Instant to,
       Pageable pageable);

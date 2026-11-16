@@ -109,6 +109,28 @@ class CalendarServiceTest {
     assertThat(entries.get(4).getMovable()).isFalse();
   }
 
+  /** ORISO-Frontend#2252: an unopened direct invitation moves with its invitation, not here. */
+  @Test
+  void ownEntries_Should_NotOfferToMoveAnUnopenedInvitation() {
+    var unopened =
+        new CalendarEntry(
+            "invitation",
+            CalendarEntryType.APPOINTMENT,
+            Instant.parse("2026-11-20T09:00:00Z"),
+            Instant.parse("2026-11-20T10:00:00Z"),
+            null,
+            null,
+            null,
+            null);
+    when(reader.appointmentsOfConsultant(eq(ME), any(), any())).thenReturn(List.of(unopened));
+
+    var entries = service.ownEntries(FROM, TO);
+
+    assertThat(entries).extracting(CalendarEntryDTO::getId).containsExactly("invitation");
+    assertThat(entries.get(0).getMovable()).isFalse();
+    assertThat(entries.get(0).getSessionId()).isNull();
+  }
+
   @Test
   void askerEntries_Should_BeReadOnly_And_WithoutBlockers() {
     caller.setRoles(Set.of(UserRole.USER.getValue()));

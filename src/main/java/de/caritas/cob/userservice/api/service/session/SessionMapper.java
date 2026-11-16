@@ -88,7 +88,10 @@ public class SessionMapper {
         /* ADR-022 decision 2, read path. The pointer itself travels so a client that already
         holds the currently published legal-text version can tell a stale consent from a
         current one; consentRequired answers the part the server can decide on its own —
-        Gate 2 applies to this room and nothing has been recorded yet. */
+        Gate 2 applies to this room and nothing has been recorded yet. This is the owner's
+        answer: only the owner (or their counsellor) reads this DTO. A joiner of a shared
+        appointment conversation (FE#2252) gets their own answer from
+        SessionConsentService#consentRequired on the join response. */
         .consentedLegalVersionId(session.getConsentedLegalVersionId())
         .consentRequired(
             session.isConsentGateApplicable() && isNull(session.getConsentedLegalVersionId()))

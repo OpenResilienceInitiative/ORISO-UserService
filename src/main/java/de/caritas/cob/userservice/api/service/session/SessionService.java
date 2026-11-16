@@ -1151,8 +1151,9 @@ public class SessionService {
   public Optional<Session> findSessionByConsultantAndUserAndConsultingType(
       Consultant consultant, User user, Integer consultingTypeId) {
     if (nonNull(consultant) && nonNull(user)) {
-      return sessionRepository.findByConsultantAndUserAndConsultingTypeId(
-          consultant, user, consultingTypeId);
+      // ORISO-Frontend#2252: never an appointment conversation, and never "more than one row".
+      return sessionRepository.findOneToOneSessions(consultant, user, consultingTypeId).stream()
+          .findFirst();
     }
     return Optional.empty();
   }
