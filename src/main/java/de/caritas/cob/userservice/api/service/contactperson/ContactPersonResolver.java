@@ -215,12 +215,15 @@ public class ContactPersonResolver {
     return contact == null || contact.isBlank() ? admin.getEmail() : contact.trim();
   }
 
-  /** The full name; the user name as last resort. */
+  /**
+   * The full name; the display e-mail as last resort. Never the login user name, which counsellors
+   * must not see.
+   */
   public static String displayName(Admin admin) {
     var fullName =
         (nullToEmpty(admin.getFirstName()).trim() + " " + nullToEmpty(admin.getLastName()).trim())
             .trim();
-    return fullName.isBlank() ? admin.getUsername() : fullName;
+    return fullName.isBlank() ? displayEmail(admin) : fullName;
   }
 
   private boolean isCentreCandidate(

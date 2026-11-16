@@ -270,6 +270,17 @@ class ContactPersonResolverTest {
     assertThat(resolver.isTraegerCandidate(foreign, TENANT)).isFalse();
   }
 
+  @Test
+  void displayName_Should_neverShowTheUserName_But_fallBackToTheDisplayEmail() {
+    var admin = admin("a-1", AdminType.TENANT, TENANT);
+    admin.setFirstName(" ");
+    admin.setLastName("");
+
+    assertThat(ContactPersonResolver.displayName(admin)).isEqualTo("a-1@login.example");
+    admin.setContactEmail("kontakt@traeger.org");
+    assertThat(ContactPersonResolver.displayName(admin)).isEqualTo("kontakt@traeger.org");
+  }
+
   Admin admin(String id, AdminType type, Long tenantId) {
     var admin =
         Admin.builder()

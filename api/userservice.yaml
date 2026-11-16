@@ -5475,6 +5475,7 @@ components:
           enum: [ CONTACT, DEPUTY, ADMIN ]
         displayName:
           type: string
+          description: First and last name; without a name the e-mail below. Never the login user name.
           example: "Maria Muster"
         email:
           type: string
