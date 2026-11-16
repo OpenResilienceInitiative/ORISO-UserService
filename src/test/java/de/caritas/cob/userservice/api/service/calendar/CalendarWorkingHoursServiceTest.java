@@ -27,6 +27,7 @@ import de.caritas.cob.userservice.api.model.CalendarWorkingHoursSetting;
 import de.caritas.cob.userservice.api.port.out.CalendarWorkingDayExceptionRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarWorkingHoursRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarWorkingHoursSettingRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -58,6 +59,7 @@ class CalendarWorkingHoursServiceTest {
   @Mock CalendarWorkingHoursRepository repository;
   @Mock CalendarWorkingHoursSettingRepository settings;
   @Mock CalendarWorkingDayExceptionRepository exceptions;
+  @Mock ConsultantRepository consultants;
 
   private final AuthenticatedUser caller = new AuthenticatedUser();
   private CalendarWorkingHoursService service;
@@ -66,10 +68,10 @@ class CalendarWorkingHoursServiceTest {
   void setUp() {
     caller.setUserId(ME);
     caller.setRoles(Set.of(UserRole.CONSULTANT.getValue()));
-    lenient().when(exceptions.lockConsultant(ME)).thenReturn(Optional.of(ME));
+    lenient().when(consultants.lockConsultant(ME)).thenReturn(Optional.of(ME));
     service =
         new CalendarWorkingHoursService(
-            caller, repository, settings, exceptions, CLOCK, "Europe/Berlin");
+            caller, repository, settings, exceptions, consultants, CLOCK, "Europe/Berlin");
   }
 
   @Test
@@ -204,6 +206,26 @@ class CalendarWorkingHoursServiceTest {
     service.replace(request(window(1, "08:00", "17:00")));
 
     verify(settings, never()).save(any());
+  }
+
+  @Test
+  void replace_Should_LockTheCounsellor_BeforeReadingOrWritingAnything() {
+    service.replace(request(window(1, "08:00", "17:00")).holidayRegion(HolidayRegionEnum.BY));
+
+    var order = inOrder(consultants, repository, settings);
+    order.verify(consultants).lockConsultant(ME);
+    order.verify(repository).deleteByConsultantId(ME);
+    order.verify(settings).findById(ME);
+    order.verify(settings).save(any());
+  }
+
+  @Test
+  void replace_Should_Refuse_When_TheCounsellorHasNoRow() {
+    when(consultants.lockConsultant(ME)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> service.replace(request(window(1, "08:00", "17:00"))))
+        .isInstanceOf(ForbiddenException.class);
+    verifyNoInteractions(repository, settings);
   }
 
   @Test
@@ -345,7 +367,7 @@ class CalendarWorkingHoursServiceTest {
           .as(String.valueOf(unreachable))
           .isInstanceOf(BadRequestException.class);
     }
-    verifyNoInteractions(exceptions);
+    verifyNoInteractions(exceptions, consultants);
   }
 
   @Test
@@ -367,8 +389,8 @@ class CalendarWorkingHoursServiceTest {
 
     service.replaceException(date, dayRequest());
 
-    var order = inOrder(exceptions);
-    order.verify(exceptions).lockConsultant(ME);
+    var order = inOrder(consultants, exceptions);
+    order.verify(consultants).lockConsultant(ME);
     order.verify(exceptions).deleteByConsultantIdBefore(any(), any());
     order.verify(exceptions).countDatesByConsultantId(ME);
     order.verify(exceptions).saveAll(any());
@@ -380,14 +402,14 @@ class CalendarWorkingHoursServiceTest {
 
     service.removeException(date);
 
-    var order = inOrder(exceptions);
-    order.verify(exceptions).lockConsultant(ME);
+    var order = inOrder(consultants, exceptions);
+    order.verify(consultants).lockConsultant(ME);
     order.verify(exceptions).deleteByConsultantIdAndExceptionDate(ME, date);
   }
 
   @Test
   void replaceException_Should_Refuse_When_TheCounsellorHasNoRow() {
-    when(exceptions.lockConsultant(ME)).thenReturn(Optional.empty());
+    when(consultants.lockConsultant(ME)).thenReturn(Optional.empty());
 
     assertThatThrownBy(() -> service.replaceException(TODAY.plusDays(1), dayRequest()))
         .isInstanceOf(ForbiddenException.class);

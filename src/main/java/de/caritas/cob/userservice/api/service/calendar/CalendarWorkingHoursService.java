@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.model.CalendarWorkingHoursSetting;
 import de.caritas.cob.userservice.api.port.out.CalendarWorkingDayExceptionRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarWorkingHoursRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarWorkingHoursSettingRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.LogService;
 import java.time.Clock;
 import java.time.LocalDate;
@@ -69,6 +70,7 @@ public class CalendarWorkingHoursService {
   private final CalendarWorkingHoursRepository workingHours;
   private final CalendarWorkingHoursSettingRepository settings;
   private final CalendarWorkingDayExceptionRepository exceptions;
+  private final ConsultantRepository consultants;
   private final Clock clock;
   private final ZoneId zone;
 
@@ -78,12 +80,14 @@ public class CalendarWorkingHoursService {
       CalendarWorkingHoursRepository workingHours,
       CalendarWorkingHoursSettingRepository settings,
       CalendarWorkingDayExceptionRepository exceptions,
+      ConsultantRepository consultants,
       Clock clock,
       @Value("${calendar.zone:Europe/Berlin}") String zone) {
     this.caller = caller;
     this.workingHours = workingHours;
     this.settings = settings;
     this.exceptions = exceptions;
+    this.consultants = consultants;
     this.clock = clock;
     this.zone = ZoneId.of(zone);
   }
@@ -104,13 +108,15 @@ public class CalendarWorkingHoursService {
   /**
    * Replaces every weekly window and the holiday region of the caller (absent = holidays are no
    * days off); nothing changes when one window is invalid. Day exceptions in the request are
-   * ignored.
+   * ignored. Writes of one counsellor run one at a time, so two first writes of the region store
+   * one row.
    */
   @Transactional
   public CalendarWorkingHoursDTO replace(CalendarWorkingHoursDTO request) {
     requireConsultant();
     var consultantId = caller.getUserId();
     var rows = rowsOf(request, consultantId);
+    lockCounsellor(consultantId);
     workingHours.deleteByConsultantId(consultantId);
     workingHours.saveAll(rows);
     storeRegion(consultantId, request.getHolidayRegion());
@@ -133,7 +139,7 @@ public class CalendarWorkingHoursService {
     var windows = dayWindowsOf(request);
     var today = today();
     requireWithinWindow(date, today);
-    lockExceptionsOf(consultantId);
+    lockCounsellor(consultantId);
     exceptions.deleteByConsultantIdBefore(consultantId, today.minusDays(EXCEPTION_DAYS_BACK));
     if (!exceptions.existsByConsultantIdAndExceptionDate(consultantId, date)
         && exceptions.countDatesByConsultantId(consultantId) >= MAX_EXCEPTIONS) {
@@ -157,16 +163,17 @@ public class CalendarWorkingHoursService {
       throw new BadRequestException("A day exception names its date.");
     }
     var consultantId = caller.getUserId();
-    lockExceptionsOf(consultantId);
+    lockCounsellor(consultantId);
     exceptions.deleteByConsultantIdAndExceptionDate(consultantId, date);
   }
 
   /**
-   * Waits for and holds the counsellor's row until the transaction ends, so that the limit check of
-   * one write sees what a parallel one stored.
+   * Waits for and holds the counsellor's row until the transaction ends, so that their writes run
+   * one after another: the limit check of one exception write sees what a parallel one stored, and
+   * two first writes of the region do not both insert its row.
    */
-  private void lockExceptionsOf(String consultantId) {
-    if (exceptions.lockConsultant(consultantId).isEmpty()) {
+  private void lockCounsellor(String consultantId) {
+    if (consultants.lockConsultant(consultantId).isEmpty()) {
       throw new ForbiddenException("Only a counsellor keeps working hours.");
     }
   }

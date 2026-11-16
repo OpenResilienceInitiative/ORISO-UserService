@@ -1,8 +1,11 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.securityContext;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -45,6 +48,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Answers;
+import org.mockito.Mockito;
+import org.mockito.invocation.InvocationOnMock;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -57,13 +62,15 @@ import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 /**
  * Working hours (ADR-032, addenda v1.1 and v1.2) through the real security chain, controller,
- * service and database; caller staged. Configured like {@link CalendarControllerIT} to share its
- * context.
+ * service and database; caller staged. Configured like {@link CalendarControllerIT}, but with a
+ * context of its own: the settings repository is spied on, to hold two first writes of the holiday
+ * region at the same point.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -87,7 +94,7 @@ class CalendarWorkingHoursControllerIT {
   @Autowired private TenantFixtures fixtures;
   @Autowired private MockMvc mockMvc;
   @Autowired private CalendarWorkingHoursRepository workingHours;
-  @Autowired private CalendarWorkingHoursSettingRepository settings;
+  @MockitoSpyBean private CalendarWorkingHoursSettingRepository settings;
   @Autowired private CalendarWorkingDayExceptionRepository exceptions;
 
   @MockitoBean TenantService tenantService;
@@ -223,6 +230,52 @@ class CalendarWorkingHoursControllerIT {
     explicitNull.put("holidayRegion", null);
     assertThat(body(setHours(explicitNull))).isEqualTo(hours(tuesday));
     assertThat(body(get(PATH))).isEqualTo(hours(tuesday));
+  }
+
+  @Test
+  void put_Should_AnswerBoth_AndStoreOneRegion_When_TwoFirstWritesRunTogether() throws Exception {
+    actAsCounsellor(counsellor);
+    var bothSaved = new CountDownLatch(2);
+    doAnswer(
+            call -> {
+              var saved = callThrough(call);
+              bothSaved.countDown();
+              // Unlocked, both writes found no row and insert one when they commit; locked, the
+              // second waits at the counsellor's row, and the first goes on after half a second.
+              bothSaved.await(500, MILLISECONDS);
+              return saved;
+            })
+        .when(settings)
+        .save(any());
+    var security = TestSecurityContextHolder.getContext();
+    var start = new CountDownLatch(1);
+    var statuses = new ArrayList<Integer>();
+    try (var pool = Executors.newFixedThreadPool(2)) {
+      var answers = new ArrayList<Future<Integer>>();
+      for (var region : List.of("BY", "NW")) {
+        var request =
+            setHours(
+                    Map.of(
+                        "windows", List.of(window(1, "08:00", "17:00")), "holidayRegion", region))
+                .with(securityContext(security));
+        answers.add(
+            pool.submit(
+                () -> {
+                  start.await();
+                  return mockMvc.perform(request).andReturn().getResponse().getStatus();
+                }));
+      }
+      start.countDown();
+      for (var answer : answers) {
+        statuses.add(answer.get(30, SECONDS));
+      }
+    }
+
+    assertThat(statuses).containsExactly(200, 200);
+    var owners = new ArrayList<String>();
+    Tenants.acrossAll(() -> settings.findAll())
+        .forEach(setting -> owners.add(setting.getConsultantId()));
+    assertThat(owners).containsExactly(counsellor.getId());
   }
 
   @Test
@@ -554,6 +607,17 @@ class CalendarWorkingHoursControllerIT {
     var dates = new ArrayList<LocalDate>();
     Tenants.acrossAll(() -> exceptions.findAll()).forEach(row -> dates.add(row.getExceptionDate()));
     return dates;
+  }
+
+  /**
+   * Runs the repository behind the spy. A repository is a JDK proxy without a real method Mockito
+   * could call, so the spy delegates to it as its default answer.
+   */
+  private Object callThrough(InvocationOnMock call) throws Throwable {
+    return Mockito.mockingDetails(settings)
+        .getMockCreationSettings()
+        .getDefaultAnswer()
+        .answer(call);
   }
 
   private static CalendarWorkingDayException dayOff(String consultantId, LocalDate date) {
