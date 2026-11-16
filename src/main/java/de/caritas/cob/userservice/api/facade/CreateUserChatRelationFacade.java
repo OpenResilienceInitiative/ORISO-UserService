@@ -10,14 +10,12 @@ import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.UserAgencyService;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.auditing.AuditingHandler;
 import org.springframework.stereotype.Service;
 
 /** Creates the domain relation between a user and a group-chat agency. */
 @Service
 @RequiredArgsConstructor
-@Slf4j
 public class CreateUserChatRelationFacade {
 
   private final @NonNull UserAgencyService userAgencyService;
@@ -33,10 +31,7 @@ public class CreateUserChatRelationFacade {
    */
   public void initializeUserChatAgencyRelation(UserDTO userDTO, User user) {
     if (isAlreadyAssignedToAgency(user, userDTO.getAgencyId())) {
-      log.info(
-          "User {} already has a relation to agency {}; reusing it",
-          user.getUserId(),
-          userDTO.getAgencyId());
+      // Reuse silently: logging user and agency together would record a sensitive association.
       return;
     }
 
