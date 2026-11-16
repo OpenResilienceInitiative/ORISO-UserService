@@ -37,6 +37,7 @@ import de.caritas.cob.userservice.api.port.out.CalendarBlockerRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarSyncRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarWorkingHoursRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionAppointmentRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
@@ -49,6 +50,7 @@ import de.caritas.cob.userservice.api.tenant.Tenants;
 import de.caritas.cob.userservice.api.tenant.WithTenant;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantCalendarAction;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
+import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import jakarta.servlet.http.Cookie;
 import java.nio.charset.StandardCharsets;
@@ -89,6 +91,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Subscription feed and busy import through the real security chain, services and database. Only
@@ -128,6 +132,9 @@ class CalendarSyncControllerIT {
   @Autowired private CalendarSyncService syncService;
   @Autowired private CalendarWorkingHoursRepository workingHours;
   @Autowired private DeleteConsultantCalendarAction deleteCalendar;
+  @Autowired private ConsultantRepository consultants;
+  @Autowired private DeletionLifecycleService lifecycle;
+  @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private JdbcTemplate jdbc;
   @Autowired private SessionAppointmentRepository appointments;
   @Autowired private ChatRepository chats;
@@ -362,26 +369,53 @@ class CalendarSyncControllerIT {
   }
 
   @Test
-  void importAll_Should_NotReadTheCalendarOfADeletedCounsellor_And_DropTheConnection() {
+  void aSoftDeletedCounsellor_Should_KeepTheirCalendar_AndBeReadAgainOnceTheDeletionIsCancelled() {
     connectImport(PUBLIC_ADDRESS);
     blockerAt(in(24), in(25), Source.EXTERNAL);
-    var neverExisted = new CalendarSync();
-    neverExisted.setConsultantId(UUID.randomUUID().toString());
-    neverExisted.setTenantId(TENANT);
-    neverExisted.setFeedId(UUID.randomUUID());
-    neverExisted.setImportUrl(OTHER_ADDRESS);
-    syncs.save(neverExisted);
-    jdbc.update(
-        "UPDATE consultant SET delete_date = ? WHERE consultant_id = ?",
-        LocalDateTime.now(),
-        counsellor.getId());
+    inTransaction(
+        () -> {
+          var marked = consultants.findById(counsellor.getId()).orElseThrow();
+          lifecycle.beginConsultantDeletion(marked, "synthetic-admin");
+          consultants.save(marked);
+        });
 
     syncService.importAll();
 
     verifyNoInteractions(fetcher);
-    assertThat(syncs.findById(counsellor.getId())).isEmpty();
-    assertThat(syncs.findById(neverExisted.getConsultantId())).isEmpty();
-    assertThat(busyStarts()).isEmpty();
+    assertThat(syncs.findById(counsellor.getId()).orElseThrow().getImportUrl())
+        .isEqualTo(PUBLIC_ADDRESS);
+    assertThat(busyStarts()).containsExactly(in(24));
+
+    inTransaction(
+        () -> {
+          var marked = consultants.findById(counsellor.getId()).orElseThrow();
+          lifecycle.cancelConsultantDeletion(marked);
+          consultants.save(marked);
+        });
+    when(fetcher.fetch(any(), anyList())).thenReturn(calendar(event(in(48), in(49))));
+
+    syncService.importAll();
+
+    verify(fetcher).fetch(any(), anyList());
+    assertThat(busyStarts()).containsExactly(in(48));
+  }
+
+  @Test
+  void importAll_Should_DropAConnectionWhoseCounsellorHasNoRow_WithoutReadingIt() {
+    var orphan = UUID.randomUUID().toString();
+    var sync = new CalendarSync();
+    sync.setConsultantId(orphan);
+    sync.setTenantId(TENANT);
+    sync.setFeedId(UUID.randomUUID());
+    sync.setImportUrl(OTHER_ADDRESS);
+    syncs.save(sync);
+    blockerOf(orphan, in(24), in(25), Source.EXTERNAL);
+
+    syncService.importAll();
+
+    verifyNoInteractions(fetcher);
+    assertThat(syncs.findById(orphan)).isEmpty();
+    assertThat(rowsOf("calendar_blocker", orphan)).isZero();
   }
 
   @Test
@@ -630,6 +664,10 @@ class CalendarSyncControllerIT {
     sync.setFeedId(UUID.randomUUID());
     sync.setImportUrl(address);
     syncs.save(sync);
+  }
+
+  private void inTransaction(Runnable work) {
+    new TransactionTemplate(transactionManager).executeWithoutResult(status -> work.run());
   }
 
   private int rowsOf(String table, String consultantId) {

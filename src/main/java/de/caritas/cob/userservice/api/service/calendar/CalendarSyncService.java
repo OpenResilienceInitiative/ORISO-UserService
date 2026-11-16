@@ -39,8 +39,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  * it failed as a code. Every transaction that reads the connection row and writes it back locks it
  * first, so none of them overwrites what another changed meanwhile. A write that fails rolls back
  * whole; its code is then recorded in a transaction of its own, so the last good import is not
- * shown as the latest without an error. The connection of a counsellor who is deleted is dropped by
- * the next import run instead of being read.
+ * shown as the latest without an error. The calendar of a counsellor whose account is deleted is
+ * not read, but kept as it is while the deletion can still be cancelled; the hard delete removes it
+ * with the account. Only a connection whose counsellor has no row at all is dropped by the import.
  */
 @Service
 @Slf4j
@@ -175,24 +176,25 @@ public class CalendarSyncService {
 
   /**
    * The configured calendars of counsellors who exist and are not deleted, those never synced
-   * first, then the least recently synced. The connection of a deleted counsellor is dropped here,
-   * so the private address is not kept and the calendar is not read again.
+   * first, then the least recently synced. A counsellor whose account is deleted is left out and
+   * their rows stay, so a cancelled deletion finds the calendar as it was; the hard delete removes
+   * it. A connection whose counsellor has no row at all is dropped here, so its private address is
+   * not kept and the calendar is not read again.
    */
   List<CalendarSync> dueImports() {
     var configured = syncs.findByImportUrlIsNotNull();
     if (configured.isEmpty()) {
       return List.of();
     }
-    var active =
-        new HashSet<>(
-            consultants.findIdsNotDeletedAmong(
-                configured.stream().map(CalendarSync::getConsultantId).toList()));
+    var ids = configured.stream().map(CalendarSync::getConsultantId).toList();
+    var existing = new HashSet<>(consultants.findIdsAmong(ids));
+    var active = new HashSet<>(consultants.findIdsNotDeletedAmong(ids));
     var due = new ArrayList<CalendarSync>();
     for (var sync : configured) {
       if (active.contains(sync.getConsultantId())) {
         due.add(sync);
-      } else {
-        forgetDeleted(sync.getConsultantId());
+      } else if (!existing.contains(sync.getConsultantId())) {
+        forgetOrphan(sync.getConsultantId());
       }
     }
     due.sort(
@@ -201,8 +203,8 @@ public class CalendarSyncService {
     return due;
   }
 
-  /** Drops the connection of a deleted counsellor and the busy times imported with it. */
-  private void forgetDeleted(String consultantId) {
+  /** Drops a connection whose counsellor has no row, and the busy times imported with it. */
+  private void forgetOrphan(String consultantId) {
     try {
       transaction.executeWithoutResult(
           status ->
@@ -215,7 +217,7 @@ public class CalendarSyncService {
                       }));
     } catch (RuntimeException notDropped) {
       log.warn(
-          "The calendar connection of a deleted counsellor could not be dropped: {}",
+          "A calendar connection without a counsellor could not be dropped: {}",
           notDropped.getClass().getSimpleName());
     }
   }

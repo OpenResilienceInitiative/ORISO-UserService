@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -86,7 +88,10 @@ class CalendarSyncServiceTest {
     caller.setTenantId(3L);
     caller.setRoles(Set.of(UserRole.CONSULTANT.getValue()));
     service = serviceWith(Clock.fixed(NOW, ZoneOffset.UTC));
-    // Every counsellor exists unless a test says otherwise.
+    // Every counsellor exists and is not deleted unless a test says otherwise.
+    lenient()
+        .when(consultants.findIdsAmong(any()))
+        .thenAnswer(call -> List.copyOf(call.<Collection<String>>getArgument(0)));
     lenient()
         .when(consultants.findIdsNotDeletedAmong(any()))
         .thenAnswer(call -> List.copyOf(call.<Collection<String>>getArgument(0)));
@@ -303,21 +308,55 @@ class CalendarSyncServiceTest {
   }
 
   @Test
-  void importAll_Should_NotReadTheCalendarOfADeletedCounsellor_And_DropTheConnection() {
-    var gone = connect("gone", "https://93.184.216.35/gone-token.ics");
+  void importAll_Should_NotReadASoftDeletedCounsellorsCalendar_And_KeepIt() {
+    var deleted = connect("deleted", "https://93.184.216.35/deleted-token.ics");
     connect(ME, ADDRESS);
-    // "gone" has a delete date or no row at all.
-    org.mockito.Mockito.doReturn(List.of(ME)).when(consultants).findIdsNotDeletedAmong(any());
+    // "deleted" still has a row, with a delete date: the deletion can still be cancelled.
+    doReturn(List.of(ME)).when(consultants).findIdsNotDeletedAmong(any());
     when(fetcher.fetch(any(), anyList())).thenReturn(CALENDAR);
 
     service.importAll();
 
-    verify(fetcher, times(1)).fetch(any(), anyList());
-    verify(fetcher).fetch(org.mockito.ArgumentMatchers.eq(URI.create(ADDRESS)), anyList());
-    verify(syncs).delete(gone);
-    verify(blockers).deleteByConsultantIdAndSource("gone", Source.EXTERNAL);
-    assertThat(stored).containsOnlyKeys(ME);
+    verify(fetcher, times(1)).fetch(eq(URI.create(ADDRESS)), anyList());
+    verify(syncs, never()).delete(any());
+    verify(blockers, never()).deleteByConsultantIdAndSource(eq("deleted"), any());
+    assertThat(stored).containsKeys(ME, "deleted");
+    assertThat(stored.get("deleted")).isSameAs(deleted);
+    assertThat(deleted.getImportUrl()).isEqualTo("https://93.184.216.35/deleted-token.ics");
+    assertThat(deleted.getImportLastSyncAt()).isNull();
     assertThat(stored.get(ME).getImportLastSyncAt()).isEqualTo(NOW);
+  }
+
+  @Test
+  void importAll_Should_ReadTheCalendarAgain_OnceTheDeletionIsCancelled() {
+    connect(ME, ADDRESS);
+    when(fetcher.fetch(any(), anyList())).thenReturn(CALENDAR);
+    doReturn(List.of()).when(consultants).findIdsNotDeletedAmong(any());
+    service.importAll();
+    verify(fetcher, never()).fetch(any(), anyList());
+
+    // Cancelling the deletion clears the delete date.
+    doReturn(List.of(ME)).when(consultants).findIdsNotDeletedAmong(any());
+    service.importAll();
+
+    verify(fetcher, times(1)).fetch(eq(URI.create(ADDRESS)), anyList());
+    assertThat(stored.get(ME).getImportLastSyncAt()).isEqualTo(NOW);
+  }
+
+  @Test
+  void importAll_Should_DropAConnectionWhoseCounsellorHasNoRow_WithoutReadingIt() {
+    var orphan = connect("orphan", "https://93.184.216.35/orphan-token.ics");
+    connect(ME, ADDRESS);
+    doReturn(List.of(ME)).when(consultants).findIdsAmong(any());
+    doReturn(List.of(ME)).when(consultants).findIdsNotDeletedAmong(any());
+    when(fetcher.fetch(any(), anyList())).thenReturn(CALENDAR);
+
+    service.importAll();
+
+    verify(fetcher, times(1)).fetch(eq(URI.create(ADDRESS)), anyList());
+    verify(syncs).delete(orphan);
+    verify(blockers).deleteByConsultantIdAndSource("orphan", Source.EXTERNAL);
+    assertThat(stored).containsOnlyKeys(ME);
   }
 
   @Test

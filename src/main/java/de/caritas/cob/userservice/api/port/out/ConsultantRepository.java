@@ -24,9 +24,18 @@ public interface ConsultantRepository
   boolean existsByIdAndManagedPausedTrue(String id);
 
   /**
-   * Which of the ids belong to a counsellor who exists and is not deleted. Native, so that no
-   * tenant filter hides the counsellors of another Träger: a background job that drops what a
-   * deleted counsellor left behind must not take those for deleted.
+   * Which of the ids belong to a counsellor who has a row, deleted or not. Native, so that no
+   * tenant filter hides the counsellors of another Träger: a background job that drops what an
+   * account left behind must not take those for gone.
+   */
+  @Query(
+      value = "SELECT consultant_id FROM consultant WHERE consultant_id IN (:ids)",
+      nativeQuery = true)
+  List<String> findIdsAmong(@Param("ids") Collection<String> ids);
+
+  /**
+   * Which of the ids belong to a counsellor who has a row and is not deleted. Native for the same
+   * reason as {@link #findIdsAmong}.
    */
   @Query(
       value =
