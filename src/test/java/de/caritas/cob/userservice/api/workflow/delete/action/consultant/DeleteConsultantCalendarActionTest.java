@@ -10,7 +10,9 @@ import static org.mockito.Mockito.verify;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.CalendarBlockerRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarSyncRepository;
+import de.caritas.cob.userservice.api.port.out.CalendarWorkingDayExceptionRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarWorkingHoursRepository;
+import de.caritas.cob.userservice.api.port.out.CalendarWorkingHoursSettingRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
 import java.util.ArrayList;
 import org.junit.jupiter.api.BeforeEach;
@@ -28,6 +30,8 @@ class DeleteConsultantCalendarActionTest {
   @Mock private CalendarSyncRepository calendarSyncRepository;
   @Mock private CalendarBlockerRepository calendarBlockerRepository;
   @Mock private CalendarWorkingHoursRepository calendarWorkingHoursRepository;
+  @Mock private CalendarWorkingDayExceptionRepository calendarWorkingDayExceptionRepository;
+  @Mock private CalendarWorkingHoursSettingRepository calendarWorkingHoursSettingRepository;
   @Mock private PlatformTransactionManager transactionManager;
 
   private DeleteConsultantCalendarAction action;
@@ -39,6 +43,8 @@ class DeleteConsultantCalendarActionTest {
             calendarSyncRepository,
             calendarBlockerRepository,
             calendarWorkingHoursRepository,
+            calendarWorkingDayExceptionRepository,
+            calendarWorkingHoursSettingRepository,
             transactionManager);
   }
 
@@ -51,6 +57,8 @@ class DeleteConsultantCalendarActionTest {
     verify(calendarSyncRepository).deleteByConsultantId(CONSULTANT_ID);
     verify(calendarBlockerRepository).deleteByConsultantId(CONSULTANT_ID);
     verify(calendarWorkingHoursRepository).deleteByConsultantId(CONSULTANT_ID);
+    verify(calendarWorkingDayExceptionRepository).deleteByConsultantId(CONSULTANT_ID);
+    verify(calendarWorkingHoursSettingRepository).deleteByConsultantId(CONSULTANT_ID);
     verify(transactionManager).commit(any());
     assertThat(workflow.getDeletionWorkflowErrors()).isEmpty();
   }

@@ -39,4 +39,9 @@ public interface CalendarWorkingDayExceptionRepository
           + " WHERE e.consultantId = :consultantId AND e.exceptionDate < :before")
   int deleteByConsultantIdBefore(
       @Param("consultantId") String consultantId, @Param("before") LocalDate before);
+
+  /** Removes every exception of a counsellor whose account is deleted. */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query("DELETE FROM CalendarWorkingDayException e WHERE e.consultantId = :consultantId")
+  int deleteByConsultantId(@Param("consultantId") String consultantId);
 }
