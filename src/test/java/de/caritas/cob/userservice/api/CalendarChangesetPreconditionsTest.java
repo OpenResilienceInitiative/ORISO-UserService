@@ -29,13 +29,15 @@ class CalendarChangesetPreconditionsTest {
       DIRECTORY + "20261114_calendar_working_hours_1000/changeSet.xml";
   private static final String KIND =
       DIRECTORY + "20261114_session_appointment_kind_1000/changeSet.xml";
+  private static final String PROPOSAL =
+      DIRECTORY + "20261116_calendar_move_proposal_1000/changeSet.xml";
 
   @Test
   void freshDatabase_Should_CreateEveryTable_And_ItsIndexOnce() throws Exception {
     try (Connection c = connection()) {
       createSessionAppointment(c, false);
 
-      for (var changelog : new String[] {KIND, BLOCKER, SYNC, WORKING_HOURS}) {
+      for (var changelog : new String[] {KIND, BLOCKER, SYNC, WORKING_HOURS, PROPOSAL}) {
         update(c, changelog);
       }
 
@@ -46,7 +48,13 @@ class CalendarChangesetPreconditionsTest {
               Map.entry("20261114-calendar-blocker-1000-index", "MARK_RAN"),
               Map.entry("20261114-calendar-sync-1645", "EXECUTED"),
               Map.entry("20261114-calendar-working-hours-1000", "EXECUTED"),
-              Map.entry("20261114-calendar-working-hours-1000-index", "MARK_RAN"));
+              Map.entry("20261114-calendar-working-hours-1000-index", "MARK_RAN"),
+              Map.entry("20261116-calendar-move-proposal-1000", "EXECUTED"),
+              Map.entry("20261116-calendar-move-proposal-1000-index-approver", "MARK_RAN"),
+              Map.entry("20261116-calendar-move-proposal-1000-index-proposer", "MARK_RAN"),
+              Map.entry("20261116-calendar-move-proposal-1000-index-appointment", "MARK_RAN"),
+              Map.entry("20261116-calendar-move-proposal-1000-appointment-fk", "MARK_RAN"));
+      assertProposalSchema(c);
       assertThat(hasIndex(c, "CALENDAR_BLOCKER", "IDX_CALENDAR_BLOCKER_CONSULTANT_START")).isTrue();
       assertThat(hasIndex(c, "CALENDAR_WORKING_HOURS", "IDX_CALENDAR_WORKING_HOURS_CONSULTANT"))
           .isTrue();
@@ -75,6 +83,13 @@ class CalendarChangesetPreconditionsTest {
                 + " NOT NULL, weekday INT NOT NULL, start_time TIME NOT NULL, end_time TIME NOT"
                 + " NULL, PRIMARY KEY (id))");
         sql.execute(
+            "CREATE TABLE calendar_move_proposal (id CHAR(36) NOT NULL, appointment_id CHAR(36)"
+                + " NOT NULL, proposer_id VARCHAR(36) NOT NULL, approver_id VARCHAR(36) NOT NULL,"
+                + " proposed_start DATETIME(6) NOT NULL, proposed_end DATETIME(6) NOT NULL,"
+                + " entry_start DATETIME(6) NOT NULL, entry_end DATETIME(6) NOT NULL, status"
+                + " VARCHAR(16) NOT NULL, created_at DATETIME(6) NOT NULL, decided_at DATETIME(6),"
+                + " PRIMARY KEY (id))");
+        sql.execute(
             "INSERT INTO calendar_working_hours (id, consultant_id, weekday, start_time, end_time)"
                 + " VALUES ('"
                 + UUID.randomUUID()
@@ -84,7 +99,7 @@ class CalendarChangesetPreconditionsTest {
         c.commit();
       }
 
-      for (var changelog : new String[] {KIND, BLOCKER, SYNC, WORKING_HOURS}) {
+      for (var changelog : new String[] {KIND, BLOCKER, SYNC, WORKING_HOURS, PROPOSAL}) {
         update(c, changelog);
       }
 
@@ -95,7 +110,13 @@ class CalendarChangesetPreconditionsTest {
               Map.entry("20261114-calendar-blocker-1000-index", "EXECUTED"),
               Map.entry("20261114-calendar-sync-1645", "MARK_RAN"),
               Map.entry("20261114-calendar-working-hours-1000", "MARK_RAN"),
-              Map.entry("20261114-calendar-working-hours-1000-index", "EXECUTED"));
+              Map.entry("20261114-calendar-working-hours-1000-index", "EXECUTED"),
+              Map.entry("20261116-calendar-move-proposal-1000", "MARK_RAN"),
+              Map.entry("20261116-calendar-move-proposal-1000-index-approver", "EXECUTED"),
+              Map.entry("20261116-calendar-move-proposal-1000-index-proposer", "EXECUTED"),
+              Map.entry("20261116-calendar-move-proposal-1000-index-appointment", "EXECUTED"),
+              Map.entry("20261116-calendar-move-proposal-1000-appointment-fk", "EXECUTED"));
+      assertProposalSchema(c);
       assertThat(hasIndex(c, "CALENDAR_BLOCKER", "IDX_CALENDAR_BLOCKER_CONSULTANT_START")).isTrue();
       assertThat(hasIndex(c, "CALENDAR_WORKING_HOURS", "IDX_CALENDAR_WORKING_HOURS_CONSULTANT"))
           .isTrue();
@@ -104,6 +125,61 @@ class CalendarChangesetPreconditionsTest {
         rs.next();
         assertThat(rs.getInt(1)).as("rows made by hand are kept").isEqualTo(1);
       }
+    }
+  }
+
+  @Test
+  void proposalRollback_Should_DropTheTable_And_KeepTheAppointments() throws Exception {
+    try (Connection c = connection()) {
+      createSessionAppointment(c, true);
+      update(c, PROPOSAL);
+      assertThat(hasTable(c, "CALENDAR_MOVE_PROPOSAL")).isTrue();
+
+      var database =
+          DatabaseFactory.getInstance().findCorrectDatabaseImplementation(new JdbcConnection(c));
+      new Liquibase(PROPOSAL, new ClassLoaderResourceAccessor(), database)
+          .rollback(5, new Contexts(), new LabelExpression());
+
+      assertThat(hasTable(c, "CALENDAR_MOVE_PROPOSAL")).isFalse();
+      assertThat(hasTable(c, "SESSION_APPOINTMENT")).isTrue();
+    }
+  }
+
+  /**
+   * Every index the reads use, and the foreign key that removes a proposal with its appointment.
+   */
+  private static void assertProposalSchema(Connection c) throws Exception {
+    for (var index :
+        new String[] {
+          "IDX_CALENDAR_MOVE_PROPOSAL_APPROVER",
+          "IDX_CALENDAR_MOVE_PROPOSAL_PROPOSER",
+          "IDX_CALENDAR_MOVE_PROPOSAL_APPOINTMENT"
+        }) {
+      assertThat(hasIndex(c, "CALENDAR_MOVE_PROPOSAL", index)).as(index).isTrue();
+    }
+    var appointmentId = UUID.randomUUID().toString();
+    try (var sql = c.createStatement()) {
+      sql.execute("INSERT INTO session_appointment (id) VALUES ('" + appointmentId + "')");
+      sql.execute(
+          "INSERT INTO calendar_move_proposal (id, appointment_id, proposer_id, approver_id,"
+              + " proposed_start, proposed_end, entry_start, entry_end, status, created_at)"
+              + " VALUES ('"
+              + UUID.randomUUID()
+              + "', '"
+              + appointmentId
+              + "', 'a', 'b', '2026-11-19 13:00:00', '2026-11-19 14:00:00',"
+              + " '2026-11-18 09:00:00', '2026-11-18 10:00:00', 'OPEN', '2026-11-16 10:00:00')");
+      sql.execute("DELETE FROM session_appointment WHERE id = '" + appointmentId + "'");
+      try (var rs = sql.executeQuery("SELECT COUNT(*) FROM calendar_move_proposal")) {
+        rs.next();
+        assertThat(rs.getInt(1)).as("the proposal goes with its appointment").isZero();
+      }
+    }
+  }
+
+  private static boolean hasTable(Connection c, String table) throws Exception {
+    try (var rs = c.getMetaData().getTables(null, null, table, null)) {
+      return rs.next();
     }
   }
 

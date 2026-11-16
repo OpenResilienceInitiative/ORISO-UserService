@@ -6,6 +6,7 @@ import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourc
 import de.caritas.cob.userservice.api.actions.ActionCommand;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.CalendarBlockerRepository;
+import de.caritas.cob.userservice.api.port.out.CalendarMoveProposalRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarSyncRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarWorkingHoursRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
@@ -18,8 +19,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Deletes the calendar of a consultant (ADR-032): the calendar connections with the private address
- * of their own calendar, their blockers with notes and imported busy times, and their working
- * hours.
+ * of their own calendar, their blockers with notes and imported busy times, their working hours,
+ * and the move proposals they made or were asked to decide.
  *
  * <p>None of these tables has a foreign key to the consultant, so without this action the rows
  * would outlive the account. All go in one transaction. A failure counts as user content, so the
@@ -33,16 +34,19 @@ public class DeleteConsultantCalendarAction
   private final CalendarSyncRepository calendarSyncRepository;
   private final CalendarBlockerRepository calendarBlockerRepository;
   private final CalendarWorkingHoursRepository calendarWorkingHoursRepository;
+  private final CalendarMoveProposalRepository calendarMoveProposalRepository;
   private final TransactionTemplate transaction;
 
   public DeleteConsultantCalendarAction(
       CalendarSyncRepository calendarSyncRepository,
       CalendarBlockerRepository calendarBlockerRepository,
       CalendarWorkingHoursRepository calendarWorkingHoursRepository,
+      CalendarMoveProposalRepository calendarMoveProposalRepository,
       PlatformTransactionManager transactionManager) {
     this.calendarSyncRepository = calendarSyncRepository;
     this.calendarBlockerRepository = calendarBlockerRepository;
     this.calendarWorkingHoursRepository = calendarWorkingHoursRepository;
+    this.calendarMoveProposalRepository = calendarMoveProposalRepository;
     this.transaction = new TransactionTemplate(transactionManager);
   }
 
@@ -60,6 +64,7 @@ public class DeleteConsultantCalendarAction
             calendarSyncRepository.deleteByConsultantId(consultantId);
             calendarBlockerRepository.deleteByConsultantId(consultantId);
             calendarWorkingHoursRepository.deleteByConsultantId(consultantId);
+            calendarMoveProposalRepository.deleteByConsultantId(consultantId);
           });
     } catch (Exception e) {
       log.error("UserService delete workflow error: ", e);

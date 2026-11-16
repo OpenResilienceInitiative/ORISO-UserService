@@ -26,7 +26,11 @@ public interface SessionAppointmentRepository extends CrudRepository<SessionAppo
   Optional<SessionAppointment> findOfSessionForUpdate(
       @Param("id") UUID id, @Param("sessionId") Long sessionId);
 
-  /** Locked: the first people opening one direct invitation create one conversation (#2252). */
+  /**
+   * Locked like {@link #findOfSessionForUpdate}, by the appointment alone: a move proposal
+   * (ADR-032) names only the appointment, and the first people opening one direct invitation create
+   * one conversation (#2252). The session is not locked with it.
+   */
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("SELECT a FROM SessionAppointment a WHERE a.id = :id")
   Optional<SessionAppointment> findByIdForUpdate(@Param("id") UUID id);
