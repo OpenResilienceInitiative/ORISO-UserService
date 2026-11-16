@@ -32,6 +32,31 @@ class ErstantwortDefaultsControllerIT {
   @MockitoBean private TenantService tenantService;
   @Autowired private MockMvc mvc;
 
+  @Autowired
+  private de.caritas.cob.userservice.api.port.out.ErstantwortTextOverrideRepository overrides;
+
+  @org.junit.jupiter.api.AfterEach
+  void clearOverrides() {
+    overrides.deleteAll();
+  }
+
+  /** The Träger editor shows what is actually sent: the platform admin's text, if there is one. */
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.SINGLE_TENANT_ADMIN})
+  void defaultsShowThePlatformAdminsTextInsteadOfTheBuiltInOne() throws Exception {
+    overrides.save(
+        de.caritas.cob.userservice.api.model.ErstantwortTextOverride.platform(
+            "greeting", java.util.Map.of("en", "<p>Hello from the platform</p>"), "admin"));
+
+    mvc.perform(get(PATH).param("locale", "en"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.greeting").value("Hello from the platform"))
+        .andExpect(jsonPath("$.closing").value("See you soon — we will get back to you."));
+    mvc.perform(get(PATH).param("locale", "fr"))
+        .andExpect(
+            jsonPath("$.greeting").value(org.hamcrest.Matchers.not("Hello from the platform")));
+  }
+
   @Test
   void anonymousGets401() throws Exception {
     mvc.perform(get(PATH)).andExpect(status().isUnauthorized());

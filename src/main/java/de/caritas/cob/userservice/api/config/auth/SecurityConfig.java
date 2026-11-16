@@ -721,6 +721,11 @@ public class SecurityConfig {
                 .access(this::isPlatformAdmin)
                 // An admin's own list sorts (#1263): every admin role that sees a user list keeps
                 // its own; the data is always the caller's, so no other access widens.
+                // The platform admin's own Erstantwort texts (Settings → Begrüßung), above the
+                // built-in default. Must precede the generic /useradmin/** rule.
+                .requestMatchers(
+                    "/useradmin/erstantwort/platform", "/service/useradmin/erstantwort/platform")
+                .access(this::isPlatformAdmin)
                 // Platform default Erstantwort texts for the Träger editor (Admin#601); read-only.
                 .requestMatchers(
                     HttpMethod.GET,

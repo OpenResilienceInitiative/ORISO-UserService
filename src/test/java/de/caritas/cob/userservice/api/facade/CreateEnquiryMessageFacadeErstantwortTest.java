@@ -68,6 +68,10 @@ class CreateEnquiryMessageFacadeErstantwortTest {
   @Mock private MatrixSessionSystemMessageService matrixSessionSystemMessageService;
   @Mock private TenantErstantwortContentClient tenantContentClient;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.erstantwort.ErstantwortPlatformTextService
+      platformTextService;
+
   private CreateEnquiryMessageFacade facade;
 
   private Session session;
@@ -87,7 +91,8 @@ class CreateEnquiryMessageFacadeErstantwortTest {
             agencyPreAssignmentRoomService,
             erstantwortPayloadBuilder,
             matrixSessionSystemMessageService,
-            new ErstantwortTenantTextResolver(tenantContentClient));
+            new ErstantwortTenantTextResolver(tenantContentClient),
+            platformTextService);
     user = new User();
     user.setUserId("asker-1");
     user.setMatrixUserId("@asker:matrix.test");
@@ -184,6 +189,25 @@ class CreateEnquiryMessageFacadeErstantwortTest {
         .contains("emergencyAddition")
         .contains("Notruf Sonnenblume 0800")
         .doesNotContain("<p>", "</p>");
+  }
+
+  /** The platform admin's texts reach the payload for the asker's language and formality. */
+  @Test
+  void platformAdminTextsReachThePostedPayload() {
+    user.setLanguageFormal(false);
+    when(platformTextService.resolvePlatformTexts("en", true))
+        .thenReturn(Map.of("greeting", "Welcome from the platform"));
+    when(erstantwortPayloadBuilder.buildFirstResponseBody(any()))
+        .thenAnswer(
+            call -> new ErstantwortPayloadBuilder().buildFirstResponseBody(call.getArgument(0)));
+    var data = enquiryData();
+    data.setUiLocale("en");
+
+    facade.createEnquiryMessage(data);
+
+    var body = ArgumentCaptor.forClass(String.class);
+    verify(matrixSessionSystemMessageService).postFirstResponseMessage(eq(session), body.capture());
+    assertThat(body.getValue()).contains("Welcome from the platform");
   }
 
   /**
