@@ -76,7 +76,9 @@ class EventNotificationServiceCallRecipientsTest {
     when(session.getConsultant()).thenReturn(counsellor);
     when(session.getTenantId()).thenReturn(TENANT_ID);
     lenient().when(session.getId()).thenReturn(SESSION_ID);
+    when(counsellor.getTenantId()).thenReturn(TENANT_ID);
     var silent = mock(Consultant.class);
+    when(silent.getTenantId()).thenReturn(TENANT_ID);
     when(consultantRepository.findById(COUNSELLOR)).thenReturn(Optional.of(counsellor));
     when(consultantRepository.findById(SILENT_COLLEAGUE)).thenReturn(Optional.of(silent));
     when(caseWriterAuthorizer.isCurrentAssignedOrTeamWriter(session, counsellor)).thenReturn(true);
@@ -113,6 +115,23 @@ class EventNotificationServiceCallRecipientsTest {
   void anUnknownOrForeignTenantSessionNotifiesNoCounsellor() {
     notifyAll(new MatrixCallConversation(ROOM, 99L, SESSION_ID, null), COUNSELLOR);
     notifyAll(new MatrixCallConversation(ROOM, TENANT_ID, 70L, null), COUNSELLOR);
+
+    verify(deduplicationWriter, never()).persistInNewTransaction(any(EventNotification.class));
+  }
+
+  @Test
+  void aDeletedOrForeignTenantCounsellorGetsNothingEvenIfTheCaseRuleWouldAllowIt() {
+    var deleted = mock(Consultant.class);
+    when(deleted.getTenantId()).thenReturn(TENANT_ID);
+    when(deleted.getDeleteDate()).thenReturn(java.time.LocalDateTime.now());
+    var foreign = mock(Consultant.class);
+    when(foreign.getTenantId()).thenReturn(99L);
+    when(consultantRepository.findById("deleted-1")).thenReturn(Optional.of(deleted));
+    when(consultantRepository.findById("foreign-1")).thenReturn(Optional.of(foreign));
+    when(caseWriterAuthorizer.isCurrentAssignedOrTeamWriter(any(), any())).thenReturn(true);
+
+    notifyAll(sessionCall, "deleted-1");
+    notifyAll(sessionCall, "foreign-1");
 
     verify(deduplicationWriter, never()).persistInNewTransaction(any(EventNotification.class));
   }

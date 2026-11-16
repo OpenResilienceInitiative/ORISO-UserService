@@ -1281,6 +1281,11 @@ public class EventNotificationService {
         .findByMatrixRoomId(conversation.getMatrixRoomId())
         .filter(session -> Objects.equals(session.getId(), conversation.getSessionId()))
         .filter(session -> Objects.equals(session.getTenantId(), conversation.getTenantId()))
+        // The authorizer leaves tenant and identity checks to its caller (as isCurrentWriter does).
+        .filter(
+            session ->
+                counsellor.get().getDeleteDate() == null
+                    && Objects.equals(counsellor.get().getTenantId(), session.getTenantId()))
         .map(
             session ->
                 caseWriterAuthorizer.isCurrentAssignedOrTeamWriter(session, counsellor.get()))
