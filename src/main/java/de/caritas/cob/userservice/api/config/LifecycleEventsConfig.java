@@ -7,7 +7,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Declares the durable topic exchange for lifecycle events (ADR-032), so publishing works on a
+ * Declares the durable topic exchange for lifecycle events (ADR-034), so publishing works on a
  * fresh broker. The broker admin declares it lazily on the first connection, so a missing broker
  * does not keep the service from starting.
  */

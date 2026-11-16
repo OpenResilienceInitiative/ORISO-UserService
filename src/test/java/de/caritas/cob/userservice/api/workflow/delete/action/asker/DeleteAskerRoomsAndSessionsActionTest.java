@@ -386,7 +386,7 @@ class DeleteAskerRoomsAndSessionsActionTest {
     this.deleteAskerRoomsAndSessionsAction.execute(
         new AskerDeletionWorkflowDTO(new User(), new ArrayList<>()));
 
-    // ADR-032: the deleted session is announced after its row is gone, the kept one is not.
+    // ADR-034: the deleted session is announced after its row is gone, the kept one is not.
     InOrder order = inOrder(this.sessionRepository, this.lifecycleEventPublisher);
     order.verify(this.sessionRepository).delete(first);
     order

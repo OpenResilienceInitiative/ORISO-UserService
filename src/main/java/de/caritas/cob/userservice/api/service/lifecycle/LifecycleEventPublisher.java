@@ -18,7 +18,7 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
- * Publishes lifecycle events (ADR-032) to the topic exchange {@code oriso.lifecycle}, so add-ons
+ * Publishes lifecycle events (ADR-034) to the topic exchange {@code oriso.lifecycle}, so add-ons
  * can delete their own data when the UserService deleted a user or a session.
  *
  * <p>Delivery is best effort on purpose: the core deletion is the priority. A publishing failure is

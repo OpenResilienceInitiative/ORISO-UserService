@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
 
 /**
  * Announces the deletion of a {@link Consultant} to add-ons (lifecycle event {@code user.deleted},
- * ADR-032). Runs last in the consultant deletion workflow.
+ * ADR-034). Runs last in the consultant deletion workflow.
  */
 @Slf4j
 @Component

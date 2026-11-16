@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
 
 /**
  * Announces the deletion of a {@link User} to add-ons (lifecycle event {@code user.deleted},
- * ADR-032). Runs last in the asker deletion workflow.
+ * ADR-034). Runs last in the asker deletion workflow.
  */
 @Slf4j
 @Component

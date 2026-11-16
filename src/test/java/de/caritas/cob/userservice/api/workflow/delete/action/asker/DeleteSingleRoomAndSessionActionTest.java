@@ -264,7 +264,7 @@ class DeleteSingleRoomAndSessionActionTest {
     this.deleteSingleRoomAndSessionAction.execute(
         new SessionDeletionWorkflowDTO(session, new ArrayList<>()));
 
-    // ADR-032: announced only after the row is gone, with the ids captured before.
+    // ADR-034: announced only after the row is gone, with the ids captured before.
     InOrder order = inOrder(this.sessionRepository, this.lifecycleEventPublisher);
     order.verify(this.sessionRepository).delete(session);
     order

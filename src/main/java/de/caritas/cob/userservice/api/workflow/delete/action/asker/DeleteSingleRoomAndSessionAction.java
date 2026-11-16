@@ -26,7 +26,7 @@ public class DeleteSingleRoomAndSessionAction extends DeleteRoomsAndSessionActio
    * @param sessionRepository a {@link SessionRepository} instance
    * @param sessionDataRepository a {@link SessionDataRepository} instance
    * @param caseHandoverRequestRepository a {@link CaseHandoverRequestRepository} instance
-   * @param lifecycleEventPublisher announces the deleted session to add-ons (ADR-032)
+   * @param lifecycleEventPublisher announces the deleted session to add-ons (ADR-034)
    */
   public DeleteSingleRoomAndSessionAction(
       SessionRepository sessionRepository,
@@ -55,7 +55,7 @@ public class DeleteSingleRoomAndSessionAction extends DeleteRoomsAndSessionActio
    */
   @Override
   public void execute(SessionDeletionWorkflowDTO actionTarget) {
-    // ADR-032: capture the ids while the row exists, announce session.deleted once it is gone.
+    // ADR-034: capture the ids while the row exists, announce session.deleted once it is gone.
     var deletedSession = DeletedSession.of(actionTarget.getSession());
     if (performSessionDeletion(
         actionTarget.getSession(), actionTarget.getDeletionWorkflowErrors())) {

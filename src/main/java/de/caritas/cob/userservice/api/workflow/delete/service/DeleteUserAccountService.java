@@ -120,7 +120,7 @@ public class DeleteUserAccountService {
         .addActionToExecute(DeleteAskerEventNotificationsAction.class)
         .addActionToExecute(DeleteAskerReplyEmailDeliveriesAction.class)
         .addActionToExecute(DeleteDatabaseAskerAction.class)
-        // Last: announces user.deleted to add-ons (ADR-032) once the account row is gone.
+        // Last: announces user.deleted to add-ons (ADR-034) once the account row is gone.
         .addActionToExecute(PublishAskerDeletedEventAction.class)
         .executeActions(deletionWorkflowDTO);
 
@@ -164,7 +164,7 @@ public class DeleteUserAccountService {
         .addActionToExecute(DeleteConsultantMessageEmailDeliveriesAction.class)
         .addActionToExecute(DeleteConsultantMessageStatsAction.class)
         .addActionToExecute(DeleteDatabaseConsultantAction.class)
-        // Last: announces user.deleted to add-ons (ADR-032) once the account row is gone.
+        // Last: announces user.deleted to add-ons (ADR-034) once the account row is gone.
         .addActionToExecute(PublishConsultantDeletedEventAction.class)
         .executeActions(deletionWorkflowDTO);
 

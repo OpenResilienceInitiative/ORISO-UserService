@@ -27,7 +27,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Read-only context of a user for add-ons (contract oriso-addon/v1, ADR-032): role, agencies,
+ * Read-only context of a user for add-ons (contract oriso-addon/v1, ADR-034): role, agencies,
  * sessions and the consultants involved. Called by the AddonService only, scoped to one tenant.
  */
 @Service

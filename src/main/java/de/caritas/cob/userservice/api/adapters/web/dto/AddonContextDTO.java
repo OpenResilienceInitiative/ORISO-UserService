@@ -2,7 +2,7 @@ package de.caritas.cob.userservice.api.adapters.web.dto;
 
 import java.util.List;
 
-/** What an add-on may know about a user of the host (contract oriso-addon/v1, ADR-032). */
+/** What an add-on may know about a user of the host (contract oriso-addon/v1, ADR-034). */
 public record AddonContextDTO(
     String userId,
     String type,

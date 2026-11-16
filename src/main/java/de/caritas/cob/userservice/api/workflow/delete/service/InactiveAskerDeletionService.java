@@ -50,7 +50,7 @@ public class InactiveAskerDeletionService {
                 DeleteAskerEventNotificationsAction.class,
                 DeleteKeycloakAskerAction.class,
                 DeleteDatabaseAskerAction.class,
-                // Last: announces user.deleted to add-ons (ADR-032) once the row is gone.
+                // Last: announces user.deleted to add-ons (ADR-034) once the row is gone.
                 PublishAskerDeletedEventAction.class);
     for (var step : steps) {
       actions
