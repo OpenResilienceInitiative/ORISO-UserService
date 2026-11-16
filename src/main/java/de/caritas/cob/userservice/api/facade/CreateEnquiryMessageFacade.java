@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.service.erstantwort.ErstantwortModality;
 import de.caritas.cob.userservice.api.service.erstantwort.ErstantwortPayloadBuilder;
 import de.caritas.cob.userservice.api.service.erstantwort.ErstantwortPlatformTextService;
 import de.caritas.cob.userservice.api.service.erstantwort.ErstantwortTenantTextResolver;
+import de.caritas.cob.userservice.api.service.erstantwort.ErstantwortTenantTexts;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.AgencyPreAssignmentRoomService;
@@ -217,9 +218,20 @@ public class CreateEnquiryMessageFacade {
       var tenantId =
           session.getTenantId() != null ? session.getTenantId() : TenantContext.getCurrentTenant();
       var tenantTexts = erstantwortTenantTextResolver.resolve(tenantId, uiLocale, informal);
+      // ADR-018 §6: the Beratungsstelle's own texts sit above the Träger's.
+      var agencyTexts =
+          erstantwortPlatformTextService.resolveAgencyTexts(
+              session.getAgencyId(), uiLocale, informal);
+      if (agencyTexts == null) {
+        agencyTexts = ErstantwortTenantTexts.none();
+      }
       var body =
           erstantwortPayloadBuilder.buildFirstResponseBody(
               ErstantwortContext.builder()
+                  .greetingByAgency(agencyTexts.getGreeting())
+                  .whoReadsAlongByAgency(agencyTexts.getWhoReadsAlong())
+                  .freeNoticeByAgency(agencyTexts.getFreeNotice())
+                  .closingByAgency(agencyTexts.getClosing())
                   .greetingByTenant(tenantTexts.getGreeting())
                   .whoReadsAlongByTenant(tenantTexts.getWhoReadsAlong())
                   .emergencyAdditionByTenant(tenantTexts.getEmergencyAddition())

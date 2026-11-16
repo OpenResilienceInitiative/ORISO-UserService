@@ -107,6 +107,51 @@ class ErstantwortPlatformOverrideTest {
     }
   }
 
+  /** Every install ships 3 Bausteine x 7 language versions; none may be empty. */
+  @Test
+  void builtInDefaultsCoverEveryEditableBausteinInAllSevenLanguages() {
+    var defaults = ErstantwortTranslations.builtInDefaults();
+
+    assertThat(defaults).containsOnlyKeys("greeting", "closing", "emergencyNumbers");
+    defaults.forEach(
+        (id, perLanguage) -> {
+          assertThat(perLanguage)
+              .as(id)
+              .containsOnlyKeys("de", "de@informal", "en", "fr", "ru", "tr", "ti");
+          perLanguage.forEach(
+              (language, text) -> assertThat(text).as(id + "/" + language).isNotBlank());
+        });
+  }
+
+  /** What the platform editor shows as "default" is exactly what an advice seeker receives. */
+  @ParameterizedTest
+  @CsvSource({"de", "de@informal", "en", "fr", "ru", "tr", "ti"})
+  void theDefaultShownInTheEditorIsTheTextThatIsSent(String locale) throws Exception {
+    var payload = payload(ErstantwortContext.builder().locale(locale).build());
+    var defaults = ErstantwortTranslations.builtInDefaults();
+
+    for (var id : ErstantwortTranslations.PLATFORM_EDITABLE) {
+      assertThat(block(payload, id).path("body").asText())
+          .as(id + "/" + locale)
+          .isEqualTo(defaults.get(id).get(locale));
+    }
+  }
+
+  /** Without a valid locale the legacy German wording goes out; it equals the shipped German. */
+  @ParameterizedTest
+  @CsvSource({"false,de", "true,de@informal"})
+  void theLegacyGermanWordingEqualsTheShippedGermanDefault(boolean informal, String variant)
+      throws Exception {
+    var payload = payload(ErstantwortContext.builder().informal(informal).build());
+    var defaults = ErstantwortTranslations.builtInDefaults();
+
+    for (var id : ErstantwortTranslations.PLATFORM_EDITABLE) {
+      assertThat(block(payload, id).path("body").asText())
+          .as(id)
+          .isEqualTo(defaults.get(id).get(variant));
+    }
+  }
+
   private JsonNode payload(ErstantwortContext context) throws Exception {
     var body = builder.buildFirstResponseBody(context);
     return new ObjectMapper()

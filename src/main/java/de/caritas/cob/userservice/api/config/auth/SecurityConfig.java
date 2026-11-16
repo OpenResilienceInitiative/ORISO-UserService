@@ -736,6 +736,13 @@ public class SecurityConfig {
                 .requestMatchers("/useradmin/list-preferences", "/useradmin/list-preferences/**")
                 .hasAnyAuthority(
                     USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
+                // A Beratungsstelle's own Erstantwort texts (ADR-018 §6). Every admin role reaches
+                // it; the controller narrows to the caller's AdminScope.
+                .requestMatchers(
+                    "/useradmin/erstantwort/agencies/{agencyId:[0-9]+}",
+                    "/service/useradmin/erstantwort/agencies/{agencyId:[0-9]+}")
+                .hasAnyAuthority(
+                    USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
                 // Contact person per counselling centre and Träger (ORISO-Admin#1534). Every admin
                 // role reaches it; ContactPersonAdminService narrows to the caller's AdminScope
                 // (agency admins: own centres only, never the Träger default).

@@ -151,4 +151,56 @@ class ErstantwortPlatformTextServiceTest {
     assertThat(service.readPlatformTexts())
         .containsExactly(Map.entry("greeting", Map.of("de", "<p>Hallo</p>")));
   }
+
+  // ---- Beratungsstelle level (ADR-018 §6) ----
+
+  private static ErstantwortTextOverride agencyRow(String baustein, Map<String, String> texts) {
+    return ErstantwortTextOverride.agency(5L, baustein, texts, "admin");
+  }
+
+  @Test
+  void aCentreStoresItsOwnBausteineUnderItsAgencyId() {
+    service.replaceAgencyTexts(5L, Map.of("whoReadsAlong", Map.of("de", "<p>Team A</p>")), "a");
+
+    var captor = ArgumentCaptor.forClass(ErstantwortTextOverride.class);
+    verify(repository).save(captor.capture());
+    assertThat(captor.getValue().getScope()).isEqualTo(ErstantwortTextOverride.AGENCY);
+    assertThat(captor.getValue().getScopeId()).isEqualTo(5L);
+    assertThat(captor.getValue().textsAsMap()).containsEntry("de", "<p>Team A</p>");
+  }
+
+  @Test
+  void aCentreMayNotRewordTheEmergencyNumbersOrTheDeadline() {
+    assertThatThrownBy(
+            () ->
+                service.replaceAgencyTexts(5L, Map.of("emergencyNumbers", Map.of("de", "x")), "a"))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                service.replaceAgencyTexts(5L, Map.of("emergencyAddition", Map.of("de", "x")), "a"))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void aCentresTextsResolveLikeTheTragersWithTheSameLanguageFallback() {
+    when(repository.findByScopeAndScopeId(ErstantwortTextOverride.AGENCY, 5L))
+        .thenReturn(
+            List.of(
+                agencyRow("greeting", Map.of("de", "<p>Hallo Zentrum</p>")),
+                agencyRow(
+                    "whoReadsAlong", Map.of("de", "<p>Team A</p>", "en", "<p>Team A en</p>"))));
+
+    var texts = service.resolveAgencyTexts(5L, "en", false);
+
+    assertThat(texts.getWhoReadsAlong()).isEqualTo("Team A en");
+    // No English greeting: falls back to the centre's own German text, as for a Träger.
+    assertThat(texts.getGreeting()).isEqualTo("Hallo Zentrum");
+  }
+
+  @Test
+  void noCentreOrAFailingStoreMeansNoCentreTexts() {
+    assertThat(service.resolveAgencyTexts(null, "de", false).getGreeting()).isNull();
+    when(repository.findByScopeAndScopeId(any(), any())).thenThrow(new IllegalStateException("db"));
+    assertThat(service.resolveAgencyTexts(5L, "de", false).getGreeting()).isNull();
+  }
 }

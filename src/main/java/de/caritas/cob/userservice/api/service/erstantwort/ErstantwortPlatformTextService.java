@@ -26,6 +26,11 @@ public class ErstantwortPlatformTextService {
 
   static final int MAX_TEXT_LENGTH = 10_000;
   private static final String META_SUFFIX = "__meta";
+
+  /** What a Beratungsstelle may author; emergency addition and deadline stay with the Träger. */
+  public static final java.util.List<String> AGENCY_EDITABLE =
+      java.util.List.of("greeting", "whoReadsAlong", "freeNotice", "closing");
+
   private static final Set<String> LANGUAGES =
       Set.of("de", "de@informal", "en", "fr", "ru", "tr", "ti");
 
@@ -49,7 +54,10 @@ public class ErstantwortPlatformTextService {
   @Transactional
   public void replacePlatformTexts(Map<String, Map<String, String>> changes, String actor) {
     var validated = new LinkedHashMap<String, Map<String, String>>();
-    changes.forEach((baustein, texts) -> validated.put(baustein, validated(baustein, texts)));
+    changes.forEach(
+        (baustein, texts) ->
+            validated.put(
+                baustein, validated(baustein, texts, ErstantwortTranslations.PLATFORM_EDITABLE)));
     validated.forEach(
         (baustein, texts) -> {
           if (texts.keySet().stream().noneMatch(key -> !key.endsWith(META_SUFFIX))) {
@@ -85,14 +93,72 @@ public class ErstantwortPlatformTextService {
     }
   }
 
+  /**
+   * A Beratungsstelle's stored maps per Baustein, for its editor. Access is checked by the caller.
+   */
+  @Transactional(readOnly = true)
+  public Map<String, Map<String, String>> readAgencyTexts(Long agencyId) {
+    var result = new LinkedHashMap<String, Map<String, String>>();
+    repository
+        .findByScopeAndScopeId(ErstantwortTextOverride.AGENCY, agencyId)
+        .forEach(row -> result.put(row.getBaustein(), row.textsAsMap()));
+    return result;
+  }
+
+  /** Same semantics as {@link #replacePlatformTexts}, for one Beratungsstelle. */
+  @Transactional
+  public void replaceAgencyTexts(
+      Long agencyId, Map<String, Map<String, String>> changes, String actor) {
+    var validated = new LinkedHashMap<String, Map<String, String>>();
+    changes.forEach(
+        (baustein, texts) -> validated.put(baustein, validated(baustein, texts, AGENCY_EDITABLE)));
+    validated.forEach(
+        (baustein, texts) -> {
+          if (texts.keySet().stream().allMatch(key -> key.endsWith(META_SUFFIX))) {
+            repository.deleteById(ErstantwortTextOverride.agencyKey(agencyId, baustein));
+            return;
+          }
+          repository.save(ErstantwortTextOverride.agency(agencyId, baustein, texts, actor));
+        });
+  }
+
+  /**
+   * A Beratungsstelle's texts for one reader, with the Träger's language fallback (reader's locale,
+   * source language, English, German) — the centre writes in its own voice like a Träger. Never
+   * throws.
+   */
+  public ErstantwortTenantTexts resolveAgencyTexts(Long agencyId, String locale, boolean informal) {
+    if (agencyId == null) return ErstantwortTenantTexts.none();
+    try {
+      var maps = new LinkedHashMap<String, Map<String, String>>();
+      repository
+          .findByScopeAndScopeId(ErstantwortTextOverride.AGENCY, agencyId)
+          .forEach(row -> maps.put(row.getBaustein(), row.textsAsMap()));
+      return ErstantwortTenantTexts.builder()
+          .greeting(ErstantwortTenantTextResolver.pick(maps.get("greeting"), locale, informal))
+          .whoReadsAlong(
+              ErstantwortTenantTextResolver.pickStated(maps.get("whoReadsAlong"), locale, informal))
+          .freeNotice(ErstantwortTenantTextResolver.pick(maps.get("freeNotice"), locale, informal))
+          .closing(ErstantwortTenantTextResolver.pick(maps.get("closing"), locale, informal))
+          .build();
+    } catch (RuntimeException exception) {
+      log.warn(
+          "Erstantwort texts of centre {} unavailable, the Träger's apply ({})",
+          agencyId,
+          exception.getClass().getSimpleName());
+      return ErstantwortTenantTexts.none();
+    }
+  }
+
   private Iterable<ErstantwortTextOverride> platformRows() {
     return repository.findByScopeAndScopeId(
         ErstantwortTextOverride.PLATFORM, ErstantwortTextOverride.PLATFORM_SCOPE_ID);
   }
 
-  private static Map<String, String> validated(String baustein, Map<String, String> texts) {
-    if (!ErstantwortTranslations.PLATFORM_EDITABLE.contains(baustein)) {
-      throw new IllegalArgumentException("Baustein not editable at platform level");
+  private static Map<String, String> validated(
+      String baustein, Map<String, String> texts, java.util.List<String> editable) {
+    if (!editable.contains(baustein)) {
+      throw new IllegalArgumentException("Baustein not editable at this level");
     }
     var result = new LinkedHashMap<String, String>();
     if (texts == null) return result;

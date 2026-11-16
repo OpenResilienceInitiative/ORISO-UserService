@@ -38,6 +38,7 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 public class ErstantwortTextOverride {
 
   public static final String PLATFORM = "PLATFORM";
+  public static final String AGENCY = "AGENCY";
   public static final long PLATFORM_SCOPE_ID = 0L;
   private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -72,6 +73,18 @@ public class ErstantwortTextOverride {
     row.setTextsFromMap(texts);
     row.setUpdatedBy(updatedBy);
     return row;
+  }
+
+  public static ErstantwortTextOverride agency(
+      Long agencyId, String baustein, Map<String, String> texts, String updatedBy) {
+    var row = platform(baustein, texts, updatedBy);
+    row.setScope(AGENCY);
+    row.setScopeId(agencyId);
+    return row;
+  }
+
+  public static Key agencyKey(Long agencyId, String baustein) {
+    return new Key(AGENCY, agencyId, baustein);
   }
 
   public static Key platformKey(String baustein) {
