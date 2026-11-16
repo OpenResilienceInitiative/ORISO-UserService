@@ -551,6 +551,8 @@ public class SecurityConfig {
                     "/service/users/chat-series/**",
                     "/users/agencies/{agencyId:[0-9]+}/admin-contacts",
                     "/service/users/agencies/{agencyId:[0-9]+}/admin-contacts",
+                    "/users/agencies/{agencyId:[0-9]+}/contact-person",
+                    "/service/users/agencies/{agencyId:[0-9]+}/contact-person",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover",
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover/extend",

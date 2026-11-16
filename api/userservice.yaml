@@ -1920,6 +1920,42 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
+  /users/agencies/{agencyId}/contact-person:
+    get:
+      tags:
+        - user-controller
+      summary: 'Whom a counsellor contacts at one of their own counselling centres [Authorization: Role: consultant]'
+      description: >-
+        ORISO-Admin#1534. Resolves, for a counselling centre the caller belongs to, the people to contact, in this order:
+        the centre's own contact person (OWN), the Träger default (TRAEGER_DEFAULT), all agency admins of the centre
+        (FALLBACK_AGENCY_ADMINS), all Träger admins (FALLBACK_TENANT_ADMINS); with nobody left the list is empty and the
+        frontend shows the platform support e-mail (SUPPORT_EMAIL). A contact person who is no longer an admin of the centre
+        or its Träger counts as not set. The e-mail is the admin's contact e-mail, else the login e-mail. chatConsultantId is
+        only set for a person who is also an active counsellor of this centre with a chat identity, and never for the caller.
+        A centre the caller does not belong to answers 403, whether or not it exists.
+      operationId: getConsultantAgencyContactPerson
+      parameters:
+        - name: agencyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        200:
+          description: OK
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/ConsultantAgencyContactDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - the caller is not a counsellor of this counselling centre
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
   /users/chat/internal-subset/recipients:
     get:
       tags:
@@ -5410,6 +5446,45 @@ components:
         displayName:
           type: string
           example: "Maria Muster"
+    ConsultantAgencyContactDTO:
+      type: object
+      required:
+        - source
+        - people
+      properties:
+        source:
+          type: string
+          enum: [ OWN, TRAEGER_DEFAULT, FALLBACK_AGENCY_ADMINS, FALLBACK_TENANT_ADMINS, SUPPORT_EMAIL ]
+        people:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConsultantAgencyContactPersonDTO'
+        traegerContactEmail:
+          type: string
+          description: The general contact e-mail of the Träger, if one is set.
+    ConsultantAgencyContactPersonDTO:
+      type: object
+      required:
+        - role
+        - displayName
+        - email
+        - isConsultant
+      properties:
+        role:
+          type: string
+          enum: [ CONTACT, DEPUTY, ADMIN ]
+        displayName:
+          type: string
+          example: "Maria Muster"
+        email:
+          type: string
+          description: The contact e-mail of the admin, else the login e-mail.
+        isConsultant:
+          type: boolean
+          description: The admin is also an active counsellor of this centre.
+        chatConsultantId:
+          type: string
+          description: Id to pass in consultantIds of POST /users/chat/internal-subset; absent when no chat is possible.
     InternalSubsetChatResponseDTO:
       type: object
       required:
