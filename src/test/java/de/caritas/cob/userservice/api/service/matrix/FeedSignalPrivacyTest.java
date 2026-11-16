@@ -83,6 +83,9 @@ class FeedSignalPrivacyTest {
             mock(SessionRepository.class),
             mock(UserRepository.class),
             mock(ConsultantRepository.class),
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.service.notification.MatrixCaseReplyActorAuthorizer
+                    .class),
             mock(IdentityTombstoneService.class),
             mock(EventNotificationDeduplicationWriter.class),
             signal,

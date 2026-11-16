@@ -261,6 +261,9 @@ class EventNotificationControllerTest {
             sessionRepository,
             userRepository,
             consultantRepository,
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.service.notification.MatrixCaseReplyActorAuthorizer
+                    .class),
             identityTombstoneService,
             deduplicationWriter,
             mock(de.caritas.cob.userservice.api.service.matrix.MatrixFeedUpdateSignalService.class),
@@ -754,6 +757,9 @@ class EventNotificationControllerTest {
             s6Sessions,
             mock(UserRepository.class),
             mock(ConsultantRepository.class),
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.service.notification.MatrixCaseReplyActorAuthorizer
+                    .class),
             mock(IdentityTombstoneService.class),
             s6DedupWriter,
             mock(de.caritas.cob.userservice.api.service.matrix.MatrixFeedUpdateSignalService.class),

@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.notification;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -32,9 +33,9 @@ import org.mockito.quality.Strictness;
 
 /**
  * A 1:1 session room also holds the department's silent counsellors (ADR-002 §1). Call activity of
- * that session reaches only its advice seeker and its assigned counsellor; a group chat's call
- * still reaches every member. Regression: every silent member got "Invitation to an internal group
- * call" for a case they cannot open.
+ * that session reaches a counsellor only while they may write in the case (assigned or permitted
+ * team writer); the advice seeker and group chat members are not gated. Regression: every silent
+ * member got "Invitation to an internal group call" for a case they cannot open.
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -51,6 +52,7 @@ class EventNotificationServiceCallRecipientsTest {
   @Mock private EventNotificationRepository eventNotificationRepository;
   @Mock private SessionRepository sessionRepository;
   @Mock private UserRepository userRepository;
+  @Mock private MatrixCaseReplyActorAuthorizer caseWriterAuthorizer;
   @Mock private ConsultantRepository consultantRepository;
   @Mock private IdentityTombstoneService identityTombstoneService;
   @Mock private EventNotificationDeduplicationWriter deduplicationWriter;
@@ -73,7 +75,14 @@ class EventNotificationServiceCallRecipientsTest {
     when(session.getUser()).thenReturn(asker);
     when(session.getConsultant()).thenReturn(counsellor);
     when(session.getTenantId()).thenReturn(TENANT_ID);
-    when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
+    lenient().when(session.getId()).thenReturn(SESSION_ID);
+    var silent = mock(Consultant.class);
+    when(consultantRepository.findById(COUNSELLOR)).thenReturn(Optional.of(counsellor));
+    when(consultantRepository.findById(SILENT_COLLEAGUE)).thenReturn(Optional.of(silent));
+    when(caseWriterAuthorizer.isCurrentAssignedOrTeamWriter(session, counsellor)).thenReturn(true);
+    when(caseWriterAuthorizer.isCurrentAssignedOrTeamWriter(session, silent)).thenReturn(false);
+    // The call resolver names the session by its Matrix room; so does the gate.
+    lenient().when(sessionRepository.findByMatrixRoomId(ROOM)).thenReturn(Optional.of(session));
   }
 
   private void notifyAll(MatrixCallConversation conversation, String recipient) {
@@ -101,9 +110,9 @@ class EventNotificationServiceCallRecipientsTest {
   }
 
   @Test
-  void anUnknownOrForeignTenantSessionNotifiesNobody() {
-    notifyAll(new MatrixCallConversation(ROOM, 99L, SESSION_ID, null), ASKER);
-    notifyAll(new MatrixCallConversation(ROOM, TENANT_ID, 70L, null), ASKER);
+  void anUnknownOrForeignTenantSessionNotifiesNoCounsellor() {
+    notifyAll(new MatrixCallConversation(ROOM, 99L, SESSION_ID, null), COUNSELLOR);
+    notifyAll(new MatrixCallConversation(ROOM, TENANT_ID, 70L, null), COUNSELLOR);
 
     verify(deduplicationWriter, never()).persistInNewTransaction(any(EventNotification.class));
   }

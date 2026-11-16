@@ -39,6 +39,7 @@ class EventNotificationServiceFeedSignalTest {
   @Mock private SessionRepository sessionRepository;
   @Mock private UserRepository userRepository;
   @Mock private ConsultantRepository consultantRepository;
+  @Mock private MatrixCaseReplyActorAuthorizer caseWriterAuthorizer;
   @Mock private IdentityTombstoneService identityTombstoneService;
   @Mock private EventNotificationDeduplicationWriter deduplicationWriter;
   @Mock private MatrixFeedUpdateSignalService feedUpdateSignalService;

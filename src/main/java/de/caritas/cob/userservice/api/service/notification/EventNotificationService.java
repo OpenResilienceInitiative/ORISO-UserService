@@ -59,6 +59,7 @@ public class EventNotificationService {
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull UserRepository userRepository;
   private final @NonNull ConsultantRepository consultantRepository;
+  private final @NonNull MatrixCaseReplyActorAuthorizer caseWriterAuthorizer;
   private final @NonNull IdentityTombstoneService identityTombstoneService;
   private final @NonNull EventNotificationDeduplicationWriter deduplicationWriter;
   private final @NonNull MatrixFeedUpdateSignalService feedUpdateSignalService;
@@ -1253,6 +1254,12 @@ public class EventNotificationService {
    * invitation for a case they cannot open (Activity showed only "Open chat", which led nowhere). A
    * group chat's call keeps notifying every member.
    */
+  /**
+   * A 1:1 session room also holds the agency's silent counsellors (ADR-002 §1). Call activity of a
+   * session reaches a counsellor only while they may write in the case: its assigned counsellor or
+   * a permitted team writer (the same rule as a case reply). Advice seekers and group chats are not
+   * gated here.
+   */
   private boolean isSessionCallParticipant(
       de.caritas.cob.userservice.api.service.matrix.MatrixCallConversation conversation,
       String recipientId) {
@@ -1262,14 +1269,21 @@ public class EventNotificationService {
     if (recipientId == null || recipientId.isBlank()) {
       return false;
     }
+    var counsellor = consultantRepository.findById(recipientId);
+    if (counsellor.isEmpty()) {
+      return true;
+    }
+    if (conversation.getMatrixRoomId() == null) {
+      return false;
+    }
+    // Same lookup as MatrixCallConversationResolver: the call's source room names the session.
     return sessionRepository
-        .findById(conversation.getSessionId())
+        .findByMatrixRoomId(conversation.getMatrixRoomId())
+        .filter(session -> Objects.equals(session.getId(), conversation.getSessionId()))
         .filter(session -> Objects.equals(session.getTenantId(), conversation.getTenantId()))
         .map(
             session ->
-                (session.getUser() != null && recipientId.equals(session.getUser().getUserId()))
-                    || (session.getConsultant() != null
-                        && recipientId.equals(session.getConsultant().getId())))
+                caseWriterAuthorizer.isCurrentAssignedOrTeamWriter(session, counsellor.get()))
         .orElse(false);
   }
 
