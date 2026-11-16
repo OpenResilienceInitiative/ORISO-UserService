@@ -23,7 +23,7 @@ import org.hibernate.persister.entity.AbstractEntityPersister;
  *       row. A row deleted meanwhile is detached and answers empty; {@code refresh} never runs on
  *       it, so no {@code EntityNotFoundException} marks the transaction rollback-only;
  *   <li>managed and already write-locked by this transaction: it was read by a locking read of this
- *       helper, and nobody could change it since.
+ *       helper or inserted by this transaction, and nobody could change it since.
  * </ul>
  *
  * Bulk {@code @Lock} queries over the same rows must therefore run before any unlocked read of them
@@ -42,7 +42,7 @@ final class FreshRowLock {
     if (managed == null) {
       return Optional.ofNullable(entityManager.find(type, id, LockModeType.PESSIMISTIC_WRITE));
     }
-    if (entityManager.getLockMode(managed) == LockModeType.PESSIMISTIC_WRITE) {
+    if (holdsWriteLock(entityManager.getLockMode(managed))) {
       return Optional.of(managed);
     }
     if (!existsLocked(entityManager, session, type, id)) {
@@ -51,6 +51,18 @@ final class FreshRowLock {
     }
     entityManager.refresh(managed, LockModeType.PESSIMISTIC_WRITE);
     return Optional.of(managed);
+  }
+
+  /**
+   * Write-locked by this transaction: by a locking read of this helper ({@code PESSIMISTIC_WRITE}),
+   * or because this transaction inserted the row (Hibernate's {@code WRITE}, which JPA reports as
+   * {@code PESSIMISTIC_FORCE_INCREMENT}). A refresh of such a row would only drop this
+   * transaction's own unflushed changes, and a new element collection with them
+   * (ORISO-Frontend#2252).
+   */
+  private static boolean holdsWriteLock(LockModeType mode) {
+    return mode == LockModeType.PESSIMISTIC_WRITE
+        || mode == LockModeType.PESSIMISTIC_FORCE_INCREMENT;
   }
 
   /** A locking read of the latest committed row: it waits for a holder and sees a delete. */
