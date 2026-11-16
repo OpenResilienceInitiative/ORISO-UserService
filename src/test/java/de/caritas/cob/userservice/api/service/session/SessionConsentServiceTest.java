@@ -32,12 +32,13 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class SessionConsentServiceTest {
 
   @Mock private SessionRepository sessionRepository;
+  @Mock private de.caritas.cob.userservice.api.port.out.DirectInvitationMemberRepository members;
 
   private SessionConsentService sessionConsentService;
 
   @BeforeEach
   void setUp() {
-    sessionConsentService = new SessionConsentService(sessionRepository);
+    sessionConsentService = new SessionConsentService(sessionRepository, members);
   }
 
   @Test
@@ -104,7 +105,7 @@ class SessionConsentServiceTest {
     per-participant consent, so the pointer must refuse the room outright rather
     than clear the gate for everybody. */
     var groupChat = sessionOf(42L, "system-user", null);
-    groupChat.setConversationType(ConversationType.SELF_HELP);
+    groupChat.setConversationType(ConversationType.INTERNAL_GROUP);
     when(sessionRepository.findById(42L)).thenReturn(Optional.of(groupChat));
     var participant = askerWithId("system-user");
 
@@ -136,6 +137,123 @@ class SessionConsentServiceTest {
     var saved = ArgumentCaptor.forClass(Session.class);
     verify(sessionRepository).save(saved.capture());
     assertThat(saved.getValue().getConsentedLegalVersionId()).isEqualTo(7L);
+  }
+
+  // --- ORISO-Frontend#2252, decision B: each person of a shared appointment conversation ---
+
+  @Test
+  void recordConsent_Should_StoreAJoinersConsentOnTheirOwnMemberRow() {
+    var shared = sharedConversation(42L, "asker-1", 6L);
+    var row = memberRow(42L, "joiner-1");
+    when(sessionRepository.findById(42L)).thenReturn(Optional.of(shared));
+    when(members.findBySessionIdAndUserIdForUpdate(42L, "joiner-1")).thenReturn(Optional.of(row));
+
+    sessionConsentService.recordConsent(42L, askerWithId("joiner-1"), 7L);
+
+    assertThat(row.getConsentedLegalVersionId()).isEqualTo(7L);
+    verify(members).save(row);
+    assertThat(shared.getConsentedLegalVersionId()).as("the owner's pointer").isEqualTo(6L);
+    verify(sessionRepository, never()).save(any());
+  }
+
+  @Test
+  void recordConsent_Should_Refuse_SomebodyWhoIsNoMemberOfTheSharedConversation() {
+    when(sessionRepository.findById(42L))
+        .thenReturn(Optional.of(sharedConversation(42L, "asker-1", null)));
+    when(members.findBySessionIdAndUserIdForUpdate(42L, "stranger")).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> sessionConsentService.recordConsent(42L, askerWithId("stranger"), 7L))
+        .isInstanceOf(ForbiddenException.class);
+    verify(members, never()).save(any());
+  }
+
+  @Test
+  void recordConsent_Should_Refuse_AMemberWhoWasTakenOutAlready() {
+    var row = memberRow(42L, "joiner-1");
+    row.setRemovedAt(java.time.LocalDateTime.of(2030, 1, 1, 10, 0));
+    when(sessionRepository.findById(42L))
+        .thenReturn(Optional.of(sharedConversation(42L, "asker-1", null)));
+    when(members.findBySessionIdAndUserIdForUpdate(42L, "joiner-1")).thenReturn(Optional.of(row));
+
+    assertThatThrownBy(() -> sessionConsentService.recordConsent(42L, askerWithId("joiner-1"), 7L))
+        .isInstanceOf(ForbiddenException.class);
+    verify(members, never()).save(any());
+  }
+
+  @Test
+  void recordConsent_Should_StillRefuseAStranger_InAnOrdinary1to1() {
+    when(sessionRepository.findById(42L)).thenReturn(Optional.of(sessionOf(42L, "asker-1", null)));
+
+    assertThatThrownBy(() -> sessionConsentService.recordConsent(42L, askerWithId("joiner-1"), 7L))
+        .isInstanceOf(ForbiddenException.class);
+    verify(members, never()).findBySessionIdAndUserIdForUpdate(any(), any());
+  }
+
+  @Test
+  void consentRequired_Should_StayOpenForAJoiner_AfterTheOwnerAgreed() {
+    var shared = sharedConversation(42L, "asker-1", 6L);
+    when(members.findBySessionIdAndUserId(42L, "joiner-1"))
+        .thenReturn(Optional.of(memberRow(42L, "joiner-1")));
+
+    assertThat(sessionConsentService.consentRequired(shared, "joiner-1")).isTrue();
+  }
+
+  @Test
+  void consentRequired_Should_Close_OnceTheJoinerAgreedThemselves() {
+    var shared = sharedConversation(42L, "asker-1", null);
+    var row = memberRow(42L, "joiner-1");
+    row.setConsentedLegalVersionId(7L);
+    when(members.findBySessionIdAndUserId(42L, "joiner-1")).thenReturn(Optional.of(row));
+
+    assertThat(sessionConsentService.consentRequired(shared, "joiner-1")).isFalse();
+  }
+
+  @Test
+  void consentRequired_Should_FollowTheSessionPointer_ForTheOwner() {
+    assertThat(
+            sessionConsentService.consentRequired(
+                sharedConversation(42L, "asker-1", null), "asker-1"))
+        .isTrue();
+    assertThat(
+            sessionConsentService.consentRequired(
+                sharedConversation(42L, "asker-1", 6L), "asker-1"))
+        .isFalse();
+    verify(members, never()).findBySessionIdAndUserId(any(), any());
+  }
+
+  @Test
+  void consentRequired_Should_BeFalse_WhereTheRoomHasNoGate() {
+    var groupChat = sessionOf(42L, "system-user", null);
+    groupChat.setConversationType(ConversationType.INTERNAL_GROUP);
+
+    assertThat(sessionConsentService.consentRequired(groupChat, "anybody")).isFalse();
+  }
+
+  @Test
+  void consentRequired_Should_LoadTheSession_WhenOnlyItsIdIsKnown() {
+    when(sessionRepository.findById(42L))
+        .thenReturn(Optional.of(sharedConversation(42L, "asker-1", 6L)));
+    when(members.findBySessionIdAndUserId(42L, "joiner-1"))
+        .thenReturn(Optional.of(memberRow(42L, "joiner-1")));
+
+    assertThat(sessionConsentService.consentRequired(42L, "joiner-1")).isTrue();
+  }
+
+  private Session sharedConversation(Long id, String ownerId, Long ownerConsent) {
+    var session = sessionOf(id, ownerId, ownerConsent);
+    session.setDirectInvitationConversation(true);
+    return session;
+  }
+
+  private static de.caritas.cob.userservice.api.model.DirectInvitationMember memberRow(
+      Long sessionId, String userId) {
+    return de.caritas.cob.userservice.api.model.DirectInvitationMember.builder()
+        .id(3L)
+        .sessionId(sessionId)
+        .userId(userId)
+        .inviteLinkId(9L)
+        .joinedAt(java.time.LocalDateTime.of(2030, 1, 1, 9, 0))
+        .build();
   }
 
   private Session sessionOf(Long id, String askerId, Long consentedLegalVersionId) {

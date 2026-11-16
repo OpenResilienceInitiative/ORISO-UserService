@@ -78,6 +78,7 @@ class DirectInvitationExpiryCommitIT {
   @Autowired private ConsultantRepository consultants;
   @Autowired private EntityManager entityManager;
   @Autowired private PlatformTransactionManager transactionManager;
+  @Autowired private javax.sql.DataSource dataSource;
 
   @MockitoBean private DirectInvitationRoomMembership rooms;
   @MockitoBean private SessionArchiveService archive;
@@ -169,7 +170,7 @@ class DirectInvitationExpiryCommitIT {
   void removeCommittedRows() {
     tx.executeWithoutResult(
         status -> {
-          members.findBySessionIdAndRemovedAtIsNull(sessionId).forEach(members::delete);
+          members.findActiveBySessionIdForUpdate(sessionId).forEach(members::delete);
           members.findById(memberId).ifPresent(members::delete);
           if (secondMemberId != null) {
             members.findById(secondMemberId).ifPresent(members::delete);
@@ -270,7 +271,7 @@ class DirectInvitationExpiryCommitIT {
                           sessions.findById(sessionId).orElseThrow());
                       locked.countDown();
                       awaitQuietly(release);
-                      members.findBySessionIdAndRemovedAtIsNull(sessionId).forEach(members::delete);
+                      members.findActiveBySessionIdForUpdate(sessionId).forEach(members::delete);
                       members.findById(memberId).ifPresent(members::delete);
                       appointments.findById(appointmentId).ifPresent(appointments::delete);
                       sessions.deleteById(sessionId);
@@ -282,7 +283,8 @@ class DirectInvitationExpiryCommitIT {
     var session = tx.execute(status -> sessions.findById(sessionId).orElseThrow());
     var link = tx.execute(status -> links.findById(linkId).orElseThrow());
     var join = CompletableFuture.supplyAsync(() -> memberships.reserve(session, latecomer, link));
-    Thread.sleep(300);
+    // The database itself reports the wait: the reservation's lockById waits for the deletion.
+    LockWaits.awaitALockWait(dataSource);
     assertThat(join).as("the reservation waits for the deletion's lock").isNotDone();
     release.countDown();
     deletion.get(10, TimeUnit.SECONDS);

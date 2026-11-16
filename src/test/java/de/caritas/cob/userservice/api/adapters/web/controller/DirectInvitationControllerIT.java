@@ -112,6 +112,19 @@ class DirectInvitationControllerIT {
   @MockitoBean private DirectInvitationRoomMembership rooms;
   @MockitoBean private EventNotificationService notifications;
   @MockitoBean private MatrixSessionSystemMessageService systemMessages;
+  // Direct entry itself runs for real in the lifecycle test; only its remote calls are stubbed.
+  @Autowired private de.caritas.cob.userservice.api.facade.CreateSessionFacade createSessionFacade;
+  @MockitoBean private de.caritas.cob.userservice.api.helper.AgencyVerifier agencyVerifier;
+
+  @MockitoBean private de.caritas.cob.userservice.api.service.dpa.NewCounsellingDpaPolicy dpaPolicy;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.session.DirectSessionMatrixRoomService
+      directSessionRooms;
+
+  @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
+  private de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager
+      consultingTypeManager;
 
   private Consultant owner;
   private Consultant otherCounsellor;
@@ -264,8 +277,38 @@ class DirectInvitationControllerIT {
                     userRepository.findById(asker.getUserId()).orElseThrow(),
                     consultingType)
                 .map(Session::getId))
-        .as("direct entry creates its own 1:1 instead")
+        .as("the 1:1 lookup leaves the shared conversation out")
         .isEmpty();
+
+    // Direct entry for real: a new 1:1, never the archived shared conversation.
+    var consultingTypeSettings =
+        new de.caritas.cob.userservice.consultingtypeservice.generated.web.model
+                .ExtendedConsultingTypeResponseDTO()
+            .id(consultingType)
+            .sessionDataInitializing(
+                new de.caritas.cob.userservice.consultingtypeservice.generated.web.model
+                    .SessionDataInitializingDTO());
+    org.mockito.Mockito.doReturn(consultingTypeSettings)
+        .when(consultingTypeManager)
+        .getConsultingTypeSettings(String.valueOf(consultingType));
+    org.mockito.Mockito.doReturn(consultingTypeSettings)
+        .when(consultingTypeManager)
+        .getConsultingTypeSettings(consultingType);
+    when(agencyVerifier.getVerifiedAgency(AGENCY_ID, consultingType))
+        .thenReturn(new AgencyDTO().id(AGENCY_ID).tenantId(TENANT_ID).teamAgency(false));
+    var entry = new de.caritas.cob.userservice.api.adapters.web.dto.UserDTO();
+    entry.setAgencyId(AGENCY_ID);
+    entry.setPostcode("10115");
+    entry.setConsultingType(String.valueOf(consultingType));
+    var direct =
+        createSessionFacade.createDirectUserSession(
+            owner.getId(),
+            entry,
+            userRepository.findById(asker.getUserId()).orElseThrow(),
+            consultingTypeSettings);
+
+    assertThat(direct.getStatus()).isEqualTo(HttpStatus.CREATED);
+    assertThat(direct.getSessionId()).isNotNull().isNotEqualTo(conversation.getId());
   }
 
   @Test

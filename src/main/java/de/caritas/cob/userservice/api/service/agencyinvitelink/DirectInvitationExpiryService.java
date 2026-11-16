@@ -148,7 +148,9 @@ public class DirectInvitationExpiryService {
     var owner = session.getUser() != null ? session.getUser().getUserId() : null;
     var asked = new ArrayList<Long>();
     var allOut = true;
-    for (var member : members.findBySessionIdAndRemovedAtIsNull(session.getId())) {
+    // A locking read: under REPEATABLE READ a plain one would still see the snapshot of the
+    // deletion's first read and miss a reservation committed before this lock.
+    for (var member : members.findActiveBySessionIdForUpdate(session.getId())) {
       if (Objects.equals(member.getUserId(), owner)) {
         continue;
       }

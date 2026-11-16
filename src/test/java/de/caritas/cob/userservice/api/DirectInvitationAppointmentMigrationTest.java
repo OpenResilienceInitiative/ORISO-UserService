@@ -199,6 +199,41 @@ class DirectInvitationAppointmentMigrationTest {
     }
   }
 
+  /**
+   * FE#2252 decision B: each member keeps their own consent pointer. Its own changeSet, so a
+   * database whose member table came from an earlier run gets the column as well.
+   */
+  @Test
+  void update_Should_AddTheMembersConsentPointer_ToAMemberTableFromAnEarlierRun() throws Exception {
+    try (Connection c = h2WithUpperCaseNames("member-consent")) {
+      givenTheTablesBeforeThisChange(c);
+      try (var liquibase = liquibase(c)) {
+        liquibase.update(new Contexts(), new LabelExpression());
+        try (var sql = c.createStatement()) {
+          sql.execute(
+              "ALTER TABLE direct_invitation_member DROP COLUMN consented_legal_version_id");
+          sql.execute(
+              "DELETE FROM DATABASECHANGELOG WHERE ID = '20261116-direct-invitation-member-consent-2252'");
+        }
+        liquibase.update(new Contexts(), new LabelExpression());
+        // Read before closing: closing Liquibase closes its connection.
+        assertConsentColumnIsNullable(c);
+      }
+    }
+  }
+
+  private static void assertConsentColumnIsNullable(Connection c) throws Exception {
+    try (var sql = c.createStatement();
+        var rs =
+            sql.executeQuery(
+                "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE"
+                    + " TABLE_NAME = 'DIRECT_INVITATION_MEMBER'"
+                    + " AND COLUMN_NAME = 'CONSENTED_LEGAL_VERSION_ID'")) {
+      assertThat(rs.next()).as("the column exists").isTrue();
+      assertThat(rs.getString(1)).isEqualTo("YES");
+    }
+  }
+
   /** A table missing although its changeSet ran is no table to create again silently. */
   @Test
   void update_Should_Stop_When_TheMemberTableIsGoneAlthoughItsChangeSetRan() throws Exception {
@@ -251,6 +286,29 @@ class DirectInvitationAppointmentMigrationTest {
             "ALTER TABLE direct_invitation_member ADD CONSTRAINT"
                 + " fk_direct_invitation_member_session FOREIGN KEY (session_id) REFERENCES"
                 + " session (id)");
+      }
+      try (var liquibase = liquibase(c)) {
+        assertThatThrownBy(() -> liquibase.update(new Contexts(), new LabelExpression()))
+            .hasStackTraceContaining("direct_invitation_member");
+      }
+    }
+  }
+
+  /** CodeRabbit on PR #1648: a session key to another table stops it, on H2 as on MariaDB. */
+  @Test
+  void update_Should_Stop_When_TheMemberSessionKeyPointsAtAnotherTable() throws Exception {
+    try (Connection c = h2WithUpperCaseNames("member-wrong-target")) {
+      givenTheTablesBeforeThisChange(c);
+      try (var sql = c.createStatement()) {
+        sql.execute("CREATE TABLE other_table (id BIGINT UNSIGNED NOT NULL, PRIMARY KEY (id))");
+        sql.execute(completeMemberTable());
+        sql.execute(
+            "ALTER TABLE direct_invitation_member ADD CONSTRAINT"
+                + " uq_direct_invitation_member_session_user UNIQUE (session_id, user_id)");
+        sql.execute(
+            "ALTER TABLE direct_invitation_member ADD CONSTRAINT"
+                + " fk_direct_invitation_member_session FOREIGN KEY (session_id) REFERENCES"
+                + " other_table (id) ON DELETE CASCADE");
       }
       try (var liquibase = liquibase(c)) {
         assertThatThrownBy(() -> liquibase.update(new Contexts(), new LabelExpression()))

@@ -59,7 +59,8 @@ class DirectLinkControllerDelegateCallLinkTest {
             knocks,
             waitingRooms,
             users,
-            mock(TemporaryAccountService.class));
+            mock(TemporaryAccountService.class),
+            mock(de.caritas.cob.userservice.api.service.session.SessionConsentService.class));
     counsellor.setId("counsellor-1");
     when(accounts.retrieveValidatedConsultant()).thenReturn(counsellor);
     var guest = new User();

@@ -77,6 +77,7 @@ class DirectInvitationMoveIT {
   @Autowired private ConsultantRepository consultants;
   @Autowired private EntityManager entityManager;
   @Autowired private PlatformTransactionManager transactionManager;
+  @Autowired private javax.sql.DataSource dataSource;
 
   @MockitoBean private AgencyService agencyService;
   @MockitoBean private TopicService topicService;
@@ -97,11 +98,42 @@ class DirectInvitationMoveIT {
   private Long openId;
   private Long memberId;
 
+  /** Runs after every locking read of an invitation; set by the concurrency test. */
+  private static volatile Runnable afterLockingRead = () -> {};
+
   @TestConfiguration
   static class TestClock {
     @Bean
     Clock clock() {
       return Clock.systemUTC();
+    }
+
+    /** Lets the test hold a move right after it took its first invitation lock. */
+    @Bean
+    static org.springframework.beans.factory.config.BeanPostProcessor lockingReadHook() {
+      return new org.springframework.beans.factory.config.BeanPostProcessor() {
+        @Override
+        public Object postProcessAfterInitialization(Object bean, String name) {
+          if (!(bean instanceof AgencyInviteLinkRepository repository)) {
+            return bean;
+          }
+          return java.lang.reflect.Proxy.newProxyInstance(
+              AgencyInviteLinkRepository.class.getClassLoader(),
+              new Class<?>[] {AgencyInviteLinkRepository.class},
+              (proxy, method, args) -> {
+                Object result;
+                try {
+                  result = method.invoke(repository, args);
+                } catch (java.lang.reflect.InvocationTargetException e) {
+                  throw e.getCause();
+                }
+                if (method.getName().endsWith("ForUpdate")) {
+                  afterLockingRead.run();
+                }
+                return result;
+              });
+        }
+      };
     }
   }
 
@@ -157,6 +189,7 @@ class DirectInvitationMoveIT {
 
   @AfterEach
   void removeCommittedRows() {
+    afterLockingRead = () -> {};
     tx.executeWithoutResult(
         status -> {
           members.findById(memberId).ifPresent(members::delete);
@@ -182,26 +215,35 @@ class DirectInvitationMoveIT {
     assertThat(member.getRemovedAt()).as("the revocation is committed").isNotNull();
   }
 
+  /**
+   * CodeRabbit on PR #1648: the two moves overlap while they take their locks. The first one is
+   * held right after its first invitation lock, the second one starts and the database reports it
+   * waiting. Taking the moved invitation's own lock first instead would leave each move holding one
+   * invitation and waiting for the other: a deadlock, which fails this test.
+   */
   @Test
   void movesThroughTwoInvitations_Should_RunOneAfterTheOther() throws Exception {
     var first = LocalDateTime.now(ZoneOffset.UTC).plusDays(1).withNano(0);
     var second = first.plusDays(1);
     var holding = new CountDownLatch(1);
     var release = new CountDownLatch(1);
+    var heldOnce = new java.util.concurrent.atomic.AtomicBoolean();
+    afterLockingRead =
+        () -> {
+          if (heldOnce.compareAndSet(false, true)) {
+            holding.countDown();
+            await(release);
+          }
+        };
     var firstMove =
-        CompletableFuture.runAsync(
-            () ->
-                tx.executeWithoutResult(
-                    status -> {
-                      directLinks.update(owner, overdueId, move(first));
-                      holding.countDown();
-                      await(release);
-                    }));
-    assertThat(holding.await(10, TimeUnit.SECONDS)).isTrue();
+        CompletableFuture.runAsync(() -> directLinks.update(owner, overdueId, move(first)));
+    assertThat(holding.await(10, TimeUnit.SECONDS))
+        .as("the first move took its first lock")
+        .isTrue();
 
     var secondMove =
         CompletableFuture.runAsync(() -> directLinks.update(owner, openId, move(second)));
-    Thread.sleep(300);
+    LockWaits.awaitALockWait(dataSource);
     assertThat(secondMove).as("waits for the first move's locks").isNotDone();
     release.countDown();
     firstMove.get(10, TimeUnit.SECONDS);

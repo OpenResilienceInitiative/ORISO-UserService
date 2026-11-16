@@ -31,8 +31,16 @@ public interface DirectInvitationMemberRepository
 
   List<DirectInvitationMember> findByInviteLinkIdAndRemovedAtIsNull(Long inviteLinkId);
 
-  /** Everybody still in a conversation through an invitation. */
-  List<DirectInvitationMember> findBySessionIdAndRemovedAtIsNull(Long sessionId);
+  /**
+   * Everybody still in a conversation through an invitation, as a locking read: on MariaDB it reads
+   * the latest committed rows, not the snapshot of the transaction's first read, so a deletion sees
+   * a reservation that committed meanwhile.
+   */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "SELECT m FROM DirectInvitationMember m WHERE m.sessionId = :sessionId"
+          + " AND m.removedAt IS NULL ORDER BY m.id")
+  List<DirectInvitationMember> findActiveBySessionIdForUpdate(@Param("sessionId") Long sessionId);
 
   /**
    * Removals Matrix has not confirmed yet whose next attempt is due at {@code now}, for the sweep

@@ -75,6 +75,15 @@ public class DirectInvitationMember {
   @Column(name = "join_attempt", length = 36)
   private String joinAttempt;
 
+  /**
+   * ADR-022 Gate 2 pointer of this one person (ORISO-Frontend#2252, decision B): the legal-text
+   * version they agreed to themselves. Each person of a shared appointment conversation passes the
+   * gate on their own; the owner keeps {@code session.consented_legal_version_id}. A pointer, not a
+   * log — overwritten on re-consent, no timestamp beside it.
+   */
+  @Column(name = "consented_legal_version_id")
+  private Long consentedLegalVersionId;
+
   /** Optimistic lock: the sweep never overwrites a change a join made meanwhile. */
   @Version
   @Column(name = "version", nullable = false)

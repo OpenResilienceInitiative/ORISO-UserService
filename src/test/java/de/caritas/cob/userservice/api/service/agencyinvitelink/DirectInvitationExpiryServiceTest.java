@@ -262,7 +262,7 @@ class DirectInvitationExpiryServiceTest {
    */
   @Test
   void requireInvitedOutBeforeDeletion_Should_TakeEveryInvitedPersonOutOfTheRoom() {
-    when(members.findBySessionIdAndRemovedAtIsNull(SESSION_ID)).thenReturn(List.of(guest, account));
+    when(members.findActiveBySessionIdForUpdate(SESSION_ID)).thenReturn(List.of(guest, account));
     when(rooms.remove(conversation, "@guest-1:x")).thenReturn(true);
     when(rooms.remove(conversation, "@account-1:x")).thenReturn(true);
 
@@ -280,14 +280,27 @@ class DirectInvitationExpiryServiceTest {
    */
   @Test
   void requireInvitedOutBeforeDeletion_Should_LockTheConversation_BeforeReadingItsMembers() {
-    when(members.findBySessionIdAndRemovedAtIsNull(SESSION_ID)).thenReturn(List.of(guest));
+    when(members.findActiveBySessionIdForUpdate(SESSION_ID)).thenReturn(List.of(guest));
     when(rooms.remove(conversation, "@guest-1:x")).thenReturn(true);
 
     service.requireInvitedOutBeforeDeletion(conversation);
 
     var order = org.mockito.Mockito.inOrder(sessions, members);
     order.verify(sessions).lockById(SESSION_ID);
-    order.verify(members).findBySessionIdAndRemovedAtIsNull(SESSION_ID);
+    order.verify(members).findActiveBySessionIdForUpdate(SESSION_ID);
+  }
+
+  /**
+   * CodeRabbit on PR #1648: a locking read of the members, which on MariaDB sees a reservation
+   * committed after the deletion's first read; a plain read stays on that first read's snapshot.
+   */
+  @Test
+  void requireInvitedOutBeforeDeletion_Should_ReadTheMembersWithALockingRead() {
+    when(members.findActiveBySessionIdForUpdate(SESSION_ID)).thenReturn(List.of());
+
+    service.requireInvitedOutBeforeDeletion(conversation);
+
+    verify(members).findActiveBySessionIdForUpdate(SESSION_ID);
   }
 
   /**
@@ -296,7 +309,7 @@ class DirectInvitationExpiryServiceTest {
    */
   @Test
   void requireInvitedOutBeforeDeletion_Should_KeepTheRemovalsDue_When_TheDeletionIsRefused() {
-    when(members.findBySessionIdAndRemovedAtIsNull(SESSION_ID)).thenReturn(List.of(guest, account));
+    when(members.findActiveBySessionIdForUpdate(SESSION_ID)).thenReturn(List.of(guest, account));
     when(rooms.remove(conversation, "@guest-1:x")).thenReturn(true);
     when(rooms.remove(conversation, "@account-1:x")).thenReturn(false);
     // What the rollback restores: neither row was due before.
@@ -319,7 +332,7 @@ class DirectInvitationExpiryServiceTest {
     var owner = new User();
     owner.setUserId("account-1");
     conversation.setUser(owner);
-    when(members.findBySessionIdAndRemovedAtIsNull(SESSION_ID)).thenReturn(List.of(guest, account));
+    when(members.findActiveBySessionIdForUpdate(SESSION_ID)).thenReturn(List.of(guest, account));
     when(rooms.remove(conversation, "@guest-1:x")).thenReturn(true);
 
     service.requireInvitedOutBeforeDeletion(conversation);
@@ -330,7 +343,7 @@ class DirectInvitationExpiryServiceTest {
   /** Fail closed: the deletion waits until Matrix confirmed everybody out. */
   @Test
   void requireInvitedOutBeforeDeletion_Should_RefuseTheDeletion_When_MatrixKeepsSomeoneIn() {
-    when(members.findBySessionIdAndRemovedAtIsNull(SESSION_ID)).thenReturn(List.of(guest));
+    when(members.findActiveBySessionIdForUpdate(SESSION_ID)).thenReturn(List.of(guest));
     when(rooms.remove(conversation, "@guest-1:x")).thenReturn(false);
 
     org.junit.jupiter.api.Assertions.assertThrows(
@@ -342,7 +355,7 @@ class DirectInvitationExpiryServiceTest {
   void requireInvitedOutBeforeDeletion_Should_RefuseTheDeletion_WhileAJoinIsRunning() {
     guest.setJoinAttempt("attempt");
     guest.setJoinedAt(NOW);
-    when(members.findBySessionIdAndRemovedAtIsNull(SESSION_ID)).thenReturn(List.of(guest));
+    when(members.findActiveBySessionIdForUpdate(SESSION_ID)).thenReturn(List.of(guest));
 
     org.junit.jupiter.api.Assertions.assertThrows(
         de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException.class,

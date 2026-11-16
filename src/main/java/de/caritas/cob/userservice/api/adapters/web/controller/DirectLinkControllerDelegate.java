@@ -65,6 +65,8 @@ public class DirectLinkControllerDelegate {
   private final @NonNull de.caritas.cob.userservice.api.service.temporaryaccount
           .TemporaryAccountService
       temporaryAccountService;
+  private final @NonNull de.caritas.cob.userservice.api.service.session.SessionConsentService
+      consents;
 
   public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.TemporaryAccountDTO>
       getOwnTemporaryAccount() {
@@ -205,7 +207,8 @@ public class DirectLinkControllerDelegate {
   }
 
   ResponseEntity<DirectLinkConversationDTO> startDirectLinkConversation(String token) {
-    var started = service.startConversation(token, userAccountService.retrieveValidatedUser());
+    var person = userAccountService.retrieveValidatedUser();
+    var started = service.startConversation(token, person);
     var dto =
         new DirectLinkConversationDTO()
             .sessionId(started.sessionId())
@@ -220,6 +223,12 @@ public class DirectLinkControllerDelegate {
                     : CallKnockStatus.valueOf(started.knockStatus()))
             .callAdmitted(started.callAdmitted())
             .appointmentConversation(started.appointmentConversation() ? true : null)
+            /* FE#2252 decision B: only the owner can read the session itself, so a joiner of a
+            shared conversation learns here whether their own consent is still open. */
+            .consentRequired(
+                started.appointmentConversation()
+                    ? consents.consentRequired(started.sessionId(), person.getUserId())
+                    : null)
             .callOpensAt(
                 started.callOpensAt() == null
                     ? null

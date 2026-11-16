@@ -57,6 +57,7 @@ class DirectInvitationRenewalLockIT {
 
   @Autowired private SessionAppointmentRepository appointments;
   @Autowired private PlatformTransactionManager transactionManager;
+  @Autowired private javax.sql.DataSource dataSource;
 
   @MockitoBean private DirectInvitationRoomMembership rooms;
   @MockitoBean private EventNotificationService notifications;
@@ -152,8 +153,8 @@ class DirectInvitationRenewalLockIT {
     assertThat(asksForTheLock.await(10, TimeUnit.SECONDS))
         .as("the second renewal reached its locking read while the first one holds the row")
         .isTrue();
-    // Everything it read before that read happened under the other renewal's lock, uncommitted.
-    Thread.sleep(200);
+    // The database itself reports the wait: the locking query runs and waits for the other lock.
+    LockWaits.awaitALockWait(dataSource);
     assertThat(renewal).as("it waits for the other renewal's lock").isNotDone();
     release.countDown();
     other.get(10, TimeUnit.SECONDS);

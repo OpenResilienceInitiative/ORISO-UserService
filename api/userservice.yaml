@@ -1086,7 +1086,8 @@ paths:
           description: UNAUTHORIZED - no/invalid Keycloak token
         403:
           description: FORBIDDEN - no/invalid role/authorization or CSRF token, or the session
-            does not belong to the authenticated help-seeker
+            does not belong to the authenticated help-seeker and they are no member of its shared
+            appointment conversation (ORISO-Frontend#2252, where each member agrees for themselves)
         404:
           description: NOT FOUND - session not found
         409:
@@ -4032,6 +4033,9 @@ components:
         appointmentConversation:
           type: boolean
           description: True when the conversation is shared by everybody who opened the invitation (ORISO-Frontend#2252)
+        consentRequired:
+          type: boolean
+          description: 'Shared appointment conversations only (ORISO-Frontend#2252): true while this person has not passed the consent gate (ADR-022) themselves. Each person agrees on their own; the owner''s consent does not count for anybody else. Record it with PUT /users/sessions/{sessionId}/consent.'
         callOpensAt:
           type: string
           format: date-time

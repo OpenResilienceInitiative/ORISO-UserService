@@ -93,7 +93,7 @@
   <changeSet id="20261114-direct-invitation-member-verify-2252" author="oriso" runAlways="true"
     runOnChange="true">
     <preConditions onFail="HALT"
-      onFailMessage="direct_invitation_member does not match changeSet 20261114-direct-invitation-member-2252, or is missing although that changeSet ran. Do not drop it, it holds who may be in which room. Compare it with that changeSet (columns; unique uq_direct_invitation_member_session_user on session_id, user_id; fk_direct_invitation_member_session on session_id ON DELETE CASCADE), add what is missing by hand after review (or recreate it and remove that changeSet's DATABASECHANGELOG row if it is missing), then restart.">
+      onFailMessage="direct_invitation_member does not match changeSet 20261114-direct-invitation-member-2252, or is missing although that changeSet ran. Do not drop it, it holds who may be in which room. Compare it with that changeSet (columns; unique uq_direct_invitation_member_session_user on session_id, user_id; fk_direct_invitation_member_session on session_id to session(id) ON DELETE CASCADE), add what is missing by hand after review (or recreate it and remove that changeSet's DATABASECHANGELOG row if it is missing), then restart.">
       <or>
         <and>
           <not>
@@ -123,14 +123,39 @@
             WHERE c.constraint_schema = SCHEMA() AND c.constraint_type = 'UNIQUE'
               AND LOWER(c.table_name) = 'direct_invitation_member' AND LOWER(c.constraint_name) = 'uq_direct_invitation_member_session_user'
           </sqlCheck>
-          <sqlCheck expectedResult="1">
-            SELECT COUNT(*) FROM information_schema.referential_constraints r
-            JOIN information_schema.key_column_usage k ON k.constraint_schema = r.constraint_schema
-              AND k.constraint_name = r.constraint_name
-            WHERE r.constraint_schema = SCHEMA() AND r.delete_rule = 'CASCADE'
-              AND LOWER(r.constraint_name) = 'fk_direct_invitation_member_session' AND LOWER(k.table_name) = 'direct_invitation_member'
-              AND LOWER(k.column_name) = 'session_id'
-          </sqlCheck>
+          <!-- The key's target too: MariaDB names it on key_column_usage, H2 only through the
+               referenced key. -->
+          <or>
+            <and>
+              <dbms type="h2"/>
+              <sqlCheck expectedResult="1">
+                SELECT COUNT(*) FROM information_schema.referential_constraints r
+                JOIN information_schema.key_column_usage k ON k.constraint_schema = r.constraint_schema
+                  AND k.constraint_name = r.constraint_name
+                JOIN information_schema.key_column_usage t
+                  ON t.constraint_schema = r.unique_constraint_schema
+                  AND t.constraint_name = r.unique_constraint_name
+                WHERE r.constraint_schema = SCHEMA() AND r.delete_rule = 'CASCADE'
+                  AND LOWER(r.constraint_name) = 'fk_direct_invitation_member_session' AND LOWER(k.table_name) = 'direct_invitation_member'
+                  AND LOWER(k.column_name) = 'session_id' AND LOWER(t.table_name) = 'session'
+                  AND LOWER(t.column_name) = 'id'
+              </sqlCheck>
+            </and>
+            <and>
+              <not>
+                <dbms type="h2"/>
+              </not>
+              <sqlCheck expectedResult="1">
+                SELECT COUNT(*) FROM information_schema.referential_constraints r
+                JOIN information_schema.key_column_usage k ON k.constraint_schema = r.constraint_schema
+                  AND k.constraint_name = r.constraint_name AND k.table_name = r.table_name
+                WHERE r.constraint_schema = SCHEMA() AND r.delete_rule = 'CASCADE'
+                  AND LOWER(r.constraint_name) = 'fk_direct_invitation_member_session' AND LOWER(k.table_name) = 'direct_invitation_member'
+                  AND LOWER(k.column_name) = 'session_id' AND LOWER(k.referenced_table_name) = 'session'
+                  AND LOWER(k.referenced_column_name) = 'id'
+              </sqlCheck>
+            </and>
+          </or>
         </and>
       </or>
     </preConditions>
@@ -183,13 +208,32 @@
     <rollback><sql>SELECT 1</sql></rollback>
   </changeSet>
 
+  <!-- FE#2252 decision B: each person of a shared appointment conversation passes the consent gate
+       (ADR-022) themselves; the owner keeps session.consented_legal_version_id. Same pointer shape
+       as on session (no timestamp, no actor: a pointer, not a log). Own changeSet and guard, so a
+       database that ran the member table before gets the column too. -->
+  <changeSet id="20261116-direct-invitation-member-consent-2252" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <columnExists tableName="direct_invitation_member"
+          columnName="consented_legal_version_id"/>
+      </not>
+    </preConditions>
+    <addColumn tableName="direct_invitation_member">
+      <column name="consented_legal_version_id" type="BIGINT"/>
+    </addColumn>
+    <rollback>
+      <dropColumn tableName="direct_invitation_member" columnName="consented_legal_version_id"/>
+    </rollback>
+  </changeSet>
+
   <!-- Every token "Neuen Link senden" replaced, not only the last one: an older link still reads
        as expired and still asks for a new one. Same check and single creation as the member
        table. -->
   <changeSet id="20261114-direct-invitation-replaced-token-verify-2252" author="oriso"
     runAlways="true" runOnChange="true">
     <preConditions onFail="HALT"
-      onFailMessage="agency_invite_link_replaced_token does not match changeSet 20261114-direct-invitation-replaced-token-2252, or is missing although that changeSet ran. Do not drop it, old links would stop reading as expired. Compare it with that changeSet (columns; unique uq_agency_invite_link_replaced_token on token; fk_agency_invite_link_replaced_token_link on invite_link_id ON DELETE CASCADE), add what is missing by hand after review (or recreate it and remove that changeSet's DATABASECHANGELOG row if it is missing), then restart.">
+      onFailMessage="agency_invite_link_replaced_token does not match changeSet 20261114-direct-invitation-replaced-token-2252, or is missing although that changeSet ran. Do not drop it, old links would stop reading as expired. Compare it with that changeSet (columns; unique uq_agency_invite_link_replaced_token on token; fk_agency_invite_link_replaced_token_link on invite_link_id to agency_invite_link(id) ON DELETE CASCADE), add what is missing by hand after review (or recreate it and remove that changeSet's DATABASECHANGELOG row if it is missing), then restart.">
       <or>
         <and>
           <not>
@@ -213,14 +257,39 @@
             WHERE c.constraint_schema = SCHEMA() AND c.constraint_type = 'UNIQUE'
               AND LOWER(c.table_name) = 'agency_invite_link_replaced_token' AND LOWER(c.constraint_name) = 'uq_agency_invite_link_replaced_token'
           </sqlCheck>
-          <sqlCheck expectedResult="1">
-            SELECT COUNT(*) FROM information_schema.referential_constraints r
-            JOIN information_schema.key_column_usage k ON k.constraint_schema = r.constraint_schema
-              AND k.constraint_name = r.constraint_name
-            WHERE r.constraint_schema = SCHEMA() AND r.delete_rule = 'CASCADE'
-              AND LOWER(r.constraint_name) = 'fk_agency_invite_link_replaced_token_link' AND LOWER(k.table_name) = 'agency_invite_link_replaced_token'
-              AND LOWER(k.column_name) = 'invite_link_id'
-          </sqlCheck>
+          <!-- The key's target too: MariaDB names it on key_column_usage, H2 only through the
+               referenced key. -->
+          <or>
+            <and>
+              <dbms type="h2"/>
+              <sqlCheck expectedResult="1">
+                SELECT COUNT(*) FROM information_schema.referential_constraints r
+                JOIN information_schema.key_column_usage k ON k.constraint_schema = r.constraint_schema
+                  AND k.constraint_name = r.constraint_name
+                JOIN information_schema.key_column_usage t
+                  ON t.constraint_schema = r.unique_constraint_schema
+                  AND t.constraint_name = r.unique_constraint_name
+                WHERE r.constraint_schema = SCHEMA() AND r.delete_rule = 'CASCADE'
+                  AND LOWER(r.constraint_name) = 'fk_agency_invite_link_replaced_token_link' AND LOWER(k.table_name) = 'agency_invite_link_replaced_token'
+                  AND LOWER(k.column_name) = 'invite_link_id' AND LOWER(t.table_name) = 'agency_invite_link'
+                  AND LOWER(t.column_name) = 'id'
+              </sqlCheck>
+            </and>
+            <and>
+              <not>
+                <dbms type="h2"/>
+              </not>
+              <sqlCheck expectedResult="1">
+                SELECT COUNT(*) FROM information_schema.referential_constraints r
+                JOIN information_schema.key_column_usage k ON k.constraint_schema = r.constraint_schema
+                  AND k.constraint_name = r.constraint_name AND k.table_name = r.table_name
+                WHERE r.constraint_schema = SCHEMA() AND r.delete_rule = 'CASCADE'
+                  AND LOWER(r.constraint_name) = 'fk_agency_invite_link_replaced_token_link' AND LOWER(k.table_name) = 'agency_invite_link_replaced_token'
+                  AND LOWER(k.column_name) = 'invite_link_id' AND LOWER(k.referenced_table_name) = 'agency_invite_link'
+                  AND LOWER(k.referenced_column_name) = 'id'
+              </sqlCheck>
+            </and>
+          </or>
         </and>
       </or>
     </preConditions>

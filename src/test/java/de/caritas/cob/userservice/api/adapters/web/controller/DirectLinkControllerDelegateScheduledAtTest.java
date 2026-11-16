@@ -37,6 +37,8 @@ class DirectLinkControllerDelegateScheduledAtTest {
   private final CounsellorDirectLinkService service = mock(CounsellorDirectLinkService.class);
   private final UserAccountService accounts = mock(UserAccountService.class);
   private final TopicService topics = mock(TopicService.class);
+  private final de.caritas.cob.userservice.api.service.session.SessionConsentService consents =
+      mock(de.caritas.cob.userservice.api.service.session.SessionConsentService.class);
   private final Consultant counsellor = new Consultant();
   private final de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitationService
       invitations =
@@ -56,10 +58,51 @@ class DirectLinkControllerDelegateScheduledAtTest {
             mock(DirectCallKnockService.class),
             mock(de.caritas.cob.userservice.api.service.chat.GroupWaitingRoomService.class),
             mock(UserRepository.class),
-            mock(TemporaryAccountService.class));
+            mock(TemporaryAccountService.class),
+            consents);
     counsellor.setId("counsellor-1");
     when(accounts.retrieveValidatedConsultant()).thenReturn(counsellor);
     when(topics.getAllTopicsMap()).thenReturn(Map.of());
+  }
+
+  @Test
+  void startDirectLinkConversation_Should_TellAJoinerTheirOwnConsentIsStillOpen() {
+    var joiner = new de.caritas.cob.userservice.api.model.User();
+    joiner.setUserId("joiner-1");
+    when(accounts.retrieveValidatedUser()).thenReturn(joiner);
+    when(service.startConversation("token", joiner)).thenReturn(started(true));
+    when(consents.consentRequired(42L, "joiner-1")).thenReturn(true);
+
+    var body = delegate.startDirectLinkConversation("token").getBody();
+
+    assertThat(body.getConsentRequired()).isTrue();
+  }
+
+  @Test
+  void startDirectLinkConversation_Should_LeaveConsentOut_ForAnOrdinary1to1() {
+    var asker = new de.caritas.cob.userservice.api.model.User();
+    asker.setUserId("asker-1");
+    when(accounts.retrieveValidatedUser()).thenReturn(asker);
+    when(service.startConversation("token", asker)).thenReturn(started(false));
+
+    var body = delegate.startDirectLinkConversation("token").getBody();
+
+    assertThat(body.getConsentRequired()).isNull();
+    org.mockito.Mockito.verifyNoInteractions(consents);
+  }
+
+  private static CounsellorDirectLinkService.StartedConversation started(boolean shared) {
+    return new CounsellorDirectLinkService.StartedConversation(
+        42L,
+        "!room:oriso",
+        de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkChatType.CHAT,
+        de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkAdmission.DIRECT,
+        false,
+        null,
+        null,
+        null,
+        shared,
+        null);
   }
 
   @Test
