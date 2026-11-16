@@ -21,6 +21,7 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -1140,6 +1141,9 @@ public class EventNotificationService {
       String callId,
       String mediaRoomId,
       boolean video) {
+    if (!isSessionCallParticipant(session, recipientId)) {
+      return;
+    }
     var params = callParams(session, callId, mediaRoomId);
     params.put("callType", video ? "video" : "audio");
     params.put("callerName", resolveSenderName(senderId));
@@ -1168,6 +1172,9 @@ public class EventNotificationService {
       String callId,
       String mediaRoomId,
       boolean video) {
+    if (!isSessionCallParticipant(session, recipientId)) {
+      return;
+    }
     var params = callParams(session, callId, mediaRoomId);
     params.put("callType", video ? "video" : "audio");
     String key = callEventKey("call.started", session.getMatrixRoomId(), callId);
@@ -1193,6 +1200,9 @@ public class EventNotificationService {
       String mediaRoomId,
       long startedAt,
       long endedAt) {
+    if (!isSessionCallParticipant(session, recipientId)) {
+      return;
+    }
     var params = callParams(session, callId, mediaRoomId);
     params.put("durationSeconds", Long.toString(Math.max(0, endedAt - startedAt) / 1000));
     String key = callEventKey("call.ended", session.getMatrixRoomId(), callId);
@@ -1217,6 +1227,9 @@ public class EventNotificationService {
       String callId,
       String mediaRoomId,
       boolean video) {
+    if (!isSessionCallParticipant(session, recipientId)) {
+      return;
+    }
     var params = callParams(session, callId, mediaRoomId);
     params.put("callType", video ? "video" : "audio");
     String key = callEventKey("call.missed", session.getMatrixRoomId(), callId);
@@ -1231,6 +1244,33 @@ public class EventNotificationService {
         session.actionPath(consultantRecipient),
         session.getSessionId(),
         session.getTenantId());
+  }
+
+  /**
+   * A 1:1 session room also holds the department's other counsellors as silent members (ADR-002
+   * §1). A call there is the session's own: only its advice seeker and its assigned counsellor get
+   * call activity. Before this gate every silent member received an "internal group call"
+   * invitation for a case they cannot open (Activity showed only "Open chat", which led nowhere). A
+   * group chat's call keeps notifying every member.
+   */
+  private boolean isSessionCallParticipant(
+      de.caritas.cob.userservice.api.service.matrix.MatrixCallConversation conversation,
+      String recipientId) {
+    if (conversation.getSessionId() == null) {
+      return true;
+    }
+    if (recipientId == null || recipientId.isBlank()) {
+      return false;
+    }
+    return sessionRepository
+        .findById(conversation.getSessionId())
+        .filter(session -> Objects.equals(session.getTenantId(), conversation.getTenantId()))
+        .map(
+            session ->
+                (session.getUser() != null && recipientId.equals(session.getUser().getUserId()))
+                    || (session.getConsultant() != null
+                        && recipientId.equals(session.getConsultant().getId())))
+        .orElse(false);
   }
 
   private Map<String, Object> callParams(
