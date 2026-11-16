@@ -20,6 +20,13 @@ public interface MatrixCallObservationEndRepository
   Optional<MatrixCallObservationEnd> findForUpdateBySourceRoomIdAndCallIdAndActorMatrixId(
       String sourceRoomId, String callId, String actorMatrixId);
 
+  /** FE#2209 round 5: who ended this call, one entry per actor. */
+  @Query(
+      "select e.actorMatrixId from MatrixCallObservationEnd e"
+          + " where e.sourceRoomId = :sourceRoomId and e.callId = :callId")
+  java.util.List<String> findActorMatrixIdsBySourceRoomIdAndCallId(
+      @Param("sourceRoomId") String sourceRoomId, @Param("callId") String callId);
+
   /** The first end of a call that never got a registration; the call reads as ended. */
   Optional<MatrixCallObservationEnd> findFirstBySourceRoomIdAndCallIdOrderByEndedAtAsc(
       String sourceRoomId, String callId);

@@ -1019,6 +1019,35 @@ class MatrixEventListenerServiceTest {
         .hasMessage("repository unavailable");
   }
 
+  @Test
+  void syncCycle_Should_StopBeforeTheJoinedRoomsAndReplayTheBatch_When_ALeaveCannotBeRecorded() {
+    // FE#2209 round 11 (F4): a leave arrives once. If its marker cannot be written, the joined
+    // rooms of the batch are not handled and the cursor stays, so the whole batch is replayed.
+    var service = newService();
+    ReflectionTestUtils.setField(service, "adminAccessToken", "admin-token");
+    when(matrixSynapseService.getMatrixApiUrl()).thenReturn("https://matrix.example");
+    var rooms =
+        Map.<String, Object>of(
+            "leave", Map.of("!left-call-room:example", Map.of()),
+            "join",
+                Map.of(
+                    "!joined-call-room:example", Map.of("timeline", Map.of("events", List.of()))));
+    when(matrixSynapseService.makeMatrixRequest(
+            anyString(), eq("GET"), eq("admin-token"), eq(null)))
+        .thenReturn(Map.of("next_batch", "batch-with-a-leave", "rooms", rooms));
+    org.mockito.Mockito.doThrow(new MatrixCallInviteNotificationService.CallRoomBatchReplay())
+        .when(callInviteNotifications)
+        .handleMediaRoomLeft("!left-call-room:example");
+
+    assertThatThrownBy(
+            () -> ReflectionTestUtils.invokeMethod(service, "executeObservedMatrixSyncCycle"))
+        .isInstanceOf(MatrixCallInviteNotificationService.CallRoomBatchReplay.class);
+
+    verify(callInviteNotifications, never()).handleMediaRooms(any());
+    verify(callInviteNotifications, never()).reconcileMediaRooms();
+    verify(emailSyncCursorStore, never()).write(anyString());
+  }
+
   // ── tenant of each unit of work ───────────────────────────────────────────
 
   @Test

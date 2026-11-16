@@ -95,6 +95,8 @@ class MatrixCallGroupShadowSessionMariaDbIT {
   @MockitoBean private EventNotificationService notifications;
   @MockitoBean private MatrixCallLifecycleService lifecycle;
   @MockitoBean private MatrixCallGuestService callGuests;
+  @MockitoBean private MatrixSessionCallBindingService sessionBindings;
+  @MockitoBean private SessionCallRevival revival;
 
   @Test
   void aCallInAGroupChatRoomWithItsShadowSessionRegistersAndReadsAsTheChatsCall() {
