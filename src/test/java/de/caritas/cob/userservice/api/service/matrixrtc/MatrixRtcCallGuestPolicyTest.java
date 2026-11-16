@@ -30,6 +30,8 @@ class MatrixRtcCallGuestPolicyTest {
   private final SessionRepository sessions = mock(SessionRepository.class);
   private final MatrixSynapseService matrix = mock(MatrixSynapseService.class);
   private final TenantService tenants = mock(TenantService.class);
+  private final de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService callGuests =
+      mock(de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService.class);
   private JdbcTemplate jdbc;
   private MatrixRtcCallPolicyService service;
 
@@ -48,7 +50,7 @@ class MatrixRtcCallGuestPolicyTest {
     jdbc.execute("CREATE TABLE account_inactivity(identity_id VARCHAR(36),status VARCHAR(20))");
     jdbc.execute(
         "CREATE TABLE matrix_call_binding(id BIGINT PRIMARY KEY,source_room_id VARCHAR(255),"
-            + "media_room_id VARCHAR(255),ended_at BIGINT)");
+            + "media_room_id VARCHAR(255),ended_at BIGINT,session_id BIGINT)");
     jdbc.execute(
         "CREATE TABLE matrix_call_guest(id BIGINT AUTO_INCREMENT PRIMARY KEY,binding_id BIGINT,"
             + "matrix_user_id VARCHAR(255),admitted_by_matrix_id VARCHAR(255),admitted_at BIGINT,"
@@ -60,7 +62,9 @@ class MatrixRtcCallGuestPolicyTest {
             + "user_id VARCHAR(36),via VARCHAR(32),status VARCHAR(16))");
     jdbc.update("INSERT INTO user VALUES ('guest',?)", GUEST);
     jdbc.update("INSERT INTO account_inactivity VALUES ('guest','ACTIVE')");
-    jdbc.update("INSERT INTO matrix_call_binding VALUES (1,?,'!media:example',NULL)", SOURCE);
+    jdbc.update(
+        "INSERT INTO matrix_call_binding(id,source_room_id,media_room_id) VALUES (1,?,'!media:example')",
+        SOURCE);
     var hasher = new MatrixRtcCorrelationIdHasher();
     ReflectionTestUtils.setField(hasher, "secret", "test-hmac-secret");
     ReflectionTestUtils.invokeMethod(hasher, "init");
@@ -74,7 +78,8 @@ class MatrixRtcCallGuestPolicyTest {
             tenants,
             matrix,
             hasher,
-            jdbc);
+            jdbc,
+            callGuests);
     when(matrix.getRoomMembers(SOURCE)).thenReturn(Optional.of(List.of("@counsellor:example")));
     var session = mock(Session.class);
     when(session.getTenantId()).thenReturn(7L);
@@ -134,7 +139,9 @@ class MatrixRtcCallGuestPolicyTest {
 
   @Test
   void guestOfAnotherConversationsCallIsDenied() {
-    jdbc.update("INSERT INTO matrix_call_binding VALUES (2,'!other:example','!m2:example',NULL)");
+    jdbc.update(
+        "INSERT INTO matrix_call_binding(id,source_room_id,media_room_id)"
+            + " VALUES (2,'!other:example','!m2:example')");
     guest(2, null);
 
     assertThat(service.resolve(SOURCE, GUEST, "!media:example"))
@@ -145,7 +152,9 @@ class MatrixRtcCallGuestPolicyTest {
   @Test
   void guestOfOneCallIsDeniedForAnotherCallFromTheSameConversation() {
     jdbc.update(
-        "INSERT INTO matrix_call_binding VALUES (3,?,'!second-media:example',NULL)", SOURCE);
+        "INSERT INTO matrix_call_binding(id,source_room_id,media_room_id)"
+            + " VALUES (3,?,'!second-media:example')",
+        SOURCE);
     guest(1, null);
 
     assertThat(service.resolve(SOURCE, GUEST, "!second-media:example"))
@@ -155,6 +164,39 @@ class MatrixRtcCallGuestPolicyTest {
         .isEqualTo(CallMediaPolicy.denied());
     assertThat(service.resolve(SOURCE, GUEST, "!media:example"))
         .isEqualTo(new CallMediaPolicy(true, true));
+  }
+
+  // Security review 5901360577 (Shirloin), point 1: the media gate applies the 1:1 rule too.
+
+  @Test
+  void aSessionCallSeatIsRefusedOnceTheRuleNoLongerHolds() {
+    // Authority lost (reassignment, suspension, deactivation, another Träger) or no counsellor in
+    // the call: MatrixCallGuestService.sessionCallAdmitsGuests answers false.
+    jdbc.update("UPDATE matrix_call_binding SET session_id=45 WHERE id=1");
+    guest(1, null);
+    when(callGuests.sessionCallAdmitsGuests(1L)).thenReturn(false);
+
+    assertThat(service.resolve(SOURCE, GUEST, "!media:example"))
+        .isEqualTo(CallMediaPolicy.denied());
+  }
+
+  @Test
+  void aSessionCallSeatIsAdmittedWhileTheRuleHolds() {
+    jdbc.update("UPDATE matrix_call_binding SET session_id=45 WHERE id=1");
+    guest(1, null);
+    when(callGuests.sessionCallAdmitsGuests(1L)).thenReturn(true);
+
+    assertThat(service.resolve(SOURCE, GUEST, "!media:example"))
+        .isEqualTo(new CallMediaPolicy(true, true));
+  }
+
+  @Test
+  void aGroupCallSeatKeepsItsRule() {
+    guest(1, null);
+
+    assertThat(service.resolve(SOURCE, GUEST, "!media:example"))
+        .isEqualTo(new CallMediaPolicy(true, true));
+    org.mockito.Mockito.verifyNoInteractions(callGuests);
   }
 
   private void guest(long binding, Long revokedAt) {

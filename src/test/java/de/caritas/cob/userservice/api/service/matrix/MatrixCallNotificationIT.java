@@ -47,6 +47,8 @@ import org.springframework.transaction.annotation.Transactional;
     })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({
+  de.caritas.cob.userservice.api.service.matrix.SessionCallAuthority.class,
+  de.caritas.cob.userservice.api.service.matrix.SessionCallRevival.class,
   EventNotificationService.class,
   ConsultantDisplayNameResolver.class,
   EventNotificationDeduplicationWriter.class,
@@ -55,6 +57,8 @@ import org.springframework.transaction.annotation.Transactional;
   MatrixCallGuestService.class,
   MatrixCallConversationResolver.class,
   MatrixCallBindingWriter.class,
+  de.caritas.cob.userservice.api.service.matrix.DedicatedCallRoom.class,
+  de.caritas.cob.userservice.api.service.matrix.OrisoRoomRegistry.class,
   MatrixCallInviteNotificationService.class,
   MatrixCallNotificationIT.ActiveAccountFixture.class
 })
@@ -76,6 +80,20 @@ class MatrixCallNotificationIT {
   @MockitoBean private de.caritas.cob.userservice.api.port.out.ChatRepository chats;
   @MockitoBean private UserRepository users;
   @MockitoBean private ConsultantRepository consultants;
+
+  /** Round 10: the call code reads every row of a Matrix id; the one-row stubs stay the fixture. */
+  @org.junit.jupiter.api.BeforeEach
+  void everyRowQueryAnswersFromTheOneRowStubs() {
+    org.mockito.Mockito.lenient()
+        .when(
+            consultants.findAllByMatrixUserIdAndDeleteDateIsNull(
+                org.mockito.ArgumentMatchers.anyString()))
+        .thenAnswer(
+            call ->
+                consultants.findByMatrixUserIdAndDeleteDateIsNull(call.getArgument(0)).stream()
+                    .toList());
+  }
+
   @MockitoBean private IdentityTombstoneService tombstones;
   @Autowired private AccountInactivityService accountLifecycle;
   @Autowired private javax.sql.DataSource accountDataSource;
@@ -100,6 +118,17 @@ class MatrixCallNotificationIT {
 
   @org.junit.jupiter.api.BeforeEach
   void initializeAccountLifecycleRows() {
+    // Security review 5901360577: the invite path checks the call room's origin as bind() does.
+    // The Frontend creates every call room with the caller as creator and binding sender.
+    org.mockito.Mockito.lenient()
+        .when(
+            matrix.getCallRoomOrigin(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
+        .thenAnswer(
+            call ->
+                java.util.Optional.of(
+                    new de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService
+                        .CallRoomOrigin(call.getArgument(1), call.getArgument(1))));
     initializeAccountLifecycleTable(accountDataSource);
     org.mockito.Mockito.lenient()
         .when(

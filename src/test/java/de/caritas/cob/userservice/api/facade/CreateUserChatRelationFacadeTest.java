@@ -1,12 +1,15 @@
 package de.caritas.cob.userservice.api.facade;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
-import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.model.User;
@@ -55,12 +58,29 @@ class CreateUserChatRelationFacadeTest {
   }
 
   @Test
-  void rejectsAnExistingUserAgencyRelation() {
+  void reusesAnExistingUserAgencyRelationInsteadOfRejectingIt() {
+    // #1646: an existing asker who asks for further counselling at a centre they already
+    // know must not get a 400 because the relation to that centre already exists.
     when(userAgencyService.getUserAgenciesByUser(user))
         .thenReturn(List.of(new UserAgency(user, AGENCY_ID)));
 
-    assertThatThrownBy(() -> facade.initializeUserChatAgencyRelation(userDto, user))
-        .isInstanceOf(BadRequestException.class);
+    assertThatNoException()
+        .isThrownBy(() -> facade.initializeUserChatAgencyRelation(userDto, user));
+
+    verify(userAgencyService, never()).saveUserAgency(any());
+    verifyNoInteractions(auditingHandler, rollbackFacade);
+  }
+
+  @Test
+  void createsTheRelationWhenTheUserOnlyKnowsOtherAgencies() {
+    when(userAgencyService.getUserAgenciesByUser(user))
+        .thenReturn(List.of(new UserAgency(user, AGENCY_ID + 1)));
+
+    facade.initializeUserChatAgencyRelation(userDto, user);
+
+    var relation = ArgumentCaptor.forClass(UserAgency.class);
+    verify(userAgencyService).saveUserAgency(relation.capture());
+    assertThat(relation.getValue().getAgencyId()).isEqualTo(AGENCY_ID);
   }
 
   @Test

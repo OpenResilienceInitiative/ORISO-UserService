@@ -27,7 +27,8 @@ class CallObservationEndMigrationMariaDbIT {
       "db/changelog/changeset/20261113_call_observation_end_1628/changeSet.xml";
 
   private static final MariaDBContainer<?> DATABASE =
-      new MariaDBContainer<>("mariadb:10.11").withDatabaseName("userservice");
+      new MariaDBContainer<>(System.getProperty("it.mariadb.image", "mariadb:10.11"))
+          .withDatabaseName("userservice");
 
   static {
     DATABASE.start();

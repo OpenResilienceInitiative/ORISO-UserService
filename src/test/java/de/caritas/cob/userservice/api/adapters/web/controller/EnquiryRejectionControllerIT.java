@@ -64,6 +64,17 @@ class EnquiryRejectionControllerIT {
 
   @BeforeEach
   void submittedOrdinaryAgencyEnquiry() {
+    // Security review 5901360577: the invite path checks the call room's origin as bind() does.
+    // The Frontend creates every call room with the caller as creator and binding sender.
+    org.mockito.Mockito.lenient()
+        .when(
+            matrix.getCallRoomOrigin(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
+        .thenAnswer(
+            call ->
+                java.util.Optional.of(
+                    new de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService
+                        .CallRoomOrigin(call.getArgument(1), call.getArgument(1))));
     TenantContext.setCurrentTenant(7L);
     org.mockito.Mockito.doNothing().when(feedSignal).signalFeedUpdated(anyString());
     seekerId = UUID.randomUUID().toString();
