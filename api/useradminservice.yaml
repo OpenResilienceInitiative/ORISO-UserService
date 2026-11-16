@@ -3068,6 +3068,11 @@ components:
         tenantId:
           type: integer
           example: "1"
+        contactEmail:
+          type: string
+          format: email
+          maxLength: 255
+          description: Optional contact e-mail counsellors see instead of the login e-mail (ORISO-Admin#1534). Blank clears it.
 
     PatchAdminDTO:
       type: object
@@ -3090,6 +3095,11 @@ components:
           type: string
           format: email
           example: "maxmuster@mann.com"
+        contactEmail:
+          type: string
+          format: email
+          maxLength: 255
+          description: Optional contact e-mail counsellors see instead of the login e-mail (ORISO-Admin#1534). Absent keeps it, blank clears it.
 
     UpdateAgencyAdminDTO:
       allOf:
@@ -3130,6 +3140,9 @@ components:
         email:
           type: string
           example: "max@mustermann.de"
+        contactEmail:
+          type: string
+          description: Optional contact e-mail counsellors see instead of the login e-mail (ORISO-Admin#1534).
         createDate:
           type: string
         updateDate:

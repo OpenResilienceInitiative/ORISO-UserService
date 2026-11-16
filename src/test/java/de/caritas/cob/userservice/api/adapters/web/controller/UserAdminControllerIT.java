@@ -562,6 +562,8 @@ class UserAdminControllerIT {
       throws Exception {
     // given
     CreateAdminDTO createAgencyAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    // A random string is no e-mail address; the contact e-mail is validated (ORISO-Admin#1534).
+    createAgencyAdminDTO.setContactEmail("kontakt@test.com");
 
     // when
     this.mvc
@@ -580,6 +582,7 @@ class UserAdminControllerIT {
       throws Exception {
     // given
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setContactEmail("kontakt@test.com");
 
     // when
     this.mvc
@@ -591,6 +594,19 @@ class UserAdminControllerIT {
 
     // then
     verify(this.adminUserFacade, times(1)).createNewTenantAdmin(any());
+  }
+
+  @Test
+  void createAgencyAdmin_Should_returnBadRequest_When_theContactEmailIsNoEmail() throws Exception {
+    CreateAdminDTO createAgencyAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAgencyAdminDTO.setContactEmail("no-email");
+
+    this.mvc
+        .perform(
+            post(AGENCY_ADMIN_COLLECTION_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(createAgencyAdminDTO)))
+        .andExpect(status().isBadRequest());
   }
 
   @Test
@@ -610,6 +626,7 @@ class UserAdminControllerIT {
     UpdateAgencyAdminDTO updateAgencyAdminDTO =
         new EasyRandom().nextObject(UpdateAgencyAdminDTO.class);
     updateAgencyAdminDTO.setEmail("test@test.com");
+    updateAgencyAdminDTO.setContactEmail("kontakt@test.com");
 
     // when
     this.mvc
@@ -629,6 +646,7 @@ class UserAdminControllerIT {
     UpdateAgencyAdminDTO updateAgencyAdminDTO =
         new EasyRandom().nextObject(UpdateAgencyAdminDTO.class);
     updateAgencyAdminDTO.setEmail("test@test.com");
+    updateAgencyAdminDTO.setContactEmail("kontakt@test.com");
 
     // when
     this.mvc
