@@ -25,7 +25,9 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.CalendarBlocker;
 import de.caritas.cob.userservice.api.model.CalendarBlocker.Source;
 import de.caritas.cob.userservice.api.model.CalendarSync;
+import de.caritas.cob.userservice.api.model.CalendarWorkingDayException;
 import de.caritas.cob.userservice.api.model.CalendarWorkingHours;
+import de.caritas.cob.userservice.api.model.CalendarWorkingHoursSetting;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Chat.ChatModality;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -35,7 +37,9 @@ import de.caritas.cob.userservice.api.model.SessionAppointment;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.CalendarBlockerRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarSyncRepository;
+import de.caritas.cob.userservice.api.port.out.CalendarWorkingDayExceptionRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarWorkingHoursRepository;
+import de.caritas.cob.userservice.api.port.out.CalendarWorkingHoursSettingRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionAppointmentRepository;
@@ -54,6 +58,7 @@ import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTe
 import jakarta.servlet.http.Cookie;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneOffset;
@@ -125,6 +130,8 @@ class CalendarSyncControllerIT {
   @Autowired private CalendarSyncRepository syncs;
   @Autowired private CalendarSyncService syncService;
   @Autowired private CalendarWorkingHoursRepository workingHours;
+  @Autowired private CalendarWorkingDayExceptionRepository dayExceptions;
+  @Autowired private CalendarWorkingHoursSettingRepository holidayRegions;
   @Autowired private DeleteConsultantCalendarAction deleteCalendar;
   @Autowired private ConsultantRepository consultants;
   @Autowired private DeletionLifecycleService lifecycle;
@@ -163,6 +170,8 @@ class CalendarSyncControllerIT {
           blockers.deleteAll();
           syncs.deleteAll();
           workingHours.deleteAll();
+          dayExceptions.deleteAll();
+          holidayRegions.deleteAll();
           chats.deleteAll(seededChats);
         });
     fixtures.removeAll();
@@ -349,13 +358,27 @@ class CalendarSyncControllerIT {
       hours.setStartTime(LocalTime.of(9, 0));
       hours.setEndTime(LocalTime.of(17, 0));
       workingHours.save(hours);
+      var dayOff = new CalendarWorkingDayException();
+      dayOff.setConsultantId(owner);
+      dayOff.setExceptionDate(LocalDate.now(ZoneOffset.UTC).plusDays(1));
+      dayExceptions.save(dayOff);
+      var region = new CalendarWorkingHoursSetting();
+      region.setConsultantId(owner);
+      region.setHolidayRegion("BY");
+      holidayRegions.save(region);
     }
     var workflow = new ConsultantDeletionWorkflowDTO(counsellor, new ArrayList<>());
 
     deleteCalendar.execute(workflow);
 
     assertThat(workflow.getDeletionWorkflowErrors()).isEmpty();
-    for (var table : List.of("calendar_sync", "calendar_blocker", "calendar_working_hours")) {
+    for (var table :
+        List.of(
+            "calendar_sync",
+            "calendar_blocker",
+            "calendar_working_hours",
+            "calendar_working_day_exception",
+            "calendar_working_hours_setting")) {
       assertThat(rowsOf(table, counsellor.getId())).as(table).isZero();
       assertThat(rowsOf(table, colleague.getId())).as(table).isPositive();
     }

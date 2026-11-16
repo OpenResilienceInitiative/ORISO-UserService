@@ -128,6 +128,15 @@ class MatrixCallObservationMariaDbIT {
         .thenReturn(Optional.of(user("other", OTHER)));
     when(consultants.findByMatrixUserIdAndDeleteDateIsNull(anyString()))
         .thenReturn(Optional.empty());
+    // #1656: recipients are resolved in one batched query per table.
+    when(users.findAllByMatrixUserIdInAndDeleteDateIsNull(any()))
+        .thenAnswer(
+            i -> {
+              java.util.Collection<String> ids = i.getArgument(0);
+              return java.util.stream.Stream.of(creator, user("other", OTHER))
+                  .filter(u -> ids.contains(u.getMatrixUserId()))
+                  .toList();
+            });
     when(lifecycle.isActiveRecipient(anyString())).thenReturn(true);
     when(conversations.resolveForWriting(SOURCE)).thenReturn(Optional.of(conversation));
     when(conversations.resolve(SOURCE)).thenReturn(Optional.of(conversation));

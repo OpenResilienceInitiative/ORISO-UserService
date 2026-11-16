@@ -109,14 +109,18 @@ class MatrixSessionCallBindingServiceTest {
         .thenReturn(Optional.of(consultant("counsellor-id", COUNSELLOR)));
     when(consultants.findByIdAndDeleteDateIsNull("other-counsellor-id"))
         .thenReturn(Optional.of(consultant("other-counsellor-id", OTHER_COUNSELLOR)));
-    when(consultants.findByMatrixUserIdAndDeleteDateIsNull(anyString()))
-        .thenReturn(Optional.empty());
-    when(users.findByMatrixUserIdAndDeleteDateIsNull(anyString())).thenReturn(Optional.empty());
     var asker = new User();
     asker.setUserId("asker-id");
     asker.setMatrixUserId(ASKER);
     asker.setTenantId(TENANT);
-    when(users.findByMatrixUserIdAndDeleteDateIsNull(ASKER)).thenReturn(Optional.of(asker));
+    // CodeRabbit 4585785768: invitees are resolved with one query per table.
+    when(users.findAllByMatrixUserIdInAndDeleteDateIsNull(any()))
+        .thenAnswer(
+            call ->
+                ((java.util.Collection<?>) call.getArgument(0)).contains(ASKER)
+                    ? List.of(asker)
+                    : List.of());
+    when(consultants.findAllByMatrixUserIdInAndDeleteDateIsNull(any())).thenReturn(List.of());
     when(matrix.getCallRoomMembers(SOURCE))
         .thenReturn(Optional.of(List.of(COUNSELLOR, ASKER, OTHER_COUNSELLOR)));
     when(matrix.getCallRoomBinding(anyString(), anyString()))
@@ -719,8 +723,33 @@ class MatrixSessionCallBindingServiceTest {
     var owner = existing(7L, MEDIA, COUNSELLOR);
     when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(askers));
     when(bindings.findByMediaRoomId(MEDIA)).thenReturn(Optional.of(owner));
+    // CodeRabbit 4585785834: the lock succeeds, so the collision guard is the only refusal left.
+    when(bindings.lockById(42L)).thenReturn(Optional.of(askers));
     assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isFalse();
     verify(bindings, never()).saveAndFlush(any());
+    assertThat(askers.getCallerMatrixId()).isEqualTo(ASKER);
+    assertThat(askers.getMediaRoomId()).isEqualTo("!asker-media:example");
+  }
+
+  @Test
+  void anAmbiguousMemberIsNoInviteeAndDoesNotAbortTheRegistration() {
+    // CodeRabbit 4585785779: consultant.matrix_user_id is not unique. The single-row finder throws
+    // once two not deleted accounts share an id; the invitees are resolved in one batch per table
+    // and such an id stands for nobody (SoleCounsellor), so the registration still goes through.
+    var first = consultant("other-counsellor-id", OTHER_COUNSELLOR);
+    var twin = consultant("twin-id", OTHER_COUNSELLOR);
+    when(consultants.findAllByMatrixUserIdInAndDeleteDateIsNull(any()))
+        .thenReturn(List.of(first, twin));
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull(OTHER_COUNSELLOR))
+        .thenThrow(new org.springframework.dao.IncorrectResultSizeDataAccessException(1, 2));
+
+    assertThat(service.bind(actor("counsellor-id", true), SOURCE, "call", MEDIA, true)).isTrue();
+
+    var captor = ArgumentCaptor.forClass(MatrixCallBinding.class);
+    verify(callBindings).registerWhileSourceLocked(captor.capture());
+    assertThat(captor.getValue().getInvitedMatrixIds()).containsExactly(ASKER);
+    verify(users, org.mockito.Mockito.times(1)).findAllByMatrixUserIdInAndDeleteDateIsNull(any());
+    verify(users, never()).findByMatrixUserIdAndDeleteDateIsNull(anyString());
   }
 
   @Test

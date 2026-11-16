@@ -74,6 +74,10 @@ class MatrixCallGuestServiceTest {
         .thenReturn(Optional.of(new MatrixCallConversation(SOURCE, 7L, 45L, null)));
     when(consultants.findByIdAndDeleteDateIsNull("counsellor"))
         .thenReturn(Optional.of(consultant("counsellor", COUNSELLOR, 7L)));
+    // CodeRabbit 4585785683: the admitting counsellor's Matrix id stands for them alone.
+    lenient()
+        .when(consultants.findByMatrixUserIdAndDeleteDateIsNull(COUNSELLOR))
+        .thenReturn(Optional.of(consultant("counsellor", COUNSELLOR, 7L)));
     when(users.findByUserIdAndDeleteDateIsNull("guest"))
         .thenReturn(Optional.of(user("guest", GUEST, 7L)));
     when(matrix.getCallRoomMembers(SOURCE)).thenReturn(Optional.of(List.of(COUNSELLOR)));
@@ -91,6 +95,17 @@ class MatrixCallGuestServiceTest {
             call ->
                 consultants.findByMatrixUserIdAndDeleteDateIsNull(call.getArgument(0)).stream()
                     .toList());
+    // CodeRabbit 4585785733: the media gate resolves every live sender in one query; the batch
+    // answers what the per-id fixture answers for each id.
+    lenient()
+        .when(consultants.findAllByMatrixUserIdInAndDeleteDateIsNull(any()))
+        .thenAnswer(
+            call -> {
+              java.util.Collection<String> ids = call.getArgument(0);
+              return ids.stream()
+                  .flatMap(id -> consultants.findAllByMatrixUserIdAndDeleteDateIsNull(id).stream())
+                  .toList();
+            });
     lenient()
         .when(guests.saveAndFlush(any(MatrixCallGuest.class)))
         .thenAnswer(
@@ -979,6 +994,51 @@ class MatrixCallGuestServiceTest {
     service.revokeOnceTheSessionCallRuleLapsed(call, 1300L);
 
     assertThat(guest.getRevokedAt()).isNotNull();
+  }
+
+  // CodeRabbit 4585785683: admission applies the media gate's unique-identity rule to the admitting
+  // counsellor too; else it would seat a guest the gate then refuses.
+  @Test
+  void aCounsellorWhoseMatrixIdAnotherAccountOfTheTraegerSharesCannotAdmit() throws Exception {
+    twoRowsFor(
+        COUNSELLOR, consultant("counsellor", COUNSELLOR, 7L), consultant("twin", COUNSELLOR, 7L));
+
+    assertThat(service.admit(counsellor, SOURCE, "call", "guest").outcome())
+        .isEqualTo(Outcome.NOT_FOUND);
+    assertThat(service.counsellorCall(7L, "counsellor", SOURCE, "call").outcome())
+        .as("the share-link owner and previous-admitter paths go through counsellorCall too")
+        .isEqualTo(Outcome.NOT_FOUND);
+    assertThat(saved).isEmpty();
+    verify(matrix, never()).inviteUserToRoom(anyString(), anyString(), anyString());
+  }
+
+  // CodeRabbit 4585785672: the session is locked after the binding and before the authority check,
+  // so the check reads a reassignment that committed after this transaction's snapshot.
+  @Test
+  void theSessionIsLockedAfterTheBindingAndBeforeTheAuthorityCheck() {
+    service.counsellorCall(7L, "counsellor", SOURCE, "call");
+
+    var order = org.mockito.Mockito.inOrder(bindings, authority);
+    order.verify(bindings).lockByMediaRoomId(MEDIA);
+    order.verify(authority).lockSessionOf(binding);
+    order.verify(authority).grantsGuestAuthority(binding);
+  }
+
+  // CodeRabbit 4585785733: the media gate resolves every live sender in one query.
+  @Test
+  void theMediaGateResolvesAllLiveSendersInOneQuery() {
+    long now = System.currentTimeMillis();
+    for (int i = 0; i < 20; i++)
+      device("guest-device-" + i, "@guest" + i + ":example", now + 60_000);
+    when(bindings.findById(11L)).thenReturn(Optional.of(binding));
+    org.mockito.Mockito.doReturn(List.of(consultant("counsellor", COUNSELLOR, 7L)))
+        .when(consultants)
+        .findAllByMatrixUserIdInAndDeleteDateIsNull(any());
+
+    assertThat(service.sessionCallAdmitsGuests(11L)).isTrue();
+    verify(consultants, org.mockito.Mockito.times(1))
+        .findAllByMatrixUserIdInAndDeleteDateIsNull(any());
+    verify(consultants, never()).findAllByMatrixUserIdAndDeleteDateIsNull(anyString());
   }
 
   private MatrixCallBinding binding(Long endedAt) {

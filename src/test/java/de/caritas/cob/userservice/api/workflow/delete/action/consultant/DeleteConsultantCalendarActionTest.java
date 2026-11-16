@@ -11,7 +11,9 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.CalendarBlockerRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarMoveProposalRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarSyncRepository;
+import de.caritas.cob.userservice.api.port.out.CalendarWorkingDayExceptionRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarWorkingHoursRepository;
+import de.caritas.cob.userservice.api.port.out.CalendarWorkingHoursSettingRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
 import java.util.ArrayList;
 import org.junit.jupiter.api.BeforeEach;
@@ -29,6 +31,8 @@ class DeleteConsultantCalendarActionTest {
   @Mock private CalendarSyncRepository calendarSyncRepository;
   @Mock private CalendarBlockerRepository calendarBlockerRepository;
   @Mock private CalendarWorkingHoursRepository calendarWorkingHoursRepository;
+  @Mock private CalendarWorkingDayExceptionRepository calendarWorkingDayExceptionRepository;
+  @Mock private CalendarWorkingHoursSettingRepository calendarWorkingHoursSettingRepository;
   @Mock private CalendarMoveProposalRepository calendarMoveProposalRepository;
   @Mock private PlatformTransactionManager transactionManager;
 
@@ -41,6 +45,8 @@ class DeleteConsultantCalendarActionTest {
             calendarSyncRepository,
             calendarBlockerRepository,
             calendarWorkingHoursRepository,
+            calendarWorkingDayExceptionRepository,
+            calendarWorkingHoursSettingRepository,
             calendarMoveProposalRepository,
             transactionManager);
   }
@@ -54,6 +60,8 @@ class DeleteConsultantCalendarActionTest {
     verify(calendarSyncRepository).deleteByConsultantId(CONSULTANT_ID);
     verify(calendarBlockerRepository).deleteByConsultantId(CONSULTANT_ID);
     verify(calendarWorkingHoursRepository).deleteByConsultantId(CONSULTANT_ID);
+    verify(calendarWorkingDayExceptionRepository).deleteByConsultantId(CONSULTANT_ID);
+    verify(calendarWorkingHoursSettingRepository).deleteByConsultantId(CONSULTANT_ID);
     // Proposals they made and proposals they were asked to decide: one query covers both roles.
     verify(calendarMoveProposalRepository).deleteByConsultantId(CONSULTANT_ID);
     verify(transactionManager).commit(any());

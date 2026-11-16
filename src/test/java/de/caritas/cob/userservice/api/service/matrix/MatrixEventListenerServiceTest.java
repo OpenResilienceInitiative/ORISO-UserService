@@ -1025,6 +1025,9 @@ class MatrixEventListenerServiceTest {
     // rooms of the batch are not handled and the cursor stays, so the whole batch is replayed.
     var service = newService();
     ReflectionTestUtils.setField(service, "adminAccessToken", "admin-token");
+    // CodeRabbit 4585785827: the in-memory cursor must stay too, or the next request skips the
+    // batch although the persisted email cursor was never written.
+    ReflectionTestUtils.setField(service, "syncToken", "previous-batch");
     when(matrixSynapseService.getMatrixApiUrl()).thenReturn("https://matrix.example");
     var rooms =
         Map.<String, Object>of(
@@ -1046,6 +1049,7 @@ class MatrixEventListenerServiceTest {
     verify(callInviteNotifications, never()).handleMediaRooms(any());
     verify(callInviteNotifications, never()).reconcileMediaRooms();
     verify(emailSyncCursorStore, never()).write(anyString());
+    assertThat(ReflectionTestUtils.getField(service, "syncToken")).isEqualTo("previous-batch");
   }
 
   // ── tenant of each unit of work ───────────────────────────────────────────

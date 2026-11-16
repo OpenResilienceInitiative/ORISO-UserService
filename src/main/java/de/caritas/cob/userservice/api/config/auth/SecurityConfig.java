@@ -560,6 +560,8 @@ public class SecurityConfig {
                     "/service/users/chat-series/**",
                     "/users/agencies/{agencyId:[0-9]+}/admin-contacts",
                     "/service/users/agencies/{agencyId:[0-9]+}/admin-contacts",
+                    "/users/agencies/{agencyId:[0-9]+}/contact-person",
+                    "/service/users/agencies/{agencyId:[0-9]+}/contact-person",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover",
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover/extend",
@@ -740,6 +742,24 @@ public class SecurityConfig {
                 .requestMatchers("/useradmin/list-preferences", "/useradmin/list-preferences/**")
                 .hasAnyAuthority(
                     USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
+                // Contact person per counselling centre and Träger (ORISO-Admin#1534). Every admin
+                // role reaches it; ContactPersonAdminService narrows to the caller's AdminScope
+                // (agency admins: own centres only, never the Träger default).
+                .requestMatchers(
+                    "/useradmin/agencies/{agencyId:[0-9]+}/contactperson",
+                    "/useradmin/agencies/{agencyId:[0-9]+}/contactperson/candidates",
+                    "/useradmin/agencycontacts/coverage",
+                    "/service/useradmin/agencies/{agencyId:[0-9]+}/contactperson",
+                    "/service/useradmin/agencies/{agencyId:[0-9]+}/contactperson/candidates",
+                    "/service/useradmin/agencycontacts/coverage")
+                .hasAnyAuthority(
+                    USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
+                .requestMatchers(
+                    "/useradmin/tenants/{tenantId:[0-9]+}/contactperson",
+                    "/useradmin/tenants/{tenantId:[0-9]+}/contactperson/candidates",
+                    "/service/useradmin/tenants/{tenantId:[0-9]+}/contactperson",
+                    "/service/useradmin/tenants/{tenantId:[0-9]+}/contactperson/candidates")
+                .hasAnyAuthority(USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
                 .requestMatchers(
                     "/useradmin", "/useradmin/**", "/service/useradmin", "/service/useradmin/**")
                 .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
@@ -786,6 +806,8 @@ public class SecurityConfig {
                     "/service/users/calendar/sync/import",
                     "/users/calendar/working-hours",
                     "/service/users/calendar/working-hours",
+                    "/users/calendar/working-hours/exceptions/{date}",
+                    "/service/users/calendar/working-hours/exceptions/{date}",
                     "/users/calendar/proposals",
                     "/service/users/calendar/proposals",
                     "/users/calendar/proposals/{proposalId}",

@@ -762,6 +762,14 @@ public class UserController implements UsersApi {
         agencyAdminContactService.contactsFor(authenticatedUser.getUserId(), agencyId));
   }
 
+  /** The contact person of one of the caller's counselling centres (ORISO-Admin#1534). */
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAgencyContactDTO>
+      getConsultantAgencyContactPerson(Long agencyId) {
+    return ResponseEntity.ok(
+        agencyAdminContactService.contactPersonFor(authenticatedUser.getUserId(), agencyId));
+  }
+
   @Override
   public ResponseEntity<List<GetChatSeriesOccurrences200ResponseInner>> getChatSeriesOccurrences(
       Long seriesId, OffsetDateTime from, OffsetDateTime to, Integer limit) {

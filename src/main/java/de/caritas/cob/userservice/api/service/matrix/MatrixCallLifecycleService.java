@@ -172,7 +172,15 @@ public class MatrixCallLifecycleService {
         || !Objects.equals(session.getChatId(), binding.getChatId())
         || !Objects.equals(session.getTenantId(), binding.getTenantId())) return;
     var members = matrix.getCallRoomMembers(binding.getSourceRoomId()).orElse(null);
-    if (members == null) return;
+    if (members == null) {
+      // CodeRabbit 4585785745: a lookup that answers "unknown" (a definitive Synapse error; the
+      // transient ones throw already) must not count as a handled batch, or the departures in it
+      // are dropped and a stale membership keeps the call open. The live pass fails, so the batch
+      // is replayed and, within the replay bound, the room is marked unobserved (fail closed).
+      // An event-less pass (reconcile sweeps) has nothing to drop and returns as before.
+      if (!memberships(roomData).isEmpty()) throw new CallRoomMembersUnknown();
+      return;
+    }
     boolean retainedClosure = !conversations.lockCurrentForWriting(session);
     if (retainedClosure && !startedBeforeRejection(binding)) {
       // No call history is retained here; close silently so expiry stops reselecting the row.
@@ -313,6 +321,13 @@ public class MatrixCallLifecycleService {
                             .toInstant(java.time.ZoneOffset.UTC)
                             .toEpochMilli())
         .isPresent();
+  }
+
+  /** A call-room pass with membership events whose conversation members are unknown. No ids. */
+  static final class CallRoomMembersUnknown extends RuntimeException {
+    CallRoomMembersUnknown() {
+      super("Call room members unknown; the membership events are not applied", null, false, false);
+    }
   }
 
   private List<MatrixRtcMembershipEvent> memberships(Map<String, Object> room) {
