@@ -288,4 +288,5 @@
   <include file="db/changelog/changeset/20261114_calendar_blocker_1000/changeSet.xml"/>
   <include file="db/changelog/changeset/20261114_calendar_sync_1645/changeSet.xml"/>
   <include file="db/changelog/changeset/20261114_calendar_working_hours_1000/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261116_calendar_move_proposal_1000/changeSet.xml"/>
 </databaseChangeLog>

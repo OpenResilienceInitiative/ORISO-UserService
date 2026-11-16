@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.CalendarBlockerRepository;
+import de.caritas.cob.userservice.api.port.out.CalendarMoveProposalRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarSyncRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarWorkingHoursRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
@@ -28,6 +29,7 @@ class DeleteConsultantCalendarActionTest {
   @Mock private CalendarSyncRepository calendarSyncRepository;
   @Mock private CalendarBlockerRepository calendarBlockerRepository;
   @Mock private CalendarWorkingHoursRepository calendarWorkingHoursRepository;
+  @Mock private CalendarMoveProposalRepository calendarMoveProposalRepository;
   @Mock private PlatformTransactionManager transactionManager;
 
   private DeleteConsultantCalendarAction action;
@@ -39,6 +41,7 @@ class DeleteConsultantCalendarActionTest {
             calendarSyncRepository,
             calendarBlockerRepository,
             calendarWorkingHoursRepository,
+            calendarMoveProposalRepository,
             transactionManager);
   }
 
@@ -51,8 +54,23 @@ class DeleteConsultantCalendarActionTest {
     verify(calendarSyncRepository).deleteByConsultantId(CONSULTANT_ID);
     verify(calendarBlockerRepository).deleteByConsultantId(CONSULTANT_ID);
     verify(calendarWorkingHoursRepository).deleteByConsultantId(CONSULTANT_ID);
+    // Proposals they made and proposals they were asked to decide: one query covers both roles.
+    verify(calendarMoveProposalRepository).deleteByConsultantId(CONSULTANT_ID);
     verify(transactionManager).commit(any());
     assertThat(workflow.getDeletionWorkflowErrors()).isEmpty();
+  }
+
+  @Test
+  void execute_Should_RollBackEveryCalendarRow_When_TheProposalsCannotBeDeleted() {
+    var workflow = workflow();
+    doThrow(new IllegalStateException("db down"))
+        .when(calendarMoveProposalRepository)
+        .deleteByConsultantId(CONSULTANT_ID);
+
+    action.execute(workflow);
+
+    verify(transactionManager).rollback(any());
+    assertThat(workflow.getDeletionWorkflowErrors()).hasSize(1);
   }
 
   @Test
