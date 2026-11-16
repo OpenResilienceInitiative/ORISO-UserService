@@ -102,6 +102,11 @@ public class Admin implements TenantAware {
   @SortableField
   private String email;
 
+  /** Shown to counsellors instead of the login e-mail when set (ORISO-Admin#1534). */
+  @Column(name = "contact_email")
+  @Size(max = 255)
+  private String contactEmail;
+
   @Enumerated(EnumType.STRING)
   @Column(length = 6, nullable = false)
   private AdminType type;

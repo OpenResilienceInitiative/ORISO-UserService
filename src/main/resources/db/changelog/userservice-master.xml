@@ -290,4 +290,5 @@
   <include file="db/changelog/changeset/20261114_calendar_working_hours_1000/changeSet.xml"/>
   <include file="db/changelog/changeset/20261114_calendar_working_hours_exceptions_1000/changeSet.xml"/>
   <include file="db/changelog/changeset/20261116_calendar_move_proposal_1000/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261116_agency_contact_person_1534/changeSet.xml"/>
 </databaseChangeLog>

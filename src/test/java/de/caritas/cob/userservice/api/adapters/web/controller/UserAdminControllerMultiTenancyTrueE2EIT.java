@@ -234,6 +234,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
       throws Exception {
     // given
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setContactEmail(null);
     createAdminDTO.setEmail("agencyadmin@email.com");
     createAdminDTO.setTenantId(95);
     givenCurrentSetupIdentity(createAdminDTO, AccountInviteTargetRole.AGENCY_ADMIN);
@@ -277,6 +278,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
       throws Exception {
     // given
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setContactEmail(null);
     createAdminDTO.setEmail("agencyadmin@email.com");
     createAdminDTO.setTenantId(null);
     givenTenant();
@@ -302,6 +304,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
       throws Exception {
     // given a tenant super admin whose token carries no tenant
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setContactEmail(null);
     createAdminDTO.setEmail("agencyadmin@email.com");
     createAdminDTO.setTenantId(95);
     givenTenant();
@@ -325,6 +328,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
       throws Exception {
     // given a tenant admin of tenant 95 posting an agency admin for tenant 7
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setContactEmail(null);
     createAdminDTO.setEmail("agencyadmin@email.com");
     createAdminDTO.setTenantId(7);
     givenTenant();
@@ -348,6 +352,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
   void createNewAgencyAdmin_Should_returnOk_When_tenantAdminTargetsOwnTenant() throws Exception {
     // given
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setContactEmail(null);
     createAdminDTO.setEmail("agencyadmin@email.com");
     createAdminDTO.setTenantId(95);
     givenCurrentSetupIdentity(createAdminDTO, AccountInviteTargetRole.AGENCY_ADMIN);
@@ -374,6 +379,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
       throws Exception {
     // given a tenant admin of tenant 95 posting a tenant admin for tenant 7
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setContactEmail(null);
     createAdminDTO.setEmail("tenantadmin@email.com");
     createAdminDTO.setTenantId(7);
     givenTenant();
@@ -396,6 +402,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
   void createNewTenantAdmin_Should_returnOk_When_tenantAdminTargetsOwnTenant() throws Exception {
     // given
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setContactEmail(null);
     createAdminDTO.setEmail("tenantadmin@email.com");
     createAdminDTO.setTenantId(95);
     givenCurrentSetupIdentity(createAdminDTO, AccountInviteTargetRole.TENANT_ADMIN);
@@ -422,6 +429,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT extends AccountInactivityPolicyHt
       throws Exception {
     // given
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setContactEmail(null);
     createAdminDTO.setEmail("platformadmin@email.com");
     createAdminDTO.setTenantId(0);
     when(authenticatedUser.getAccessToken()).thenReturn("platform-caller-token");

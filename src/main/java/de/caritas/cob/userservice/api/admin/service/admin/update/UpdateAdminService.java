@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
+import de.caritas.cob.userservice.api.service.contactperson.ContactEmail;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -81,6 +82,7 @@ public class UpdateAdminService {
     admin.setLastName(updateAgencyAdminDTO.getLastname());
     admin.setFirstName(updateAgencyAdminDTO.getFirstname());
     admin.setEmail(updateAgencyAdminDTO.getEmail());
+    applyContactEmail(updateAgencyAdminDTO.getContactEmail(), admin);
     return admin;
   }
 
@@ -88,6 +90,7 @@ public class UpdateAdminService {
     admin.setLastName(updateTenantAdminDTO.getLastname());
     admin.setFirstName(updateTenantAdminDTO.getFirstname());
     admin.setEmail(updateTenantAdminDTO.getEmail());
+    applyContactEmail(updateTenantAdminDTO.getContactEmail(), admin);
     admin.setTenantId(Long.valueOf(updateTenantAdminDTO.getTenantId()));
     return admin;
   }
@@ -96,6 +99,7 @@ public class UpdateAdminService {
     admin.setLastName(patchAdminDTO.getLastname());
     admin.setFirstName(patchAdminDTO.getFirstname());
     admin.setEmail(patchAdminDTO.getEmail());
+    applyContactEmail(patchAdminDTO.getContactEmail(), admin);
     return admin;
   }
 
@@ -129,5 +133,12 @@ public class UpdateAdminService {
         profileUpdate(userDTO, patchAdminDTO.getFirstname(), patchAdminDTO.getLastname()));
 
     return this.adminRepository.save(patchAdminEntity(patchAdminDTO, admin));
+  }
+
+  /** Absent keeps the contact e-mail, blank clears it (ORISO-Admin#1534). */
+  private static void applyContactEmail(String contactEmail, Admin admin) {
+    if (contactEmail != null) {
+      admin.setContactEmail(ContactEmail.normalize(contactEmail));
+    }
   }
 }
