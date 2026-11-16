@@ -15,9 +15,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Deletes agency and tenant admins. Admins have no safeguarding window: the deletion is executed at
- * once, and leaves an {@code EXECUTED} entry in the deletion log. The row deletion, the
- * contact-person cleanup and the audit entry share one transaction; the identity-provider call
- * cannot be rolled back.
+ * once, and leaves an {@code EXECUTED} entry in the deletion log. The row deletion and the
+ * contact-person cleanup share one transaction; the identity-provider call cannot be rolled back.
+ * The log entry is best effort and written only after that transaction commits (see {@link
+ * DeletionAuditService}).
  */
 @Service
 @RequiredArgsConstructor
