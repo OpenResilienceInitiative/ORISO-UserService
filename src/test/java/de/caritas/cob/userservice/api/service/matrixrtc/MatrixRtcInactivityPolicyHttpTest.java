@@ -111,7 +111,9 @@ class MatrixRtcInactivityPolicyHttpTest {
               new TenantService(factory, new ConcurrentMapCacheManager()),
               matrix,
               hasher,
-              jdbc);
+              jdbc,
+              org.mockito.Mockito.mock(
+                  de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService.class));
       var mvc =
           MockMvcBuilders.standaloneSetup(
                   new MatrixRtcCallPolicyController(

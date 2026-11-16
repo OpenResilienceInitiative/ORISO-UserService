@@ -150,4 +150,13 @@ public interface UserRepository extends CrudRepository<User, String> {
           + " AND u.temporaryAccountSnapshot.medium IS NOT NULL"
           + " AND u.temporaryAccountSnapshot.deletedAt IS NULL")
   List<String> findLiveDirectLinkTemporaryAccountIds();
+
+  /**
+   * Advice seekers of a Träger that still count as accounts: not marked for deletion and not one of
+   * the technical {@code group-chat-system} users, which go with their Träger (#1466).
+   */
+  @Query(
+      "SELECT COUNT(u) FROM User u WHERE u.tenantId = :tenantId AND u.deleteDate IS NULL"
+          + " AND u.userId NOT LIKE 'group-chat-system%'")
+  long countActiveAdviceSeekersOfTenant(@Param("tenantId") Long tenantId);
 }
