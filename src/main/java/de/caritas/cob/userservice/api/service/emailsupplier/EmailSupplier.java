@@ -16,6 +16,9 @@ public interface EmailSupplier {
   String TEMPLATE_REASSIGN_REQUEST_NOTIFICATION = "reassign-request-notification";
   String TEMPLATE_REASSIGN_CONFIRMATION_NOTIFICATION = "reassign-confirmation-notification";
 
+  /** A colleague proposes to move one's appointment (ADR-032); rendered by OrisoEmailRenderer. */
+  String TEMPLATE_CALENDAR_MOVE_PROPOSAL = "calendar-move-proposal";
+
   /**
    * Functionality to generate a list of {@link MailDTO} used in {@link EmailNotificationFacade}.
    *
