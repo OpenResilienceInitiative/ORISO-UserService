@@ -34,6 +34,10 @@ class AgencyAdminContactServiceTest {
   @Mock private AdminAgencyRepository adminAgencyRepository;
   @Mock private ConsultantRepository consultantRepository;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.contactperson.ContactPersonResolver
+      contactPersonResolver;
+
   @InjectMocks private AgencyAdminContactService service;
 
   @Test

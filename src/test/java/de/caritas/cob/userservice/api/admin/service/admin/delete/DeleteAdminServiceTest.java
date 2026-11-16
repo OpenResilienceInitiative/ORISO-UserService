@@ -31,6 +31,26 @@ public class DeleteAdminServiceTest {
   @Mock private IdentityAccountRemover identityAccountRemover;
   @Mock private DeletionAuditService deletionAuditService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.contactperson.ContactPersonReferences
+      contactPersonReferences;
+
+  /** ORISO-Admin#1534: a deleted agency admin is no longer anybody's contact person or deputy. */
+  @Test
+  void deleteAgencyAdmin_Should_removeTheAdminFromEveryContactPerson() {
+    deleteAdminService.deleteAgencyAdmin(VALID_ADMIN_ID);
+
+    verify(contactPersonReferences).forgetAdmin(VALID_ADMIN_ID);
+  }
+
+  /** ORISO-Admin#1534: a deleted tenant admin is no longer anybody's contact person or deputy. */
+  @Test
+  void deleteTenantAdmin_Should_removeTheAdminFromEveryContactPerson() {
+    deleteAdminService.deleteTenantAdmin(VALID_ADMIN_ID);
+
+    verify(contactPersonReferences).forgetAdmin(VALID_ADMIN_ID);
+  }
+
   @Test
   public void deleteAgencyAdmin_Should_deleteAdminAndRelation_When_adminIdIsProvided() {
     // given
