@@ -46,14 +46,12 @@ import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyServic
 import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.Licensing;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantDTO;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
-import java.util.Set;
 import org.hibernate.validator.internal.util.CollectionHelper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -119,7 +117,6 @@ class CreateConsultantSagaTest {
 
   @Mock private RollbackFacade rollbackFacade;
   @Mock private AuthenticatedUser authenticatedUser;
-  @Mock private AppointmentService appointmentService;
 
   // The resolver is the single place that decides which name may reach Matrix (ADR-002 §2), so the
   // saga tests exercise the real rule instead of a mock that would answer null.
@@ -129,7 +126,6 @@ class CreateConsultantSagaTest {
 
   @BeforeEach
   void setUp() {
-    ReflectionTestUtils.setField(createConsultantSaga, "appointmentFeatureEnabled", false);
     ReflectionTestUtils.setField(createConsultantSaga, "multiTenancyEnabled", false);
     PlainCredentialsHolder.clear();
     TenantContext.clear();
@@ -201,7 +197,6 @@ class CreateConsultantSagaTest {
     assertThat(response.getEmbedded(), notNullValue());
     assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
     verify(identityClient).updateRole(KEYCLOAK_USER_ID, CONSULTANT.getValue());
-    verify(appointmentService, never()).createConsultant(any());
   }
 
   @Test
@@ -380,38 +375,6 @@ class CreateConsultantSagaTest {
 
     assertThrows(BadRequestException.class, () -> createConsultantSaga.createNewConsultant(dto));
 
-    verify(rollbackFacade).rollbackConsultantAccount(any(Consultant.class));
-  }
-
-  @Test
-  void createNewConsultant_Should_callAppointmentService_When_featureEnabled() throws Exception {
-    ReflectionTestUtils.setField(createConsultantSaga, "appointmentFeatureEnabled", true);
-    stubHappyPath();
-
-    createConsultantSaga.createNewConsultant(validCreateConsultantDto());
-
-    verify(appointmentService).createConsultant(any());
-  }
-
-  @Test
-  void createNewConsultant_Should_rollback_When_appointmentServiceFails() throws Exception {
-    ReflectionTestUtils.setField(createConsultantSaga, "appointmentFeatureEnabled", true);
-    stubHappyPath();
-    when(authenticatedUser.getUserId()).thenReturn("admin-id");
-    when(authenticatedUser.getRoles()).thenReturn(Set.of("admin"));
-    doThrow(new RuntimeException("appointment down"))
-        .when(appointmentService)
-        .createConsultant(any());
-
-    var ex =
-        assertThrows(
-            DistributedTransactionException.class,
-            () -> createConsultantSaga.createNewConsultant(validCreateConsultantDto()));
-
-    assertThat(
-        ex.getCustomHttpHeaders().get("X-Reason").get(0),
-        is(
-            "DISTRIBUTED_TRANSACTION_FAILED_ON_STEP_CREATE_ACCOUNT_IN_CALCOM_OR_APPOINTMENTSERVICE"));
     verify(rollbackFacade).rollbackConsultantAccount(any(Consultant.class));
   }
 

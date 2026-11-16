@@ -1,0 +1,14 @@
+# Breaking changes that were made on purpose.
+#
+# verify-provider-source-compatibility.sh passes this file to oasdiff as
+# --err-ignore and --warn-ignore. oasdiff skips a change when one line holds
+# its method, its path and its full message (case-insensitive). Other lines,
+# such as these comments, match nothing.
+#
+# Reviewers confirm every entry in the pull request that adds it.
+# An entry can be deleted once the change has reached every long-lived branch.
+
+# ADR-032 / ORISO-UserService#1650: the cal.com notification lookup is removed.
+GET /users/notifications api path removed without deprecation
+# ADR-032 / ORISO-UserService#1650: the cal.com feature flag is no longer sent.
+GET /users/data removed the optional property `appointmentFeatureEnabled` from the response with the `200` status

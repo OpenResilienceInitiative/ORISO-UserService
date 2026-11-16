@@ -319,6 +319,18 @@
 		</dependency>
 
 		<!-- Commons Codec -->
+		<!-- Fetches the calendar busy import pinned to the validated address (ADR-032, #1645);
+		     version managed by Spring Boot -->
+		<dependency>
+			<groupId>org.apache.httpcomponents.client5</groupId>
+			<artifactId>httpclient5</artifactId>
+		</dependency>
+		<!-- iCalendar (RFC 5545) parsing for the calendar busy import (ADR-032, #1645); BSD-3 -->
+		<dependency>
+			<groupId>org.mnode.ical4j</groupId>
+			<artifactId>ical4j</artifactId>
+			<version>4.1.1</version>
+		</dependency>
 		<dependency>
 		    <groupId>commons-codec</groupId>
 		    <artifactId>commons-codec</artifactId>
@@ -681,33 +693,6 @@
 						</configuration>
 					</execution>
 					<execution>
-						<id>appointment-service</id>
-						<goals>
-							<goal>generate</goal>
-						</goals>
-						<configuration>
-							<inputSpec>${project.basedir}/api/appointmentservice.yaml</inputSpec>
-							<generatorName>spring</generatorName>
-							<apiPackage>${adapters.web.generated.path}.controller</apiPackage>
-							<modelPackage>${adapters.web.dto.path}</modelPackage>
-							<generateSupportingFiles>true</generateSupportingFiles>
-								<configOptions>
-									<sourceFolder>/</sourceFolder>
-									<useJakartaEe>true</useJakartaEe>
-									<useSpringBoot3>true</useSpringBoot3>
-									<interfaceOnly>true</interfaceOnly>
-									<dateLibrary>java8</dateLibrary>
-								</configOptions>
-							<output>target/generated-sources</output>
-							<typeMappings>
-								<typeMapping>OffsetDateTime=Instant</typeMapping>
-							</typeMappings>
-							<importMappings>
-								<importMapping>java.time.OffsetDateTime=java.time.Instant</importMapping>
-							</importMappings>
-						</configuration>
-					</execution>
-					<execution>
 						<id>application-settings-service-client-model</id>
 						<phase>generate-sources</phase>
 						<goals>
@@ -799,6 +784,32 @@
 							<generatorName>spring</generatorName>
 							<apiPackage>
 								${project.groupId}.${project.artifactId}.generated.api.sessionappointment.controller
+							</apiPackage>
+							<modelPackage>${adapters.web.dto.path}</modelPackage>
+							<generateSupportingFiles>true</generateSupportingFiles>
+							<output>target/generated-sources</output>
+						</configuration>
+					</execution>
+					<!-- Generate calendar API (ADR-032, ORISO-UserService#1000, #1645) -->
+					<execution>
+						<id>calendar-service</id>
+						<goals>
+							<goal>generate</goal>
+						</goals>
+						<configuration>
+								<configOptions>
+									<interfaceOnly>true</interfaceOnly>
+									<sourceFolder>/</sourceFolder>
+									<useJakartaEe>true</useJakartaEe>
+									<useSpringBoot3>true</useSpringBoot3>
+									<!-- Optional fields are absent, not null: the colleague view must not even
+									     name the fields it withholds. -->
+									<additionalModelTypeAnnotations>@com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)</additionalModelTypeAnnotations>
+								</configOptions>
+							<inputSpec>${project.basedir}/api/calendar.yaml</inputSpec>
+							<generatorName>spring</generatorName>
+							<apiPackage>
+								${project.groupId}.${project.artifactId}.generated.api.calendar.controller
 							</apiPackage>
 							<modelPackage>${adapters.web.dto.path}</modelPackage>
 							<generateSupportingFiles>true</generateSupportingFiles>
@@ -1073,33 +1084,6 @@
 							</apiPackage>
 							<modelPackage>
 								${project.groupId}.${project.artifactId}.topicservice.generated.web.model
-							</modelPackage>
-						</configuration>
-					</execution>
-					<execution>
-						<id>appointment-service-client-model</id>
-						<phase>generate-sources</phase>
-						<goals>
-							<goal>generate</goal>
-						</goals>
-						<configuration>
-								<configOptions>
-									<sourceFolder>/</sourceFolder>
-									<useJakartaEe>true</useJakartaEe>
-									<useSpringBoot3>true</useSpringBoot3>
-									<library>resttemplate</library>
-									<dateLibrary>java8</dateLibrary>
-								</configOptions>
-							<inputSpec>${project.basedir}/services/appointmentService.yaml</inputSpec>
-							<generatorName>java</generatorName>
-							<generateApis>true</generateApis>
-							<generateApiTests>false</generateApiTests>
-							<generateModelTests>false</generateModelTests>
-							<apiPackage>
-								${project.groupId}.${project.artifactId}.appointmentservice.generated.web
-							</apiPackage>
-							<modelPackage>
-								${project.groupId}.${project.artifactId}.appointmentservice.generated.web.model
 							</modelPackage>
 						</configuration>
 					</execution>

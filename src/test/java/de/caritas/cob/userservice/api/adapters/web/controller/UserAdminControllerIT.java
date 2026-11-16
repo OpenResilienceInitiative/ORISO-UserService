@@ -38,7 +38,6 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NoContentException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.identity.UserIdentitiesService;
 import java.util.ArrayList;
 import java.util.UUID;
@@ -110,8 +109,6 @@ class UserAdminControllerIT {
   private RoleAuthorizationAuthorityMapper roleAuthorizationAuthorityMapper;
 
   @MockitoBean private AskerUserAdminFacade askerUserAdminFacade;
-
-  @MockitoBean private AppointmentService appointmentService;
 
   @MockitoBean private AdminUserFacade adminUserFacade;
 

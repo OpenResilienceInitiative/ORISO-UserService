@@ -13,7 +13,6 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateChatResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateEnquiryMessageResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DeleteUserAccountDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EnquiryMessageDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GetChatSeriesOccurrences200ResponseInner;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestAdmitDTO;
@@ -509,11 +508,6 @@ public class UserController implements UsersApi {
   @Override
   public ResponseEntity<Void> updateAbsence(@RequestBody AbsenceDTO absence) {
     return userAccountControllerDelegate.updateAbsence(absence);
-  }
-
-  @Override
-  public ResponseEntity<EmailNotificationsDTO> getUserEmailNotifications(String email) {
-    return userAccountControllerDelegate.getUserEmailNotifications(email);
   }
 
   /**

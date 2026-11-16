@@ -28,7 +28,6 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.service.session.SessionOwnershipService;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
@@ -58,8 +57,6 @@ public class ConsultantAdminServiceTest {
   @Mock private ConsultantUpdateService consultantUpdateService;
 
   @Mock private ConsultantPreDeletionService consultantPreDeletionService;
-
-  @Mock private AppointmentService appointmentService;
 
   @Mock private SessionRepository sessionRepository;
 
@@ -192,7 +189,6 @@ public class ConsultantAdminServiceTest {
     var result = consultantAdminService.updateConsultant("c-1", dto);
 
     assertThat(result).isNotNull();
-    verify(appointmentService).updateConsultant(result);
   }
 
   // ---------------------------------------------------------------------------

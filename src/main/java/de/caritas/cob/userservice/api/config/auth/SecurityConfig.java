@@ -63,8 +63,6 @@ public class SecurityConfig {
           + PublicSlugFormat.REGEX
           + ")";
 
-  public static final String APPOINTMENTS_APPOINTMENT_ID = "/appointments/{appointmentId:";
-
   private final JwtGrantedAuthoritiesConverter jwtGrantedAuthoritiesConverter =
       new JwtGrantedAuthoritiesConverter();
 
@@ -217,6 +215,11 @@ public class SecurityConfig {
                 .permitAll()
                 .requestMatchers(HttpMethod.GET, "/users/invitelinks/*/context")
                 .permitAll()
+                // Calendar subscription feed (ADR-032): a calendar app sends no token; the signed
+                // address is the credential and CalendarFeedService checks it in constant time.
+                .requestMatchers(
+                    HttpMethod.GET, "/users/calendar/feed/*/*", "/service/users/calendar/feed/*/*")
+                .permitAll()
                 .requestMatchers(HttpMethod.POST, "/users/identity-suggestions")
                 .permitAll()
                 // This cluster-internal endpoint authenticates with its own dedicated shared
@@ -312,8 +315,6 @@ public class SecurityConfig {
                 .requestMatchers(
                     HttpMethod.GET, "/service/conversations/anonymous/{sessionId:[0-9]+}")
                 .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT)
-                .requestMatchers("/users/notifications")
-                .hasAnyAuthority(NOTIFICATIONS_TECHNICAL)
                 .requestMatchers("/users/data")
                 .hasAnyAuthority(
                     ANONYMOUS_DEFAULT,
@@ -322,8 +323,6 @@ public class SecurityConfig {
                     SINGLE_TENANT_ADMIN,
                     TENANT_ADMIN,
                     RESTRICTED_AGENCY_ADMIN)
-                .requestMatchers(HttpMethod.GET, APPOINTMENTS_APPOINTMENT_ID + UUID_PATTERN + "}")
-                .permitAll()
                 // Call share links (#1487), ahead of /matrix/**: guests join, counsellors manage;
                 // membership of the call is checked in the service.
                 .requestMatchers(
@@ -464,7 +463,6 @@ public class SecurityConfig {
                 .hasAuthority(USER_DEFAULT)
                 .requestMatchers(
                     "/users/sessions/{sessionId:[0-9]+}/enquiry/new",
-                    "/appointments/sessions/{sessionId:[0-9]+}/enquiry/new",
                     "/users/askers/consultingType/new",
                     "/users/askers/session/new",
                     "/users/account",
@@ -775,6 +773,29 @@ public class SecurityConfig {
                 .access(this::canReportDeletion)
                 .requestMatchers("/users/deletion-audit-logs", "/service/users/deletion-audit-logs")
                 .access(this::canAccessPlatformAuditLogs)
+                // Calendar (ADR-032): an asker reads only their own; everything else is a
+                // counsellor's, and CalendarService decides whose calendar may be looked at.
+                .requestMatchers(
+                    HttpMethod.GET, "/users/calendar/entries", "/service/users/calendar/entries")
+                .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
+                .requestMatchers(
+                    "/users/calendar/colleagues",
+                    "/service/users/calendar/colleagues",
+                    "/users/calendar/colleagues/{consultantId}/entries",
+                    "/service/users/calendar/colleagues/{consultantId}/entries",
+                    "/users/calendar/blockers",
+                    "/service/users/calendar/blockers",
+                    "/users/calendar/blockers/{blockerId}",
+                    "/service/users/calendar/blockers/{blockerId}",
+                    "/users/calendar/sync",
+                    "/service/users/calendar/sync",
+                    "/users/calendar/sync/feed/reset",
+                    "/service/users/calendar/sync/feed/reset",
+                    "/users/calendar/sync/import",
+                    "/service/users/calendar/sync/import",
+                    "/users/calendar/working-hours",
+                    "/service/users/calendar/working-hours")
+                .hasAuthority(CONSULTANT_DEFAULT)
                 // 1:1 appointments (ORISO-Frontend#1960): who may do what is decided per session in
                 // SessionAppointmentService.
                 .requestMatchers(
@@ -793,15 +814,6 @@ public class SecurityConfig {
                     "/users/sessions/{sessionId:[0-9]+}/archive",
                     "/users/sessions/{sessionId:[0-9]+}")
                 .hasAnyAuthority(CONSULTANT_DEFAULT)
-                .requestMatchers("/appointments")
-                .hasAnyAuthority(CONSULTANT_DEFAULT, TECHNICAL_DEFAULT)
-                .requestMatchers("/appointments/booking/{id:[0-9]+}")
-                .hasAnyAuthority(CONSULTANT_DEFAULT, TECHNICAL_DEFAULT)
-                .requestMatchers(HttpMethod.PUT, APPOINTMENTS_APPOINTMENT_ID + UUID_PATTERN + "}")
-                .hasAuthority(CONSULTANT_DEFAULT)
-                .requestMatchers(
-                    HttpMethod.DELETE, APPOINTMENTS_APPOINTMENT_ID + UUID_PATTERN + "}")
-                .hasAuthority(CONSULTANT_DEFAULT)
                 .requestMatchers(
                     "/users/sessions/{sessionId:[0-9]+}/dearchive", "/users/mails/reassignment")
                 .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)

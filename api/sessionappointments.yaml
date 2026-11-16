@@ -173,6 +173,17 @@ components:
         endTime:
           type: string
           format: date-time
+        kind:
+          $ref: '#/components/schemas/AppointmentKind'
+    AppointmentKind:
+      description: How the appointment takes place. Absent on appointments made before the kind
+        existed; a reschedule without a kind keeps the stored one.
+      type: string
+      enum:
+        - ONSITE
+        - VIDEO
+        - PHONE
+        - CHAT
     SessionAppointmentDTO:
       type: object
       required:
@@ -199,6 +210,8 @@ components:
           enum:
             - SCHEDULED
             - CANCELLED
+        kind:
+          $ref: '#/components/schemas/AppointmentKind'
         counterpart:
           $ref: '#/components/schemas/SessionAppointmentCounterpartDTO'
     SessionAppointmentCounterpartDTO:

@@ -15,7 +15,6 @@ import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy;
 import de.caritas.cob.userservice.api.service.ConsultantService;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.notification.SupervisorAddedEmailNotificationService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
@@ -42,7 +41,6 @@ public class UserAccountService {
   private final @NonNull UserService userService;
   private final @NonNull AskerEmailCollectionPolicy emailCollectionPolicy;
   private final @NonNull ConsultantService consultantService;
-  private final @NonNull AppointmentService appointmentService;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull IdentityClient identityClient;
   private final @NonNull IdentityEmailAddressUpdater identityEmailAddressUpdater;
@@ -200,7 +198,6 @@ public class UserAccountService {
   }
 
   void updateUserEmail(User user, String email) {
-    this.appointmentService.updateAskerEmail(user.getUserId(), email);
     setInitialEmailNotificationsSettingsForNewEmailAddress(user, email);
     user.setEmail(email);
     this.userService.saveUser(user);
