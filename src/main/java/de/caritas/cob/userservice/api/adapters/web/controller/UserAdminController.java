@@ -28,6 +28,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.RootDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionAdminResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
+import de.caritas.cob.userservice.api.adapters.web.dto.TenantDeletionBlockersDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAgencyAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantAdminDTO;
@@ -43,6 +44,7 @@ import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsu
 import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPreferenceService;
 import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPreferenceService.ListSort;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantDeletionBlockerService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.PasswordPolicy;
@@ -106,6 +108,7 @@ public class UserAdminController implements UseradminApi {
           .ExistingAccountSetupIssuer
       accountSetupIssuer;
   private final @NonNull UserHelper userHelper;
+  private final @NonNull TenantDeletionBlockerService tenantDeletionBlockerService;
 
   /** Never typed by anyone and valid until the setup link expires, so length costs nothing. */
   static final int SETUP_ONLY_PASSWORD_LENGTH = 32;
@@ -549,6 +552,12 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<List<AdminResponseDTO>> getTenantAdmins(final Integer tenantId) {
     return new ResponseEntity<>(this.adminUserFacade.findTenantAdmins(tenantId), HttpStatus.OK);
+  }
+
+  /** What still blocks deleting the Träger; asked by TenantService before it deletes (#1466). */
+  @Override
+  public ResponseEntity<TenantDeletionBlockersDTO> getTenantDeletionBlockers(final Long tenantId) {
+    return ResponseEntity.ok(tenantDeletionBlockerService.findBlockers(tenantId));
   }
 
   @Override

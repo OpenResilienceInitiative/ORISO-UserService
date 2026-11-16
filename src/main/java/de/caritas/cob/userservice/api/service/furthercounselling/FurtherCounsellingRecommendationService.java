@@ -23,7 +23,9 @@ import org.springframework.stereotype.Service;
 
 /**
  * FE#1876 S2: the assigned counsellor recommends further counselling on a topic. The room gets a
- * system card; the asker opens the request dialog from it.
+ * system card; the asker opens the request dialog from it. FE#2251 extends this to accepted
+ * anonymous live chats whose Beratungsstelle switched it on ({@link
+ * LiveChatFurtherCounsellingGate}).
  */
 @Service
 @RequiredArgsConstructor
@@ -37,6 +39,7 @@ public class FurtherCounsellingRecommendationService {
   private final @NonNull TopicService topicService;
   private final @NonNull ConsultantDisplayNameResolver displayNames;
   private final @NonNull MatrixSessionSystemMessageService systemMessages;
+  private final @NonNull LiveChatFurtherCounsellingGate liveChatGate;
   private final Clock clock = Clock.systemUTC();
 
   public void recommend(Long sessionId, Long topicId, String note) {
@@ -56,6 +59,8 @@ public class FurtherCounsellingRecommendationService {
       throw new ConflictException(
           String.format("Session %s is no accepted 1:1 conversation", sessionId));
     }
+    // FE#2251: an anonymous live chat additionally needs its Beratungsstelle's switch.
+    liveChatGate.requireAllowed(session);
     var normalizedNote = normalizeNote(note);
     if (topicId == null || topicService.getTopicById(topicId) == null) {
       throw new BadRequestException(String.format("Topic %s does not exist", topicId));

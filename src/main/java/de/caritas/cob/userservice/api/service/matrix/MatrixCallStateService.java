@@ -22,6 +22,7 @@ public class MatrixCallStateService {
   private final MatrixSynapseService matrix;
   private final MatrixCallGuestService callGuests;
   private final MatrixCallObservationService observations;
+  private final SessionCallRevival revival;
   private final PlatformTransactionManager transactionManager;
 
   /**
@@ -55,7 +56,8 @@ public class MatrixCallStateService {
     if (matrixId.isEmpty() || matrixId.get().isBlank()) return Optional.empty();
     var members = matrix.getCallRoomMembers(sourceRoomId).orElse(java.util.List.of());
     boolean conversationMember = members.contains(matrixId.get());
-    if (bindings.findBySourceRoomIdAndCallId(sourceRoomId, callId).isEmpty()) {
+    var bound = bindings.findBySourceRoomIdAndCallId(sourceRoomId, callId).orElse(null);
+    if (bound == null || supersededFor(actor, bound, matrixId.get())) {
       // #2166/#2237: encrypted group or session call without a readable invite. Observation only,
       // read by conversation members; never consulted for guests or any access decision.
       return conversationMember
@@ -67,6 +69,26 @@ public class MatrixCallStateService {
     return readOnly.execute(
         status ->
             readBound(conversation, sourceRoomId, callId, matrixId.get(), conversationMember));
+  }
+
+  /**
+   * FE#2209 round 5: the assigned counsellor does not see an ended binding without authority (for
+   * example an asker's plaintext invite of the counsellor's call id that the server closed) as the
+   * state of their call; they read the call as if no binding existed. Round 6 (F2): only a binding
+   * their takeover would revive ({@link SessionCallRevival}, the same predicate {@code bind} uses).
+   * An explicitly ended, legacy-ended, already-run or counsellor-ended one stays visible as ended,
+   * so the UI never offers a start that {@code bind} refuses.
+   */
+  private boolean supersededFor(
+      AuthenticatedUser actor,
+      de.caritas.cob.userservice.api.model.MatrixCallBinding binding,
+      String matrixId) {
+    return actor.isConsultant()
+        && binding.getSessionId() != null
+        && binding.getEndedAt() != null
+        && !callGuests.grantsGuestAuthority(binding)
+        && callGuests.isAssignedCounsellor(binding, matrixId)
+        && revival.revivableBy(binding, matrixId);
   }
 
   private Optional<CallState> readBound(

@@ -18,4 +18,7 @@ public interface SupportRoomRepository extends CrudRepository<SupportRoom, Strin
       String consultantId,
       SupportRoomStatus supportAdminStatus,
       String supportAdminId);
+
+  /** FE#2209: a known ORISO room is never accepted as a call room. */
+  boolean existsByMatrixRoomId(String matrixRoomId);
 }
