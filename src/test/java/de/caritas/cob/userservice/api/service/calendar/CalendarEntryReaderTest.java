@@ -245,6 +245,45 @@ class CalendarEntryReaderTest {
     return GroupChatParticipant.builder().chatId(1L).seriesId(seriesId).consultantId(ME).build();
   }
 
+  /**
+   * ORISO-Frontend#2252: a direct invitation nobody opened yet still takes the counsellor's time.
+   */
+  @Test
+  void appointmentsOfConsultant_Should_IncludeUnopenedInvitations_WithoutAskerOrSession() {
+    var opened = appointment();
+    var unopened = appointment();
+    unopened.setSession(null);
+    unopened.setKind(null);
+    when(appointments.findScheduledOfConsultantBetween(eq(ME), any(), eq(FROM), eq(TO), any()))
+        .thenReturn(List.of(opened));
+    when(appointments.findUnopenedInvitationsOfConsultantBetween(eq(ME), eq(FROM), eq(TO), any()))
+        .thenReturn(List.of(unopened));
+
+    var entries = reader.appointmentsOfConsultant(ME, FROM, TO);
+
+    assertThat(entries)
+        .extracting(CalendarEntry::id)
+        .containsExactly(opened.getId().toString(), unopened.getId().toString());
+    var invitation = entries.get(1);
+    assertThat(invitation.type()).isEqualTo(CalendarEntryType.APPOINTMENT);
+    assertThat(invitation.title()).isNull();
+    assertThat(invitation.sessionId()).isNull();
+  }
+
+  @Test
+  void appointmentsOfConsultant_Should_Fail_When_UnopenedInvitationsTakeTheWindowOverTheLimit() {
+    var limit = CalendarEntryReader.APPOINTMENT_LIMIT;
+    var unopened = appointment();
+    unopened.setSession(null);
+    when(appointments.findScheduledOfConsultantBetween(eq(ME), any(), eq(FROM), eq(TO), any()))
+        .thenReturn(Collections.nCopies(limit, appointment()));
+    when(appointments.findUnopenedInvitationsOfConsultantBetween(eq(ME), eq(FROM), eq(TO), any()))
+        .thenReturn(List.of(unopened));
+
+    assertThatThrownBy(() -> reader.appointmentsOfConsultant(ME, FROM, TO))
+        .isInstanceOf(InternalServerErrorException.class);
+  }
+
   private static SessionAppointment appointment() {
     var consultant = new Consultant();
     consultant.setId(ME);

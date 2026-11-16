@@ -253,6 +253,11 @@ public class CounsellorDirectLinkService {
     }
     if (Boolean.TRUE.equals(cmd.active())
         && !InviteLinkStatus.ACTIVE.name().equals(link.getStatus())) {
+      // An invitation with an appointment that ended comes back only with a new token ("Neuen
+      // Link senden"): switched on, its old token would admit the people its end removed.
+      if (link.getAppointmentId() != null && hasEnded(link)) {
+        throw new ConflictException("An expired invitation is reopened by sending a new link.");
+      }
       var allowed =
           directInvitePolicy.allows(
               link.getTenantId(),
@@ -459,6 +464,12 @@ public class CounsellorDirectLinkService {
             && link.getExpiresAt().isBefore(LocalDateTime.now(ZoneOffset.UTC)))) {
       throw new DirectLinkExpiredException();
     }
+  }
+
+  /** Closed by the expiry sweep, or past its end before the sweep ran (also while switched off). */
+  private boolean hasEnded(AgencyInviteLink link) {
+    return InviteLinkStatus.EXPIRED.name().equals(link.getStatus())
+        || (link.getExpiresAt() != null && !link.getExpiresAt().isAfter(invitations.now()));
   }
 
   public static boolean defaultTemporary(InviteLinkChatType medium) {

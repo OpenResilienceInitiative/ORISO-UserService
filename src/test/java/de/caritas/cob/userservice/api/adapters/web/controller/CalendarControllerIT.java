@@ -18,6 +18,7 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.model.CalendarBlocker;
 import de.caritas.cob.userservice.api.model.CalendarBlocker.Source;
 import de.caritas.cob.userservice.api.model.Chat;
@@ -51,6 +52,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -116,6 +118,10 @@ class CalendarControllerIT {
   private User asker;
   private Session session;
   private final List<Chat> seededChats = new ArrayList<>();
+  private final List<AgencyInviteLink> seededLinks = new ArrayList<>();
+  private final List<SessionAppointment> seededAppointments = new ArrayList<>();
+
+  @Autowired private de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository inviteLinks;
 
   @BeforeEach
   void seed() {
@@ -138,6 +144,8 @@ class CalendarControllerIT {
         () -> {
           blockers.deleteAll();
           chats.deleteAll(seededChats);
+          inviteLinks.deleteAll(seededLinks);
+          appointments.deleteAll(seededAppointments);
         });
     fixtures.removeAll();
   }
@@ -487,6 +495,53 @@ class CalendarControllerIT {
     var created = JSON.readValue(response, Map.class);
     assertThat(created.get("kind")).isEqualTo(kind);
     return (String) created.get("id");
+  }
+
+  /**
+   * ORISO-Frontend#2252: a direct invitation nobody opened yet has an appointment without a
+   * conversation. It takes the counsellor's time all the same: in their own calendar (no asker, no
+   * session, not dragged here) and, redacted, in a colleague's view.
+   */
+  @Test
+  void entries_Should_ShowAnUnopenedDirectInvitation() throws Exception {
+    var unopened = appointmentOf(null, in(24), in(25), null);
+    var invitation =
+        Tenants.acrossAll(
+            () ->
+                inviteLinks.save(
+                    AgencyInviteLink.builder()
+                        .token("calendar-it-" + UUID.randomUUID())
+                        .tenantId(TENANT)
+                        .agencyId(AGENCY)
+                        .linkKind("COUNSELLOR")
+                        .chatType("VIDEO")
+                        .anonymity("FULL")
+                        .consultantId(counsellor.getId())
+                        .createdByUserId(counsellor.getId())
+                        .createDate(LocalDateTime.now(ZoneOffset.UTC))
+                        .status("ACTIVE")
+                        .appointmentId(unopened.getId())
+                        .validityAfterEndMinutes(60)
+                        .build()));
+    seededLinks.add(invitation);
+    seededAppointments.add(unopened);
+
+    actAsCounsellor(counsellor);
+    var own = list(entries(in(0), in(24 * 30)));
+    assertThat(own).hasSize(1);
+    assertThat(own.get(0).get("id")).isEqualTo(unopened.getId().toString());
+    assertThat(own.get(0).get("type")).isEqualTo("APPOINTMENT");
+    assertThat(own.get(0)).doesNotContainKeys("sessionId", "title");
+    assertThat(own.get(0).get("movable")).isEqualTo(false);
+
+    actAsCounsellor(colleague);
+    var redacted = list(colleagueEntries(counsellor, in(0), in(24 * 30)));
+    assertThat(redacted).extracting(row -> row.get("type")).containsExactly("APPOINTMENT");
+    assertThat(redacted.get(0)).doesNotContainKeys("sessionId", "title");
+
+    // Another counsellor's calendar knows nothing of it.
+    actAsCounsellor(colleague);
+    assertThat(list(entries(in(0), in(24 * 30)))).isEmpty();
   }
 
   private SessionAppointment appointmentOf(

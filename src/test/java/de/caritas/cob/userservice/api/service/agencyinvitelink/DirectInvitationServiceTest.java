@@ -214,6 +214,62 @@ class DirectInvitationServiceTest {
     verify(links).save(sibling);
   }
 
+  /** An invitation from a 1:1 moves that 1:1's appointment: a finished 1:1 refuses, as a move. */
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = Session.SessionStatus.class,
+      names = {"DONE", "IN_ARCHIVE"})
+  void change_Should_RefuseTheMove_When_TheOneToOneOfTheInvitationIsFinished(
+      Session.SessionStatus finished) {
+    var oneToOne = session(40L, "asker");
+    oneToOne.setStatus(finished);
+    appointment.setSession(oneToOne);
+    link.setJoinsExistingSession(true);
+    var before = appointment.getStartTime();
+    var start = LocalDateTime.now(ZoneOffset.UTC).plusDays(3).withNano(0);
+
+    assertThatThrownBy(() -> service.change(link, start, start.plusHours(1), null))
+        .isInstanceOf(ConflictException.class);
+    assertThat(appointment.getStartTime()).isEqualTo(before);
+    verify(appointments, never()).save(any());
+  }
+
+  /** A validity-only change of such an invitation leaves the appointment alone and is allowed. */
+  @Test
+  void change_Should_AllowAValidityChange_When_TheOneToOneIsFinished() {
+    var oneToOne = session(41L, "asker");
+    oneToOne.setStatus(Session.SessionStatus.DONE);
+    appointment.setSession(oneToOne);
+    link.setJoinsExistingSession(true);
+
+    service.change(link, null, null, 120);
+
+    assertThat(link.getValidityAfterEndMinutes()).isEqualTo(120);
+  }
+
+  @Test
+  void change_Should_RefuseTheMove_When_TheAppointmentIsCancelled() {
+    appointment.setStatus(SessionAppointment.Status.CANCELLED);
+    var start = LocalDateTime.now(ZoneOffset.UTC).plusDays(3).withNano(0);
+
+    assertThatThrownBy(() -> service.change(link, start, start.plusHours(1), null))
+        .isInstanceOf(ConflictException.class);
+    verify(appointments, never()).save(any());
+  }
+
+  /** The shared conversation of an invitation is archived at its end; it may still be moved. */
+  @Test
+  void change_Should_MoveTheAppointment_When_TheSharedConversationIsArchived() {
+    var shared = session(42L, "first");
+    shared.setStatus(Session.SessionStatus.IN_ARCHIVE);
+    appointment.setSession(shared);
+    var start = LocalDateTime.now(ZoneOffset.UTC).plusDays(3).withNano(0);
+
+    service.change(link, start, start.plusHours(1), null);
+
+    assertThat(appointment.getStartTime()).isEqualTo(start.toInstant(ZoneOffset.UTC));
+  }
+
   /** A validity change belongs to one invitation; the others keep theirs. */
   @Test
   void change_Should_LeaveTheOtherInvitations_When_OnlyTheValidityChanges() {

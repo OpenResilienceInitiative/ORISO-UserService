@@ -61,23 +61,34 @@ class CalendarEntryReader {
   private final ChatOccurrenceProjector projector = new ChatOccurrenceProjector();
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
-  /** Scheduled appointments of the counsellor's own and co-access sessions; title = asker. */
+  /**
+   * Scheduled appointments of the counsellor's own and co-access sessions (title = asker), and of
+   * the counsellor's direct invitations nobody opened yet (ORISO-Frontend#2252: no asker and no
+   * conversation yet, so neither title nor session).
+   */
   List<CalendarEntry> appointmentsOfConsultant(String consultantId, Instant from, Instant to) {
-    return complete(
-            appointments.findScheduledOfConsultantBetween(
-                consultantId,
-                caseHandovers.sessionIdsWithActiveCoAccess(consultantId),
-                from,
-                to,
-                PageRequest.of(0, APPOINTMENT_LIMIT + 1)))
-        .stream()
-        .map(
-            appointment ->
-                appointment(
-                    appointment,
-                    usernameTranscoder.decodeUsername(
-                        appointment.getSession().getUser().getUsername())))
-        .toList();
+    var page = PageRequest.of(0, APPOINTMENT_LIMIT + 1);
+    var found =
+        new ArrayList<CalendarEntry>(
+            appointments
+                .findScheduledOfConsultantBetween(
+                    consultantId,
+                    caseHandovers.sessionIdsWithActiveCoAccess(consultantId),
+                    from,
+                    to,
+                    page)
+                .stream()
+                .map(
+                    appointment ->
+                        appointment(
+                            appointment,
+                            usernameTranscoder.decodeUsername(
+                                appointment.getSession().getUser().getUsername())))
+                .toList());
+    appointments
+        .findUnopenedInvitationsOfConsultantBetween(consultantId, from, to, page)
+        .forEach(appointment -> found.add(appointment(appointment, null)));
+    return complete(found);
   }
 
   /** One appointment as a counsellor's own calendar shows it; title = asker. */
@@ -103,7 +114,7 @@ class CalendarEntryReader {
    * One more than the limit is read to tell a full window from a cut one: a calendar that shows
    * free time where an appointment was left out is worse than none.
    */
-  private static List<SessionAppointment> complete(List<SessionAppointment> found) {
+  private static <T> List<T> complete(List<T> found) {
     if (found.size() > APPOINTMENT_LIMIT) {
       throw new InternalServerErrorException(
           "A calendar window holds more than " + APPOINTMENT_LIMIT + " appointments.");
@@ -219,7 +230,7 @@ class CalendarEntryReader {
         appointment.getEndTime(),
         appointment.getKind(),
         title,
-        appointment.getSession().getId(),
+        appointment.getSession() == null ? null : appointment.getSession().getId(),
         null);
   }
 

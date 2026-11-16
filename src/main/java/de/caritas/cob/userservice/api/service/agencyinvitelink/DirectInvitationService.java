@@ -175,6 +175,7 @@ public class DirectInvitationService {
             validity != null ? validity : current.validityAfterEndMinutes());
     if (moves) {
       requireFuture(schedule);
+      requireMovable(link, appointment);
       appointment.setStartTime(schedule.start().toInstant(ZoneOffset.UTC));
       appointment.setEndTime(schedule.end().toInstant(ZoneOffset.UTC));
       appointments.save(appointment);
@@ -428,6 +429,24 @@ public class DirectInvitationService {
     link.setValidityAfterEndMinutes(schedule.validityAfterEndMinutes());
     link.setExpiresAt(schedule.expiresAt());
     link.setScheduledAt(schedule.start());
+  }
+
+  /**
+   * The rules "Termin verschieben" applies to the same row (SessionAppointmentService#reschedule):
+   * a cancelled appointment stays where it is, and the appointment of an invitation from a 1:1
+   * belongs to that conversation, so a finished or archived 1:1 refuses the move.
+   */
+  private static void requireMovable(AgencyInviteLink link, SessionAppointment appointment) {
+    if (appointment.getStatus() == SessionAppointment.Status.CANCELLED) {
+      throw new ConflictException("A cancelled appointment cannot be moved.");
+    }
+    var session = appointment.getSession();
+    if (link.isJoinsExistingSession()
+        && session != null
+        && (session.getStatus() == Session.SessionStatus.DONE
+            || session.getStatus() == Session.SessionStatus.IN_ARCHIVE)) {
+      throw new ConflictException("A finished conversation takes no new or moved appointments.");
+    }
   }
 
   private void requireFuture(DirectInvitationSchedule schedule) {

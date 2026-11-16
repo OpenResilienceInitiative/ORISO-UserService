@@ -855,6 +855,71 @@ class CounsellorDirectLinkServiceTest {
     verify(expiry, org.mockito.Mockito.times(2)).revoke(link);
   }
 
+  /** An expired invitation comes back only through "Neuen Link senden", with a new token. */
+  @Test
+  void update_Should_RefuseSwitchingOn_When_TheInvitationExpired() {
+    var link = ownLink(7L, "VIDEO", "EXPIRED");
+    link.setAppointmentId(java.util.UUID.randomUUID());
+    link.setExpiresAt(LocalDateTime.now(ZoneOffset.UTC).minusHours(1));
+
+    assertThatThrownBy(() -> service.update(owner, 7L, new UpdateCommand(null, null, null, true)))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
+    assertThat(link.getStatus()).isEqualTo("EXPIRED");
+    verify(invitations, never()).reopenConversation(any());
+  }
+
+  /** A longer validity in the same request does not let the old token back in. */
+  @Test
+  void update_Should_RefuseSwitchingOn_When_TheValidityOfAnExpiredInvitationIsExtended() {
+    var link = ownLink(8L, "VIDEO", "EXPIRED");
+    link.setAppointmentId(java.util.UUID.randomUUID());
+    link.setExpiresAt(LocalDateTime.now(ZoneOffset.UTC).minusHours(1));
+    org.mockito.Mockito.doAnswer(
+            i -> {
+              link.setExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusDays(2));
+              return null;
+            })
+        .when(invitations)
+        .change(eq(link), any(), any(), eq(2880));
+
+    assertThatThrownBy(
+            () ->
+                service.update(
+                    owner,
+                    8L,
+                    new UpdateCommand(
+                        null, null, null, true, null, false, null, null, 2880, null, null)))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
+    verify(invitations, never()).reopenConversation(any());
+  }
+
+  /** Switched off, then past its end before the sweep could close it: ended all the same. */
+  @Test
+  void update_Should_RefuseSwitchingOn_When_ASwitchedOffInvitationIsPastItsEnd() {
+    var link = ownLink(9L, "VIDEO", "DISABLED");
+    link.setAppointmentId(java.util.UUID.randomUUID());
+    link.setExpiresAt(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1));
+
+    assertThatThrownBy(() -> service.update(owner, 9L, new UpdateCommand(null, null, null, true)))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
+    assertThat(link.getStatus()).isEqualTo("DISABLED");
+  }
+
+  @Test
+  void update_Should_SwitchOnASwitchedOffInvitation_BeforeItsEnd() {
+    var link = ownLink(10L, "VIDEO", "DISABLED");
+    link.setAppointmentId(java.util.UUID.randomUUID());
+    link.setExpiresAt(LocalDateTime.now(ZoneOffset.UTC).plusDays(1));
+
+    var updated = service.update(owner, 10L, new UpdateCommand(null, null, null, true));
+
+    assertThat(updated.getStatus()).isEqualTo("ACTIVE");
+    verify(invitations).reopenConversation(link);
+  }
+
   @Test
   void switchingOff_Should_LeaveALinkWithoutAppointmentAlone() {
     ownLink(6L, "VIDEO", "ACTIVE");

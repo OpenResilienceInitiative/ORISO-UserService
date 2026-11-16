@@ -69,6 +69,23 @@ public interface SessionAppointmentRepository extends CrudRepository<SessionAppo
       @Param("to") Instant to,
       Pageable pageable);
 
+  /**
+   * The scheduled appointments of the counsellor's own direct invitations that nobody opened yet
+   * (ORISO-Frontend#2252): they have no conversation, so {@link #findScheduledOfConsultantBetween}
+   * cannot find them, yet the counsellor's time is taken all the same.
+   */
+  @Query(
+      "SELECT a FROM SessionAppointment a WHERE a.session IS NULL AND a.status = 'SCHEDULED' "
+          + "AND a.startTime < :to AND a.endTime > :from "
+          + "AND EXISTS (SELECT l.id FROM AgencyInviteLink l WHERE l.appointmentId = a.id "
+          + "AND l.consultantId = :consultantId AND l.linkKind = 'COUNSELLOR') "
+          + "ORDER BY a.startTime")
+  List<SessionAppointment> findUnopenedInvitationsOfConsultantBetween(
+      @Param("consultantId") String consultantId,
+      @Param("from") Instant from,
+      @Param("to") Instant to,
+      Pageable pageable);
+
   @Query(
       "SELECT a FROM SessionAppointment a JOIN FETCH a.session s LEFT JOIN FETCH s.consultant "
           + "WHERE s.user.userId = :userId AND a.status = 'SCHEDULED' "

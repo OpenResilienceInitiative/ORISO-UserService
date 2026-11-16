@@ -128,7 +128,8 @@ public class CalendarService {
 
   private static boolean isMovable(CalendarEntry entry, Instant now) {
     return switch (entry.type()) {
-      case APPOINTMENT -> entry.start().isAfter(now);
+        // An unopened direct invitation (no conversation yet) moves with its invitation (#2252).
+      case APPOINTMENT -> entry.sessionId() != null && entry.start().isAfter(now);
       case BLOCKER -> true;
       case GROUP, BUSY -> false;
     };
