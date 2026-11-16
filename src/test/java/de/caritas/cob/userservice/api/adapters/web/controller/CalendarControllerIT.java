@@ -45,6 +45,7 @@ import jakarta.servlet.http.Cookie;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -89,6 +90,7 @@ class CalendarControllerIT {
   private static final String CSRF_VALUE = "test";
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
   private static final ObjectMapper JSON = new ObjectMapper();
+  private static final ZoneId PLATFORM_ZONE = ZoneId.of("Europe/Berlin");
   private static final Set<String> COLLEAGUE_FIELDS =
       Set.of("id", "type", "start", "end", "ownerId", "kind", "title", "movable");
 
@@ -215,14 +217,17 @@ class CalendarControllerIT {
   @Test
   void blockers_Should_BeCreatedMovedAndRemovedByTheirOwnerOnly() throws Exception {
     actAsCounsellor(counsellor);
-    var until = LocalDate.now(ZoneOffset.UTC).plusDays(22).toString();
+    // 23:30 UTC is already the next day in the platform's zone, where the series counts its days;
+    // its last day is a date there too. A fixed time of day keeps the count the same at any hour.
+    var start = LocalDate.now(ZoneOffset.UTC).plusDays(2).atTime(23, 30).toInstant(ZoneOffset.UTC);
+    var until = start.atZone(PLATFORM_ZONE).toLocalDate().plusDays(21).toString();
     var series =
         createBlocker(
-            in(24),
-            in(25),
+            start,
+            start.plus(1, ChronoUnit.HOURS),
             "Team",
             Map.of("weekdays", List.of(0, 1, 2, 3, 4, 5, 6), "until", until));
-    assertThat(series.size()).isBetween(22, 23);
+    assertThat(series).hasSize(22);
     assertThat(series.stream().map(row -> row.get("seriesId")).distinct()).hasSize(1);
     assertThat(series.get(0).get("seriesId")).isNotNull();
     var id = (String) series.get(0).get("id");

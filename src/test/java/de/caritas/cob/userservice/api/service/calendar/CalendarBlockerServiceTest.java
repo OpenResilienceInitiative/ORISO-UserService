@@ -143,6 +143,31 @@ class CalendarBlockerServiceTest {
   }
 
   @Test
+  void create_Should_CountTheDaysOfASeriesInThePlatformsZone_When_ItStartsLateInTheEvening() {
+    // 23:30 UTC on Sunday is 00:30 on Monday 2026-11-16 in Berlin.
+    var lateEvening = Instant.parse("2026-11-15T23:30:00Z");
+    service =
+        new CalendarBlockerService(
+            caller, blockers, Clock.fixed(lateEvening, ZoneOffset.UTC), "Europe/Berlin");
+
+    var created =
+        service.create(
+            blocker("2026-11-15T23:30:00Z", "2026-11-16T00:30:00Z")
+                .repeat(
+                    new BlockerRepeatDTO()
+                        .weekdays(List.of(0, 1, 2, 3, 4, 5, 6))
+                        .until(LocalDate.parse("2026-11-18"))));
+
+    // Monday to Wednesday in Berlin: the last day is Wednesday there, not one day more or less.
+    assertThat(created)
+        .extracting(entry -> entry.getStart().toInstant())
+        .containsExactly(
+            Instant.parse("2026-11-15T23:30:00Z"),
+            Instant.parse("2026-11-16T23:30:00Z"),
+            Instant.parse("2026-11-17T23:30:00Z"));
+  }
+
+  @Test
   void expand_Should_KeepTheClockTimeAcrossTheChangeToSummerTime() {
     // Friday 2027-03-26 09:00 Berlin (CET, UTC+1); the clocks change on Sunday 2027-03-28.
     var slots =
