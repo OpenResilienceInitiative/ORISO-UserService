@@ -65,7 +65,7 @@ class AgencyContactPersonForConsultantTest {
     lenient()
         .when(consultantRepository.findByIdAndDeleteDateIsNull(CALLER))
         .thenReturn(Optional.of(caller));
-    lenient().when(resolver.activeCounsellor(any(), any())).thenReturn(Optional.empty());
+    lenient().when(resolver.activeCounsellors(any(), any())).thenReturn(java.util.Map.of());
   }
 
   @Test
@@ -164,8 +164,8 @@ class AgencyContactPersonForConsultantTest {
   void alsoCounsellorWithChatIdentityGetsAChatTarget() {
     var contact = admin("bst-1", AdminType.AGENCY);
     centre(new ContactPair(contact, null), ContactPair.NONE, null);
-    when(resolver.activeCounsellor("bst-1", AGENCY))
-        .thenReturn(Optional.of(counsellor("bst-1", MATRIX_OK)));
+    when(resolver.activeCounsellors(any(), any()))
+        .thenReturn(java.util.Map.of("bst-1", counsellor("bst-1", MATRIX_OK)));
 
     var person = service.contactPersonFor(CALLER, AGENCY).getPeople().get(0);
 
@@ -176,8 +176,8 @@ class AgencyContactPersonForConsultantTest {
   @Test
   void alsoCounsellorWithoutChatIdentityGetsNoChatTarget() {
     centre(new ContactPair(admin("bst-1", AdminType.AGENCY), null), ContactPair.NONE, null);
-    when(resolver.activeCounsellor("bst-1", AGENCY))
-        .thenReturn(Optional.of(counsellor("bst-1", null)));
+    when(resolver.activeCounsellors(any(), any()))
+        .thenReturn(java.util.Map.of("bst-1", counsellor("bst-1", null)));
 
     var person = service.contactPersonFor(CALLER, AGENCY).getPeople().get(0);
 
@@ -188,14 +188,25 @@ class AgencyContactPersonForConsultantTest {
   @Test
   void theCallerIsShownAsContact_But_neverAsChatTarget() {
     centre(new ContactPair(admin(CALLER, AdminType.AGENCY), null), ContactPair.NONE, null);
-    when(resolver.activeCounsellor(CALLER, AGENCY))
-        .thenReturn(Optional.of(counsellor(CALLER, MATRIX_OK)));
+    when(resolver.activeCounsellors(any(), any()))
+        .thenReturn(java.util.Map.of(CALLER, counsellor(CALLER, MATRIX_OK)));
 
     var person = service.contactPersonFor(CALLER, AGENCY).getPeople().get(0);
 
     assertThat(person.getRole()).isEqualTo(RoleEnum.CONTACT);
     assertThat(person.getIsConsultant()).isTrue();
     assertThat(person.getChatConsultantId()).isNull();
+  }
+
+  @Test
+  void counsellorIdentitiesAreLookedUpOnceForAllPeople() {
+    centre(ContactPair.NONE, ContactPair.NONE, null);
+    when(resolver.agencyAdminsOf(AGENCY))
+        .thenReturn(List.of(admin("bst-1", AdminType.AGENCY), admin("bst-2", AdminType.AGENCY)));
+
+    service.contactPersonFor(CALLER, AGENCY);
+
+    verify(resolver).activeCounsellors(List.of("bst-1", "bst-2"), AGENCY);
   }
 
   void centre(ContactPair own, ContactPair traegerDefault, String traegerEmail) {

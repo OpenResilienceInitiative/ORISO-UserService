@@ -12,11 +12,11 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.service.contactperson.ContactPair;
 import de.caritas.cob.userservice.api.service.contactperson.ContactPersonResolver;
 import de.caritas.cob.userservice.api.service.contactperson.ContactSource;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -65,12 +65,16 @@ public class AgencyAdminContactService {
             .orElse(null);
     var centre = contactPersonResolver.resolveCentre(agencyId, tenantId);
     var result = new ConsultantAgencyContactDTO().traegerContactEmail(centre.traegerContactEmail());
-    var people = new ArrayList<ConsultantAgencyContactPersonDTO>();
+    var shown = new ArrayList<Map.Entry<Admin, RoleEnum>>();
     switch (centre.source()) {
       case OWN, TRAEGER_DEFAULT -> {
         result.source(
             centre.source() == ContactSource.OWN ? SourceEnum.OWN : SourceEnum.TRAEGER_DEFAULT);
-        addPair(people, centre.effective(), callerId, agencyId);
+        var pair = centre.effective();
+        shown.add(Map.entry(pair.contact(), RoleEnum.CONTACT));
+        if (pair.deputy() != null) {
+          shown.add(Map.entry(pair.deputy(), RoleEnum.DEPUTY));
+        }
       }
       case NONE -> {
         var agencyAdmins = contactPersonResolver.agencyAdminsOf(agencyId);
@@ -80,38 +84,39 @@ public class AgencyAdminContactService {
             !agencyAdmins.isEmpty()
                 ? SourceEnum.FALLBACK_AGENCY_ADMINS
                 : admins.isEmpty() ? SourceEnum.SUPPORT_EMAIL : SourceEnum.FALLBACK_TENANT_ADMINS);
-        admins.forEach(admin -> people.add(person(admin, RoleEnum.ADMIN, callerId, agencyId)));
+        admins.forEach(admin -> shown.add(Map.entry(admin, RoleEnum.ADMIN)));
       }
     }
-    return result.people(people);
-  }
-
-  private void addPair(
-      List<ConsultantAgencyContactPersonDTO> people,
-      ContactPair pair,
-      String callerId,
-      Long agencyId) {
-    people.add(person(pair.contact(), RoleEnum.CONTACT, callerId, agencyId));
-    if (pair.deputy() != null) {
-      people.add(person(pair.deputy(), RoleEnum.DEPUTY, callerId, agencyId));
-    }
+    // One lookup for everybody shown, not one per person.
+    var counsellors =
+        contactPersonResolver.activeCounsellors(
+            shown.stream().map(entry -> entry.getKey().getId()).toList(), agencyId);
+    return result.people(
+        shown.stream()
+            .map(
+                entry ->
+                    person(
+                        entry.getKey(),
+                        entry.getValue(),
+                        callerId,
+                        counsellors.get(entry.getKey().getId())))
+            .toList());
   }
 
   private ConsultantAgencyContactPersonDTO person(
-      Admin admin, RoleEnum role, String callerId, Long agencyId) {
-    var counsellor = contactPersonResolver.activeCounsellor(admin.getId(), agencyId);
+      Admin admin, RoleEnum role, String callerId, Consultant counsellor) {
     // The caller stays visible as contact, but never as the one to open a chat with.
     var chatConsultantId =
-        counsellor
-            .filter(consultant -> MatrixIds.isUserId(consultant.getMatrixUserId()))
-            .map(Consultant::getId)
-            .filter(id -> !id.equals(callerId))
-            .orElse(null);
+        counsellor != null
+                && MatrixIds.isUserId(counsellor.getMatrixUserId())
+                && !counsellor.getId().equals(callerId)
+            ? counsellor.getId()
+            : null;
     return new ConsultantAgencyContactPersonDTO()
         .role(role)
         .displayName(ContactPersonResolver.displayName(admin))
         .email(ContactPersonResolver.displayEmail(admin))
-        .isConsultant(counsellor.isPresent())
+        .isConsultant(counsellor != null)
         .chatConsultantId(chatConsultantId);
   }
 

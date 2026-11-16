@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminType;
 import de.caritas.cob.userservice.api.model.AgencyContactPerson;
+import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.TenantContactPerson;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.AgencyContactPersonRepository;
@@ -24,14 +25,15 @@ import de.caritas.cob.userservice.api.port.out.TenantContactPersonRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.contactperson.CentreContact;
 import de.caritas.cob.userservice.api.service.contactperson.ContactEmail;
-import de.caritas.cob.userservice.api.service.contactperson.ContactPair;
 import de.caritas.cob.userservice.api.service.contactperson.ContactPersonResolver;
 import de.caritas.cob.userservice.api.service.contactperson.ContactSource;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Predicate;
+import java.util.stream.Stream;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -44,11 +46,14 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>Scope comes from {@link AdminScope}: platform admins everywhere, Träger admins within their
  * Träger, agency admins only for their own centres and never for the Träger default. A foreign
  * target answers 403, the same as a non-existing one. The Träger of a centre is the caller's own;
- * only a platform admin names it (query parameter), else it is looked up in AgencyService.
+ * for a platform admin it always comes from AgencyService, and a Träger hint that disagrees is
+ * refused (400).
  */
 @Service
 @RequiredArgsConstructor
 public class ContactPersonAdminService {
+
+  static final String TENANT_MISMATCH = "The Träger does not match the counselling centre";
 
   private final @NonNull AdminScope adminScope;
   private final @NonNull ContactPersonResolver resolver;
@@ -59,14 +64,14 @@ public class ContactPersonAdminService {
 
   @Transactional(readOnly = true)
   public AgencyContactPersonAdminDTO getAgencyContactPerson(Long agencyId, Long tenantId) {
-    var centreTenantId = centreTenant(agencyId, tenantId);
+    var centreTenantId = centreTenant(agencyId, tenantId, false);
     return toDto(resolver.resolveCentre(agencyId, centreTenantId));
   }
 
   @Transactional
   public AgencyContactPersonAdminDTO updateAgencyContactPerson(
       Long agencyId, Long tenantId, UpdateContactPersonDTO update) {
-    var centreTenantId = centreTenant(agencyId, tenantId);
+    var centreTenantId = centreTenant(agencyId, tenantId, true);
     var contactId = blankToNull(update.getContactAdminId());
     var deputyId = blankToNull(update.getDeputyAdminId());
     assertValidPair(
@@ -90,10 +95,8 @@ public class ContactPersonAdminService {
 
   @Transactional(readOnly = true)
   public List<ContactAdminDTO> getAgencyContactPersonCandidates(Long agencyId, Long tenantId) {
-    var centreTenantId = centreTenant(agencyId, tenantId);
-    return resolver.centreCandidates(agencyId, centreTenantId).stream()
-        .map(admin -> toDto(admin, agencyId))
-        .toList();
+    var centreTenantId = centreTenant(agencyId, tenantId, false);
+    return toDtos(resolver.centreCandidates(agencyId, centreTenantId), agencyId);
   }
 
   @Transactional(readOnly = true)
@@ -108,17 +111,19 @@ public class ContactPersonAdminService {
     adminScope.assertMay(Target.tenant(tenantId));
     var contactId = blankToNull(update.getContactAdminId());
     var deputyId = blankToNull(update.getDeputyAdminId());
-    var email = ContactEmail.normalize(update.getGeneralContactEmail());
     assertValidPair(contactId, deputyId, admin -> resolver.isTraegerCandidate(admin, tenantId));
+    var stored = tenantContactPersonRepository.findById(tenantId);
+    // Like an admin's contact e-mail: absent keeps it, blank clears it.
+    var email =
+        update.getGeneralContactEmail() == null
+            ? stored.map(TenantContactPerson::getGeneralContactEmail).orElse(null)
+            : ContactEmail.normalize(update.getGeneralContactEmail());
     if (contactId == null && email == null) {
-      if (tenantContactPersonRepository.existsById(tenantId)) {
+      if (stored.isPresent() || tenantContactPersonRepository.existsById(tenantId)) {
         tenantContactPersonRepository.deleteById(tenantId);
       }
     } else {
-      var row =
-          tenantContactPersonRepository
-              .findById(tenantId)
-              .orElseGet(() -> TenantContactPerson.builder().tenantId(tenantId).build());
+      var row = stored.orElseGet(() -> TenantContactPerson.builder().tenantId(tenantId).build());
       row.setContactAdminId(contactId);
       row.setDeputyAdminId(deputyId);
       row.setGeneralContactEmail(email);
@@ -130,7 +135,7 @@ public class ContactPersonAdminService {
   @Transactional(readOnly = true)
   public List<ContactAdminDTO> getTenantContactPersonCandidates(Long tenantId) {
     adminScope.assertMay(Target.tenant(tenantId));
-    return resolver.traegerCandidates(tenantId).stream().map(admin -> toDto(admin, null)).toList();
+    return toDtos(resolver.traegerCandidates(tenantId), null);
   }
 
   /** Covered means a valid own contact person or Träger default; the admin fallback is not. */
@@ -148,16 +153,22 @@ public class ContactPersonAdminService {
     var reach = adminScope.current();
     Map<Long, Long> tenantIdByAgencyId = new LinkedHashMap<>();
     if (reach instanceof Platform) {
+      // The Träger always comes from AgencyService; a hint is only checked against it. A centre
+      // AgencyService does not know has no Träger, whatever the hint says.
       var hints =
           request.getTenantIdsByAgency() == null
               ? Map.<String, Long>of()
               : request.getTenantIdsByAgency();
-      agencyIds.forEach(id -> tenantIdByAgencyId.put(id, hints.get(String.valueOf(id))));
-      var unknown = agencyIds.stream().filter(id -> tenantIdByAgencyId.get(id) == null).toList();
-      if (!unknown.isEmpty()) {
-        agencyService.getAgenciesWithoutCaching(unknown).stream()
-            .filter(agency -> agency.getId() != null)
-            .forEach(agency -> tenantIdByAgencyId.put(agency.getId(), agency.getTenantId()));
+      Map<Long, Long> known = new HashMap<>();
+      agencyService.getAgenciesWithoutCaching(agencyIds).stream()
+          .filter(agency -> agency.getId() != null)
+          .forEach(agency -> known.put(agency.getId(), agency.getTenantId()));
+      for (var id : agencyIds) {
+        var hint = hints.get(String.valueOf(id));
+        if (hint != null && known.containsKey(id) && !hint.equals(known.get(id))) {
+          throw new BadRequestException(TENANT_MISMATCH);
+        }
+        tenantIdByAgencyId.put(id, known.get(id));
       }
     } else {
       agencyIds.forEach(id -> tenantIdByAgencyId.put(id, reach.tenantId()));
@@ -180,17 +191,24 @@ public class ContactPersonAdminService {
    * @throws de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException for a centre
    *     outside the caller's reach
    */
-  private Long centreTenant(Long agencyId, Long requestedTenantId) {
+  private Long centreTenant(Long agencyId, Long requestedTenantId, boolean forWrite) {
     adminScope.assertMay(Target.agencies(List.of(agencyId)));
     var reach = adminScope.current();
     if (!(reach instanceof Platform)) {
       return reach.tenantId();
     }
-    if (requestedTenantId != null) {
-      return requestedTenantId;
-    }
+    // A platform admin's hint is never trusted: the Träger comes from AgencyService.
     AgencyDTO agency = agencyService.getAgencyWithoutCaching(agencyId);
-    return agency == null ? null : agency.getTenantId();
+    if (agency == null) {
+      if (forWrite) {
+        throw new BadRequestException("Unknown counselling centre");
+      }
+      return null;
+    }
+    if (requestedTenantId != null && !requestedTenantId.equals(agency.getTenantId())) {
+      throw new BadRequestException(TENANT_MISMATCH);
+    }
+    return agency.getTenantId();
   }
 
   private void assertValidPair(String contactId, String deputyId, Predicate<Admin> candidate) {
@@ -209,30 +227,47 @@ public class ContactPersonAdminService {
 
   private TenantContactPersonDTO toTenantDto(Long tenantId) {
     var traeger = resolver.resolveTraeger(tenantId);
+    var counsellors = counsellorsOf(null, traeger.pair().contact(), traeger.pair().deputy());
     return new TenantContactPersonDTO()
         .tenantId(tenantId)
-        .contact(toDto(traeger.pair().contact(), null))
-        .deputy(toDto(traeger.pair().deputy(), null))
+        .contact(toDto(traeger.pair().contact(), counsellors))
+        .deputy(toDto(traeger.pair().deputy(), counsellors))
         .generalContactEmail(traeger.generalContactEmail());
   }
 
   private AgencyContactPersonAdminDTO toDto(CentreContact centre) {
+    var counsellors =
+        counsellorsOf(
+            centre.agencyId(),
+            centre.own().contact(),
+            centre.own().deputy(),
+            centre.traegerDefault().contact(),
+            centre.traegerDefault().deputy());
     return new AgencyContactPersonAdminDTO()
         .agencyId(centre.agencyId())
         .tenantId(centre.tenantId())
-        .contact(toDto(centre.own().contact(), centre.agencyId()))
-        .deputy(toDto(centre.own().deputy(), centre.agencyId()))
-        .traegerDefault(toDto(centre.traegerDefault(), centre.agencyId()))
+        .contact(toDto(centre.own().contact(), counsellors))
+        .deputy(toDto(centre.own().deputy(), counsellors))
+        .traegerDefault(
+            new TraegerDefaultContactDTO()
+                .contact(toDto(centre.traegerDefault().contact(), counsellors))
+                .deputy(toDto(centre.traegerDefault().deputy(), counsellors)))
         .effectiveSource(EffectiveSourceEnum.valueOf(centre.source().name()));
   }
 
-  private TraegerDefaultContactDTO toDto(ContactPair pair, Long agencyId) {
-    return new TraegerDefaultContactDTO()
-        .contact(toDto(pair.contact(), agencyId))
-        .deputy(toDto(pair.deputy(), agencyId));
+  private List<ContactAdminDTO> toDtos(List<Admin> admins, Long agencyId) {
+    var counsellors =
+        resolver.activeCounsellors(admins.stream().map(Admin::getId).toList(), agencyId);
+    return admins.stream().map(admin -> toDto(admin, counsellors)).toList();
   }
 
-  private ContactAdminDTO toDto(Admin admin, Long agencyId) {
+  /** One counsellor lookup for every admin of an answer, not one per admin. */
+  private Map<String, Consultant> counsellorsOf(Long agencyId, Admin... admins) {
+    var ids = Stream.of(admins).filter(Objects::nonNull).map(Admin::getId).distinct().toList();
+    return resolver.activeCounsellors(ids, agencyId);
+  }
+
+  private static ContactAdminDTO toDto(Admin admin, Map<String, Consultant> counsellors) {
     if (admin == null) {
       return null;
     }
@@ -244,7 +279,7 @@ public class ContactPersonAdminService {
         .contactEmail(admin.getContactEmail())
         .displayEmail(ContactPersonResolver.displayEmail(admin))
         .type(typeOf(admin))
-        .isConsultant(resolver.activeCounsellor(admin.getId(), agencyId).isPresent());
+        .isConsultant(counsellors.containsKey(admin.getId()));
   }
 
   private static ContactAdminDTO.TypeEnum typeOf(Admin admin) {

@@ -470,7 +470,9 @@ paths:
         - name: tenantId
           in: query
           required: false
-          description: Träger of the centre. Only honoured for platform admins; everybody else always uses their own Träger.
+          description: >-
+            Träger of the centre, optional. For platform admins it is checked against AgencyService and a different
+            value answers 400; everybody else always uses their own Träger.
           schema:
             type: integer
             format: int64
@@ -509,7 +511,9 @@ paths:
         - name: tenantId
           in: query
           required: false
-          description: Träger of the centre. Only honoured for platform admins; everybody else always uses their own Träger.
+          description: >-
+            Träger of the centre, optional. For platform admins it is checked against AgencyService and a different
+            value answers 400; everybody else always uses their own Träger.
           schema:
             type: integer
             format: int64
@@ -553,7 +557,9 @@ paths:
         - name: tenantId
           in: query
           required: false
-          description: Träger of the centre. Only honoured for platform admins; everybody else always uses their own Träger.
+          description: >-
+            Träger of the centre, optional. For platform admins it is checked against AgencyService and a different
+            value answers 400; everybody else always uses their own Träger.
           schema:
             type: integer
             format: int64
@@ -611,7 +617,8 @@ paths:
         - admin-user-controller
       summary: 'Sets or clears the Träger default contact person, deputy and general contact e-mail (ORISO-Admin#1534) [Authorization: user-admin, tenant-admin or single-tenant-admin, within the caller''s reach]'
       description: >-
-        A null or absent value clears it. Both ids must be admins of the Träger (GET .../candidates); the deputy needs a
+        A null or absent id clears it; an absent generalContactEmail keeps it and a blank one clears it. Both ids must
+        be admins of the Träger (GET .../candidates); the deputy needs a
         contact person and must differ from it.
       operationId: updateTenantContactPerson
       parameters:
@@ -684,7 +691,8 @@ paths:
       summary: 'Which counselling centres have a contact person (ORISO-Admin#1534) [Authorization: user-admin, tenant-admin, single-tenant-admin or restricted-agency-admin, within the caller''s reach]'
       description: >-
         A centre is covered by a valid own contact person or a valid Träger default; the admin fallback does not count.
-        tenantIdsByAgency is only honoured for platform admins.
+        The Träger of each centre comes from AgencyService; for platform admins a tenantIdsByAgency entry that disagrees
+        answers 400, one for a centre AgencyService does not know is ignored.
       operationId: getAgencyContactCoverage
       requestBody:
         required: true
@@ -3290,6 +3298,7 @@ components:
           nullable: true
           format: email
           maxLength: 255
+          description: Absent keeps the stored address, blank clears it.
     AgencyContactCoverageRequestDTO:
       type: object
       required:
@@ -3303,7 +3312,7 @@ components:
             format: int64
         tenantIdsByAgency:
           type: object
-          description: Träger per centre id; only honoured for platform admins.
+          description: Träger per centre id, only checked for platform admins (see the operation description).
           additionalProperties:
             type: integer
             format: int64

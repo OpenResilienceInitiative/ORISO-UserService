@@ -271,6 +271,39 @@ class ContactPersonResolverTest {
   }
 
   @Test
+  void activeCounsellors_Should_lookUpEveryAdminWithOneQueryPerTable() {
+    var assigned = counsellor("bst-1");
+    var elsewhere = counsellor("tr-1");
+    org.mockito.Mockito.when(
+            consultantRepository.findByIdInAndDeleteDateIsNull(
+                org.mockito.ArgumentMatchers.anyCollection()))
+        .thenReturn(List.of(assigned, elsewhere));
+    org.mockito.Mockito.when(
+            consultantAgencyRepository.findByConsultantIdInAndDeleteDateIsNull(anySet()))
+        .thenReturn(List.of(relation(assigned, AGENCY), relation(elsewhere, OTHER_AGENCY)));
+
+    var result = resolver.activeCounsellors(List.of("bst-1", "tr-1", "nobody"), AGENCY);
+
+    assertThat(result).containsOnlyKeys("bst-1");
+    org.mockito.Mockito.verify(consultantRepository)
+        .findByIdInAndDeleteDateIsNull(Set.of("bst-1", "tr-1", "nobody"));
+    org.mockito.Mockito.verify(consultantAgencyRepository)
+        .findByConsultantIdInAndDeleteDateIsNull(Set.of("bst-1", "tr-1"));
+    org.mockito.Mockito.verifyNoMoreInteractions(consultantRepository, consultantAgencyRepository);
+  }
+
+  @Test
+  void activeCounsellors_Should_acceptAnyCentre_When_noCentreIsGiven() {
+    org.mockito.Mockito.when(
+            consultantRepository.findByIdInAndDeleteDateIsNull(
+                org.mockito.ArgumentMatchers.anyCollection()))
+        .thenReturn(List.of(counsellor("tr-1")));
+
+    assertThat(resolver.activeCounsellors(List.of("tr-1"), null)).containsOnlyKeys("tr-1");
+    org.mockito.Mockito.verifyNoInteractions(consultantAgencyRepository);
+  }
+
+  @Test
   void displayName_Should_neverShowTheUserName_But_fallBackToTheDisplayEmail() {
     var admin = admin("a-1", AdminType.TENANT, TENANT);
     admin.setFirstName(" ");
@@ -279,6 +312,20 @@ class ContactPersonResolverTest {
     assertThat(ContactPersonResolver.displayName(admin)).isEqualTo("a-1@login.example");
     admin.setContactEmail("kontakt@traeger.org");
     assertThat(ContactPersonResolver.displayName(admin)).isEqualTo("kontakt@traeger.org");
+  }
+
+  static de.caritas.cob.userservice.api.model.Consultant counsellor(String id) {
+    var consultant = new de.caritas.cob.userservice.api.model.Consultant();
+    consultant.setId(id);
+    return consultant;
+  }
+
+  static de.caritas.cob.userservice.api.model.ConsultantAgency relation(
+      de.caritas.cob.userservice.api.model.Consultant consultant, long agencyId) {
+    var relation = new de.caritas.cob.userservice.api.model.ConsultantAgency();
+    relation.setConsultant(consultant);
+    relation.setAgencyId(agencyId);
+    return relation;
   }
 
   Admin admin(String id, AdminType type, Long tenantId) {

@@ -89,7 +89,7 @@ class ContactPersonAdminServiceTest {
                     ContactPair.NONE,
                     ContactPair.NONE,
                     null));
-    lenient().when(resolver.activeCounsellor(any(), any())).thenReturn(Optional.empty());
+    lenient().when(resolver.activeCounsellors(any(), any())).thenReturn(Map.of());
   }
 
   @Test
@@ -127,18 +127,41 @@ class ContactPersonAdminServiceTest {
   }
 
   @Test
-  void platformAdminMayNameTheTraeger_elseTheCentresTraegerIsLookedUp() {
+  void platformAdmin_Should_getTheCentresTraegerFromAgencyService_And_aMatchingHintPasses() {
     when(adminScope.current()).thenReturn(new Platform());
-    var agency = new AgencyDTO();
-    agency.setId(AGENCY);
-    agency.setTenantId(5L);
-    when(agencyService.getAgencyWithoutCaching(AGENCY)).thenReturn(agency);
+    when(agencyService.getAgencyWithoutCaching(AGENCY)).thenReturn(agency(AGENCY, 5L));
 
-    service.getAgencyContactPerson(AGENCY, 4L);
     service.getAgencyContactPerson(AGENCY, null);
+    service.getAgencyContactPerson(AGENCY, 5L);
 
-    verify(resolver).resolveCentre(AGENCY, 4L);
-    verify(resolver).resolveCentre(AGENCY, 5L);
+    verify(resolver, org.mockito.Mockito.times(2)).resolveCentre(AGENCY, 5L);
+  }
+
+  @Test
+  void platformAdmin_Should_beRefused_When_theTenantHintDisagreesWithAgencyService() {
+    when(adminScope.current()).thenReturn(new Platform());
+    when(agencyService.getAgencyWithoutCaching(AGENCY)).thenReturn(agency(AGENCY, 5L));
+
+    assertThatThrownBy(() -> service.getAgencyContactPerson(AGENCY, 4L))
+        .isInstanceOf(BadRequestException.class);
+    assertThatThrownBy(
+            () ->
+                service.updateAgencyContactPerson(
+                    AGENCY, 4L, new UpdateContactPersonDTO().contactAdminId("a-1")))
+        .isInstanceOf(BadRequestException.class);
+    verifyNoInteractions(resolver, agencyContactPersonRepository);
+  }
+
+  @Test
+  void platformAdmin_Should_notSetAContactForACentreAgencyServiceDoesNotKnow() {
+    when(adminScope.current()).thenReturn(new Platform());
+
+    assertThatThrownBy(
+            () ->
+                service.updateAgencyContactPerson(
+                    AGENCY, 5L, new UpdateContactPersonDTO().contactAdminId("a-1")))
+        .isInstanceOf(BadRequestException.class);
+    verifyNoInteractions(agencyContactPersonRepository);
   }
 
   @Test
@@ -166,6 +189,8 @@ class ContactPersonAdminServiceTest {
     assertThat(result.getContact().getType()).isEqualTo(ContactAdminDTO.TypeEnum.AGENCY);
     assertThat(result.getDeputy()).isNull();
     assertThat(result.getTraegerDefault().getContact().getAdminId()).isEqualTo("tr-1");
+    // One counsellor lookup for everybody in the answer.
+    verify(resolver).activeCounsellors(List.of("bst-1", "tr-1"), AGENCY);
   }
 
   @Test
@@ -301,6 +326,29 @@ class ContactPersonAdminServiceTest {
   }
 
   @Test
+  void updateTenantContactPerson_Should_keepTheGeneralEmail_When_theFieldIsAbsent() {
+    var contact = admin("tr-1", AdminType.TENANT);
+    when(adminRepository.findById("tr-1")).thenReturn(Optional.of(contact));
+    when(resolver.isTraegerCandidate(contact, TENANT)).thenReturn(true);
+    when(tenantContactPersonRepository.findById(TENANT))
+        .thenReturn(
+            Optional.of(
+                TenantContactPerson.builder()
+                    .tenantId(TENANT)
+                    .generalContactEmail("info@traeger.org")
+                    .build()));
+    when(resolver.resolveTraeger(TENANT))
+        .thenReturn(new TraegerContact(TENANT, ContactPair.NONE, null));
+
+    service.updateTenantContactPerson(
+        TENANT, new UpdateTenantContactPersonDTO().contactAdminId("tr-1"));
+
+    var saved = ArgumentCaptor.forClass(TenantContactPerson.class);
+    verify(tenantContactPersonRepository).save(saved.capture());
+    assertThat(saved.getValue().getGeneralContactEmail()).isEqualTo("info@traeger.org");
+  }
+
+  @Test
   void coverage_Should_countOnlyOwnOrTraegerDefault() {
     when(adminScope.current()).thenReturn(new Tenant(TENANT));
     var someone = admin("tr-1", AdminType.TENANT);
@@ -343,24 +391,40 @@ class ContactPersonAdminServiceTest {
   }
 
   @Test
-  void coverage_Should_useTheTenantHintsOnlyForPlatformAdmins() {
+  void coverage_Should_takeTheTraegerFromOneAgencyServiceLookup_And_ignoreUnverifiableHints() {
     when(adminScope.current()).thenReturn(new Platform());
-    var agency = new AgencyDTO();
-    agency.setId(2L);
-    agency.setTenantId(6L);
-    when(agencyService.getAgenciesWithoutCaching(anyList())).thenReturn(List.of(agency));
+    when(agencyService.getAgenciesWithoutCaching(anyList()))
+        .thenReturn(List.of(agency(1L, 5L), agency(2L, 6L)));
     when(resolver.resolveCentres(anyMap())).thenReturn(Map.of());
 
     service.getAgencyContactCoverage(
         new AgencyContactCoverageRequestDTO()
-            .agencyIds(List.of(1L, 2L))
-            .tenantIdsByAgency(Map.of("1", 5L)));
+            .agencyIds(List.of(1L, 2L, 3L))
+            .tenantIdsByAgency(Map.of("1", 5L, "3", 9L)));
 
     @SuppressWarnings("unchecked")
     ArgumentCaptor<Map<Long, Long>> request = ArgumentCaptor.forClass(Map.class);
     verify(resolver).resolveCentres(request.capture());
-    assertThat(request.getValue()).containsEntry(1L, 5L).containsEntry(2L, 6L);
-    verify(agencyService).getAgenciesWithoutCaching(List.of(2L));
+    assertThat(request.getValue())
+        .containsEntry(1L, 5L)
+        .containsEntry(2L, 6L)
+        .containsEntry(3L, null);
+    verify(agencyService).getAgenciesWithoutCaching(List.of(1L, 2L, 3L));
+  }
+
+  @Test
+  void coverage_Should_refuseAHintThatDisagreesWithAgencyService() {
+    when(adminScope.current()).thenReturn(new Platform());
+    when(agencyService.getAgenciesWithoutCaching(anyList())).thenReturn(List.of(agency(1L, 5L)));
+
+    assertThatThrownBy(
+            () ->
+                service.getAgencyContactCoverage(
+                    new AgencyContactCoverageRequestDTO()
+                        .agencyIds(List.of(1L))
+                        .tenantIdsByAgency(Map.of("1", 4L))))
+        .isInstanceOf(BadRequestException.class);
+    verifyNoInteractions(resolver);
   }
 
   @Test
@@ -369,8 +433,8 @@ class ContactPersonAdminServiceTest {
     var both = admin("bst-1", AdminType.AGENCY);
     var adminOnly = admin("tr-1", AdminType.TENANT);
     when(resolver.centreCandidates(AGENCY, TENANT)).thenReturn(List.of(both, adminOnly));
-    when(resolver.activeCounsellor("bst-1", AGENCY))
-        .thenReturn(Optional.of(new de.caritas.cob.userservice.api.model.Consultant()));
+    when(resolver.activeCounsellors(List.of("bst-1", "tr-1"), AGENCY))
+        .thenReturn(Map.of("bst-1", new de.caritas.cob.userservice.api.model.Consultant()));
 
     var result = service.getAgencyContactPersonCandidates(AGENCY, null);
 
@@ -379,6 +443,13 @@ class ContactPersonAdminServiceTest {
         .containsExactly(
             org.assertj.core.groups.Tuple.tuple("bst-1", true),
             org.assertj.core.groups.Tuple.tuple("tr-1", false));
+  }
+
+  static AgencyDTO agency(long id, long tenantId) {
+    var agency = new AgencyDTO();
+    agency.setId(id);
+    agency.setTenantId(tenantId);
+    return agency;
   }
 
   static Admin admin(String id, AdminType type) {

@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.port.out.AgencyContactPersonRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.TenantContactPersonRepository;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -19,7 +20,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -196,17 +196,32 @@ public class ContactPersonResolver {
   }
 
   /**
-   * The admin's counsellor identity, if it is not deleted and, when {@code agencyId} is given,
-   * assigned to that centre.
+   * The counsellor identities of the given admins that are not deleted and, when {@code agencyId}
+   * is given, assigned to that centre. One query per table for all of them.
+   *
+   * @return counsellor by admin id; admins without such an identity are missing
    */
-  public Optional<Consultant> activeCounsellor(String adminId, Long agencyId) {
-    return consultantRepository
-        .findByIdAndDeleteDateIsNull(adminId)
-        .filter(
-            consultant ->
-                agencyId == null
-                    || consultantAgencyRepository
-                        .existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(adminId, agencyId));
+  public Map<String, Consultant> activeCounsellors(Collection<String> adminIds, Long agencyId) {
+    Set<String> ids =
+        adminIds.stream().filter(Objects::nonNull).collect(Collectors.toCollection(HashSet::new));
+    if (ids.isEmpty()) {
+      return Map.of();
+    }
+    Map<String, Consultant> counsellors =
+        consultantRepository.findByIdInAndDeleteDateIsNull(ids).stream()
+            .collect(Collectors.toMap(Consultant::getId, Function.identity(), (a, b) -> a));
+    if (agencyId == null || counsellors.isEmpty()) {
+      return counsellors;
+    }
+    Set<String> assigned =
+        consultantAgencyRepository
+            .findByConsultantIdInAndDeleteDateIsNull(new HashSet<>(counsellors.keySet()))
+            .stream()
+            .filter(relation -> agencyId.equals(relation.getAgencyId()))
+            .map(relation -> relation.getConsultant().getId())
+            .collect(Collectors.toSet());
+    counsellors.keySet().retainAll(assigned);
+    return counsellors;
   }
 
   /** The contact e-mail if set, else the login e-mail. */
@@ -256,7 +271,7 @@ public class ContactPersonResolver {
         .collect(Collectors.toMap(Admin::getId, Function.identity(), (a, b) -> a));
   }
 
-  private Map<String, Set<Long>> agenciesOf(java.util.Collection<Admin> admins) {
+  private Map<String, Set<Long>> agenciesOf(Collection<Admin> admins) {
     Set<String> agencyAdminIds =
         admins.stream()
             .filter(admin -> admin.getType() == AdminType.AGENCY)
