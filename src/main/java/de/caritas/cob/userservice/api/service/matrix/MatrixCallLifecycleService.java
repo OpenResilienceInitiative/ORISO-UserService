@@ -320,11 +320,10 @@ public class MatrixCallLifecycleService {
         .filter(user -> Objects.equals(user.getTenantId(), tenant) && user.getUserId() != null)
         .map(user -> new Recipient(user.getUserId(), false))
         .or(
+            // Round 10 (F1): duplicate-tolerant; an id two accounts of the Träger share is nobody.
             () ->
-                consultants
-                    .findByMatrixUserIdAndDeleteDateIsNull(matrixId)
-                    .filter(
-                        user -> Objects.equals(user.getTenantId(), tenant) && user.getId() != null)
+                SoleCounsellor.of(consultants, matrixId, tenant)
+                    .filter(user -> user.getId() != null)
                     .map(user -> new Recipient(user.getId(), true)));
   }
 

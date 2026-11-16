@@ -152,9 +152,9 @@ public class MatrixCallGuestService {
         .map(device -> device.getSenderMatrixId())
         .distinct()
         .filter(member -> binding.isInCall(member, now))
-        .map(consultants::findByMatrixUserIdAndDeleteDateIsNull)
+        // Round 10 (F1): one not deleted account of the Träger per id, else nobody (fail closed).
+        .map(member -> SoleCounsellor.of(consultants, member, tenant))
         .flatMap(Optional::stream)
-        .filter(value -> tenant.equals(value.getTenantId()))
         .map(value -> value.getId())
         .filter(this::isActive)
         .toList();
@@ -354,11 +354,10 @@ public class MatrixCallGuestService {
     return binding.getDevices().values().stream()
         .filter(
             device ->
-                consultants
-                    .findByMatrixUserIdAndDeleteDateIsNull(device.getSenderMatrixId())
-                    .filter(value -> tenant != null && tenant.equals(value.getTenantId()))
-                    .filter(value -> isActive(value.getId()))
-                    .isPresent())
+                tenant != null
+                    && SoleCounsellor.of(consultants, device.getSenderMatrixId(), tenant)
+                        .filter(value -> isActive(value.getId()))
+                        .isPresent())
         .mapToLong(device -> device.getExpiresAt())
         .max()
         .orElse(binding.getInvitedAt());
@@ -398,7 +397,6 @@ public class MatrixCallGuestService {
     String room = seen.getMediaRoomId();
     for (MatrixCallGuest guest : guests.findByBindingIdAndRevokedAtIsNull(seen.getId())) {
       Removal removal = remove(seen, guest);
-      evictFromLiveKit(room, guest.getMatrixUserId());
       Boolean recorded =
           new org.springframework.transaction.support.TransactionTemplate(transactionManager)
               .execute(
@@ -420,6 +418,9 @@ public class MatrixCallGuestService {
                     return true;
                   });
       if (!Boolean.TRUE.equals(recorded)) return false;
+      // Round 10 (F2): no transaction is open here, so the eviction would run at once; it runs only
+      // after the TransactionTemplate committed revoked_at, so the media gate already refuses.
+      evictFromLiveKit(room, guest.getMatrixUserId());
     }
     return guests.findByBindingIdAndRevokedAtIsNull(seen.getId()).isEmpty();
   }
@@ -441,9 +442,8 @@ public class MatrixCallGuestService {
             .orElse(null);
     if (conversation == null) return List.of();
     return callRoomMembers(binding.getSourceRoomId()).orElse(List.of()).stream()
-        .map(consultants::findByMatrixUserIdAndDeleteDateIsNull)
+        .map(member -> SoleCounsellor.of(consultants, member, tenant))
         .flatMap(Optional::stream)
-        .filter(value -> tenant.equals(value.getTenantId()))
         .map(value -> value.getId())
         .filter(this::isActive)
         .toList();
@@ -463,7 +463,8 @@ public class MatrixCallGuestService {
    * lock, so a client that asks for a new token right after an earlier eviction would still be
    * admitted, and nothing would evict it again. After the commit, the HTTP call also holds neither
    * the binding lock nor the seat locks. A rolled back revocation evicts nobody. Without a
-   * transaction (the takeover's removal), it runs at once.
+   * transaction it runs at once, so the takeover (round 10, F2) calls it only after its
+   * TransactionTemplate committed revoked_at.
    */
   private void evictFromLiveKit(String mediaRoomId, String guestMatrixId) {
     var eviction = liveKitEviction == null ? null : liveKitEviction.getIfAvailable();

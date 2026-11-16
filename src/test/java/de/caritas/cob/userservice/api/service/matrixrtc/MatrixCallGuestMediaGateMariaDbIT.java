@@ -466,6 +466,32 @@ class MatrixCallGuestMediaGateMariaDbIT {
   }
 
   @Test
+  void theTakeoverPathEvictsOnlyOnceItsRevocationIsCommitted() throws Exception {
+    // Round 10 (F2): the takeover's removal runs without a transaction, so the eviction ran at
+    // once,
+    // before the TransactionTemplate wrote revoked_at.
+    var revokedAtEviction = new java.util.concurrent.atomic.AtomicReference<Object>("not evicted");
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              revokedAtEviction.set(committedRevokedAt());
+              return null;
+            })
+        .when(eviction)
+        .evictFromCallRoom(media, guestMatrixId);
+    new JdbcTemplate(dataSource)
+        .update("UPDATE session SET consultant_id = ? WHERE id = ?", colleague.getId(), sessionId);
+
+    assertThat(callGuests.revokeBeforeTakeOver(bindings.findById(bindingId).orElseThrow()))
+        .isTrue();
+
+    assertSeatRevokedAndKept();
+    assertThat(revokedAtEviction.get())
+        .as("the eviction sees the revocation committed")
+        .isNotNull()
+        .isNotEqualTo("not evicted");
+  }
+
+  @Test
   void aRolledBackRevocationEvictsNobody() {
     new TransactionTemplate(transactionManager)
         .executeWithoutResult(
@@ -487,8 +513,8 @@ class MatrixCallGuestMediaGateMariaDbIT {
   @Test
   void aRoomThatAlwaysFailsDoesNotStopTheSweepAndItsStampAdvances() {
     // Round 9 (F2): consultant.matrix_user_id is not unique. Two accounts of another Träger share
-    // the Matrix id of a live member of this test's call, so every pass of it throws. It sorts
-    // before the reassigned call; the sweep must still reach that one.
+    // the Matrix id of a live member of this test's call; before round 10 every pass of it threw.
+    // It sorts before the reassigned call; the sweep must still reach that one.
     String shared = "@gate-shared-" + UUID.randomUUID().toString().substring(0, 8) + ":example";
     var transaction = new TransactionTemplate(transactionManager);
     var twins =
@@ -523,6 +549,133 @@ class MatrixCallGuestMediaGateMariaDbIT {
         new JdbcTemplate(dataSource)
             .update("UPDATE consultant SET delete_date = NOW() WHERE consultant_id = ?", id);
     }
+  }
+
+  @Test
+  void aPoisonRoomInTheExpiryLoopDoesNotStopTheOtherRooms() {
+    // Round 10 (F1): two not deleted accounts of this Träger share a Matrix id. Before, the
+    // single-row lookup in the rule check threw for the poison room, the exception left the
+    // reconcile pass and the sync never acknowledged its batch.
+    var twins = poisonRoomThatRanOut();
+    expireAllMemberships(bindingId);
+    try {
+      reconciler.reconcileMediaRooms();
+
+      assertThat(bindings.findById(bindingId).orElseThrow().getEndedAt())
+          .as("the expiry loop still reaches the call after the poison room")
+          .isNotNull();
+      assertSeatRevokedAndKept();
+    } finally {
+      softDelete(twins);
+    }
+  }
+
+  @Test
+  void aPoisonRoomOnTheLiveEventPathDoesNotStopTheBatchOrItsAcknowledgement() throws Exception {
+    // Round 10 (F1): the same poison room, reached through a sync batch's joined rooms.
+    var twins = poisonRoomThatRanOut();
+    // The poison room keeps its authority, so its pass reaches the presence lookup.
+    long before = System.currentTimeMillis();
+    var cursor =
+        mock(de.caritas.cob.userservice.api.service.matrix.MatrixEmailSyncCursorStore.class);
+    var listener =
+        new de.caritas.cob.userservice.api.service.matrix.MatrixEventListenerService(
+            matrix,
+            mock(de.caritas.cob.userservice.api.service.session.SessionService.class),
+            mock(
+                de.caritas.cob.userservice.api.service.mobilepushmessage
+                    .MobilePushNotificationService.class),
+            notifications,
+            Optional.empty(),
+            mock(UserRepository.class),
+            mock(ConsultantRepository.class),
+            mock(SessionRepository.class),
+            mock(
+                de.caritas.cob.userservice.api.service.statistics.ConsultantMessageStatService
+                    .class),
+            mock(de.caritas.cob.userservice.api.service.statistics.CommunicationStatService.class),
+            reconciler,
+            mock(
+                de.caritas.cob.userservice.api.service.notification.AdviceSeekerReplyEmailService
+                    .class),
+            cursor,
+            mock(
+                de.caritas.cob.userservice.api.service.notification.InternalChatEmailService
+                    .class));
+    var joined = new java.util.LinkedHashMap<String, Object>();
+    joined.put(poisonMedia, Map.of("timeline", Map.of("events", List.of())));
+    joined.put(media, Map.of("timeline", Map.of("events", List.of())));
+    when(matrix.makeMatrixRequest(
+            anyString(),
+            org.mockito.ArgumentMatchers.eq("GET"),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any()))
+        .thenReturn(Map.of("next_batch", "batch-after-poison", "rooms", Map.of("join", joined)));
+    try {
+      org.assertj.core.api.Assertions.assertThatCode(
+              () -> ReflectionTestUtils.invokeMethod(listener, "executeObservedMatrixSyncCycle"))
+          .doesNotThrowAnyException();
+
+      org.mockito.Mockito.verify(cursor).write("batch-after-poison");
+      assertThat(bindings.findById(bindingId).orElseThrow().getMediaObservedAt())
+          .as("the call room after the poison room is handled from this batch")
+          .isGreaterThanOrEqualTo(before);
+    } finally {
+      softDelete(twins);
+    }
+  }
+
+  private String poisonMedia;
+
+  /**
+   * A running call of this test's session whose memberships all ran out, held by the assigned
+   * counsellor and by a Matrix id two accounts of the Träger share. Its conversation room does not
+   * resolve, so its pass goes straight to the rule check. It sorts first by call-room id.
+   */
+  private List<String> poisonRoomThatRanOut() {
+    String suffix = UUID.randomUUID().toString().substring(0, 8);
+    String shared = "@gate-twin-" + suffix + ":example";
+    poisonMedia = "!0-a-poison-" + suffix + ":example";
+    long now = System.currentTimeMillis();
+    String caller = counsellor.getMatrixUserId();
+    return new TransactionTemplate(transactionManager)
+        .execute(
+            status -> {
+              var binding =
+                  MatrixCallBinding.builder()
+                      .sourceRoomId("!gate-unresolved-" + suffix + ":example")
+                      .callId("poison-call")
+                      .mediaRoomId(poisonMedia)
+                      .callerMatrixId(caller)
+                      .sessionId(sessionId)
+                      .tenantId(7L)
+                      .invitedAt(now - 60_000)
+                      .inviteExpiresAt(now - 30_000)
+                      .startedAt(now - 50_000)
+                      .mediaObservedAt(now - 50_000)
+                      .video(true)
+                      .build();
+              binding.getDevices().put("_" + caller + "_C", device(caller, now - 10_000));
+              binding.getDevices().put("_" + shared + "_T", device(shared, now - 10_000));
+              bindings.save(binding);
+              return List.of(
+                  consultants.save(consultantOfTenant(7L, shared)).getId(),
+                  consultants.save(consultantOfTenant(7L, shared)).getId());
+            });
+  }
+
+  private void expireAllMemberships(Long binding) {
+    new JdbcTemplate(dataSource)
+        .update(
+            "UPDATE matrix_call_device SET expires_at = ? WHERE binding_id = ?",
+            System.currentTimeMillis() - 10_000,
+            binding);
+  }
+
+  private void softDelete(List<String> consultantIds) {
+    for (String id : consultantIds)
+      new JdbcTemplate(dataSource)
+          .update("UPDATE consultant SET delete_date = NOW() WHERE consultant_id = ?", id);
   }
 
   /** The assigned counsellor's membership ran out; an active colleague of the Träger is live. */

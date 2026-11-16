@@ -80,6 +80,20 @@ class MatrixCallNotificationIT {
   @MockitoBean private de.caritas.cob.userservice.api.port.out.ChatRepository chats;
   @MockitoBean private UserRepository users;
   @MockitoBean private ConsultantRepository consultants;
+
+  /** Round 10: the call code reads every row of a Matrix id; the one-row stubs stay the fixture. */
+  @org.junit.jupiter.api.BeforeEach
+  void everyRowQueryAnswersFromTheOneRowStubs() {
+    org.mockito.Mockito.lenient()
+        .when(
+            consultants.findAllByMatrixUserIdAndDeleteDateIsNull(
+                org.mockito.ArgumentMatchers.anyString()))
+        .thenAnswer(
+            call ->
+                consultants.findByMatrixUserIdAndDeleteDateIsNull(call.getArgument(0)).stream()
+                    .toList());
+  }
+
   @MockitoBean private IdentityTombstoneService tombstones;
   @Autowired private AccountInactivityService accountLifecycle;
   @Autowired private javax.sql.DataSource accountDataSource;

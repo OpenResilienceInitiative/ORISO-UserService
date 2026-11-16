@@ -83,6 +83,14 @@ class MatrixCallGuestServiceTest {
     when(matrix.loginAsUserAccessToken(COUNSELLOR)).thenReturn("counsellor-token");
     when(accounts.snapshot(anyString())).thenReturn(Optional.empty());
     when(authority.grantsGuestAuthority(any())).thenReturn(true);
+    // Round 10: the call code reads every row of a Matrix id; the single-row stubs below stay the
+    // fixture for the ordinary one-row case.
+    lenient()
+        .when(consultants.findAllByMatrixUserIdAndDeleteDateIsNull(anyString()))
+        .thenAnswer(
+            call ->
+                consultants.findByMatrixUserIdAndDeleteDateIsNull(call.getArgument(0)).stream()
+                    .toList());
     lenient()
         .when(guests.saveAndFlush(any(MatrixCallGuest.class)))
         .thenAnswer(
@@ -892,6 +900,70 @@ class MatrixCallGuestServiceTest {
         .admittedByMatrixId(COUNSELLOR)
         .admittedAt(1500L)
         .build();
+  }
+
+  // Round 10 (F1b): consultant.matrix_user_id is not unique. The single-row query throws on two
+  // rows; the presence checks must neither throw nor grant on an ambiguous id.
+
+  private void twoRowsFor(String matrixId, Consultant... rows) {
+    org.mockito.Mockito.doReturn(List.of(rows))
+        .when(consultants)
+        .findAllByMatrixUserIdAndDeleteDateIsNull(matrixId);
+    org.mockito.Mockito.doThrow(
+            new org.springframework.dao.IncorrectResultSizeDataAccessException(1, 2))
+        .when(consultants)
+        .findByMatrixUserIdAndDeleteDateIsNull(matrixId);
+  }
+
+  @Test
+  void aMatrixIdSharedWithAnotherTraegersAccountStillCountsForItsOwnTraeger() {
+    twoRowsFor(
+        COUNSELLOR,
+        consultant("counsellor", COUNSELLOR, 7L),
+        consultant("elsewhere", COUNSELLOR, 8L));
+
+    assertThat(service.counsellorsInCall(7L, binding(null))).containsExactly("counsellor");
+  }
+
+  @Test
+  void anAmbiguousMatrixIdWithinOneTraegerCountsAsAbsentAndTheSeatsGo() {
+    twoRowsFor(
+        COUNSELLOR, consultant("counsellor", COUNSELLOR, 7L), consultant("twin", COUNSELLOR, 7L));
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull(GUEST)).thenReturn(Optional.empty());
+    var guest = seatThatCanBeRemoved();
+
+    assertThat(service.counsellorsInCall(7L, binding(null)))
+        .as("fail closed: nobody vouches on an ambiguous id")
+        .isEmpty();
+    service.revokeOnceTheSessionCallRuleLapsed(binding(null), System.currentTimeMillis());
+
+    assertThat(guest.getRevokedAt())
+        .as("an ambiguous membership is no presence either, so the grace ran out long ago")
+        .isNotNull();
+  }
+
+  @Test
+  void aGroupCallsConversationCounsellorWithASharedMatrixIdStillCounts() {
+    var group = groupCall(0L);
+    when(conversations.resolve(SOURCE))
+        .thenReturn(Optional.of(new MatrixCallConversation(SOURCE, 7L, null, 3L)));
+    twoRowsFor(
+        COUNSELLOR,
+        consultant("counsellor", COUNSELLOR, 7L),
+        consultant("elsewhere", COUNSELLOR, 8L));
+
+    assertThat(service.counsellorsInCall(7L, group)).containsExactly("counsellor");
+  }
+
+  @Test
+  void aGroupCallsAmbiguousConversationCounsellorDoesNotCount() {
+    var group = groupCall(0L);
+    when(conversations.resolve(SOURCE))
+        .thenReturn(Optional.of(new MatrixCallConversation(SOURCE, 7L, null, 3L)));
+    twoRowsFor(
+        COUNSELLOR, consultant("counsellor", COUNSELLOR, 7L), consultant("twin", COUNSELLOR, 7L));
+
+    assertThat(service.counsellorsInCall(7L, group)).isEmpty();
   }
 
   private MatrixCallBinding binding(Long endedAt) {

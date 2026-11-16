@@ -44,6 +44,7 @@ class MatrixCallInviteNotificationServiceTest {
   private final MatrixCallBindingService callBindings = mock(MatrixCallBindingService.class);
   private final MatrixCallLifecycleService lifecycle = mock(MatrixCallLifecycleService.class);
   private final OrisoRoomRegistry rooms = mock(OrisoRoomRegistry.class);
+  private final MatrixCallGuestService callGuests = mock(MatrixCallGuestService.class);
   private MatrixCallInviteNotificationService service;
 
   @BeforeEach
@@ -57,7 +58,7 @@ class MatrixCallInviteNotificationServiceTest {
             mock(EventNotificationService.class),
             callBindings,
             lifecycle,
-            mock(MatrixCallGuestService.class),
+            callGuests,
             mock(SessionCallAuthority.class),
             new DedicatedCallRoom(rooms, matrix));
     // A group chat: any member's invite carries the call (the 1:1 authority rule does not apply).
@@ -126,6 +127,87 @@ class MatrixCallInviteNotificationServiceTest {
     assertThat(service.handle(SOURCE, invite(MEDIA))).isFalse();
 
     verify(callBindings, never()).register(any());
+  }
+
+  // Round 10 (F1a): one room whose pass throws must not stop the others. The listener writes
+  // next_batch only after handleMediaRooms and reconcileMediaRooms return.
+
+  private static final String POISON = "!poison:example";
+  private static final String HEALTHY = "!healthy:example";
+
+  @Test
+  void aRoomWhosePassThrowsDoesNotStopAnyReconcileLoop() {
+    var both = List.of(POISON, HEALTHY);
+    var failure = new org.springframework.dao.IncorrectResultSizeDataAccessException(1, 2);
+    when(callBindings.unobservedMediaRooms(org.mockito.ArgumentMatchers.anyLong()))
+        .thenReturn(both);
+    when(callBindings.expiredMediaRooms(org.mockito.ArgumentMatchers.anyLong())).thenReturn(both);
+    when(callBindings.neverObservedSessionCalls(org.mockito.ArgumentMatchers.anyLong()))
+        .thenReturn(both);
+    when(callGuests.endedRoomsWithOutstandingGuests()).thenReturn(both);
+    org.mockito.Mockito.doThrow(failure).when(lifecycle).restoreObservation(POISON);
+    when(lifecycle.handleRoom(POISON, Map.of())).thenThrow(failure);
+    when(lifecycle.finishNeverObserved(
+            org.mockito.ArgumentMatchers.eq(POISON), org.mockito.ArgumentMatchers.anyLong()))
+        .thenThrow(failure);
+
+    service.reconcileMediaRooms();
+
+    verify(lifecycle).restoreObservation(HEALTHY);
+    verify(lifecycle, org.mockito.Mockito.times(2)).handleRoom(HEALTHY, Map.of());
+    verify(lifecycle)
+        .finishNeverObserved(
+            org.mockito.ArgumentMatchers.eq(HEALTHY), org.mockito.ArgumentMatchers.anyLong());
+    verify(callGuests)
+        .runningSessionRoomsWithOutstandingGuests(org.mockito.ArgumentMatchers.anyLong());
+  }
+
+  @Test
+  void aLiveRoomWhosePassThrowsStopsNoOtherRoomAndHoldsTheBatchForAReplay() {
+    Map<String, Object> poisonData = Map.of("timeline", Map.of("events", List.of()));
+    Map<String, Object> healthyData = Map.of("state", Map.of("events", List.of()));
+    var batch = new java.util.LinkedHashMap<String, Object>();
+    batch.put(POISON, poisonData);
+    batch.put(HEALTHY, healthyData);
+    when(callBindings.knownMediaRooms(any())).thenReturn(java.util.Set.of(POISON, HEALTHY));
+    when(lifecycle.handleRoom(POISON, poisonData))
+        .thenThrow(new org.springframework.dao.CannotAcquireLockException("lock wait"))
+        .thenReturn(true);
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.handleMediaRooms(batch))
+        .as("the failed room's events exist only in this batch: replay it")
+        .isInstanceOf(MatrixCallInviteNotificationService.CallRoomBatchReplay.class);
+    verify(lifecycle).handleRoom(HEALTHY, healthyData);
+
+    org.assertj.core.api.Assertions.assertThatCode(() -> service.handleMediaRooms(batch))
+        .as("the replay succeeds and the batch can be acknowledged")
+        .doesNotThrowAnyException();
+  }
+
+  @Test
+  void aLiveRoomThatKeepsFailingHoldsTheBatchOnlyABoundedNumberOfTimes() {
+    Map<String, Object> poisonData = Map.of("timeline", Map.of("events", List.of()));
+    Map<String, Object> healthyData = Map.of("state", Map.of("events", List.of()));
+    var batch = new java.util.LinkedHashMap<String, Object>();
+    batch.put(POISON, poisonData);
+    batch.put(HEALTHY, healthyData);
+    when(callBindings.knownMediaRooms(any())).thenReturn(java.util.Set.of(POISON, HEALTHY));
+    when(lifecycle.handleRoom(POISON, poisonData))
+        .thenThrow(new org.springframework.dao.IncorrectResultSizeDataAccessException(1, 2));
+
+    for (int attempt = 0;
+        attempt < MatrixCallInviteNotificationService.LIVE_ROOM_RETRIES;
+        attempt++)
+      org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.handleMediaRooms(batch))
+          .isInstanceOf(MatrixCallInviteNotificationService.CallRoomBatchReplay.class);
+
+    org.assertj.core.api.Assertions.assertThatCode(() -> service.handleMediaRooms(batch))
+        .as("then the room is left to the sweeps and the batch is acknowledged")
+        .doesNotThrowAnyException();
+    verify(
+            lifecycle,
+            org.mockito.Mockito.times(MatrixCallInviteNotificationService.LIVE_ROOM_RETRIES + 1))
+        .handleRoom(HEALTHY, healthyData);
   }
 
   private static Map<String, Object> invite(String callRoom) {

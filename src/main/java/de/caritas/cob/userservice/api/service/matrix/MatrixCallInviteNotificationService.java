@@ -29,59 +29,119 @@ public class MatrixCallInviteNotificationService {
   private final SessionCallAuthority authority;
   private final DedicatedCallRoom callRoom;
 
+  /** How often a live room whose pass failed may hold its sync batch for a replay. */
+  public static final int LIVE_ROOM_RETRIES = 3;
+
   public boolean handleMediaRoom(String room, Map<String, Object> roomData) {
     return lifecycle.handleRoom(room, roomData);
   }
 
+  /**
+   * Live sync path. FE#2209 round 10 (F1): each room is handled on its own, so a room whose pass
+   * throws no longer keeps the rooms after it in the batch from being handled. The failed room's
+   * membership events exist only in this batch, so it is retried by replaying the batch: once every
+   * room was handled, the sync is told not to acknowledge it (the established behaviour for a
+   * transient Matrix lookup failure). That replay is bounded per room: once a room failed {@link
+   * #LIVE_ROOM_RETRIES} times in a row it no longer holds the batch, it is logged and left to the
+   * sweeps, which cover it from its persisted state (expiry, rule lapse, guest removal). A success
+   * resets the count.
+   */
   @SuppressWarnings("unchecked")
   public void handleMediaRooms(Map<String, Object> joinedRooms) {
     var known = callBindings.knownMediaRooms(joinedRooms.keySet());
+    boolean replay = false;
     for (var entry : joinedRooms.entrySet()) {
-      if (known.contains(entry.getKey())) {
-        lifecycle.handleRoom(entry.getKey(), (Map<String, Object>) entry.getValue());
+      String room = entry.getKey();
+      if (!known.contains(room)) continue;
+      var roomData = (Map<String, Object>) entry.getValue();
+      if (passed("Call room event pass", () -> lifecycle.handleRoom(room, roomData))) {
+        liveRoomFailures.remove(room);
+        continue;
       }
+      int failures = liveRoomFailures.merge(room, 1, Integer::sum);
+      if (failures <= LIVE_ROOM_RETRIES) replay = true;
+      else log.warn("Call room event pass keeps failing for one room; left to the sweeps");
+    }
+    if (replay) throw new CallRoomBatchReplay();
+  }
+
+  /** Consecutive live pass failures per room; bounded, written by the sync worker only. */
+  private final Map<String, Integer> liveRoomFailures =
+      java.util.Collections.synchronizedMap(
+          new java.util.LinkedHashMap<>() {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<String, Integer> eldest) {
+              return size() > MAX_TRACKED_FAILING_ROOMS;
+            }
+          });
+
+  static final int MAX_TRACKED_FAILING_ROOMS = 256;
+
+  /** Tells the sync not to acknowledge the batch, so a failed live room is retried. No ids. */
+  public static final class CallRoomBatchReplay extends RuntimeException {
+    CallRoomBatchReplay() {
+      super("A call room pass failed; the sync batch is replayed", null, false, false);
     }
   }
 
   public void handleMediaRoomLeft(String room) {
-    lifecycle.loseObservation(room);
+    passed("Call room leave", () -> lifecycle.loseObservation(room));
   }
 
   public void reconcileMediaRooms() {
+    // Round 10 (F1): every loop handles each room through passed(), so a room whose pass always
+    // throws (e.g. a lookup that cannot decide) is logged and skipped, and the sync still
+    // acknowledges its batch. Retry bound: the rule-lapse sweep stamps each candidate before its
+    // pass and takes the least recently swept first, so with N candidates a room that keeps
+    // failing is retried within about ceil(N/100) sweep cycles. The other loops keep their order
+    // and retry such a room every cycle; they reach the rooms behind it as long as fewer than a
+    // page (100) of rooms keep failing.
     // Each room is locked in its own transaction. Only call after a successful sync has
     // applied current membership renewals, never on a transport failure.
     for (String room : callBindings.unobservedMediaRooms(System.currentTimeMillis())) {
-      lifecycle.restoreObservation(room);
+      passed("Call room observation restore", () -> lifecycle.restoreObservation(room));
     }
     for (String room : callBindings.expiredMediaRooms(System.currentTimeMillis())) {
-      lifecycle.handleRoom(room, Map.of());
+      passed("Call room expiry pass", () -> lifecycle.handleRoom(room, Map.of()));
     }
     // FE#2209 review: a session call that was never observed would otherwise never end.
     long now = System.currentTimeMillis();
     for (String room :
         callBindings.neverObservedSessionCalls(
             now - MatrixCallLifecycleService.NEVER_OBSERVED_MARGIN_MILLIS)) {
-      lifecycle.finishNeverObserved(room, now);
+      passed("Never observed call end", () -> lifecycle.finishNeverObserved(room, now));
     }
     // US#1477: an ended call can still hold a guest whose removal failed; retry without an event.
     for (String room : callGuests.endedRoomsWithOutstandingGuests()) {
-      lifecycle.handleRoom(room, Map.of());
+      passed("Ended call guest removal", () -> lifecycle.handleRoom(room, Map.of()));
     }
     // Security review 5901360577: a running session call whose rule lapsed without any call-room
     // event (reassignment, suspension, a counsellor whose membership simply ran out). Round 8:
     // only calls whose rule may have lapsed, least recently swept first, each stamped as swept.
-    // Round 9 (F2): the stamp commits before the pass, and a room whose pass fails is logged and
-    // skipped, so one room that always fails neither sorts first forever nor stops the others.
+    // Round 9 (F2): the stamp commits before the pass, so one room that always fails neither
+    // sorts first forever nor stops the others.
     long sweptAt = System.currentTimeMillis();
     for (String room : callGuests.runningSessionRoomsWithOutstandingGuests(sweptAt)) {
-      try {
-        if (lifecycle.recordSweep(room, sweptAt)) lifecycle.sweepRunningSessionCall(room, sweptAt);
-      } catch (RuntimeException failure) {
-        // No room ids or user ids in the log.
-        log.warn(
-            "Running session call sweep failed for one call ({})",
-            failure.getClass().getSimpleName());
-      }
+      passed(
+          "Running session call sweep",
+          () -> {
+            if (lifecycle.recordSweep(room, sweptAt))
+              lifecycle.sweepRunningSessionCall(room, sweptAt);
+          });
+    }
+  }
+
+  /**
+   * Runs one room's pass. A failure is logged with its exception class only (no room or user ids)
+   * and reported, never thrown, so it cannot stop the other rooms or the sync acknowledgement.
+   */
+  private static boolean passed(String pass, Runnable work) {
+    try {
+      work.run();
+      return true;
+    } catch (RuntimeException failure) {
+      log.warn("{} failed for one call room ({})", pass, failure.getClass().getSimpleName());
+      return false;
     }
   }
 
