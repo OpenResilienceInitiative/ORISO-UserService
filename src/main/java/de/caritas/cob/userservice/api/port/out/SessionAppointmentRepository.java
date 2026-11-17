@@ -35,10 +35,17 @@ public interface SessionAppointmentRepository extends CrudRepository<SessionAppo
   @Query("SELECT a FROM SessionAppointment a WHERE a.id = :id")
   Optional<SessionAppointment> findByIdForUpdate(@Param("id") UUID id);
 
+  /**
+   * The counsellor's upcoming appointments of their own and co-access sessions, and the requests
+   * waiting for them in their own sessions (ORISO-Frontend#2287): a request is seen only by the
+   * counsellor of its conversation, never through co-access. Declined requests are left out.
+   */
   @Query(
       "SELECT a FROM SessionAppointment a JOIN FETCH a.session s JOIN FETCH s.user "
-          + "WHERE (s.consultant.id = :consultantId OR s.id IN :coAccessSessionIds) "
-          + "AND a.status = 'SCHEDULED' AND a.endTime > :now "
+          + "WHERE ((a.status = 'SCHEDULED' "
+          + "AND (s.consultant.id = :consultantId OR s.id IN :coAccessSessionIds)) "
+          + "OR (a.status = 'REQUESTED' AND s.consultant.id = :consultantId)) "
+          + "AND a.endTime > :now "
           + "ORDER BY a.startTime")
   List<SessionAppointment> findUpcomingOfConsultant(
       @Param("consultantId") String consultantId,
@@ -46,9 +53,11 @@ public interface SessionAppointmentRepository extends CrudRepository<SessionAppo
       @Param("now") Instant now,
       Pageable pageable);
 
+  /** The asker's upcoming appointments and their own requests still waiting (#2287). */
   @Query(
       "SELECT a FROM SessionAppointment a JOIN FETCH a.session s LEFT JOIN FETCH s.consultant "
-          + "WHERE s.user.userId = :userId AND a.status = 'SCHEDULED' AND a.endTime > :now "
+          + "WHERE s.user.userId = :userId AND a.status IN ('SCHEDULED', 'REQUESTED') "
+          + "AND a.endTime > :now "
           + "ORDER BY a.startTime")
   List<SessionAppointment> findUpcomingOfAsker(
       @Param("userId") String userId, @Param("now") Instant now, Pageable pageable);
@@ -127,12 +136,15 @@ public interface SessionAppointmentRepository extends CrudRepository<SessionAppo
 
   /**
    * The requests waiting for the counsellor of their conversation that overlap the window
-   * (ORISO-Frontend#2287): they take the counsellor's time from other advice seekers, but are no
-   * entry of the calendar or the subscription feed.
+   * (ORISO-Frontend#2287): they take the counsellor's time from other advice seekers and show
+   * provisionally in that counsellor's own calendar, but not in a colleague's view, through
+   * co-access or in the subscription feed.
    */
   @Query(
-      "SELECT a FROM SessionAppointment a WHERE a.session.consultant.id = :consultantId "
-          + "AND a.status = 'REQUESTED' AND a.startTime < :to AND a.endTime > :from")
+      "SELECT a FROM SessionAppointment a JOIN FETCH a.session s JOIN FETCH s.user "
+          + "WHERE s.consultant.id = :consultantId "
+          + "AND a.status = 'REQUESTED' AND a.startTime < :to AND a.endTime > :from "
+          + "ORDER BY a.startTime")
   List<SessionAppointment> findRequestedOfConsultantBetween(
       @Param("consultantId") String consultantId,
       @Param("from") Instant from,

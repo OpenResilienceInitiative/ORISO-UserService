@@ -91,6 +91,29 @@ class CalendarEntryReader {
     return complete(found);
   }
 
+  /**
+   * The advice seekers' requests waiting for this counsellor in their own conversations
+   * (ORISO-Frontend#2287), marked requested; title = asker. Only the counsellor's own view reads
+   * them: not a colleague's view, not co-access, not the subscription feed.
+   */
+  List<CalendarEntry> requestsOfConsultant(String consultantId, Instant from, Instant to) {
+    return complete(appointments.findRequestedOfConsultantBetween(consultantId, from, to)).stream()
+        .map(
+            appointment ->
+                new CalendarEntry(
+                    appointment.getId().toString(),
+                    CalendarEntryType.APPOINTMENT,
+                    appointment.getStartTime(),
+                    appointment.getEndTime(),
+                    appointment.getKind(),
+                    usernameTranscoder.decodeUsername(
+                        appointment.getSession().getUser().getUsername()),
+                    appointment.getSession().getId(),
+                    null,
+                    true))
+        .toList();
+  }
+
   /** One appointment as a counsellor's own calendar shows it; title = asker. */
   CalendarEntry appointmentOfConsultant(SessionAppointment appointment) {
     return appointment(

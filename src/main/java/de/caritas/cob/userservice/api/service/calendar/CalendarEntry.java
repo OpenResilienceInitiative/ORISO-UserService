@@ -8,6 +8,8 @@ import java.time.Instant;
  * One thing in a calendar as its owner knows it, before any view decides what to show of it.
  *
  * @param title asker username, counsellor display name, group topic or blocker note
+ * @param requested an advice seeker's appointment request still waiting for the counsellor
+ *     (ORISO-Frontend#2287): shown provisionally, never moved
  */
 record CalendarEntry(
     String id,
@@ -17,4 +19,18 @@ record CalendarEntry(
     SessionAppointment.Kind kind,
     String title,
     Long sessionId,
-    String seriesId) {}
+    String seriesId,
+    boolean requested) {
+
+  CalendarEntry(
+      String id,
+      CalendarEntryType type,
+      Instant start,
+      Instant end,
+      SessionAppointment.Kind kind,
+      String title,
+      Long sessionId,
+      String seriesId) {
+    this(id, type, start, end, kind, title, sessionId, seriesId, false);
+  }
+}

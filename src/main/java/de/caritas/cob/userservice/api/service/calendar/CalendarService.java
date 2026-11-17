@@ -68,9 +68,11 @@ public class CalendarService {
       return entries.stream().sorted(BY_START).map(entry -> own(entry, me, false)).toList();
     }
     var now = Instant.now(clock);
-    return entriesOfConsultant(me, window).stream()
-        .map(entry -> own(entry, me, isMovable(entry, now)))
-        .toList();
+    var entries = entriesOfConsultant(me, window);
+    // Requests waiting for this counsellor: in their own view only, provisionally (#2287).
+    entries.addAll(reader.requestsOfConsultant(me, window.from(), window.to()));
+    entries.sort(BY_START);
+    return entries.stream().map(entry -> own(entry, me, isMovable(entry, now))).toList();
   }
 
   /** The colleagues in the caller's scope, with the setting that selected them. */
@@ -127,6 +129,9 @@ public class CalendarService {
   }
 
   private static boolean isMovable(CalendarEntry entry, Instant now) {
+    if (entry.requested()) {
+      return false; // a request is confirmed or declined, not moved
+    }
     return switch (entry.type()) {
         // An unopened direct invitation (no conversation yet) moves with its invitation (#2252).
       case APPOINTMENT -> entry.sessionId() != null && entry.start().isAfter(now);
@@ -146,6 +151,7 @@ public class CalendarService {
         .title(entry.title())
         .sessionId(entry.sessionId())
         .seriesId(entry.seriesId())
+        .requested(entry.requested() ? Boolean.TRUE : null)
         .movable(movable);
   }
 

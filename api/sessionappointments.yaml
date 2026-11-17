@@ -300,7 +300,10 @@ paths:
       tags:
         - session-appointment-controller
       summary: 'The caller''s next scheduled 1:1 appointments across their sessions, not yet ended,
-        at most 50, earliest first. [Authorization: counsellor or asker]'
+        at most 50, earliest first, with the advice seekers'' requests still waiting (status
+        REQUESTED, ORISO-Frontend#2287): a request is listed for the asker who made it and the
+        counsellor of its conversation only, not through co-access. Declined requests are left out.
+        [Authorization: counsellor or asker]'
       operationId: getMyUpcomingSessionAppointments
       responses:
         200:

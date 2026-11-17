@@ -360,6 +360,105 @@ class AppointmentSelfBookingControllerIT {
   }
 
   @Test
+  void upcoming_Should_ListARequest_ForItsCounsellorAndItsAsker_Only() throws Exception {
+    opensEveryDay("00:00", "23:30");
+    actAsAsker(asker);
+    var start = firstSlotStart(session.getId(), Instant.now(), "REQUEST");
+    var id = booked(start);
+
+    assertThat(upcoming()).containsEntry(id, "REQUESTED");
+    actAsCounsellor(counsellor);
+    assertThat(upcoming()).containsEntry(id, "REQUESTED");
+    actAsCounsellor(otherCounsellor);
+    assertThat(upcoming()).doesNotContainKey(id);
+    actAsAsker(otherAsker);
+    assertThat(upcoming()).doesNotContainKey(id);
+  }
+
+  @Test
+  void upcoming_Should_ShowTheConfirmedRequestAsScheduled_And_LeaveOutADeclinedOne()
+      throws Exception {
+    opensEveryDay("00:00", "23:30");
+    var otherSession = fixtures.session(otherAsker, AGENCY, counsellor);
+    actAsAsker(asker);
+    var now = Instant.now();
+    var confirmed = booked(firstSlotStart(session.getId(), now, "REQUEST"));
+    actAsAsker(otherAsker);
+    var declinedStart = firstSlotStart(otherSession.getId(), now, "REQUEST");
+    var declined =
+        (String)
+            JSON.readValue(
+                    mockMvc
+                        .perform(
+                            book(
+                                otherSession.getId(),
+                                declinedStart,
+                                declinedStart.plus(Duration.ofHours(1)),
+                                "VIDEO"))
+                        .andExpect(status().isCreated())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString(),
+                    Map.class)
+                .get("id");
+
+    actAsCounsellor(counsellor);
+    mockMvc.perform(decide(confirmed, "confirm")).andExpect(status().isOk());
+    mockMvc
+        .perform(
+            csrf(
+                post(
+                    "/users/sessions/"
+                        + otherSession.getId()
+                        + "/appointments/"
+                        + declined
+                        + "/decline")))
+        .andExpect(status().isOk());
+
+    assertThat(upcoming()).containsEntry(confirmed, "SCHEDULED").doesNotContainKey(declined);
+    actAsAsker(otherAsker);
+    assertThat(upcoming()).doesNotContainKey(declined);
+  }
+
+  @Test
+  void calendar_Should_ShowARequestProvisionally_ToItsCounsellorOnly() throws Exception {
+    opensEveryDay("00:00", "23:30");
+    actAsAsker(asker);
+    var now = Instant.now();
+    var start = firstSlotStart(session.getId(), now, "REQUEST");
+    var id = booked(start);
+
+    actAsCounsellor(counsellor);
+    var entry = calendarEntry(id, now);
+    assertThat(entry).isNotNull();
+    assertThat(entry.get("type")).isEqualTo("APPOINTMENT");
+    assertThat(entry.get("requested")).isEqualTo(true);
+    assertThat(entry.get("movable")).isEqualTo(false);
+    assertThat(entry.get("sessionId")).isEqualTo(session.getId().intValue());
+
+    actAsCounsellor(otherCounsellor);
+    assertThat(calendarEntry(id, now)).isNull();
+
+    actAsCounsellor(counsellor);
+    mockMvc.perform(decide(id, "confirm")).andExpect(status().isOk());
+    var confirmed = calendarEntry(id, now);
+    assertThat(confirmed.get("requested")).isNotEqualTo(true);
+    assertThat(confirmed.get("movable")).isEqualTo(true);
+  }
+
+  @Test
+  void calendar_Should_LeaveOutADeclinedRequest() throws Exception {
+    opensEveryDay("00:00", "23:30");
+    actAsAsker(asker);
+    var now = Instant.now();
+    var id = booked(firstSlotStart(session.getId(), now, "REQUEST"));
+
+    actAsCounsellor(counsellor);
+    mockMvc.perform(decide(id, "decline")).andExpect(status().isOk());
+    assertThat(calendarEntry(id, now)).isNull();
+  }
+
+  @Test
   void reschedule_Should_Refuse_ARequestWaitingForConfirmation() throws Exception {
     opensEveryDay("00:00", "23:30");
     actAsAsker(asker);
@@ -617,6 +716,26 @@ class AppointmentSelfBookingControllerIT {
             .getResponse()
             .getContentAsString();
     return (String) JSON.readValue(response, Map.class).get("id");
+  }
+
+  /** The caller's upcoming appointments as id → status. */
+  private Map<String, String> upcoming() throws Exception {
+    var found = new HashMap<String, String>();
+    body(get("/users/appointments/upcoming"))
+        .forEach(row -> found.put((String) row.get("id"), (String) row.get("status")));
+    return found;
+  }
+
+  /** The caller's own calendar entry of that id over the next three days, or null. */
+  private Map<String, Object> calendarEntry(String id, Instant now) throws Exception {
+    return body(
+            get("/users/calendar/entries")
+                .param("from", now.toString())
+                .param("to", now.plus(Duration.ofDays(3)).toString()))
+        .stream()
+        .filter(entry -> id.equals(entry.get("id")))
+        .findFirst()
+        .orElse(null);
   }
 
   private Instant firstSlotStart(long sessionId, Instant now) throws Exception {

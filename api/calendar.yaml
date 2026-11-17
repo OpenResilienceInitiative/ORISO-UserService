@@ -682,6 +682,11 @@ components:
           type: string
         movable:
           type: boolean
+        requested:
+          description: Own view only - an advice seeker's appointment request waiting for this
+            counsellor's confirmation (ORISO-Frontend#2287), shown provisionally. Confirmed it is
+            an ordinary appointment, declined it is gone. Absent otherwise.
+          type: boolean
     CalendarColleagueDTO:
       type: object
       required:
