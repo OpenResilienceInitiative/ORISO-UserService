@@ -60,6 +60,36 @@ class TemporaryAccountKeepServiceTest {
     when(identities.changePassword(USER_ID, PASSWORD)).thenReturn(true);
   }
 
+  // --- #1662: GET /users/data tells the app up front whether "Konto behalten" will succeed ---
+
+  @Test
+  void keepAllowed_isTrueOnlyForATemporaryGuestWhoEnteredUnderGuestChooses() {
+    guest.setGuestAccountModeAtEntry(GuestAccountMode.GUEST_CHOOSES);
+    assertThat(service.keepAllowed(guest)).isTrue();
+
+    guest.setGuestAccountModeAtEntry(GuestAccountMode.TEMPORARY);
+    assertThat(service.keepAllowed(guest)).isFalse();
+  }
+
+  @Test
+  void keepAllowed_fallsBackToTheLinkForAnAccountWithoutAStoredMode() {
+    assertThat(service.keepAllowed(guest)).isTrue();
+    link.applyGuestAccountMode(GuestAccountMode.TEMPORARY);
+    assertThat(service.keepAllowed(guest)).isFalse();
+  }
+
+  @Test
+  void keepAllowed_isFalseForAPermanentAccountOrOneBeingDeleted() {
+    guest.setGuestAccountModeAtEntry(GuestAccountMode.GUEST_CHOOSES);
+    guest.setTemporaryAccount(false);
+    assertThat(service.keepAllowed(guest)).isFalse();
+
+    guest.setTemporaryAccount(true);
+    guest.setDeleteDate(LocalDateTime.now());
+    assertThat(service.keepAllowed(guest)).isFalse();
+    assertThat(service.keepAllowed(null)).isFalse();
+  }
+
   @Test
   void keepMakesTheGuestPermanent_AndEndsTheDeletionSchedule() {
     service.keep(USER_ID, PASSWORD);

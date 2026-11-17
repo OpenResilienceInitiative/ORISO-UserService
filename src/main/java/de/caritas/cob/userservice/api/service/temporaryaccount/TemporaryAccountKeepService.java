@@ -71,6 +71,21 @@ public class TemporaryAccountKeepService {
     users.save(user);
   }
 
+  /**
+   * #1662: whether {@link #keep} would let this account be kept (password aside), so the app offers
+   * "Konto behalten" only when it will succeed. Same rule as {@link #keep}, read without the lock.
+   */
+  @Transactional(readOnly = true)
+  public boolean keepAllowed(User user) {
+    if (user == null || !user.isTemporaryAccount()) return false;
+    try {
+      requireNotBeingDeleted(user);
+    } catch (ConflictException beingDeleted) {
+      return false;
+    }
+    return guestMayChoose(user);
+  }
+
   private static void requireNotBeingDeleted(User user) {
     var snapshot = user.getTemporaryAccountSnapshot();
     if (user.getDeleteDate() != null

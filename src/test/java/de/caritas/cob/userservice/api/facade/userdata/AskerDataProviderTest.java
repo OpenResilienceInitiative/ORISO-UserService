@@ -67,6 +67,9 @@ class AskerDataProviderTest {
 
   @Mock UserAgencyService userAgencyService;
 
+  @Mock
+  de.caritas.cob.userservice.api.service.temporaryaccount.TemporaryAccountKeepService keepService;
+
   @Test
   void retrieveDataPreservesStoredRecoveryPolicy() {
     givenAnEmailDummySuffixConfig();
@@ -98,6 +101,25 @@ class AskerDataProviderTest {
 
     assertEquals(Boolean.TRUE, askerDataProvider.retrieveData(temporary).getTemporaryAccount());
     assertEquals(Boolean.FALSE, askerDataProvider.retrieveData(permanent).getTemporaryAccount());
+  }
+
+  @Test
+  void retrieveDataTellsTheAppWhetherTheGuestMayKeepTheAccount() {
+    // #1662: the app offers "Konto behalten" only when keeping will succeed.
+    givenAnEmailDummySuffixConfig();
+    when(authenticatedUser.getRoles()).thenReturn(asSet(UserRole.USER.getValue()));
+    when(consultingTypeManager.getAllConsultingTypeIds()).thenReturn(List.of());
+    var guest = new User();
+    guest.setEmail("guest@example.test");
+    guest.setLanguageCode(LanguageCode.de);
+    guest.setTemporaryAccount(true);
+
+    when(keepService.keepAllowed(guest)).thenReturn(true);
+    assertEquals(
+        Boolean.TRUE, askerDataProvider.retrieveData(guest).getTemporaryAccountKeepAllowed());
+    when(keepService.keepAllowed(guest)).thenReturn(false);
+    assertEquals(
+        Boolean.FALSE, askerDataProvider.retrieveData(guest).getTemporaryAccountKeepAllowed());
   }
 
   @Test

@@ -5198,6 +5198,15 @@ components:
           description: >-
             Advice seekers only: true while the account is a temporary guest account that ORISO
             deletes later (ADR-029). Absent for consultants and admins.
+        temporaryAccountKeepAllowed:
+          type: boolean
+          readOnly: true
+          description: >-
+            Advice seekers only (#1662): true while the temporary account may be kept with
+            POST /users/temporary-account/keep, i.e. the guest entered under GUEST_CHOOSES (or, for
+            an account without a stored entry mode, its link or Gesprächskreis offers it) and no
+            deletion has started. The app offers "Konto behalten" only then. Absent for consultants
+            and admins.
         displayName:
           type: string
           example: Max M.
