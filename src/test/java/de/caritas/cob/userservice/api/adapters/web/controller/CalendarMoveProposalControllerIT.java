@@ -218,6 +218,28 @@ class CalendarMoveProposalControllerIT {
     verify(mailSender, after(300).never()).send(any());
   }
 
+  /** ORISO-UserService#1663: the reason is stored, shown to the owner, and kept out of the mail. */
+  @Test
+  void create_Should_KeepTheReason_ForTheOwner_When_ItFitsIn500Characters() throws Exception {
+    var appointment = appointmentOf(in(48), in(49));
+    actAsCounsellor(proposer);
+
+    expect(
+        proposal(appointment.toString(), in(72), in(73), "x".repeat(501)), status().isBadRequest());
+    var created =
+        parseObject(
+            mockMvc
+                .perform(proposal(appointment.toString(), in(72), in(73), " Room taken "))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+
+    assertThat(created).containsEntry("reason", "Room taken");
+    actAsCounsellor(owner);
+    assertThat(listing().get("received").get(0)).containsEntry("reason", "Room taken");
+  }
+
   @Test
   void create_Should_ReplaceTheProposersOpenProposal_ForTheSameAppointment() throws Exception {
     var appointment = appointmentOf(in(48), in(49));
@@ -483,6 +505,23 @@ class CalendarMoveProposalControllerIT {
             .andReturn()
             .getResponse()
             .getContentAsString());
+  }
+
+  private MockHttpServletRequestBuilder proposal(
+      String entryId, Instant start, Instant end, String reason) throws Exception {
+    return csrf(post(PROPOSALS))
+        .contentType(MediaType.APPLICATION_JSON)
+        .content(
+            JSON.writeValueAsString(
+                Map.of(
+                    "entryId",
+                    entryId,
+                    "start",
+                    start.toString(),
+                    "end",
+                    end.toString(),
+                    "reason",
+                    reason)));
   }
 
   private MockHttpServletRequestBuilder proposal(String entryId, Instant start, Instant end)
