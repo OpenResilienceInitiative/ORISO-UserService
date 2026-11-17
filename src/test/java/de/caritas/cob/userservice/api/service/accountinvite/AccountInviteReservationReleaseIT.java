@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.accountinvite;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
@@ -81,7 +82,10 @@ class AccountInviteReservationReleaseIT {
   }
 
   @Autowired private AccountInviteService service;
-  @Autowired private AccountInviteRepository accountInviteRepository;
+
+  @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
+  private AccountInviteRepository accountInviteRepository;
+
   @Autowired private IdReservationReleaseTaskRepository releaseTaskRepository;
   @Autowired private AuthenticatedUser caller;
 
@@ -325,6 +329,63 @@ class AccountInviteReservationReleaseIT {
     service.expireElapsedInvites();
 
     assertThat(reload(setup).getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+  }
+
+  /**
+   * Review of ORISO-UserService#1670: a send renews a lapsed invite (new token, new expiry, still
+   * EMAIL_SENT). If it commits after the sweep picked the id, the sweep must not expire the link
+   * that was just mailed.
+   */
+  @Test
+  void aLapsedInviteRenewedAfterTheSweepPickedIt_Should_StaySent() {
+    AccountInvite sent = savedInvite(AccountInviteStatus.EMAIL_SENT, minutesAgo(1));
+    LocalDateTime renewedUntil = LocalDateTime.now().plusDays(30).withNano(0);
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              // The sweep picked the lapsed invite; a send renews it before the expiry runs.
+              AccountInvite renewed = reload(sent);
+              renewed.setExpiresAt(renewedUntil);
+              accountInviteRepository.saveAndFlush(renewed);
+              Long afterId = call.getArgument(5);
+              return afterId < sent.getId() ? java.util.List.of(sent.getId()) : java.util.List.of();
+            })
+        .when(accountInviteRepository)
+        .findElapsedInviteIdsToExpire(any(), any(), any(), any(), any(), any(), any());
+
+    int expired = service.expireElapsedInvites();
+
+    assertThat(expired).isZero();
+    assertThat(reload(sent).getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+    assertThat(reload(sent).getExpiresAt()).isEqualTo(renewedUntil);
+  }
+
+  /** Review of ORISO-UserService#1670: a row another writer holds is skipped, not fatal. */
+  @Test
+  void aBusyInvite_Should_BeSkipped_WhileTheOthersExpire() {
+    AccountInvite busy = savedInvite(AccountInviteStatus.EMAIL_SENT, minutesAgo(2));
+    AccountInvite free = savedInvite(AccountInviteStatus.EMAIL_SENT, minutesAgo(1));
+    org.mockito.Mockito.doThrow(
+            new org.springframework.dao.PessimisticLockingFailureException("held by a send"))
+        .when(accountInviteRepository)
+        .findByIdForUpdate(busy.getId());
+
+    int expired = service.expireElapsedInvites();
+
+    assertThat(expired).isEqualTo(1);
+    assertThat(reload(busy).getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+    assertThat(reload(free).getStatus()).isEqualTo(AccountInviteStatus.EXPIRED);
+  }
+
+  /** Review of ORISO-UserService#1670: one run stops at 2,000; the next takes the rest. */
+  @Test
+  void theExpirySweep_Should_StopAtItsPerRunLimit_AndTheNextRunShouldTakeTheRest() {
+    for (int i = 0; i < 2_001; i++) {
+      savedInvite(AccountInviteStatus.EMAIL_SENT, minutesAgo(1));
+    }
+
+    assertThat(service.expireElapsedInvites()).isEqualTo(2_000);
+    assertThat(service.expireElapsedInvites()).isEqualTo(1);
+    assertThat(service.expireElapsedInvites()).isZero();
   }
 
   @Test

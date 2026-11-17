@@ -688,15 +688,7 @@ public class AccountInviteService {
       // One transaction per invite: the sweep never holds one invite's locks while taking
       // another's.
       for (Long inviteId : elapsed) {
-        Boolean done =
-            requiresNewTransaction()
-                .execute(
-                    transaction ->
-                        accountInviteRepository
-                            .findById(inviteId)
-                            .map(invite -> expireAndReleaseNumbers(invite, now))
-                            .orElse(false));
-        if (Boolean.TRUE.equals(done)) {
+        if (expireIfStillElapsed(inviteId, now)) {
           expired++;
         }
       }
@@ -706,6 +698,35 @@ public class AccountInviteService {
       }
     }
     return expired;
+  }
+
+  /**
+   * Expires one invite the sweep picked, under its row lock. A send that renewed the lapsed link
+   * after the pick (new token and expiry, still EMAIL_SENT) wins: the expiry is checked again under
+   * the lock. A row another writer holds is skipped and left to the next run, so it never stops the
+   * rest of the sweep; any other failure still surfaces.
+   */
+  private boolean expireIfStillElapsed(Long inviteId, LocalDateTime now) {
+    try {
+      Boolean done =
+          requiresNewTransaction()
+              .execute(
+                  transaction ->
+                      InviteRowHold.lock(accountInviteRepository, inviteId)
+                          .filter(invite -> hasLapsed(invite, now))
+                          .map(invite -> expireAndReleaseNumbers(invite, now))
+                          .orElse(false));
+      return Boolean.TRUE.equals(done);
+    } catch (CustomValidationHttpStatusException conflict) {
+      if (!InviteRowHold.isBusy(conflict)) {
+        throw conflict;
+      }
+      return false;
+    }
+  }
+
+  private static boolean hasLapsed(AccountInvite invite, LocalDateTime now) {
+    return invite.getExpiresAt() != null && !invite.getExpiresAt().isAfter(now);
   }
 
   /**
