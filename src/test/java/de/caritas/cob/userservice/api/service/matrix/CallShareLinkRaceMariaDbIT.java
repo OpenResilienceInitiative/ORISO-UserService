@@ -154,6 +154,11 @@ class CallShareLinkRaceMariaDbIT {
   @Autowired private javax.sql.DataSource dataSource;
 
   @MockitoSpyBean private MatrixSessionCallBindingService sessionBindings;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.lifecycle.SessionInteractionService
+      sessionInteractions;
+
   @MockitoBean private MatrixSynapseService matrix;
   @MockitoBean private AccountInactivityService accountLifecycle;
   @MockitoBean private MatrixFeedUpdateSignalService feedUpdateSignals;

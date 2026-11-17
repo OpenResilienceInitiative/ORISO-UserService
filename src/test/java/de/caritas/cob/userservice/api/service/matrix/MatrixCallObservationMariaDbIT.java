@@ -98,6 +98,10 @@ class MatrixCallObservationMariaDbIT {
   @Autowired private MatrixCallObservationRepository observations;
   @Autowired private org.springframework.jdbc.core.JdbcTemplate jdbc;
 
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.lifecycle.SessionInteractionService
+      sessionInteractions;
+
   @MockitoBean private MatrixCallConversationResolver conversations;
   @MockitoBean private UserRepository users;
   @MockitoBean private ConsultantRepository consultants;

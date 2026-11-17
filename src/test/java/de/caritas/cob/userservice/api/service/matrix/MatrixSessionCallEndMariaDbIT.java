@@ -109,6 +109,10 @@ class MatrixSessionCallEndMariaDbIT {
   @Autowired private SessionRepository sessions;
   @Autowired private PlatformTransactionManager transactionManager;
 
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.lifecycle.SessionInteractionService
+      sessionInteractions;
+
   @MockitoBean private MatrixSynapseService matrix;
   @MockitoBean private EventNotificationService notifications;
   @MockitoBean private MatrixCallLifecycleService lifecycle;

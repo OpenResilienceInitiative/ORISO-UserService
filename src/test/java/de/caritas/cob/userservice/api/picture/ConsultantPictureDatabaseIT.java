@@ -73,6 +73,10 @@ class ConsultantPictureDatabaseIT {
   @Autowired ConsultantPictureStore store;
   @Autowired ConsultantAdminService deletion;
   @Autowired DeleteDatabaseConsultantAction hardDeletion;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.lifecycle.LifecycleEventPublisher lifecycleEvents;
+
   @MockitoBean IdentityTombstoneService tombstones;
   @Autowired ConsultantRepository consultants;
   @Autowired EntityManager em;
