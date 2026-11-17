@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.adapters.web.mapping;
 
 import static org.springframework.hateoas.server.mvc.WebMvcLinkBuilder.methodOn;
 
+import de.caritas.cob.userservice.api.adapters.web.controller.StatisticsReaderController;
 import de.caritas.cob.userservice.api.adapters.web.controller.UserAdminController;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminLinks;
@@ -142,6 +143,8 @@ public class AdminDtoMapper implements DtoMapperUtils {
           case AGENCY ->
               controller.searchAgencyAdmins(
                   query, page, perPage, field, order, filter.tenantId(), filter.agencyIds());
+          case STATISTICS ->
+              methodOn(StatisticsReaderController.class).search(query, page, perPage, field, order);
           default ->
               throw new IllegalArgumentException("unsupported admin search type: " + adminType);
         };

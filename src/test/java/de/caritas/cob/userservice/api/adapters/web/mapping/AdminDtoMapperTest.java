@@ -139,6 +139,35 @@ class AdminDtoMapperTest {
     }
   }
 
+  @Test
+  void adminSearchResultOf_Should_LinkStatisticsReaderPages_To_TheReaderSearch() {
+    AdminDtoMapper adminDtoMapper = new AdminDtoMapper(tenantService, accountLoginStatusService);
+    var resultMap = resultMap();
+    resultMap.put("isFirstPage", false);
+    resultMap.put("isLastPage", false);
+
+    var result =
+        adminDtoMapper.adminSearchResultOf(
+            resultMap,
+            "*",
+            2,
+            10,
+            "FIRSTNAME",
+            "ASC",
+            SearchFilter.NONE,
+            Admin.AdminType.STATISTICS);
+
+    assertThat(result.getLinks().getSelf().getHref())
+        .contains("/useradmin/statisticsreaders/search")
+        .contains("page=2");
+    assertThat(result.getLinks().getPrevious().getHref())
+        .contains("/useradmin/statisticsreaders/search")
+        .contains("page=1");
+    assertThat(result.getLinks().getNext().getHref())
+        .contains("/useradmin/statisticsreaders/search")
+        .contains("page=3");
+  }
+
   private Map<String, Object> resultMap() {
     Map<String, Object> adminMap = new HashMap<>();
     adminMap.put("id", "admin-id");
