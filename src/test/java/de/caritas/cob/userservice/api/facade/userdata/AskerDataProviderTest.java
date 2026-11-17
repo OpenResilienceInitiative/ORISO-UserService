@@ -84,6 +84,23 @@ class AskerDataProviderTest {
   }
 
   @Test
+  void retrieveDataTellsTheAppWhetherTheAccountIsTemporary() {
+    givenAnEmailDummySuffixConfig();
+    when(authenticatedUser.getRoles()).thenReturn(asSet(UserRole.USER.getValue()));
+    when(consultingTypeManager.getAllConsultingTypeIds()).thenReturn(List.of());
+    var temporary = new User();
+    temporary.setEmail("guest@example.test");
+    temporary.setLanguageCode(LanguageCode.de);
+    temporary.setTemporaryAccount(true);
+    var permanent = new User();
+    permanent.setEmail("asker@example.test");
+    permanent.setLanguageCode(LanguageCode.de);
+
+    assertEquals(Boolean.TRUE, askerDataProvider.retrieveData(temporary).getTemporaryAccount());
+    assertEquals(Boolean.FALSE, askerDataProvider.retrieveData(permanent).getTemporaryAccount());
+  }
+
+  @Test
   void retrieveData_Should_ReturnUserDataWithAgency_When_ProvidedWithUserWithAgencyInSession() {
     givenAnEmailDummySuffixConfig();
     when(authenticatedUser.getRoles()).thenReturn(asSet(UserRole.USER.getValue()));

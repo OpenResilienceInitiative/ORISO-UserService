@@ -5166,6 +5166,12 @@ components:
             master must allow collection, and the asker must own an eligible agency counselling
             session or belong to an eligible self-help group. False while current policy or
             context cannot be established. Absent for consultants.
+        temporaryAccount:
+          type: boolean
+          readOnly: true
+          description: >-
+            Advice seekers only: true while the account is a temporary guest account that ORISO
+            deletes later (ADR-029). Absent for consultants and admins.
         displayName:
           type: string
           example: Max M.

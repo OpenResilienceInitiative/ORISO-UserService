@@ -62,6 +62,7 @@ public class AskerDataProvider {
             .chatRecoveryPolicyRevision(user.getEffectiveChatRecoveryPolicyRevision())
             .userId(user.getUserId())
             .userName(user.getUsername())
+            .temporaryAccount(user.isTemporaryAccount())
             .email(observeUserEmailAddress(user))
             .isAbsent(false)
             .encourage2fa(user.getEncourage2fa())
