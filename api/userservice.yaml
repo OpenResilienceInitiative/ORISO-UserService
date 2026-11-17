@@ -5140,6 +5140,18 @@ components:
         message:
           type: string
           example: Ich bin abwesend vom...bis.
+        start:
+          description: First day of a planned absence (inclusive, Europe/Berlin). Without it the
+            absence starts now. Ignored when absent is false.
+          type: string
+          format: date
+          example: '2026-12-21'
+        end:
+          description: Last day of a planned absence (inclusive). Without it the absence lasts until
+            it is switched off. Must not be before start; ignored when absent is false.
+          type: string
+          format: date
+          example: '2027-01-03'
 
     UserDataResponseDTO:
       type: object
@@ -5230,6 +5242,17 @@ components:
         absenceMessage:
           type: string
           example: Bin mal weg...
+        absenceStart:
+          description: First day of the counsellor's planned absence (ORISO-Frontend#2303); set only
+            while the absence is switched on and not over. absent=false with absenceStart set means
+            the absence is planned and has not begun.
+          type: string
+          format: date
+        absenceEnd:
+          description: Last day of the counsellor's absence (inclusive); set only while the absence is
+            switched on and not over. Missing = until switched off.
+          type: string
+          format: date
         isInTeamAgency:
           type: boolean
           example: true
