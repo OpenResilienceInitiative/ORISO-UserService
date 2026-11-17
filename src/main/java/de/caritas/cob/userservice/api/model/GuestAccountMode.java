@@ -5,7 +5,7 @@ import de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitationA
 /**
  * Which account a person without an ORISO account gets through an invitation (#1662): a direct
  * link, a call share link or a Gesprächskreis invite. The counsellor sets it per link; the platform
- * and later the Träger cap which modes may be offered ({@code GuestAccountModePolicy}).
+ * and the Träger cap which modes may be offered ({@code GuestAccountModePolicy}).
  */
 public enum GuestAccountMode {
   /** "Nach dem Gespräch löschen": only a temporary account (ADR-029 §3). */

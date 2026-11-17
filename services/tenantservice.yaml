@@ -1626,6 +1626,42 @@ components:
           type: boolean
           example: 'true'
           description: "Direkteinladung erlauben for video calls (ADR-029 §6): may counsellors create and may guests redeem direct links. Effective Traeger value; opt-out, reads true when never stored."
+        featureGuestAccountTemporaryChatEnabled:
+          type: boolean
+          example: 'true'
+          description: "#1662: may a counsellor offer the guest account mode TEMPORARY on chats links? Effective Traeger value (platform -> Traeger); opt-out, reads true when never stored."
+        featureGuestAccountGuestChoosesChatEnabled:
+          type: boolean
+          example: 'true'
+          description: "#1662: may a counsellor offer the guest account mode GUEST_CHOOSES on chats links? Effective Traeger value (platform -> Traeger); opt-out, reads true when never stored."
+        featureGuestAccountPermanentChatEnabled:
+          type: boolean
+          example: 'true'
+          description: "#1662: may a counsellor offer the guest account mode PERMANENT on chats links? Effective Traeger value (platform -> Traeger); opt-out, reads true when never stored."
+        featureGuestAccountTemporaryAudioEnabled:
+          type: boolean
+          example: 'true'
+          description: "#1662: may a counsellor offer the guest account mode TEMPORARY on audio calls links? Effective Traeger value (platform -> Traeger); opt-out, reads true when never stored."
+        featureGuestAccountGuestChoosesAudioEnabled:
+          type: boolean
+          example: 'true'
+          description: "#1662: may a counsellor offer the guest account mode GUEST_CHOOSES on audio calls links? Effective Traeger value (platform -> Traeger); opt-out, reads true when never stored."
+        featureGuestAccountPermanentAudioEnabled:
+          type: boolean
+          example: 'true'
+          description: "#1662: may a counsellor offer the guest account mode PERMANENT on audio calls links? Effective Traeger value (platform -> Traeger); opt-out, reads true when never stored."
+        featureGuestAccountTemporaryVideoEnabled:
+          type: boolean
+          example: 'true'
+          description: "#1662: may a counsellor offer the guest account mode TEMPORARY on video calls links? Effective Traeger value (platform -> Traeger); opt-out, reads true when never stored."
+        featureGuestAccountGuestChoosesVideoEnabled:
+          type: boolean
+          example: 'true'
+          description: "#1662: may a counsellor offer the guest account mode GUEST_CHOOSES on video calls links? Effective Traeger value (platform -> Traeger); opt-out, reads true when never stored."
+        featureGuestAccountPermanentVideoEnabled:
+          type: boolean
+          example: 'true'
+          description: "#1662: may a counsellor offer the guest account mode PERMANENT on video calls links? Effective Traeger value (platform -> Traeger); opt-out, reads true when never stored."
         featureCallsEnabled:
           type: boolean
           example: 'true'

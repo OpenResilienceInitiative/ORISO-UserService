@@ -9,8 +9,8 @@ import org.springframework.stereotype.Service;
 
 /**
  * #1662: the platform cap. While temporary accounts are not allowed, only permanent accounts are
- * offered; otherwise every mode. The Träger cap is not stored yet (see {@link
- * GuestAccountModePolicy}).
+ * offered; otherwise every mode. Callers get it through {@link TraegerGuestAccountModePolicy},
+ * which adds the Träger's allowed modes.
  */
 @Service
 @RequiredArgsConstructor

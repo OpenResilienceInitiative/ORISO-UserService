@@ -64,7 +64,7 @@ public class TemporaryAccountLinkResolver {
     if (!InviteLinkStatus.ACTIVE.name().equals(link.getStatus())) {
       throw new BadRequestException("Invite link expired");
     }
-    // #1662: the link's mode, capped by what the platform (later the Träger) allows now.
+    // #1662: the link's mode, capped by what the platform and the Träger allow now.
     requireAdmittedAccountType(
         userDTO,
         guestAccountModes.cap(

@@ -405,6 +405,40 @@ class CallShareLinkServiceTest {
   }
 
   @Test
+  void aTraegerWithoutPermanentGuestAccountsFallsBackToTheClosestAllowedMode() {
+    when(links.findByCallBindingId(binding.getId())).thenReturn(Optional.empty());
+    org.mockito.Mockito.doReturn(
+            java.util.EnumSet.of(GuestAccountMode.TEMPORARY, GuestAccountMode.GUEST_CHOOSES))
+        .when(guestAccountModes)
+        .allowedModes(eq(TENANT), any(), any());
+
+    // the old switch "off" asks for permanent accounts, which this Träger does not offer
+    var share = service.create(TENANT, COUNSELLOR, SOURCE, CALL_ID, null, false);
+
+    assertThat(share.guestAccountMode()).isEqualTo(GuestAccountMode.GUEST_CHOOSES);
+    assertThat(share.link().getGuestAccountMode()).isEqualTo(GuestAccountMode.GUEST_CHOOSES);
+    assertThat(share.allowedGuestAccountModes())
+        .containsExactlyInAnyOrder(GuestAccountMode.TEMPORARY, GuestAccountMode.GUEST_CHOOSES);
+    assertThat(service.effectiveGuestAccountMode(share.link()))
+        .isEqualTo(GuestAccountMode.GUEST_CHOOSES);
+  }
+
+  @Test
+  void anExistingPermanentLinkShowsTheClosestModeTheTraegerStillAllows() {
+    var link = link(true, false);
+    link.applyGuestAccountMode(GuestAccountMode.PERMANENT);
+    when(links.findByIdForUpdate(5L)).thenReturn(Optional.of(link));
+    org.mockito.Mockito.doReturn(java.util.EnumSet.of(GuestAccountMode.TEMPORARY))
+        .when(guestAccountModes)
+        .allowedModes(eq(TENANT), any(), any());
+
+    var view = service.update(TENANT, COUNSELLOR, 5L, null, null);
+
+    assertThat(view.guestAccountMode()).isEqualTo(GuestAccountMode.TEMPORARY);
+    assertThat(view.allowedGuestAccountModes()).containsExactly(GuestAccountMode.TEMPORARY);
+  }
+
+  @Test
   void aGroupCallLinkOffersOnlyPermanentAccounts() {
     useBinding(runningCall(null, 600L, MEDIA));
 

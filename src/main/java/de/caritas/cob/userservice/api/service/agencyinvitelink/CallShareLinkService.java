@@ -384,12 +384,13 @@ public class CallShareLinkService {
 
   /**
    * #1662: the mode the link works with now. Without the registration context (Beratungsstelle and
-   * consulting type) or while temporary accounts are not allowed, only permanent accounts.
+   * consulting type) or while temporary accounts are not allowed, only permanent accounts; a mode
+   * the Träger no longer allows falls back to the closest one it does.
    */
   @Transactional(readOnly = true)
   public GuestAccountMode effectiveGuestAccountMode(AgencyInviteLink link) {
     var mode = link.effectiveGuestAccountMode();
-    return allowedModes(link).contains(mode) ? mode : GuestAccountMode.PERMANENT;
+    return GuestAccountModePolicy.fallbackWithin(allowedModes(link), mode);
   }
 
   /** The modes a counsellor may choose for this link now. */
@@ -434,7 +435,7 @@ public class CallShareLinkService {
       }
       return chosen;
     }
-    return allowed.contains(fromSwitch) ? fromSwitch : GuestAccountMode.PERMANENT;
+    return GuestAccountModePolicy.fallbackWithin(allowed, fromSwitch);
   }
 
   /** Whether temporary accounts may be offered; the effective value is the setting AND this. */
@@ -610,7 +611,7 @@ public class CallShareLinkService {
   private ShareLink view(AgencyInviteLink link, boolean created) {
     var allowed = allowedModes(link);
     var mode = link.effectiveGuestAccountMode();
-    var effective = allowed.contains(mode) ? mode : GuestAccountMode.PERMANENT;
+    var effective = GuestAccountModePolicy.fallbackWithin(allowed, mode);
     return new ShareLink(
         link,
         effective.offersTemporaryAccounts(),
