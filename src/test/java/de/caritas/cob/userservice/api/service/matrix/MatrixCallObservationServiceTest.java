@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService.CallR
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.MatrixCallBinding;
+import de.caritas.cob.userservice.api.model.MatrixCallDevice;
 import de.caritas.cob.userservice.api.model.MatrixCallObservation;
 import de.caritas.cob.userservice.api.model.MatrixCallObservationEnd;
 import de.caritas.cob.userservice.api.model.User;
@@ -599,6 +600,89 @@ class MatrixCallObservationServiceTest {
         .thenReturn(Optional.of(user("other", OTHER)));
 
     assertThat(service.end(member, SOURCE, "call")).isEqualTo(Outcome.OK);
+
+    assertThat(binding.getEndedAt()).isNull();
+    verify(bindings, org.mockito.Mockito.never()).save(any());
+    verify(sessionBindings, org.mockito.Mockito.never()).revokeGuestsAfterEnd(anyString());
+  }
+
+  // --- #1662 (Frank, 17 Nov): a group call ends like a 1:1 call; any counsellor in the call ---
+
+  private static final String MODERATOR = "@moderator:example";
+
+  private AuthenticatedUser groupMember(String id, String matrixId, boolean counsellor) {
+    var member = new AuthenticatedUser();
+    member.setUserId(id);
+    member.setTenantId(7L);
+    member.setRoles(java.util.Set.of(counsellor ? "consultant" : "user"));
+    if (counsellor) {
+      when(consultants.findByIdAndDeleteDateIsNull(id))
+          .thenReturn(Optional.of(consultant(id, matrixId, 7L)));
+    } else {
+      when(users.findByUserIdAndDeleteDateIsNull(id)).thenReturn(Optional.of(user(id, matrixId)));
+    }
+    when(matrix.getCallRoomMembers(SOURCE))
+        .thenReturn(Optional.of(List.of(CREATOR, OTHER, matrixId)));
+    return member;
+  }
+
+  private static void joinCall(MatrixCallBinding binding, String matrixId) {
+    long now = System.currentTimeMillis();
+    binding
+        .getDevices()
+        .put(
+            "_" + matrixId + "_D",
+            new MatrixCallDevice(matrixId, now - 1000, now + 60_000, true, "$e"));
+  }
+
+  @Test
+  void aCounsellorInTheGroupCallEndsTheCallersBindingAndRevokesTheGuestSeats() {
+    var binding = groupBinding(CREATOR);
+    var moderator = groupMember("moderator", MODERATOR, true);
+    joinCall(binding, MODERATOR);
+
+    assertThat(service.end(moderator, SOURCE, "call")).isEqualTo(Outcome.OK);
+
+    assertThat(binding.getEndedAt()).isNotNull();
+    verify(bindings).save(binding);
+    verify(lifecycle).isActiveRecipient("moderator");
+    verify(sessionBindings).revokeGuestsAfterEnd(MEDIA);
+  }
+
+  @Test
+  void aCounsellorWhoIsNotInTheGroupCallLeavesTheBindingLive() {
+    var binding = groupBinding(CREATOR);
+    var moderator = groupMember("moderator", MODERATOR, true);
+    joinCall(binding, CREATOR);
+
+    service.end(moderator, SOURCE, "call");
+
+    assertThat(binding.getEndedAt()).isNull();
+    verify(bindings, org.mockito.Mockito.never()).save(any());
+    verify(sessionBindings, org.mockito.Mockito.never()).revokeGuestsAfterEnd(anyString());
+  }
+
+  @Test
+  void anAskerInTheGroupCallLeavesTheBindingLive() {
+    var binding = groupBinding(CREATOR);
+    var asker = groupMember("asker", "@asker:example", false);
+    joinCall(binding, "@asker:example");
+
+    service.end(asker, SOURCE, "call");
+
+    assertThat(binding.getEndedAt()).isNull();
+    verify(bindings, org.mockito.Mockito.never()).save(any());
+    verify(sessionBindings, org.mockito.Mockito.never()).revokeGuestsAfterEnd(anyString());
+  }
+
+  @Test
+  void aSuspendedCounsellorInTheGroupCallLeavesTheBindingLive() {
+    var binding = groupBinding(CREATOR);
+    var moderator = groupMember("moderator", MODERATOR, true);
+    joinCall(binding, MODERATOR);
+    when(lifecycle.isActiveRecipient("moderator")).thenReturn(false);
+
+    service.end(moderator, SOURCE, "call");
 
     assertThat(binding.getEndedAt()).isNull();
     verify(bindings, org.mockito.Mockito.never()).save(any());

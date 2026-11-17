@@ -257,10 +257,9 @@ public class MatrixSessionCallBindingService {
         || !Objects.equals(binding.getTenantId(), conversation.getTenantId())) {
       return null;
     }
-    boolean caller = ender.equals(binding.getCallerMatrixId());
-    boolean colleagueInCall =
-        binding.isInCall(ender, now) && lifecycle.isActiveRecipient(actor.getUserId());
-    if (!caller && !colleagueInCall) return null;
+    if (!binding.mayBeEndedBy(ender, () -> lifecycle.isActiveRecipient(actor.getUserId()), now)) {
+      return null;
+    }
     binding.finishExplicitly(now);
     bindings.save(binding);
     return binding.getMediaRoomId();

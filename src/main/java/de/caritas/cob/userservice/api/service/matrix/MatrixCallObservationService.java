@@ -318,12 +318,18 @@ public class MatrixCallObservationService {
 
   /**
    * #1662 (CodeRabbit): a group call's binding stays live until its memberships expire, and share
-   * link and guest admission follow that. The caller who registered it ends it explicitly here, in
-   * the end transaction and in the same lock order as the session path (binding, conversation,
-   * observation). Returns its call room for the guest revocation after the commit, else null.
+   * link and guest admission follow that. It is ended explicitly here, in the end transaction and
+   * in the same lock order as the session path (binding, conversation, observation), by whoever may
+   * end a 1:1 call (Frank, 17 Nov): the caller who registered it, or a counsellor or moderator who
+   * is in the call. Returns its call room for the guest revocation after the commit, else null.
    */
   private String endGroupBindingWhileLocked(
-      MatrixCallConversation conversation, String caller, String callId, long now, Long lockedId) {
+      AuthenticatedUser actor,
+      MatrixCallConversation conversation,
+      String caller,
+      String callId,
+      long now,
+      Long lockedId) {
     var known =
         bindings
             .findBySourceRoomIdAndCallId(conversation.getMatrixRoomId(), callId)
@@ -340,7 +346,10 @@ public class MatrixCallObservationService {
         || !Objects.equals(binding.getChatId(), conversation.getChatId())
         || !Objects.equals(binding.getTenantId(), conversation.getTenantId())
         || !callId.equals(binding.getCallId())
-        || !caller.equals(binding.getCallerMatrixId())) {
+        || !binding.mayBeEndedBy(
+            caller,
+            () -> actor.isConsultant() && lifecycle.isActiveRecipient(actor.getUserId()),
+            now)) {
       return null;
     }
     binding.finishExplicitly(now);
@@ -374,7 +383,8 @@ public class MatrixCallObservationService {
                       ? sessionBindings.endWhileSessionLocked(
                           actor, conversation, callId, now, boundId)
                       : conversation.getChatId() != null
-                          ? endGroupBindingWhileLocked(conversation, caller, callId, now, boundId)
+                          ? endGroupBindingWhileLocked(
+                              actor, conversation, caller, callId, now, boundId)
                           : null;
               return observed == null
                   ? new Ending(null, false, false, endedCallRoom)
