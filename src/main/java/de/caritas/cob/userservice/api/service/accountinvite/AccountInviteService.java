@@ -78,6 +78,11 @@ public class AccountInviteService {
           AccountInviteStatus.EXPIRED,
           AccountInviteStatus.SUPERSEDED);
 
+  /** No link of these works any more; only such an invite is marked for deletion. */
+  private static final List<AccountInviteStatus> SETTLED_STATUSES =
+      List.of(
+          AccountInviteStatus.REVOKED, AccountInviteStatus.EXPIRED, AccountInviteStatus.SUPERSEDED);
+
   private static final int EXPIRY_SWEEP_BATCH = 100;
 
   /** Expiry already freed the address claim and the reserved numbers. */
@@ -695,7 +700,42 @@ public class AccountInviteService {
    */
   @Transactional
   public AccountInvite revokeInvite(Long inviteId) {
+    return revokeLocked(findAuthorizedInviteForUpdate(inviteId));
+  }
+
+  /**
+   * An admin deletes an invite (ORISO-Admin#1522): an open one is revoked at once — its link stops
+   * working, its address and any reserved number are given back — and the row is marked, so it is
+   * no longer listed and the nightly invite purge removes it. An expired or replaced invite keeps
+   * its status and is only marked. Repeating the call changes nothing.
+   *
+   * <p>Refused with 409 {@code INVITE_ALREADY_ACCEPTED} once the account exists (the invite goes
+   * with the account), and with 409 {@code INVITE_BUSY} while an existing account is being set up
+   * through it.
+   */
+  @Transactional
+  public void deleteInvite(Long inviteId) {
     AccountInvite invite = findAuthorizedInviteForUpdate(inviteId);
+    if (invite.getDeletionRequestedAt() != null) {
+      return;
+    }
+    if (invite.getStatus() == AccountInviteStatus.ACCEPTED) {
+      throw inviteAlreadyAccepted();
+    }
+    AccountInvite settled =
+        ReservationLedger.PENDING_STATUSES.contains(invite.getStatus())
+            ? revokeLocked(invite)
+            : invite;
+    if (!SETTLED_STATUSES.contains(settled.getStatus())) {
+      throw InviteRowHold.conflict(HttpStatusExceptionReason.INVITE_BUSY);
+    }
+    accountInviteRepository.markForDeletion(
+        inviteId, SETTLED_STATUSES, authenticatedUser.getUserId(), LocalDateTime.now());
+  }
+
+  /** Revokes an invite already locked and authorized; see {@link #revokeInvite(Long)}. */
+  private AccountInvite revokeLocked(AccountInvite invite) {
+    Long inviteId = invite.getId();
     if (invite.getStatus() == AccountInviteStatus.ACCEPTED) {
       throw inviteAlreadyAccepted();
     }
@@ -705,7 +745,7 @@ public class AccountInviteService {
     LocalDateTime now = LocalDateTime.now();
     int revoked =
         accountInviteRepository.revokeWhileStatusIn(
-            invite.getId(), REVOCABLE_STATUSES, authenticatedUser.getUserId(), now);
+            inviteId, REVOCABLE_STATUSES, authenticatedUser.getUserId(), now);
     AccountInvite current = findInvite(inviteId);
     if (revoked == 0) {
       if (current.getStatus() == AccountInviteStatus.ACCEPTED) {

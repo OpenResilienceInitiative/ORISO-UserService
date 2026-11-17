@@ -212,6 +212,21 @@ public interface AccountInviteRepository
       @Param("now") LocalDateTime now);
 
   /**
+   * Marks a settled invite as deleted by an admin (ORISO-Admin#1522); 0 when it is already marked
+   * or no longer settled. Only the mark is written, so a concurrent writer's fields stay intact.
+   */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i SET i.deletionRequestedAt = :now,"
+          + " i.deletionRequestedByUserId = :requestedByUserId, i.updateDate = :now"
+          + " WHERE i.id = :id AND i.deletionRequestedAt IS NULL AND i.status IN :settled")
+  int markForDeletion(
+      @Param("id") Long id,
+      @Param("settled") Collection<AccountInviteStatus> settled,
+      @Param("requestedByUserId") String requestedByUserId,
+      @Param("now") LocalDateTime now);
+
+  /**
    * Locks the row and proves it still has the status its writer checked; 0 when a revoke or accept
    * changed it first. Keeps the persistence context so the writer goes on with its entity.
    */

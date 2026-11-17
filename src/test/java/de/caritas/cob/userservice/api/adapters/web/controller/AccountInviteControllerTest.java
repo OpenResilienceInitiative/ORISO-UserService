@@ -593,6 +593,16 @@ class AccountInviteControllerTest {
   }
 
   @Test
+  void deleteInvite_Should_returnNoContent() throws Exception {
+    MockMvcBuilders.standaloneSetup(controller)
+        .build()
+        .perform(delete("/useradmin/account-invites/10"))
+        .andExpect(status().isNoContent());
+
+    verify(accountInviteService).deleteInvite(10L);
+  }
+
+  @Test
   void waiveTwoFactor_Should_delegate() {
     var request = new AccountInviteController.WaiveTwoFactorRequestDTO();
     request.reason = "hardship";
@@ -823,6 +833,7 @@ class AccountInviteControllerTest {
     assertHasPreAuthorize(
         "resendInvite", Long.class, AccountInviteController.SendInviteRequestDTO.class);
     assertHasPreAuthorize("revokeInvite", Long.class);
+    assertHasPreAuthorize("deleteInvite", Long.class);
     assertHasPreAuthorize(
         "changeRole", Long.class, AccountInviteController.ChangeRoleRequestDTO.class);
     assertHasPreAuthorize("createTemplate", AccountInviteController.TemplateRequestDTO.class);
