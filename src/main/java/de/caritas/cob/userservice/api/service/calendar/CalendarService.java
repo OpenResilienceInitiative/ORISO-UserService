@@ -91,8 +91,7 @@ public class CalendarService {
                         new CalendarColleagueDTO()
                             .id(colleague.consultant().getId())
                             .displayName(colleague.name())
-                            .secondaryLabel(
-                                StringUtils.trimToNull(colleague.consultant().getUsername()))
+                            .secondaryLabel(secondaryLabelOf(colleague))
                             .agencyName(
                                 colleague.agencyId() == null
                                     ? ""
@@ -166,6 +165,17 @@ public class CalendarService {
         .kind(appointment ? kindOf(entry) : null)
         .title(appointment && showAskerUsernames ? entry.title() : null)
         .movable(false);
+  }
+
+  /**
+   * The username tells colleagues of one name apart (ORISO-UserService#1663). Within the Träger the
+   * consultant lists show it already; another Träger's colleague is told apart by their counselling
+   * centre, so the username does not leave the Träger.
+   */
+  private static String secondaryLabelOf(Colleague colleague) {
+    return colleague.relation() == CalendarColleagueScope.Relation.OTHER_TENANT
+        ? null
+        : StringUtils.trimToNull(colleague.consultant().getUsername());
   }
 
   private static AppointmentKind kindOf(CalendarEntry entry) {

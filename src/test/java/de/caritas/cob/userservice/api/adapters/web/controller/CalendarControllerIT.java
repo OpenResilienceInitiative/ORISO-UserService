@@ -368,8 +368,13 @@ class CalendarControllerIT {
     policy(CalendarVisibilityScope.PLATFORM, false);
     assertThat(colleaguesOf(body(get("/users/calendar/colleagues"))))
         .filteredOn(row -> row.get("id").equals(counsellorOfOtherTenant.getId()))
-        .extracting(row -> row.get("relation"))
-        .containsExactly("OTHER_TENANT");
+        .singleElement()
+        .satisfies(
+            row -> {
+              assertThat(row).containsEntry("relation", "OTHER_TENANT");
+              // ORISO-UserService#1663: the username does not leave the Träger.
+              assertThat(row).doesNotContainKey("secondaryLabel");
+            });
   }
 
   @Test

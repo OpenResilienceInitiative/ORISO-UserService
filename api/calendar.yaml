@@ -649,7 +649,8 @@ components:
           type: string
         secondaryLabel:
           description: Tells colleagues of the same display name apart (ORISO-UserService#1663);
-            the counsellor's ORISO username. Absent when the counsellor has none.
+            the counsellor's ORISO username. Only for colleagues of the caller's own Träger
+            (SAME_AGENCY, SAME_TENANT); absent for OTHER_TENANT, who differ by agencyName.
           type: string
         relation:
           type: string

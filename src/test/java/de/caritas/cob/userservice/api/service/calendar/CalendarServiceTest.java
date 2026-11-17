@@ -248,6 +248,22 @@ class CalendarServiceTest {
   }
 
   @Test
+  void colleagues_Should_KeepTheUsernameInTheTraeger() {
+    var otherTraeger =
+        new Colleague(
+            consultant(COLLEAGUE, 2L), "Colleague Name", Relation.OTHER_TENANT, 10L, false);
+    when(colleagues.list(ME, null, CalendarService.COLLEAGUE_LIMIT))
+        .thenReturn(
+            new Listing(
+                new CalendarPolicy(CalendarVisibilityScope.PLATFORM, false),
+                List.of(otherTraeger)));
+
+    var result = service.colleagues(null);
+
+    assertThat(result.getColleagues().get(0).getSecondaryLabel()).isNull();
+  }
+
+  @Test
   void colleagues_Should_StillBeListed_When_TheAgencyServiceDoesNotAnswer() {
     when(colleagues.list(ME, null, CalendarService.COLLEAGUE_LIMIT))
         .thenReturn(new Listing(CalendarPolicy.CLOSED, List.of(colleague(false))));
