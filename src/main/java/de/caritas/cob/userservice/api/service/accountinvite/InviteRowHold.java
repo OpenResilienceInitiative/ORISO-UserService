@@ -44,6 +44,14 @@ final class InviteRowHold {
     }
   }
 
+  /** Whether a conflict is the {@link #orBusy} answer: another writer holds the row. */
+  static boolean isBusy(CustomValidationHttpStatusException conflict) {
+    var headers = conflict.getCustomHttpHeaders();
+    return conflict.getHttpStatus() == HttpStatus.CONFLICT
+        && headers != null
+        && HttpStatusExceptionReason.INVITE_BUSY.name().equals(headers.getFirst("X-Reason"));
+  }
+
   static CustomValidationHttpStatusException conflict(HttpStatusExceptionReason reason) {
     return new CustomValidationHttpStatusException(reason, HttpStatus.CONFLICT);
   }
