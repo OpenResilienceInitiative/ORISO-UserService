@@ -356,6 +356,55 @@ class SelfBookingRaceMariaDbIT {
   }
 
   /**
+   * The counsellor removes their Sprechstunden while a booking waits on their row: the booking read
+   * its conversation before, yet it must find the time no longer offered (CodeRabbit on
+   * UserService#1669).
+   */
+  @Test
+  void aBookingWaitingOnTheCounsellor_Should_FollowSprechstundenRemovedMeanwhile()
+      throws Exception {
+    var now = Instant.now();
+    var slot = freeTime.slots(counsellor.getId(), now, now.plus(Duration.ofDays(3))).get(0);
+    var time =
+        new SessionAppointmentTimeDTO()
+            .startTime(slot.start().atOffset(ZoneOffset.UTC))
+            .endTime(slot.end().atOffset(ZoneOffset.UTC))
+            .kind(AppointmentKind.VIDEO);
+
+    var pool = Executors.newFixedThreadPool(2);
+    var holding = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    try {
+      // Changes the Sprechstunden the way the counsellor's settings do: under the counsellor's row.
+      var counsellorClearsThem =
+          CompletableFuture.runAsync(
+              () ->
+                  transaction.executeWithoutResult(
+                      status -> {
+                        consultants.lockConsultant(counsellor.getId());
+                        holding.countDown();
+                        await(release);
+                        consultationHours.deleteAll(
+                            consultationHours
+                                .findByConsultantIdOrderByWeekdayAscStartTimeAscEndTimeAsc(
+                                    counsellor.getId()));
+                      }),
+              pool);
+      assertThat(holding.await(15, TimeUnit.SECONDS)).isTrue();
+
+      var booking = CompletableFuture.supplyAsync(() -> book(first, time), pool);
+      awaitWaitersOnTheCounsellor(1, booking);
+      release.countDown();
+      counsellorClearsThem.get(15, TimeUnit.SECONDS);
+
+      assertThat(outcome(booking)).isEqualTo("conflict");
+    } finally {
+      release.countDown();
+      pool.shutdownNow();
+    }
+  }
+
+  /**
    * A colleague's conversation the counsellor holds co-access to shows in the counsellor's calendar
    * and takes their time. An asker's booking that waits on the counsellor's row must still see an
    * appointment booked in that conversation meanwhile (CodeRabbit on UserService#1669).

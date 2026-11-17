@@ -170,6 +170,32 @@ class FreeSlotGridTest {
   }
 
   @Test
+  void slots_Should_OfferARepeatedTimeOnce_When_TheClocksFallBack() {
+    // 25 October 2026, a Sunday: Berlin repeats 02:00 to 03:00. The grid offers each wall-clock
+    // time once, at its earlier offset, so a picker that shows HH:mm finds exactly one slot.
+    var fallBack = LocalDate.of(2026, 10, 25);
+    var plan = weekly(SUNDAY, window("01:00", "04:00"));
+
+    var slots =
+        FreeSlotGrid.slots(
+            plan,
+            List.of(),
+            at(fallBack, "00:00"),
+            at(fallBack.plusDays(1), "00:00"),
+            at(fallBack, "00:00"),
+            HOUR,
+            HOUR,
+            BERLIN);
+
+    assertThat(slots)
+        .extracting(FreeSlot::start)
+        .containsExactly(
+            Instant.parse("2026-10-24T23:00:00Z"),
+            Instant.parse("2026-10-25T00:00:00Z"),
+            Instant.parse("2026-10-25T02:00:00Z"));
+  }
+
+  @Test
   void slots_Should_OfferOnlyStartsInsideTheAskedWindow() {
     var plan = weekly(MON, window("09:00", "12:00"));
 

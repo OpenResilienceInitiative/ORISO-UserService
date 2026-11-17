@@ -34,6 +34,7 @@ import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -156,9 +157,12 @@ public class SessionAppointmentService {
   /**
    * Books one offered slot for the asker. The counsellor's row is locked first, so bookings with
    * one counsellor run one after another; the slot is then checked against the free time and, with
-   * a locking read, against the appointments another booking committed meanwhile.
+   * a locking read, against the appointments another booking committed meanwhile. READ_COMMITTED:
+   * the conversation is read before the lock, and at REPEATABLE READ that read would pin a snapshot
+   * older than Sprechstunden or booking settings the counsellor changed under the same row lock
+   * meanwhile; every read after the lock must see them.
    */
-  @Transactional
+  @Transactional(isolation = Isolation.READ_COMMITTED)
   public SessionAppointmentDTO book(Long sessionId, SessionAppointmentTimeDTO time) {
     var session = selfBookableSession(sessionId);
     if (time.getKind() == null || !SELF_BOOKABLE.contains(time.getKind())) {
