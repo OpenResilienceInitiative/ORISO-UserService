@@ -125,6 +125,17 @@ public class UpdateAdminService {
     return this.adminRepository.save(patchAdminEntity(patchAdminDTO, admin));
   }
 
+  /** Name and e-mail of a read-only statistics account; nothing else is editable. */
+  public Admin patchStatisticsReader(String adminId, PatchAdminDTO patchAdminDTO) {
+    final Admin admin = retrieveAdminService.findAdmin(adminId, Admin.AdminType.STATISTICS);
+    final UserDTO userDTO = buildValidatedUserDTO(patchAdminDTO, admin);
+    this.identityProfileUpdater.updateProfile(
+        admin.getId(),
+        profileUpdate(userDTO, patchAdminDTO.getFirstname(), patchAdminDTO.getLastname()));
+
+    return this.adminRepository.save(patchAdminEntity(patchAdminDTO, admin));
+  }
+
   public Admin patchTenantAdmin(String adminId, PatchAdminDTO patchAdminDTO) {
     final Admin admin = retrieveAdminService.findAdmin(adminId, Admin.AdminType.TENANT);
     final UserDTO userDTO = buildValidatedUserDTO(patchAdminDTO, admin);

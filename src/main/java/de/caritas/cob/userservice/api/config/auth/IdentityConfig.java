@@ -87,7 +87,9 @@ public class IdentityConfig implements IdentityClientConfig, IdentityPolicy {
         || roles.contains(UserRole.SINGLE_TENANT_ADMIN.getValue())
             && otpAllowedForSingleTenantAdmins
         || roles.contains(UserRole.RESTRICTED_AGENCY_ADMIN.getValue())
-            && otpAllowedForRestrictedAgencyAdmins;
+            && otpAllowedForRestrictedAgencyAdmins
+        // 2FA is mandatory for statistics readers (#1666), so no property may switch it off.
+        || roles.contains(UserRole.STATISTICS_READER.getValue());
   }
 
   @Override

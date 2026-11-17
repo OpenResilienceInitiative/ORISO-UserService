@@ -46,6 +46,8 @@ public class DeleteDatabaseConsultantActionTest {
 
   @Mock private ConsultantRepository consultantRepository;
 
+  @Mock private org.springframework.transaction.PlatformTransactionManager transactionManager;
+
   @Mock private SessionSupervisorRepository sessionSupervisorRepository;
 
   @Mock private ConsultantMobileTokenRepository consultantMobileTokenRepository;
@@ -64,6 +66,15 @@ public class DeleteDatabaseConsultantActionTest {
 
   @BeforeEach
   public void setup() {
+    // The step deletes the row it loads inside its transaction; equality is by id.
+    org.mockito.Mockito.lenient()
+        .when(consultantRepository.findById(any()))
+        .thenAnswer(
+            call -> {
+              var managed = new Consultant();
+              managed.setId(call.getArgument(0));
+              return java.util.Optional.of(managed);
+            });
     logAppender.start();
     logger.addAppender(logAppender);
   }
@@ -149,7 +160,7 @@ public class DeleteDatabaseConsultantActionTest {
   @Test
   public void execute_Should_returnEmptyListAndPerformDeletion_When_consultantCanBeDeleted() {
     ConsultantDeletionWorkflowDTO workflowDTO =
-        new ConsultantDeletionWorkflowDTO(new Consultant(), emptyList());
+        new ConsultantDeletionWorkflowDTO(consultantWithId(), emptyList());
 
     this.deleteDatabaseConsultantAction.execute(workflowDTO);
     List<DeletionWorkflowError> workflowErrors = workflowDTO.getDeletionWorkflowErrors();
@@ -165,7 +176,7 @@ public class DeleteDatabaseConsultantActionTest {
     Session session = new Session();
     session.setConsultant(new Consultant());
     ConsultantDeletionWorkflowDTO workflowDTO =
-        new ConsultantDeletionWorkflowDTO(new Consultant(), emptyList());
+        new ConsultantDeletionWorkflowDTO(consultantWithId(), emptyList());
 
     this.deleteDatabaseConsultantAction.execute(workflowDTO);
     List<DeletionWorkflowError> workflowErrors = workflowDTO.getDeletionWorkflowErrors();
@@ -181,7 +192,7 @@ public class DeleteDatabaseConsultantActionTest {
     doThrow(new RuntimeException()).when(this.consultantRepository).delete(any(Consultant.class));
 
     this.deleteDatabaseConsultantAction.execute(
-        new ConsultantDeletionWorkflowDTO(new Consultant(), new ArrayList<>()));
+        new ConsultantDeletionWorkflowDTO(consultantWithId(), new ArrayList<>()));
 
     verify(this.deletionAuditService, never()).recordAsSystem(any(), any(), any(), any());
   }
@@ -201,7 +212,8 @@ public class DeleteDatabaseConsultantActionTest {
     assertThat(workflowErrors.get(0).getDeletionSourceType(), is(CONSULTANT));
     assertThat(workflowErrors.get(0).getDeletionTargetType(), is(DATABASE));
     assertThat(workflowErrors.get(0).getIdentifier(), is("consultantId"));
-    assertThat(workflowErrors.get(0).getReason(), is("Unable to delete consultant in database"));
+    assertThat(
+        workflowErrors.get(0).getReason(), is("Unable to delete the counsellor in the database"));
     assertThat(workflowErrors.get(0).getTimestamp(), notNullValue());
     assertThat(
         logAppender.list.stream().anyMatch(event -> event.getLevel() == Level.ERROR), is(true));
@@ -227,7 +239,7 @@ public class DeleteDatabaseConsultantActionTest {
     assertThat(workflowErrors.get(0).getIdentifier(), is("consultantId"));
     assertThat(
         workflowErrors.get(0).getReason(),
-        is("Unable to unassign consultant from his sessions with state NEW or INITIAL"));
+        is("Unable to unassign the counsellor from their sessions"));
     assertThat(workflowErrors.get(0).getTimestamp(), notNullValue());
     assertThat(
         logAppender.list.stream().anyMatch(event -> event.getLevel() == Level.ERROR), is(true));
@@ -268,7 +280,8 @@ public class DeleteDatabaseConsultantActionTest {
 
     var workflowErrors = workflowDTO.getDeletionWorkflowErrors();
     assertThat(workflowErrors, hasSize(1));
-    assertThat(workflowErrors.get(0).getReason(), is("Unable to delete consultant supervisions"));
+    assertThat(
+        workflowErrors.get(0).getReason(), is("Unable to delete the counsellor's supervisions"));
     assertThat(workflowErrors.get(0).getDeletionSourceType(), is(CONSULTANT));
     assertThat(workflowErrors.get(0).getDeletionTargetType(), is(DATABASE));
   }
@@ -443,6 +456,12 @@ public class DeleteDatabaseConsultantActionTest {
     consultant.setDeletionLifecycleState(
         de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState
             .HARD_DELETE_IN_PROGRESS);
+    return consultant;
+  }
+
+  private static Consultant consultantWithId() {
+    var consultant = new Consultant();
+    consultant.setId("c-test");
     return consultant;
   }
 }
