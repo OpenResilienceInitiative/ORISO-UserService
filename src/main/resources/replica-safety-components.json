@@ -427,6 +427,22 @@
       "status": "blocker"
     },
     {
+      "id": "appointment-request-expiry-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/appointmentrequestexpiry/scheduler/AppointmentRequestExpiryScheduler.java",
+      "kind": "scheduler",
+      "owner": "appointments",
+      "risk": "correctness",
+      "components": [
+        "declineUnansweredRequests"
+      ],
+      "decision": "One conditional UPDATE (REQUESTED and started -> DECLINED); concurrent runs decline each row once and have no external side effect.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "safe"
+    },
+    {
       "id": "inactive-account-notification-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/workflow/inactiveaccountnotification/scheduler/InactiveAccountNotificationScheduler.java",
       "kind": "scheduler",

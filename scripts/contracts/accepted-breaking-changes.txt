@@ -13,15 +13,23 @@ GET /users/notifications api path removed without deprecation
 # ADR-032 / ORISO-UserService#1650: the cal.com feature flag is no longer sent.
 GET /users/data removed the optional property `appointmentFeatureEnabled` from the response with the `200` status
 
-# ORISO-Frontend#2287: advice seekers' appointment requests (REQUESTED) and declined requests
-# (DECLINED). The only consumer, ORISO-Frontend, reads both since #2298 and merges after this.
+# ADR-020 / ORISO-Frontend#2287: REQUESTED/DECLINED requests; ORISO-Frontend#2298 reads them.
 GET /users/appointments/upcoming added the new `DECLINED` enum value to the `items/status` response property for the response status `200`
+# ADR-020 / ORISO-Frontend#2287: REQUESTED/DECLINED requests; ORISO-Frontend#2298 reads them.
 GET /users/appointments/upcoming added the new `REQUESTED` enum value to the `items/status` response property for the response status `200`
+# ADR-020 / ORISO-Frontend#2287: REQUESTED/DECLINED requests; ORISO-Frontend#2298 reads them.
 GET /users/sessions/{sessionId}/appointments added the new `DECLINED` enum value to the `items/status` response property for the response status `200`
+# ADR-020 / ORISO-Frontend#2287: REQUESTED/DECLINED requests; ORISO-Frontend#2298 reads them.
 GET /users/sessions/{sessionId}/appointments added the new `REQUESTED` enum value to the `items/status` response property for the response status `200`
+# ADR-020 / ORISO-Frontend#2287: REQUESTED/DECLINED requests; ORISO-Frontend#2298 reads them.
 POST /users/sessions/{sessionId}/appointments added the new `DECLINED` enum value to the `status` response property for the response status `201`
+# ADR-020 / ORISO-Frontend#2287: REQUESTED/DECLINED requests; ORISO-Frontend#2298 reads them.
 POST /users/sessions/{sessionId}/appointments added the new `REQUESTED` enum value to the `status` response property for the response status `201`
+# ADR-020 / ORISO-Frontend#2287: REQUESTED/DECLINED requests; ORISO-Frontend#2298 reads them.
 PUT /users/sessions/{sessionId}/appointments/{appointmentId} added the new `DECLINED` enum value to the `status` response property for the response status `200`
+# ADR-020 / ORISO-Frontend#2287: REQUESTED/DECLINED requests; ORISO-Frontend#2298 reads them.
 PUT /users/sessions/{sessionId}/appointments/{appointmentId} added the new `REQUESTED` enum value to the `status` response property for the response status `200`
+# ADR-020 / ORISO-Frontend#2287: REQUESTED/DECLINED requests; ORISO-Frontend#2298 reads them.
 POST /users/sessions/{sessionId}/appointments/{appointmentId}/cancel added the new `DECLINED` enum value to the `status` response property for the response status `200`
+# ADR-020 / ORISO-Frontend#2287: REQUESTED/DECLINED requests; ORISO-Frontend#2298 reads them.
 POST /users/sessions/{sessionId}/appointments/{appointmentId}/cancel added the new `REQUESTED` enum value to the `status` response property for the response status `200`
