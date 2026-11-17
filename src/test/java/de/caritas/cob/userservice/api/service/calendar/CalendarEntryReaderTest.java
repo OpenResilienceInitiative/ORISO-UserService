@@ -27,13 +27,16 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.CalendarBlockerRepository;
 import de.caritas.cob.userservice.api.port.out.ChatOccurrenceExceptionRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionAppointmentRepository;
 import de.caritas.cob.userservice.api.service.CaseHandoverService;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -57,6 +60,7 @@ class CalendarEntryReaderTest {
   @Mock GroupChatParticipantRepository participants;
   @Mock ChatOccurrenceExceptionRepository occurrenceExceptions;
   @Mock CalendarBlockerRepository blockers;
+  @Mock ConsultantRepository consultants;
 
   private CalendarEntryReader reader;
 
@@ -64,7 +68,13 @@ class CalendarEntryReaderTest {
   void setUp() {
     reader =
         new CalendarEntryReader(
-            appointments, caseHandovers, chats, participants, occurrenceExceptions, blockers);
+            appointments,
+            caseHandovers,
+            chats,
+            participants,
+            occurrenceExceptions,
+            blockers,
+            consultants);
     lenient().when(occurrenceExceptions.findBySeries_IdIn(any())).thenReturn(List.of());
   }
 
@@ -245,6 +255,45 @@ class CalendarEntryReaderTest {
     return GroupChatParticipant.builder().chatId(1L).seriesId(seriesId).consultantId(ME).build();
   }
 
+  /**
+   * ORISO-Frontend#2252: a direct invitation nobody opened yet still takes the counsellor's time.
+   */
+  @Test
+  void appointmentsOfConsultant_Should_IncludeUnopenedInvitations_WithoutAskerOrSession() {
+    var opened = appointment();
+    var unopened = appointment();
+    unopened.setSession(null);
+    unopened.setKind(null);
+    when(appointments.findScheduledOfConsultantBetween(eq(ME), any(), eq(FROM), eq(TO), any()))
+        .thenReturn(List.of(opened));
+    when(appointments.findUnopenedInvitationsOfConsultantBetween(eq(ME), eq(FROM), eq(TO), any()))
+        .thenReturn(List.of(unopened));
+
+    var entries = reader.appointmentsOfConsultant(ME, FROM, TO);
+
+    assertThat(entries)
+        .extracting(CalendarEntry::id)
+        .containsExactly(opened.getId().toString(), unopened.getId().toString());
+    var invitation = entries.get(1);
+    assertThat(invitation.type()).isEqualTo(CalendarEntryType.APPOINTMENT);
+    assertThat(invitation.title()).isNull();
+    assertThat(invitation.sessionId()).isNull();
+  }
+
+  @Test
+  void appointmentsOfConsultant_Should_Fail_When_UnopenedInvitationsTakeTheWindowOverTheLimit() {
+    var limit = CalendarEntryReader.APPOINTMENT_LIMIT;
+    var unopened = appointment();
+    unopened.setSession(null);
+    when(appointments.findScheduledOfConsultantBetween(eq(ME), any(), eq(FROM), eq(TO), any()))
+        .thenReturn(Collections.nCopies(limit, appointment()));
+    when(appointments.findUnopenedInvitationsOfConsultantBetween(eq(ME), eq(FROM), eq(TO), any()))
+        .thenReturn(List.of(unopened));
+
+    assertThatThrownBy(() -> reader.appointmentsOfConsultant(ME, FROM, TO))
+        .isInstanceOf(InternalServerErrorException.class);
+  }
+
   private static SessionAppointment appointment() {
     var consultant = new Consultant();
     consultant.setId(ME);
@@ -274,5 +323,73 @@ class CalendarEntryReaderTest {
     blocker.setStartTime(Instant.parse("2026-11-10T08:00:00Z"));
     blocker.setEndTime(Instant.parse("2026-11-10T09:00:00Z"));
     return blocker;
+  }
+
+  // ORISO-Frontend#2303: a planned absence is one all-day entry over its days, clipped to the
+  // window.
+  @Test
+  void absence_Should_CoverItsDaysInBerlinTime_ClippedToTheWindow() {
+    var me = absentConsultant(LocalDate.of(2026, 11, 28), LocalDate.of(2026, 12, 5));
+    when(consultants.findById(ME)).thenReturn(Optional.of(me));
+
+    var entries = reader.absenceOf(ME, FROM, TO);
+
+    assertThat(entries).hasSize(1);
+    var entry = entries.get(0);
+    assertThat(entry.type()).isEqualTo(CalendarEntryType.ABSENCE);
+    assertThat(entry.id()).isEqualTo("absence-" + ME);
+    assertThat(entry.start()).isEqualTo(Instant.parse("2026-11-27T23:00:00Z"));
+    assertThat(entry.end()).isEqualTo(TO);
+    assertThat(entry.allDay()).isTrue();
+    assertThat(entry.title()).isNull();
+  }
+
+  @Test
+  void absence_Should_EndAfterItsLastDay() {
+    var me = absentConsultant(LocalDate.of(2026, 11, 2), LocalDate.of(2026, 11, 3));
+    when(consultants.findById(ME)).thenReturn(Optional.of(me));
+
+    var entry = reader.absenceOf(ME, FROM, TO).get(0);
+
+    assertThat(entry.start()).isEqualTo(Instant.parse("2026-11-01T23:00:00Z"));
+    assertThat(entry.end()).isEqualTo(Instant.parse("2026-11-03T23:00:00Z"));
+  }
+
+  @Test
+  void absence_Should_BeMissing_WithoutDates_SwitchedOff_OrOutsideTheWindow() {
+    var undated = absentConsultant(null, null);
+    var off = absentConsultant(LocalDate.of(2026, 11, 2), LocalDate.of(2026, 11, 3));
+    off.setAbsent(false);
+    var later = absentConsultant(LocalDate.of(2026, 12, 2), null);
+    when(consultants.findById("undated")).thenReturn(Optional.of(undated));
+    when(consultants.findById("off")).thenReturn(Optional.of(off));
+    when(consultants.findById("later")).thenReturn(Optional.of(later));
+    when(consultants.findById("gone")).thenReturn(Optional.empty());
+
+    assertThat(reader.absenceOf("undated", FROM, TO)).isEmpty();
+    assertThat(reader.absenceOf("off", FROM, TO)).isEmpty();
+    assertThat(reader.absenceOf("later", FROM, TO)).isEmpty();
+    assertThat(reader.absenceOf("gone", FROM, TO)).isEmpty();
+  }
+
+  @Test
+  void absence_Should_RunToTheWindowEnd_WhenOpenEnded() {
+    var me = absentConsultant(LocalDate.of(2026, 11, 20), null);
+    when(consultants.findById(ME)).thenReturn(Optional.of(me));
+
+    var entry = reader.absenceOf(ME, FROM, TO).get(0);
+
+    assertThat(entry.start()).isEqualTo(Instant.parse("2026-11-19T23:00:00Z"));
+    assertThat(entry.end()).isEqualTo(TO);
+  }
+
+  private static Consultant absentConsultant(LocalDate start, LocalDate end) {
+    var consultant = new Consultant();
+    consultant.setId(ME);
+    consultant.setAbsent(true);
+    consultant.setAbsenceMessage("Im Urlaub");
+    consultant.setAbsenceStart(start);
+    consultant.setAbsenceEnd(end);
+    return consultant;
   }
 }

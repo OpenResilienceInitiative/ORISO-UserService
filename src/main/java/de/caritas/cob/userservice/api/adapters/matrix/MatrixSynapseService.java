@@ -767,19 +767,6 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
     try {
       String browserCredential =
           MatrixBrowserCredential.derive(matrixConfig.getRegistrationSharedSecret(), matrixUserId);
-      var adminHeaders = getClientHttpHeaders(adminToken);
-      adminHeaders.setContentType(MediaType.APPLICATION_JSON);
-      var updateBody = new MatrixPasswordUpdateRequestDTO();
-      updateBody.setPassword(browserCredential);
-      updateBody.setLogoutDevices(false);
-      var updateUri =
-          MatrixUrlBuilder.buildUrl(
-              matrixConfig, ENDPOINT_UPDATE_USER_ADMIN, java.util.Map.of("userId", matrixUserId));
-      restTemplate.exchange(
-          updateUri,
-          org.springframework.http.HttpMethod.PUT,
-          new HttpEntity<>(updateBody, adminHeaders),
-          java.util.Map.class);
 
       var loginHeaders = new HttpHeaders();
       loginHeaders.setContentType(MediaType.APPLICATION_JSON);
@@ -789,31 +776,31 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
       loginBody.setPassword(browserCredential);
       loginBody.setDeviceId(deviceId);
       loginBody.setInitialDeviceDisplayName("ORISO Web");
+      var loginRequest = new HttpEntity<>(loginBody, loginHeaders);
 
+      // The credential is derived and never changes, so once set it simply works. Writing it is a
+      // bcrypt hash on Synapse (0.75-2.9 s on Dev, ORISO-Frontend#2272): set it only when Synapse
+      // refuses it, i.e. on a user's first browser login or after the password changed elsewhere.
+      java.util.Map<?, ?> loginResponse;
       try {
-        var response =
-            restTemplate.postForEntity(
-                matrixConfig.getApiUrl(ENDPOINT_LOGIN),
-                new HttpEntity<>(loginBody, loginHeaders),
-                java.util.Map.class);
-        if (response.getBody() == null
-            || response.getBody().get("access_token") == null
-            || response.getBody().get("device_id") == null) {
-          return null;
-        }
-
-        @SuppressWarnings("unchecked")
-        var responseBody =
-            new java.util.HashMap<>((java.util.Map<String, Object>) response.getBody());
-        responseBody.put("interactive_auth_password", browserCredential);
-        return responseBody;
+        loginResponse = postBrowserLogin(loginRequest);
       } catch (HttpClientErrorException ex) {
-        if (ex.getStatusCode() != HttpStatus.TOO_MANY_REQUESTS) {
+        if (ex.getStatusCode() != HttpStatus.FORBIDDEN) {
           throw ex;
         }
-        throw new MatrixBrowserLoginRateLimitedException(
-            browserLoginRetryAfterSeconds(ex, nowSupplier.getAsLong()));
+        setBrowserCredential(adminToken, matrixUserId, browserCredential);
+        loginResponse = postBrowserLogin(loginRequest);
       }
+      if (loginResponse == null
+          || loginResponse.get("access_token") == null
+          || loginResponse.get("device_id") == null) {
+        return null;
+      }
+
+      @SuppressWarnings("unchecked")
+      var responseBody = new java.util.HashMap<>((java.util.Map<String, Object>) loginResponse);
+      responseBody.put("interactive_auth_password", browserCredential);
+      return responseBody;
     } catch (MatrixBrowserLoginRateLimitedException ex) {
       log.warn(
           "Matrix browser device login was rate limited for user {}",
@@ -831,6 +818,37 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
     } finally {
       browserLoginLock.unlock();
     }
+  }
+
+  private java.util.Map<?, ?> postBrowserLogin(HttpEntity<MatrixLoginRequestDTO> loginRequest) {
+    try {
+      return restTemplate
+          .postForEntity(matrixConfig.getApiUrl(ENDPOINT_LOGIN), loginRequest, java.util.Map.class)
+          .getBody();
+    } catch (HttpClientErrorException ex) {
+      if (ex.getStatusCode() != HttpStatus.TOO_MANY_REQUESTS) {
+        throw ex;
+      }
+      throw new MatrixBrowserLoginRateLimitedException(
+          browserLoginRetryAfterSeconds(ex, nowSupplier.getAsLong()));
+    }
+  }
+
+  private void setBrowserCredential(
+      String adminToken, String matrixUserId, String browserCredential) {
+    var adminHeaders = getClientHttpHeaders(adminToken);
+    adminHeaders.setContentType(MediaType.APPLICATION_JSON);
+    var updateBody = new MatrixPasswordUpdateRequestDTO();
+    updateBody.setPassword(browserCredential);
+    updateBody.setLogoutDevices(false);
+    var updateUri =
+        MatrixUrlBuilder.buildUrl(
+            matrixConfig, ENDPOINT_UPDATE_USER_ADMIN, java.util.Map.of("userId", matrixUserId));
+    restTemplate.exchange(
+        updateUri,
+        org.springframework.http.HttpMethod.PUT,
+        new HttpEntity<>(updateBody, adminHeaders),
+        java.util.Map.class);
   }
 
   private static String browserLoginErrorCode(HttpStatusCodeException error) {
@@ -1057,6 +1075,13 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
       log.info("Successfully deactivated Matrix user: {}", redactor.pseudonym(matrixUserId));
       return response.getStatusCode().is2xxSuccessful();
 
+    } catch (org.springframework.web.client.HttpClientErrorException.NotFound gone) {
+      // Nobody can sign in with a user Synapse no longer knows: deactivation has already happened
+      // (ORISO-Admin#1523), as for a missing Keycloak user.
+      log.warn(
+          "Matrix user {} not found, treating it as already deactivated",
+          redactor.pseudonym(matrixUserId));
+      return true;
     } catch (Exception ex) {
       log.warn(
           "Failed to deactivate Matrix user {}: {}",
@@ -2037,6 +2062,61 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
    * never as a policy.
    */
   public java.util.Optional<String> getRoomHistoryVisibility(String matrixRoomId) {
+    return readRoomState(matrixRoomId)
+        .map(
+            events ->
+                events.stream()
+                    .filter(event -> "m.room.history_visibility".equals(event.get("type")))
+                    .map(event -> event.get("content"))
+                    .filter(java.util.Map.class::isInstance)
+                    .map(content -> ((java.util.Map<?, ?>) content).get("history_visibility"))
+                    .filter(String.class::isInstance)
+                    .map(String.class::cast)
+                    .reduce((first, second) -> second)
+                    .orElse("shared"));
+  }
+
+  /**
+   * Whether the room encrypts its messages with Megolm, read from the room state via the Synapse
+   * admin API (ORISO-Frontend#2252). Empty when the state cannot be read; callers must treat that
+   * as "unknown".
+   */
+  public java.util.Optional<Boolean> isRoomEncrypted(String matrixRoomId) {
+    return readRoomState(matrixRoomId)
+        .map(
+            events ->
+                events.stream()
+                    .filter(event -> "m.room.encryption".equals(event.get("type")))
+                    // The room's encryption lives under the empty state key only.
+                    .filter(event -> "".equals(event.get("state_key")))
+                    .map(event -> event.get("content"))
+                    .filter(java.util.Map.class::isInstance)
+                    .map(content -> ((java.util.Map<?, ?>) content).get("algorithm"))
+                    .anyMatch("m.megolm.v1.aes-sha2"::equals));
+  }
+
+  /**
+   * Whether a user is out of a room by its state (ORISO-Frontend#2252): no {@code m.room.member}
+   * event for them at all (never invited or joined), or their latest one says "leave" or "ban".
+   * Empty when the state cannot be read; callers must treat that as "unknown".
+   */
+  public java.util.Optional<Boolean> isOutOfRoom(String matrixRoomId, String matrixUserId) {
+    return readRoomState(matrixRoomId)
+        .map(
+            events ->
+                events.stream()
+                    .filter(event -> "m.room.member".equals(event.get("type")))
+                    .filter(event -> matrixUserId.equals(event.get("state_key")))
+                    .map(event -> event.get("content"))
+                    .filter(java.util.Map.class::isInstance)
+                    .map(content -> ((java.util.Map<?, ?>) content).get("membership"))
+                    .reduce((first, second) -> second)
+                    .map(membership -> "leave".equals(membership) || "ban".equals(membership))
+                    .orElse(true));
+  }
+
+  private java.util.Optional<java.util.List<java.util.Map<?, ?>>> readRoomState(
+      String matrixRoomId) {
     String adminToken = getAdminAccessToken();
     if (adminToken == null) {
       return java.util.Optional.empty();
@@ -2058,15 +2138,8 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
       return java.util.Optional.of(
           events.stream()
               .filter(java.util.Map.class::isInstance)
-              .map(java.util.Map.class::cast)
-              .filter(event -> "m.room.history_visibility".equals(event.get("type")))
-              .map(event -> event.get("content"))
-              .filter(java.util.Map.class::isInstance)
-              .map(content -> ((java.util.Map<?, ?>) content).get("history_visibility"))
-              .filter(String.class::isInstance)
-              .map(String.class::cast)
-              .reduce((first, second) -> second)
-              .orElse("shared"));
+              .<java.util.Map<?, ?>>map(java.util.Map.class::cast)
+              .toList());
     } catch (Exception ex) {
       if (ex instanceof HttpStatusCodeException status && status.getStatusCode().value() == 401) {
         // The cached admin token is no longer accepted: log in again on the next call.

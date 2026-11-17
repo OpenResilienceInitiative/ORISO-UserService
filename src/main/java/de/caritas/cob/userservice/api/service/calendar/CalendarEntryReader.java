@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.model.SessionAppointment;
 import de.caritas.cob.userservice.api.port.out.CalendarBlockerRepository;
 import de.caritas.cob.userservice.api.port.out.ChatOccurrenceExceptionRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionAppointmentRepository;
 import de.caritas.cob.userservice.api.service.CaseHandoverService;
@@ -58,26 +59,38 @@ class CalendarEntryReader {
   private final GroupChatParticipantRepository participants;
   private final ChatOccurrenceExceptionRepository occurrenceExceptions;
   private final CalendarBlockerRepository blockers;
+  private final ConsultantRepository consultants;
   private final ChatOccurrenceProjector projector = new ChatOccurrenceProjector();
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
-  /** Scheduled appointments of the counsellor's own and co-access sessions; title = asker. */
+  /**
+   * Scheduled appointments of the counsellor's own and co-access sessions (title = asker), and of
+   * the counsellor's direct invitations nobody opened yet (ORISO-Frontend#2252: no asker and no
+   * conversation yet, so neither title nor session).
+   */
   List<CalendarEntry> appointmentsOfConsultant(String consultantId, Instant from, Instant to) {
-    return complete(
-            appointments.findScheduledOfConsultantBetween(
-                consultantId,
-                caseHandovers.sessionIdsWithActiveCoAccess(consultantId),
-                from,
-                to,
-                PageRequest.of(0, APPOINTMENT_LIMIT + 1)))
-        .stream()
-        .map(
-            appointment ->
-                appointment(
-                    appointment,
-                    usernameTranscoder.decodeUsername(
-                        appointment.getSession().getUser().getUsername())))
-        .toList();
+    var page = PageRequest.of(0, APPOINTMENT_LIMIT + 1);
+    var found =
+        new ArrayList<CalendarEntry>(
+            appointments
+                .findScheduledOfConsultantBetween(
+                    consultantId,
+                    caseHandovers.sessionIdsWithActiveCoAccess(consultantId),
+                    from,
+                    to,
+                    page)
+                .stream()
+                .map(
+                    appointment ->
+                        appointment(
+                            appointment,
+                            usernameTranscoder.decodeUsername(
+                                appointment.getSession().getUser().getUsername())))
+                .toList());
+    appointments
+        .findUnopenedInvitationsOfConsultantBetween(consultantId, from, to, page)
+        .forEach(appointment -> found.add(appointment(appointment, null)));
+    return complete(found);
   }
 
   /** One appointment as a counsellor's own calendar shows it; title = asker. */
@@ -103,7 +116,7 @@ class CalendarEntryReader {
    * One more than the limit is read to tell a full window from a cut one: a calendar that shows
    * free time where an appointment was left out is worse than none.
    */
-  private static List<SessionAppointment> complete(List<SessionAppointment> found) {
+  private static <T> List<T> complete(List<T> found) {
     if (found.size() > APPOINTMENT_LIMIT) {
       throw new InternalServerErrorException(
           "A calendar window holds more than " + APPOINTMENT_LIMIT + " appointments.");
@@ -144,6 +157,51 @@ class CalendarEntryReader {
         .toList();
   }
 
+  /**
+   * The counsellor's planned absence (ORISO-Frontend#2303) as one all-day entry over its days,
+   * clipped to the window. An absence without dates has no days to show; one switched off has none.
+   */
+  List<CalendarEntry> absenceOf(String consultantId, Instant from, Instant to) {
+    return consultants
+        .findById(consultantId)
+        .filter(Consultant::isAbsenceSwitchedOn)
+        .filter(c -> c.getAbsenceStart() != null || c.getAbsenceEnd() != null)
+        .map(
+            c -> {
+              var start =
+                  c.getAbsenceStart() == null
+                      ? from
+                      : later(from, c.getAbsenceStart().atStartOfDay(Consultant.ABSENCE_ZONE));
+              var end =
+                  c.getAbsenceEnd() == null
+                      ? to
+                      : earlier(
+                          to, c.getAbsenceEnd().plusDays(1).atStartOfDay(Consultant.ABSENCE_ZONE));
+              return start.isBefore(end)
+                  ? List.of(
+                      new CalendarEntry(
+                          "absence-" + consultantId,
+                          CalendarEntryType.ABSENCE,
+                          start,
+                          end,
+                          null,
+                          null,
+                          null,
+                          null,
+                          true))
+                  : List.<CalendarEntry>of();
+            })
+        .orElse(List.of());
+  }
+
+  private static Instant later(Instant a, java.time.ZonedDateTime b) {
+    return a.isAfter(b.toInstant()) ? a : b.toInstant();
+  }
+
+  private static Instant earlier(Instant a, java.time.ZonedDateTime b) {
+    return a.isBefore(b.toInstant()) ? a : b.toInstant();
+  }
+
   static CalendarEntry blocker(CalendarBlocker blocker) {
     var own = blocker.getSource() == CalendarBlocker.Source.ORISO;
     return new CalendarEntry(
@@ -154,7 +212,8 @@ class CalendarEntryReader {
         null,
         own ? blocker.getNote() : null,
         null,
-        own && blocker.getSeriesId() != null ? blocker.getSeriesId().toString() : null);
+        own && blocker.getSeriesId() != null ? blocker.getSeriesId().toString() : null,
+        own && blocker.isAllDay());
   }
 
   private List<CalendarEntry> occurrencesOf(Collection<Chat> found, Instant from, Instant to) {
@@ -219,7 +278,7 @@ class CalendarEntryReader {
         appointment.getEndTime(),
         appointment.getKind(),
         title,
-        appointment.getSession().getId(),
+        appointment.getSession() == null ? null : appointment.getSession().getId(),
         null);
   }
 

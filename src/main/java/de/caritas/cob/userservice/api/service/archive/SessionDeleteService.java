@@ -46,6 +46,9 @@ public class SessionDeleteService {
 
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull DeletedAskerSessionService deletedAskerSessionService;
+  private final @NonNull de.caritas.cob.userservice.api.service.agencyinvitelink
+          .DirectInvitationExpiryService
+      invitationEnd;
 
   @Transactional
   public void deleteSession(Long sessionId) {
@@ -66,6 +69,8 @@ public class SessionDeleteService {
           HttpStatusExceptionReason.MEMBERS_ONLY_CHAT_STOP_REQUIRED, HttpStatus.CONFLICT);
     }
     requireDeletableByCaller(session);
+    // ORISO-Frontend#2252: the room outlives the deletion; whoever came in by invitation leaves it.
+    invitationEnd.requireInvitedOutBeforeDeletion(session);
 
     try {
       var endedBy =

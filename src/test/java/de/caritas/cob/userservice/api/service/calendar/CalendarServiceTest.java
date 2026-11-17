@@ -22,6 +22,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.SessionAppointment.Kind;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -104,9 +105,34 @@ class CalendarServiceTest {
     assertThat(entries.get(1).getMovable()).isFalse();
     assertThat(entries.get(2).getTitle()).isEqualTo("private note");
     assertThat(entries.get(2).getSeriesId()).isEqualTo("series-1");
+    assertThat(entries.get(2).getAllDay()).as("ORISO-UserService#1663").isTrue();
+    assertThat(entries.get(1).getAllDay()).as("an imported busy time").isNull();
+    assertThat(entries.get(3).getAllDay()).as("an appointment").isNull();
     assertThat(entries.get(2).getMovable()).isTrue();
     assertThat(entries.get(4).getTitle()).isEqualTo("group topic");
     assertThat(entries.get(4).getMovable()).isFalse();
+  }
+
+  /** ORISO-Frontend#2252: an unopened direct invitation moves with its invitation, not here. */
+  @Test
+  void ownEntries_Should_NotOfferToMoveAnUnopenedInvitation() {
+    var unopened =
+        new CalendarEntry(
+            "invitation",
+            CalendarEntryType.APPOINTMENT,
+            Instant.parse("2026-11-20T09:00:00Z"),
+            Instant.parse("2026-11-20T10:00:00Z"),
+            null,
+            null,
+            null,
+            null);
+    when(reader.appointmentsOfConsultant(eq(ME), any(), any())).thenReturn(List.of(unopened));
+
+    var entries = service.ownEntries(FROM, TO);
+
+    assertThat(entries).extracting(CalendarEntryDTO::getId).containsExactly("invitation");
+    assertThat(entries.get(0).getMovable()).isFalse();
+    assertThat(entries.get(0).getSessionId()).isNull();
   }
 
   @Test
@@ -165,7 +191,7 @@ class CalendarServiceTest {
     assertThat(entries.get(3).getKind()).isEqualTo(AppointmentKind.PHONE);
     var json = json(entries);
     assertThat(json)
-        .doesNotContain("sessionId", "seriesId", "title", "series-1")
+        .doesNotContain("sessionId", "seriesId", "title", "series-1", "allDay")
         .doesNotContain("asker-name", "private note", "group topic", "BUSY");
     for (Map<String, Object> entry : parsed(json)) {
       assertThat(entry.keySet())
@@ -216,7 +242,26 @@ class CalendarServiceTest {
     assertThat(result.getColleagues().get(0).getDisplayName()).isEqualTo("Colleague Name");
     assertThat(result.getColleagues().get(0).getAgencyName()).isEqualTo("Centre North");
     assertThat(result.getColleagues().get(0).getRelation()).isEqualTo(RelationEnum.SAME_AGENCY);
+    // ORISO-UserService#1663: tells two colleagues of the same name apart (Frank: the username).
+    assertThat(result.getColleagues().get(0).getSecondaryLabel()).isEqualTo("colleague.login");
+    assertThat(result.getColleagues().get(1).getSecondaryLabel()).isNull();
     assertThat(result.getColleagues().get(1).getAgencyName()).isEmpty();
+  }
+
+  @Test
+  void colleagues_Should_KeepTheUsernameInTheTraeger() {
+    var otherTraeger =
+        new Colleague(
+            consultant(COLLEAGUE, 2L), "Colleague Name", Relation.OTHER_TENANT, 10L, false);
+    when(colleagues.list(ME, null, CalendarService.COLLEAGUE_LIMIT))
+        .thenReturn(
+            new Listing(
+                new CalendarPolicy(CalendarVisibilityScope.PLATFORM, false),
+                List.of(otherTraeger)));
+
+    var result = service.colleagues(null);
+
+    assertThat(result.getColleagues().get(0).getSecondaryLabel()).isNull();
   }
 
   @Test
@@ -253,7 +298,8 @@ class CalendarServiceTest {
                     null,
                     "private note",
                     null,
-                    "series-1"),
+                    "series-1",
+                    true),
                 new CalendarEntry(
                     "busy",
                     CalendarEntryType.BUSY,
@@ -298,6 +344,10 @@ class CalendarServiceTest {
     var consultant = new Consultant();
     consultant.setId(id);
     consultant.setTenantId(tenantId);
+    if (COLLEAGUE.equals(id)) {
+      // Stored encoded, as provisioning does (review 4595469701).
+      consultant.setUsername(new UsernameTranscoder().encodeUsername("colleague.login"));
+    }
     return consultant;
   }
 

@@ -317,6 +317,45 @@ class SessionRepositoryIT {
     return result;
   }
 
+  /**
+   * ORISO-Frontend#2252: the shared conversation of a direct invitation with an appointment is a
+   * session of the same counsellor, person and consulting type as their 1:1, and a person can have
+   * several. Looking up the 1:1 must neither return one of those nor fail on their number, also
+   * after the invitations were deleted (no link rows here at all).
+   */
+  @Test
+  void findOneToOneSessions_Should_LeaveOutSharedConversations_AlsoAfterTheirLinksAreGone() {
+    givenAUser();
+    var consultant = consultantRepository.findAll().iterator().next();
+    var oneToOne = validSession(null, 1);
+    oneToOne.setConsultant(consultant);
+    oneToOne = underTest.save(oneToOne);
+    // An ordinary appointment of the 1:1 ("Termin anlegen") keeps it the 1:1.
+    appointmentOf(oneToOne);
+    for (int i = 0; i < 2; i++) {
+      var shared = validSession(null, 1);
+      shared.setConsultant(consultant);
+      shared = underTest.save(shared);
+      appointmentOf(shared);
+      underTest.markDirectInvitationConversation(shared.getId());
+    }
+    entityManager.flush();
+    entityManager.clear();
+
+    var found = underTest.findOneToOneSessions(consultant, user, 1);
+
+    assertEquals(List.of(oneToOne.getId()), found.stream().map(Session::getId).toList());
+  }
+
+  private void appointmentOf(Session session) {
+    var appointment = new de.caritas.cob.userservice.api.model.SessionAppointment();
+    appointment.setSession(session);
+    appointment.setStatus(de.caritas.cob.userservice.api.model.SessionAppointment.Status.SCHEDULED);
+    appointment.setStartTime(java.time.Instant.parse("2030-01-01T10:00:00Z"));
+    appointment.setEndTime(java.time.Instant.parse("2030-01-01T11:00:00Z"));
+    entityManager.persist(appointment);
+  }
+
   private void givenValidSession() {
     session = validSession(null, 1);
   }

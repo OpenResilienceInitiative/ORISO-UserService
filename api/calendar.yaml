@@ -580,6 +580,7 @@ components:
         - GROUP
         - BLOCKER
         - BUSY
+        - ABSENCE
     AppointmentKind:
       description: How the appointment takes place. Absent on appointments made before the kind
         existed; a reschedule without a kind keeps the stored one.
@@ -627,6 +628,10 @@ components:
         seriesId:
           description: Blockers created as a series
           type: string
+        allDay:
+          description: Own view, blockers only - entered as whole days (ORISO-UserService#1663).
+            Absent on every other entry and in a colleague's view.
+          type: boolean
         movable:
           type: boolean
     CalendarColleagueDTO:
@@ -642,6 +647,11 @@ components:
         displayName:
           type: string
         agencyName:
+          type: string
+        secondaryLabel:
+          description: Tells colleagues of the same display name apart (ORISO-UserService#1663);
+            the counsellor's ORISO username. Only for colleagues of the caller's own Träger
+            (SAME_AGENCY, SAME_TENANT); absent for OTHER_TENANT, who differ by agencyName.
           type: string
         relation:
           type: string
@@ -882,6 +892,11 @@ components:
         end:
           type: string
           format: date-time
+        reason:
+          description: Why the proposer asks (ORISO-UserService#1663). Optional; blank is stored
+            as none. Shown to the deciding colleague in ORISO only, not put into the e-mail.
+          type: string
+          maxLength: 500
     CalendarMoveProposalDTO:
       type: object
       required:
@@ -929,6 +944,9 @@ components:
           type: string
         approverName:
           description: The name colleagues see
+          type: string
+        reason:
+          description: Why the proposer asks; absent when they gave none
           type: string
         createdAt:
           type: string

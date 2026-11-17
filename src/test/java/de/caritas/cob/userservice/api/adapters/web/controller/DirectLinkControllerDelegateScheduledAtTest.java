@@ -37,7 +37,14 @@ class DirectLinkControllerDelegateScheduledAtTest {
   private final CounsellorDirectLinkService service = mock(CounsellorDirectLinkService.class);
   private final UserAccountService accounts = mock(UserAccountService.class);
   private final TopicService topics = mock(TopicService.class);
+  private final de.caritas.cob.userservice.api.service.session.SessionConsentService consents =
+      mock(de.caritas.cob.userservice.api.service.session.SessionConsentService.class);
   private final Consultant counsellor = new Consultant();
+  private final de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitationService
+      invitations =
+          mock(
+              de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitationService
+                  .class);
   private DirectLinkControllerDelegate delegate;
 
   @BeforeEach
@@ -45,15 +52,57 @@ class DirectLinkControllerDelegateScheduledAtTest {
     delegate =
         new DirectLinkControllerDelegate(
             service,
+            invitations,
             accounts,
             topics,
             mock(DirectCallKnockService.class),
             mock(de.caritas.cob.userservice.api.service.chat.GroupWaitingRoomService.class),
             mock(UserRepository.class),
-            mock(TemporaryAccountService.class));
+            mock(TemporaryAccountService.class),
+            consents);
     counsellor.setId("counsellor-1");
     when(accounts.retrieveValidatedConsultant()).thenReturn(counsellor);
     when(topics.getAllTopicsMap()).thenReturn(Map.of());
+  }
+
+  @Test
+  void startDirectLinkConversation_Should_TellAJoinerTheirOwnConsentIsStillOpen() {
+    var joiner = new de.caritas.cob.userservice.api.model.User();
+    joiner.setUserId("joiner-1");
+    when(accounts.retrieveValidatedUser()).thenReturn(joiner);
+    when(service.startConversation("token", joiner)).thenReturn(started(true));
+    when(consents.consentRequired(42L, "joiner-1")).thenReturn(true);
+
+    var body = delegate.startDirectLinkConversation("token").getBody();
+
+    assertThat(body.getConsentRequired()).isTrue();
+  }
+
+  @Test
+  void startDirectLinkConversation_Should_LeaveConsentOut_ForAnOrdinary1to1() {
+    var asker = new de.caritas.cob.userservice.api.model.User();
+    asker.setUserId("asker-1");
+    when(accounts.retrieveValidatedUser()).thenReturn(asker);
+    when(service.startConversation("token", asker)).thenReturn(started(false));
+
+    var body = delegate.startDirectLinkConversation("token").getBody();
+
+    assertThat(body.getConsentRequired()).isNull();
+    org.mockito.Mockito.verifyNoInteractions(consents);
+  }
+
+  private static CounsellorDirectLinkService.StartedConversation started(boolean shared) {
+    return new CounsellorDirectLinkService.StartedConversation(
+        42L,
+        "!room:oriso",
+        de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkChatType.CHAT,
+        de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkAdmission.DIRECT,
+        false,
+        null,
+        null,
+        null,
+        shared,
+        null);
   }
 
   @Test
@@ -111,6 +160,30 @@ class DirectLinkControllerDelegateScheduledAtTest {
     assertThat(captor.getAllValues().get(0).clearScheduledAt()).isFalse();
     assertThat(captor.getAllValues().get(1).scheduledAt()).isNull();
     assertThat(captor.getAllValues().get(1).clearScheduledAt()).isTrue();
+  }
+
+  /** ORISO-Frontend#2252: the list reads the appointments of all links at once, not per link. */
+  @Test
+  void list_Should_ReadTheAppointmentsOfAllLinksInOneGo() {
+    var first = link(null);
+    first.setAppointmentId(java.util.UUID.randomUUID());
+    var second = link(null);
+    second.setId(6L);
+    second.setAppointmentId(java.util.UUID.randomUUID());
+    var appointment = new de.caritas.cob.userservice.api.model.SessionAppointment();
+    appointment.setId(first.getAppointmentId());
+    appointment.setStatus(de.caritas.cob.userservice.api.model.SessionAppointment.Status.SCHEDULED);
+    appointment.setStartTime(java.time.Instant.parse("2030-01-01T10:00:00Z"));
+    appointment.setEndTime(java.time.Instant.parse("2030-01-01T11:00:00Z"));
+    when(service.listOwn(counsellor)).thenReturn(java.util.List.of(first, second));
+    when(invitations.appointmentsOf(java.util.List.of(first, second)))
+        .thenReturn(Map.of(appointment.getId(), appointment));
+
+    var response = delegate.getOwnDirectLinks();
+
+    org.mockito.Mockito.verify(invitations, org.mockito.Mockito.never()).appointmentOf(any());
+    assertThat(response.getBody().get(0).getAppointment().getId()).isEqualTo(appointment.getId());
+    assertThat(response.getBody().get(1).getAppointment()).isNull();
   }
 
   private static AgencyInviteLink link(LocalDateTime scheduledAt) {

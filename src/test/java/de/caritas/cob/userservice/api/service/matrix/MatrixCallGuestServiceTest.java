@@ -1012,6 +1012,21 @@ class MatrixCallGuestServiceTest {
     verify(matrix, never()).inviteUserToRoom(anyString(), anyString(), anyString());
   }
 
+  // CodeRabbit 4585987235: a session call whose media room is no longer observed (after
+  // loseObservation / loseBatch) admits nobody, as the media gate refuses its seats; devices whose
+  // expiry is still in the future must not open it.
+  @Test
+  void anUnobservedSessionCallAdmitsNobody() throws Exception {
+    binding.loseMediaObservation();
+
+    assertThat(service.admit(counsellor, SOURCE, "call", "guest").outcome())
+        .isEqualTo(Outcome.NOT_FOUND);
+    assertThat(service.counsellorCall(7L, "counsellor", SOURCE, "call").outcome())
+        .isEqualTo(Outcome.NOT_FOUND);
+    assertThat(saved).isEmpty();
+    verify(matrix, never()).inviteUserToRoom(anyString(), anyString(), anyString());
+  }
+
   // CodeRabbit 4585785672: the session is locked after the binding and before the authority check,
   // so the check reads a reassignment that committed after this transaction's snapshot.
   @Test
