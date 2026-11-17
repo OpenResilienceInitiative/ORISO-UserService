@@ -550,6 +550,27 @@ public interface AccountInviteRepository
       @Param("now") LocalDateTime now,
       Pageable pageable);
 
+  /**
+   * Settled invites whose settling (revoke, replacement, recorded expiry) is older than {@code
+   * cutoff}; for the nightly purge (ORISO-Admin#1522). Oldest first.
+   */
+  @Query(
+      "SELECT i.id FROM AccountInvite i WHERE i.status IN :settled"
+          + " AND COALESCE(i.revokedAt, i.supersededAt, i.updateDate, i.createDate) < :cutoff"
+          + " ORDER BY i.id ASC")
+  List<Long> findSettledBefore(
+      @Param("settled") Collection<AccountInviteStatus> settled,
+      @Param("cutoff") LocalDateTime cutoff,
+      Pageable pageable);
+
+  /** Deletes the given invites if they are still settled; the mail deliveries must be gone. */
+  @Transactional
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query("DELETE FROM AccountInvite i WHERE i.id IN :ids AND i.status IN :settled")
+  int deleteSettledByIdIn(
+      @Param("ids") Collection<Long> ids,
+      @Param("settled") Collection<AccountInviteStatus> settled);
+
   /** The elapsed address-holding rows {@link #expireElapsedRecipientClaims} is about to expire. */
   @Query(
       "SELECT i FROM AccountInvite i WHERE i.activeRecipientKey = :recipientEmail"
