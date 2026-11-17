@@ -212,6 +212,21 @@ public interface AccountInviteRepository
       @Param("now") LocalDateTime now);
 
   /**
+   * Marks a settled invite as deleted by an admin (ORISO-Admin#1522); 0 when it is already marked
+   * or no longer settled. Only the mark is written, so a concurrent writer's fields stay intact.
+   */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i SET i.deletionRequestedAt = :now,"
+          + " i.deletionRequestedByUserId = :requestedByUserId, i.updateDate = :now"
+          + " WHERE i.id = :id AND i.deletionRequestedAt IS NULL AND i.status IN :settled")
+  int markForDeletion(
+      @Param("id") Long id,
+      @Param("settled") Collection<AccountInviteStatus> settled,
+      @Param("requestedByUserId") String requestedByUserId,
+      @Param("now") LocalDateTime now);
+
+  /**
    * Revokes every open invite of a deleted Träger ({@code tenantId}) or Beratungsstelle ({@code
    * agencyId}); the other argument is null (ORISO-Admin#1522). Frees each address like a manual
    * revoke. A setup link through which an account is being set up right now is left alone.
@@ -308,10 +323,11 @@ public interface AccountInviteRepository
    *       case-preserving, and the two databases involved disagree on the default: MariaDB's {@code
    *       utf8mb4_*_ci} collation compares case-insensitively, H2 (tests) does not. The guard must
    *       not depend on which one it runs against.
-   *   <li>The expiry clause reflects that expiry is materialized lazily — {@code EXPIRED} is only
-   *       stamped when someone opens the link (see {@code AccountInviteService#acceptInvite}), so a
-   *       never-opened invite stays {@code EMAIL_SENT} forever. Without the date check a lapsed
-   *       invite would permanently block its address, leaving the admin no way to re-invite.
+   *   <li>The expiry clause reflects that expiry is materialized with a delay — {@code EXPIRED} is
+   *       stamped when someone opens the link or by the periodic expiry sweep ({@code
+   *       AccountInviteService#expireElapsedInvites}), so a lapsed invite can still read {@code
+   *       EMAIL_SENT} for a few minutes. Without the date check it would block its address until
+   *       the next sweep.
    * </ul>
    *
    * <p>The caller passes the non-terminal statuses; terminal ones ({@code ACCEPTED}, {@code
@@ -570,16 +586,33 @@ public interface AccountInviteRepository
       @Param("statuses") Collection<AccountInviteStatus> statuses,
       @Param("now") LocalDateTime now);
 
-  /** Elapsed, unaccepted invites that may still hold a reserved Träger or agency number. */
+  /**
+   * Ids of elapsed invites the expiry sweep settles, after {@code afterId} in id order:
+   *
+   * <ul>
+   *   <li>every sent invite whose link has lapsed — not only those holding a reserved Träger or
+   *       agency number (ORISO-Admin#1522), else a never-opened counsellor invite is listed as open
+   *       forever;
+   *   <li>a draft only while it holds a number, as before: sending a draft re-arms its expiry, so
+   *       an old number-free draft stays sendable.
+   * </ul>
+   *
+   * The id cursor lets the sweep page past a row it could not expire this time.
+   */
   @Query(
-      "SELECT i FROM AccountInvite i WHERE i.status IN :statuses"
-          + " AND i.expiresAt IS NOT NULL AND i.expiresAt <= :now"
-          + " AND (i.tenantIdReservationToken IS NOT NULL OR i.agencyIdAllocationMode IN :modes)"
-          + " ORDER BY i.expiresAt ASC")
-  List<AccountInvite> findElapsedHoldingANumber(
-      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      "SELECT i.id FROM AccountInvite i WHERE i.purpose = :purpose"
+          + " AND (i.status = :sent OR (i.status = :draft"
+          + "      AND (i.tenantIdReservationToken IS NOT NULL"
+          + "           OR i.agencyIdAllocationMode IN :modes)))"
+          + " AND i.expiresAt IS NOT NULL AND i.expiresAt <= :now AND i.id > :afterId"
+          + " ORDER BY i.id ASC")
+  List<Long> findElapsedInviteIdsToExpire(
+      @Param("purpose") AccountInvitePurpose purpose,
+      @Param("sent") AccountInviteStatus sent,
+      @Param("draft") AccountInviteStatus draft,
       @Param("modes") Collection<IdAllocationMode> modes,
       @Param("now") LocalDateTime now,
+      @Param("afterId") Long afterId,
       Pageable pageable);
 
   /** The elapsed address-holding rows {@link #expireElapsedRecipientClaims} is about to expire. */

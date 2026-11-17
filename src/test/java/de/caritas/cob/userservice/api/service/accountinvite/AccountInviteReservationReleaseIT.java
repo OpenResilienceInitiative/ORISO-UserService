@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.accountinvite;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
@@ -81,7 +82,10 @@ class AccountInviteReservationReleaseIT {
   }
 
   @Autowired private AccountInviteService service;
-  @Autowired private AccountInviteRepository accountInviteRepository;
+
+  @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
+  private AccountInviteRepository accountInviteRepository;
+
   @Autowired private IdReservationReleaseTaskRepository releaseTaskRepository;
   @Autowired private AuthenticatedUser caller;
 
@@ -266,7 +270,171 @@ class AccountInviteReservationReleaseIT {
     verify(agencyIdAllocationClient, never()).release(anyLong());
   }
 
+  // --- expiry of invites without a number (ORISO-Admin#1522, ORISO-UserService#1617) -----------
+
+  @Test
+  void anElapsedSentCounsellorInvite_Should_BeExpired_AndFreeItsAddress_EvenUnopened() {
+    AccountInvite sent = savedInvite(AccountInviteStatus.EMAIL_SENT, minutesAgo(1));
+
+    int expired = service.expireElapsedInvites();
+
+    AccountInvite stored = reload(sent);
+    assertThat(expired).isEqualTo(1);
+    assertThat(stored.getStatus()).isEqualTo(AccountInviteStatus.EXPIRED);
+    assertThat(stored.getActiveRecipientKey()).isNull();
+    verify(agencyIdAllocationClient, never()).release(anyLong());
+  }
+
+  @Test
+  void anElapsedDraftWithoutANumber_Should_StayADraft_BecauseSendingReArmsItsExpiry() {
+    AccountInvite draft =
+        service.createInvite(
+            command(
+                AccountInviteTargetRole.COUNSELLOR,
+                null,
+                null,
+                EXISTING_AGENCY,
+                IdAllocationMode.EXISTING));
+    elapse(draft);
+
+    int expired = service.expireElapsedInvites();
+
+    assertThat(expired).isZero();
+    assertThat(reload(draft).getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
+  }
+
+  @Test
+  void theExpirySweep_Should_LeaveAcceptedRevokedAndValidInvitesAlone() {
+    AccountInvite accepted = savedInvite(AccountInviteStatus.ACCEPTED, minutesAgo(1));
+    AccountInvite revoked = savedInvite(AccountInviteStatus.REVOKED, minutesAgo(1));
+    AccountInvite valid =
+        savedInvite(AccountInviteStatus.EMAIL_SENT, LocalDateTime.now().plusDays(1));
+
+    int expired = service.expireElapsedInvites();
+
+    assertThat(expired).isZero();
+    assertThat(reload(accepted).getStatus()).isEqualTo(AccountInviteStatus.ACCEPTED);
+    assertThat(reload(revoked).getStatus()).isEqualTo(AccountInviteStatus.REVOKED);
+    assertThat(reload(valid).getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+  }
+
+  @Test
+  void theExpirySweep_Should_LeaveExistingAccountSetupLinksToTheirOwnFlow() {
+    AccountInvite setup =
+        accountInviteRepository.save(
+            inviteRow(AccountInviteStatus.EMAIL_SENT, minutesAgo(1))
+                .purpose(AccountInvitePurpose.EXISTING_ACCOUNT_SETUP)
+                .build());
+
+    service.expireElapsedInvites();
+
+    assertThat(reload(setup).getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+  }
+
+  /**
+   * Review of ORISO-UserService#1670: a send renews a lapsed invite (new token, new expiry, still
+   * EMAIL_SENT). If it commits after the sweep picked the id, the sweep must not expire the link
+   * that was just mailed.
+   */
+  @Test
+  void aLapsedInviteRenewedAfterTheSweepPickedIt_Should_StaySent() {
+    AccountInvite sent = savedInvite(AccountInviteStatus.EMAIL_SENT, minutesAgo(1));
+    LocalDateTime renewedUntil = LocalDateTime.now().plusDays(30).withNano(0);
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              // The sweep picked the lapsed invite; a send renews it before the expiry runs.
+              AccountInvite renewed = reload(sent);
+              renewed.setExpiresAt(renewedUntil);
+              accountInviteRepository.saveAndFlush(renewed);
+              Long afterId = call.getArgument(5);
+              return afterId < sent.getId() ? java.util.List.of(sent.getId()) : java.util.List.of();
+            })
+        .when(accountInviteRepository)
+        .findElapsedInviteIdsToExpire(any(), any(), any(), any(), any(), any(), any());
+
+    int expired = service.expireElapsedInvites();
+
+    assertThat(expired).isZero();
+    assertThat(reload(sent).getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+    assertThat(reload(sent).getExpiresAt()).isEqualTo(renewedUntil);
+  }
+
+  /** Review of ORISO-UserService#1670: a row another writer holds is skipped, not fatal. */
+  @Test
+  void aBusyInvite_Should_BeSkipped_WhileTheOthersExpire() {
+    AccountInvite busy = savedInvite(AccountInviteStatus.EMAIL_SENT, minutesAgo(2));
+    AccountInvite free = savedInvite(AccountInviteStatus.EMAIL_SENT, minutesAgo(1));
+    org.mockito.Mockito.doThrow(
+            new org.springframework.dao.PessimisticLockingFailureException("held by a send"))
+        .when(accountInviteRepository)
+        .findByIdForUpdate(busy.getId());
+
+    int expired = service.expireElapsedInvites();
+
+    assertThat(expired).isEqualTo(1);
+    assertThat(reload(busy).getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+    assertThat(reload(free).getStatus()).isEqualTo(AccountInviteStatus.EXPIRED);
+  }
+
+  /** Review of ORISO-UserService#1670: one run stops at 2,000; the next takes the rest. */
+  @Test
+  void theExpirySweep_Should_StopAtItsPerRunLimit_AndTheNextRunShouldTakeTheRest() {
+    for (int i = 0; i < 2_001; i++) {
+      savedInvite(AccountInviteStatus.EMAIL_SENT, minutesAgo(1));
+    }
+
+    assertThat(service.expireElapsedInvites()).isEqualTo(2_000);
+    assertThat(service.expireElapsedInvites()).isEqualTo(1);
+    assertThat(service.expireElapsedInvites()).isZero();
+  }
+
+  @Test
+  void theExpirySweep_Should_WorkThroughABacklogLargerThanOneBatch() {
+    int backlog = 250;
+    for (int i = 0; i < backlog; i++) {
+      savedInvite(AccountInviteStatus.EMAIL_SENT, minutesAgo(1 + i));
+    }
+
+    int expired = service.expireElapsedInvites();
+
+    assertThat(expired).isEqualTo(backlog);
+    assertThat(
+            accountInviteRepository.findAll().stream()
+                .filter(invite -> invite.getStatus() != AccountInviteStatus.EXPIRED)
+                .count())
+        .isZero();
+  }
+
   // --- helpers ----------------------------------------------------------------------------------
+
+  private AccountInvite savedInvite(AccountInviteStatus status, LocalDateTime expiresAt) {
+    return accountInviteRepository.save(inviteRow(status, expiresAt).build());
+  }
+
+  private static AccountInvite.AccountInviteBuilder inviteRow(
+      AccountInviteStatus status, LocalDateTime expiresAt) {
+    String email = UUID.randomUUID() + "@example.org";
+    boolean holdsAddress =
+        status == AccountInviteStatus.DRAFT || status == AccountInviteStatus.EMAIL_SENT;
+    return AccountInvite.builder()
+        .targetRole(AccountInviteTargetRole.COUNSELLOR)
+        .tenantId(OWN_TENANT)
+        .recipientEmail(email)
+        .activeRecipientKey(holdsAddress ? email : null)
+        .agencyId(EXISTING_AGENCY)
+        .agencyIdAllocationMode(IdAllocationMode.EXISTING)
+        .status(status)
+        .expiresAt(expiresAt)
+        .provisioningStatus(AccountInviteProvisioningStatus.PENDING)
+        .emailVerificationStatus(EmailVerificationStatus.PENDING)
+        .twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP)
+        .createDate(LocalDateTime.now())
+        .updateDate(LocalDateTime.now());
+  }
+
+  private static LocalDateTime minutesAgo(long minutes) {
+    return LocalDateTime.now().minusMinutes(minutes);
+  }
 
   private void elapse(AccountInvite invite) {
     AccountInvite stored = reload(invite);
