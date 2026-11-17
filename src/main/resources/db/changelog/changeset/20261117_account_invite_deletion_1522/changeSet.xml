@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- ORISO-Admin#1522: an admin deletes an invitation. The delete revokes it at once and marks
+       the row; the nightly invite purge removes marked rows. A marked row is no longer listed. -->
+  <changeSet id="20261117-account-invite-deletion-mark-1522" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <columnExists tableName="account_invite" columnName="deletion_requested_at"/>
+      </not>
+    </preConditions>
+    <addColumn tableName="account_invite">
+      <column name="deletion_requested_at" type="DATETIME"/>
+      <column name="deletion_requested_by_user_id" type="VARCHAR(36)"/>
+    </addColumn>
+    <rollback>
+      <dropColumn tableName="account_invite" columnName="deletion_requested_by_user_id"/>
+      <dropColumn tableName="account_invite" columnName="deletion_requested_at"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>
