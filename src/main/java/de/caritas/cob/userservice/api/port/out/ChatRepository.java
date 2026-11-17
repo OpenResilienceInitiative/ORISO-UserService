@@ -85,6 +85,14 @@ public interface ChatRepository extends CrudRepository<Chat, Long> {
 
   List<Chat> findByChatOwner(Consultant chatOwner);
 
+  /** The chats a counsellor owns, by id (calendar, ADR-032). */
+  @Query("select c from Chat c where c.chatOwner.id = :ownerId")
+  List<Chat> findByChatOwnerId(@Param("ownerId") String ownerId);
+
+  /** The chats an asker has joined (calendar, ADR-032). */
+  @Query("select uc.chat from UserChat uc where uc.user.userId = :userId")
+  List<Chat> findJoinedByUserId(@Param("userId") String userId);
+
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   List<Chat> findAllByActiveIsTrue();
 

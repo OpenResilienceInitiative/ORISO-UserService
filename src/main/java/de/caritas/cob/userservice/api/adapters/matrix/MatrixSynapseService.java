@@ -2037,6 +2037,61 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
    * never as a policy.
    */
   public java.util.Optional<String> getRoomHistoryVisibility(String matrixRoomId) {
+    return readRoomState(matrixRoomId)
+        .map(
+            events ->
+                events.stream()
+                    .filter(event -> "m.room.history_visibility".equals(event.get("type")))
+                    .map(event -> event.get("content"))
+                    .filter(java.util.Map.class::isInstance)
+                    .map(content -> ((java.util.Map<?, ?>) content).get("history_visibility"))
+                    .filter(String.class::isInstance)
+                    .map(String.class::cast)
+                    .reduce((first, second) -> second)
+                    .orElse("shared"));
+  }
+
+  /**
+   * Whether the room encrypts its messages with Megolm, read from the room state via the Synapse
+   * admin API (ORISO-Frontend#2252). Empty when the state cannot be read; callers must treat that
+   * as "unknown".
+   */
+  public java.util.Optional<Boolean> isRoomEncrypted(String matrixRoomId) {
+    return readRoomState(matrixRoomId)
+        .map(
+            events ->
+                events.stream()
+                    .filter(event -> "m.room.encryption".equals(event.get("type")))
+                    // The room's encryption lives under the empty state key only.
+                    .filter(event -> "".equals(event.get("state_key")))
+                    .map(event -> event.get("content"))
+                    .filter(java.util.Map.class::isInstance)
+                    .map(content -> ((java.util.Map<?, ?>) content).get("algorithm"))
+                    .anyMatch("m.megolm.v1.aes-sha2"::equals));
+  }
+
+  /**
+   * Whether a user is out of a room by its state (ORISO-Frontend#2252): no {@code m.room.member}
+   * event for them at all (never invited or joined), or their latest one says "leave" or "ban".
+   * Empty when the state cannot be read; callers must treat that as "unknown".
+   */
+  public java.util.Optional<Boolean> isOutOfRoom(String matrixRoomId, String matrixUserId) {
+    return readRoomState(matrixRoomId)
+        .map(
+            events ->
+                events.stream()
+                    .filter(event -> "m.room.member".equals(event.get("type")))
+                    .filter(event -> matrixUserId.equals(event.get("state_key")))
+                    .map(event -> event.get("content"))
+                    .filter(java.util.Map.class::isInstance)
+                    .map(content -> ((java.util.Map<?, ?>) content).get("membership"))
+                    .reduce((first, second) -> second)
+                    .map(membership -> "leave".equals(membership) || "ban".equals(membership))
+                    .orElse(true));
+  }
+
+  private java.util.Optional<java.util.List<java.util.Map<?, ?>>> readRoomState(
+      String matrixRoomId) {
     String adminToken = getAdminAccessToken();
     if (adminToken == null) {
       return java.util.Optional.empty();
@@ -2058,15 +2113,8 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
       return java.util.Optional.of(
           events.stream()
               .filter(java.util.Map.class::isInstance)
-              .map(java.util.Map.class::cast)
-              .filter(event -> "m.room.history_visibility".equals(event.get("type")))
-              .map(event -> event.get("content"))
-              .filter(java.util.Map.class::isInstance)
-              .map(content -> ((java.util.Map<?, ?>) content).get("history_visibility"))
-              .filter(String.class::isInstance)
-              .map(String.class::cast)
-              .reduce((first, second) -> second)
-              .orElse("shared"));
+              .<java.util.Map<?, ?>>map(java.util.Map.class::cast)
+              .toList());
     } catch (Exception ex) {
       if (ex instanceof HttpStatusCodeException status && status.getStatusCode().value() == 401) {
         // The cached admin token is no longer accepted: log in again on the next call.

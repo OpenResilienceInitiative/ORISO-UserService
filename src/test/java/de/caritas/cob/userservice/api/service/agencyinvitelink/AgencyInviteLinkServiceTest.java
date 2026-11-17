@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -484,6 +485,126 @@ class AgencyInviteLinkServiceTest {
     assertThat(TenantContext.getCurrentTenant()).isNull();
   }
 
+  /** ORISO-Frontend#2252: an invitation's expiry is UTC; a server east of UTC must not end it. */
+  @Test
+  void directInvitationWithAppointment_Should_OpenUntilItsUtcExpiry_OnAServerAheadOfUtc() {
+    var link =
+        AgencyInviteLink.builder()
+            .token("direct")
+            .status(InviteLinkStatus.ACTIVE.name())
+            .tenantId(83L)
+            .linkKind(InviteLinkKind.COUNSELLOR.name())
+            .chatType(InviteLinkChatType.CHAT.name())
+            .consultantId("owner")
+            .agencyId(5L)
+            .consultingTypeId(1)
+            .appointmentId(java.util.UUID.randomUUID())
+            .expiresAt(LocalDateTime.now(java.time.ZoneOffset.UTC).plusMinutes(30))
+            .build();
+    var owner = new Consultant();
+    owner.setId("owner");
+    var membership = new de.caritas.cob.userservice.api.model.ConsultantAgency();
+    membership.setAgencyId(5L);
+    owner.setConsultantAgencies(java.util.Set.of(membership));
+    when(directInvitePolicy.allows(83L, 5L, InviteLinkChatType.CHAT)).thenReturn(true);
+    when(repository.findByToken("direct")).thenReturn(Optional.of(link));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("owner")).thenReturn(Optional.of(owner));
+    var previous = java.util.TimeZone.getDefault();
+    try {
+      java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Pacific/Kiritimati"));
+
+      assertThat(service.getContext("direct").agencyId()).isEqualTo(5L);
+    } finally {
+      java.util.TimeZone.setDefault(previous);
+    }
+  }
+
+  /** Redemption decides an appointment invitation's expiry in UTC too, like the context. */
+  @Test
+  void redeem_Should_DecideAnAppointmentInvitationsExpiryInUtc() {
+    var link = appointmentInvitation(LocalDateTime.now(java.time.ZoneOffset.UTC).plusMinutes(30));
+    var previous = java.util.TimeZone.getDefault();
+    try {
+      java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Pacific/Kiritimati"));
+
+      assertThat(service.redeem("direct").getAgencyId()).isEqualTo(5L);
+    } finally {
+      java.util.TimeZone.setDefault(previous);
+    }
+    assertThat(link.getStatus()).isEqualTo(InviteLinkStatus.ACTIVE.name());
+  }
+
+  /** Overdue: 410 expired, and the status is left to the sweep, which removes the guests. */
+  @Test
+  void redeem_Should_AnswerExpired_AndLeaveTheStatusToTheSweep_ForAnOverdueInvitation() {
+    var link = appointmentInvitation(LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(1));
+
+    assertThatThrownBy(() -> service.redeem("direct"))
+        .isInstanceOf(DirectLinkExpiredException.class);
+    assertThat(link.getStatus()).isEqualTo(InviteLinkStatus.ACTIVE.name());
+    verify(repository, org.mockito.Mockito.never()).save(link);
+  }
+
+  /** CodeRabbit on PR #1648: once the sweep set EXPIRED, the invitation still answers 410. */
+  @Test
+  void redeem_Should_AnswerExpired_ForAnInvitationTheSweepClosed() {
+    var link = appointmentInvitation(LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(1));
+    link.setStatus(InviteLinkStatus.EXPIRED.name());
+    when(repository.findByTokenAndStatus("direct", InviteLinkStatus.ACTIVE.name()))
+        .thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> service.redeem("direct"))
+        .isInstanceOf(DirectLinkExpiredException.class);
+  }
+
+  /** CodeRabbit on PR #1648: a token "Neuen Link senden" replaced answers 410, not 404. */
+  @Test
+  void redeem_Should_AnswerExpired_ForAReplacedToken() {
+    when(repository.findByTokenAndStatus("old", InviteLinkStatus.ACTIVE.name()))
+        .thenReturn(Optional.empty());
+    when(repository.findByToken("old")).thenReturn(Optional.empty());
+    when(repository.findFirstByPreviousToken("old"))
+        .thenReturn(Optional.of(AgencyInviteLink.builder().id(9L).build()));
+
+    assertThatThrownBy(() -> service.redeem("old")).isInstanceOf(DirectLinkExpiredException.class);
+  }
+
+  @Test
+  void redeem_Should_StillAnswerNotFound_ForAnUnknownToken() {
+    when(repository.findByTokenAndStatus("nope", InviteLinkStatus.ACTIVE.name()))
+        .thenReturn(Optional.empty());
+    when(repository.findByToken("nope")).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> service.redeem("nope")).isInstanceOf(NotFoundException.class);
+  }
+
+  private AgencyInviteLink appointmentInvitation(LocalDateTime expiresAt) {
+    var link =
+        AgencyInviteLink.builder()
+            .token("direct")
+            .status(InviteLinkStatus.ACTIVE.name())
+            .tenantId(83L)
+            .linkKind(InviteLinkKind.COUNSELLOR.name())
+            .chatType(InviteLinkChatType.CHAT.name())
+            .consultantId("owner")
+            .agencyId(5L)
+            .consultingTypeId(1)
+            .appointmentId(java.util.UUID.randomUUID())
+            .expiresAt(expiresAt)
+            .build();
+    var owner = new Consultant();
+    owner.setId("owner");
+    var membership = new de.caritas.cob.userservice.api.model.ConsultantAgency();
+    membership.setAgencyId(5L);
+    owner.setConsultantAgencies(java.util.Set.of(membership));
+    when(directInvitePolicy.allows(83L, 5L, InviteLinkChatType.CHAT)).thenReturn(true);
+    when(repository.findByToken("direct")).thenReturn(Optional.of(link));
+    when(repository.findByTokenAndStatus("direct", InviteLinkStatus.ACTIVE.name()))
+        .thenReturn(Optional.of(link));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("owner")).thenReturn(Optional.of(owner));
+    return link;
+  }
+
   /** "Direkteinladung erlauben" withdrawn: the link stays stored, but the page says it is off. */
   @Test
   void directLinkWithWithdrawnPermission_Should_ReadAsNoLongerActive() {
@@ -927,10 +1048,72 @@ class AgencyInviteLinkServiceTest {
         .build();
   }
 
+  /**
+   * CodeRabbit on PR #1648: the link is read under its lock, the one a first visitor holds while
+   * creating the conversation, so the switch-off sees that conversation and ends its access.
+   */
+  @Test
+  void deactivate_Should_ReadTheLinkUnderItsLock() {
+    var link = storedLink("ACTIVE", InviteLinkKind.COUNSELLOR.name(), 1L, null);
+    when(repository.findByIdForUpdate(7L)).thenReturn(Optional.of(link));
+    when(repository.save(any(AgencyInviteLink.class))).thenAnswer(i -> i.getArgument(0));
+
+    service.deactivate(7L);
+
+    verify(repository, Mockito.never()).findById(7L);
+  }
+
+  /** ORISO-Frontend#2252: an admin switching an invitation off ends access like its counsellor. */
+  @Test
+  void deactivate_Should_EndTheAccessOfAnInvitationWithAppointment() {
+    var link = storedLink("ACTIVE", InviteLinkKind.COUNSELLOR.name(), 1L, null);
+    link.setChatType(InviteLinkChatType.VIDEO.name());
+    link.setAppointmentId(java.util.UUID.randomUUID());
+    when(repository.findByIdForUpdate(7L)).thenReturn(Optional.of(link));
+    when(repository.save(any(AgencyInviteLink.class))).thenAnswer(i -> i.getArgument(0));
+    var invitationEnd = mock(DirectInvitationExpiryService.class);
+    withInvitationEnd(invitationEnd);
+
+    var result = service.deactivate(7L);
+
+    assertThat(result.getStatus()).isEqualTo(InviteLinkStatus.DISABLED.name());
+    verify(invitationEnd).revoke(link);
+  }
+
+  /** The list never closes an invitation itself: the sweep must still see it and remove guests. */
+  @Test
+  void list_Should_LeaveAnOverdueInvitationWithAppointmentToTheSweep() {
+    AgencyInviteLink invitation =
+        AgencyInviteLink.builder()
+            .token("t")
+            .status(InviteLinkStatus.ACTIVE.name())
+            .tenantId(1L)
+            .appointmentId(java.util.UUID.randomUUID())
+            .expiresAt(LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(1))
+            .build();
+    var page = new org.springframework.data.domain.PageImpl<>(java.util.List.of(invitation));
+    when(repository.findAllByTenantIdAndFilters(any(), any(), any(), any(), any(), any()))
+        .thenReturn(page);
+
+    service.list(null, null, null, null, 0, 20);
+
+    assertThat(invitation.getStatus()).isEqualTo(InviteLinkStatus.ACTIVE.name());
+    verify(repository, org.mockito.Mockito.never()).save(invitation);
+  }
+
+  @SuppressWarnings("unchecked")
+  private void withInvitationEnd(DirectInvitationExpiryService invitationEnd) {
+    var provider =
+        (org.springframework.beans.factory.ObjectProvider<DirectInvitationExpiryService>)
+            mock(org.springframework.beans.factory.ObjectProvider.class);
+    when(provider.getIfAvailable()).thenReturn(invitationEnd);
+    org.springframework.test.util.ReflectionTestUtils.setField(service, "invitationEnd", provider);
+  }
+
   @Test
   void deactivate_Should_SwitchAnActiveLinkOff() {
     var link = storedLink("ACTIVE", "EXTERNAL_INBOUND", 1L, null);
-    when(repository.findById(7L)).thenReturn(Optional.of(link));
+    when(repository.findByIdForUpdate(7L)).thenReturn(Optional.of(link));
     when(repository.save(any(AgencyInviteLink.class))).thenAnswer(i -> i.getArgument(0));
 
     var result = service.deactivate(7L);
@@ -942,7 +1125,7 @@ class AgencyInviteLinkServiceTest {
   @Test
   void deactivate_Should_BeIdempotent_When_LinkIsAlreadyDisabled() {
     var link = storedLink("DISABLED", "EXTERNAL_INBOUND", 1L, null);
-    when(repository.findById(7L)).thenReturn(Optional.of(link));
+    when(repository.findByIdForUpdate(7L)).thenReturn(Optional.of(link));
 
     var result = service.deactivate(7L);
 
@@ -953,7 +1136,7 @@ class AgencyInviteLinkServiceTest {
   @Test
   void deactivate_Should_ThrowConflict_When_LinkWasAlreadyUsedOrExpired() {
     for (String status : List.of("USED", "EXPIRED")) {
-      when(repository.findById(7L))
+      when(repository.findByIdForUpdate(7L))
           .thenReturn(Optional.of(storedLink(status, "EXTERNAL_INBOUND", 1L, null)));
 
       assertThatThrownBy(() -> service.deactivate(7L))
@@ -965,14 +1148,14 @@ class AgencyInviteLinkServiceTest {
 
   @Test
   void deactivate_Should_ThrowNotFound_When_LinkDoesNotExist() {
-    when(repository.findById(7L)).thenReturn(Optional.empty());
+    when(repository.findByIdForUpdate(7L)).thenReturn(Optional.empty());
 
     assertThatThrownBy(() -> service.deactivate(7L)).isInstanceOf(NotFoundException.class);
   }
 
   @Test
   void deactivate_Should_ThrowNotFound_When_LinkBelongsToAnotherTenant() {
-    when(repository.findById(7L))
+    when(repository.findByIdForUpdate(7L))
         .thenReturn(Optional.of(storedLink("ACTIVE", "EXTERNAL_INBOUND", 2L, null)));
 
     assertThatThrownBy(() -> service.deactivate(7L)).isInstanceOf(NotFoundException.class);
@@ -981,7 +1164,8 @@ class AgencyInviteLinkServiceTest {
 
   @Test
   void deactivate_Should_ThrowNotFound_When_LinkIsACallShareLink() {
-    when(repository.findById(7L)).thenReturn(Optional.of(storedLink("ACTIVE", "CALL", 1L, null)));
+    when(repository.findByIdForUpdate(7L))
+        .thenReturn(Optional.of(storedLink("ACTIVE", "CALL", 1L, null)));
 
     assertThatThrownBy(() -> service.deactivate(7L)).isInstanceOf(NotFoundException.class);
     Mockito.verify(repository, Mockito.never()).save(any());
@@ -990,7 +1174,7 @@ class AgencyInviteLinkServiceTest {
   @Test
   void deactivate_Should_ThrowForbidden_When_AgencyAdminTargetsAnotherAgenciesLink() {
     actAsAgencyAdminOfAgencyTen();
-    when(repository.findById(7L))
+    when(repository.findByIdForUpdate(7L))
         .thenReturn(Optional.of(storedLink("ACTIVE", "EXTERNAL_INBOUND", 1L, 11L)));
 
     assertThatThrownBy(() -> service.deactivate(7L)).isInstanceOf(ForbiddenException.class);
@@ -1000,7 +1184,7 @@ class AgencyInviteLinkServiceTest {
   @Test
   void deactivate_Should_ThrowForbidden_When_AgencyAdminTargetsAWholeTraegerLink() {
     actAsAgencyAdminOfAgencyTen();
-    when(repository.findById(7L))
+    when(repository.findByIdForUpdate(7L))
         .thenReturn(Optional.of(storedLink("ACTIVE", "EXTERNAL_INBOUND", 1L, null)));
 
     assertThatThrownBy(() -> service.deactivate(7L)).isInstanceOf(ForbiddenException.class);

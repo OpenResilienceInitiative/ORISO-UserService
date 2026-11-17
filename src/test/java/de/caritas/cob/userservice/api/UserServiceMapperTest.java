@@ -11,8 +11,6 @@ import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminBase;
 import de.caritas.cob.userservice.api.model.Admin.AdminType;
-import de.caritas.cob.userservice.api.model.Appointment;
-import de.caritas.cob.userservice.api.model.Appointment.AppointmentStatus;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Consultant.ConsultantBase;
 import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
@@ -21,13 +19,11 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
-import java.time.Instant;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -206,28 +202,6 @@ class UserServiceMapperTest {
     assertThat(consultant.getNotificationsSettings())
         .isEqualTo(
             "{\"initialEnquiryNotificationEnabled\":false,\"newChatMessageNotificationEnabled\":true,\"reassignmentNotificationEnabled\":true,\"appointmentNotificationEnabled\":true,\"assignmentNotificationEnabled\":true,\"internalChatNotificationEnabled\":null,\"feedbackNotificationEnabled\":true,\"serviceNoticeNotificationEnabled\":true}");
-  }
-
-  // ── mapOf(Appointment) ────────────────────────────────────────────────────
-
-  @Test
-  void mapOf_Appointment_Should_MapAllFields() {
-    Consultant consultant = new Consultant();
-    consultant.setId("c-1");
-
-    Appointment appointment = new Appointment();
-    appointment.setId(UUID.fromString("11111111-1111-1111-1111-111111111111"));
-    appointment.setDescription("Test session");
-    appointment.setDatetime(Instant.parse("2026-07-01T10:00:00Z"));
-    appointment.setStatus(AppointmentStatus.CREATED);
-    appointment.setConsultant(consultant);
-
-    Map<String, Object> result = userServiceMapper.mapOf(appointment);
-
-    assertThat(result.get("id")).isEqualTo("11111111-1111-1111-1111-111111111111");
-    assertThat(result.get("description")).isEqualTo("Test session");
-    assertThat(result.get("status")).isEqualTo("created");
-    assertThat(result.get("consultantId")).isEqualTo("c-1");
   }
 
   // ── mapOf(User) ───────────────────────────────────────────────────────────
@@ -446,27 +420,6 @@ class UserServiceMapperTest {
     User result = userServiceMapper.adviceSeekerOf(user, patchMap);
 
     assertThat(result.getDataPrivacyConfirmation()).isNotNull();
-  }
-
-  // ── appointmentOf ─────────────────────────────────────────────────────────
-
-  @Test
-  void appointmentOf_Should_MapAllFields() {
-    Consultant consultant = new Consultant();
-    consultant.setId("c-1");
-
-    Map<String, Object> appointmentMap = new HashMap<>();
-    appointmentMap.put("id", "22222222-2222-2222-2222-222222222222");
-    appointmentMap.put("description", "Counseling session");
-    appointmentMap.put("datetime", "2026-08-01T09:00:00Z");
-    appointmentMap.put("status", "created");
-
-    Appointment result = userServiceMapper.appointmentOf(appointmentMap, consultant);
-
-    assertThat(result.getId()).isEqualTo(UUID.fromString("22222222-2222-2222-2222-222222222222"));
-    assertThat(result.getDescription()).isEqualTo("Counseling session");
-    assertThat(result.getStatus()).isEqualTo(AppointmentStatus.CREATED);
-    assertThat(result.getConsultant()).isSameAs(consultant);
   }
 
   // ── roomIdOf / userIdOf ───────────────────────────────────────────────────

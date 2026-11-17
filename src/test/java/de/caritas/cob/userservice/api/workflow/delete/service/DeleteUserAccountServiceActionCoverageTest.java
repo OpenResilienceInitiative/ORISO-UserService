@@ -16,7 +16,6 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAnonymousRegistryIdAction;
-import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAppointmentServiceAskerAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAskerDraftMessagesAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAskerEventNotificationsAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAskerReplyEmailDeliveriesAction;
@@ -26,9 +25,9 @@ import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteDatabas
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteKeycloakAskerAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteMatrixAskerAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.PublishAskerDeletedEventAction;
-import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteAppointmentServiceConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteCaseHandoverRequestsForConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteChatAction;
+import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantCalendarAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantDraftMessagesAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantEventNotificationsAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantMessageEmailDeliveriesAction;
@@ -72,7 +71,6 @@ class DeleteUserAccountServiceActionCoverageTest {
           DeleteAskerRoomsAndSessionsAction.class,
           DeleteDatabaseAskerAgencyAction.class,
           DeleteAnonymousRegistryIdAction.class,
-          DeleteAppointmentServiceAskerAction.class,
           DeleteAskerDraftMessagesAction.class,
           DeleteAskerEventNotificationsAction.class,
           DeleteAskerReplyEmailDeliveriesAction.class,
@@ -85,12 +83,12 @@ class DeleteUserAccountServiceActionCoverageTest {
           DeleteMatrixConsultantAction.class,
           DeleteDatabaseConsultantAgencyAction.class,
           DeleteChatAction.class,
-          DeleteAppointmentServiceConsultantAction.class,
           DeleteCaseHandoverRequestsForConsultantAction.class,
           DeleteConsultantDraftMessagesAction.class,
           DeleteConsultantEventNotificationsAction.class,
           DeleteConsultantMessageEmailDeliveriesAction.class,
           DeleteConsultantMessageStatsAction.class,
+          DeleteConsultantCalendarAction.class,
           DeleteDatabaseConsultantAction.class,
           PublishConsultantDeletedEventAction.class);
 

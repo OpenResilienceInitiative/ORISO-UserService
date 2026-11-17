@@ -51,7 +51,6 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.identity.UserIdentitiesService;
 import java.lang.reflect.Method;
 import java.util.List;
@@ -75,7 +74,6 @@ class UserAdminControllerTest {
   @Mock private ConsultantAdminFacade consultantAdminFacade;
   @Mock private AskerUserAdminFacade askerUserAdminFacade;
   @Mock private AdminUserFacade adminUserFacade;
-  @Mock private AppointmentService appointmentService;
   @Mock private AdminDtoMapper adminDtoMapper;
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private GrantConsultantIdentityService grantConsultantIdentityService;
@@ -97,7 +95,6 @@ class UserAdminControllerTest {
             consultantAdminFacade,
             askerUserAdminFacade,
             adminUserFacade,
-            appointmentService,
             adminDtoMapper,
             authenticatedUser,
             grantConsultantIdentityService,
@@ -107,6 +104,9 @@ class UserAdminControllerTest {
             mock(de.caritas.cob.userservice.api.helper.UserHelper.class),
             mock(
                 de.caritas.cob.userservice.api.admin.service.tenant.TenantDeletionBlockerService
+                    .class),
+            mock(
+                de.caritas.cob.userservice.api.admin.service.contactperson.ContactPersonAdminService
                     .class));
   }
 

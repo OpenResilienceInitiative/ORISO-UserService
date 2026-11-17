@@ -9,7 +9,6 @@ import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
-import java.time.LocalDateTime;
 import java.util.Objects;
 import java.util.Optional;
 import lombok.NonNull;
@@ -41,7 +40,12 @@ public class TemporaryAccountLinkResolver {
     var link =
         repository
             .findByToken(userDTO.getDirectLinkToken())
-            .orElseThrow(() -> new ForbiddenException("The direct link is not valid"));
+            .orElseThrow(
+                () ->
+                    // A token replaced by "Neuen Link senden" reads as expired (#2252).
+                    repository.findFirstByPreviousToken(userDTO.getDirectLinkToken()).isPresent()
+                        ? new DirectLinkExpiredException()
+                        : new ForbiddenException("The direct link is not valid"));
     if (InviteLinkKind.CALL.name().equals(link.getLinkKind())) {
       requireCallRegistration(link, userDTO);
       return Optional.of(link);
@@ -53,11 +57,12 @@ public class TemporaryAccountLinkResolver {
     if (InviteLinkStatus.DISABLED.name().equals(link.getStatus())) {
       throw new DirectLinkInactiveException();
     }
-    if (!InviteLinkStatus.ACTIVE.name().equals(link.getStatus())
-        || (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now()))) {
+    // The one expiry decision, in UTC (410 DIRECT_LINK_EXPIRED); here only the status is left.
+    CounsellorDirectLinkService.requireNotExpired(link);
+    if (!InviteLinkStatus.ACTIVE.name().equals(link.getStatus())) {
       throw new BadRequestException("Invite link expired");
     }
-    requireMatchingAccountType(userDTO, link.isTemporaryAccount());
+    requireAdmittedAccountType(userDTO, link.effectiveAccessMode());
     var registrationTenant = TenantContext.getCurrentTenant();
     if (registrationTenant != null && !Objects.equals(registrationTenant, link.getTenantId())) {
       throw new ForbiddenException("Invite link belongs to another tenant");
@@ -87,6 +92,16 @@ public class TemporaryAccountLinkResolver {
     callShareLinks.requireDirectInviteAllowed(link);
     requireMatchingAccountType(
         userDTO, link.isTemporaryAccount() && callShareLinks.temporaryAccountAllowed(link));
+  }
+
+  /** ORISO-Frontend#2252: the invitation's access mode decides which accounts may register. */
+  private static void requireAdmittedAccountType(UserDTO userDTO, DirectInvitationAccessMode mode) {
+    if (!mode.admits(userDTO.isTemporary())) {
+      throw new BadRequestException(
+          mode == DirectInvitationAccessMode.GUESTS_ONLY
+              ? "This direct link creates temporary accounts."
+              : "This direct link does not create temporary accounts.");
+    }
   }
 
   private static void requireMatchingAccountType(UserDTO userDTO, boolean temporary) {

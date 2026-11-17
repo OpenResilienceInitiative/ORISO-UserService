@@ -66,6 +66,40 @@ class SessionDeleteServiceTest {
   de.caritas.cob.userservice.api.service.session.DeletedAskerSessionService
       deletedAskerSessionService;
 
+  @Mock
+  de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitationExpiryService
+      invitationEnd;
+
+  /** CodeRabbit on PR #1648: the room outlives the deletion, the invited people must not. */
+  @Test
+  void deleteSession_Should_TakeTheInvitedPeopleOutOfTheRoom_BeforeDeleting() {
+    var sessionId = givenAPresentSession(false);
+    var delete = givenActionRegistryDeletesSession();
+
+    sessionDeleteService.deleteSession(sessionId);
+
+    var order = org.mockito.Mockito.inOrder(invitationEnd, delete);
+    order.verify(invitationEnd).requireInvitedOutBeforeDeletion(any(Session.class));
+    order.verify(delete).executeActions(any(SessionDeletionWorkflowDTO.class));
+  }
+
+  @Test
+  void deleteSession_Should_KeepTheConversation_When_SomeoneInvitedIsStillInTheRoom() {
+    var sessionId = givenAPresentSession(false);
+    org.mockito.Mockito.doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException(
+                "still in"))
+        .when(invitationEnd)
+        .requireInvitedOutBeforeDeletion(any(Session.class));
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException.class,
+        () -> sessionDeleteService.deleteSession(sessionId));
+
+    org.mockito.Mockito.verifyNoInteractions(actionsRegistry);
+    org.mockito.Mockito.verifyNoInteractions(matrixSessionSystemMessageService);
+  }
+
   @Test
   void deleteSessionAndInactiveUser_Should_ReturnOK_When_SessionIdIsKnown() {
     var sessionId = givenAPresentSession(false);

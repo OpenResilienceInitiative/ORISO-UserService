@@ -13,7 +13,6 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateChatResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateEnquiryMessageResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DeleteUserAccountDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EnquiryMessageDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GetChatSeriesOccurrences200ResponseInner;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestAdmitDTO;
@@ -273,6 +272,27 @@ public class UserController implements UsersApi {
   }
 
   @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkDTO>
+      renewDirectInvitation(
+          Long linkId,
+          de.caritas.cob.userservice.api.adapters.web.dto.RenewDirectInvitationDTO body) {
+    return directLinkControllerDelegate.renewDirectInvitation(linkId, body);
+  }
+
+  @Override
+  public ResponseEntity<Void> requestDirectInvitationRenewal(String token) {
+    return directLinkControllerDelegate.requestDirectInvitationRenewal(token);
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkDTO>
+      createSessionDirectInvitation(
+          Long sessionId,
+          de.caritas.cob.userservice.api.adapters.web.dto.CreateSessionDirectInvitationDTO body) {
+    return directLinkControllerDelegate.createSessionDirectInvitation(sessionId, body);
+  }
+
+  @Override
   public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkConversationDTO>
       startDirectLinkConversation(String token) {
     return directLinkControllerDelegate.startDirectLinkConversation(token);
@@ -511,11 +531,6 @@ public class UserController implements UsersApi {
     return userAccountControllerDelegate.updateAbsence(absence);
   }
 
-  @Override
-  public ResponseEntity<EmailNotificationsDTO> getUserEmailNotifications(String email) {
-    return userAccountControllerDelegate.getUserEmailNotifications(email);
-  }
-
   /**
    * Gets the user data for the current logged-in user depending on his user role.
    *
@@ -745,6 +760,14 @@ public class UserController implements UsersApi {
   public ResponseEntity<List<AgencyAdminContactDTO>> getAgencyAdminContacts(Long agencyId) {
     return ResponseEntity.ok(
         agencyAdminContactService.contactsFor(authenticatedUser.getUserId(), agencyId));
+  }
+
+  /** The contact person of one of the caller's counselling centres (ORISO-Admin#1534). */
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAgencyContactDTO>
+      getConsultantAgencyContactPerson(Long agencyId) {
+    return ResponseEntity.ok(
+        agencyAdminContactService.contactPersonFor(authenticatedUser.getUserId(), agencyId));
   }
 
   @Override

@@ -284,4 +284,12 @@
   <include file="db/changelog/changeset/20261113_user_deletion_failure_1521/changeSet.xml"/>
   <include file="db/changelog/changeset/20261113_call_binding_end_cause_2209/changeSet.xml"/>
   <include file="db/changelog/changeset/20261115_call_binding_last_swept_2209/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261114_session_appointment_kind_1000/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261114_calendar_blocker_1000/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261114_calendar_sync_1645/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261114_calendar_working_hours_1000/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261114_calendar_working_hours_exceptions_1000/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261116_calendar_move_proposal_1000/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261116_agency_contact_person_1534/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261114_direct_invitation_appointment_2252/changeSet.xml"/>
 </databaseChangeLog>

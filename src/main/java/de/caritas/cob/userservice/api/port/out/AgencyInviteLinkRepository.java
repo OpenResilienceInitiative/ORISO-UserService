@@ -17,6 +17,48 @@ public interface AgencyInviteLinkRepository
 
   Optional<AgencyInviteLink> findByToken(String token);
 
+  /**
+   * The invitation one of whose tokens "Neuen Link senden" replaced, however many renewals ago
+   * (ORISO-Frontend#2252).
+   */
+  @Query("SELECT l FROM AgencyInviteLink l JOIN l.replacedTokens t WHERE t = :token")
+  Optional<AgencyInviteLink> findFirstByPreviousToken(@Param("token") String token);
+
+  /**
+   * The appointment of the caller's own direct link, read without loading (or locking) the link
+   * itself (#2252). Ownership is part of the query, so nobody locks another counsellor's rows.
+   */
+  @Query(
+      "SELECT l.appointmentId FROM AgencyInviteLink l WHERE l.id = :id"
+          + " AND l.consultantId = :consultantId AND l.linkKind = :linkKind"
+          + " AND l.chatType IN :chatTypes")
+  Optional<java.util.UUID> findAppointmentIdOfOwnLink(
+      @Param("id") Long id,
+      @Param("consultantId") String consultantId,
+      @Param("linkKind") String linkKind,
+      @Param("chatTypes") Collection<String> chatTypes);
+
+  /** Ownership check without loading or locking the row (#2252). */
+  boolean existsByIdAndConsultantIdAndLinkKindAndChatTypeIn(
+      Long id, String consultantId, String linkKind, Collection<String> chatTypes);
+
+  /**
+   * Every invitation that meets at one appointment, locked in id order: moving the appointment
+   * moves all their expiries (ORISO-Frontend#2252).
+   */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("SELECT l FROM AgencyInviteLink l WHERE l.appointmentId = :appointmentId ORDER BY l.id")
+  List<AgencyInviteLink> findByAppointmentIdForUpdate(
+      @Param("appointmentId") java.util.UUID appointmentId);
+
+  /** Direct invitations whose appointment validity ran out and that are still on (#2252). */
+  @Query(
+      "SELECT l.id FROM AgencyInviteLink l WHERE l.linkKind = 'COUNSELLOR'"
+          + " AND l.appointmentId IS NOT NULL AND l.status = 'ACTIVE'"
+          + " AND l.expiresAt < :now AND l.id > :afterId ORDER BY l.id")
+  List<Long> findExpiredInvitationIds(
+      @Param("now") java.time.LocalDateTime now, @Param("afterId") Long afterId, Pageable pageable);
+
   /** A counsellor's own direct links, newest first (#1475). */
   List<AgencyInviteLink> findAllByConsultantIdAndLinkKindAndChatTypeInOrderByCreateDateDesc(
       String consultantId, String linkKind, Collection<String> chatTypes);

@@ -2668,6 +2668,27 @@ class UserControllerAuthorizationIT {
     verify(this.sessionConsentService).recordConsent(eq(123L), any(), eq(7L));
   }
 
+  /**
+   * ORISO-Frontend#2252: an invitation member may agree without a version when the advice centre
+   * has no consent text of its own; the service decides who may (owners still get 400).
+   */
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT})
+  void recordSessionConsent_Should_PassAnAbsentVersionOnToTheService() throws Exception {
+    for (var body : new String[] {"{}", "{\"legalVersionId\":null}"}) {
+      mvc.perform(
+              put(PATH_RECORD_SESSION_CONSENT)
+                  .cookie(CSRF_COOKIE)
+                  .header(CSRF_HEADER, CSRF_VALUE)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(body))
+          .andExpect(status().isNoContent());
+    }
+
+    verify(this.sessionConsentService, org.mockito.Mockito.times(2))
+        .recordConsent(eq(123L), any(), org.mockito.ArgumentMatchers.isNull());
+  }
+
   @Test
   @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
   void recordSessionConsent_Should_ReturnForbiddenAndCallNoMethods_When_CallerIsAConsultant()

@@ -104,6 +104,12 @@ public class MatrixCallGuestService {
             .filter(value -> !blank(value))
             .orElse(null);
     if (conversation == null || counsellor == null) return CounsellorCall.of(Outcome.NOT_FOUND);
+    // CodeRabbit 4585785683: the admitting counsellor (the actor, the link owner or the counsellor
+    // who admitted a knock) vouches only while their Matrix id stands for them alone in the Träger,
+    // the rule the media gate applies (SoleCounsellor); else a seat would be granted that the gate
+    // refuses.
+    if (!SoleCounsellor.is(consultants, counsellor, tenant, consultantId))
+      return CounsellorCall.of(Outcome.NOT_FOUND);
     // FE#2209 review: a suspended account keeps its rows and Matrix membership; it vouches for
     // nobody.
     if (!isActive(consultantId)) return CounsellorCall.of(Outcome.NOT_FOUND);
@@ -123,8 +129,12 @@ public class MatrixCallGuestService {
             .flatMap(value -> bindings.lockByMediaRoomId(value.getMediaRoomId()))
             .filter(value -> value.getEndedAt() == null)
             .orElse(null);
-    if (binding == null || !authority.grantsGuestAuthority(binding))
-      return CounsellorCall.of(Outcome.NOT_FOUND);
+    if (binding == null) return CounsellorCall.of(Outcome.NOT_FOUND);
+    // CodeRabbit 4585785672: lock the session after the binding (lock order binding, session), as
+    // the share-link join does, so the authority check reads a reassignment that committed after
+    // this transaction's snapshot; a former counsellor can then no longer seat a guest.
+    authority.lockSessionOf(binding);
+    if (!authority.grantsGuestAuthority(binding)) return CounsellorCall.of(Outcome.NOT_FOUND);
     // FE#2209 review (Frank): in a 1:1 session call, any counsellor of the Träger who is in the
     // call itself, with a live MatrixRTC membership in its call room, may open it to somebody else.
     // Group chats are out of scope and keep the conversation rule (round 3).
@@ -151,13 +161,21 @@ public class MatrixCallGuestService {
     // Round 10 security scan: once the call room's observation is lost (the listener left it, or
     // a batch that may hold a departure was dropped), its memberships may be stale: nobody counts.
     if (binding.getMediaObservedAt() == null) return List.of();
-    return binding.getDevices().values().stream()
-        .map(device -> device.getSenderMatrixId())
-        .distinct()
-        .filter(member -> binding.isInCall(member, now))
-        // Round 10 (F1): one not deleted account of the Träger per id, else nobody (fail closed).
-        .map(member -> SoleCounsellor.of(consultants, member, tenant))
-        .flatMap(Optional::stream)
+    var live =
+        binding.getDevices().values().stream()
+            .map(device -> device.getSenderMatrixId())
+            .distinct()
+            .filter(member -> binding.isInCall(member, now))
+            .toList();
+    // Round 10 (F1): one not deleted account of the Träger per id, else nobody (fail closed).
+    // CodeRabbit 4585785733: every live sender is resolved in one query, not one per sender.
+    return activeCounsellorIds(live, tenant);
+  }
+
+  /** The active sole counsellors of {@code tenant} among {@code matrixIds}, in their order. */
+  private List<String> activeCounsellorIds(List<String> matrixIds, Long tenant) {
+    if (matrixIds.isEmpty()) return List.of();
+    return SoleCounsellor.allOf(consultants, matrixIds, tenant).values().stream()
         .map(value -> value.getId())
         .filter(this::isActive)
         .toList();
@@ -356,13 +374,15 @@ public class MatrixCallGuestService {
    */
   private long lastCounsellorPresence(MatrixCallBinding binding) {
     Long tenant = binding.getTenantId();
+    var senders =
+        binding.getDevices().values().stream().map(device -> device.getSenderMatrixId()).toList();
+    var counsellors = SoleCounsellor.allOf(consultants, senders, tenant);
     return binding.getDevices().values().stream()
         .filter(
             device ->
-                tenant != null
-                    && SoleCounsellor.of(consultants, device.getSenderMatrixId(), tenant)
-                        .filter(value -> isActive(value.getId()))
-                        .isPresent())
+                Optional.ofNullable(counsellors.get(device.getSenderMatrixId()))
+                    .filter(value -> isActive(value.getId()))
+                    .isPresent())
         .mapToLong(device -> device.getExpiresAt())
         .max()
         .orElse(binding.getInvitedAt());
@@ -446,12 +466,8 @@ public class MatrixCallGuestService {
             .filter(value -> tenant.equals(value.getTenantId()))
             .orElse(null);
     if (conversation == null) return List.of();
-    return callRoomMembers(binding.getSourceRoomId()).orElse(List.of()).stream()
-        .map(member -> SoleCounsellor.of(consultants, member, tenant))
-        .flatMap(Optional::stream)
-        .map(value -> value.getId())
-        .filter(this::isActive)
-        .toList();
+    return activeCounsellorIds(
+        callRoomMembers(binding.getSourceRoomId()).orElse(List.of()), tenant);
   }
 
   private void revoke(MatrixCallBinding binding, MatrixCallGuest guest) {

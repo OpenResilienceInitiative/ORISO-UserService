@@ -281,6 +281,17 @@ public class Session implements TenantAware {
   @Column(name = "direct_link_name", length = 100, updatable = false)
   private String directLinkName;
 
+  /**
+   * ORISO-Frontend#2252: the shared conversation of a direct invitation with an appointment, never
+   * a 1:1. Kept on the conversation itself, so it holds after the invitation is deleted. Written
+   * once, only by {@code SessionRepository#markDirectInvitationConversation}, so a stale entity
+   * save cannot erase it.
+   */
+  @org.hibernate.annotations.ColumnDefault("false")
+  @Column(name = "direct_invitation_conversation", nullable = false, updatable = false)
+  @Builder.Default
+  private boolean directInvitationConversation = false;
+
   @OneToMany(
       targetEntity = SessionTopic.class,
       mappedBy = "session",

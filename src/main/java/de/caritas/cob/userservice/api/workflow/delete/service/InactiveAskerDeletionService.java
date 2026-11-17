@@ -20,8 +20,8 @@ public class InactiveAskerDeletionService {
 
   public List<DeletionWorkflowError> delete(String identityId) {
     var user = users.findById(identityId);
-    // Realm-only legacy identities and retries after a local-row deletion still own remote
-    // appointment data and content addressed by identity ID. Never treat a missing row as proof
+    // Realm-only legacy identities and retries after a local-row deletion still own content
+    // addressed by identity ID. Never treat a missing row as proof
     // that these systems or Keycloak have already been cleaned.
     var target =
         user.orElseGet(
@@ -36,7 +36,6 @@ public class InactiveAskerDeletionService {
     List<Class<? extends ActionCommand<AskerDeletionWorkflowDTO>>> steps =
         user.isEmpty()
             ? List.of(
-                DeleteAppointmentServiceAskerAction.class,
                 DeleteAskerDraftMessagesAction.class,
                 DeleteAskerEventNotificationsAction.class,
                 DeleteKeycloakAskerAction.class)
@@ -45,7 +44,6 @@ public class InactiveAskerDeletionService {
                 DeleteAskerRoomsAndSessionsAction.class,
                 DeleteDatabaseAskerAgencyAction.class,
                 DeleteAnonymousRegistryIdAction.class,
-                DeleteAppointmentServiceAskerAction.class,
                 DeleteAskerDraftMessagesAction.class,
                 DeleteAskerEventNotificationsAction.class,
                 DeleteKeycloakAskerAction.class,

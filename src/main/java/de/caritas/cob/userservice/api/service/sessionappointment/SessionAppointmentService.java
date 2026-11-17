@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.sessionappointment;
 
+import de.caritas.cob.userservice.api.adapters.web.dto.AppointmentKind;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionAppointmentCounterpartDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionAppointmentDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionAppointmentTimeDTO;
@@ -29,8 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Lifecycle of the 1:1 appointments of a conversation (ADR-020, ORISO-Frontend#1960). Works from
- * this service's own table alone: no cal.com, no AppointmentService, independent of {@code
- * feature.appointment.enabled}.
+ * this service's own table alone.
  *
  * <p>The responsible counsellors are the session's counsellor and whoever holds a live co-access
  * grant through a case handover. They create and move; they and the asker read and cancel. Anybody
@@ -74,6 +74,7 @@ public class SessionAppointmentService {
     appointment.setSession(session);
     appointment.setStatus(Status.SCHEDULED);
     applyTime(appointment, time);
+    applyKind(appointment, time);
     return toDto(appointments.save(appointment));
   }
 
@@ -88,6 +89,7 @@ public class SessionAppointmentService {
       throw new ConflictException("A cancelled appointment cannot be moved.");
     }
     applyTime(appointment, time);
+    applyKind(appointment, time);
     return toDto(appointment);
   }
 
@@ -176,6 +178,13 @@ public class SessionAppointmentService {
     appointment.setEndTime(end);
   }
 
+  /** A request without a kind leaves the stored one alone, so a plain move keeps it. */
+  private void applyKind(SessionAppointment appointment, SessionAppointmentTimeDTO time) {
+    if (time.getKind() != null) {
+      appointment.setKind(SessionAppointment.Kind.valueOf(time.getKind().name()));
+    }
+  }
+
   private SessionAppointmentDTO toDto(SessionAppointment appointment) {
     return new SessionAppointmentDTO()
         .id(appointment.getId())
@@ -183,6 +192,10 @@ public class SessionAppointmentService {
         .startTime(appointment.getStartTime().atOffset(ZoneOffset.UTC))
         .endTime(appointment.getEndTime().atOffset(ZoneOffset.UTC))
         .status(SessionAppointmentDTO.StatusEnum.fromValue(appointment.getStatus().name()))
+        .kind(
+            appointment.getKind() == null
+                ? null
+                : AppointmentKind.valueOf(appointment.getKind().name()))
         .counterpart(counterpartOf(appointment.getSession()));
   }
 

@@ -102,6 +102,47 @@ public class DirectCallKnockService {
         .orElseGet(() -> openKnock(session, user, inviteLinkId, medium));
   }
 
+  /**
+   * A direct invitation with "Anklopfen" switched off (ORISO-Frontend#2252): the person is let in
+   * without waiting, recorded as an admission by the conversation's counsellor so every later visit
+   * finds it like a decided knock. Nobody is rung.
+   */
+  @Transactional
+  public GroupChatJoinRequest admitWithoutKnock(
+      Long sessionId, User user, Long inviteLinkId, InviteLinkChatType medium) {
+    var session =
+        sessionRepository
+            .findByIdForUpdate(sessionId)
+            .orElseThrow(() -> new NotFoundException("Session %s not found", sessionId));
+    return admissionOf(sessionId, user)
+        .orElseGet(
+            () -> {
+              var now = LocalDateTime.now();
+              // A knock from before "Anklopfen" was switched off no longer waits.
+              repository
+                  .findPendingCallKnocksForUpdate(sessionId, user.getUserId(), Via.DIRECT_LINK)
+                  .forEach(
+                      waiting -> {
+                        waiting.setStatus(Status.CANCELLED);
+                        waiting.setDecidedAt(now);
+                        repository.save(waiting);
+                      });
+              return repository.save(
+                  GroupChatJoinRequest.builder()
+                      .via(Via.DIRECT_LINK)
+                      .sessionId(session.getId())
+                      .userId(user.getUserId())
+                      .inviteLinkId(inviteLinkId)
+                      .medium(medium.name())
+                      .status(Status.ADMITTED)
+                      .requestedAt(now)
+                      .decidedAt(now)
+                      .decidedBy(
+                          session.getConsultant() == null ? null : session.getConsultant().getId())
+                      .build());
+            });
+  }
+
   private GroupChatJoinRequest openKnock(
       Session session, User user, Long inviteLinkId, InviteLinkChatType medium) {
     var knock =

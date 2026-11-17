@@ -127,6 +127,29 @@ class CallShareLinkServiceTest {
   }
 
   @Test
+  void requireUsable_Should_Return410_When_TheCallCarriesNoGuestAuthority() {
+    // CodeRabbit 4585785793: a 1:1 session call placed by anybody but its assigned, active
+    // counsellor rings, but its link is not usable.
+    when(callGuests.grantsGuestAuthority(binding)).thenReturn(false);
+
+    assertThatThrownBy(() -> service.requireUsable(link(true, true)))
+        .isInstanceOf(CallShareLinkEndedException.class);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest(name = "knock = {0}")
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+  void join_Should_Return410_AndNeitherKnockNorSeat_When_TheCallCarriesNoGuestAuthority(
+      boolean knock) {
+    joinable(knock);
+    when(callGuests.grantsGuestAuthority(binding)).thenReturn(false);
+
+    assertThatThrownBy(() -> service.join("token-5", guest))
+        .isInstanceOf(CallShareLinkEndedException.class);
+    verify(knocks, never()).knockOnCallLink(any(), any(), anyString());
+    verify(callGuests, never()).admitAs(any(), any(), any(), any(), any());
+  }
+
+  @Test
   void create_Should_OpenALinkForTheRunningCall_WithBothSettingsOnByDefault() {
     when(links.findByCallBindingId(binding.getId())).thenReturn(Optional.empty());
 

@@ -83,6 +83,7 @@ class FeedSignalPrivacyTest {
             mock(SessionRepository.class),
             mock(UserRepository.class),
             mock(ConsultantRepository.class),
+            org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class),
             mock(IdentityTombstoneService.class),
             mock(EventNotificationDeduplicationWriter.class),
             signal,

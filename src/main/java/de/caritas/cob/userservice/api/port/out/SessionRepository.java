@@ -48,6 +48,13 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
   @Query("SELECT session FROM Session session WHERE session.id = :sessionId")
   Optional<Session> findByIdForUpdate(@Param("sessionId") Long sessionId);
 
+  /**
+   * The conversation's row lock alone, without loading it (ORISO-Frontend#2252): a deletion takes
+   * it before it reads the invited members, a join reservation before it writes one.
+   */
+  @Query(value = "SELECT id FROM session WHERE id = :id FOR UPDATE", nativeQuery = true)
+  Optional<Long> lockById(@Param("id") Long id);
+
   /** Scalar lock avoids returning an earlier managed Session snapshot after remote call lookup. */
   @Query(
       value =
@@ -84,6 +91,14 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
       "UPDATE Session session SET session.directLinkName = :name"
           + " WHERE session.id = :sessionId AND session.directLinkName IS NULL")
   int recordDirectLinkName(@Param("sessionId") Long sessionId, @Param("name") String name);
+
+  /** ORISO-Frontend#2252: this session is the shared conversation of a direct invitation. */
+  @Transactional
+  @Modifying(flushAutomatically = true)
+  @Query(
+      "UPDATE Session session SET session.directInvitationConversation = true"
+          + " WHERE session.id = :sessionId")
+  int markDirectInvitationConversation(@Param("sessionId") Long sessionId);
 
   /**
    * Write the independent standing preference without changing ownership or its optimistic version.
@@ -526,15 +541,19 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
       RegistrationType registrationType);
 
   /**
-   * Find one session by assigned consultant and user.
-   *
-   * @param consultant the consultant
-   * @param user the user
-   * @param consultingTypeId the id of the consulting type
-   * @return an {@link Optional} of the result
+   * The person's 1:1 sessions with the counsellor in a consulting type, oldest first, without the
+   * shared conversations of direct invitations with an appointment (ORISO-Frontend#2252): those are
+   * sessions of the same three, and a person can have several. Their mark is on the session, so it
+   * holds after the invitation is deleted; a 1:1 an invitation was created from stays in.
    */
-  Optional<Session> findByConsultantAndUserAndConsultingTypeId(
-      Consultant consultant, User user, Integer consultingTypeId);
+  @Query(
+      "SELECT s FROM Session s WHERE s.consultant = :consultant AND s.user = :user"
+          + " AND s.consultingTypeId = :consultingTypeId"
+          + " AND s.directInvitationConversation = false ORDER BY s.id")
+  List<Session> findOneToOneSessions(
+      @Param("consultant") Consultant consultant,
+      @Param("user") User user,
+      @Param("consultingTypeId") Integer consultingTypeId);
 
   /**
    * Find one session by assigned consultant and user.

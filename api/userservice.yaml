@@ -61,6 +61,32 @@ paths:
           description: >-
             A paused invitation returns {"reason":"INVITE_LINK_PAUSED"}.
             A switched-off direct link returns {"reason":"DIRECT_LINK_INACTIVE"}.
+            An expired direct invitation, or a token replaced by "Neuen Link senden", returns
+            {"reason":"DIRECT_LINK_EXPIRED"} (ORISO-Frontend#2252).
+  /users/invitelinks/{token}/renewal-requests:
+    post:
+      tags: [direct-link-controller]
+      operationId: requestDirectInvitationRenewal
+      summary: 'Ask the counsellor for a new link of a direct invitation ("Neuen Link anfragen") [Authorization: Role: user]'
+      description: >-
+        ORISO-Frontend#2252. Only a person who already is in the invitation's conversation (an
+        invited person or the asker of the 1:1 it was created from) may ask; anybody else gets 404.
+        Works with an expired token and with a token that was replaced. The counsellor gets an
+        in-app notice (event type direct_invitation.renewal_requested, params linkId, sessionId).
+        Asking twice with the same token sends one notice.
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '204': {description: The counsellor was told (also when this person asked for this token before)}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '404': {description: 'Unknown link, or the caller is not in its conversation'}
+        '409': {description: 'The link has no appointment, so it never expires and needs no renewal'}
+        '503': {description: 'The notice to the counsellor could not be stored; nothing was sent, try again'}
   /users/invitelinks/{token}/conversations:
     post:
       tags: [direct-link-controller]
@@ -73,6 +99,14 @@ paths:
         admission KNOCK: the person waits until the counsellor admits them (ADR-029 §2). Let in
         once: after an admission every later visit returns it (callAdmitted true) and opens no new
         knock; after a decline the next visit knocks again.
+        A direct invitation with an appointment (ORISO-Frontend#2252) works differently: the first
+        person creates the shared appointment conversation and everybody after them joins that
+        same conversation (appointmentConversation true). An invitation created from an existing
+        1:1 adds the person to that 1:1. The chat works at once; for audio and video the call
+        admission (knock) starts only at callOpensAt (15 minutes before the start); before that
+        knockId is empty. With knock switched off the person is let in without knocking. The
+        access mode is enforced: GUESTS_ONLY refuses a person with a permanent account,
+        ACCOUNTS_ONLY refuses a temporary account (403 with reason).
       security:
         - Bearer: [ ]
       parameters:
@@ -91,11 +125,14 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/DirectLinkConversationDTO'}
-        '400': {description: 'Expired link, or not a counsellor direct link'}
+        '400': {description: 'Not a counsellor direct link'}
         '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
-        '403': {description: 'Direct invitations are not allowed here, or the caller belongs to another Träger'}
+        '403': {description: 'Direct invitations are not allowed here, the caller belongs to another Träger, or the access mode excludes the caller: body {"reason":"DIRECT_INVITATION_GUESTS_ONLY"} or {"reason":"DIRECT_INVITATION_ACCOUNTS_ONLY"}'}
         '404': {description: Unknown link}
-        '410': {description: 'The link was switched off; body {"reason":"DIRECT_LINK_INACTIVE"}'}
+        '409': {description: 'Invitation from a 1:1 whose room is not encrypted, so earlier messages would not stay private: body {"reason":"DIRECT_INVITATION_ROOM_NOT_ENCRYPTED"}'}
+        '410': {description: 'The link was switched off ({"reason":"DIRECT_LINK_INACTIVE"}), or it expired or was replaced ({"reason":"DIRECT_LINK_EXPIRED"})'}
+        '502': {description: 'The conversation room could not be created or joined'}
+        '503': {description: 'Matrix cannot tell whether the 1:1 is encrypted; nobody joins, try again'}
   /users/call-knocks:
     get:
       tags: [direct-link-controller]
@@ -452,6 +489,11 @@ paths:
       tags: [direct-link-controller]
       operationId: deleteDirectLink
       summary: 'Delete an own direct link; conversations started through it stay [Authorization: Role: consultant]'
+      description: >-
+        For a direct invitation with an appointment (ORISO-Frontend#2252) deleting ends access like
+        an expiry: guests leave the appointment conversation, which is archived, and everybody who
+        came into a 1:1 by the link leaves it. Switching the link off (PATCH active false) does the
+        same; switching it on again reopens the appointment conversation.
       security:
         - Bearer: [ ]
       parameters:
@@ -463,6 +505,79 @@ paths:
         '204': {description: Deleted}
         '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
         '404': {description: No own direct link with this id}
+  /users/directlinks/{linkId}/renewal:
+    post:
+      tags: [direct-link-controller]
+      operationId: renewDirectInvitation
+      summary: 'Issue a new link for the same appointment ("Neuen Link senden") [Authorization: Role: consultant]'
+      description: >-
+        ORISO-Frontend#2252. The invitation gets a new token; the old token answers 410
+        DIRECT_LINK_EXPIRED from now on. Appointment, access mode, knock and the appointment
+        conversation stay. The new link is valid for validityAfterEndMinutes after the later of
+        the appointment end and now. An invitation that had expired is switched on again and its
+        archived appointment conversation is reopened. The new link is posted into the
+        conversation as a system notice ([SYSTEM_NOTIFICATION] with type DIRECT_INVITATION_RENEWED
+        and url) when the conversation exists.
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: linkId
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RenewDirectInvitationDTO'}
+      responses:
+        '200':
+          description: The invitation with its new token and url
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DirectLinkDTO'}
+        '400': {description: 'validityAfterEndMinutes outside 0..2880'}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '404': {description: No own direct link with this id}
+        '409': {description: 'The link has no appointment (it never expires), or the new link would already be expired (validity 0 after the end)'}
+  /users/sessions/{sessionId}/direct-invitations:
+    post:
+      tags: [direct-link-controller]
+      operationId: createSessionDirectInvitation
+      summary: 'Invite more people by link into an existing 1:1 conversation, for an appointment ("Weitere Personen per Link einladen") [Authorization: Role: consultant]'
+      description: >-
+        ORISO-Frontend#2252. Binds a direct invitation to the conversation and to one of its
+        appointments: either an existing appointment (appointmentId, from POST
+        /users/sessions/{sessionId}/appointments) or a new one (appointment). People who open the
+        link join this conversation as invited members; they are removed when the invitation
+        expires, and the conversation itself is never archived by the expiry. They join as plain
+        members (invited by the counsellor): no room setting changes; earlier messages stay
+        readable only through the history-key transfer a person in the room approves. That needs
+        an encrypted 1:1; otherwise opening the link answers 409
+        DIRECT_INVITATION_ROOM_NOT_ENCRYPTED.
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateSessionDirectInvitationDTO'}
+      responses:
+        '201':
+          description: The new invitation
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DirectLinkDTO'}
+        '400': {description: 'Neither or both of appointmentId and appointment, invalid times, or validity outside 0..2880'}
+        '401': {description: UNAUTHORIZED - no/invalid Keycloak token}
+        '403': {description: Direct invitations are not allowed here}
+        '404': {description: 'No such conversation of the caller (same answer for another counsellor''s or another Träger''s), or no such appointment in it'}
+        '409': {description: 'The conversation is finished or archived, or the appointment is cancelled'}
   /users/{username}:
     get:
       tags:
@@ -966,12 +1081,13 @@ paths:
         204:
           description: NO CONTENT - successful operation
         400:
-          description: BAD REQUEST - no legal version supplied
+          description: BAD REQUEST - the session's own help-seeker supplied no legal version
         401:
           description: UNAUTHORIZED - no/invalid Keycloak token
         403:
           description: FORBIDDEN - no/invalid role/authorization or CSRF token, or the session
-            does not belong to the authenticated help-seeker
+            does not belong to the authenticated help-seeker and they are no confirmed invitation
+            member of it (ORISO-Frontend#2252, where each member agrees for themselves)
         404:
           description: NOT FOUND - session not found
         409:
@@ -1165,36 +1281,6 @@ paths:
       responses:
         204:
           description: NO CONTENT - successful operation
-        400:
-          description: BAD REQUEST - invalid/incomplete request or body object
-        401:
-          description: UNAUTHORIZED - no/invalid Keycloak token
-        403:
-          description: FORBIDDEN - no/invalid role/authorization or CSRF token
-        500:
-          description: INTERNAL SERVER ERROR - server encountered unexpected condition
-      security:
-        - Bearer: [ ]
-  /users/notifications:
-    get:
-      tags:
-        - user-controller
-      summary: 'Returns notification settings for the currently authenticated user [Authorization:
-        Role: technical-calcom]'
-      operationId: getUserEmailNotifications
-      parameters:
-        - name: email
-          in: query
-          required: true
-          schema:
-            type: string
-      responses:
-        200:
-          description: OK - successful operation
-          content:
-            'application/json':
-              schema:
-                $ref: '#/components/schemas/EmailNotificationsDTO'
         400:
           description: BAD REQUEST - invalid/incomplete request or body object
         401:
@@ -1912,6 +1998,42 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/AgencyAdminContactDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - the caller is not a counsellor of this counselling centre
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
+  /users/agencies/{agencyId}/contact-person:
+    get:
+      tags:
+        - user-controller
+      summary: 'Whom a counsellor contacts at one of their own counselling centres [Authorization: Role: consultant]'
+      description: >-
+        ORISO-Admin#1534. Resolves, for a counselling centre the caller belongs to, the people to contact, in this order:
+        the centre's own contact person (OWN), the Träger default (TRAEGER_DEFAULT), all agency admins of the centre
+        (FALLBACK_AGENCY_ADMINS), all Träger admins (FALLBACK_TENANT_ADMINS); with nobody left the list is empty and the
+        frontend shows the platform support e-mail (SUPPORT_EMAIL). A contact person who is no longer an admin of the centre
+        or its Träger counts as not set. The e-mail is the admin's contact e-mail, else the login e-mail. chatConsultantId is
+        only set for a person who is also an active counsellor of this centre with a chat identity, and never for the caller.
+        A centre the caller does not belong to answers 403, whether or not it exists.
+      operationId: getConsultantAgencyContactPerson
+      parameters:
+        - name: agencyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        200:
+          description: OK
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/ConsultantAgencyContactDTO'
         401:
           description: UNAUTHORIZED - no/invalid Keycloak token
         403:
@@ -3695,6 +3817,90 @@ components:
           nullable: true
           enum: [ALWAYS_TEMPORARY, GUEST_DECIDES, ALWAYS_PERSISTENT]
           description: Links with temporaryAccount only. The mode a person joining now gets (§5).
+        accessMode:
+          allOf: [{$ref: '#/components/schemas/DirectInvitationAccessMode'}]
+          nullable: true
+          description: Direct links only. Who may enter; the entry page offers only the allowed ways (ORISO-Frontend#2252).
+        knock:
+          type: boolean
+          nullable: true
+          description: Direct links only. Whether the call waits for the counsellor (Anklopfen).
+        appointmentStartTime:
+          type: string
+          format: date-time
+          nullable: true
+          description: Direct invitations with an appointment only (ORISO-Frontend#2252).
+        appointmentEndTime:
+          type: string
+          format: date-time
+          nullable: true
+        callOpensAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: 15 minutes before the start; the call waiting room opens then, the chat works at once.
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Appointment end plus the validity; afterwards the link answers 410 DIRECT_LINK_EXPIRED.
+    DirectInvitationAccessMode:
+      type: string
+      enum: [GUESTS_ONLY, ACCOUNTS_ONLY, BOTH]
+      description: >-
+        Who may enter through a direct invitation (ORISO-Frontend#2252). GUESTS_ONLY: only people
+        with a temporary account; ACCOUNTS_ONLY: only people with a permanent account; BOTH: the
+        person chooses. Links from before #2252 read BOTH when they created temporary accounts,
+        else ACCOUNTS_ONLY.
+    DirectInvitationAppointmentInputDTO:
+      type: object
+      required: [startTime, endTime]
+      properties:
+        startTime: {type: string, format: date-time}
+        endTime: {type: string, format: date-time}
+    DirectInvitationAppointmentDTO:
+      type: object
+      required: [id, startTime, endTime, status]
+      description: The appointment of a direct invitation; the same session_appointment as "Termin anlegen" (ORISO-Frontend#1960).
+      properties:
+        id: {type: string, format: uuid}
+        startTime: {type: string, format: date-time}
+        endTime: {type: string, format: date-time}
+        status: {type: string, enum: [SCHEDULED, CANCELLED]}
+    RenewDirectInvitationDTO:
+      type: object
+      properties:
+        validityAfterEndMinutes:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 2880
+          description: Defaults to the invitation's current validity
+    CreateSessionDirectInvitationDTO:
+      type: object
+      description: Exactly one of appointmentId and appointment
+      properties:
+        appointmentId:
+          type: string
+          format: uuid
+          description: An appointment of this conversation (POST /users/sessions/{sessionId}/appointments)
+        appointment: {$ref: '#/components/schemas/DirectInvitationAppointmentInputDTO'}
+        medium:
+          allOf: [{$ref: '#/components/schemas/DirectLinkMedium'}]
+          description: Defaults to VIDEO
+        name: {type: string, maxLength: 100}
+        validityAfterEndMinutes:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 2880
+          description: Minutes the link stays valid after the appointment end; default 1440 (24 h)
+        accessMode:
+          allOf: [{$ref: '#/components/schemas/DirectInvitationAccessMode'}]
+          description: Defaults to BOTH
+        knock:
+          type: boolean
+          description: Defaults to true
     DirectLinkMedium:
       type: string
       enum: [CHAT, AUDIO, VIDEO]
@@ -3719,7 +3925,36 @@ components:
         scheduledAt:
           type: string
           format: date-time
-          description: Optional date and time the counsellor noted for the link (ORISO-Frontend#2142). Informational only; it does not limit when the link works.
+          description: Optional date and time the counsellor noted for the link (ORISO-Frontend#2142). With an appointment it is the appointment start.
+        appointment:
+          allOf: [{$ref: '#/components/schemas/DirectInvitationAppointmentDTO'}]
+          description: Set for a direct invitation with an appointment (ORISO-Frontend#2252); absent for a link without one, which never expires.
+        validityAfterEndMinutes:
+          type: integer
+          format: int32
+          description: With an appointment only. Minutes the link stays valid after the end (0..2880).
+        expiresAt:
+          type: string
+          format: date-time
+          description: With an appointment only. Appointment end plus validity, or later after a renewal.
+        expired:
+          type: boolean
+          description: True once expiresAt has passed (the entry answers 410 DIRECT_LINK_EXPIRED)
+        callOpensAt:
+          type: string
+          format: date-time
+          description: With an appointment only. 15 minutes before the start.
+        accessMode: {$ref: '#/components/schemas/DirectInvitationAccessMode'}
+        knock:
+          type: boolean
+          description: Audio and video. Whether people wait for the counsellor; changeable at any time.
+        sessionId:
+          type: integer
+          format: int64
+          description: With an appointment only. The appointment conversation, once the first person opened the link, or the 1:1 the invitation was created from.
+        joinsExistingSession:
+          type: boolean
+          description: True for an invitation created from an existing 1:1 (POST /users/sessions/{sessionId}/direct-invitations)
     CreateDirectLinkDTO:
       type: object
       required: [medium, topicId]
@@ -3737,7 +3972,25 @@ components:
         scheduledAt:
           type: string
           format: date-time
-          description: Optional informational date and time (ORISO-Frontend#2142)
+          description: Optional informational date and time (ORISO-Frontend#2142); ignored when appointment is set
+        appointment:
+          allOf: [{$ref: '#/components/schemas/DirectInvitationAppointmentInputDTO'}]
+          description: >-
+            Optional (ORISO-Frontend#2252). With it, everybody who opens the link shares one
+            appointment conversation, and the link expires validityAfterEndMinutes after the end.
+            The start must lie in the future and the end after the start.
+        validityAfterEndMinutes:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 2880
+          description: With an appointment only; default 1440 (24 h)
+        accessMode:
+          allOf: [{$ref: '#/components/schemas/DirectInvitationAccessMode'}]
+          description: Who may enter. Wins over temporary (temporary = accessMode is not ACCOUNTS_ONLY); default from temporary.
+        knock:
+          type: boolean
+          description: Audio and video. Default true.
     UpdateDirectLinkDTO:
       type: object
       description: Every field is optional; absent fields stay unchanged
@@ -3753,6 +4006,19 @@ components:
         clearScheduledAt:
           type: boolean
           description: true removes the date and time; must not be combined with scheduledAt
+        appointment:
+          allOf: [{$ref: '#/components/schemas/DirectInvitationAppointmentInputDTO'}]
+          description: Moves the appointment of an invitation that has one (409 otherwise); expiresAt follows.
+        validityAfterEndMinutes:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 2880
+          description: With an appointment only (409 otherwise); expiresAt follows.
+        accessMode: {$ref: '#/components/schemas/DirectInvitationAccessMode'}
+        knock:
+          type: boolean
+          description: Changeable during the call; applies to the next person who opens the link.
     DirectLinkConversationDTO:
       type: object
       required: [sessionId, medium, admission, created]
@@ -3770,6 +4036,16 @@ components:
         callAdmitted:
           type: boolean
           description: 'Audio and video only. True once the counsellor let the person in: the admission holds for the whole conversation, so later calls are joined directly and no new knock is opened.'
+        appointmentConversation:
+          type: boolean
+          description: True when the conversation is shared by everybody who opened the invitation (ORISO-Frontend#2252)
+        consentRequired:
+          type: boolean
+          description: 'Appointment invitations only (ORISO-Frontend#2252), for the shared conversation and for an existing 1:1 alike: true while this person has not passed the consent gate (ADR-022) themselves. Each person agrees on their own; the owner''s consent does not count for anybody else. Record it with PUT /users/sessions/{sessionId}/consent; legalVersionId may be left out when the advice centre has no consent text of its own.'
+        callOpensAt:
+          type: string
+          format: date-time
+          description: With an appointment only. Before this time no knock is opened and knockId is empty; ask again from then.
     CallKnockStatus:
       type: string
       enum: [PENDING, ADMITTED, DECLINED, CANCELLED]
@@ -4340,8 +4616,6 @@ components:
 
     SessionConsentDTO:
       type: object
-      required:
-        - legalVersionId
       properties:
         legalVersionId:
           type: integer
@@ -4350,7 +4624,10 @@ components:
           description: >-
             The legal-text version the help-seeker agreed to, as published by ORISO-AgencyService.
             A public document version - no personal data. Stored as a pointer that is overwritten
-            on re-consent (ADR-022 decision 2); no consent log is kept.
+            on re-consent (ADR-022 decision 2); no consent log is kept. Required for the session's
+            own help-seeker (400 without it). A confirmed invitation member (ORISO-Frontend#2252)
+            may leave it out or send null when the advice centre has no consent text of its own:
+            agreeing to the platform text then counts and is stored as "agreed, no version".
 
     SessionAttachmentDTO:
       type: object
@@ -5008,9 +5285,6 @@ components:
           uniqueItems: true
           items:
             $ref: '#/components/schemas/EmailToggle'
-        appointmentFeatureEnabled:
-          type: boolean
-          example: true
         termsAndConditionsConfirmation:
           type: string
           example: 2022-12-07T11:51:01
@@ -5410,6 +5684,46 @@ components:
         displayName:
           type: string
           example: "Maria Muster"
+    ConsultantAgencyContactDTO:
+      type: object
+      required:
+        - source
+        - people
+      properties:
+        source:
+          type: string
+          enum: [ OWN, TRAEGER_DEFAULT, FALLBACK_AGENCY_ADMINS, FALLBACK_TENANT_ADMINS, SUPPORT_EMAIL ]
+        people:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConsultantAgencyContactPersonDTO'
+        traegerContactEmail:
+          type: string
+          description: The general contact e-mail of the Träger, if one is set.
+    ConsultantAgencyContactPersonDTO:
+      type: object
+      required:
+        - role
+        - displayName
+        - email
+        - isConsultant
+      properties:
+        role:
+          type: string
+          enum: [ CONTACT, DEPUTY, ADMIN ]
+        displayName:
+          type: string
+          description: First and last name; without a name the e-mail below. Never the login user name.
+          example: "Maria Muster"
+        email:
+          type: string
+          description: The contact e-mail of the admin, else the login e-mail.
+        isConsultant:
+          type: boolean
+          description: The admin is also an active counsellor of this centre.
+        chatConsultantId:
+          type: string
+          description: Id to pass in consultantIds of POST /users/chat/internal-subset; absent when no chat is possible.
     InternalSubsetChatResponseDTO:
       type: object
       required:

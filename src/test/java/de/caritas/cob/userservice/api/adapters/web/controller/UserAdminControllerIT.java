@@ -38,7 +38,6 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NoContentException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.identity.UserIdentitiesService;
 import java.util.ArrayList;
 import java.util.UUID;
@@ -111,8 +110,6 @@ class UserAdminControllerIT {
 
   @MockitoBean private AskerUserAdminFacade askerUserAdminFacade;
 
-  @MockitoBean private AppointmentService appointmentService;
-
   @MockitoBean private AdminUserFacade adminUserFacade;
 
   @MockitoBean
@@ -133,6 +130,80 @@ class UserAdminControllerIT {
   @MockitoBean
   private de.caritas.cob.userservice.api.admin.service.tenant.TenantDeletionBlockerService
       tenantDeletionBlockerService;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.admin.service.contactperson.ContactPersonAdminService
+      contactPersonAdminService;
+
+  @Test
+  void getAgencyContactPerson_Should_passTheTenantHintAndReturnTheState() throws Exception {
+    when(contactPersonAdminService.getAgencyContactPerson(7L, 3L))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.adapters.web.dto.AgencyContactPersonAdminDTO()
+                .agencyId(7L)
+                .tenantId(3L)
+                .traegerDefault(
+                    new de.caritas.cob.userservice.api.adapters.web.dto.TraegerDefaultContactDTO())
+                .effectiveSource(
+                    de.caritas.cob.userservice.api.adapters.web.dto.AgencyContactPersonAdminDTO
+                        .EffectiveSourceEnum.NONE));
+
+    mvc.perform(get(ROOT_PATH + "/agencies/7/contactperson").param("tenantId", "3"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.agencyId").value(7))
+        .andExpect(jsonPath("$.effectiveSource").value("NONE"));
+  }
+
+  @Test
+  void updateAgencyContactPerson_Should_passIdsAndAllowClearing() throws Exception {
+    mvc.perform(
+            put(ROOT_PATH + "/agencies/7/contactperson")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"contactAdminId\":\"a-1\",\"deputyAdminId\":null}"))
+        .andExpect(status().isOk());
+
+    var body =
+        org.mockito.ArgumentCaptor.forClass(
+            de.caritas.cob.userservice.api.adapters.web.dto.UpdateContactPersonDTO.class);
+    verify(contactPersonAdminService).updateAgencyContactPerson(eq(7L), eq(null), body.capture());
+    org.assertj.core.api.Assertions.assertThat(body.getValue().getContactAdminId())
+        .isEqualTo("a-1");
+    org.assertj.core.api.Assertions.assertThat(body.getValue().getDeputyAdminId()).isNull();
+  }
+
+  @Test
+  void updateTenantContactPerson_Should_returnBadRequest_When_theGeneralEmailIsInvalid()
+      throws Exception {
+    mvc.perform(
+            put(ROOT_PATH + "/tenants/3/contactperson")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"generalContactEmail\":\"not-an-email\"}"))
+        .andExpect(status().isBadRequest());
+
+    org.mockito.Mockito.verifyNoInteractions(contactPersonAdminService);
+  }
+
+  @Test
+  void getAgencyContactCoverage_Should_returnOneEntryPerCentre() throws Exception {
+    when(contactPersonAdminService.getAgencyContactCoverage(any()))
+        .thenReturn(
+            java.util.List.of(
+                new de.caritas.cob.userservice.api.adapters.web.dto.AgencyContactCoverageDTO()
+                    .agencyId(7L)
+                    .covered(true)
+                    .source(
+                        de.caritas.cob.userservice.api.adapters.web.dto.AgencyContactCoverageDTO
+                            .SourceEnum.OWN)));
+
+    mvc.perform(
+            post(ROOT_PATH + "/agencycontacts/coverage")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"agencyIds\":[7]}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].agencyId").value(7))
+        .andExpect(jsonPath("$[0].covered").value(true))
+        .andExpect(jsonPath("$[0].source").value("OWN"));
+  }
 
   @Test
   void getSessions_Should_returnBadRequest_When_requiredPaginationParamsAreMissing()
@@ -488,6 +559,8 @@ class UserAdminControllerIT {
       throws Exception {
     // given
     CreateAdminDTO createAgencyAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    // A random string is no e-mail address; the contact e-mail is validated (ORISO-Admin#1534).
+    createAgencyAdminDTO.setContactEmail("kontakt@test.com");
 
     // when
     this.mvc
@@ -506,6 +579,7 @@ class UserAdminControllerIT {
       throws Exception {
     // given
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setContactEmail("kontakt@test.com");
 
     // when
     this.mvc
@@ -517,6 +591,19 @@ class UserAdminControllerIT {
 
     // then
     verify(this.adminUserFacade, times(1)).createNewTenantAdmin(any());
+  }
+
+  @Test
+  void createAgencyAdmin_Should_returnBadRequest_When_theContactEmailIsNoEmail() throws Exception {
+    CreateAdminDTO createAgencyAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAgencyAdminDTO.setContactEmail("no-email");
+
+    this.mvc
+        .perform(
+            post(AGENCY_ADMIN_COLLECTION_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(createAgencyAdminDTO)))
+        .andExpect(status().isBadRequest());
   }
 
   @Test
@@ -536,6 +623,7 @@ class UserAdminControllerIT {
     UpdateAgencyAdminDTO updateAgencyAdminDTO =
         new EasyRandom().nextObject(UpdateAgencyAdminDTO.class);
     updateAgencyAdminDTO.setEmail("test@test.com");
+    updateAgencyAdminDTO.setContactEmail("kontakt@test.com");
 
     // when
     this.mvc
@@ -555,6 +643,7 @@ class UserAdminControllerIT {
     UpdateAgencyAdminDTO updateAgencyAdminDTO =
         new EasyRandom().nextObject(UpdateAgencyAdminDTO.class);
     updateAgencyAdminDTO.setEmail("test@test.com");
+    updateAgencyAdminDTO.setContactEmail("kontakt@test.com");
 
     // when
     this.mvc

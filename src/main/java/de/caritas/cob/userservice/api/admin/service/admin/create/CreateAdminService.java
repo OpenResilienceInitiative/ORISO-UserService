@@ -24,6 +24,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupIssuer;
+import de.caritas.cob.userservice.api.service.contactperson.ContactEmail;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.ws.rs.NotFoundException;
 import java.util.ArrayList;
@@ -266,6 +267,7 @@ public class CreateAdminService {
         .firstName(createAgencyAdminDTO.getFirstname())
         .lastName(createAgencyAdminDTO.getLastname())
         .email(createAgencyAdminDTO.getEmail())
+        .contactEmail(ContactEmail.normalize(createAgencyAdminDTO.getContactEmail()))
         .createDate(nowInUtc())
         .updateDate(nowInUtc())
         .build();

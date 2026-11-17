@@ -199,4 +199,56 @@ class UpdateAdminServiceTest {
     verify(admin).setEmail("mail@example.com");
     verify(adminRepository).save(admin);
   }
+
+  /** ORISO-Admin#1534: absent keeps the contact e-mail, a value is normalised, blank clears it. */
+  @Test
+  void patchAgencyAdmin_Should_keepSetOrClearTheContactEmail() {
+    var admin =
+        Admin.builder()
+            .id("adminId")
+            .type(AdminType.AGENCY)
+            .tenantId(2L)
+            .username("u")
+            .firstName("f")
+            .lastName("l")
+            .email("login@example.org")
+            .contactEmail("old@example.org")
+            .build();
+    when(retrieveAdminService.findAdmin("adminId", AdminType.AGENCY)).thenReturn(admin);
+    var patch =
+        new de.caritas.cob.userservice.api.adapters.web.dto.PatchAdminDTO()
+            .firstname("f")
+            .lastname("l")
+            .email("login@example.org");
+
+    updateAdminService.patchAgencyAdmin("adminId", patch);
+    assertEquals("old@example.org", admin.getContactEmail());
+
+    updateAdminService.patchAgencyAdmin("adminId", patch.contactEmail(" Kontakt@Example.ORG "));
+    assertEquals("kontakt@example.org", admin.getContactEmail());
+
+    updateAdminService.patchAgencyAdmin("adminId", patch.contactEmail(""));
+    assertNull(admin.getContactEmail());
+  }
+
+  @Test
+  void adminResponse_Should_carryTheContactEmail() {
+    var admin =
+        Admin.builder()
+            .id("adminId")
+            .type(AdminType.TENANT)
+            .username("u")
+            .firstName("f")
+            .lastName("l")
+            .email("login@example.org")
+            .contactEmail("kontakt@example.org")
+            .build();
+
+    var dto =
+        de.caritas.cob.userservice.api.admin.service.admin.AdminResponseDTOBuilder.getInstance(
+                admin)
+            .buildAgencyAdminResponseDTO();
+
+    assertEquals("kontakt@example.org", dto.getEmbedded().getContactEmail());
+  }
 }

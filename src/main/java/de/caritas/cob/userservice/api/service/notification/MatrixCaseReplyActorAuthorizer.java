@@ -64,7 +64,7 @@ public class MatrixCaseReplyActorAuthorizer {
 
   // Tenant/current-identity validation remains the caller's responsibility. This shared
   // decision also serves the controller's documented tenant-one legacy ownership boundary.
-  boolean isCurrentAssignedOrTeamWriter(Session session, Consultant actor) {
+  public boolean isCurrentAssignedOrTeamWriter(Session session, Consultant actor) {
     if (membersOnlyChatAccess.excludes(session, actor)) return false;
     return session.isAdvisedBy(actor) || isPermittedTeamWriter(session, actor);
   }

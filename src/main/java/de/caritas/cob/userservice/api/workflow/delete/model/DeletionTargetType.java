@@ -5,7 +5,6 @@ public enum DeletionTargetType {
   MATRIX,
   DATABASE,
   ANONYMOUS_REGISTRY_IDS,
-  APPOINTMENT_SERVICE,
   /**
    * Unencrypted user content stored server-side — drafts and the notification feed. Kept apart from
    * {@link #DATABASE} so the account row can refuse to disappear while that content is still there:

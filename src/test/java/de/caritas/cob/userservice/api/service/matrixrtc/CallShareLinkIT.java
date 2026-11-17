@@ -491,6 +491,56 @@ class CallShareLinkIT {
   }
 
   /**
+   * CodeRabbit 4585785851: another persisted conversation room is never a call room, even with
+   * valid binding and origin evidence for it, so a counsellor cannot invite guests into another
+   * conversation through its call. Isolates the OrisoRoomRegistry check: the room differs from the
+   * source room, so the equality check before it does not apply.
+   */
+  @Test
+  void anotherConversationsRoomIsNeverBoundAsTheCallRoom() {
+    String otherRoom = "!share-other-conversation:example";
+    String caller = counsellor.getMatrixUserId();
+    Long otherSession =
+        transaction.execute(
+            status -> {
+              var other =
+                  new Session(
+                      users.findById("share-asker").orElseThrow(),
+                      1,
+                      "12345",
+                      1L,
+                      Session.SessionStatus.IN_PROGRESS,
+                      false);
+              other.setTenantId(7L);
+              other.setAgencyId(99L);
+              other.setMatrixRoomId(otherRoom);
+              other.setLanguageCode(LanguageCode.de);
+              other.setIsConsultantDirectlySet(false);
+              other.setConsultant(counsellor);
+              return sessions.save(other).getId();
+            });
+    try {
+      when(matrix.getCallRoomBinding(otherRoom, caller))
+          .thenReturn(Optional.of(Map.of("call_id", "other-room-call", "source_room_id", SOURCE)));
+      when(matrix.getCallRoomOrigin(otherRoom, caller))
+          .thenReturn(Optional.of(new MatrixSynapseService.CallRoomOrigin(caller, caller)));
+
+      assertThat(
+              sessionBindings.bind(
+                  actor(counsellor.getId(), "consultant"),
+                  SOURCE,
+                  "other-room-call",
+                  otherRoom,
+                  true))
+          .isFalse();
+      assertThat(bindings.findBySourceRoomIdAndCallId(SOURCE, "other-room-call")).isEmpty();
+      assertThat(bindings.findByMediaRoomId(otherRoom)).isEmpty();
+    } finally {
+      transaction.executeWithoutResult(status -> sessions.deleteById(otherSession));
+    }
+  }
+
+  /**
    * FE#2209: an encrypted 1:1 call has no readable invite. The session counsellor's verified
    * registration binds it, and the same share link, knock and seat then work against a real
    * database. A binding nobody was ever seen in ends by itself and seats nobody afterwards.
@@ -1308,7 +1358,6 @@ class CallShareLinkIT {
     consultant.setFirstName("Synthetic");
     consultant.setLastName("C" + id.substring(0, 8));
     consultant.setEmail(id.substring(0, 8) + "@synthetic.oriso.test");
-    consultant.setAppointments(null);
     consultant.setConsultantAgencies(new HashSet<>());
     consultant.setConsultantMobileTokens(new HashSet<>());
     consultant.setEncourage2fa(true);

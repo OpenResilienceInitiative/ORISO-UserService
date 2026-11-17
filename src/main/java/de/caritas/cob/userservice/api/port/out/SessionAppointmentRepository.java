@@ -26,6 +26,15 @@ public interface SessionAppointmentRepository extends CrudRepository<SessionAppo
   Optional<SessionAppointment> findOfSessionForUpdate(
       @Param("id") UUID id, @Param("sessionId") Long sessionId);
 
+  /**
+   * Locked like {@link #findOfSessionForUpdate}, by the appointment alone: a move proposal
+   * (ADR-032) names only the appointment, and the first people opening one direct invitation create
+   * one conversation (#2252). The session is not locked with it.
+   */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("SELECT a FROM SessionAppointment a WHERE a.id = :id")
+  Optional<SessionAppointment> findByIdForUpdate(@Param("id") UUID id);
+
   @Query(
       "SELECT a FROM SessionAppointment a JOIN FETCH a.session s JOIN FETCH s.user "
           + "WHERE (s.consultant.id = :consultantId OR s.id IN :coAccessSessionIds) "
@@ -43,4 +52,48 @@ public interface SessionAppointmentRepository extends CrudRepository<SessionAppo
           + "ORDER BY a.startTime")
   List<SessionAppointment> findUpcomingOfAsker(
       @Param("userId") String userId, @Param("now") Instant now, Pageable pageable);
+
+  /**
+   * The scheduled appointments of a counsellor's own and co-access sessions that overlap the window
+   * (calendar, ADR-032).
+   */
+  @Query(
+      "SELECT a FROM SessionAppointment a JOIN FETCH a.session s JOIN FETCH s.user "
+          + "WHERE (s.consultant.id = :consultantId OR s.id IN :coAccessSessionIds) "
+          + "AND a.status = 'SCHEDULED' AND a.startTime < :to AND a.endTime > :from "
+          + "ORDER BY a.startTime")
+  List<SessionAppointment> findScheduledOfConsultantBetween(
+      @Param("consultantId") String consultantId,
+      @Param("coAccessSessionIds") Collection<Long> coAccessSessionIds,
+      @Param("from") Instant from,
+      @Param("to") Instant to,
+      Pageable pageable);
+
+  /**
+   * The scheduled appointments of the counsellor's own direct invitations that nobody opened yet
+   * (ORISO-Frontend#2252): they have no conversation, so {@link #findScheduledOfConsultantBetween}
+   * cannot find them, yet the counsellor's time is taken all the same.
+   */
+  @Query(
+      "SELECT a FROM SessionAppointment a WHERE a.session IS NULL AND a.status = 'SCHEDULED' "
+          + "AND a.startTime < :to AND a.endTime > :from "
+          + "AND EXISTS (SELECT l.id FROM AgencyInviteLink l WHERE l.appointmentId = a.id "
+          + "AND l.consultantId = :consultantId AND l.linkKind = 'COUNSELLOR') "
+          + "ORDER BY a.startTime")
+  List<SessionAppointment> findUnopenedInvitationsOfConsultantBetween(
+      @Param("consultantId") String consultantId,
+      @Param("from") Instant from,
+      @Param("to") Instant to,
+      Pageable pageable);
+
+  @Query(
+      "SELECT a FROM SessionAppointment a JOIN FETCH a.session s LEFT JOIN FETCH s.consultant "
+          + "WHERE s.user.userId = :userId AND a.status = 'SCHEDULED' "
+          + "AND a.startTime < :to AND a.endTime > :from "
+          + "ORDER BY a.startTime")
+  List<SessionAppointment> findScheduledOfAskerBetween(
+      @Param("userId") String userId,
+      @Param("from") Instant from,
+      @Param("to") Instant to,
+      Pageable pageable);
 }

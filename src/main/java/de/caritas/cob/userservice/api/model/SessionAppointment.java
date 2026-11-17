@@ -23,8 +23,8 @@ import org.hibernate.annotations.OnDeleteAction;
 import org.hibernate.type.SqlTypes;
 
 /**
- * A 1:1 appointment of one conversation (ADR-020). Owned by UserService alone, independent of the
- * legacy {@link Appointment} and of the AppointmentService. Holds times and references only.
+ * A 1:1 appointment of one conversation (ADR-020). Owned by UserService alone. Holds times and
+ * references only.
  */
 @Entity
 @Table(name = "session_appointment")
@@ -38,6 +38,14 @@ public class SessionAppointment {
     CANCELLED
   }
 
+  /** How the appointment takes place (ADR-032); null on rows made before the kind existed. */
+  public enum Kind {
+    ONSITE,
+    VIDEO,
+    PHONE,
+    CHAT
+  }
+
   @Id
   @GeneratedValue(generator = "UUID")
   @GenericGenerator(name = "UUID", strategy = "org.hibernate.id.UUIDGenerator")
@@ -45,10 +53,13 @@ public class SessionAppointment {
   @Column(columnDefinition = "char(36)")
   private UUID id;
 
-  @ManyToOne(fetch = FetchType.LAZY, optional = false)
+  /**
+   * The conversation. Empty only for the appointment of a direct invitation nobody opened yet
+   * (ORISO-Frontend#2252): the first person who opens it creates the appointment conversation.
+   */
+  @ManyToOne(fetch = FetchType.LAZY)
   @JoinColumn(
       name = "session_id",
-      nullable = false,
       foreignKey = @ForeignKey(name = "fk_session_appointment_session"))
   @OnDelete(action = OnDeleteAction.CASCADE)
   private Session session;
@@ -62,4 +73,8 @@ public class SessionAppointment {
   @Enumerated(EnumType.STRING)
   @Column(length = 16, nullable = false)
   private Status status;
+
+  @Enumerated(EnumType.STRING)
+  @Column(length = 16)
+  private Kind kind;
 }
