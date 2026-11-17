@@ -72,6 +72,8 @@ public class ChatService {
   private final @NonNull UserChatRepository userChatRepository;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull GroupChatParticipantRepository groupChatParticipantRepository;
+  private final @NonNull de.caritas.cob.userservice.api.port.out.ChatOccurrenceExceptionRepository
+      chatOccurrenceExceptionRepository;
   private final @NonNull GroupChatParticipantReconciliationService participantReconciliationService;
   private final @NonNull GroupAppointmentSeriesEventProducer appointmentEvents;
 
@@ -542,6 +544,10 @@ public class ChatService {
     participationHistory.deleteSeries(chat);
     // Needs the participations: they name the case of a members-only chat.
     membersOnlyRevocation.retireCaseOf(chat);
+    // A recurring chat's moved or skipped dates restrict the delete like its participants
+    // (ORISO-Admin#1523).
+    chatOccurrenceExceptionRepository.deleteAll(
+        chatOccurrenceExceptionRepository.findBySeries_Id(chat.getId()));
     groupChatParticipantRepository.deleteBySeriesId(chat.getId());
     chatRepository.delete(chat);
   }
