@@ -3,14 +3,18 @@ package de.caritas.cob.userservice.api.facade;
 import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.GROUP_INVITE_INVALID;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.ConversationType;
+import de.caritas.cob.userservice.api.model.GuestAccountMode;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserChat;
 import de.caritas.cob.userservice.api.port.out.ChatAgencyRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
+import de.caritas.cob.userservice.api.service.agencyinvitelink.GuestAccountModePolicy;
+import de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkChatType;
 import de.caritas.cob.userservice.api.service.chat.GroupChatInviteTokens;
 import java.util.Optional;
 import lombok.NonNull;
@@ -28,6 +32,7 @@ public class GroupInviteRegistration {
 
   private final @NonNull ChatAgencyRepository chatAgencyRepository;
   private final @NonNull ChatService chatService;
+  private final @NonNull GuestAccountModePolicy guestAccountModes;
 
   /** The group the registration was invited to, or empty for an ordinary registration. */
   public Optional<Chat> resolveInvitedGroup(UserDTO userDTO) {
@@ -58,6 +63,16 @@ public class GroupInviteRegistration {
     // check the join by invite link makes.
     if (!GroupChatInviteTokens.matches(group.getInviteToken(), userDTO.getGroupChatInviteToken())) {
       throw new CustomValidationHttpStatusException(GROUP_INVITE_INVALID, HttpStatus.FORBIDDEN);
+    }
+    // #1662: the circle's guest account mode, capped by what the platform allows now.
+    var mode =
+        guestAccountModes.cap(
+            null, userDTO.getAgencyId(), InviteLinkChatType.CHAT, group.getGuestAccountMode());
+    if (!mode.admits(userDTO.isTemporary())) {
+      throw new BadRequestException(
+          mode == GuestAccountMode.TEMPORARY
+              ? "This group invite creates temporary accounts."
+              : "This group invite does not create temporary accounts.");
     }
     return Optional.of(group);
   }

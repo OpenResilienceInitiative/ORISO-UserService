@@ -100,6 +100,7 @@ import org.testcontainers.containers.MariaDBContainer;
   DirectCallKnockService.class,
   EffectiveDirectInvitePolicy.class,
   ConfiguredTemporaryAccountPolicy.class,
+  de.caritas.cob.userservice.api.service.agencyinvitelink.PlatformGuestAccountModePolicy.class,
   de.caritas.cob.userservice.api.service.matrix.DedicatedCallRoom.class,
   MatrixSessionCallBindingService.class,
   MatrixCallBindingService.class,

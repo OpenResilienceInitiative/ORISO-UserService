@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.GroupChatJoinRequest;
+import de.caritas.cob.userservice.api.model.GuestAccountMode;
 import de.caritas.cob.userservice.api.model.MatrixCallBinding;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
@@ -20,10 +21,12 @@ import de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService.Outc
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.Base64;
+import java.util.EnumSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -56,7 +59,7 @@ public class CallShareLinkService {
   private final @NonNull ChatAgencyRepository chatAgencies;
   private final @NonNull DirectCallKnockService knocks;
   private final @NonNull DirectInvitePolicy directInvitePolicy;
-  private final @NonNull TemporaryAccountPolicy temporaryAccountPolicy;
+  private final @NonNull GuestAccountModePolicy guestAccountModes;
   private final @NonNull TenantService tenantService;
   private final @NonNull UserRepository users;
 
@@ -73,6 +76,22 @@ public class CallShareLinkService {
       String callId,
       Boolean knock,
       Boolean temporaryAccount) {
+    return create(tenant, consultantId, sourceRoomId, callId, knock, temporaryAccount, null);
+  }
+
+  /**
+   * #1662: {@code guestAccountMode} wins over the old {@code temporaryAccount} switch (on by
+   * default: TEMPORARY). A chosen mode must be allowed (403); the old switch is clamped as before.
+   */
+  @Transactional
+  public ShareLink create(
+      Long tenant,
+      String consultantId,
+      String sourceRoomId,
+      String callId,
+      Boolean knock,
+      Boolean temporaryAccount,
+      GuestAccountMode guestAccountMode) {
     var binding = requireCounsellorCall(tenant, consultantId, sourceRoomId, callId);
     var existing = links.findByCallBindingId(binding.getId());
     var medium = mediumOf(binding);
@@ -90,10 +109,14 @@ public class CallShareLinkService {
       return view(existing.get(), false);
     }
     Integer consultingTypeId = session.map(Session::getConsultingTypeId).orElse(null);
-    boolean temporaryAllowed =
-        agencyId != null
-            && consultingTypeId != null
-            && temporaryAccountPolicy.allows(tenant, agencyId, medium);
+    var allowed = allowedModes(tenant, agencyId, consultingTypeId, medium);
+    var mode =
+        chosenMode(
+            guestAccountMode,
+            temporaryAccount == null || temporaryAccount
+                ? GuestAccountMode.TEMPORARY
+                : GuestAccountMode.PERMANENT,
+            allowed);
     var now = LocalDateTime.now();
     var link =
         AgencyInviteLink.builder()
@@ -108,12 +131,12 @@ public class CallShareLinkService {
             .consultantId(consultantId)
             .createdByUserId(consultantId)
             .knock(knock == null || knock)
-            .temporaryAccount((temporaryAccount == null || temporaryAccount) && temporaryAllowed)
             .callBindingId(binding.getId())
             .createDate(now)
             .expiresAt(now.plusMinutes(maxLifetimeMinutes))
             .status(InviteLinkStatus.ACTIVE.name())
             .build();
+    link.applyGuestAccountMode(mode);
     return view(links.save(link), true);
   }
 
@@ -140,6 +163,18 @@ public class CallShareLinkService {
   @Transactional
   public ShareLink update(
       Long tenant, String consultantId, Long linkId, Boolean knock, Boolean temporaryAccount) {
+    return update(tenant, consultantId, linkId, knock, temporaryAccount, null);
+  }
+
+  /** #1662: as {@link #create}, {@code guestAccountMode} wins over the old switch. */
+  @Transactional
+  public ShareLink update(
+      Long tenant,
+      String consultantId,
+      Long linkId,
+      Boolean knock,
+      Boolean temporaryAccount,
+      GuestAccountMode guestAccountMode) {
     lockCallOf(linkId);
     var link =
         links
@@ -155,8 +190,14 @@ public class CallShareLinkService {
     var agencyId = agencyOf(binding);
     requireSameAgency(link, agencyId);
     requireDirectInvites(binding, agencyId);
-    if (temporaryAccount != null) {
-      link.setTemporaryAccount(temporaryAccount && temporaryAccountAllowed(link));
+    if (guestAccountMode != null || temporaryAccount != null) {
+      link.applyGuestAccountMode(
+          chosenMode(
+              guestAccountMode,
+              Boolean.TRUE.equals(temporaryAccount)
+                  ? GuestAccountMode.TEMPORARY
+                  : GuestAccountMode.PERMANENT,
+              allowedModes(link)));
     }
     if (knock != null && knock != link.isKnock()) {
       link.setKnock(knock);
@@ -341,13 +382,23 @@ public class CallShareLinkService {
     requireDirectInviteAllowed(bindingOf(link));
   }
 
-  /** Whether temporary accounts may be offered; the effective value is the setting AND this. */
+  /**
+   * #1662: the mode the link works with now. Without the registration context (Beratungsstelle and
+   * consulting type) or while temporary accounts are not allowed, only permanent accounts.
+   */
   @Transactional(readOnly = true)
-  public boolean temporaryAccountAllowed(AgencyInviteLink link) {
+  public GuestAccountMode effectiveGuestAccountMode(AgencyInviteLink link) {
+    var mode = link.effectiveGuestAccountMode();
+    return allowedModes(link).contains(mode) ? mode : GuestAccountMode.PERMANENT;
+  }
+
+  /** The modes a counsellor may choose for this link now. */
+  @Transactional(readOnly = true)
+  public Set<GuestAccountMode> allowedModes(AgencyInviteLink link) {
     if (link.getAgencyId() == null
         || link.getConsultingTypeId() == null
         || link.getCallBindingId() == null) {
-      return false;
+      return EnumSet.of(GuestAccountMode.PERMANENT);
     }
     return bindings
         .findById(link.getCallBindingId())
@@ -355,9 +406,41 @@ public class CallShareLinkService {
         .filter(binding -> Objects.equals(link.getAgencyId(), agencyOf(binding)))
         .map(
             binding ->
-                temporaryAccountPolicy.allows(
-                    link.getTenantId(), link.getAgencyId(), mediumOf(binding)))
-        .orElse(false);
+                allowedModes(
+                    link.getTenantId(),
+                    link.getAgencyId(),
+                    link.getConsultingTypeId(),
+                    mediumOf(binding)))
+        .orElse(EnumSet.of(GuestAccountMode.PERMANENT));
+  }
+
+  /**
+   * Without a Beratungsstelle and consulting type a new person cannot register (a group call), so
+   * only existing, permanent accounts.
+   */
+  private Set<GuestAccountMode> allowedModes(
+      Long tenant, Long agencyId, Integer consultingTypeId, InviteLinkChatType medium) {
+    if (agencyId == null || consultingTypeId == null) {
+      return EnumSet.of(GuestAccountMode.PERMANENT);
+    }
+    return guestAccountModes.allowedModes(tenant, agencyId, medium);
+  }
+
+  private static GuestAccountMode chosenMode(
+      GuestAccountMode chosen, GuestAccountMode fromSwitch, Set<GuestAccountMode> allowed) {
+    if (chosen != null) {
+      if (!allowed.contains(chosen)) {
+        throw new ForbiddenException("This guest account mode is not allowed here");
+      }
+      return chosen;
+    }
+    return allowed.contains(fromSwitch) ? fromSwitch : GuestAccountMode.PERMANENT;
+  }
+
+  /** Whether temporary accounts may be offered; the effective value is the setting AND this. */
+  @Transactional(readOnly = true)
+  public boolean temporaryAccountAllowed(AgencyInviteLink link) {
+    return allowedModes(link).stream().anyMatch(GuestAccountMode::offersTemporaryAccounts);
   }
 
   private Long agencyOf(MatrixCallBinding binding) {
@@ -525,8 +608,16 @@ public class CallShareLinkService {
   }
 
   private ShareLink view(AgencyInviteLink link, boolean created) {
-    boolean allowed = temporaryAccountAllowed(link);
-    return new ShareLink(link, link.isTemporaryAccount() && allowed, allowed, created);
+    var allowed = allowedModes(link);
+    var mode = link.effectiveGuestAccountMode();
+    var effective = allowed.contains(mode) ? mode : GuestAccountMode.PERMANENT;
+    return new ShareLink(
+        link,
+        effective.offersTemporaryAccounts(),
+        allowed.stream().anyMatch(GuestAccountMode::offersTemporaryAccounts),
+        created,
+        effective,
+        allowed);
   }
 
   private static InviteLinkChatType mediumOf(MatrixCallBinding binding) {
@@ -541,12 +632,16 @@ public class CallShareLinkService {
 
   /**
    * @param temporaryAccount effective: the counsellor's setting, and allowed by platform and Träger
+   * @param guestAccountMode effective mode (#1662), PERMANENT while the chosen one is not allowed
+   * @param allowedGuestAccountModes the modes the counsellor may choose now
    */
   public record ShareLink(
       AgencyInviteLink link,
       boolean temporaryAccount,
       boolean temporaryAccountAllowed,
-      boolean created) {}
+      boolean created,
+      GuestAccountMode guestAccountMode,
+      Set<GuestAccountMode> allowedGuestAccountModes) {}
 
   /** What a guest's visit led to; call data only once the guest holds a seat. */
   public record Join(

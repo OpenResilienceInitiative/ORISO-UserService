@@ -3852,6 +3852,16 @@ components:
         with a temporary account; ACCOUNTS_ONLY: only people with a permanent account; BOTH: the
         person chooses. Links from before #2252 read BOTH when they created temporary accounts,
         else ACCOUNTS_ONLY.
+    GuestAccountMode:
+      type: string
+      enum: [TEMPORARY, GUEST_CHOOSES, PERMANENT]
+      description: >-
+        Which account a person without an ORISO account gets through the link (#1662). TEMPORARY:
+        only a temporary account, deleted after the conversation (ADR-029); GUEST_CHOOSES: the
+        person picks a temporary or a permanent account at entry; PERMANENT: only a permanent
+        account. Replaces the boolean temporary switch and the #2252 accessMode, which stay for one
+        release as mirrors (temporary = mode is not PERMANENT; accessMode GUESTS_ONLY / BOTH /
+        ACCOUNTS_ONLY). A mode the platform (later the Träger) does not allow is refused with 403.
     DirectInvitationAppointmentInputDTO:
       type: object
       required: [startTime, endTime]
@@ -3897,7 +3907,10 @@ components:
           description: Minutes the link stays valid after the appointment end; default 1440 (24 h)
         accessMode:
           allOf: [{$ref: '#/components/schemas/DirectInvitationAccessMode'}]
-          description: Defaults to BOTH
+          description: Defaults to BOTH. Deprecated, use guestAccountMode.
+        guestAccountMode:
+          allOf: [{$ref: '#/components/schemas/GuestAccountMode'}]
+          description: Wins over accessMode. Defaults to GUEST_CHOOSES.
         knock:
           type: boolean
           description: Defaults to true
@@ -3945,6 +3958,7 @@ components:
           format: date-time
           description: With an appointment only. 15 minutes before the start.
         accessMode: {$ref: '#/components/schemas/DirectInvitationAccessMode'}
+        guestAccountMode: {$ref: '#/components/schemas/GuestAccountMode'}
         knock:
           type: boolean
           description: Audio and video. Whether people wait for the counsellor; changeable at any time.
@@ -3987,7 +4001,13 @@ components:
           description: With an appointment only; default 1440 (24 h)
         accessMode:
           allOf: [{$ref: '#/components/schemas/DirectInvitationAccessMode'}]
-          description: Who may enter. Wins over temporary (temporary = accessMode is not ACCOUNTS_ONLY); default from temporary.
+          description: Who may enter. Wins over temporary (temporary = accessMode is not ACCOUNTS_ONLY); default from temporary. Deprecated, use guestAccountMode.
+        guestAccountMode:
+          allOf: [{$ref: '#/components/schemas/GuestAccountMode'}]
+          description: >-
+            #1662. Wins over accessMode and temporary. Without any of the three: GUEST_CHOOSES for
+            calls, PERMANENT for chat. A mode that is not allowed is refused with 403; the default
+            and the old switches fall back to PERMANENT instead.
         knock:
           type: boolean
           description: Audio and video. Default true.
@@ -4016,6 +4036,9 @@ components:
           maximum: 2880
           description: With an appointment only (409 otherwise); expiresAt follows.
         accessMode: {$ref: '#/components/schemas/DirectInvitationAccessMode'}
+        guestAccountMode:
+          allOf: [{$ref: '#/components/schemas/GuestAccountMode'}]
+          description: "#1662. Wins over accessMode and temporary; 403 when not allowed."
         knock:
           type: boolean
           description: Changeable during the call; applies to the next person who opens the link.
@@ -4885,6 +4908,9 @@ components:
           type: string
           description: 'Secret part of the invite link (send it as inviteToken to
             /users/chat/{id}/assign). Only present for counsellors who may see the group.'
+        guestAccountMode:
+          allOf: [{$ref: '#/components/schemas/GuestAccountMode'}]
+          description: Gesprächskreis only (#1662). Which account a guest without one gets through the invite link.
         startDateWithTime:
           type: string
           format: date-time
@@ -5620,6 +5646,12 @@ components:
             items:
               type: string
               maxLength: 120
+        guestAccountMode:
+          allOf: [{$ref: '#/components/schemas/GuestAccountMode'}]
+          description: >-
+            Gesprächskreis only (#1662): which account a guest without one gets through the invite
+            link. Defaults to GUEST_CHOOSES (the guest picks "join without account" or "create
+            account"). Group-join temporary accounts keep their 24 h lifetime.
 
     InternalChatRecipientDTO:
       type: object

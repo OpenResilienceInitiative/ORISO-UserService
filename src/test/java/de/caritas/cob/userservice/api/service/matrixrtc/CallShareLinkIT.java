@@ -107,6 +107,7 @@ import org.springframework.transaction.support.TransactionTemplate;
   DirectCallKnockService.class,
   EffectiveDirectInvitePolicy.class,
   ConfiguredTemporaryAccountPolicy.class,
+  de.caritas.cob.userservice.api.service.agencyinvitelink.PlatformGuestAccountModePolicy.class,
   de.caritas.cob.userservice.api.service.matrix.DedicatedCallRoom.class,
   de.caritas.cob.userservice.api.service.matrix.MatrixSessionCallBindingService.class,
   de.caritas.cob.userservice.api.service.matrix.MatrixCallBindingService.class,
@@ -366,6 +367,8 @@ class CallShareLinkIT {
             .andExpect(jsonPath("$.knock").value(true))
             .andExpect(jsonPath("$.temporaryAccount").value(true))
             .andExpect(jsonPath("$.temporaryAccountAllowed").value(true))
+            .andExpect(jsonPath("$.guestAccountMode").value("TEMPORARY"))
+            .andExpect(jsonPath("$.allowedGuestAccountModes.length()").value(3))
             .andExpect(jsonPath("$.medium").value("AUDIO"))
             .andExpect(jsonPath("$.active").value(true))
             .andReturn();
@@ -421,6 +424,17 @@ class CallShareLinkIT {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.token").value(token))
         .andExpect(jsonPath("$.knock").value(false));
+    // #1662: the guest account mode changes on the same link; the old switch follows it.
+    mvc(counsellor.getId(), "consultant", null)
+        .perform(
+            patch("/matrix/calls/share-links/" + linkId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"guestAccountMode\":\"GUEST_CHOOSES\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.guestAccountMode").value("GUEST_CHOOSES"))
+        .andExpect(jsonPath("$.temporaryAccount").value(true));
+    assertThat(links.findById(linkId).orElseThrow().getGuestAccountMode())
+        .isEqualTo(de.caritas.cob.userservice.api.model.GuestAccountMode.GUEST_CHOOSES);
     var second = shareLinks.join(token, users.findById("share-guest-2").orElseThrow());
     assertThat(second.callAdmitted()).isTrue();
     assertThat(second.admission()).isEqualTo(InviteLinkAdmission.DIRECT);

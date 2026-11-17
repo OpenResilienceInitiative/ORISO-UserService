@@ -372,6 +372,10 @@ public class ChatService {
     result.setSourceLanguage(chat.getSourceLanguage());
     result.setHintMessageTranslations(chat.getHintMessageTranslations());
     result.setGroupChatRulesTranslations(chat.getGroupChatRulesTranslations());
+    if (ChatConverter.conversationTypeOf(chat)
+        == de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP) {
+      result.setGuestAccountMode(chat.getGuestAccountMode());
+    }
     return result;
   }
 
@@ -628,6 +632,10 @@ public class ChatService {
     chat.setSourceLanguage(chatDTO.getSourceLanguage());
     chat.setHintMessageTranslations(chatDTO.getHintMessageTranslations());
     chat.setGroupChatRulesTranslations(chatDTO.getGroupChatRulesTranslations());
+    // #1662: an older app sends no mode; the circle keeps the one it has.
+    if (chatDTO.getGuestAccountMode() != null) {
+      chat.setGuestAccountMode(chatDTO.getGuestAccountMode());
+    }
 
     this.saveChat(chat);
     Set<GroupAppointmentMailQueue.Member> newlyJoinedMembers =

@@ -159,4 +159,9 @@ public class UserChatDTO {
   @ApiModelProperty
   @JsonInclude(JsonInclude.Include.NON_NULL)
   private String inviteToken;
+
+  /** Gesprächskreis (#1662): which account a guest without one gets through the invite link. */
+  @ApiModelProperty
+  @JsonInclude(JsonInclude.Include.NON_NULL)
+  private de.caritas.cob.userservice.api.model.GuestAccountMode guestAccountMode;
 }

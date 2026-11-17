@@ -62,6 +62,8 @@ class GuestIdentityHttpTest {
     GuestUsernameAvailability.class,
     AgencyInviteLinkController.class,
     AgencyInviteLinkService.class,
+    de.caritas.cob.userservice.api.service.agencyinvitelink.PlatformGuestAccountModePolicy.class,
+    de.caritas.cob.userservice.api.service.agencyinvitelink.ConfiguredTemporaryAccountPolicy.class,
     ApiResponseEntityExceptionHandler.class
   })
   static class Config {
