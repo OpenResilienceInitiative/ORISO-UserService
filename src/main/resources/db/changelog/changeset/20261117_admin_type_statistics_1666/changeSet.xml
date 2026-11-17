@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <!-- ORISO-UserService#1666: admin.type was VARCHAR(6), too short for STATISTICS (and SUPPORT).
+       Two steps, each with its own precondition (onFail="MARK_RAN", master changelog rule), so a
+       database that already received either change by hand skips only that step. MariaDB drops
+       NOT NULL on MODIFY COLUMN, so the second step sees the column nullable again after the
+       first and restores it. The NOT NULL step keeps the column's current width, so a column someone
+       widened further by hand gets NOT NULL and is never narrowed. -->
+  <changeSet id="20261117-admin-type-width-1666" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <or>
+        <and>
+          <dbms type="mariadb,mysql"/>
+          <sqlCheck expectedResult="1">
+            SELECT COUNT(*) FROM information_schema.columns
+            WHERE table_schema = DATABASE() AND table_name = 'admin' AND column_name = 'type'
+              AND character_maximum_length &lt; 16
+          </sqlCheck>
+        </and>
+        <and>
+          <dbms type="h2"/>
+          <sqlCheck expectedResult="1">
+            SELECT COUNT(*) FROM information_schema.columns
+            WHERE table_schema = CURRENT_SCHEMA() AND LOWER(table_name) = 'admin'
+              AND LOWER(column_name) = 'type' AND character_maximum_length &lt; 16
+          </sqlCheck>
+        </and>
+      </or>
+    </preConditions>
+    <modifyDataType tableName="admin" columnName="type" newDataType="VARCHAR(16)"/>
+    <!-- Narrowing back to VARCHAR(6) would truncate STATISTICS/SUPPORT rows; rollback keeps the width. -->
+    <rollback/>
+  </changeSet>
+
+  <changeSet id="20261117-admin-type-not-null-1666" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <or>
+        <and>
+          <dbms type="mariadb,mysql"/>
+          <sqlCheck expectedResult="1">
+            SELECT COUNT(*) FROM information_schema.columns
+            WHERE table_schema = DATABASE() AND table_name = 'admin' AND column_name = 'type'
+              AND is_nullable = 'YES' AND character_maximum_length &gt;= 16
+          </sqlCheck>
+        </and>
+        <and>
+          <dbms type="h2"/>
+          <sqlCheck expectedResult="1">
+            SELECT COUNT(*) FROM information_schema.columns
+            WHERE table_schema = CURRENT_SCHEMA() AND LOWER(table_name) = 'admin'
+              AND LOWER(column_name) = 'type' AND is_nullable = 'YES'
+              AND character_maximum_length &gt;= 16
+          </sqlCheck>
+        </and>
+      </or>
+    </preConditions>
+    <!-- MariaDB rewrites the whole column on MODIFY, so the statement is built from the column's
+         current width: NOT NULL is added and a column widened further by hand keeps its width. -->
+    <sql dbms="mariadb,mysql" splitStatements="true">
+      SET @admin_type_width = (SELECT character_maximum_length FROM information_schema.columns
+        WHERE table_schema = DATABASE() AND table_name = 'admin' AND column_name = 'type');
+      SET @admin_type_not_null = CONCAT('ALTER TABLE admin MODIFY type VARCHAR(', @admin_type_width, ') NOT NULL');
+      PREPARE admin_type_not_null FROM @admin_type_not_null;
+      EXECUTE admin_type_not_null;
+      DEALLOCATE PREPARE admin_type_not_null
+    </sql>
+    <sql dbms="h2">ALTER TABLE admin ALTER COLUMN type SET NOT NULL</sql>
+    <!-- Every admin row carries a type; rollback keeps the constraint (non-destructive). -->
+    <rollback/>
+  </changeSet>
+</databaseChangeLog>

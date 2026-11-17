@@ -20,6 +20,7 @@ import org.springframework.core.convert.converter.Converter;
 import org.springframework.http.HttpMethod;
 import org.springframework.lang.Nullable;
 import org.springframework.security.authentication.AbstractAuthenticationToken;
+import org.springframework.security.authentication.AnonymousAuthenticationToken;
 import org.springframework.security.authorization.AuthorizationDecision;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -322,7 +323,8 @@ public class SecurityConfig {
                     CONSULTANT_DEFAULT,
                     SINGLE_TENANT_ADMIN,
                     TENANT_ADMIN,
-                    RESTRICTED_AGENCY_ADMIN)
+                    RESTRICTED_AGENCY_ADMIN,
+                    STATISTICS_READER)
                 // Call share links (#1487), ahead of /matrix/**: guests join, counsellors manage;
                 // membership of the call is checked in the service.
                 .requestMatchers(
@@ -356,9 +358,9 @@ public class SecurityConfig {
                 // Live-Handshake (ADR-018): any authenticated professional may hit the endpoints;
                 // per-purpose role pairs + fresh-credential checks are enforced in the service.
                 .requestMatchers("/users/handshakes", "/users/handshakes/**")
-                .authenticated()
+                .access(this::authenticatedButNotStatisticsReaderOnly)
                 .requestMatchers("/users/support-rooms", "/users/support-rooms/**")
-                .authenticated()
+                .access(this::authenticatedButNotStatisticsReaderOnly)
                 .requestMatchers("/users/tutorials/progress", "/users/tutorials/progress/**")
                 .hasAnyAuthority(
                     USER_DEFAULT,
@@ -390,8 +392,19 @@ public class SecurityConfig {
                     CONSULTANT_DEFAULT,
                     SINGLE_TENANT_ADMIN,
                     TENANT_ADMIN,
-                    RESTRICTED_AGENCY_ADMIN)
-                .requestMatchers("/users/twoFactorAuth", "/users/2fa/**", "/users/mobile/app/token")
+                    RESTRICTED_AGENCY_ADMIN,
+                    STATISTICS_READER)
+                // A statistics reader must be able to set up its mandatory 2FA (#1666), but has no
+                // use for the mobile app token.
+                .requestMatchers("/users/twoFactorAuth", "/users/2fa/**")
+                .hasAnyAuthority(
+                    SINGLE_TENANT_ADMIN,
+                    TENANT_ADMIN,
+                    USER_DEFAULT,
+                    CONSULTANT_DEFAULT,
+                    RESTRICTED_AGENCY_ADMIN,
+                    STATISTICS_READER)
+                .requestMatchers("/users/mobile/app/token")
                 .hasAnyAuthority(
                     SINGLE_TENANT_ADMIN,
                     TENANT_ADMIN,
@@ -711,17 +724,38 @@ public class SecurityConfig {
                     "/useradmin/users/{userId:" + UUID_PATTERN + "}/identities",
                     "/service/useradmin/users/{userId:" + UUID_PATTERN + "}/identities")
                 .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
+                // Read-only statistics accounts (ORISO-UserService#1666): managed by platform
+                // admins
+                // only. Must precede the generic /useradmin/** rule, which Träger admins also pass.
+                .requestMatchers(
+                    "/useradmin/statisticsreaders",
+                    "/useradmin/statisticsreaders/**",
+                    "/service/useradmin/statisticsreaders",
+                    "/service/useradmin/statisticsreaders/**")
+                .access(this::isPlatformAdmin)
                 .requestMatchers(
                     HttpMethod.GET,
                     "/useradmin/statistics/dashboard",
                     "/service/useradmin/statistics/dashboard")
-                .hasAnyAuthority(
-                    USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
+                .access(
+                    (authentication, context) ->
+                        new AuthorizationDecision(
+                            hasAnyAuthority(
+                                    authentication,
+                                    USER_ADMIN,
+                                    TENANT_ADMIN,
+                                    SINGLE_TENANT_ADMIN,
+                                    RESTRICTED_AGENCY_ADMIN)
+                                || isPlatformStatisticsReader(authentication)))
                 .requestMatchers(
                     HttpMethod.GET,
                     "/useradmin/statistics/tutorials",
                     "/service/useradmin/statistics/tutorials")
-                .hasAnyAuthority(TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+                .access(
+                    (authentication, context) ->
+                        new AuthorizationDecision(
+                            hasAnyAuthority(authentication, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+                                || isPlatformStatisticsReader(authentication)))
                 // Global statistics settings and their protocol (OBP #93): platform admins only.
                 // Must precede the generic /useradmin/** rule, which a Träger admin also passes.
                 .requestMatchers(
@@ -1006,6 +1040,52 @@ public class SecurityConfig {
                     GLOBAL_SUPPORT_ADMIN,
                     TECHNICAL_DEFAULT,
                     NOTIFICATIONS_TECHNICAL)));
+  }
+
+  /**
+   * Authenticated-only routes stay closed to a pure statistics reader (#1666): its tenant-0 token
+   * switches the tenant filter off, so an "any authenticated user" route would read across Träger.
+   */
+  private AuthorizationDecision authenticatedButNotStatisticsReaderOnly(
+      Supplier<? extends Authentication> authenticationSupplier,
+      RequestAuthorizationContext requestContext) {
+    var authentication = authenticationSupplier.get();
+    if (authentication == null
+        || !authentication.isAuthenticated()
+        || authentication instanceof AnonymousAuthenticationToken) {
+      return new AuthorizationDecision(false);
+    }
+    var authorities =
+        authentication.getAuthorities().stream()
+            .map(GrantedAuthority::getAuthority)
+            .filter(authority -> authority.startsWith(Authority.AuthorityValue.PREFIX))
+            .toList();
+    boolean onlyStatisticsReader =
+        authorities.contains(STATISTICS_READER)
+            && authorities.stream().allMatch(STATISTICS_READER::equals);
+    return new AuthorizationDecision(!onlyStatisticsReader);
+  }
+
+  private static boolean hasAnyAuthority(
+      Supplier<? extends Authentication> authenticationSupplier, String... authorities) {
+    Set<String> wanted = Set.of(authorities);
+    return authenticationSupplier.get().getAuthorities().stream()
+        .anyMatch(authority -> wanted.contains(authority.getAuthority()));
+  }
+
+  /**
+   * ORISO-UserService#1666: the read-only statistics account. Needs the authority, the realm role
+   * and the platform tenant 0 together; any one alone is not enough.
+   */
+  private boolean isPlatformStatisticsReader(
+      Supplier<? extends Authentication> authenticationSupplier) {
+    if (!(authenticationSupplier.get() instanceof JwtAuthenticationToken jwtAuthentication)) {
+      return false;
+    }
+    Jwt jwt = jwtAuthentication.getToken();
+    return hasAnyAuthority(authenticationSupplier, STATISTICS_READER)
+        && KeycloakRoles.of(jwt.getClaims()).contains(UserRole.STATISTICS_READER.getValue())
+        && isPlatformTenant(jwt);
   }
 
   private AuthorizationDecision isPlatformAdmin(
