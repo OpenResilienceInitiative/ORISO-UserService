@@ -713,6 +713,22 @@
       "status": "bounded"
     },
     {
+      "id": "account-invite-retention-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/inviteretention/scheduler/InviteRetentionScheduler.java",
+      "kind": "scheduler",
+      "owner": "account-invites",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "purgeSettledInvites"
+      ],
+      "decision": "Leases the run through ScheduledTaskClaimService; the purge deletes only invitations still REVOKED, EXPIRED or SUPERSEDED past the retention period, together with their mail-delivery rows, in batched transactions that re-check the status, so a replayed run deletes nothing twice and never touches an open or accepted invitation.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
       "id": "team-discussion-orphan-cleanup-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/workflow/delete/scheduler/TeamDiscussionOrphanCleanupScheduler.java",
       "kind": "scheduler",
