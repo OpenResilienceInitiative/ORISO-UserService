@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AddonContextDTO.Consultan
 import de.caritas.cob.userservice.api.adapters.web.dto.AddonContextDTO.SessionRef;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
@@ -18,8 +19,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
+import java.util.function.Function;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
@@ -47,6 +47,7 @@ public class AddonContextService {
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull UsernameTranscoder usernameTranscoder;
+  private final @NonNull ConsultantDisplayNameResolver displayNameResolver;
 
   @Transactional(readOnly = true)
   public AddonContextDTO contextOf(String userId, Long tenantId) {
@@ -87,7 +88,11 @@ public class AddonContextService {
         ASKER,
         agencyIds,
         sessions.stream().map(AddonContextService::sessionRef).toList(),
-        consultants.values().stream().map(this::consultantRef).toList());
+        consultants.values().stream()
+            .map(
+                consultant ->
+                    consultantRef(consultant, displayNameResolver::resolveMatrixDisplayName))
+            .toList());
   }
 
   private AddonContextDTO consultantContext(Consultant consultant, Long tenantId) {
@@ -95,6 +100,7 @@ public class AddonContextService {
         consultantAgencyRepository
             .findByConsultantIdAndDeleteDateIsNull(consultant.getId())
             .stream()
+            .filter(relation -> inTenant(relation.getTenantId(), tenantId))
             .map(ConsultantAgency::getAgencyId)
             .filter(Objects::nonNull)
             .distinct()
@@ -106,7 +112,11 @@ public class AddonContextService {
             .map(AddonContextService::sessionRef)
             .toList();
     return new AddonContextDTO(
-        consultant.getId(), CONSULTANT, agencyIds, sessions, List.of(consultantRef(consultant)));
+        consultant.getId(),
+        CONSULTANT,
+        agencyIds,
+        sessions,
+        List.of(consultantRef(consultant, displayNameResolver::resolveInternalDisplayName)));
   }
 
   /** Every session of the consultant, newest first, read in pages so none is left out. */
@@ -134,18 +144,13 @@ public class AddonContextService {
         session.getStatus() == null ? null : session.getStatus().name());
   }
 
-  private ConsultantRef consultantRef(Consultant consultant) {
+  private ConsultantRef consultantRef(
+      Consultant consultant, Function<Consultant, String> displayName) {
     var username =
         consultant.getUsername() == null
             ? null
             : usernameTranscoder.decodeUsername(consultant.getUsername());
-    var realName =
-        Stream.of(consultant.getFirstName(), consultant.getLastName())
-            .filter(part -> part != null && !part.isBlank())
-            .map(String::trim)
-            .collect(Collectors.joining(" "));
-    return new ConsultantRef(
-        consultant.getId(), username, realName.isEmpty() ? username : realName);
+    return new ConsultantRef(consultant.getId(), username, displayName.apply(consultant));
   }
 
   private static void requireTenant(Long userTenantId, Long requestedTenantId) {

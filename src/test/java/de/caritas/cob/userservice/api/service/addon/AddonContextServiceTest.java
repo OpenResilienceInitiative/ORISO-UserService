@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AddonContextDTO.Consultan
 import de.caritas.cob.userservice.api.adapters.web.dto.AddonContextDTO.SessionRef;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
@@ -63,7 +64,8 @@ class AddonContextServiceTest {
             consultantRepository,
             consultantAgencyRepository,
             sessionRepository,
-            usernameTranscoder);
+            usernameTranscoder,
+            new ConsultantDisplayNameResolver());
     consultant = new Consultant();
     consultant.setId(CONSULTANT_ID);
     consultant.setTenantId(1L);
@@ -97,7 +99,46 @@ class AddonContextServiceTest {
             new SessionRef(16L, 0L, CONSULTANT_ID, "IN_PROGRESS"),
             new SessionRef(17L, 4L, null, "NEW"));
     assertThat(context.consultants())
-        .containsExactly(new ConsultantRef(CONSULTANT_ID, "florian-test-berater", "Florian Test"));
+        .containsExactly(
+            new ConsultantRef(CONSULTANT_ID, "florian-test-berater", "florian-test-berater"));
+  }
+
+  @Test
+  void askerSeesTheCounsellorsPublicNameButNeverTheRealOrInternalName() {
+    consultant.setDisplayName("Beratung Nord");
+    consultant.setInternalDisplayName("Flo (Team Nord)");
+    var asker = new User();
+    asker.setUserId(ASKER_ID);
+    asker.setTenantId(1L);
+    when(userRepository.findByUserIdAndDeleteDateIsNull(ASKER_ID)).thenReturn(Optional.of(asker));
+    when(sessionRepository.findByUserUserId(ASKER_ID))
+        .thenReturn(List.of(session(16L, 0L, consultant, SessionStatus.IN_PROGRESS, 1L)));
+
+    assertThat(service.contextOf(ASKER_ID, 1L).consultants())
+        .containsExactly(new ConsultantRef(CONSULTANT_ID, "florian-test-berater", "Beratung Nord"));
+  }
+
+  @Test
+  void consultantContextUsesTheInternalNameAndOnlyAgenciesOfTheTenant() {
+    consultant.setDisplayName("Beratung Nord");
+    consultant.setInternalDisplayName("Flo (Team Nord)");
+    when(consultantRepository.findByIdAndDeleteDateIsNull(CONSULTANT_ID))
+        .thenReturn(Optional.of(consultant));
+    when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(CONSULTANT_ID))
+        .thenReturn(
+            List.of(
+                ConsultantAgency.builder().agencyId(7L).tenantId(1L).build(),
+                ConsultantAgency.builder().agencyId(8L).tenantId(2L).build(),
+                ConsultantAgency.builder().agencyId(9L).build()));
+    when(sessionRepository.findByConsultantId(eq(CONSULTANT_ID), any(Pageable.class)))
+        .thenReturn(new PageImpl<>(List.of()));
+
+    var context = service.contextOf(CONSULTANT_ID, 1L);
+
+    assertThat(context.agencyIds()).containsExactly(7L, 9L);
+    assertThat(context.consultants())
+        .containsExactly(
+            new ConsultantRef(CONSULTANT_ID, "florian-test-berater", "Flo (Team Nord)"));
   }
 
   @Test
