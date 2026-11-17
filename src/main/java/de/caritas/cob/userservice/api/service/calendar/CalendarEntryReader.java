@@ -110,6 +110,7 @@ class CalendarEntryReader {
                         appointment.getSession().getUser().getUsername()),
                     appointment.getSession().getId(),
                     null,
+                    false,
                     true))
         .toList();
   }
@@ -188,7 +189,8 @@ class CalendarEntryReader {
         null,
         own ? blocker.getNote() : null,
         null,
-        own && blocker.getSeriesId() != null ? blocker.getSeriesId().toString() : null);
+        own && blocker.getSeriesId() != null ? blocker.getSeriesId().toString() : null,
+        own && blocker.isAllDay());
   }
 
   private List<CalendarEntry> occurrencesOf(Collection<Chat> found, Instant from, Instant to) {
