@@ -8,6 +8,7 @@ import java.time.Instant;
  * One thing in a calendar as its owner knows it, before any view decides what to show of it.
  *
  * @param title asker username, counsellor display name, group topic or blocker note
+ * @param allDay a blocker entered as whole days (ORISO-UserService#1663); false for all else
  */
 record CalendarEntry(
     String id,
@@ -17,4 +18,18 @@ record CalendarEntry(
     SessionAppointment.Kind kind,
     String title,
     Long sessionId,
-    String seriesId) {}
+    String seriesId,
+    boolean allDay) {
+
+  CalendarEntry(
+      String id,
+      CalendarEntryType type,
+      Instant start,
+      Instant end,
+      SessionAppointment.Kind kind,
+      String title,
+      Long sessionId,
+      String seriesId) {
+    this(id, type, start, end, kind, title, sessionId, seriesId, false);
+  }
+}
