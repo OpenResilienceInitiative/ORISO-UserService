@@ -76,6 +76,10 @@ class ChatStartTimeContractTest {
   @Mock private GroupChatInviteTokenService groupChatInviteTokenService;
   @Mock private AgencyService agencyService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.port.out.ChatOccurrenceExceptionRepository
+      chatOccurrenceExceptionRepository;
+
   private final ChatConverter chatConverter = new ChatConverter();
 
   @BeforeEach
