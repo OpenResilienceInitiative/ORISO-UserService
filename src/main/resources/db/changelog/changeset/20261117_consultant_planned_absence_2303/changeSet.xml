@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- ORISO-Frontend#2303: a planned absence. Optional first and last day (inclusive); without
+       them the absence lasts until it is switched off, as before. -->
+  <changeSet id="20261117-consultant-planned-absence-2303" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not><columnExists tableName="consultant" columnName="absence_start"/></not>
+    </preConditions>
+    <addColumn tableName="consultant">
+      <column name="absence_start" type="DATE"/>
+      <column name="absence_end" type="DATE"/>
+    </addColumn>
+    <rollback>
+      <dropColumn tableName="consultant" columnName="absence_start"/>
+      <dropColumn tableName="consultant" columnName="absence_end"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

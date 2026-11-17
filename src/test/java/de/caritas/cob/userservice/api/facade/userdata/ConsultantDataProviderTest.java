@@ -56,6 +56,40 @@ public class ConsultantDataProviderTest {
   @Mock private EmailNotificationMapper emailNotificationMapper;
 
   @Test
+  public void retrieveData_Should_ReturnAPlannedAbsence_AsNotAbsentYetWithItsDays() {
+    Consultant consultant = easyRandom.nextObject(Consultant.class);
+    consultant.setConsultantAgencies(new HashSet<>());
+    var today = java.time.LocalDate.now(Consultant.ABSENCE_ZONE);
+    consultant.setAbsent(true);
+    consultant.setAbsenceStart(today.plusDays(3));
+    consultant.setAbsenceEnd(today.plusDays(10));
+    when(agencyService.getAgencies(any())).thenReturn(List.of());
+
+    var result = underTest.retrieveData(consultant);
+
+    assertEquals(false, result.isAbsent());
+    assertEquals(today.plusDays(3), result.getAbsenceStart());
+    assertEquals(today.plusDays(10), result.getAbsenceEnd());
+  }
+
+  @Test
+  public void retrieveData_Should_DropTheDays_OfAnAbsenceThatIsOver() {
+    Consultant consultant = easyRandom.nextObject(Consultant.class);
+    consultant.setConsultantAgencies(new HashSet<>());
+    var today = java.time.LocalDate.now(Consultant.ABSENCE_ZONE);
+    consultant.setAbsent(true);
+    consultant.setAbsenceStart(today.minusDays(10));
+    consultant.setAbsenceEnd(today.minusDays(1));
+    when(agencyService.getAgencies(any())).thenReturn(List.of());
+
+    var result = underTest.retrieveData(consultant);
+
+    assertEquals(false, result.isAbsent());
+    assertNull(result.getAbsenceStart());
+    assertNull(result.getAbsenceEnd());
+  }
+
+  @Test
   public void retrieveData_Should_FlattenTheAvatarChoice() {
     Consultant consultant = easyRandom.nextObject(Consultant.class);
     consultant.setConsultantAgencies(new HashSet<>());

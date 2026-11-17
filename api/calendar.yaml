@@ -580,6 +580,7 @@ components:
         - GROUP
         - BLOCKER
         - BUSY
+        - ABSENCE
     AppointmentKind:
       description: How the appointment takes place. Absent on appointments made before the kind
         existed; a reschedule without a kind keeps the stored one.

@@ -25,7 +25,11 @@ public interface AdminStatisticsRepository extends Repository<Session, Long> {
    */
   String ACTIVE_CONSULTANT =
       "c.delete_date IS NULL AND c.status = 'CREATED' "
-          + "AND c.is_absent = 0 AND c.managed_paused = FALSE "
+          // Absent today (ORISO-Frontend#2303): switched on and today within the optional range.
+          + "AND NOT (c.is_absent = 1"
+          + " AND (c.absence_start IS NULL OR c.absence_start <= CURRENT_DATE)"
+          + " AND (c.absence_end IS NULL OR c.absence_end >= CURRENT_DATE)) "
+          + "AND c.managed_paused = FALSE "
           + "AND (c.deletion_lifecycle_state IS NULL OR c.deletion_lifecycle_state = 'ACTIVE')";
 
   interface GroupCountProjection {
