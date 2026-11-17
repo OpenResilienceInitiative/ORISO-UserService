@@ -767,19 +767,6 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
     try {
       String browserCredential =
           MatrixBrowserCredential.derive(matrixConfig.getRegistrationSharedSecret(), matrixUserId);
-      var adminHeaders = getClientHttpHeaders(adminToken);
-      adminHeaders.setContentType(MediaType.APPLICATION_JSON);
-      var updateBody = new MatrixPasswordUpdateRequestDTO();
-      updateBody.setPassword(browserCredential);
-      updateBody.setLogoutDevices(false);
-      var updateUri =
-          MatrixUrlBuilder.buildUrl(
-              matrixConfig, ENDPOINT_UPDATE_USER_ADMIN, java.util.Map.of("userId", matrixUserId));
-      restTemplate.exchange(
-          updateUri,
-          org.springframework.http.HttpMethod.PUT,
-          new HttpEntity<>(updateBody, adminHeaders),
-          java.util.Map.class);
 
       var loginHeaders = new HttpHeaders();
       loginHeaders.setContentType(MediaType.APPLICATION_JSON);
@@ -789,31 +776,31 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
       loginBody.setPassword(browserCredential);
       loginBody.setDeviceId(deviceId);
       loginBody.setInitialDeviceDisplayName("ORISO Web");
+      var loginRequest = new HttpEntity<>(loginBody, loginHeaders);
 
+      // The credential is derived and never changes, so once set it simply works. Writing it is a
+      // bcrypt hash on Synapse (0.75-2.9 s on Dev, ORISO-Frontend#2272): set it only when Synapse
+      // refuses it, i.e. on a user's first browser login or after the password changed elsewhere.
+      java.util.Map<?, ?> loginResponse;
       try {
-        var response =
-            restTemplate.postForEntity(
-                matrixConfig.getApiUrl(ENDPOINT_LOGIN),
-                new HttpEntity<>(loginBody, loginHeaders),
-                java.util.Map.class);
-        if (response.getBody() == null
-            || response.getBody().get("access_token") == null
-            || response.getBody().get("device_id") == null) {
-          return null;
-        }
-
-        @SuppressWarnings("unchecked")
-        var responseBody =
-            new java.util.HashMap<>((java.util.Map<String, Object>) response.getBody());
-        responseBody.put("interactive_auth_password", browserCredential);
-        return responseBody;
+        loginResponse = postBrowserLogin(loginRequest);
       } catch (HttpClientErrorException ex) {
-        if (ex.getStatusCode() != HttpStatus.TOO_MANY_REQUESTS) {
+        if (ex.getStatusCode() != HttpStatus.FORBIDDEN) {
           throw ex;
         }
-        throw new MatrixBrowserLoginRateLimitedException(
-            browserLoginRetryAfterSeconds(ex, nowSupplier.getAsLong()));
+        setBrowserCredential(adminToken, matrixUserId, browserCredential);
+        loginResponse = postBrowserLogin(loginRequest);
       }
+      if (loginResponse == null
+          || loginResponse.get("access_token") == null
+          || loginResponse.get("device_id") == null) {
+        return null;
+      }
+
+      @SuppressWarnings("unchecked")
+      var responseBody = new java.util.HashMap<>((java.util.Map<String, Object>) loginResponse);
+      responseBody.put("interactive_auth_password", browserCredential);
+      return responseBody;
     } catch (MatrixBrowserLoginRateLimitedException ex) {
       log.warn(
           "Matrix browser device login was rate limited for user {}",
@@ -831,6 +818,37 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
     } finally {
       browserLoginLock.unlock();
     }
+  }
+
+  private java.util.Map<?, ?> postBrowserLogin(HttpEntity<MatrixLoginRequestDTO> loginRequest) {
+    try {
+      return restTemplate
+          .postForEntity(matrixConfig.getApiUrl(ENDPOINT_LOGIN), loginRequest, java.util.Map.class)
+          .getBody();
+    } catch (HttpClientErrorException ex) {
+      if (ex.getStatusCode() != HttpStatus.TOO_MANY_REQUESTS) {
+        throw ex;
+      }
+      throw new MatrixBrowserLoginRateLimitedException(
+          browserLoginRetryAfterSeconds(ex, nowSupplier.getAsLong()));
+    }
+  }
+
+  private void setBrowserCredential(
+      String adminToken, String matrixUserId, String browserCredential) {
+    var adminHeaders = getClientHttpHeaders(adminToken);
+    adminHeaders.setContentType(MediaType.APPLICATION_JSON);
+    var updateBody = new MatrixPasswordUpdateRequestDTO();
+    updateBody.setPassword(browserCredential);
+    updateBody.setLogoutDevices(false);
+    var updateUri =
+        MatrixUrlBuilder.buildUrl(
+            matrixConfig, ENDPOINT_UPDATE_USER_ADMIN, java.util.Map.of("userId", matrixUserId));
+    restTemplate.exchange(
+        updateUri,
+        org.springframework.http.HttpMethod.PUT,
+        new HttpEntity<>(updateBody, adminHeaders),
+        java.util.Map.class);
   }
 
   private static String browserLoginErrorCode(HttpStatusCodeException error) {

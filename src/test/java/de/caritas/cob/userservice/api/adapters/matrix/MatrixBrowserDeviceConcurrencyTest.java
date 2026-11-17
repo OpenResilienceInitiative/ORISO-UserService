@@ -65,6 +65,34 @@ class MatrixBrowserDeviceConcurrencyTest {
     }
   }
 
+  @Test
+  void aLaterLoginReusesTheIssuedCredentialWithoutRewritingThePassword() throws Exception {
+    // Each password write is a bcrypt hash on Synapse (0.75-2.9 s on Dev, ORISO-Frontend#2272).
+    // The credential is derived and never changes, so only the first login has to set it.
+    try (var synapse = new StatefulSynapse()) {
+      assertThat(synapse.newService().loginBrowserDevice(ALICE, "DEVICE_A")).isNotNull();
+      assertThat(synapse.passwordUpdateRequests.get())
+          .as("the first login sets the credential once")
+          .isEqualTo(1);
+
+      assertThat(synapse.newService().loginBrowserDevice(ALICE, "DEVICE_B")).isNotNull();
+      assertThat(synapse.passwordUpdateRequests.get())
+          .as("a later login, even on another instance, does not rewrite it")
+          .isEqualTo(1);
+    }
+  }
+
+  @Test
+  void aChangedAccountPasswordIsRepairedOnTheNextLogin() throws Exception {
+    try (var synapse = new StatefulSynapse()) {
+      assertThat(synapse.newService().loginBrowserDevice(ALICE, "DEVICE_A")).isNotNull();
+      synapse.passwords.put(ALICE, "changed-elsewhere");
+
+      assertThat(synapse.newService().loginBrowserDevice(ALICE, "DEVICE_B")).isNotNull();
+      assertThat(synapse.passwordUpdateRequests.get()).isEqualTo(2);
+    }
+  }
+
   @ParameterizedTest
   @NullAndEmptySource
   @ValueSource(strings = {"   "})
