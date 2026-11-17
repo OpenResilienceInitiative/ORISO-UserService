@@ -91,6 +91,31 @@ class GroupInviteRegistrationTest {
         .containsExactly(GuestAccountMode.PERMANENT);
   }
 
+  @Test
+  void theInvitationNamesTheModeTheGuestJoinsUnder() {
+    group.setGuestAccountMode(GuestAccountMode.GUEST_CHOOSES);
+
+    var invitation = registration.resolveInvitation(invite(true)).orElseThrow();
+
+    assertThat(invitation.group()).isSameAs(group);
+    assertThat(invitation.mode()).isEqualTo(GuestAccountMode.GUEST_CHOOSES);
+  }
+
+  @Test
+  void theCircleFollowsTheCapOfTheTraegerItRegistersIn() {
+    var capping = mock(GuestAccountModePolicy.class);
+    when(capping.cap(5L, AGENCY, InviteLinkChatType.CHAT, GuestAccountMode.GUEST_CHOOSES))
+        .thenReturn(GuestAccountMode.PERMANENT);
+    var inTraeger = new GroupInviteRegistration(chatAgencies, mock(ChatService.class), capping);
+    de.caritas.cob.userservice.api.tenant.TenantContext.setCurrentTenant(5L);
+    try {
+      assertThatThrownBy(() -> inTraeger.resolveInvitation(invite(true)))
+          .isInstanceOf(BadRequestException.class);
+    } finally {
+      de.caritas.cob.userservice.api.tenant.TenantContext.clear();
+    }
+  }
+
   private static UserDTO invite(boolean temporary) {
     var dto = new UserDTO();
     dto.setGroupChatId(GROUP);

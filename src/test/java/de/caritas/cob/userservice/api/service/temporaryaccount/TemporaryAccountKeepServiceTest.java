@@ -71,6 +71,51 @@ class TemporaryAccountKeepServiceTest {
   }
 
   @Test
+  void theModeTheGuestEnteredUnderDecides_NotALaterSwitchOfTheLink() {
+    guest.setGuestAccountModeAtEntry(GuestAccountMode.GUEST_CHOOSES);
+    // the counsellor switched the link to "delete after the session" after this guest entered
+    link.applyGuestAccountMode(GuestAccountMode.TEMPORARY);
+
+    service.keep(USER_ID, PASSWORD);
+
+    assertThat(guest.isTemporaryAccount()).isFalse();
+  }
+
+  @Test
+  void aGuestWhoEnteredUnderTemporaryMayNotKeep_EvenWhenTheLinkLetsGuestsChooseNow() {
+    guest.setGuestAccountModeAtEntry(GuestAccountMode.TEMPORARY);
+    link.applyGuestAccountMode(GuestAccountMode.GUEST_CHOOSES);
+
+    assertThatThrownBy(() -> service.keep(USER_ID, PASSWORD))
+        .isInstanceOf(ForbiddenException.class);
+    verify(identities, never()).changePassword(anyString(), anyString());
+  }
+
+  @Test
+  void aStoredEntryModeNeedsNoLink() {
+    guest.setGuestAccountModeAtEntry(GuestAccountMode.GUEST_CHOOSES);
+    when(links.findById(9L)).thenReturn(Optional.empty());
+
+    service.keep(USER_ID, PASSWORD);
+
+    assertThat(guest.isTemporaryAccount()).isFalse();
+  }
+
+  @Test
+  void aGesprächskreisGuestKeepsTheRightToChoose_WhenTheCircleIsSwitchedToTemporaryLater() {
+    guest.setTemporaryAccountSnapshot(null);
+    guest.setGuestAccountModeAtEntry(GuestAccountMode.GUEST_CHOOSES);
+    var circle = circle(GuestAccountMode.TEMPORARY);
+    when(userChats.findByUser(guest))
+        .thenReturn(List.of(UserChat.builder().user(guest).chat(circle).build()));
+
+    service.keep(USER_ID, PASSWORD);
+
+    assertThat(guest.isTemporaryAccount()).isFalse();
+  }
+
+  // Accounts created before the entry mode was stored are judged by their link or circle.
+  @Test
   void aLinkThatOnlyCreatesTemporaryAccountsRefusesKeeping() {
     link.applyGuestAccountMode(GuestAccountMode.TEMPORARY);
 

@@ -24,9 +24,11 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * "Konto behalten" (#1662): a temporary guest turns the account into a permanent one with a
  * password only, at entry or later until the account is deleted. Allowed only when the guest could
- * have chosen a permanent account in the first place: the direct link or call link the account came
- * through, or the Gesprächskreis it joined, lets guests choose ({@link
- * GuestAccountMode#GUEST_CHOOSES}).
+ * have chosen a permanent account in the first place: the guest entered under {@link
+ * GuestAccountMode#GUEST_CHOOSES} (stored on the account at registration; a Gesprächskreis "join
+ * without account" stores the circle's mode, GUEST_CHOOSES by default). A later switch of the link
+ * or circle only affects new guests. Accounts created before the mode was stored are judged by
+ * their link or circle as it is now.
  *
  * <p>The user row is locked for the whole step. The two deletion jobs lock the same row and
  * re-check the account before they delete it, so whichever comes first wins: a started deletion
@@ -81,10 +83,14 @@ public class TemporaryAccountKeepService {
   }
 
   /**
-   * A direct-link or call-link account knows its link through the snapshot; a Gesprächskreis guest
+   * The stored entry mode decides. Without one (an account from before #1662 stored it): a
+   * direct-link or call-link account knows its link through the snapshot; a Gesprächskreis guest
    * has no snapshot and is a member of the circle. A deleted link proves nothing: refused.
    */
   private boolean guestMayChoose(User user) {
+    if (user.getGuestAccountModeAtEntry() != null) {
+      return user.getGuestAccountModeAtEntry() == GuestAccountMode.GUEST_CHOOSES;
+    }
     var snapshot = user.getTemporaryAccountSnapshot();
     if (snapshot != null && snapshot.getInviteLinkId() != null) {
       return links

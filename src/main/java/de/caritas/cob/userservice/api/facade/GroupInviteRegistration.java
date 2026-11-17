@@ -34,8 +34,19 @@ public class GroupInviteRegistration {
   private final @NonNull ChatService chatService;
   private final @NonNull GuestAccountModePolicy guestAccountModes;
 
+  /**
+   * The circle a registration was invited to and the guest account mode it admits the guest under
+   * (#1662): the circle's mode as capped now.
+   */
+  public record Invitation(Chat group, GuestAccountMode mode) {}
+
   /** The group the registration was invited to, or empty for an ordinary registration. */
   public Optional<Chat> resolveInvitedGroup(UserDTO userDTO) {
+    return resolveInvitation(userDTO).map(Invitation::group);
+  }
+
+  /** {@link #resolveInvitedGroup} with the mode the registration joins under. */
+  public Optional<Invitation> resolveInvitation(UserDTO userDTO) {
     if (userDTO.getGroupChatId() == null) {
       return Optional.empty();
     }
@@ -64,17 +75,21 @@ public class GroupInviteRegistration {
     if (!GroupChatInviteTokens.matches(group.getInviteToken(), userDTO.getGroupChatInviteToken())) {
       throw new CustomValidationHttpStatusException(GROUP_INVITE_INVALID, HttpStatus.FORBIDDEN);
     }
-    // #1662: the circle's guest account mode, capped by what the platform allows now.
+    // #1662: the circle's guest account mode, capped by what the platform and the Träger the
+    // registration runs in allow now.
     var mode =
         guestAccountModes.cap(
-            null, userDTO.getAgencyId(), InviteLinkChatType.CHAT, group.getGuestAccountMode());
+            de.caritas.cob.userservice.api.tenant.TenantContext.getCurrentTenant(),
+            userDTO.getAgencyId(),
+            InviteLinkChatType.CHAT,
+            group.getGuestAccountMode());
     if (!mode.admits(userDTO.isTemporary())) {
       throw new BadRequestException(
           mode == GuestAccountMode.TEMPORARY
               ? "This group invite creates temporary accounts."
               : "This group invite does not create temporary accounts.");
     }
-    return Optional.of(group);
+    return Optional.of(new Invitation(group, mode));
   }
 
   public void join(Chat group, User user) {

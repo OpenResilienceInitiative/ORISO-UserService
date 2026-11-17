@@ -242,7 +242,11 @@ public class CreateUserFacadeTest {
     if (groupSignup) {
       var group = new Chat();
       group.setConversationType(ConversationType.SELF_HELP);
-      when(groupInviteRegistration.resolveInvitedGroup(dto)).thenReturn(Optional.of(group));
+      when(groupInviteRegistration.resolveInvitation(dto))
+          .thenReturn(
+              Optional.of(
+                  new GroupInviteRegistration.Invitation(
+                      group, de.caritas.cob.userservice.api.model.GuestAccountMode.GUEST_CHOOSES)));
     }
     TenantContext.setCurrentTenant(42L);
     try {
@@ -318,7 +322,11 @@ public class CreateUserFacadeTest {
     if (aliasCase == AliasCase.GROUP_INVITE) {
       var group = new Chat();
       group.setConversationType(ConversationType.SELF_HELP);
-      when(groupInviteRegistration.resolveInvitedGroup(dto)).thenReturn(Optional.of(group));
+      when(groupInviteRegistration.resolveInvitation(dto))
+          .thenReturn(
+              Optional.of(
+                  new GroupInviteRegistration.Invitation(
+                      group, de.caritas.cob.userservice.api.model.GuestAccountMode.GUEST_CHOOSES)));
     }
     if (aliasCase == AliasCase.DIRECT_LINK) {
       var link =
@@ -327,7 +335,11 @@ public class CreateUserFacadeTest {
               .chatType("CHAT")
               .temporaryAccount(false)
               .build();
-      when(temporaryAccountLinkResolver.resolve(dto)).thenReturn(Optional.of(link));
+      when(temporaryAccountLinkResolver.resolveEntry(dto))
+          .thenReturn(
+              Optional.of(
+                  new de.caritas.cob.userservice.api.service.agencyinvitelink
+                      .TemporaryAccountLinkResolver.Entry(link, link.effectiveGuestAccountMode())));
     }
     var reachedIdentity = new IllegalStateException("identity creation reached");
     when(identityClient.createUser(dto)).thenThrow(reachedIdentity);
@@ -402,7 +414,11 @@ public class CreateUserFacadeTest {
             .build();
     var group = new Chat();
     group.setConversationType(ConversationType.SELF_HELP);
-    when(groupInviteRegistration.resolveInvitedGroup(dto)).thenReturn(Optional.of(group));
+    when(groupInviteRegistration.resolveInvitation(dto))
+        .thenReturn(
+            Optional.of(
+                new GroupInviteRegistration.Invitation(
+                    group, de.caritas.cob.userservice.api.model.GuestAccountMode.GUEST_CHOOSES)));
     when(identityClient.createUser(dto))
         .thenAnswer(
             call -> {
@@ -442,7 +458,11 @@ public class CreateUserFacadeTest {
             .chatType("CHAT")
             .temporaryAccount(false)
             .build();
-    when(temporaryAccountLinkResolver.resolve(dto)).thenReturn(Optional.of(link));
+    when(temporaryAccountLinkResolver.resolveEntry(dto))
+        .thenReturn(
+            Optional.of(
+                new de.caritas.cob.userservice.api.service.agencyinvitelink
+                    .TemporaryAccountLinkResolver.Entry(link, link.effectiveGuestAccountMode())));
     var names = mock(de.caritas.cob.userservice.api.service.SessionDataService.class);
     org.springframework.test.util.ReflectionTestUtils.setField(
         createUserFacade, "sessionDataService", names);
@@ -488,7 +508,11 @@ public class CreateUserFacadeTest {
             .chatType("VIDEO")
             .temporaryAccount(false)
             .build();
-    when(temporaryAccountLinkResolver.resolve(dto)).thenReturn(Optional.of(link));
+    when(temporaryAccountLinkResolver.resolveEntry(dto))
+        .thenReturn(
+            Optional.of(
+                new de.caritas.cob.userservice.api.service.agencyinvitelink
+                    .TemporaryAccountLinkResolver.Entry(link, link.effectiveGuestAccountMode())));
     when(tenantService.getRestrictedTenantDataFresh(42L))
         .thenReturn(
             new RestrictedTenantDTO()
@@ -873,7 +897,11 @@ public class CreateUserFacadeTest {
             .startDate(LocalDateTime.now())
             .conversationType(ConversationType.SELF_HELP)
             .build();
-    when(groupInviteRegistration.resolveInvitedGroup(any())).thenReturn(Optional.of(group));
+    when(groupInviteRegistration.resolveInvitation(any()))
+        .thenReturn(
+            Optional.of(
+                new GroupInviteRegistration.Invitation(
+                    group, de.caritas.cob.userservice.api.model.GuestAccountMode.GUEST_CHOOSES)));
     // The membership row may exist although the call failed, so compensation must still leave.
     RuntimeException joinFailure = new RuntimeException("membership write failed");
     doThrow(joinFailure).when(groupInviteRegistration).join(group, user);
@@ -910,7 +938,11 @@ public class CreateUserFacadeTest {
             .startDate(LocalDateTime.now())
             .conversationType(ConversationType.SELF_HELP)
             .build();
-    when(groupInviteRegistration.resolveInvitedGroup(any())).thenReturn(Optional.of(group));
+    when(groupInviteRegistration.resolveInvitation(any()))
+        .thenReturn(
+            Optional.of(
+                new GroupInviteRegistration.Invitation(
+                    group, de.caritas.cob.userservice.api.model.GuestAccountMode.GUEST_CHOOSES)));
     // Without it the event would fail to build and be swallowed, hiding a regression.
 
     Long sessionId =
@@ -957,7 +989,11 @@ public class CreateUserFacadeTest {
             .startDate(LocalDateTime.now())
             .conversationType(ConversationType.SELF_HELP)
             .build();
-    when(groupInviteRegistration.resolveInvitedGroup(any())).thenReturn(Optional.of(group));
+    when(groupInviteRegistration.resolveInvitation(any()))
+        .thenReturn(
+            Optional.of(
+                new GroupInviteRegistration.Invitation(
+                    group, de.caritas.cob.userservice.api.model.GuestAccountMode.GUEST_CHOOSES)));
 
     USER_DTO_SUCHT.setTemporary(true);
     try {
@@ -967,6 +1003,10 @@ public class CreateUserFacadeTest {
     }
 
     assertThat(user.isTemporaryAccount(), is(true));
+    // #1662: "join without account" lets the guest keep the account later
+    assertThat(
+        user.getGuestAccountModeAtEntry(),
+        is(de.caritas.cob.userservice.api.model.GuestAccountMode.GUEST_CHOOSES));
     verify(groupInviteRegistration).join(group, user);
   }
 
@@ -987,7 +1027,11 @@ public class CreateUserFacadeTest {
             .chatType("AUDIO")
             .temporaryAccount(true)
             .build();
-    when(temporaryAccountLinkResolver.resolve(any())).thenReturn(Optional.of(link));
+    when(temporaryAccountLinkResolver.resolveEntry(any()))
+        .thenReturn(
+            Optional.of(
+                new de.caritas.cob.userservice.api.service.agencyinvitelink
+                    .TemporaryAccountLinkResolver.Entry(link, link.effectiveGuestAccountMode())));
     var snapshot =
         de.caritas.cob.userservice.api.model.TemporaryAccountSnapshot.builder()
             .medium(
@@ -1012,6 +1056,8 @@ public class CreateUserFacadeTest {
     assertThat(sessionId, nullValue());
     assertThat(user.isTemporaryAccount(), is(true));
     assertThat(user.getTemporaryAccountSnapshot(), is(snapshot));
+    // #1662: the mode the guest entered under, as the link resolver capped it
+    assertThat(user.getGuestAccountModeAtEntry(), is(link.effectiveGuestAccountMode()));
     org.mockito.Mockito.verifyNoInteractions(createNewSessionFacade);
   }
 
@@ -1030,7 +1076,11 @@ public class CreateUserFacadeTest {
             .chatType("CHAT")
             .temporaryAccount(false)
             .build();
-    when(temporaryAccountLinkResolver.resolve(any())).thenReturn(Optional.of(link));
+    when(temporaryAccountLinkResolver.resolveEntry(any()))
+        .thenReturn(
+            Optional.of(
+                new de.caritas.cob.userservice.api.service.agencyinvitelink
+                    .TemporaryAccountLinkResolver.Entry(link, link.effectiveGuestAccountMode())));
 
     Long sessionId =
         createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT);
@@ -1038,6 +1088,7 @@ public class CreateUserFacadeTest {
     assertThat(sessionId, nullValue());
     assertThat(user.isTemporaryAccount(), is(false));
     assertThat(user.getTemporaryAccountSnapshot(), nullValue());
+    assertThat(user.getGuestAccountModeAtEntry(), nullValue());
     org.mockito.Mockito.verifyNoInteractions(createNewSessionFacade, temporaryAccountSettings);
   }
 

@@ -212,6 +212,27 @@ class TemporaryAccountLinkResolverTest {
   }
 
   @Test
+  void resolveEntry_Should_NameTheCappedModeTheGuestEntersUnder() {
+    link.applyGuestAccountMode(GuestAccountMode.PERMANENT);
+    when(guestAccountModes.cap(5L, 99L, InviteLinkChatType.VIDEO, GuestAccountMode.PERMANENT))
+        .thenReturn(GuestAccountMode.GUEST_CHOOSES);
+
+    var entry = resolver.resolveEntry(registration("tok", true)).orElseThrow();
+
+    assertThat(entry.link()).isSameAs(link);
+    assertThat(entry.mode()).isEqualTo(GuestAccountMode.GUEST_CHOOSES);
+  }
+
+  @Test
+  void resolveEntry_Should_NameTheCallLinksEffectiveMode() {
+    var registration = callRegistration(true);
+    link.applyGuestAccountMode(GuestAccountMode.GUEST_CHOOSES);
+
+    assertThat(resolver.resolveEntry(registration).orElseThrow().mode())
+        .isEqualTo(GuestAccountMode.GUEST_CHOOSES);
+  }
+
+  @Test
   void resolve_Should_RequireTheTemporaryFlag_When_TheInvitationIsForGuestsOnly() {
     link.setAccessMode(DirectInvitationAccessMode.GUESTS_ONLY);
     assertThatThrownBy(() -> resolver.resolve(registration("tok", false)))

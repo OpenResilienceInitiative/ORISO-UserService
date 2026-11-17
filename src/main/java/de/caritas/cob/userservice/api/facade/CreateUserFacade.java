@@ -143,7 +143,12 @@ public class CreateUserFacade {
       userVerifier.checkIfUsernameIsAvailable(userDTO);
       agencyVerifier.checkIfConsultingTypeMatchesToAgency(userDTO);
       var consultingTypeSettings = obtainConsultingTypeSettings(userDTO);
-      var directLink = temporaryAccountLinkResolver.resolve(userDTO);
+      var linkEntry = temporaryAccountLinkResolver.resolveEntry(userDTO);
+      var directLink =
+          linkEntry.map(
+              de.caritas.cob.userservice.api.service.agencyinvitelink.TemporaryAccountLinkResolver
+                      .Entry
+                  ::link);
       boolean callGuest =
           directLink
               .filter(link -> InviteLinkKind.CALL.name().equals(link.getLinkKind()))
@@ -153,7 +158,8 @@ public class CreateUserFacade {
           || !isTrue(consultingTypeSettings.getGroupChat().getIsGroupChat())) {
         dpaPolicy.requireForAgency(userDTO.getAgencyId());
       }
-      Optional<Chat> invitedGroup = groupInviteRegistration.resolveInvitedGroup(userDTO);
+      var invitation = groupInviteRegistration.resolveInvitation(userDTO);
+      Optional<Chat> invitedGroup = invitation.map(GroupInviteRegistration.Invitation::group);
       var registrationType =
           invitedGroup.isPresent()
               ? ConversationType.SELF_HELP
@@ -208,6 +214,17 @@ public class CreateUserFacade {
       User user = updateIdentityAndCreateAccount(identityUserId, userDTO, UserRole.USER, snapshot);
       if (user != null) {
         user.setTemporaryAccount(userDTO.isTemporary());
+        if (userDTO.isTemporary()) {
+          // #1662: "Konto behalten" is judged by the mode the guest entered under.
+          user.setGuestAccountModeAtEntry(
+              linkEntry
+                  .map(
+                      de.caritas.cob.userservice.api.service.agencyinvitelink
+                              .TemporaryAccountLinkResolver.Entry
+                          ::mode)
+                  .or(() -> invitation.map(GroupInviteRegistration.Invitation::mode))
+                  .orElse(null));
+        }
         // ADR-029 §4: the account keeps the lifetimes valid at its creation (#1476).
         if (directLink.isPresent() && userDTO.isTemporary()) {
           var link = directLink.get();

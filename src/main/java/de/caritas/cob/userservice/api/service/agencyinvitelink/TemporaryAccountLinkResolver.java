@@ -30,8 +30,20 @@ public class TemporaryAccountLinkResolver {
   private final @NonNull CallShareLinkService callShareLinks;
   private final @NonNull GuestAccountModePolicy guestAccountModes;
 
+  /**
+   * The link a registration came through and the guest account mode it admits the guest under
+   * (#1662): the link's mode as capped now. A temporary account stores it as the mode it entered
+   * under.
+   */
+  public record Entry(AgencyInviteLink link, GuestAccountMode mode) {}
+
   /** The direct link the registration names, or empty for every other registration. */
   public Optional<AgencyInviteLink> resolve(UserDTO userDTO) {
+    return resolveEntry(userDTO).map(Entry::link);
+  }
+
+  /** {@link #resolve} with the mode the registration enters under. */
+  public Optional<Entry> resolveEntry(UserDTO userDTO) {
     if (isBlank(userDTO.getDirectLinkToken())) {
       return Optional.empty();
     }
@@ -49,8 +61,7 @@ public class TemporaryAccountLinkResolver {
                         ? new DirectLinkExpiredException()
                         : new ForbiddenException("The direct link is not valid"));
     if (InviteLinkKind.CALL.name().equals(link.getLinkKind())) {
-      requireCallRegistration(link, userDTO);
-      return Optional.of(link);
+      return Optional.of(new Entry(link, requireCallRegistration(link, userDTO)));
     }
     if (!InviteLinkKind.COUNSELLOR.name().equals(link.getLinkKind())
         || !InviteLinkChatType.isDirectMedium(link.getChatType())) {
@@ -65,13 +76,13 @@ public class TemporaryAccountLinkResolver {
       throw new BadRequestException("Invite link expired");
     }
     // #1662: the link's mode, capped by what the platform and the Träger allow now.
-    requireAdmittedAccountType(
-        userDTO,
+    var mode =
         guestAccountModes.cap(
             link.getTenantId(),
             link.getAgencyId(),
             InviteLinkChatType.valueOf(link.getChatType()),
-            link.effectiveGuestAccountMode()));
+            link.effectiveGuestAccountMode());
+    requireAdmittedAccountType(userDTO, mode);
     var registrationTenant = TenantContext.getCurrentTenant();
     if (registrationTenant != null && !Objects.equals(registrationTenant, link.getTenantId())) {
       throw new ForbiddenException("Invite link belongs to another tenant");
@@ -81,10 +92,10 @@ public class TemporaryAccountLinkResolver {
       throw new DirectLinkInactiveException();
     }
     DirectLinkOwner.requireStillServing(consultantRepository, link);
-    return Optional.of(link);
+    return Optional.of(new Entry(link, mode));
   }
 
-  private void requireCallRegistration(AgencyInviteLink link, UserDTO userDTO) {
+  private GuestAccountMode requireCallRegistration(AgencyInviteLink link, UserDTO userDTO) {
     if (link.getTenantId() == null
         || !Objects.equals(TenantContext.getCurrentTenant(), link.getTenantId())
         || link.getAgencyId() == null
@@ -99,7 +110,9 @@ public class TemporaryAccountLinkResolver {
     }
     callShareLinks.requireUsable(link);
     callShareLinks.requireDirectInviteAllowed(link);
-    requireAdmittedAccountType(userDTO, callShareLinks.effectiveGuestAccountMode(link));
+    var mode = callShareLinks.effectiveGuestAccountMode(link);
+    requireAdmittedAccountType(userDTO, mode);
+    return mode;
   }
 
   /**
