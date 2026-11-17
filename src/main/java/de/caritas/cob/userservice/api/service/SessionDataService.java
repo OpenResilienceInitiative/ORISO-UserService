@@ -187,6 +187,7 @@ public class SessionDataService {
                 value ->
                     SessionDataKeyRegistration.DISPLAY_NAME.getValue().equals(value.getKey())
                         && alias.equals(value.getValue()))) return;
+    AskerIdentityPolicy.requireDisplayNameChangeAllowed(session.getUser());
     validateAliasValue(
         alias, aliasTenant(session), AskerNotificationChannelPolicy.conversationType(session));
   }

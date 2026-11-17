@@ -606,4 +606,49 @@ class AccountManagerTest {
             captor.capture());
     assertThat(captor.getValue()).doesNotContainKey("c-1");
   }
+
+  // #1662: a temporary account cannot opt into e-mail notifications; opting out stays possible.
+
+  @Test
+  void aTemporaryAccountCannotTurnOnEmailNotifications() {
+    var guest = new User();
+    guest.setUserId("guest-id");
+    guest.setTemporaryAccount(true);
+    Mockito.when(userRepository.findByUserIdAndDeleteDateIsNull("guest-id"))
+        .thenReturn(Optional.of(guest));
+    var patch =
+        Map.<String, Object>of(
+            "id",
+            "guest-id",
+            "emailNotifications",
+            new de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO()
+                .emailNotificationsEnabled(true));
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> accountManager.patchUser(patch))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    Mockito.verify(userRepository, Mockito.never()).save(Mockito.any());
+  }
+
+  @Test
+  void aTemporaryAccountMayTurnEmailNotificationsOff() {
+    var guest = new User();
+    guest.setUserId("guest-id");
+    guest.setTemporaryAccount(true);
+    Mockito.when(userRepository.findByUserIdAndDeleteDateIsNull("guest-id"))
+        .thenReturn(Optional.of(guest));
+    Mockito.when(userServiceMapper.adviceSeekerOf(Mockito.eq(guest), Mockito.anyMap()))
+        .thenReturn(guest);
+    Mockito.when(userRepository.save(guest)).thenReturn(guest);
+    Mockito.when(userServiceMapper.mapOf(guest)).thenReturn(Map.of("id", "guest-id"));
+    var patch =
+        Map.<String, Object>of(
+            "id",
+            "guest-id",
+            "emailNotifications",
+            new de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO()
+                .emailNotificationsEnabled(false));
+
+    assertThat(accountManager.patchUser(patch)).isPresent();
+  }
 }

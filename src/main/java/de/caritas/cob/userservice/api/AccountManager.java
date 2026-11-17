@@ -5,6 +5,7 @@ import static java.util.Objects.isNull;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO;
 import de.caritas.cob.userservice.api.admin.service.search.AccountSearch;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -24,6 +25,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.matrix.ConsultantRenameSystemMessageService;
+import de.caritas.cob.userservice.api.service.notification.AskerNotificationChannelPolicy;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -238,6 +240,10 @@ public class AccountManager implements AccountManaging {
   }
 
   private Map<String, Object> patchAdviceSeeker(User adviceSeeker, Map<String, Object> patchMap) {
+    if (patchMap.get("emailNotifications") instanceof EmailNotificationsDTO notifications
+        && Boolean.TRUE.equals(notifications.getEmailNotificationsEnabled())) {
+      AskerNotificationChannelPolicy.requireNotificationOptInAllowed(adviceSeeker);
+    }
     var patchedAdviceSeeker = userServiceMapper.adviceSeekerOf(adviceSeeker, patchMap);
     var savedAdviceSeeker = userRepository.save(patchedAdviceSeeker);
 

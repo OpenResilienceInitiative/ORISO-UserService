@@ -551,6 +551,33 @@ public class UserAccountServiceTest {
   }
 
   @Test
+  void aTemporaryAccountCannotRegisterADeviceForPushNotifications() {
+    var guest = new User();
+    guest.setUserId(USER_ID);
+    guest.setTemporaryAccount(true);
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(userService.getUser(USER_ID)).thenReturn(Optional.of(guest));
+
+    assertThrows(ForbiddenException.class, () -> accountProvider.updateUserMobileToken("token"));
+    assertThrows(ForbiddenException.class, () -> accountProvider.addMobileAppToken("token"));
+    verify(userService, never()).saveUser(any());
+    verify(userService, never()).addMobileAppToken(any(), any());
+  }
+
+  @Test
+  void aTemporaryAccountMayStillClearItsDeviceToken() {
+    var guest = new User();
+    guest.setUserId(USER_ID);
+    guest.setTemporaryAccount(true);
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(userService.getUser(USER_ID)).thenReturn(Optional.of(guest));
+
+    accountProvider.updateUserMobileToken("");
+
+    verify(userService).saveUser(guest);
+  }
+
+  @Test
   public void ensureCurrentAccountIsWritable_Should_NotThrow_When_ConsultantIsActive() {
     when(userService.getUser(USER_ID)).thenReturn(Optional.empty());
     when(userService.findDeletedById(USER_ID)).thenReturn(Optional.empty());
