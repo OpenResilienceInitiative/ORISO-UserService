@@ -116,6 +116,10 @@ class ChatServiceTest {
 
   @Mock private GroupChatParticipantRepository groupChatParticipantRepository;
 
+  @Mock
+  private de.caritas.cob.userservice.api.port.out.ChatOccurrenceExceptionRepository
+      chatOccurrenceExceptionRepository;
+
   @Mock private GroupChatParticipantReconciliationService participantReconciliationService;
 
   @Mock private GroupAppointmentSeriesEventProducer appointmentEvents;
@@ -975,5 +979,29 @@ class ChatServiceTest {
     assertThat(
         chatService.getChatSessionsForConsultantByRoomIds(Set.of(MATRIX_ROOM_ID), CONSULTANT),
         hasSize(0));
+  }
+
+  /**
+   * ORISO-Admin#1523: a recurring group chat's moved or skipped dates hold a restricting foreign
+   * key on the chat; they go before it, as its participants do.
+   */
+  @Test
+  void deleteChatRecords_Should_RemoveOccurrenceExceptionsAndParticipants_BeforeTheChat() {
+    var chat = new Chat();
+    chat.setId(77L);
+    var exceptions =
+        java.util.List.of(
+            de.caritas.cob.userservice.api.model.ChatOccurrenceException.skip(
+                chat, java.time.LocalDateTime.of(2026, 11, 20, 10, 0)));
+    when(chatOccurrenceExceptionRepository.findBySeries_Id(77L)).thenReturn(exceptions);
+
+    chatService.deleteChatRecords(chat);
+
+    var order =
+        org.mockito.Mockito.inOrder(
+            chatOccurrenceExceptionRepository, groupChatParticipantRepository, chatRepository);
+    order.verify(chatOccurrenceExceptionRepository).deleteAll(exceptions);
+    order.verify(groupChatParticipantRepository).deleteBySeriesId(77L);
+    order.verify(chatRepository).delete(chat);
   }
 }

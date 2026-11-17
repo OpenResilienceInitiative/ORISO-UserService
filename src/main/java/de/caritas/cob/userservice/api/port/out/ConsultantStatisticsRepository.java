@@ -1,7 +1,10 @@
 package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.SessionAppointment;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.List;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.Repository;
 import org.springframework.data.repository.query.Param;
@@ -48,4 +51,41 @@ public interface ConsultantStatisticsRepository extends Repository<Session, Long
       @Param("tenantId") Long tenantId,
       @Param("fromDate") LocalDateTime fromDate,
       @Param("toDate") LocalDateTime toDate);
+
+  /** Number of appointments of one kind; {@code kind} is null on rows made before kinds existed. */
+  interface AppointmentKindCount {
+    SessionAppointment.Kind getKind();
+
+    long getTotal();
+  }
+
+  /**
+   * Scheduled (not cancelled) 1:1 appointments of the consultant's own sessions whose start lies in
+   * {@code [from, to)}, counted per kind (ORISO-Frontend#2299). Callers cap {@code to} at now to
+   * count only realised appointments.
+   */
+  @Query(
+      "SELECT a.kind AS kind, COUNT(a) AS total FROM SessionAppointment a JOIN a.session s "
+          + "WHERE s.consultant.id = :consultantId AND s.tenantId = :tenantId "
+          + "AND a.status = 'SCHEDULED' AND a.startTime >= :from AND a.startTime < :to "
+          + "GROUP BY a.kind")
+  List<AppointmentKindCount> countScheduledAppointmentsByKindStartingIn(
+      @Param("consultantId") String consultantId,
+      @Param("tenantId") Long tenantId,
+      @Param("from") Instant from,
+      @Param("to") Instant to);
+
+  /**
+   * Cancelled 1:1 appointments of the consultant's own sessions that would have started in the
+   * period.
+   */
+  @Query(
+      "SELECT COUNT(a) FROM SessionAppointment a JOIN a.session s "
+          + "WHERE s.consultant.id = :consultantId AND s.tenantId = :tenantId "
+          + "AND a.status = 'CANCELLED' AND a.startTime >= :from AND a.startTime < :to")
+  long countCancelledAppointmentsStartingIn(
+      @Param("consultantId") String consultantId,
+      @Param("tenantId") Long tenantId,
+      @Param("from") Instant from,
+      @Param("to") Instant to);
 }

@@ -235,7 +235,7 @@ public class AdminDashboardStatisticsService {
       CommunicationCounts communication) {}
 
   public DashboardStatistics buildDashboard() {
-    if (authenticatedUser.isPlatformAdmin()) {
+    if (authenticatedUser.isPlatformAdmin() || authenticatedUser.isPlatformStatisticsReader()) {
       return currentDashboard(DashboardScope.PLATFORM, PLATFORM_TENANT_ID);
     }
     if (authenticatedUser.isTenantSuperAdmin() || authenticatedUser.isSingleTenantAdmin()) {
