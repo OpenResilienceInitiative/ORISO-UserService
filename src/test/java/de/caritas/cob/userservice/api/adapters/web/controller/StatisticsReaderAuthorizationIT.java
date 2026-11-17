@@ -9,6 +9,9 @@ import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValu
 import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.USER_ADMIN;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -21,11 +24,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminResponseDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.StatisticsReaderUserService;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.service.statistics.AdminDashboardStatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsReaderSecondFactorGate;
 import de.caritas.cob.userservice.api.service.statistics.settings.StatisticsSettingsService;
 import de.caritas.cob.userservice.api.service.tutorial.TutorialStatisticsService;
 import jakarta.servlet.http.Cookie;
+import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -133,6 +138,19 @@ class StatisticsReaderAuthorizationIT {
   }
 
   @Test
+  void statisticsReaderWithoutActiveSecondFactorIsRefused() throws Exception {
+    doThrow(new ForbiddenException("2FA required"))
+        .when(secondFactorGate)
+        .requireActiveSecondFactor();
+
+    mvc.perform(get(DASHBOARD).with(statisticsReader(0))).andExpect(status().isForbidden());
+    mvc.perform(get(TUTORIALS).with(statisticsReader(0))).andExpect(status().isForbidden());
+
+    verify(secondFactorGate, times(2)).requireActiveSecondFactor();
+    verifyNoInteractions(adminDashboardStatisticsService, tutorialStatisticsService);
+  }
+
+  @Test
   void statisticsReaderLoadsItsOwnAccountData() throws Exception {
     mvc.perform(get("/users/data").with(statisticsReader(0))).andExpect(status().isOk());
 
@@ -193,11 +211,25 @@ class StatisticsReaderAuthorizationIT {
   }
 
   @Test
-  void searchRejectsOversizedPagesAndMalformedQueries() throws Exception {
+  void searchRejectsOversizedPages() throws Exception {
     mvc.perform(get(READERS + "/search").param("perPage", "1000").with(platformAdmin()))
         .andExpect(status().isBadRequest());
-    mvc.perform(get(READERS + "/search").param("query", "%zz").with(platformAdmin()))
-        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void searchUsesTheQueryAsSpringDecodedIt() throws Exception {
+    // %2B and %40 arrive as + and @; a second decode would turn the + into a space
+    // URI, not a template string: a template would encode the % again
+    mvc.perform(
+            get(URI.create(READERS + "/search?query=stats%2Breader%40example.org"))
+                .with(platformAdmin()))
+        .andExpect(status().isOk());
+    // a literal % is searched as typed instead of failing a second decode
+    mvc.perform(get(READERS + "/search").param("query", " 100%zz ").with(platformAdmin()))
+        .andExpect(status().isOk());
+
+    verify(statisticsReaderUserService).search(eq("stats+reader@example.org"), any());
+    verify(statisticsReaderUserService).search(eq("100%zz"), any());
   }
 
   @Test

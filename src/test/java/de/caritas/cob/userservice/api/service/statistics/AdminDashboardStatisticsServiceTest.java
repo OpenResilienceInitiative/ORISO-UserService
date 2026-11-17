@@ -765,8 +765,19 @@ class AdminDashboardStatisticsServiceTest {
 
   @Test
   void buildDashboard_Should_ThrowForbidden_When_StatisticsReaderIsNotOnThePlatformTenant() {
+    // a valid platform context must not stand in for the reader's own tenant
+    TenantContext.setCurrentTenant(0L);
     authenticatedUser.setRoles(Set.of(UserRole.STATISTICS_READER.getValue()));
     authenticatedUser.setTenantId(4L);
+
+    assertThatThrownBy(() -> service.buildDashboard()).isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void buildDashboard_Should_ThrowForbidden_When_StatisticsReaderHasNoTenant() {
+    TenantContext.setCurrentTenant(0L);
+    authenticatedUser.setRoles(Set.of(UserRole.STATISTICS_READER.getValue()));
+    authenticatedUser.setTenantId(null);
 
     assertThatThrownBy(() -> service.buildDashboard()).isInstanceOf(ForbiddenException.class);
   }

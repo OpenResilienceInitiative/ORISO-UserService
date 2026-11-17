@@ -2,13 +2,14 @@ package de.caritas.cob.userservice.api.service.statistics;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import java.util.Set;
@@ -21,6 +22,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 /** ORISO-UserService#1666: a statistics reader sees no numbers before 2FA is active. */
 @ExtendWith(MockitoExtension.class)
 class StatisticsReaderSecondFactorGateTest {
+
+  /** Keycloak stores usernames encoded; the gate must look up the reader's own account. */
+  private static final String ENCODED_USERNAME =
+      new UsernameTranscoder().encodeUsername("stats.reader");
 
   @Mock private IdentitySecondFactor identitySecondFactor;
 
@@ -37,16 +42,17 @@ class StatisticsReaderSecondFactorGateTest {
   @Test
   void readerWithActiveOtpPasses() {
     givenReader();
-    when(identitySecondFactor.getOtpCredential(anyString()))
+    when(identitySecondFactor.getOtpCredential(ENCODED_USERNAME))
         .thenReturn(new IdentityOtpCredential(true, null, null, null));
 
     assertThatCode(gate::requireActiveSecondFactor).doesNotThrowAnyException();
+    verify(identitySecondFactor).getOtpCredential(ENCODED_USERNAME);
   }
 
   @Test
   void readerWithoutOtpIsRefused() {
     givenReader();
-    when(identitySecondFactor.getOtpCredential(anyString()))
+    when(identitySecondFactor.getOtpCredential(ENCODED_USERNAME))
         .thenReturn(new IdentityOtpCredential(false, "secret", "qr", null));
 
     assertThatThrownBy(gate::requireActiveSecondFactor).isInstanceOf(ForbiddenException.class);
@@ -55,7 +61,7 @@ class StatisticsReaderSecondFactorGateTest {
   @Test
   void readerIsRefusedWhenTheOtpStateCannotBeRead() {
     givenReader();
-    when(identitySecondFactor.getOtpCredential(anyString()))
+    when(identitySecondFactor.getOtpCredential(ENCODED_USERNAME))
         .thenThrow(new IllegalStateException("keycloak down"));
 
     assertThatThrownBy(gate::requireActiveSecondFactor).isInstanceOf(ForbiddenException.class);
@@ -64,7 +70,7 @@ class StatisticsReaderSecondFactorGateTest {
   @Test
   void readerIsRefusedWhenNoOtpStateComesBack() {
     givenReader();
-    when(identitySecondFactor.getOtpCredential(anyString())).thenReturn(null);
+    when(identitySecondFactor.getOtpCredential(ENCODED_USERNAME)).thenReturn(null);
 
     assertThatThrownBy(gate::requireActiveSecondFactor).isInstanceOf(ForbiddenException.class);
   }

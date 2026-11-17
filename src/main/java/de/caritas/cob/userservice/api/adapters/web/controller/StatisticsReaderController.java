@@ -7,10 +7,10 @@ import de.caritas.cob.userservice.api.adapters.web.dto.PatchAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.AdminDtoMapper;
 import de.caritas.cob.userservice.api.admin.service.admin.StatisticsReaderUserService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.model.Admin;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.port.out.SearchSort;
 import jakarta.validation.Valid;
-import java.net.URLDecoder;
-import java.nio.charset.StandardCharsets;
 import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -62,22 +62,26 @@ public class StatisticsReaderController {
         || perPage > MAX_PAGE_SIZE) {
       throw new BadRequestException("Unsupported paging or sort parameters");
     }
-    String decodedInfix;
-    try {
-      decodedInfix = URLDecoder.decode(query, StandardCharsets.UTF_8).trim();
-    } catch (IllegalArgumentException malformed) {
-      throw new BadRequestException("Malformed search query");
-    }
+    // Spring has already decoded the request parameter. A second pass corrupts literal % and +.
+    var infix = query.trim();
     var resultMap =
         statisticsReaderUserService.search(
-            decodedInfix,
+            infix,
             SearchSort.pageRequestOf(
                 page - 1,
                 perPage,
                 adminDtoMapper.mappedFieldOf(field),
                 "ASC".equalsIgnoreCase(order)));
     return ResponseEntity.ok(
-        adminDtoMapper.adminSearchResultOf(resultMap, query, page, perPage, field, order));
+        adminDtoMapper.adminSearchResultOf(
+            resultMap,
+            query,
+            page,
+            perPage,
+            field,
+            order,
+            SearchFilter.NONE,
+            Admin.AdminType.STATISTICS));
   }
 
   @GetMapping("/{adminId}")
