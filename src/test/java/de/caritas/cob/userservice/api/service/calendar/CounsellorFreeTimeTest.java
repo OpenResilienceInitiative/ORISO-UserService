@@ -291,6 +291,24 @@ class CounsellorFreeTimeTest {
     hours.add(row);
   }
 
+  @Test
+  void offeredSlot_Should_FollowTheSettingReadWithALock() {
+    // The plain read says the defaults; the booking's locking read says requests of 30 minutes.
+    setting(true, 1, 60);
+    var locked = new CalendarBookingSetting();
+    locked.setConsultantId(COUNSELLOR);
+    locked.setAutoAccept(false);
+    locked.setNoticeDays(1);
+    locked.setSlotMinutes(30);
+    when(bookingSettings.lockById(COUNSELLOR)).thenReturn(Optional.of(locked));
+    sprechstunde(3, "10:00", "12:00");
+    var wednesday = MONDAY.plusDays(2);
+
+    assertThat(freeTime.offeredSlot(COUNSELLOR, at(wednesday, "10:30"), at(wednesday, "11:00")))
+        .map(FreeSlot::mode)
+        .contains(BookingMode.REQUEST);
+  }
+
   private void setting(boolean autoAccept, int noticeDays, int slotMinutes) {
     var setting = new CalendarBookingSetting();
     setting.setConsultantId(COUNSELLOR);

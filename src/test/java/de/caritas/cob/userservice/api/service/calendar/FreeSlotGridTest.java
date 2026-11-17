@@ -170,6 +170,30 @@ class FreeSlotGridTest {
   }
 
   @Test
+  void slots_Should_EndTheWindowAtTheGap_When_ItsEndDoesNotExist() {
+    // 29 March 2026: 02:30 does not exist. A window "01:00 to 02:30" ends where the clocks jump
+    // (02:00 = 01:00Z), not at 03:30 where java.time would move its end.
+    var springForward = LocalDate.of(2026, 3, 29);
+    var plan = weekly(SUNDAY, window("01:00", "02:30"));
+
+    var slots =
+        FreeSlotGrid.slots(
+            plan,
+            List.of(),
+            at(springForward, "00:00"),
+            at(springForward.plusDays(1), "00:00"),
+            at(springForward, "00:00"),
+            HALF_HOUR,
+            HALF_HOUR,
+            BERLIN);
+
+    assertThat(slots)
+        .extracting(FreeSlot::start)
+        .containsExactly(
+            Instant.parse("2026-03-29T00:00:00Z"), Instant.parse("2026-03-29T00:30:00Z"));
+  }
+
+  @Test
   void slots_Should_OfferARepeatedTimeOnce_When_TheClocksFallBack() {
     // 25 October 2026, a Sunday: Berlin repeats 02:00 to 03:00. The grid offers each wall-clock
     // time once, at its earlier offset, so a picker that shows HH:mm finds exactly one slot.

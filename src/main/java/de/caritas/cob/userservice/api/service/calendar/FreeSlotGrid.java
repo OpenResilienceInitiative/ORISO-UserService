@@ -67,7 +67,7 @@ final class FreeSlotGrid {
         !day.isAfter(lastDay);
         day = day.plusDays(1)) {
       for (var window : plan.windowsOn(day)) {
-        var windowEnd = LocalDateTime.of(day, window.end()).atZone(zone).toInstant();
+        var windowEnd = instantOf(LocalDateTime.of(day, window.end()), zone);
         for (var local = LocalDateTime.of(day, window.start());
             local.toLocalDate().equals(day);
             local = local.plus(step)) {
@@ -91,6 +91,18 @@ final class FreeSlotGrid {
     }
     result.sort(BY_START);
     return result;
+  }
+
+  /**
+   * The instant of a wall-clock time; one the clocks skip in spring is the instant they jump, not
+   * the shifted time java.time would give, so a window ending in the gap does not grow.
+   */
+  private static Instant instantOf(LocalDateTime local, ZoneId zone) {
+    var rules = zone.getRules();
+    if (rules.getValidOffsets(local).isEmpty()) {
+      return rules.getTransition(local).getInstant();
+    }
+    return local.atZone(zone).toInstant();
   }
 
   private static boolean overlaps(BusySlot taken, Instant start, Instant end) {
