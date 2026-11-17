@@ -20,6 +20,7 @@ import org.springframework.core.convert.converter.Converter;
 import org.springframework.http.HttpMethod;
 import org.springframework.lang.Nullable;
 import org.springframework.security.authentication.AbstractAuthenticationToken;
+import org.springframework.security.authentication.AnonymousAuthenticationToken;
 import org.springframework.security.authorization.AuthorizationDecision;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -357,9 +358,9 @@ public class SecurityConfig {
                 // Live-Handshake (ADR-018): any authenticated professional may hit the endpoints;
                 // per-purpose role pairs + fresh-credential checks are enforced in the service.
                 .requestMatchers("/users/handshakes", "/users/handshakes/**")
-                .authenticated()
+                .access(this::authenticatedButNotStatisticsReaderOnly)
                 .requestMatchers("/users/support-rooms", "/users/support-rooms/**")
-                .authenticated()
+                .access(this::authenticatedButNotStatisticsReaderOnly)
                 .requestMatchers("/users/tutorials/progress", "/users/tutorials/progress/**")
                 .hasAnyAuthority(
                     USER_DEFAULT,
@@ -1027,6 +1028,30 @@ public class SecurityConfig {
                     GLOBAL_SUPPORT_ADMIN,
                     TECHNICAL_DEFAULT,
                     NOTIFICATIONS_TECHNICAL)));
+  }
+
+  /**
+   * Authenticated-only routes stay closed to a pure statistics reader (#1666): its tenant-0 token
+   * switches the tenant filter off, so an "any authenticated user" route would read across Träger.
+   */
+  private AuthorizationDecision authenticatedButNotStatisticsReaderOnly(
+      Supplier<? extends Authentication> authenticationSupplier,
+      RequestAuthorizationContext requestContext) {
+    var authentication = authenticationSupplier.get();
+    if (authentication == null
+        || !authentication.isAuthenticated()
+        || authentication instanceof AnonymousAuthenticationToken) {
+      return new AuthorizationDecision(false);
+    }
+    var authorities =
+        authentication.getAuthorities().stream()
+            .map(GrantedAuthority::getAuthority)
+            .filter(authority -> authority.startsWith(Authority.AuthorityValue.PREFIX))
+            .toList();
+    boolean onlyStatisticsReader =
+        authorities.contains(STATISTICS_READER)
+            && authorities.stream().allMatch(STATISTICS_READER::equals);
+    return new AuthorizationDecision(!onlyStatisticsReader);
   }
 
   private static boolean hasAnyAuthority(

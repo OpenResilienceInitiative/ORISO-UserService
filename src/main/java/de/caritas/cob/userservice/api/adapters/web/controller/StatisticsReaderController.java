@@ -36,6 +36,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class StatisticsReaderController {
 
+  private static final int MAX_PAGE_SIZE = 100;
   private static final Set<String> SORT_FIELDS =
       Set.of("FIRSTNAME", "LASTNAME", "EMAIL", "UPDATE_DATE");
 
@@ -57,10 +58,16 @@ public class StatisticsReaderController {
     if (!SORT_FIELDS.contains(field)
         || !("ASC".equalsIgnoreCase(order) || "DESC".equalsIgnoreCase(order))
         || page < 1
-        || perPage < 1) {
+        || perPage < 1
+        || perPage > MAX_PAGE_SIZE) {
       throw new BadRequestException("Unsupported paging or sort parameters");
     }
-    var decodedInfix = URLDecoder.decode(query, StandardCharsets.UTF_8).trim();
+    String decodedInfix;
+    try {
+      decodedInfix = URLDecoder.decode(query, StandardCharsets.UTF_8).trim();
+    } catch (IllegalArgumentException malformed) {
+      throw new BadRequestException("Malformed search query");
+    }
     var resultMap =
         statisticsReaderUserService.search(
             decodedInfix,

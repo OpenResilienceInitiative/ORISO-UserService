@@ -4,9 +4,7 @@
   <changeSet id="20261117-admin-type-statistics-1666" author="oriso">
     <modifyDataType tableName="admin" columnName="type" newDataType="VARCHAR(16)"/>
     <addNotNullConstraint tableName="admin" columnName="type" columnDataType="VARCHAR(16)"/>
-    <rollback>
-      <modifyDataType tableName="admin" columnName="type" newDataType="VARCHAR(6)"/>
-      <addNotNullConstraint tableName="admin" columnName="type" columnDataType="VARCHAR(6)"/>
-    </rollback>
+    <!-- Narrowing back to VARCHAR(6) would truncate STATISTICS/SUPPORT rows; rollback keeps the width. -->
+    <rollback/>
   </changeSet>
 </databaseChangeLog>

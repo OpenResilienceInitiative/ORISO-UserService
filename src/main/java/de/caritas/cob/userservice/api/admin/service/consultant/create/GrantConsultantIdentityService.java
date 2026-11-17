@@ -100,6 +100,12 @@ public class GrantConsultantIdentityService {
                     new BadRequestException(String.format("Admin with id %s not found", adminId)));
 
     adminScope.assertMay(Target.admin(admin.getId()));
+    // A read-only statistics account must stay read-only (ORISO-UserService#1666): it never
+    // becomes a counsellor, not even by a platform admin's mistake.
+    if (admin.getType() == de.caritas.cob.userservice.api.model.Admin.AdminType.STATISTICS) {
+      throw new de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException(
+          "A statistics reader cannot be given a counsellor identity");
+    }
     adminScope.assertMay(Target.agencies(dto.getAgencyIds()));
 
     if (consultantRepository.findByIdAndDeleteDateIsNull(adminId).isPresent()) {

@@ -167,7 +167,9 @@ class StatisticsReaderAuthorizationIT {
             get("/service/users/statistics/consultant"),
             get("/users/sessions/askers"),
             get("/service/users/supervisors/logs"),
-            get("/userstatistics/test"))) {
+            get("/userstatistics/test"),
+            get("/users/handshakes/pending"),
+            get("/users/support-rooms"))) {
       mvc.perform(request.with(reader)).andExpect(status().isForbidden());
     }
     mvc.perform(withCsrf(post("/useradmin/consultants")).content("{}").with(reader))
@@ -188,6 +190,14 @@ class StatisticsReaderAuthorizationIT {
                 .param("order", "DESC")
                 .with(platformAdmin()))
         .andExpect(status().isOk());
+  }
+
+  @Test
+  void searchRejectsOversizedPagesAndMalformedQueries() throws Exception {
+    mvc.perform(get(READERS + "/search").param("perPage", "1000").with(platformAdmin()))
+        .andExpect(status().isBadRequest());
+    mvc.perform(get(READERS + "/search").param("query", "%zz").with(platformAdmin()))
+        .andExpect(status().isBadRequest());
   }
 
   @Test

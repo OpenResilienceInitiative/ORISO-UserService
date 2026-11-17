@@ -110,7 +110,7 @@ public class Admin implements TenantAware {
   private String contactEmail;
 
   @Enumerated(EnumType.STRING)
-  @Column(length = 6, nullable = false)
+  @Column(length = 16, nullable = false)
   private AdminType type;
 
   @Column(name = "id_old", updatable = false)
