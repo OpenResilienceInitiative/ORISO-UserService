@@ -34,7 +34,19 @@ class AgencyDeletionAuditPullTest {
   @Mock private AgencyDeletionAuditOutboxClient outbox;
   @Mock private DeletionAuditService deletionAuditService;
   @Mock private DeletionAuditLogRepository deletionAuditLogRepository;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.accountinvite.DeletedUnitInviteRevocation
+      deletedUnitInviteRevocation;
+
   @InjectMocks private AgencyDeletionAuditPull pull;
+
+  @org.junit.jupiter.api.BeforeEach
+  void revocationSucceedsByDefault() {
+    org.mockito.Mockito.lenient()
+        .when(deletedUnitInviteRevocation.onDeletionReported(any(), any(), any()))
+        .thenReturn(true);
+  }
 
   private static PendingEntry row(long id, long agencyId, Long tenantId) {
     return new PendingEntry(id, agencyId, tenantId, "EXECUTED", "2026-10-30T01:00:00");
@@ -51,6 +63,9 @@ class AgencyDeletionAuditPullTest {
     verify(deletionAuditService).recordAsSystem(AGENCY, "268", 4L, EXECUTED, PURGED_AT);
     verify(deletionAuditService).recordAsSystem(AGENCY, "269", null, EXECUTED, PURGED_AT);
     verify(outbox).acknowledge(List.of(1L, 2L));
+    // ORISO-Admin#1522: a purged Beratungsstelle keeps no working invitation.
+    verify(deletedUnitInviteRevocation).onDeletionReported(AGENCY, "268", EXECUTED);
+    verify(deletedUnitInviteRevocation).onDeletionReported(AGENCY, "269", EXECUTED);
   }
 
   @Test
@@ -95,6 +110,19 @@ class AgencyDeletionAuditPullTest {
 
     verify(deletionAuditService, never()).recordAsSystem(any(), any(), any(), any(), any());
     verify(outbox, never()).acknowledge(anyList());
+  }
+
+  /** Review of ORISO-UserService#1675: a failed revocation keeps the row for the next pull. */
+  @Test
+  void aRowWhoseInvitationsCouldNotBeRevokedStaysInTheOutbox() {
+    when(outbox.fetchPending(anyInt())).thenReturn(List.of(row(1, 268, 4L), row(2, 269, null)));
+    when(deletionAuditLogRepository.existsByTargetTypeAndTargetIdAndOutcome(any(), any(), any()))
+        .thenReturn(true);
+    when(deletedUnitInviteRevocation.onDeletionReported(AGENCY, "268", EXECUTED)).thenReturn(false);
+
+    assertThat(pull.pullOnce()).isEqualTo(1);
+
+    verify(outbox).acknowledge(List.of(2L));
   }
 
   @Test

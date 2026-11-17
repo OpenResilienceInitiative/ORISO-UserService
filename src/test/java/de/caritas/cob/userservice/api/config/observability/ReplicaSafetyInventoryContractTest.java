@@ -71,6 +71,7 @@ class ReplicaSafetyInventoryContractTest {
           "event-notification-retention-scheduler",
           "statistics-feature-gate-cache",
           "statistics-retention-scheduler",
+          "deleted-unit-invite-retry-scheduler",
           "account-invite-retention-scheduler",
           "team-discussion-retention-scheduler",
           "call-observation-retention-scheduler",

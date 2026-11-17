@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.model.SessionAppointment;
 import de.caritas.cob.userservice.api.port.out.CalendarBlockerRepository;
 import de.caritas.cob.userservice.api.port.out.ChatOccurrenceExceptionRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionAppointmentRepository;
 import de.caritas.cob.userservice.api.service.CaseHandoverService;
@@ -58,6 +59,7 @@ class CalendarEntryReader {
   private final GroupChatParticipantRepository participants;
   private final ChatOccurrenceExceptionRepository occurrenceExceptions;
   private final CalendarBlockerRepository blockers;
+  private final ConsultantRepository consultants;
   private final ChatOccurrenceProjector projector = new ChatOccurrenceProjector();
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
@@ -153,6 +155,51 @@ class CalendarEntryReader {
     return blockers.findOverlapping(consultantId, from, to).stream()
         .map(CalendarEntryReader::blocker)
         .toList();
+  }
+
+  /**
+   * The counsellor's planned absence (ORISO-Frontend#2303) as one all-day entry over its days,
+   * clipped to the window. An absence without dates has no days to show; one switched off has none.
+   */
+  List<CalendarEntry> absenceOf(String consultantId, Instant from, Instant to) {
+    return consultants
+        .findById(consultantId)
+        .filter(Consultant::isAbsenceSwitchedOn)
+        .filter(c -> c.getAbsenceStart() != null || c.getAbsenceEnd() != null)
+        .map(
+            c -> {
+              var start =
+                  c.getAbsenceStart() == null
+                      ? from
+                      : later(from, c.getAbsenceStart().atStartOfDay(Consultant.ABSENCE_ZONE));
+              var end =
+                  c.getAbsenceEnd() == null
+                      ? to
+                      : earlier(
+                          to, c.getAbsenceEnd().plusDays(1).atStartOfDay(Consultant.ABSENCE_ZONE));
+              return start.isBefore(end)
+                  ? List.of(
+                      new CalendarEntry(
+                          "absence-" + consultantId,
+                          CalendarEntryType.ABSENCE,
+                          start,
+                          end,
+                          null,
+                          null,
+                          null,
+                          null,
+                          true))
+                  : List.<CalendarEntry>of();
+            })
+        .orElse(List.of());
+  }
+
+  private static Instant later(Instant a, java.time.ZonedDateTime b) {
+    return a.isAfter(b.toInstant()) ? a : b.toInstant();
+  }
+
+  private static Instant earlier(Instant a, java.time.ZonedDateTime b) {
+    return a.isBefore(b.toInstant()) ? a : b.toInstant();
   }
 
   static CalendarEntry blocker(CalendarBlocker blocker) {
