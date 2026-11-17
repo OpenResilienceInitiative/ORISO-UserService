@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.notification.AddonNotificationService.RecipientKind;
+import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -59,11 +60,11 @@ class AddonNotificationServiceTest {
     var asker = new User();
     asker.setUserId(ASKER_ID);
     asker.setTenantId(1L);
-    when(userRepository.findByUserIdAndDeleteDateIsNull(ASKER_ID)).thenReturn(Optional.of(asker));
+    when(userRepository.findByUserIdForUpdate(ASKER_ID)).thenReturn(Optional.of(asker));
     var consultant = new Consultant();
     consultant.setId(CONSULTANT_ID);
     consultant.setTenantId(1L);
-    when(consultantRepository.findByIdAndDeleteDateIsNull(CONSULTANT_ID))
+    when(consultantRepository.findActiveByIdForUpdate(CONSULTANT_ID))
         .thenReturn(Optional.of(consultant));
     when(eventNotificationService.createAddonNotification(
             anyString(), anyLong(), anyString(), anyString(), anyString(), any(), any()))
@@ -169,6 +170,23 @@ class AddonNotificationServiceTest {
   }
 
   @Test
+  void askerMarkedForDeletionReceivesNothing() {
+    var deleting = new User();
+    deleting.setUserId("deleting");
+    deleting.setTenantId(1L);
+    deleting.setDeleteDate(LocalDateTime.now());
+    when(userRepository.findByUserIdForUpdate("deleting")).thenReturn(Optional.of(deleting));
+
+    assertThatThrownBy(
+            () ->
+                service.create(
+                    request("deleting", 1L, "asker.navigation", null, true, de("T"), de("X"))))
+        .isInstanceOf(NotFoundException.class);
+    verify(eventNotificationService, never())
+        .createAddonNotification(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
   void recipientOfAnotherTenantIsRejected() {
     assertThatThrownBy(
             () ->
@@ -183,7 +201,7 @@ class AddonNotificationServiceTest {
   void recipientWithoutTenantCountsAsLegacyTenantOne() {
     var legacy = new User();
     legacy.setUserId("legacy");
-    when(userRepository.findByUserIdAndDeleteDateIsNull("legacy")).thenReturn(Optional.of(legacy));
+    when(userRepository.findByUserIdForUpdate("legacy")).thenReturn(Optional.of(legacy));
 
     service.create(request("legacy", 1L, "asker.navigation", null, false, de("T"), de("X")));
 

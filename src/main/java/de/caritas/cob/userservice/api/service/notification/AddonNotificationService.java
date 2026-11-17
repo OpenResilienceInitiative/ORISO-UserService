@@ -158,13 +158,18 @@ public class AddonNotificationService {
     }
   }
 
+  /**
+   * Reads the recipient under a row lock held until the notification is committed. Account deletion
+   * sets the delete date on that row, or holds the same lock, before it purges the feed, so this
+   * notification is either purged with the feed or never written.
+   */
   private RecipientKind recipientKind(String userId, Long tenantId) {
-    var asker = userRepository.findByUserIdAndDeleteDateIsNull(userId);
+    var asker = userRepository.findByUserIdForUpdate(userId).filter(u -> u.getDeleteDate() == null);
     if (asker.isPresent()) {
       requireTenant(asker.get().getTenantId(), tenantId);
       return RecipientKind.ASKER;
     }
-    var consultant = consultantRepository.findByIdAndDeleteDateIsNull(userId);
+    var consultant = consultantRepository.findActiveByIdForUpdate(userId);
     if (consultant.isPresent()) {
       requireTenant(consultant.get().getTenantId(), tenantId);
       return RecipientKind.CONSULTANT;
