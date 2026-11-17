@@ -34,6 +34,11 @@ class AgencyDeletionAuditPullTest {
   @Mock private AgencyDeletionAuditOutboxClient outbox;
   @Mock private DeletionAuditService deletionAuditService;
   @Mock private DeletionAuditLogRepository deletionAuditLogRepository;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.accountinvite.DeletedUnitInviteRevocation
+      deletedUnitInviteRevocation;
+
   @InjectMocks private AgencyDeletionAuditPull pull;
 
   private static PendingEntry row(long id, long agencyId, Long tenantId) {
@@ -51,6 +56,9 @@ class AgencyDeletionAuditPullTest {
     verify(deletionAuditService).recordAsSystem(AGENCY, "268", 4L, EXECUTED, PURGED_AT);
     verify(deletionAuditService).recordAsSystem(AGENCY, "269", null, EXECUTED, PURGED_AT);
     verify(outbox).acknowledge(List.of(1L, 2L));
+    // ORISO-Admin#1522: a purged Beratungsstelle keeps no working invitation.
+    verify(deletedUnitInviteRevocation).onDeletionReported(AGENCY, "268", EXECUTED);
+    verify(deletedUnitInviteRevocation).onDeletionReported(AGENCY, "269", EXECUTED);
   }
 
   @Test
