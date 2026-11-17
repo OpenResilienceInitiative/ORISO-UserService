@@ -346,6 +346,32 @@ class AppointmentSelfBookingControllerIT {
   }
 
   @Test
+  void coAccessCounsellorsAppointments_Should_NotLimitTheOffer() throws Exception {
+    opensEveryDay("00:00", "23:30");
+    grantCoAccess(otherCounsellor);
+    actAsAsker(asker);
+    var now = Instant.now();
+    var start = firstSlotStart(session.getId(), now, "INSTANT");
+    var colleaguesConversation = fixtures.session(otherAsker, AGENCY, otherCounsellor);
+    actAsCounsellor(otherCounsellor);
+    mockMvc
+        .perform(
+            csrf(post("/users/sessions/" + colleaguesConversation.getId() + "/appointments"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(times(start, start.plus(Duration.ofHours(1)), "VIDEO")))
+        .andExpect(status().isCreated());
+
+    // Frank, 17 Nov 2026: only the conversation's own counsellor's calendar limits the offer;
+    // a co-access counsellor's appointments do not, though they see both in their calendar.
+    actAsAsker(asker);
+    assertThat(slotStarts(session.getId(), now)).contains(start);
+    mockMvc
+        .perform(book(session.getId(), start, start.plus(Duration.ofHours(1)), "VIDEO"))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.status").value("SCHEDULED"));
+  }
+
+  @Test
   void confirm_Should_Refuse_When_SomethingElseTakesTheTimeNow() throws Exception {
     opensEveryDay("00:00", "23:30");
     actAsAsker(asker);
