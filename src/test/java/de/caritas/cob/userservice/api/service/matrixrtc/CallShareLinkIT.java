@@ -805,7 +805,11 @@ class CallShareLinkIT {
       assertThat(share.temporaryAccountAllowed()).isTrue();
       shareLinks.requireUsable(share.link());
 
-      // A member who is not in the conversation room cannot manage it (no IDOR).
+      // A colleague in the conversation and in the call reaches the link ...
+      inCall(groupMedia, colleague.getMatrixUserId(), System.currentTimeMillis() + 600000);
+      assertThat(shareLinks.current(7L, colleague.getId(), groupRoom, "group-call").link().getId())
+          .isEqualTo(share.link().getId());
+      // ... and loses it with the conversation membership alone (no IDOR).
       when(matrix.getCallRoomMembers(groupRoom)).thenReturn(Optional.of(List.of(ASKER, caller)));
       assertThatThrownBy(() -> shareLinks.current(7L, colleague.getId(), groupRoom, "group-call"))
           .isInstanceOf(

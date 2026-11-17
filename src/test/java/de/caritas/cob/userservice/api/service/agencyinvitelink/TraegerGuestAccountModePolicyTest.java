@@ -127,6 +127,29 @@ class TraegerGuestAccountModePolicyTest {
   }
 
   @Test
+  void aTenantServiceThatRefusesTheReadOffersOnlyPermanentAccounts() {
+    when(tenantService.getRestrictedTenantDataFresh(TENANT))
+        .thenThrow(
+            org.springframework.web.client.HttpClientErrorException.create(
+                org.springframework.http.HttpStatus.FORBIDDEN, "Forbidden", null, null, null));
+
+    assertThat(policy(true).allowedModes(TENANT, AGENCY, InviteLinkChatType.CHAT))
+        .containsExactly(PERMANENT);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(ints = {408, 429})
+  void anOverloadedTenantServiceIsAnOutageNotARefusal(int status) {
+    when(tenantService.getRestrictedTenantDataFresh(TENANT))
+        .thenThrow(
+            org.springframework.web.client.HttpClientErrorException.create(
+                org.springframework.http.HttpStatusCode.valueOf(status), "busy", null, null, null));
+
+    assertThatThrownBy(() -> policy(true).allowedModes(TENANT, AGENCY, InviteLinkChatType.CHAT))
+        .isInstanceOf(ServiceUnavailableException.class);
+  }
+
+  @Test
   void thePlatformAloneDecidesWhereNoTraegerIsKnownOrTheMediumHasNoSwitch() {
     var policy = policy(true);
     assertThat(policy.allowedModes(null, AGENCY, InviteLinkChatType.CHAT))

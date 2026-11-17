@@ -181,11 +181,9 @@ class DirectLinkTemporaryAccountCleanupTest {
    */
   @Test
   void delete_Should_LeaveAKeptAccount_ReadUnderTheRowLock() {
-    var kept = new User();
-    kept.setUserId(USER_ID);
-    kept.setMatrixUserId(MATRIX_ID);
-    kept.setTemporaryAccount(false);
-    when(userRepository.findByUserIdForUpdate(USER_ID)).thenReturn(Optional.of(kept));
+    // Otherwise due for deletion (fixture: snapshot, closed session); only the flag differs, so
+    // the temporary-account check alone must keep it.
+    user.setTemporaryAccount(false);
 
     assertThat(cleanup.delete(USER_ID, NOW)).isEmpty();
 

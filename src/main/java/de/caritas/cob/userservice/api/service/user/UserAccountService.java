@@ -259,11 +259,14 @@ public class UserAccountService {
    *
    * @param mobileToken the new mobile device identifier token
    */
+  @org.springframework.transaction.annotation.Transactional
   public void updateUserMobileToken(String mobileToken) {
     ensureCurrentAccountIsWritable();
     if (mobileToken != null && !mobileToken.isBlank()) ensurePushRegistrationAllowed();
+    // #1662: write to the row read under the lock "Konto behalten" takes. User has no version
+    // column; a copy read before a concurrent keep would merge temporary_account back.
     this.userService
-        .getUser(this.authenticatedUser.getUserId())
+        .getUserForUpdate(this.authenticatedUser.getUserId())
         .ifPresent(user -> updateMobileToken(user, mobileToken));
   }
 

@@ -116,6 +116,33 @@ class GroupInviteRegistrationTest {
     }
   }
 
+  @Test
+  void theRegistrationIsCappedByTheCirclesTraegerNotTheRequestTenant() {
+    // The entry page caps with the circle owner's Träger; the registration must use the same one,
+    // whatever tenant the unauthenticated request was resolved to.
+    var owner = new de.caritas.cob.userservice.api.model.Consultant();
+    owner.setTenantId(7L);
+    group.setChatOwner(owner);
+    group.setGuestAccountMode(GuestAccountMode.GUEST_CHOOSES);
+    var capping = mock(GuestAccountModePolicy.class);
+    when(capping.cap(7L, AGENCY, InviteLinkChatType.CHAT, GuestAccountMode.GUEST_CHOOSES))
+        .thenReturn(GuestAccountMode.PERMANENT);
+    when(capping.cap(5L, AGENCY, InviteLinkChatType.CHAT, GuestAccountMode.GUEST_CHOOSES))
+        .thenReturn(GuestAccountMode.GUEST_CHOOSES);
+    var inTraeger = new GroupInviteRegistration(chatAgencies, mock(ChatService.class), capping);
+    de.caritas.cob.userservice.api.tenant.TenantContext.setCurrentTenant(5L);
+    try {
+      assertThat(inTraeger.publicGuestAccountMode(GROUP, AGENCY, TOKEN))
+          .isEqualTo(GuestAccountMode.PERMANENT);
+      assertThatThrownBy(() -> inTraeger.resolveInvitation(invite(true)))
+          .isInstanceOf(BadRequestException.class);
+      assertThat(inTraeger.resolveInvitation(invite(false)).orElseThrow().mode())
+          .isEqualTo(GuestAccountMode.PERMANENT);
+    } finally {
+      de.caritas.cob.userservice.api.tenant.TenantContext.clear();
+    }
+  }
+
   // --- #1662: the Gesprächskreis entry page reads the mode before anybody logs in ---
 
   @ParameterizedTest

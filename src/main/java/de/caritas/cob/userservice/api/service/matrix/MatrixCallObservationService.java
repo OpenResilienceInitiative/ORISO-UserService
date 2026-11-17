@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.matrix;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.model.MatrixCallBinding;
 import de.caritas.cob.userservice.api.model.MatrixCallObservation;
 import de.caritas.cob.userservice.api.model.MatrixCallObservationEnd;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
@@ -301,9 +302,50 @@ public class MatrixCallObservationService {
   private record Ending(
       MatrixCallObservation row, boolean endedNow, boolean observed, String endedCallRoom) {}
 
-  /** Outside the transaction: the session call's binding, which the end locks first. */
+  /**
+   * Outside the transaction: the call's binding, which the end locks first. #1662: a group call has
+   * one too (MatrixGroupCallBindingService), and its explicit end must end it as well.
+   */
   private Long boundId(boolean oneToOne, String sourceRoomId, String callId) {
-    return oneToOne ? sessionBindings.boundCallId(sourceRoomId, callId).orElse(null) : null;
+    if (oneToOne) return sessionBindings.boundCallId(sourceRoomId, callId).orElse(null);
+    if (blank(sourceRoomId, 255) || blank(callId, 191)) return null;
+    return bindings
+        .findBySourceRoomIdAndCallId(sourceRoomId, callId)
+        .filter(binding -> binding.getSessionId() == null && binding.getChatId() != null)
+        .map(MatrixCallBinding::getId)
+        .orElse(null);
+  }
+
+  /**
+   * #1662 (CodeRabbit): a group call's binding stays live until its memberships expire, and share
+   * link and guest admission follow that. The caller who registered it ends it explicitly here, in
+   * the end transaction and in the same lock order as the session path (binding, conversation,
+   * observation). Returns its call room for the guest revocation after the commit, else null.
+   */
+  private String endGroupBindingWhileLocked(
+      MatrixCallConversation conversation, String caller, String callId, long now, Long lockedId) {
+    var known =
+        bindings
+            .findBySourceRoomIdAndCallId(conversation.getMatrixRoomId(), callId)
+            .filter(binding -> binding.getSessionId() == null && binding.getChatId() != null)
+            .orElse(null);
+    if (known == null) return null;
+    if (!Objects.equals(known.getId(), lockedId)) {
+      throw new MatrixSessionCallBindingService.LockOrderRetry();
+    }
+    var binding = bindings.lockById(known.getId()).orElse(null);
+    if (binding == null
+        || binding.getEndedAt() != null
+        || binding.getSessionId() != null
+        || !Objects.equals(binding.getChatId(), conversation.getChatId())
+        || !Objects.equals(binding.getTenantId(), conversation.getTenantId())
+        || !callId.equals(binding.getCallId())
+        || !caller.equals(binding.getCallerMatrixId())) {
+      return null;
+    }
+    binding.finishExplicitly(now);
+    bindings.save(binding);
+    return binding.getMediaRoomId();
   }
 
   private Ending writeEnd(
@@ -318,7 +360,10 @@ public class MatrixCallObservationService {
             status -> {
               // Lock order: binding (as the lifecycle takes it), session, observation, as bind and
               // registration take session before observation.
-              if (boundId != null) sessionBindings.lockBinding(boundId);
+              if (boundId != null) {
+                if (conversation.getChatId() == null) sessionBindings.lockBinding(boundId);
+                else bindings.lockById(boundId);
+              }
               // The session's call lock; a closed session still holds it, and ending is always
               // allowed.
               conversations.lockCurrentForWriting(conversation);
@@ -328,7 +373,9 @@ public class MatrixCallObservationService {
                   conversation.getSessionId() != null && conversation.getChatId() == null
                       ? sessionBindings.endWhileSessionLocked(
                           actor, conversation, callId, now, boundId)
-                      : null;
+                      : conversation.getChatId() != null
+                          ? endGroupBindingWhileLocked(conversation, caller, callId, now, boundId)
+                          : null;
               return observed == null
                   ? new Ending(null, false, false, endedCallRoom)
                   : new Ending(observed.row(), observed.endedNow(), true, endedCallRoom);

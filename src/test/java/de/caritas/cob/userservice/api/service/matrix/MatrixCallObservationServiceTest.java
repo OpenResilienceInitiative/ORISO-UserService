@@ -527,6 +527,84 @@ class MatrixCallObservationServiceTest {
     verify(sessionBindings).revokeGuestsAfterEnd(MEDIA);
   }
 
+  // --- #1662 (CodeRabbit): an explicit end of a group call ends its binding and guest seats ---
+
+  private MatrixCallBinding groupBinding(String callerMatrixId) {
+    long now = System.currentTimeMillis();
+    var binding =
+        MatrixCallBinding.builder()
+            .id(9L)
+            .sourceRoomId(SOURCE)
+            .callId("call")
+            .mediaRoomId(MEDIA)
+            .callerMatrixId(callerMatrixId)
+            .chatId(45L)
+            .tenantId(7L)
+            .invitedAt(now - 1000)
+            .inviteExpiresAt(now + 60_000)
+            .build();
+    when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(binding));
+    when(bindings.lockById(9L)).thenReturn(Optional.of(binding));
+    return binding;
+  }
+
+  @Test
+  void theCallersEndOfAGroupCallEndsItsBindingAndThenRevokesTheGuestSeats() {
+    long now = System.currentTimeMillis();
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call"))
+        .thenReturn(Optional.of(row(now - 1000, now + 60_000, null)));
+    var binding = groupBinding(CREATOR);
+    var order = new java.util.ArrayList<String>();
+    when(bindings.lockById(9L))
+        .thenAnswer(
+            i -> {
+              order.add("lock binding " + tx.isOpen());
+              return Optional.of(binding);
+            });
+    when(conversations.lockCurrentForWriting(any()))
+        .thenAnswer(
+            i -> {
+              order.add("lock conversation " + tx.isOpen());
+              return true;
+            });
+    org.mockito.Mockito.doAnswer(
+            i -> {
+              order.add("revoke guests " + tx.isOpen());
+              return null;
+            })
+        .when(sessionBindings)
+        .revokeGuestsAfterEnd(MEDIA);
+
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
+
+    assertThat(binding.getEndedAt()).isNotNull();
+    verify(bindings).save(binding);
+    assertThat(order.get(0)).isEqualTo("lock binding true");
+    assertThat(order.get(1)).isEqualTo("lock conversation true");
+    assertThat(order.get(order.size() - 1)).isEqualTo("revoke guests false");
+    verify(sessionBindings, org.mockito.Mockito.never())
+        .endWhileSessionLocked(any(), any(), anyString(), anyLong(), any());
+  }
+
+  @Test
+  void anotherMembersEndOfAGroupCallLeavesTheCallersBindingLive() {
+    long now = System.currentTimeMillis();
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call"))
+        .thenReturn(Optional.of(row(now - 1000, now + 60_000, null)));
+    var binding = groupBinding(CREATOR);
+    var member = new AuthenticatedUser();
+    member.setUserId("other");
+    member.setTenantId(7L);
+    when(users.findByUserIdAndDeleteDateIsNull("other"))
+        .thenReturn(Optional.of(user("other", OTHER)));
+
+    assertThat(service.end(member, SOURCE, "call")).isEqualTo(Outcome.OK);
+
+    assertThat(binding.getEndedAt()).isNull();
+    verify(bindings, org.mockito.Mockito.never()).save(any());
+    verify(sessionBindings, org.mockito.Mockito.never()).revokeGuestsAfterEnd(anyString());
+  }
+
   // --- #1630 (a): no database transaction stays open while Matrix is called ---
 
   @Test

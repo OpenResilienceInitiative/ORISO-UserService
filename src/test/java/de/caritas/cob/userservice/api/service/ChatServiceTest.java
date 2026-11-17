@@ -546,12 +546,15 @@ class ChatServiceTest {
     Chat inactiveChat = new Chat();
     inactiveChat.setActive(false);
     inactiveChat.setChatOwner(CONSULTANT);
+    // A non-default saved mode: an omitted field must keep it, not reset it to the default.
+    inactiveChat.setGuestAccountMode(
+        de.caritas.cob.userservice.api.model.GuestAccountMode.TEMPORARY);
     when(chatRepository.findByIdWithPermissionRelations(Mockito.anyLong()))
         .thenReturn(Optional.of(inactiveChat));
 
     chatService.updateChat(CHAT_ID, CHAT_DTO, AUTHENTICATED_USER_CONSULTANT);
     assertEquals(
-        de.caritas.cob.userservice.api.model.GuestAccountMode.GUEST_CHOOSES,
+        de.caritas.cob.userservice.api.model.GuestAccountMode.TEMPORARY,
         inactiveChat.getGuestAccountMode());
 
     var edit =

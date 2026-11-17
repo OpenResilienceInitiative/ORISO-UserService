@@ -164,6 +164,13 @@ public class CreateUserFacade {
           invitedGroup.isPresent()
               ? ConversationType.SELF_HELP
               : ConversationType.AGENCY_COUNSELLING;
+      if (userDTO.isTemporary() && invitedGroup.isEmpty() && directLink.isEmpty()) {
+        // The deletion job removes temporary accounts; only a valid group invite or direct link
+        // may ask for one. Checked before the e-mail rule
+        // (#1662), so a form mistake stays a plain 400.
+        throw new BadRequestException(
+            "A temporary account requires a group invite or a direct link.");
+      }
       Long tenantId = TenantContext.getCurrentTenant();
       if (userDTO.getEmail() != null && !userDTO.getEmail().isBlank()) {
         emailCollectionPolicy.requireForRegistration(
@@ -178,12 +185,6 @@ public class CreateUserFacade {
       } else {
         // Group/direct-link signup creates no personal Session here; no shared/global alias.
         userDTO.setDisplayName(null);
-      }
-      if (userDTO.isTemporary() && invitedGroup.isEmpty() && directLink.isEmpty()) {
-        // The deletion job removes temporary accounts; only a valid group invite or direct link
-        // may ask for one.
-        throw new BadRequestException(
-            "A temporary account requires a group invite or a direct link.");
       }
 
       RecoveryPolicySnapshot snapshot =

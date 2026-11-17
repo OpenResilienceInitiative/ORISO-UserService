@@ -177,6 +177,28 @@ class CallShareLinkServiceTest {
   }
 
   @Test
+  void aGroupCallLinkIsNotCreatedWhileTheAgencyLookupFailsAndIsCompleteOnceItRecovers() {
+    useBinding(runningCall(null, 600L, MEDIA));
+    when(creatorAgency.of(binding)).thenReturn(Optional.of(99L));
+    when(creatorAgency.consultingTypeOf(99L))
+        .thenThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException(
+                "down"))
+        .thenReturn(Optional.of(3));
+
+    assertThatThrownBy(() -> service.create(TENANT, COUNSELLOR, SOURCE, CALL_ID, true, true))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException
+                .class);
+    verify(links, never()).save(any());
+
+    var share = service.create(TENANT, COUNSELLOR, SOURCE, CALL_ID, true, true);
+
+    assertThat(share.link().getConsultingTypeId()).isEqualTo(3);
+    assertThat(share.temporaryAccountAllowed()).isTrue();
+  }
+
+  @Test
   void groupCallWhoseAgencyHasNoKnownConsultingTypeOnlyTakesExistingAccounts() {
     useBinding(runningCall(null, 600L, MEDIA));
     when(creatorAgency.of(binding)).thenReturn(Optional.of(99L));

@@ -48,4 +48,41 @@ class GuestAccountModeAtEntryMigrationTest {
       }
     }
   }
+
+  @Test
+  void update_Should_KeepTheStoredModes_When_TheColumnExistsButTheChangeSetWasNotRecorded()
+      throws Exception {
+    // A restart after the DDL committed but before Liquibase recorded the change set.
+    try (Connection c =
+        DriverManager.getConnection(
+            "jdbc:h2:mem:guest-mode-at-entry-recover-" + UUID.randomUUID() + ";MODE=MariaDB",
+            "sa",
+            "")) {
+      try (var sql = c.createStatement()) {
+        sql.execute(
+            "CREATE TABLE `user` (user_id VARCHAR(36) NOT NULL,"
+                + " guest_account_mode_at_entry VARCHAR(16), PRIMARY KEY (user_id))");
+        sql.execute(
+            "INSERT INTO `user` (user_id, guest_account_mode_at_entry)"
+                + " VALUES ('kept', 'GUEST_CHOOSES')");
+      }
+      var database =
+          DatabaseFactory.getInstance().findCorrectDatabaseImplementation(new JdbcConnection(c));
+      try (var liquibase = new Liquibase(CHANGELOG, new ClassLoaderResourceAccessor(), database)) {
+        liquibase.update(new Contexts(), new LabelExpression());
+        var sql = c.createStatement();
+        var rows =
+            sql.executeQuery(
+                "SELECT guest_account_mode_at_entry FROM `user` WHERE user_id = 'kept'");
+        assertThat(rows.next()).isTrue();
+        assertThat(rows.getString(1)).isEqualTo("GUEST_CHOOSES");
+        var recorded =
+            sql.executeQuery(
+                "SELECT COUNT(*) FROM DATABASECHANGELOG WHERE ID ="
+                    + " '20261117-user-guest-account-mode-at-entry-1662'");
+        assertThat(recorded.next()).isTrue();
+        assertThat(recorded.getInt(1)).isEqualTo(1);
+      }
+    }
+  }
 }

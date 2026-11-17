@@ -351,13 +351,17 @@ public class UserAccountServiceTest {
     User guest = permanentAsker();
     guest.setTenantId(42L);
     guest.setTemporaryAccount(true);
+    guest.setEmail("guest@example.org");
     when(this.authenticatedUser.getUserId()).thenReturn("user");
     when(this.userService.getUser("user")).thenReturn(Optional.of(guest));
     when(userHelper.getDummyEmail("user")).thenReturn("user@dummy.example");
 
     accountProvider.changeUserAccountEmailAddress(Optional.empty());
 
-    verify(userService).saveUser(guest);
+    var saved = ArgumentCaptor.forClass(User.class);
+    verify(userService).saveUser(saved.capture());
+    assertThat(saved.getValue().getEmail()).isEqualTo("user@dummy.example");
+    verify(identityEmailAddressUpdater).deleteCurrentUserEmail();
   }
 
   @Test
@@ -607,12 +611,40 @@ public class UserAccountServiceTest {
     var guest = new User();
     guest.setUserId(USER_ID);
     guest.setTemporaryAccount(true);
+    guest.setMobileToken("old-device-token");
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
     when(userService.getUser(USER_ID)).thenReturn(Optional.of(guest));
+    when(userService.getUserForUpdate(USER_ID)).thenReturn(Optional.of(guest));
 
     accountProvider.updateUserMobileToken("");
 
-    verify(userService).saveUser(guest);
+    var saved = org.mockito.ArgumentCaptor.forClass(User.class);
+    verify(userService).saveUser(saved.capture());
+    org.assertj.core.api.Assertions.assertThat(saved.getValue().getMobileToken()).isEmpty();
+  }
+
+  @Test
+  void theMobileTokenIsWrittenToTheRowReadUnderTheKeepLock() {
+    // #1662: a copy read before a concurrent "Konto behalten" must not merge temporary_account
+    // back; the write uses the row read under the lock the keep takes.
+    var stale = new User();
+    stale.setUserId(USER_ID);
+    stale.setTemporaryAccount(true);
+    var locked = new User();
+    locked.setUserId(USER_ID);
+    locked.setTemporaryAccount(false);
+    locked.setMobileToken("old-device-token");
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(userService.getUser(USER_ID)).thenReturn(Optional.of(stale));
+    when(userService.getUserForUpdate(USER_ID)).thenReturn(Optional.of(locked));
+
+    accountProvider.updateUserMobileToken("");
+
+    var saved = org.mockito.ArgumentCaptor.forClass(User.class);
+    verify(userService).saveUser(saved.capture());
+    org.assertj.core.api.Assertions.assertThat(saved.getValue()).isSameAs(locked);
+    org.assertj.core.api.Assertions.assertThat(saved.getValue().isTemporaryAccount()).isFalse();
+    org.assertj.core.api.Assertions.assertThat(saved.getValue().getMobileToken()).isEmpty();
   }
 
   @Test
@@ -676,6 +708,7 @@ public class UserAccountServiceTest {
   public void updateUserMobileToken_Should_updateUsersMobileToken_When_mobileTokenIsValidString() {
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
     when(userService.getUser(USER_ID)).thenReturn(Optional.of(USER));
+    when(userService.getUserForUpdate(USER_ID)).thenReturn(Optional.of(USER));
 
     this.accountProvider.updateUserMobileToken("mobileToken");
 
@@ -688,6 +721,7 @@ public class UserAccountServiceTest {
   public void updateUserMobileToken_Should_updateUsersMobileToken_When_mobileTokenIsNull() {
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
     when(userService.getUser(USER_ID)).thenReturn(Optional.of(USER));
+    when(userService.getUserForUpdate(USER_ID)).thenReturn(Optional.of(USER));
 
     this.accountProvider.updateUserMobileToken(null);
 
@@ -700,6 +734,7 @@ public class UserAccountServiceTest {
   public void updateUserMobileToken_Should_updateUsersMobileToken_When_mobileTokenIsEmptyString() {
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
     when(userService.getUser(USER_ID)).thenReturn(Optional.of(USER));
+    when(userService.getUserForUpdate(USER_ID)).thenReturn(Optional.of(USER));
 
     this.accountProvider.updateUserMobileToken("");
 

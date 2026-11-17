@@ -45,6 +45,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.RestClientException;
 
 @Slf4j
@@ -53,6 +55,8 @@ import org.springframework.web.client.RestClientException;
 public class AccountManager implements AccountManaging {
 
   private final ConsultantRepository consultantRepository;
+
+  private final PlatformTransactionManager transactionManager;
 
   private final AccountSearch accountSearch;
 
@@ -213,10 +217,21 @@ public class AccountManager implements AccountManaging {
     var id = (String) patchMap.get("id");
     var userMap = new HashMap<String, Object>();
 
-    userRepository
-        .findByUserIdAndDeleteDateIsNull(id)
+    // #1662: read the advice seeker under the row lock "Konto behalten" takes and save it in the
+    // same transaction. User has no version column; a copy read before a concurrent keep would
+    // otherwise merge temporary_account and the deletion snapshot back.
+    var patchedAdviceSeeker =
+        new TransactionTemplate(transactionManager)
+            .execute(
+                status ->
+                    userRepository
+                        .findByUserIdForUpdate(id)
+                        .filter(user -> user.getDeleteDate() == null)
+                        .map(user -> patchAdviceSeeker(user, patchMap)));
+    Optional.ofNullable(patchedAdviceSeeker)
+        .flatMap(java.util.function.Function.identity())
         .ifPresentOrElse(
-            user -> userMap.putAll(patchAdviceSeeker(user, patchMap)),
+            userMap::putAll,
             () ->
                 consultantRepository
                     .findByIdAndDeleteDateIsNull(id)

@@ -192,6 +192,8 @@ class MatrixCallObservationControllerTest {
         .thenReturn(true);
 
     register().andExpect(status().isNoContent());
+    // #1662: a session call that bound skips the group path entirely (short-circuit, not "|").
+    org.mockito.Mockito.verifyNoInteractions(groupBindings);
   }
 
   @Test

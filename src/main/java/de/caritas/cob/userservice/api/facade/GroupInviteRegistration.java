@@ -60,11 +60,11 @@ public class GroupInviteRegistration {
     Chat group =
         invitedGroup(
             userDTO.getGroupChatId(), userDTO.getAgencyId(), userDTO.getGroupChatInviteToken());
-    // #1662: the circle's guest account mode, capped by what the platform and the Träger the
-    // registration runs in allow now.
+    // #1662: the circle's guest account mode, capped by what the platform and the circle's Träger
+    // allow now: the same Träger the entry page caps with, not the tenant the request resolved to.
     var mode =
         guestAccountModes.cap(
-            de.caritas.cob.userservice.api.tenant.TenantContext.getCurrentTenant(),
+            tenantOf(group),
             userDTO.getAgencyId(),
             InviteLinkChatType.CHAT,
             group.getGuestAccountMode());
@@ -86,12 +86,15 @@ public class GroupInviteRegistration {
   @org.springframework.transaction.annotation.Transactional(readOnly = true)
   public GuestAccountMode publicGuestAccountMode(Long chatId, Long agencyId, String inviteToken) {
     var group = invitedGroup(chatId, agencyId, inviteToken);
-    Long tenant =
-        group.getChatOwner() != null && group.getChatOwner().getTenantId() != null
-            ? group.getChatOwner().getTenantId()
-            : de.caritas.cob.userservice.api.tenant.TenantContext.getCurrentTenant();
     return guestAccountModes.cap(
-        tenant, agencyId, InviteLinkChatType.CHAT, group.getGuestAccountMode());
+        tenantOf(group), agencyId, InviteLinkChatType.CHAT, group.getGuestAccountMode());
+  }
+
+  /** The circle's Träger: its owner's tenant, else the current one (single-tenant setups). */
+  private static Long tenantOf(Chat group) {
+    return group.getChatOwner() != null && group.getChatOwner().getTenantId() != null
+        ? group.getChatOwner().getTenantId()
+        : de.caritas.cob.userservice.api.tenant.TenantContext.getCurrentTenant();
   }
 
   /** The self-help group of this Beratungsstelle that the link names, for its holder only. */

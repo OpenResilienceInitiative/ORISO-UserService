@@ -18,10 +18,14 @@ class AgencyInviteLinkGuestAccountModeTest {
     assertThat(link.getAccessMode()).isEqualTo(DirectInvitationAccessMode.GUESTS_ONLY);
 
     link.applyGuestAccountMode(GuestAccountMode.GUEST_CHOOSES);
+    assertThat(link.getGuestAccountMode()).isEqualTo(GuestAccountMode.GUEST_CHOOSES);
+    assertThat(link.effectiveGuestAccountMode()).isEqualTo(GuestAccountMode.GUEST_CHOOSES);
     assertThat(link.isTemporaryAccount()).isTrue();
     assertThat(link.getAccessMode()).isEqualTo(DirectInvitationAccessMode.BOTH);
 
     link.applyGuestAccountMode(GuestAccountMode.PERMANENT);
+    assertThat(link.getGuestAccountMode()).isEqualTo(GuestAccountMode.PERMANENT);
+    assertThat(link.effectiveGuestAccountMode()).isEqualTo(GuestAccountMode.PERMANENT);
     assertThat(link.isTemporaryAccount()).isFalse();
     assertThat(link.getAccessMode()).isEqualTo(DirectInvitationAccessMode.ACCOUNTS_ONLY);
   }

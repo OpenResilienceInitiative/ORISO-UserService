@@ -160,6 +160,77 @@ class MatrixGroupCallBindingServiceTest {
     assertThat(matrixCallsInsideTransaction).isEmpty();
   }
 
+  /** Records commits and rollbacks next to the observer join, in the order they happen. */
+  private MatrixGroupCallBindingService serviceRecording(List<String> events) {
+    var recording =
+        new RecordingTransactionManager() {
+          @Override
+          public void commit(org.springframework.transaction.TransactionStatus status) {
+            super.commit(status);
+            events.add("commit");
+          }
+
+          @Override
+          public void rollback(org.springframework.transaction.TransactionStatus status) {
+            super.rollback(status);
+            events.add("rollback");
+          }
+        };
+    org.mockito.Mockito.doAnswer(
+            call -> {
+              events.add("observe");
+              return null;
+            })
+        .when(matrix)
+        .ensureAdminInRoom(anyString(), anyString());
+    return new MatrixGroupCallBindingService(
+        conversations,
+        chats,
+        consultants,
+        users,
+        bindings,
+        callBindings,
+        matrix,
+        lifecycle,
+        new DedicatedCallRoom(rooms, matrix),
+        groupAccess,
+        observations,
+        ends,
+        recording);
+  }
+
+  @Test
+  void theObserverJoinsOnlyAfterTheBindingCommitted() {
+    var events = new ArrayList<String>();
+    var recording = serviceRecording(events);
+    when(callBindings.registerWhileSourceLocked(any()))
+        .thenAnswer(
+            call -> {
+              events.add("register");
+              return true;
+            });
+
+    assertThat(recording.bind(actor("moderator-id", true), SOURCE, "call", MEDIA, true)).isTrue();
+
+    assertThat(events).containsSubsequence("register", "commit", "observe");
+    assertThat(events.get(events.size() - 1)).isEqualTo("observe");
+  }
+
+  @Test
+  void aRolledBackBindingSetsUpNoObserver() {
+    var events = new ArrayList<String>();
+    var recording = serviceRecording(events);
+    when(callBindings.registerWhileSourceLocked(any()))
+        .thenThrow(new org.springframework.dao.DataIntegrityViolationException("raced"));
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> recording.bind(actor("moderator-id", true), SOURCE, "call", MEDIA, true))
+        .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+
+    assertThat(events).contains("rollback").doesNotContain("observe");
+    verify(matrix, org.mockito.Mockito.never()).ensureAdminInRoom(anyString(), anyString());
+  }
+
   @Test
   void aCounsellorWhoIsNoMemberOfTheGroupRoomGetsNone() {
     when(matrix.getCallRoomMembers(SOURCE)).thenReturn(Optional.of(List.of(PLAIN_MEMBER, ASKER)));

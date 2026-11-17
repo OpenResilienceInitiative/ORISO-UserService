@@ -187,14 +187,23 @@ class GroupCallCreatorAgencyTest {
   }
 
   @Test
-  void noConsultingTypeWhenTheAgencyIsUnknownOrUnavailable() {
+  void noConsultingTypeWhenTheAgencyIsUnknown() {
     when(agencyService.getAgency(98L)).thenReturn(null);
-    when(agencyService.getAgency(97L)).thenThrow(new IllegalStateException("down"));
     when(agencyService.getAgency(96L)).thenReturn(new AgencyDTO().id(96L));
     assertThat(creatorAgency.consultingTypeOf(98L)).isEmpty();
-    assertThat(creatorAgency.consultingTypeOf(97L)).isEmpty();
     assertThat(creatorAgency.consultingTypeOf(96L)).isEmpty();
     assertThat(creatorAgency.consultingTypeOf(null)).isEmpty();
+  }
+
+  @Test
+  void aFailedAgencyLookupIsNotMistakenForAnAgencyWithoutConsultingType() {
+    // #1662: an empty answer would be stored on the call's link and refuse every registration for
+    // the rest of the call; the caller must see the outage instead.
+    when(agencyService.getAgency(97L)).thenThrow(new IllegalStateException("down"));
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> creatorAgency.consultingTypeOf(97L))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException
+                .class);
   }
 
   private void groupAgencies(Long... ids) {

@@ -1075,12 +1075,16 @@ public class CreateUserFacadeTest {
             .linkKind(linkKind)
             .chatType("AUDIO")
             .temporaryAccount(true)
+            .guestAccountMode(de.caritas.cob.userservice.api.model.GuestAccountMode.GUEST_CHOOSES)
             .build();
+    // The link stores GUEST_CHOOSES, but the Träger's cap admits only TEMPORARY now: the account
+    // must keep the resolver's capped mode, not reread the stored one.
     when(temporaryAccountLinkResolver.resolveEntry(any()))
         .thenReturn(
             Optional.of(
                 new de.caritas.cob.userservice.api.service.agencyinvitelink
-                    .TemporaryAccountLinkResolver.Entry(link, link.effectiveGuestAccountMode())));
+                    .TemporaryAccountLinkResolver.Entry(
+                    link, de.caritas.cob.userservice.api.model.GuestAccountMode.TEMPORARY)));
     var snapshot =
         de.caritas.cob.userservice.api.model.TemporaryAccountSnapshot.builder()
             .medium(
@@ -1106,7 +1110,9 @@ public class CreateUserFacadeTest {
     assertThat(user.isTemporaryAccount(), is(true));
     assertThat(user.getTemporaryAccountSnapshot(), is(snapshot));
     // #1662: the mode the guest entered under, as the link resolver capped it
-    assertThat(user.getGuestAccountModeAtEntry(), is(link.effectiveGuestAccountMode()));
+    assertThat(
+        user.getGuestAccountModeAtEntry(),
+        is(de.caritas.cob.userservice.api.model.GuestAccountMode.TEMPORARY));
     org.mockito.Mockito.verifyNoInteractions(createNewSessionFacade);
   }
 

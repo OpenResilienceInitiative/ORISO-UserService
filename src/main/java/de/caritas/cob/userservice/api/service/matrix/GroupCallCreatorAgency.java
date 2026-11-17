@@ -78,16 +78,22 @@ public class GroupCallCreatorAgency {
         .collect(Collectors.toSet());
   }
 
-  /** The consulting type the Beratungsstelle registers under; empty when it cannot be read. */
+  /**
+   * The consulting type the Beratungsstelle registers under; empty when the agency is unknown or
+   * names none, {@code ServiceUnavailableException} when the lookup fails.
+   */
   public Optional<Integer> consultingTypeOf(Long agencyId) {
     if (agencyId == null) return Optional.empty();
     try {
       return Optional.ofNullable(agencies.getAgency(agencyId)).map(AgencyDTO::getConsultingType);
     } catch (RuntimeException unavailable) {
+      // #1662: not "no consulting type". The link would store that and refuse every registration
+      // for the rest of the call; fail the request so it is retried once the lookup works.
       log.warn(
           "Agency lookup for a group call link failed ({})",
           unavailable.getClass().getSimpleName());
-      return Optional.empty();
+      throw new de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException(
+          "The agency of the group call is not available");
     }
   }
 }

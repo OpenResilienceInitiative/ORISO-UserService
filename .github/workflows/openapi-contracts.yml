@@ -59,8 +59,9 @@ jobs:
       uses: actions/checkout@v6
       with:
         repository: OpenResilienceInitiative/ORISO-TenantService
-        # TenantService dev including #357 (current DPA signature time in the tenant gate).
-        ref: ${{ github.event_name != 'push' && '4ee2e71ccd1b821c6189791f43e3fa014501d052' || 'dev' }}
+        # TenantService#368 head (dev including #357 + the nine featureGuestAccount* caps of
+        # UserService#1662). Merge TenantService#368 first; then repin to the dev commit with it.
+        ref: ${{ github.event_name != 'push' && 'b9e4036bf8924e49a0b033af1f85670dc4ca998a' || 'dev' }}
         path: .providers/tenant
         persist-credentials: false
 
