@@ -227,6 +227,38 @@ public interface AccountInviteRepository
       @Param("now") LocalDateTime now);
 
   /**
+   * Revokes every open invite of a deleted Träger ({@code tenantId}) or Beratungsstelle ({@code
+   * agencyId}); the other argument is null (ORISO-Admin#1522). Frees each address like a manual
+   * revoke. A setup link through which an account is being set up right now is left alone.
+   */
+  @Transactional
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i"
+          + " SET i.status ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus.REVOKED,"
+          + " i.activeRecipientKey = NULL,"
+          + " i.activeSetupIdentityKey = NULL,"
+          + " i.initialPasswordVerifier = NULL,"
+          + " i.revokedAt = :now,"
+          + " i.provisioningFailureReason = :reason,"
+          + " i.updateDate = :now"
+          + " WHERE (:tenantId IS NULL OR i.tenantId = :tenantId)"
+          + " AND (:agencyId IS NULL OR i.agencyId = :agencyId)"
+          + " AND (:tenantId IS NOT NULL OR :agencyId IS NOT NULL)"
+          + " AND i.status IN :open"
+          + " AND (i.purpose <>"
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose.EXISTING_ACCOUNT_SETUP"
+          + " OR i.provisioningStatus <>"
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteProvisioningStatus.IN_PROGRESS)")
+  int revokeOpenInvitesOfUnit(
+      @Param("tenantId") Long tenantId,
+      @Param("agencyId") Long agencyId,
+      @Param("open") Collection<AccountInviteStatus> open,
+      @Param("reason") String reason,
+      @Param("now") LocalDateTime now);
+
+  /**
    * Locks the row and proves it still has the status its writer checked; 0 when a revoke or accept
    * changed it first. Keeps the persistence context so the writer goes on with its entity.
    */
