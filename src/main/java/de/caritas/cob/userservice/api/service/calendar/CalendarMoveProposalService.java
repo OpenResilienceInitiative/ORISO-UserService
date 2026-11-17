@@ -35,6 +35,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -59,6 +60,7 @@ public class CalendarMoveProposalService {
 
   private static final String NOT_FOUND = "Move proposal not found.";
   private static final String NO_APPOINTMENT = "Appointment not found.";
+  static final int MAX_REASON = 500;
 
   private final AuthenticatedUser caller;
   private final CalendarMoveProposalRepository proposals;
@@ -110,6 +112,10 @@ public class CalendarMoveProposalService {
     if (!start.isAfter(now)) {
       throw new BadRequestException("A proposed time must start in the future.");
     }
+    var reason = StringUtils.trimToNull(request.getReason());
+    if (reason != null && reason.length() > MAX_REASON) {
+      throw new BadRequestException("A reason is at most " + MAX_REASON + " characters long.");
+    }
     var appointmentId = appointmentIdOf(request.getEntryId());
     // Locked: two proposals of one counsellor for one appointment must not both stay open.
     var appointment =
@@ -152,6 +158,7 @@ public class CalendarMoveProposalService {
     proposal.setEntryEnd(appointment.getEndTime());
     proposal.setStatus(Status.OPEN);
     proposal.setCreatedAt(now);
+    proposal.setReason(reason);
     proposal = proposals.save(proposal);
     var proposerName =
         consultants.findByIdAndDeleteDateIsNull(me).map(CalendarColleagueScope::nameOf).orElse("");
@@ -300,6 +307,7 @@ public class CalendarMoveProposalService {
         .proposerName(names.getOrDefault(proposal.getProposerId(), ""))
         .approverId(proposal.getApproverId())
         .approverName(names.getOrDefault(proposal.getApproverId(), ""))
+        .reason(proposal.getReason())
         .createdAt(proposal.getCreatedAt().atOffset(ZoneOffset.UTC));
   }
 
