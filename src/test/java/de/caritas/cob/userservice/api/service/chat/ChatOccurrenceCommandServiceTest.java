@@ -75,7 +75,8 @@ class ChatOccurrenceCommandServiceTest {
             "!room:matrix.example",
             null,
             false,
-            java.util.List.of("owner", "co-mod", "asker"));
+            // FE#1211: the owner cancelled it; only the others need to hear about it.
+            java.util.List.of("co-mod", "asker"));
   }
 
   @Test
