@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <!-- ORISO-UserService#1666: admin.type was VARCHAR(6), too short for STATISTICS (and SUPPORT). -->
+  <changeSet id="20261117-admin-type-statistics-1666" author="oriso">
+    <modifyDataType tableName="admin" columnName="type" newDataType="VARCHAR(16)"/>
+    <addNotNullConstraint tableName="admin" columnName="type" columnDataType="VARCHAR(16)"/>
+    <rollback>
+      <modifyDataType tableName="admin" columnName="type" newDataType="VARCHAR(6)"/>
+      <addNotNullConstraint tableName="admin" columnName="type" columnDataType="VARCHAR(6)"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

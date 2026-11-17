@@ -140,6 +140,18 @@ class IdentityConfigTest {
   }
 
   @Test
+  void otpIsAlwaysAllowedForStatisticsReaders() {
+    givenAValidIdentityConfig();
+    identityConfig.setOtpAllowedForUsers(false);
+    identityConfig.setOtpAllowedForConsultants(false);
+    identityConfig.setOtpAllowedForTenantSuperAdmins(false);
+    identityConfig.setOtpAllowedForSingleTenantAdmins(false);
+    identityConfig.setOtpAllowedForRestrictedAgencyAdmins(false);
+
+    assertTrue(identityConfig.isOtpAllowed(Set.of(UserRole.STATISTICS_READER.getValue())));
+  }
+
+  @Test
   void isTwoFactorAuthenticationAllowedShouldMirrorTheOtpRolePolicy() {
     givenAValidIdentityConfig();
     identityConfig.setOtpAllowedForUsers(true);

@@ -55,7 +55,9 @@ public class Admin implements TenantAware {
     TENANT,
     SUPER,
     /** Global Support Admin (ADR-018) — additive support identity, separate from Platform Admin. */
-    SUPPORT
+    SUPPORT,
+    /** Read-only platform statistics account (ORISO-UserService#1666); always on tenant 0. */
+    STATISTICS
   }
 
   /** Explicit management pause; independent identity and lifecycle restrictions stay intact. */
