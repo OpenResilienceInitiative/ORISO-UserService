@@ -63,6 +63,46 @@ paths:
             A switched-off direct link returns {"reason":"DIRECT_LINK_INACTIVE"}.
             An expired direct invitation, or a token replaced by "Neuen Link senden", returns
             {"reason":"DIRECT_LINK_EXPIRED"} (ORISO-Frontend#2252).
+  /users/chat/{chatId}/invite-context:
+    get:
+      tags: [group-invite-context-controller]
+      operationId: getGroupInviteContext
+      summary: Read a Gesprächskreis invite's guest account mode before login (#1662)
+      description: >-
+        Public. For the holder of a Gesprächskreis invite link (group id, its Beratungsstelle and
+        the invite secret) only: the circle's guest account mode, capped by what the platform and
+        the circle's Träger allow now. Nothing else about the circle is returned. Refusals match
+        the registration with a group invite (reason GROUP_INVITE_INVALID).
+      security: []
+      parameters:
+        - name: chatId
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+        - name: agencyId
+          in: query
+          required: true
+          schema: {type: integer, format: int64}
+        - name: inviteToken
+          in: query
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: The circle's guest account mode
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [guestAccountMode]
+                properties:
+                  guestAccountMode:
+                    type: string
+                    enum: [TEMPORARY, GUEST_CHOOSES, PERMANENT]
+        '400':
+          description: Unknown group, another Beratungsstelle's, or not a Gesprächskreis
+        '403':
+          description: Wrong or missing invite secret
   /users/invitelinks/{token}/renewal-requests:
     post:
       tags: [direct-link-controller]

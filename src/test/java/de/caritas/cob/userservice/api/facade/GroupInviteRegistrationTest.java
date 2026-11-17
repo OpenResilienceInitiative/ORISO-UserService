@@ -116,6 +116,49 @@ class GroupInviteRegistrationTest {
     }
   }
 
+  // --- #1662: the Gesprächskreis entry page reads the mode before anybody logs in ---
+
+  @ParameterizedTest
+  @CsvSource({
+    "TEMPORARY, true, TEMPORARY",
+    "GUEST_CHOOSES, true, GUEST_CHOOSES",
+    "PERMANENT, true, PERMANENT",
+    "GUEST_CHOOSES, false, PERMANENT",
+    "TEMPORARY, false, PERMANENT"
+  })
+  void theEntryPageReadsTheCirclesCappedMode(
+      GuestAccountMode stored, boolean temporaryAllowedNow, GuestAccountMode expected) {
+    group.setGuestAccountMode(stored);
+    temporaryAllowed = temporaryAllowedNow;
+
+    assertThat(registration.publicGuestAccountMode(GROUP, AGENCY, TOKEN)).isEqualTo(expected);
+  }
+
+  @Test
+  void theEntryPageLearnsNothingWithoutTheLinksSecret() {
+    assertThatThrownBy(() -> registration.publicGuestAccountMode(GROUP, AGENCY, "guessed"))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class);
+    assertThatThrownBy(() -> registration.publicGuestAccountMode(GROUP, AGENCY, null))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class);
+  }
+
+  @Test
+  void theEntryPageLearnsNothingForAnotherAgencyOrAnInternalGroup() {
+    assertThatThrownBy(() -> registration.publicGuestAccountMode(GROUP, AGENCY + 1, TOKEN))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class);
+    group.setConversationType(ConversationType.INTERNAL_GROUP);
+    assertThatThrownBy(() -> registration.publicGuestAccountMode(GROUP, AGENCY, TOKEN))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class);
+  }
+
   private static UserDTO invite(boolean temporary) {
     var dto = new UserDTO();
     dto.setGroupChatId(GROUP);

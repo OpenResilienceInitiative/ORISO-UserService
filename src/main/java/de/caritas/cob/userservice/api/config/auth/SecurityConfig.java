@@ -215,6 +215,10 @@ public class SecurityConfig {
                 .permitAll()
                 .requestMatchers(HttpMethod.GET, "/users/invitelinks/*/context")
                 .permitAll()
+                // #1662: a Gesprächskreis entry page reads the circle's guest account mode; the
+                // invite secret is the credential and GroupInviteRegistration checks it.
+                .requestMatchers(HttpMethod.GET, "/users/chat/*/invite-context")
+                .permitAll()
                 // Calendar subscription feed (ADR-032): a calendar app sends no token; the signed
                 // address is the credential and CalendarFeedService checks it in constant time.
                 .requestMatchers(
