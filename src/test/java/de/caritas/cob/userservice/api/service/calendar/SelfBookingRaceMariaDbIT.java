@@ -8,11 +8,12 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AppointmentKind;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionAppointmentTimeDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.model.CalendarWorkingHours;
+import de.caritas.cob.userservice.api.model.CalendarConsultationHours;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.SessionAppointment;
 import de.caritas.cob.userservice.api.model.User;
-import de.caritas.cob.userservice.api.port.out.CalendarWorkingHoursRepository;
+import de.caritas.cob.userservice.api.port.out.CalendarConsultationHoursRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionAppointmentRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
@@ -55,10 +56,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.MariaDBContainer;
 
 /**
- * Self-booking (ORISO-Frontend#1050) on MariaDB at REPEATABLE READ: two askers of the same
- * counsellor book the same slot at the same moment. Both have read their conversation, so both
+ * Self-booking (ORISO-Frontend#1050, #2287) on MariaDB at REPEATABLE READ. Two askers of the same
+ * counsellor book the same slot at the same moment: both have read their conversation, so both
  * transactions hold a snapshot from before either booking; both then wait on the counsellor's row.
  * Exactly one booking may be stored: the second must see the first although its snapshot does not.
+ * The same holds when the counsellor confirms a request while another asker books its time.
  */
 @DataJpaTest
 @ActiveProfiles("testing")
@@ -117,7 +119,7 @@ class SelfBookingRaceMariaDbIT {
   @Autowired private ConsultantRepository consultants;
   @Autowired private SessionRepository sessions;
   @Autowired private SessionAppointmentRepository appointments;
-  @Autowired private CalendarWorkingHoursRepository workingHours;
+  @Autowired private CalendarConsultationHoursRepository consultationHours;
   @Autowired private CounsellorFreeTime freeTime;
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private javax.sql.DataSource dataSource;
@@ -137,7 +139,8 @@ class SelfBookingRaceMariaDbIT {
   void setUp() {
     transaction = new TransactionTemplate(transactionManager);
     when(caller.getUserId()).thenAnswer(invocation -> actingAs.get());
-    when(caller.isConsultant()).thenReturn(false);
+    when(caller.isConsultant())
+        .thenAnswer(invocation -> counsellor != null && counsellor.getId().equals(actingAs.get()));
     when(caller.getTenantId()).thenReturn(TENANT);
     transaction.executeWithoutResult(
         status -> {
@@ -145,12 +148,12 @@ class SelfBookingRaceMariaDbIT {
           first = sessions.save(session(users.save(user()), counsellor));
           second = sessions.save(session(users.save(user()), counsellor));
           for (int weekday = 0; weekday <= 6; weekday++) {
-            var row = new CalendarWorkingHours();
+            var row = new CalendarConsultationHours();
             row.setConsultantId(counsellor.getId());
             row.setWeekday(weekday);
             row.setStartTime(LocalTime.of(0, 0));
             row.setEndTime(LocalTime.of(23, 30));
-            workingHours.save(row);
+            consultationHours.save(row);
           }
         });
   }
@@ -158,7 +161,8 @@ class SelfBookingRaceMariaDbIT {
   @AfterEach
   void tearDown() {
     var jdbc = new JdbcTemplate(dataSource);
-    jdbc.update("DELETE FROM calendar_working_hours WHERE consultant_id = ?", counsellor.getId());
+    jdbc.update(
+        "DELETE FROM calendar_consultation_hours WHERE consultant_id = ?", counsellor.getId());
     for (var session : new Session[] {first, second}) {
       jdbc.update("DELETE FROM session_appointment WHERE session_id = ?", session.getId());
       jdbc.update("DELETE FROM session WHERE id = ?", session.getId());
@@ -212,6 +216,80 @@ class SelfBookingRaceMariaDbIT {
                 appointments.lockScheduledOfConsultantBetween(
                     counsellor.getId(), slot.start(), slot.end()));
     assertThat(stored).hasSize(1);
+  }
+
+  @Test
+  void confirmAndACompetingBooking_Should_NeverBothTakeTheTime() throws Exception {
+    var now = Instant.now();
+    var slot = freeTime.slots(counsellor.getId(), now, now.plus(Duration.ofDays(3))).get(0);
+    var time =
+        new SessionAppointmentTimeDTO()
+            .startTime(slot.start().atOffset(ZoneOffset.UTC))
+            .endTime(slot.end().atOffset(ZoneOffset.UTC))
+            .kind(AppointmentKind.VIDEO);
+
+    var pool = Executors.newFixedThreadPool(3);
+    var holding = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    try {
+      var holder =
+          CompletableFuture.runAsync(
+              () ->
+                  transaction.executeWithoutResult(
+                      status -> {
+                        consultants.lockConsultant(counsellor.getId());
+                        holding.countDown();
+                        await(release);
+                      }),
+              pool);
+      assertThat(holding.await(15, TimeUnit.SECONDS)).isTrue();
+
+      // The second asker's booking reads its conversation, then waits on the counsellor's row:
+      // its snapshot is older than the request stored next.
+      var booking = CompletableFuture.supplyAsync(() -> book(second, time), pool);
+      awaitWaitersOnTheCounsellor(1, booking);
+      var request =
+          transaction.execute(
+              status -> {
+                var requested = new SessionAppointment();
+                requested.setSession(sessions.findById(first.getId()).orElseThrow());
+                requested.setStatus(SessionAppointment.Status.REQUESTED);
+                requested.setStartTime(slot.start());
+                requested.setEndTime(slot.end());
+                requested.setKind(SessionAppointment.Kind.VIDEO);
+                return appointments.save(requested);
+              });
+      var confirm = CompletableFuture.supplyAsync(() -> confirm(request.getId()), pool);
+      awaitWaitersOnTheCounsellor(2, booking, confirm);
+      release.countDown();
+      holder.get(15, TimeUnit.SECONDS);
+
+      assertThat(outcome(booking)).isEqualTo("conflict");
+      assertThat(outcome(confirm)).isEqualTo("confirmed");
+    } finally {
+      release.countDown();
+      pool.shutdownNow();
+    }
+    var stored =
+        transaction.execute(
+            status ->
+                appointments.lockScheduledOfConsultantBetween(
+                    counsellor.getId(), slot.start(), slot.end()));
+    assertThat(stored)
+        .extracting(SessionAppointment::getStatus)
+        .containsExactly(SessionAppointment.Status.SCHEDULED);
+  }
+
+  private String confirm(UUID appointmentId) {
+    actingAs.set(counsellor.getId());
+    try {
+      Tenants.in(TENANT, () -> service.confirm(first.getId(), appointmentId));
+      return "confirmed";
+    } catch (ConflictException conflict) {
+      return "conflict";
+    } finally {
+      actingAs.remove();
+    }
   }
 
   private String book(Session session, SessionAppointmentTimeDTO time) {

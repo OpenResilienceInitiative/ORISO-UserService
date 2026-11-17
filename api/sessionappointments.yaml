@@ -92,7 +92,8 @@ paths:
         404:
           description: NOT FOUND - no such session or appointment, or the caller is no participant
         409:
-          description: CONFLICT - the appointment is cancelled
+          description: CONFLICT - the appointment is cancelled, declined, or a request waiting for
+            confirmation (confirm or decline it first)
       security:
         - Bearer: [ ]
   /users/sessions/{sessionId}/appointments/{appointmentId}/cancel:
@@ -125,10 +126,11 @@ paths:
       tags:
         - session-appointment-controller
       summary: 'The times the asker may book with the counsellor of the session (self-booking,
-        ORISO-Frontend#1050): slots inside the counsellor''s working hours (day exceptions and the
-        public holidays of their region count) that no appointment, group date, blocker or imported
-        busy time touches, starting no earlier than the self-booking lead time and less than 14
-        days ahead (the booking horizon), earliest first. A counsellor without working hours
+        ORISO-Frontend#1050, #2287): slots of the counsellor''s slot length inside their
+        Sprechstunden (not their working hours; days off and the public holidays of their region
+        count) that no appointment, request, group date, blocker or imported busy time touches,
+        starting no earlier than the minimum lead time and less than 14 days ahead (the booking
+        horizon), earliest first, each INSTANT or REQUEST. A counsellor without Sprechstunden
         offers none. [Authorization: the asker of the session]'
       operationId: getSessionAppointmentSlots
       parameters:
@@ -177,9 +179,11 @@ paths:
     post:
       tags:
         - session-appointment-controller
-      summary: 'Books one of the offered slots as a scheduled video or phone appointment. The slot
-        is checked again while the counsellor''s calendar is locked, so two bookings never take the
-        same time. [Authorization: the asker of the session]'
+      summary: 'Books one of the offered slots as a video or phone appointment: SCHEDULED when the
+        slot is INSTANT, REQUESTED (waiting for the counsellor) when it is a REQUEST, as decided
+        again at booking time. The slot is checked again while the counsellor''s calendar is
+        locked, so two bookings never take the same time. [Authorization: the asker of the
+        session]'
       operationId: bookSessionAppointmentSlot
       parameters:
         - $ref: '#/components/parameters/SessionId'
@@ -207,7 +211,7 @@ paths:
         409:
           description: 'CONFLICT - the time is no longer free, or the conversation is not running.
             X-Reason SELF_BOOKING_LIMIT_REACHED: the conversation already has an upcoming
-            appointment (one at a time). X-Reason SLOT_OUTSIDE_BOOKING_WINDOW: the start lies
+            appointment or a request waiting (one at a time). X-Reason SLOT_OUTSIDE_BOOKING_WINDOW: the start lies
             inside the lead time or 14 days or more ahead.'
           headers:
             X-Reason:
@@ -216,6 +220,79 @@ paths:
                 enum:
                   - SELF_BOOKING_LIMIT_REACHED
                   - SLOT_OUTSIDE_BOOKING_WINDOW
+      security:
+        - Bearer: [ ]
+  /users/sessions/{sessionId}/appointments/{appointmentId}/confirm:
+    post:
+      tags:
+        - session-appointment-controller
+      summary: 'Confirms an advice seeker''s request: REQUESTED becomes SCHEDULED. The time is
+        checked again while the counsellor''s calendar is locked; it must still start in the
+        future and nothing else may take it meanwhile. [Authorization: the assigned counsellor of
+        the session, or a counsellor with co-access]'
+      operationId: confirmSessionAppointment
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/AppointmentId'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionAppointmentDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - the asker of the session, or no/invalid role or CSRF token
+        404:
+          description: NOT FOUND - no such session or appointment, or the caller is no participant
+        409:
+          description: 'CONFLICT - X-Reason APPOINTMENT_NOT_REQUESTED: the appointment is no
+            request (any more). X-Reason REQUESTED_TIME_TAKEN: the time has passed or something
+            else takes it now; decline the request instead.'
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                enum:
+                  - APPOINTMENT_NOT_REQUESTED
+                  - REQUESTED_TIME_TAKEN
+      security:
+        - Bearer: [ ]
+  /users/sessions/{sessionId}/appointments/{appointmentId}/decline:
+    post:
+      tags:
+        - session-appointment-controller
+      summary: 'Declines an advice seeker''s request: REQUESTED becomes DECLINED and frees the
+        time. [Authorization: the assigned counsellor of the session, or a counsellor with
+        co-access]'
+      operationId: declineSessionAppointment
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/AppointmentId'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionAppointmentDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - the asker of the session, or no/invalid role or CSRF token
+        404:
+          description: NOT FOUND - no such session or appointment, or the caller is no participant
+        409:
+          description: 'CONFLICT - X-Reason APPOINTMENT_NOT_REQUESTED: the appointment is no
+            request (any more).'
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                enum:
+                  - APPOINTMENT_NOT_REQUESTED
       security:
         - Bearer: [ ]
   /users/appointments/upcoming:
@@ -269,6 +346,7 @@ components:
       required:
         - startTime
         - endTime
+        - bookingMode
       properties:
         startTime:
           type: string
@@ -276,6 +354,16 @@ components:
         endTime:
           type: string
           format: date-time
+        bookingMode:
+          $ref: '#/components/schemas/SlotBookingMode'
+    SlotBookingMode:
+      description: 'INSTANT: booking the slot schedules the appointment at once (the counsellor
+        accepts automatically and the start lies at least their notice period ahead). REQUEST:
+        booking it sends a request (status REQUESTED) the counsellor confirms or declines.'
+      type: string
+      enum:
+        - INSTANT
+        - REQUEST
     SessionAppointmentTimeDTO:
       type: object
       required:
@@ -321,10 +409,15 @@ components:
           type: string
           format: date-time
         status:
+          description: 'REQUESTED: an advice seeker''s booking waiting for the counsellor
+            (ORISO-Frontend#2287); it takes the time like a scheduled one. DECLINED: a request the
+            counsellor declined.'
           type: string
           enum:
             - SCHEDULED
             - CANCELLED
+            - REQUESTED
+            - DECLINED
         kind:
           $ref: '#/components/schemas/AppointmentKind'
         counterpart:

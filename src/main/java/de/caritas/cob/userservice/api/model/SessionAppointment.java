@@ -33,9 +33,15 @@ import org.hibernate.type.SqlTypes;
 @NoArgsConstructor
 public class SessionAppointment {
 
+  /**
+   * REQUESTED: an advice seeker's booking that waits for the counsellor (ORISO-Frontend#2287); it
+   * takes the time like a scheduled one. Confirmed it is SCHEDULED, declined DECLINED.
+   */
   public enum Status {
     SCHEDULED,
-    CANCELLED
+    CANCELLED,
+    REQUESTED,
+    DECLINED
   }
 
   /** How the appointment takes place (ADR-032); null on rows made before the kind existed. */

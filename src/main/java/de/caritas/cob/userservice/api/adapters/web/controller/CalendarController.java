@@ -5,6 +5,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import de.caritas.cob.userservice.api.adapters.web.dto.BlockerCreateDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.BlockerTimeDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarColleaguesDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.CalendarConsultationHoursDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarEntryDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarImportDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarMoveProposalCreateDTO;
@@ -15,6 +16,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CalendarWorkingDayExcepti
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarWorkingDayExceptionWindowsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarWorkingHoursDTO;
 import de.caritas.cob.userservice.api.service.calendar.CalendarBlockerService;
+import de.caritas.cob.userservice.api.service.calendar.CalendarConsultationHoursService;
 import de.caritas.cob.userservice.api.service.calendar.CalendarFeedService;
 import de.caritas.cob.userservice.api.service.calendar.CalendarMoveProposalService;
 import de.caritas.cob.userservice.api.service.calendar.CalendarService;
@@ -50,6 +52,7 @@ public class CalendarController implements UsersApi {
   private final CalendarSyncService sync;
   private final CalendarFeedService feed;
   private final CalendarWorkingHoursService workingHours;
+  private final CalendarConsultationHoursService consultationHours;
   private final CalendarMoveProposalService proposals;
 
   @Override
@@ -103,6 +106,17 @@ public class CalendarController implements UsersApi {
   @Override
   public ResponseEntity<CalendarSyncDTO> removeCalendarImport() {
     return ResponseEntity.ok(sync.removeImport());
+  }
+
+  @Override
+  public ResponseEntity<CalendarConsultationHoursDTO> getCalendarConsultationHours() {
+    return ResponseEntity.ok(consultationHours.consultationHours());
+  }
+
+  @Override
+  public ResponseEntity<CalendarConsultationHoursDTO> setCalendarConsultationHours(
+      CalendarConsultationHoursDTO request) {
+    return ResponseEntity.ok(consultationHours.replace(request));
   }
 
   @Override

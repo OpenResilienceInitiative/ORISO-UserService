@@ -16,12 +16,16 @@ import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.CalendarBlocker;
+import de.caritas.cob.userservice.api.model.CalendarBookingSetting;
+import de.caritas.cob.userservice.api.model.CalendarConsultationHours;
 import de.caritas.cob.userservice.api.model.CalendarWorkingHours;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.CalendarBlockerRepository;
+import de.caritas.cob.userservice.api.port.out.CalendarBookingSettingRepository;
+import de.caritas.cob.userservice.api.port.out.CalendarConsultationHoursRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarWorkingHoursRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -55,10 +59,12 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 
 /**
- * Self-booking (ORISO-Frontend#1050): the asker of a 1:1 conversation books a free slot of its
- * counsellor. Real security chain, controller, service and database; only the caller is staged.
+ * Self-booking (ORISO-Frontend#1050, #2287): the asker of a 1:1 conversation books a free slot of
+ * its counsellor's Sprechstunden, at once or as a request the counsellor confirms or declines. Real
+ * security chain, controller, service and database; only the caller is staged.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -76,13 +82,20 @@ class AppointmentSelfBookingControllerIT {
   private static final String CSRF_VALUE = "test";
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
   private static final ObjectMapper JSON = new ObjectMapper();
-  private static final Duration LEAD_TIME = Duration.ofHours(24);
+
+  /** The minimum lead time before any slot (appointment.self-booking.lead-time). */
+  private static final Duration LEAD_TIME = Duration.ofHours(2);
+
+  /** The default notice period: inside it every slot is a request. */
+  private static final Duration NOTICE = Duration.ofDays(1);
 
   @Autowired private TenantFixtures fixtures;
   @Autowired private MockMvc mockMvc;
   @Autowired private SessionRepository sessions;
   @Autowired private CalendarWorkingHoursRepository workingHours;
   @Autowired private CalendarBlockerRepository blockers;
+  @Autowired private CalendarConsultationHoursRepository consultationHours;
+  @Autowired private CalendarBookingSettingRepository bookingSettings;
 
   @MockitoBean TenantService tenantService;
   @MockitoBean TenantResolverService tenantResolverService;
@@ -117,13 +130,21 @@ class AppointmentSelfBookingControllerIT {
               workingHours.findByConsultantIdOrderByWeekdayAscStartTimeAscEndTimeAsc(
                   counsellor.getId()));
           blockers.deleteAll(blockers.findOverlapping(counsellor.getId(), Instant.EPOCH, far()));
+          consultationHours.deleteAll(
+              consultationHours.findByConsultantIdOrderByWeekdayAscStartTimeAscEndTimeAsc(
+                  counsellor.getId()));
+          for (var id : List.of(counsellor.getId(), otherCounsellor.getId())) {
+            consultationHours.deleteAll(
+                consultationHours.findByConsultantIdOrderByWeekdayAscStartTimeAscEndTimeAsc(id));
+            bookingSettings.findById(id).ifPresent(bookingSettings::delete);
+          }
         });
     fixtures.removeAll();
   }
 
   @Test
-  void slots_Should_OfferHourLongTimesInsideTheWorkingHours_AfterTheLeadTime() throws Exception {
-    worksEveryDay("08:00", "18:00");
+  void slots_Should_OfferHourLongTimesInsideTheSprechstunden_AfterTheLeadTime() throws Exception {
+    opensEveryDay("08:00", "18:00");
     actAsAsker(asker);
     var now = Instant.now();
 
@@ -139,7 +160,8 @@ class AppointmentSelfBookingControllerIT {
   }
 
   @Test
-  void slots_Should_BeEmpty_When_TheCounsellorKeepsNoWorkingHours() throws Exception {
+  void slots_Should_BeEmpty_When_TheCounsellorKeepsOnlyWorkingHours() throws Exception {
+    worksEveryDay("00:00", "23:30");
     actAsAsker(asker);
     var now = Instant.now();
 
@@ -147,8 +169,48 @@ class AppointmentSelfBookingControllerIT {
   }
 
   @Test
+  void slots_Should_BeRequestsInsideTheNoticePeriod_And_InstantAfterIt() throws Exception {
+    opensEveryDay("00:00", "23:30");
+    actAsAsker(asker);
+    var now = Instant.now();
+
+    var slots = slots(session.getId(), now, now.plus(Duration.ofDays(3)));
+
+    var edge = now.plus(NOTICE);
+    for (var slot : slots) {
+      var start = Instant.parse((String) slot.get("startTime"));
+      // The server's "now" is a moment later than this one: leave the slots at the edge out.
+      if (Duration.between(start, edge).abs().compareTo(Duration.ofMinutes(1)) < 0) {
+        continue;
+      }
+      assertThat(slot.get("bookingMode"))
+          .as(start.toString())
+          .isEqualTo(start.isBefore(edge) ? "REQUEST" : "INSTANT");
+    }
+    assertThat(slots).extracting(slot -> slot.get("bookingMode")).contains("REQUEST", "INSTANT");
+  }
+
+  @Test
+  void slots_Should_FollowTheCounsellorsSettings() throws Exception {
+    opensEveryDay("00:00", "23:30");
+    settings(false, 1, 30);
+    actAsAsker(asker);
+    var now = Instant.now();
+
+    var slots = slots(session.getId(), now, now.plus(Duration.ofDays(3)));
+
+    assertThat(slots).isNotEmpty();
+    assertThat(slots).extracting(slot -> slot.get("bookingMode")).containsOnly("REQUEST");
+    for (var slot : slots) {
+      var start = Instant.parse((String) slot.get("startTime"));
+      var end = Instant.parse((String) slot.get("endTime"));
+      assertThat(Duration.between(start, end)).isEqualTo(Duration.ofMinutes(30));
+    }
+  }
+
+  @Test
   void slots_Should_LeaveOutTheCounsellorsBlockers() throws Exception {
-    worksEveryDay("00:00", "23:30");
+    opensEveryDay("00:00", "23:30");
     actAsAsker(asker);
     var now = Instant.now();
     var first = firstSlotStart(session.getId(), now);
@@ -176,11 +238,11 @@ class AppointmentSelfBookingControllerIT {
   }
 
   @Test
-  void book_Should_ScheduleTheSlot_And_TakeItOutOfTheOffer() throws Exception {
-    worksEveryDay("00:00", "23:30");
+  void book_Should_ScheduleAnInstantSlot_And_TakeItOutOfTheOffer() throws Exception {
+    opensEveryDay("00:00", "23:30");
     actAsAsker(asker);
     var now = Instant.now();
-    var start = firstSlotStart(session.getId(), now);
+    var start = firstSlotStart(session.getId(), now, "INSTANT");
 
     mockMvc
         .perform(book(session.getId(), start, start.plus(Duration.ofHours(1)), "VIDEO"))
@@ -190,15 +252,164 @@ class AppointmentSelfBookingControllerIT {
         .andExpect(jsonPath("$.kind").value("VIDEO"))
         .andExpect(jsonPath("$.counterpart.username").isNotEmpty());
 
-    assertThat(firstSlotStart(session.getId(), now)).isNotEqualTo(start);
+    assertThat(slotStarts(session.getId(), now)).doesNotContain(start);
     var listed = body(get("/users/sessions/" + session.getId() + "/appointments"));
     assertThat(listed).hasSize(1);
     assertThat(Instant.parse((String) listed.get(0).get("startTime"))).isEqualTo(start);
   }
 
   @Test
+  void book_Should_RequestARequestSlot_AndBlockItForOthers_AndCountItAsTheOneAppointment()
+      throws Exception {
+    opensEveryDay("00:00", "23:30");
+    var otherSession = fixtures.session(otherAsker, AGENCY, counsellor);
+    actAsAsker(asker);
+    var now = Instant.now();
+    var start = firstSlotStart(session.getId(), now, "REQUEST");
+    var later = firstSlotStart(session.getId(), now, "INSTANT");
+
+    mockMvc
+        .perform(book(session.getId(), start, start.plus(Duration.ofHours(1)), "PHONE"))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.status").value("REQUESTED"))
+        .andExpect(jsonPath("$.kind").value("PHONE"));
+
+    mockMvc
+        .perform(book(session.getId(), later, later.plus(Duration.ofHours(1)), "VIDEO"))
+        .andExpect(status().isConflict())
+        .andExpect(header().string("X-Reason", "SELF_BOOKING_LIMIT_REACHED"));
+    actAsAsker(otherAsker);
+    assertThat(slotStarts(otherSession.getId(), now)).doesNotContain(start);
+    mockMvc
+        .perform(book(otherSession.getId(), start, start.plus(Duration.ofHours(1)), "VIDEO"))
+        .andExpect(status().isConflict());
+  }
+
+  @Test
+  void confirm_Should_ScheduleTheRequest_ForTheCounsellorOnly() throws Exception {
+    opensEveryDay("00:00", "23:30");
+    actAsAsker(asker);
+    var start = firstSlotStart(session.getId(), Instant.now(), "REQUEST");
+    var id = booked(start);
+
+    mockMvc.perform(decide(id, "confirm")).andExpect(status().isForbidden());
+    actAsCounsellor(otherCounsellor);
+    mockMvc.perform(decide(id, "confirm")).andExpect(status().isNotFound());
+
+    actAsCounsellor(counsellor);
+    mockMvc
+        .perform(decide(id, "confirm"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("SCHEDULED"));
+    mockMvc
+        .perform(decide(id, "confirm"))
+        .andExpect(status().isConflict())
+        .andExpect(header().string("X-Reason", "APPOINTMENT_NOT_REQUESTED"));
+    mockMvc
+        .perform(decide(id, "decline"))
+        .andExpect(status().isConflict())
+        .andExpect(header().string("X-Reason", "APPOINTMENT_NOT_REQUESTED"));
+  }
+
+  @Test
+  void confirm_Should_Refuse_When_SomethingElseTakesTheTimeNow() throws Exception {
+    opensEveryDay("00:00", "23:30");
+    actAsAsker(asker);
+    var start = firstSlotStart(session.getId(), Instant.now(), "REQUEST");
+    var id = booked(start);
+    block(start.plus(Duration.ofMinutes(30)), start.plus(Duration.ofMinutes(45)));
+
+    actAsCounsellor(counsellor);
+    mockMvc
+        .perform(decide(id, "confirm"))
+        .andExpect(status().isConflict())
+        .andExpect(header().string("X-Reason", "REQUESTED_TIME_TAKEN"));
+    mockMvc
+        .perform(decide(id, "decline"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("DECLINED"));
+  }
+
+  @Test
+  void decline_Should_FreeTheTime_And_TheConversationsOneAppointment() throws Exception {
+    opensEveryDay("00:00", "23:30");
+    actAsAsker(asker);
+    var now = Instant.now();
+    var start = firstSlotStart(session.getId(), now, "REQUEST");
+    var id = booked(start);
+
+    mockMvc.perform(decide(id, "decline")).andExpect(status().isForbidden());
+    actAsCounsellor(counsellor);
+    mockMvc
+        .perform(decide(id, "decline"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("DECLINED"));
+    mockMvc
+        .perform(
+            csrf(MockMvcRequestBuilders.put(
+                    "/users/sessions/" + session.getId() + "/appointments/" + id))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(times(start, start.plus(Duration.ofHours(1)), null)))
+        .andExpect(status().isConflict());
+
+    actAsAsker(asker);
+    assertThat(slotStarts(session.getId(), now)).contains(start);
+    mockMvc
+        .perform(book(session.getId(), start, start.plus(Duration.ofHours(1)), "VIDEO"))
+        .andExpect(status().isCreated());
+  }
+
+  @Test
+  void reschedule_Should_Refuse_ARequestWaitingForConfirmation() throws Exception {
+    opensEveryDay("00:00", "23:30");
+    actAsAsker(asker);
+    var start = firstSlotStart(session.getId(), Instant.now(), "REQUEST");
+    var id = booked(start);
+
+    actAsCounsellor(counsellor);
+    var later = start.plus(Duration.ofDays(2));
+    mockMvc
+        .perform(
+            csrf(MockMvcRequestBuilders.put(
+                    "/users/sessions/" + session.getId() + "/appointments/" + id))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(times(later, later.plus(Duration.ofHours(1)), null)))
+        .andExpect(status().isConflict());
+  }
+
+  @Test
+  void consultationHours_Should_BeTheCounsellorsOwn() throws Exception {
+    actAsCounsellor(counsellor);
+    mockMvc
+        .perform(
+            csrf(MockMvcRequestBuilders.put("/users/calendar/consultation-hours"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"windows\":[{\"weekday\":2,\"start\":\"09:00\",\"end\":\"11:00\"}],"
+                        + "\"autoAccept\":false,\"noticeDays\":2,\"slotMinutes\":30}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.windows[0].weekday").value(2))
+        .andExpect(jsonPath("$.autoAccept").value(false));
+    mockMvc
+        .perform(get("/users/calendar/consultation-hours"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.windows[0].start").value("09:00"))
+        .andExpect(jsonPath("$.noticeDays").value(2))
+        .andExpect(jsonPath("$.slotMinutes").value(30));
+    actAsCounsellor(otherCounsellor);
+    mockMvc
+        .perform(get("/users/calendar/consultation-hours"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.windows").isEmpty())
+        .andExpect(jsonPath("$.slotMinutes").value(60));
+
+    actAsAsker(asker);
+    mockMvc.perform(get("/users/calendar/consultation-hours")).andExpect(status().isForbidden());
+  }
+
+  @Test
   void book_Should_Refuse_When_TheTimeIsTakenMeanwhile() throws Exception {
-    worksEveryDay("00:00", "23:30");
+    opensEveryDay("00:00", "23:30");
     var otherSession = fixtures.session(otherAsker, AGENCY, counsellor);
     actAsAsker(asker);
     var start = firstSlotStart(session.getId(), Instant.now());
@@ -214,12 +425,12 @@ class AppointmentSelfBookingControllerIT {
 
   @Test
   void book_Should_Refuse_A_TimeThatIsNoOfferedSlot() throws Exception {
-    worksEveryDay("08:00", "18:00");
+    opensEveryDay("08:00", "18:00");
     actAsAsker(asker);
     var start = firstSlotStart(session.getId(), Instant.now());
 
     // Inside the lead time.
-    var soon = Instant.now().plus(Duration.ofHours(2)).truncatedTo(ChronoUnit.HOURS);
+    var soon = Instant.now().plus(Duration.ofHours(1)).truncatedTo(ChronoUnit.HOURS);
     mockMvc
         .perform(book(session.getId(), soon, soon.plus(Duration.ofHours(1)), "VIDEO"))
         .andExpect(status().isConflict());
@@ -236,7 +447,7 @@ class AppointmentSelfBookingControllerIT {
 
   @Test
   void book_Should_TakeOnlyVideoOrPhone() throws Exception {
-    worksEveryDay("00:00", "23:30");
+    opensEveryDay("00:00", "23:30");
     actAsAsker(asker);
     var start = firstSlotStart(session.getId(), Instant.now());
 
@@ -252,7 +463,7 @@ class AppointmentSelfBookingControllerIT {
 
   @Test
   void counsellor_Should_NeitherReadSlotsNorSelfBook_And_KeepCreating() throws Exception {
-    worksEveryDay("00:00", "23:30");
+    opensEveryDay("00:00", "23:30");
     actAsAsker(asker);
     var start = firstSlotStart(session.getId(), Instant.now());
 
@@ -274,7 +485,7 @@ class AppointmentSelfBookingControllerIT {
 
   @Test
   void strangers_Should_GetNotFound() throws Exception {
-    worksEveryDay("00:00", "23:30");
+    opensEveryDay("00:00", "23:30");
     actAsAsker(asker);
     var start = firstSlotStart(session.getId(), Instant.now());
     var now = Instant.now();
@@ -293,7 +504,7 @@ class AppointmentSelfBookingControllerIT {
 
   @Test
   void finishedConversation_Should_RefuseSlotsAndBooking() throws Exception {
-    worksEveryDay("00:00", "23:30");
+    opensEveryDay("00:00", "23:30");
     actAsAsker(asker);
     var start = firstSlotStart(session.getId(), Instant.now());
     session.setStatus(SessionStatus.DONE);
@@ -310,7 +521,7 @@ class AppointmentSelfBookingControllerIT {
 
   @Test
   void anonymousAsker_Should_BookLikeARegisteredOne() throws Exception {
-    worksEveryDay("00:00", "23:30");
+    opensEveryDay("00:00", "23:30");
     Tenants.actAs(caller, asker.getUserId(), TENANT, UserRole.ANONYMOUS);
     caller.setGrantedAuthorities(Set.of(AuthorityValue.ANONYMOUS_DEFAULT));
     var start = firstSlotStart(session.getId(), Instant.now());
@@ -322,7 +533,7 @@ class AppointmentSelfBookingControllerIT {
 
   @Test
   void book_Should_AllowOnlyOneUpcomingAppointmentPerConversation() throws Exception {
-    worksEveryDay("00:00", "23:30");
+    opensEveryDay("00:00", "23:30");
     actAsAsker(asker);
     var slots = slots(session.getId(), Instant.now(), Instant.now().plus(Duration.ofDays(3)));
     var first = Instant.parse((String) slots.get(0).get("startTime"));
@@ -346,7 +557,7 @@ class AppointmentSelfBookingControllerIT {
 
   @Test
   void book_Should_CountTheCounsellorsUpcomingAppointmentAsWell() throws Exception {
-    worksEveryDay("00:00", "23:30");
+    opensEveryDay("00:00", "23:30");
     actAsAsker(asker);
     var start = firstSlotStart(session.getId(), Instant.now());
     actAsCounsellor(counsellor);
@@ -367,10 +578,10 @@ class AppointmentSelfBookingControllerIT {
 
   @Test
   void book_Should_RefuseAStartOutsideTheBookingWindow() throws Exception {
-    worksEveryDay("00:00", "23:30");
+    opensEveryDay("00:00", "23:30");
     actAsAsker(asker);
     var beyond = Instant.now().plus(Duration.ofDays(15)).truncatedTo(ChronoUnit.HOURS);
-    var soon = Instant.now().plus(Duration.ofHours(2)).truncatedTo(ChronoUnit.HOURS);
+    var soon = Instant.now().plus(Duration.ofHours(1)).truncatedTo(ChronoUnit.HOURS);
 
     for (var start : List.of(beyond, soon)) {
       mockMvc
@@ -382,7 +593,7 @@ class AppointmentSelfBookingControllerIT {
 
   @Test
   void slots_Should_OfferNothingBeyondTheBookingHorizon() throws Exception {
-    worksEveryDay("00:00", "23:30");
+    opensEveryDay("00:00", "23:30");
     actAsAsker(asker);
     var now = Instant.now();
 
@@ -414,6 +625,34 @@ class AppointmentSelfBookingControllerIT {
     return Instant.parse((String) slots.get(0).get("startTime"));
   }
 
+  /** The first offered slot of the mode, an hour away from the notice period's end. */
+  private Instant firstSlotStart(long sessionId, Instant now, String mode) throws Exception {
+    var edge = now.plus(NOTICE);
+    return slots(sessionId, now, now.plus(Duration.ofDays(3))).stream()
+        .filter(slot -> mode.equals(slot.get("bookingMode")))
+        .map(slot -> Instant.parse((String) slot.get("startTime")))
+        .filter(start -> Duration.between(start, edge).abs().compareTo(Duration.ofHours(1)) > 0)
+        .findFirst()
+        .orElseThrow();
+  }
+
+  private List<Instant> slotStarts(long sessionId, Instant now) throws Exception {
+    return slots(sessionId, now, now.plus(Duration.ofDays(3))).stream()
+        .map(slot -> Instant.parse((String) slot.get("startTime")))
+        .toList();
+  }
+
+  private MockHttpServletRequestBuilder decide(String appointmentId, String decision) {
+    return csrf(
+        post(
+            "/users/sessions/"
+                + session.getId()
+                + "/appointments/"
+                + appointmentId
+                + "/"
+                + decision));
+  }
+
   private List<Map<String, Object>> slots(long sessionId, Instant from, Instant to)
       throws Exception {
     return body(slotsRequest(sessionId, from, to, "VIDEO"));
@@ -432,6 +671,32 @@ class AppointmentSelfBookingControllerIT {
     return csrf(post("/users/sessions/" + sessionId + "/appointment-slots/booking"))
         .contentType(MediaType.APPLICATION_JSON)
         .content(times(start, end, kind));
+  }
+
+  private void opensEveryDay(String start, String end) {
+    Tenants.acrossAll(
+        () -> {
+          for (int weekday = 0; weekday <= 6; weekday++) {
+            var row = new CalendarConsultationHours();
+            row.setConsultantId(counsellor.getId());
+            row.setWeekday(weekday);
+            row.setStartTime(LocalTime.parse(start));
+            row.setEndTime(LocalTime.parse(end));
+            consultationHours.save(row);
+          }
+        });
+  }
+
+  private void settings(boolean autoAccept, int noticeDays, int slotMinutes) {
+    Tenants.acrossAll(
+        () -> {
+          var setting = new CalendarBookingSetting();
+          setting.setConsultantId(counsellor.getId());
+          setting.setAutoAccept(autoAccept);
+          setting.setNoticeDays(noticeDays);
+          setting.setSlotMinutes(slotMinutes);
+          bookingSettings.save(setting);
+        });
   }
 
   private void worksEveryDay(String start, String end) {

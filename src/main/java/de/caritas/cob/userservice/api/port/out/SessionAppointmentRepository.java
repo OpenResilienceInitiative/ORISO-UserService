@@ -98,28 +98,43 @@ public interface SessionAppointmentRepository extends CrudRepository<SessionAppo
       Pageable pageable);
 
   /**
-   * The counsellor's scheduled appointments in their own conversations that overlap the window,
-   * read with a lock (self-booking, ORISO-Frontend#1050). A locking read sees what other
-   * transactions committed after this one began, which a plain read at REPEATABLE READ does not:
-   * the last check before a booking is stored must not miss the booking that won the race.
+   * The counsellor's scheduled and requested appointments in their own conversations that overlap
+   * the window, read with a lock (self-booking, ORISO-Frontend#1050, #2287). A locking read sees
+   * what other transactions committed after this one began, which a plain read at REPEATABLE READ
+   * does not: the last check before a booking is stored must not miss the booking that won the
+   * race.
    */
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query(
       "SELECT a FROM SessionAppointment a WHERE a.session.consultant.id = :consultantId "
-          + "AND a.status = 'SCHEDULED' AND a.startTime < :to AND a.endTime > :from")
+          + "AND a.status IN ('SCHEDULED', 'REQUESTED') AND a.startTime < :to AND a.endTime > :from")
   List<SessionAppointment> lockScheduledOfConsultantBetween(
       @Param("consultantId") String consultantId,
       @Param("from") Instant from,
       @Param("to") Instant to);
 
   /**
-   * The conversation's scheduled appointments that have not ended, read with a lock: the
-   * self-booking limit counts what other transactions committed meanwhile (security review).
+   * The conversation's scheduled and requested appointments that have not ended, read with a lock:
+   * the self-booking limit counts what other transactions committed meanwhile (security review); a
+   * request waiting for the counsellor counts as well (ORISO-Frontend#2287).
    */
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query(
       "SELECT a FROM SessionAppointment a WHERE a.session.id = :sessionId "
-          + "AND a.status = 'SCHEDULED' AND a.endTime > :now")
+          + "AND a.status IN ('SCHEDULED', 'REQUESTED') AND a.endTime > :now")
   List<SessionAppointment> lockUpcomingOfSession(
       @Param("sessionId") Long sessionId, @Param("now") Instant now);
+
+  /**
+   * The requests waiting for the counsellor of their conversation that overlap the window
+   * (ORISO-Frontend#2287): they take the counsellor's time from other advice seekers, but are no
+   * entry of the calendar or the subscription feed.
+   */
+  @Query(
+      "SELECT a FROM SessionAppointment a WHERE a.session.consultant.id = :consultantId "
+          + "AND a.status = 'REQUESTED' AND a.startTime < :to AND a.endTime > :from")
+  List<SessionAppointment> findRequestedOfConsultantBetween(
+      @Param("consultantId") String consultantId,
+      @Param("from") Instant from,
+      @Param("to") Instant to);
 }

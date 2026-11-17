@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AppointmentSlotDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionAppointmentCounterpartDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionAppointmentDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionAppointmentTimeDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.SlotBookingMode;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
@@ -21,6 +22,7 @@ import de.caritas.cob.userservice.api.port.out.SessionAppointmentRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.CaseHandoverService;
 import de.caritas.cob.userservice.api.service.calendar.CounsellorFreeTime;
+import de.caritas.cob.userservice.api.service.calendar.FreeSlot.BookingMode;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -49,6 +51,13 @@ import org.springframework.transaction.annotation.Transactional;
  * checked again while the counsellor's row is locked, so two askers never get the same time. The
  * counsellor learns of it like the asker learns of a counsellor's appointment: from the notice the
  * Frontend posts into the conversation, and from the appointment in their calendar.
+ *
+ * <p>Sprechstunden and requests (ORISO-Frontend#2287): a slot the counsellor does not accept
+ * automatically, or one inside their notice period, is booked as REQUESTED. A request takes the
+ * time like a scheduled appointment and counts as the conversation's one appointment; the
+ * counsellor of the conversation confirms it (SCHEDULED, the time checked again under the same
+ * locks) or declines it (DECLINED, the time is free again). A request is not moved: it is confirmed
+ * or declined first.
  */
 @Service
 @RequiredArgsConstructor
@@ -102,8 +111,9 @@ public class SessionAppointmentService {
     requireResponsibleCounsellor(session);
     requireNotFinished(session);
     var appointment = appointmentOf(session, appointmentId);
-    if (appointment.getStatus() == Status.CANCELLED) {
-      throw new ConflictException("A cancelled appointment cannot be moved.");
+    if (appointment.getStatus() != Status.SCHEDULED) {
+      throw new ConflictException(
+          "Only a scheduled appointment is moved; a request is confirmed or declined first.");
     }
     applyTime(appointment, time);
     applyKind(appointment, time);
@@ -114,7 +124,9 @@ public class SessionAppointmentService {
   public SessionAppointmentDTO cancel(Long sessionId, UUID appointmentId) {
     var session = sessionOfParticipant(sessionId);
     var appointment = appointmentOf(session, appointmentId);
-    appointment.setStatus(Status.CANCELLED);
+    if (appointment.getStatus() != Status.DECLINED) {
+      appointment.setStatus(Status.CANCELLED);
+    }
     return toDto(appointment);
   }
 
@@ -136,7 +148,8 @@ public class SessionAppointmentService {
             slot ->
                 new AppointmentSlotDTO()
                     .startTime(slot.start().atOffset(ZoneOffset.UTC))
-                    .endTime(slot.end().atOffset(ZoneOffset.UTC)))
+                    .endTime(slot.end().atOffset(ZoneOffset.UTC))
+                    .bookingMode(SlotBookingMode.valueOf(slot.mode().name())))
         .toList();
   }
 
@@ -169,17 +182,73 @@ public class SessionAppointmentService {
           "This conversation already has an upcoming appointment.",
           HttpStatusExceptionReason.SELF_BOOKING_LIMIT_REACHED);
     }
-    if (!freeTime.isFreeSlot(consultantId, start, end)
+    var offered = freeTime.offeredSlot(consultantId, start, end);
+    if (offered.isEmpty()
         || !appointments.lockScheduledOfConsultantBetween(consultantId, start, end).isEmpty()) {
       throw new ConflictException("This time is not free any more.");
     }
     var appointment = new SessionAppointment();
     appointment.setSession(session);
-    appointment.setStatus(Status.SCHEDULED);
+    appointment.setStatus(
+        offered.get().mode() == BookingMode.INSTANT ? Status.SCHEDULED : Status.REQUESTED);
     appointment.setStartTime(start);
     appointment.setEndTime(end);
     appointment.setKind(SessionAppointment.Kind.valueOf(time.getKind().name()));
     return toDto(appointments.save(appointment));
+  }
+
+  /**
+   * The counsellor of the conversation confirms an advice seeker's request. The counsellor's row is
+   * locked first, as for a booking, and the time is checked again: it must still lie ahead and
+   * nothing but the request itself may take it, also not a booking committed meanwhile.
+   */
+  @Transactional
+  public SessionAppointmentDTO confirm(Long sessionId, UUID appointmentId) {
+    var session = sessionOfParticipant(sessionId);
+    requireResponsibleCounsellor(session);
+    if (session.getConsultant() == null) {
+      throw new ConflictException(
+          "The conversation has no counsellor whose time could be taken.",
+          HttpStatusExceptionReason.REQUESTED_TIME_TAKEN);
+    }
+    var consultantId = session.getConsultant().getId();
+    consultants.lockConsultant(consultantId);
+    var appointment = requestOf(session, appointmentId);
+    var start = appointment.getStartTime();
+    var end = appointment.getEndTime();
+    var others =
+        appointments.lockScheduledOfConsultantBetween(consultantId, start, end).stream()
+            .filter(other -> !other.getId().equals(appointment.getId()))
+            .toList();
+    if (!start.isAfter(Instant.now())
+        || !others.isEmpty()
+        || !freeTime.isFreeBesides(consultantId, start, end, appointment.getId())) {
+      throw new ConflictException(
+          "The requested time is not free any more.",
+          HttpStatusExceptionReason.REQUESTED_TIME_TAKEN);
+    }
+    appointment.setStatus(Status.SCHEDULED);
+    return toDto(appointment);
+  }
+
+  /** The counsellor of the conversation declines an advice seeker's request; the time is free. */
+  @Transactional
+  public SessionAppointmentDTO decline(Long sessionId, UUID appointmentId) {
+    var session = sessionOfParticipant(sessionId);
+    requireResponsibleCounsellor(session);
+    var appointment = requestOf(session, appointmentId);
+    appointment.setStatus(Status.DECLINED);
+    return toDto(appointment);
+  }
+
+  private SessionAppointment requestOf(Session session, UUID appointmentId) {
+    var appointment = appointmentOf(session, appointmentId);
+    if (appointment.getStatus() != Status.REQUESTED) {
+      throw new ConflictException(
+          "Only a request waiting for the counsellor is confirmed or declined.",
+          HttpStatusExceptionReason.APPOINTMENT_NOT_REQUESTED);
+    }
+    return appointment;
   }
 
   @Transactional(readOnly = true)

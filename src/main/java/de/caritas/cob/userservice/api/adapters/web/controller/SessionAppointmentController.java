@@ -46,6 +46,18 @@ public class SessionAppointmentController implements UsersApi {
     return ResponseEntity.ok(service.cancel(sessionId, appointmentId));
   }
 
+  @Override
+  public ResponseEntity<SessionAppointmentDTO> confirmSessionAppointment(
+      Long sessionId, UUID appointmentId) {
+    return ResponseEntity.ok(service.confirm(sessionId, appointmentId));
+  }
+
+  @Override
+  public ResponseEntity<SessionAppointmentDTO> declineSessionAppointment(
+      Long sessionId, UUID appointmentId) {
+    return ResponseEntity.ok(service.decline(sessionId, appointmentId));
+  }
+
   /** Video and phone offer the same free time; the medium is chosen again when booking. */
   @Override
   public ResponseEntity<List<AppointmentSlotDTO>> getSessionAppointmentSlots(
