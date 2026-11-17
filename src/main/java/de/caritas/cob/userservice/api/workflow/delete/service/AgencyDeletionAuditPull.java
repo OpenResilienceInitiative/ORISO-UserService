@@ -51,8 +51,12 @@ public class AgencyDeletionAuditPull {
           continue;
         }
       }
-      // Second chance after the mark-time report (ORISO-Admin#1522); repeating it is harmless.
-      deletedUnitInviteRevocation.onDeletionReported(AGENCY, agencyId, EXECUTED);
+      // Second chance after the mark-time report (ORISO-Admin#1522); repeating it is harmless. A
+      // failed revocation keeps the row, so the next pull tries again; its log entry is already
+      // stored and is not written twice.
+      if (!deletedUnitInviteRevocation.onDeletionReported(AGENCY, agencyId, EXECUTED)) {
+        continue;
+      }
       recorded.add(row.id());
     }
     if (!recorded.isEmpty()) {

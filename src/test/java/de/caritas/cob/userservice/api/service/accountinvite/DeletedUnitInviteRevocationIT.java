@@ -159,6 +159,43 @@ class DeletedUnitInviteRevocationIT {
     assertThat(reload(platformAdmin).getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
   }
 
+  /**
+   * Review of ORISO-UserService#1675: the invites and the links of one deletion commit together. If
+   * switching a link off fails, nothing is half done and the caller learns it, so a retry finishes
+   * the job.
+   */
+  @Test
+  void aFailureWhileSwitchingOffLinks_Should_RollBackTheRevokedInvites_AndReportIt() {
+    AccountInvite sent = invite(TENANT, AGENCY, AccountInviteStatus.EMAIL_SENT);
+    AgencyInviteLink withAppointment =
+        link(TENANT, AGENCY, InviteLinkStatus.ACTIVE, UUID.randomUUID());
+    org.mockito.Mockito.doThrow(new IllegalStateException("matrix down"))
+        .when(invitationEnd)
+        .revoke(org.mockito.ArgumentMatchers.any());
+
+    boolean done =
+        revocation.onDeletionReported(
+            de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditTargetType.AGENCY,
+            String.valueOf(AGENCY),
+            de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditOutcome.SCHEDULED);
+
+    assertThat(done).isFalse();
+    assertThat(reload(sent).getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+    assertThat(reload(sent).getActiveRecipientKey()).isNotNull();
+    assertThat(status(withAppointment)).isEqualTo(InviteLinkStatus.ACTIVE.name());
+
+    org.mockito.Mockito.reset(invitationEnd);
+    assertThat(
+            revocation.onDeletionReported(
+                de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditTargetType.AGENCY,
+                String.valueOf(AGENCY),
+                de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditOutcome
+                    .SCHEDULED))
+        .isTrue();
+    assertThat(reload(sent).getStatus()).isEqualTo(AccountInviteStatus.REVOKED);
+    assertThat(status(withAppointment)).isEqualTo(InviteLinkStatus.DISABLED.name());
+  }
+
   // --- helpers ----------------------------------------------------------------------------------
 
   private AccountInvite invite(Long tenantId, Long agencyId, AccountInviteStatus status) {

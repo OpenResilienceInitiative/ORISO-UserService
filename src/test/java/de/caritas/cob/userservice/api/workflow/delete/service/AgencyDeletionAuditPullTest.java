@@ -41,6 +41,13 @@ class AgencyDeletionAuditPullTest {
 
   @InjectMocks private AgencyDeletionAuditPull pull;
 
+  @org.junit.jupiter.api.BeforeEach
+  void revocationSucceedsByDefault() {
+    org.mockito.Mockito.lenient()
+        .when(deletedUnitInviteRevocation.onDeletionReported(any(), any(), any()))
+        .thenReturn(true);
+  }
+
   private static PendingEntry row(long id, long agencyId, Long tenantId) {
     return new PendingEntry(id, agencyId, tenantId, "EXECUTED", "2026-10-30T01:00:00");
   }
@@ -103,6 +110,19 @@ class AgencyDeletionAuditPullTest {
 
     verify(deletionAuditService, never()).recordAsSystem(any(), any(), any(), any(), any());
     verify(outbox, never()).acknowledge(anyList());
+  }
+
+  /** Review of ORISO-UserService#1675: a failed revocation keeps the row for the next pull. */
+  @Test
+  void aRowWhoseInvitationsCouldNotBeRevokedStaysInTheOutbox() {
+    when(outbox.fetchPending(anyInt())).thenReturn(List.of(row(1, 268, 4L), row(2, 269, null)));
+    when(deletionAuditLogRepository.existsByTargetTypeAndTargetIdAndOutcome(any(), any(), any()))
+        .thenReturn(true);
+    when(deletedUnitInviteRevocation.onDeletionReported(AGENCY, "268", EXECUTED)).thenReturn(false);
+
+    assertThat(pull.pullOnce()).isEqualTo(1);
+
+    verify(outbox).acknowledge(List.of(2L));
   }
 
   @Test

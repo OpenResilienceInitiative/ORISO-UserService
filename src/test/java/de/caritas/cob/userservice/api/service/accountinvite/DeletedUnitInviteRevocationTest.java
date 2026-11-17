@@ -27,6 +27,7 @@ class DeletedUnitInviteRevocationTest {
   @Mock private AccountInviteRepository invites;
   @Mock private AgencyInviteLinkRepository links;
   @Mock private ObjectProvider<DirectInvitationExpiryService> invitationEnd;
+  @Mock private org.springframework.transaction.PlatformTransactionManager transactionManager;
   @InjectMocks private DeletedUnitInviteRevocation revocation;
 
   @Test
@@ -65,11 +66,10 @@ class DeletedUnitInviteRevocationTest {
     when(invites.revokeOpenInvitesOfUnit(any(), anyLong(), any(), anyString(), any()))
         .thenThrow(new IllegalStateException("database down"));
 
-    assertThatCode(
-            () ->
-                revocation.onDeletionReported(
-                    DeletionAuditTargetType.AGENCY, "268", DeletionAuditOutcome.SCHEDULED))
-        .doesNotThrowAnyException();
+    org.assertj.core.api.Assertions.assertThat(
+            revocation.onDeletionReported(
+                DeletionAuditTargetType.AGENCY, "268", DeletionAuditOutcome.SCHEDULED))
+        .isFalse();
   }
 
   @Test
