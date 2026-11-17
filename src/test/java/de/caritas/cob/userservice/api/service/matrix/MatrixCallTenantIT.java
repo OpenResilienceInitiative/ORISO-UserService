@@ -83,6 +83,28 @@ class MatrixCallTenantIT {
 
   @Autowired private UserRepository users;
   @Autowired private ConsultantRepository consultants;
+
+  /**
+   * The case-writer rule needs agency, handover and supervisor tables this slice does not load;
+   * here a counsellor may write in the case when it is assigned to them.
+   */
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.notification.MatrixCaseReplyActorAuthorizer
+      caseWriterAuthorizer;
+
+  @org.junit.jupiter.api.BeforeEach
+  void caseWritersAreTheAssignedCounsellors() {
+    org.mockito.Mockito.lenient()
+        .when(
+            caseWriterAuthorizer.isCurrentAssignedOrTeamWriter(
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            call ->
+                ((de.caritas.cob.userservice.api.model.Session) call.getArgument(0))
+                    .isAdvisedBy(
+                        (de.caritas.cob.userservice.api.model.Consultant) call.getArgument(1)));
+  }
+
   @Autowired private SessionRepository sessions;
   @Autowired private EventNotificationRepository notifications;
   @Autowired private javax.sql.DataSource accountDataSource;

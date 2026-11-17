@@ -21,6 +21,7 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -58,6 +59,10 @@ public class EventNotificationService {
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull UserRepository userRepository;
   private final @NonNull ConsultantRepository consultantRepository;
+  // Optional so slim contexts that only need notifications still start; production always has it.
+  private final @NonNull org.springframework.beans.factory.ObjectProvider<
+          MatrixCaseReplyActorAuthorizer>
+      caseWriterAuthorizer;
   private final @NonNull IdentityTombstoneService identityTombstoneService;
   private final @NonNull EventNotificationDeduplicationWriter deduplicationWriter;
   private final @NonNull MatrixFeedUpdateSignalService feedUpdateSignalService;
@@ -1188,6 +1193,9 @@ public class EventNotificationService {
       String callId,
       String mediaRoomId,
       boolean video) {
+    if (!isSessionCallParticipant(session, recipientId)) {
+      return;
+    }
     var params = callParams(session, callId, mediaRoomId);
     params.put("callType", video ? "video" : "audio");
     params.put("callerName", resolveSenderName(senderId));
@@ -1216,6 +1224,9 @@ public class EventNotificationService {
       String callId,
       String mediaRoomId,
       boolean video) {
+    if (!isSessionCallParticipant(session, recipientId)) {
+      return;
+    }
     var params = callParams(session, callId, mediaRoomId);
     params.put("callType", video ? "video" : "audio");
     String key = callEventKey("call.started", session.getMatrixRoomId(), callId);
@@ -1241,6 +1252,9 @@ public class EventNotificationService {
       String mediaRoomId,
       long startedAt,
       long endedAt) {
+    if (!isSessionCallParticipant(session, recipientId)) {
+      return;
+    }
     var params = callParams(session, callId, mediaRoomId);
     params.put("durationSeconds", Long.toString(Math.max(0, endedAt - startedAt) / 1000));
     String key = callEventKey("call.ended", session.getMatrixRoomId(), callId);
@@ -1265,6 +1279,9 @@ public class EventNotificationService {
       String callId,
       String mediaRoomId,
       boolean video) {
+    if (!isSessionCallParticipant(session, recipientId)) {
+      return;
+    }
     var params = callParams(session, callId, mediaRoomId);
     params.put("callType", video ? "video" : "audio");
     String key = callEventKey("call.missed", session.getMatrixRoomId(), callId);
@@ -1279,6 +1296,59 @@ public class EventNotificationService {
         session.actionPath(consultantRecipient),
         session.getSessionId(),
         session.getTenantId());
+  }
+
+  /**
+   * A 1:1 session room also holds the department's other counsellors as silent members (ADR-002
+   * §1). A call there is the session's own: only its advice seeker and its assigned counsellor get
+   * call activity. Before this gate every silent member received an "internal group call"
+   * invitation for a case they cannot open (Activity showed only "Open chat", which led nowhere). A
+   * group chat's call keeps notifying every member.
+   */
+  /**
+   * A 1:1 session room also holds the agency's silent counsellors (ADR-002 §1). Call activity of a
+   * session reaches a counsellor only while they may write in the case: its assigned counsellor or
+   * a permitted team writer (the same rule as a case reply). Advice seekers and group chats are not
+   * gated here.
+   */
+  private boolean isSessionCallParticipant(
+      de.caritas.cob.userservice.api.service.matrix.MatrixCallConversation conversation,
+      String recipientId) {
+    if (conversation.getSessionId() == null) {
+      return true;
+    }
+    if (recipientId == null || recipientId.isBlank()) {
+      return false;
+    }
+    var counsellor = consultantRepository.findById(recipientId);
+    if (counsellor.isEmpty()) {
+      return true;
+    }
+    if (conversation.getMatrixRoomId() == null) {
+      return false;
+    }
+    // Same lookup as MatrixCallConversationResolver: the call's source room names the session.
+    return sessionRepository
+        .findByMatrixRoomId(conversation.getMatrixRoomId())
+        .filter(session -> Objects.equals(session.getId(), conversation.getSessionId()))
+        .filter(session -> Objects.equals(session.getTenantId(), conversation.getTenantId()))
+        // The authorizer leaves tenant and identity checks to its caller (as isCurrentWriter does).
+        .filter(
+            session ->
+                counsellor.get().getDeleteDate() == null
+                    && Objects.equals(counsellor.get().getTenantId(), session.getTenantId()))
+        .map(session -> isCaseWriter(session, counsellor.get()))
+        .orElse(false);
+  }
+
+  /** Without the case-writer rule (a slim context), only the assigned counsellor qualifies. */
+  private boolean isCaseWriter(
+      de.caritas.cob.userservice.api.model.Session session,
+      de.caritas.cob.userservice.api.model.Consultant counsellor) {
+    var authorizer = caseWriterAuthorizer.getIfAvailable();
+    return authorizer != null
+        ? authorizer.isCurrentAssignedOrTeamWriter(session, counsellor)
+        : session.isAdvisedBy(counsellor);
   }
 
   private Map<String, Object> callParams(

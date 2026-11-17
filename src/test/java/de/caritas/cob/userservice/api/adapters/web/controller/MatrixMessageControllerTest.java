@@ -496,8 +496,14 @@ class MatrixMessageControllerTest {
                 "{\"access_token\":\"synthetic-admin-token\"}", MediaType.APPLICATION_JSON));
   }
 
+  /** A first browser login: Synapse refuses the not yet set credential, which is then set. */
   private static void expectBrowserPasswordUpdate(
       MockRestServiceServer synapse, DefaultResponseCreator response) {
+    expectBrowserLogin(
+        synapse,
+        withStatus(HttpStatus.FORBIDDEN)
+            .contentType(MediaType.APPLICATION_JSON)
+            .body("{\"errcode\":\"M_FORBIDDEN\"}"));
     synapse
         .expect(requestTo(MATRIX_PASSWORD_UPDATE_URL))
         .andExpect(method(HttpMethod.PUT))
@@ -508,7 +514,6 @@ class MatrixMessageControllerTest {
   private static void expectBrowserRateLimit(
       MockRestServiceServer synapse, String upstreamRetryAfter, String retryAfterMsJson) {
     expectAdminLogin(synapse);
-    expectBrowserPasswordUpdate(synapse, withSuccess("{}", MediaType.APPLICATION_JSON));
     var response =
         withStatus(HttpStatus.TOO_MANY_REQUESTS)
             .contentType(MediaType.APPLICATION_JSON)
