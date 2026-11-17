@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.matrix;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.model.MatrixCallDevice;
 import de.caritas.cob.userservice.api.model.MatrixCallObservation;
 import de.caritas.cob.userservice.api.model.MatrixCallObservationEnd;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
@@ -18,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -387,12 +389,43 @@ public class MatrixCallObservationService {
             .build());
   }
 
+  /**
+   * FE#1211: "ended" is for the people who were in the call. An invitee who never joined hears that
+   * they missed it, as the lifecycle tells them when the call room empties; both writers share the
+   * missed event's key, so whichever runs first wins and the other adds nothing. Without a binding
+   * nobody's attendance is known, and every member hears that the call ended.
+   */
   private void notifyEnded(
       MatrixCallConversation conversation, List<String> members, MatrixCallObservation row) {
     var identities = identities(members, null, row.getTenantId());
+    var binding =
+        bindings.findBySourceRoomIdAndCallId(conversation.getMatrixRoomId(), row.getCallId());
+    var attendees =
+        binding
+            .map(
+                known ->
+                    known.getDevices().values().stream()
+                        .filter(MatrixCallDevice::isAttended)
+                        .map(MatrixCallDevice::getSenderMatrixId)
+                        .collect(Collectors.toSet()))
+            .orElse(null);
     for (String member : members) {
       var recipient = identities.get(member);
       if (recipient == null || !lifecycle.isActiveRecipient(recipient.id())) continue;
+      if (attendees != null && !attendees.contains(member)) {
+        var known = binding.get();
+        if (known.getInvitedMatrixIds().contains(member)
+            && !member.equals(known.getCallerMatrixId())) {
+          notifications.createCallMissedNotification(
+              conversation,
+              recipient.id(),
+              recipient.consultant(),
+              row.getCallId(),
+              row.getMediaRoomId(),
+              known.isVideo());
+        }
+        continue;
+      }
       notifications.createCallEndedNotification(
           conversation,
           recipient.id(),
