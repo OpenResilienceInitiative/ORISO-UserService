@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.SessionAppointment;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.calendar.CalendarColleagueScope.Colleague;
@@ -25,10 +26,12 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
 
 /**
@@ -90,6 +93,7 @@ public class CalendarService {
                         new CalendarColleagueDTO()
                             .id(colleague.consultant().getId())
                             .displayName(colleague.name())
+                            .secondaryLabel(secondaryLabelOf(colleague))
                             .agencyName(
                                 colleague.agencyId() == null
                                     ? ""
@@ -146,6 +150,7 @@ public class CalendarService {
         .title(entry.title())
         .sessionId(entry.sessionId())
         .seriesId(entry.seriesId())
+        .allDay(entry.type() == CalendarEntryType.BLOCKER ? entry.allDay() : null)
         .movable(movable);
   }
 
@@ -162,6 +167,22 @@ public class CalendarService {
         .kind(appointment ? kindOf(entry) : null)
         .title(appointment && showAskerUsernames ? entry.title() : null)
         .movable(false);
+  }
+
+  /**
+   * The username tells colleagues of one name apart (ORISO-UserService#1663). Within the Träger the
+   * consultant lists show it already; another Träger's colleague is told apart by their counselling
+   * centre, so the username does not leave the Träger.
+   */
+  // Provisioning stores usernames encoded ("enc.…"); colleagues read the login name.
+  private static final UsernameTranscoder USERNAMES = new UsernameTranscoder();
+
+  private static String secondaryLabelOf(Colleague colleague) {
+    return colleague.relation() == CalendarColleagueScope.Relation.OTHER_TENANT
+        ? null
+        : Optional.ofNullable(StringUtils.trimToNull(colleague.consultant().getUsername()))
+            .map(USERNAMES::decodeUsername)
+            .orElse(null);
   }
 
   private static AppointmentKind kindOf(CalendarEntry entry) {
