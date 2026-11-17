@@ -7,6 +7,11 @@ import lombok.*;
  * Observation-only registration of an encrypted call (#2166/#1624) in an internal group or, since
  * #2237, a 1:1 session. Exactly one of {@code chatId} or {@code sessionId} is set. It is NOT a call
  * binding: it never admits a guest, never backs a share link or knock and never grants access.
+ *
+ * <p>Frank, 17 Nov 2026: one narrowing reader. Only counsellors start calls, so the media gate
+ * refuses an advice seeker every call room except a running counsellor call ({@code
+ * CounsellorStartedCall}). A live row whose verified creator is an active counsellor of the Träger
+ * marks such a call; it never lets in anybody the gate's other rules refuse.
  */
 @Entity
 @Table(name = "matrix_call_observation")

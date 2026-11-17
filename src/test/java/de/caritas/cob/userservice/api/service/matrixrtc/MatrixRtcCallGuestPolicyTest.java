@@ -79,7 +79,8 @@ class MatrixRtcCallGuestPolicyTest {
             matrix,
             hasher,
             jdbc,
-            callGuests);
+            callGuests,
+            de.caritas.cob.userservice.testutils.CallStartRules.everyCallRunsForACounsellor());
     when(matrix.getRoomMembers(SOURCE)).thenReturn(Optional.of(List.of("@counsellor:example")));
     var session = mock(Session.class);
     when(session.getTenantId()).thenReturn(7L);

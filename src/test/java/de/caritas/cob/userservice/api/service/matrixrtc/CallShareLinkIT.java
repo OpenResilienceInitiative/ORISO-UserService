@@ -94,6 +94,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @TestPropertySource(properties = {"spring.profiles.active=testing,call-share-link-fixture"})
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({
+  de.caritas.cob.userservice.api.service.matrix.CounsellorStartedCall.class,
   de.caritas.cob.userservice.api.service.matrix.SessionCallAuthority.class,
   de.caritas.cob.userservice.api.service.matrix.SessionCallRevival.class,
   EventNotificationService.class,
@@ -142,6 +143,9 @@ class CallShareLinkIT {
   private static final String SECOND_GUEST = "@share-guest-2:example";
   private static final String CREATE =
       "{\"sourceRoomId\":\"" + SOURCE + "\",\"callId\":\"share-call\"}";
+
+  @Autowired
+  private de.caritas.cob.userservice.api.service.matrix.CounsellorStartedCall counsellorCalls;
 
   @Autowired private UserRepository users;
   @Autowired private ConsultantRepository consultants;
@@ -1295,7 +1299,8 @@ class CallShareLinkIT {
         matrix,
         hasher,
         new JdbcTemplate(dataSource),
-        callGuests);
+        callGuests,
+        counsellorCalls);
   }
 
   private String device() {
