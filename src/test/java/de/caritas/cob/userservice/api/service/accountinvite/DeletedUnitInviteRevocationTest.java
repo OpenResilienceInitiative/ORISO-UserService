@@ -28,6 +28,7 @@ class DeletedUnitInviteRevocationTest {
   @Mock private AgencyInviteLinkRepository links;
   @Mock private ObjectProvider<DirectInvitationExpiryService> invitationEnd;
   @Mock private org.springframework.transaction.PlatformTransactionManager transactionManager;
+  @Mock private de.caritas.cob.userservice.api.port.out.DeletionAuditLogRepository deletionLog;
   @InjectMocks private DeletedUnitInviteRevocation revocation;
 
   @Test

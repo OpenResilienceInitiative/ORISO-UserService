@@ -42,6 +42,7 @@ class DeletedUnitInviteRevocationIT {
   @Autowired private DeletedUnitInviteRevocation revocation;
   @Autowired private AccountInviteRepository invites;
   @Autowired private AgencyInviteLinkRepository links;
+  @Autowired private de.caritas.cob.userservice.api.port.out.DeletionAuditLogRepository deletionLog;
 
   @MockitoBean private DirectInvitationExpiryService invitationEnd;
 
@@ -49,6 +50,7 @@ class DeletedUnitInviteRevocationIT {
   void cleanUp() {
     invites.deleteAll();
     links.deleteAll();
+    deletionLog.deleteAll();
   }
 
   @Test
@@ -194,6 +196,77 @@ class DeletedUnitInviteRevocationIT {
         .isTrue();
     assertThat(reload(sent).getStatus()).isEqualTo(AccountInviteStatus.REVOKED);
     assertThat(status(withAppointment)).isEqualTo(InviteLinkStatus.DISABLED.name());
+  }
+
+  /**
+   * Review of ORISO-UserService#1675 (P1): a Träger report has no retry of its own. A revocation
+   * that failed once is completed by the retry, which takes the Träger from the deletion log.
+   */
+  @Test
+  void aFailedTenantRevocation_Should_BeCompletedByTheRetry() {
+    AccountInvite sent = invite(TENANT, null, AccountInviteStatus.EMAIL_SENT);
+    AgencyInviteLink withAppointment =
+        link(TENANT, null, InviteLinkStatus.ACTIVE, UUID.randomUUID());
+    reported(
+        de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditTargetType.TENANT,
+        TENANT,
+        de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditOutcome.EXECUTED);
+    org.mockito.Mockito.doThrow(new IllegalStateException("matrix down"))
+        .when(invitationEnd)
+        .revoke(org.mockito.ArgumentMatchers.any());
+
+    assertThat(
+            revocation.onDeletionReported(
+                de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditTargetType.TENANT,
+                String.valueOf(TENANT),
+                de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditOutcome.EXECUTED))
+        .isFalse();
+    assertThat(reload(sent).getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+
+    org.mockito.Mockito.reset(invitationEnd);
+    int retried = revocation.retryUnfinished();
+
+    assertThat(retried).isEqualTo(1);
+    assertThat(reload(sent).getStatus()).isEqualTo(AccountInviteStatus.REVOKED);
+    assertThat(status(withAppointment)).isEqualTo(InviteLinkStatus.DISABLED.name());
+    assertThat(revocation.retryUnfinished()).isZero();
+  }
+
+  @Test
+  void theRetry_Should_OnlyTouchUnitsTheDeletionLogReportsAsDeleted() {
+    AccountInvite deletedAgency = invite(TENANT, AGENCY, AccountInviteStatus.DRAFT);
+    AccountInvite liveAgency = invite(TENANT, OTHER_AGENCY, AccountInviteStatus.DRAFT);
+    AccountInvite liveTenant = invite(OTHER_TENANT, null, AccountInviteStatus.EMAIL_SENT);
+    reported(
+        de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditTargetType.AGENCY,
+        AGENCY,
+        de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditOutcome.SCHEDULED);
+    reported(
+        de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditTargetType.TENANT,
+        OTHER_TENANT,
+        de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditOutcome.CANCELLED);
+
+    int retried = revocation.retryUnfinished();
+
+    assertThat(retried).isEqualTo(1);
+    assertThat(reload(deletedAgency).getStatus()).isEqualTo(AccountInviteStatus.REVOKED);
+    assertThat(reload(liveAgency).getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
+    assertThat(reload(liveTenant).getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+  }
+
+  private void reported(
+      de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditTargetType type,
+      Long id,
+      de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditOutcome outcome) {
+    deletionLog.save(
+        de.caritas.cob.userservice.api.model.DeletionAuditLog.builder()
+            .actorRole("SYSTEM")
+            .targetType(type)
+            .targetId(String.valueOf(id))
+            .tenantId(TENANT)
+            .outcome(outcome)
+            .createDate(LocalDateTime.now())
+            .build());
   }
 
   // --- helpers ----------------------------------------------------------------------------------

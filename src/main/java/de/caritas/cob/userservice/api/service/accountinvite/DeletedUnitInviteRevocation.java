@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.accountinvite;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
+import de.caritas.cob.userservice.api.port.out.DeletionAuditLogRepository;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.DirectInvitationExpiryService;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkStatus;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditOutcome;
@@ -48,6 +49,10 @@ public class DeletedUnitInviteRevocation {
   private final @NonNull AgencyInviteLinkRepository links;
   private final @NonNull ObjectProvider<DirectInvitationExpiryService> invitationEnd;
   private final @NonNull PlatformTransactionManager transactionManager;
+  private final @NonNull DeletionAuditLogRepository deletionLog;
+
+  private static final List<DeletionAuditOutcome> DELETED =
+      List.of(DeletionAuditOutcome.SCHEDULED, DeletionAuditOutcome.EXECUTED);
 
   /** How many invites were revoked and links switched off. */
   public record Revoked(int invites, int links) {
@@ -122,6 +127,46 @@ public class DeletedUnitInviteRevocation {
           targetId,
           failure.getClass().getSimpleName());
       return false;
+    }
+  }
+
+  /**
+   * The durable retry (review of ORISO-UserService#1675): every Träger and Beratungsstelle the
+   * deletion log reports as deleted that still holds an open invite or an active link is revoked
+   * again. A report-time revocation that failed is thus completed by the next run; nothing is
+   * written when nothing is left. Run by {@code DeletedUnitInviteRetryScheduler}.
+   *
+   * @return how many units had something left that is now revoked
+   */
+  public int retryUnfinished() {
+    int completed = 0;
+    for (String id :
+        deletionLog.findDeletedTenantsStillInviting(
+            DeletionAuditTargetType.TENANT, DELETED, OPEN, active())) {
+      completed += retried(DeletionAuditTargetType.TENANT, id);
+    }
+    for (String id :
+        deletionLog.findDeletedAgenciesStillInviting(
+            DeletionAuditTargetType.AGENCY, DELETED, OPEN, active())) {
+      completed += retried(DeletionAuditTargetType.AGENCY, id);
+    }
+    return completed;
+  }
+
+  /** 1 when something was revoked, 0 when nothing was left or the retry failed again. */
+  private int retried(DeletionAuditTargetType type, String targetId) {
+    try {
+      Long id = Long.valueOf(targetId);
+      Revoked result =
+          type == DeletionAuditTargetType.AGENCY ? revokeForAgency(id) : revokeForTenant(id);
+      return result.invites() + result.links() > 0 ? 1 : 0;
+    } catch (RuntimeException failure) {
+      log.warn(
+          "Retry of the invitation revocation for deleted {} {} failed again: {}",
+          type,
+          targetId,
+          failure.getClass().getSimpleName());
+      return 0;
     }
   }
 
