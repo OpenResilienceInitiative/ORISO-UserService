@@ -1096,6 +1096,9 @@ class MatrixSynapseServiceTest {
     when(restTemplate.postForEntity(
             eq(MATRIX_BASE_URL + "/_matrix/client/r0/login"), any(HttpEntity.class), eq(Map.class)))
         .thenReturn(ResponseEntity.ok(Map.of("access_token", MATRIX_ADMIN_TOKEN)))
+        // First browser login of this user: the credential is not set yet.
+        .thenThrow(
+            HttpClientErrorException.create(HttpStatus.FORBIDDEN, "Forbidden", null, null, null))
         .thenReturn(
             ResponseEntity.ok(
                 Map.of(
@@ -1117,18 +1120,38 @@ class MatrixSynapseServiceTest {
     assertThat(updateBody.isLogoutDevices()).isFalse();
     assertThat(updateBody.getPassword()).hasSizeGreaterThanOrEqualTo(32);
 
-    verify(restTemplate, times(2))
+    verify(restTemplate, times(3))
         .postForEntity(
             eq(MATRIX_BASE_URL + "/_matrix/client/r0/login"),
             loginRequest.capture(),
             eq(Map.class));
-    var browserLoginBody = (MatrixLoginRequestDTO) loginRequest.getAllValues().get(1).getBody();
+    var browserLoginBody = (MatrixLoginRequestDTO) loginRequest.getAllValues().get(2).getBody();
     assertThat(browserLoginBody.getType()).isEqualTo("m.login.password");
     assertThat(browserLoginBody.getUser()).isEqualTo("@alice:example.org");
     assertThat(browserLoginBody.getDeviceId()).isEqualTo("ORISO_WEB_DEVICE_ONE");
     assertThat(browserLoginBody.getInitialDeviceDisplayName()).isEqualTo("ORISO Web");
     assertThat(browserLoginBody.getPassword()).isEqualTo(updateBody.getPassword());
     assertThat(result.get("interactive_auth_password")).isEqualTo(updateBody.getPassword());
+  }
+
+  @Test
+  void loginBrowserDevice_reusesTheSetCredentialWithoutAPasswordWrite() {
+    // ORISO-Frontend#2272: the password write is a bcrypt hash on Synapse, up to 2.9 s on Dev.
+    matrixConfig.setApiUrl(MATRIX_BASE_URL);
+    matrixConfig.setAdminUsername("admin");
+    matrixConfig.setAdminPassword("admin-password");
+    when(restTemplate.postForEntity(
+            eq(MATRIX_BASE_URL + "/_matrix/client/r0/login"), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("access_token", MATRIX_ADMIN_TOKEN)))
+        .thenReturn(
+            ResponseEntity.ok(
+                Map.of("access_token", "browser-token", "device_id", "ORISO_WEB_DEVICE_ONE")));
+
+    assertThat(
+            matrixSynapseService().loginBrowserDevice("@alice:example.org", "ORISO_WEB_DEVICE_ONE"))
+        .containsEntry("access_token", "browser-token");
+    verify(restTemplate, never())
+        .exchange(any(URI.class), eq(HttpMethod.PUT), any(HttpEntity.class), eq(Map.class));
   }
 
   @org.junit.jupiter.params.ParameterizedTest
@@ -1193,6 +1216,7 @@ class MatrixSynapseServiceTest {
     ReflectionTestUtils.setField(service, "adminTokenExpiry", Long.MAX_VALUE);
     var updateUri = URI.create(MATRIX_BASE_URL + "/_synapse/admin/v2/users/%40alice%3Aexample.org");
     var updateCalls = new AtomicInteger();
+    var loginCalls = new AtomicInteger();
     var firstLoginEntered = new CountDownLatch(1);
     var releaseFirstLogin = new CountDownLatch(1);
     var secondUpdateEntered = new CountDownLatch(1);
@@ -1209,6 +1233,11 @@ class MatrixSynapseServiceTest {
             eq(MATRIX_BASE_URL + "/_matrix/client/r0/login"), any(HttpEntity.class), eq(Map.class)))
         .thenAnswer(
             invocation -> {
+              // Each request's first attempt meets a not yet set credential, so both rotate it.
+              if (loginCalls.incrementAndGet() % 2 == 1) {
+                throw HttpClientErrorException.create(
+                    HttpStatus.FORBIDDEN, "Forbidden", null, null, null);
+              }
               if (firstLoginEntered.getCount() > 0) {
                 firstLoginEntered.countDown();
                 releaseFirstLogin.await(2, TimeUnit.SECONDS);
