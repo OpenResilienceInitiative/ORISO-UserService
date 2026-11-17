@@ -27,4 +27,14 @@ public interface InviteEmailDeliveryRepository extends JpaRepository<InviteEmail
           + " ORDER BY d.id DESC")
   List<InviteEmailDelivery> findLatestByAccountInviteIdIn(
       @Param("accountInviteIds") Collection<Long> accountInviteIds);
+
+  /** Removes the mail-delivery rows of invites about to be purged (ORISO-Admin#1522). */
+  @org.springframework.transaction.annotation.Transactional
+  @org.springframework.data.jpa.repository.Modifying(
+      clearAutomatically = true,
+      flushAutomatically = true)
+  @Query("DELETE FROM InviteEmailDelivery d WHERE d.accountInviteId IN :inviteIds")
+  int deleteByAccountInviteIdIn(
+      @org.springframework.data.repository.query.Param("inviteIds")
+          java.util.Collection<Long> inviteIds);
 }

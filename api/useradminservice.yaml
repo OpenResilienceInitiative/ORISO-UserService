@@ -1904,6 +1904,26 @@ paths:
           description: BAD GATEWAY - SMTP failed
       security:
         - Bearer: [ ]
+  /useradmin/account-invites/{inviteId}:
+    delete:
+      x-internal: true
+      tags:
+        - account-invite-controller
+      summary: 'Deletes an invite: revokes it at once if still open (its link stops working, its address and any reserved number are given back), hides it from every list and leaves the row to the nightly invite purge; repeating the call changes nothing. 409 INVITE_ALREADY_ACCEPTED once its account exists, 409 INVITE_BUSY while an existing account is set up through it [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
+      operationId: deleteAccountInvite
+      parameters:
+        - $ref: '#/components/parameters/InviteId'
+      responses:
+        204:
+          description: NO CONTENT - deleted, or already deleted
+        403:
+          description: FORBIDDEN - invite outside the caller's scope
+        404:
+          description: NOT FOUND - no such invite
+        409:
+          $ref: '#/components/responses/AccountInviteConflict'
+      security:
+        - Bearer: [ ]
   /useradmin/account-invites/{inviteId}/revoke:
     post:
       x-internal: true
