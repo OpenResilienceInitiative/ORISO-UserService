@@ -44,7 +44,7 @@ public class StartChatFacade {
     chat.setActive(true);
     chatService.saveChat(chat);
     try {
-      publishOpenedNotification(chat);
+      publishOpenedNotification(chat, consultant);
     } catch (RuntimeException notificationException) {
       LogService.logInternalServerError(notificationException);
     }
@@ -64,10 +64,12 @@ public class StartChatFacade {
     }
   }
 
-  private void publishOpenedNotification(Chat chat) {
+  /** FE#1211: the moderator who opens the group is the one person who needs no notice of it. */
+  private void publishOpenedNotification(Chat chat, Consultant opener) {
     if (chat.getId() == null) {
       return;
     }
+    String openerId = opener != null ? opener.getId() : null;
     groupChatLifecycleNotificationService.createOpenedNotifications(
         chat.getId(),
         chat.getCurrentOccurrenceIndex(),
@@ -75,6 +77,8 @@ public class StartChatFacade {
         chat.getMatrixRoomId(),
         null,
         chat.getChatModality() == Chat.ChatModality.VIDEO,
-        notificationRecipientService.resolveRecipientIds(chat));
+        notificationRecipientService.resolveRecipientIds(chat).stream()
+            .filter(recipientId -> !recipientId.equals(openerId))
+            .toList());
   }
 }
