@@ -855,6 +855,17 @@ class MatrixSessionCallBindingServiceTest {
     verify(lifecycle).handleRoom(MEDIA, Map.of());
   }
 
+  @Test
+  void theAttendanceIsAnnouncedAfterTheEndAndAFailureStaysThere() {
+    org.mockito.Mockito.doThrow(new IllegalStateException("matrix down"))
+        .when(lifecycle)
+        .announceExplicitEnd(MEDIA);
+
+    service.announceAttendanceAfterEnd(MEDIA);
+
+    verify(lifecycle).announceExplicitEnd(MEDIA);
+  }
+
   private static de.caritas.cob.userservice.api.model.MatrixCallObservation observation(
       long expiresAt) {
     return de.caritas.cob.userservice.api.model.MatrixCallObservation.builder()

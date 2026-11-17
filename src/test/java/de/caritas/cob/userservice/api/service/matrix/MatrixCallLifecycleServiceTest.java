@@ -219,6 +219,83 @@ class MatrixCallLifecycleServiceTest {
   }
 
   @org.junit.jupiter.api.Test
+  void anExplicitlyEndedSessionCallIsAnnouncedForEveryCounsellorWhoTookPart() {
+    String counsellor = "@counsellor:example";
+    String colleague = "@colleague:example";
+    binding =
+        MatrixCallBinding.builder()
+            .sourceRoomId(SOURCE)
+            .callId("call")
+            .mediaRoomId(MEDIA)
+            .callerMatrixId(counsellor)
+            .sessionId(16L)
+            .tenantId(TENANT)
+            .invitedAt(now - 60_000)
+            .inviteExpiresAt(now + 60_000)
+            .startedAt(now - 50_000)
+            .mediaObservedAt(now - 50_000)
+            .video(false)
+            .build();
+    binding
+        .getDevices()
+        .put("_c", new MatrixCallDevice(counsellor, now - 50_000, victimExpiry, true, "$c1"));
+    binding
+        .getDevices()
+        .put("_k", new MatrixCallDevice(colleague, now - 40_000, victimExpiry, true, "$k1"));
+    binding
+        .getDevices()
+        .put("_v", new MatrixCallDevice(VICTIM, now - 50_000, victimExpiry, true, "$v1"));
+    binding.finishExplicitly(now);
+    when(bindings.lockByMediaRoomId(MEDIA)).thenReturn(Optional.of(binding));
+    when(conversations.resolve(SOURCE))
+        .thenReturn(Optional.of(new MatrixCallConversation(SOURCE, TENANT, 16L, null)));
+    when(matrix.getCallRoomMembers(SOURCE))
+        .thenReturn(Optional.of(List.of(VICTIM, counsellor, colleague)));
+    for (var matrixId : List.of(counsellor, colleague)) {
+      var consultant = new de.caritas.cob.userservice.api.model.Consultant();
+      consultant.setId(matrixId.substring(1, matrixId.indexOf(':')));
+      consultant.setTenantId(TENANT);
+      consultant.setMatrixUserId(matrixId);
+      when(consultants.findAllByMatrixUserIdAndDeleteDateIsNull(matrixId))
+          .thenReturn(List.of(consultant));
+    }
+
+    lifecycle.handleRoom(MEDIA, Map.of());
+    org.mockito.Mockito.verifyNoInteractions(sessionInteractions);
+
+    lifecycle.announceExplicitEnd(MEDIA);
+
+    var endedAt = java.time.Instant.ofEpochMilli(now);
+    verify(sessionInteractions).callEnded(16L, "counsellor", "call", false, endedAt);
+    verify(sessionInteractions).callEnded(16L, "colleague", "call", false, endedAt);
+    org.mockito.Mockito.verifyNoMoreInteractions(sessionInteractions);
+  }
+
+  @org.junit.jupiter.api.Test
+  void aRunningCallIsNotAnnouncedAsExplicitlyEnded() {
+    var running =
+        MatrixCallBinding.builder()
+            .sourceRoomId(SOURCE)
+            .callId("call")
+            .mediaRoomId(MEDIA)
+            .callerMatrixId(VICTIM)
+            .sessionId(16L)
+            .tenantId(TENANT)
+            .invitedAt(now - 60_000)
+            .inviteExpiresAt(now + 60_000)
+            .startedAt(now - 50_000)
+            .build();
+    running
+        .getDevices()
+        .put(VICTIM_KEY, new MatrixCallDevice(VICTIM, now - 50_000, victimExpiry, true, "$v1"));
+    when(bindings.lockByMediaRoomId(MEDIA)).thenReturn(Optional.of(running));
+
+    lifecycle.announceExplicitEnd(MEDIA);
+
+    org.mockito.Mockito.verifyNoInteractions(sessionInteractions);
+  }
+
+  @org.junit.jupiter.api.Test
   void anEndedGroupCallIsNoSessionInteraction() {
     lifecycle.handleRoom(MEDIA, batch(shortening(VICTIM, VICTIM_KEY, true)));
 

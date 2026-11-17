@@ -287,8 +287,10 @@ public class MatrixCallObservationService {
               boundId(oneToOne, sourceRoomId, callId));
     }
     // After the commit: first the guest seats, then the notifications; neither can undo the end.
-    if (ending.endedCallRoom() != null)
+    if (ending.endedCallRoom() != null) {
       sessionBindings.revokeGuestsAfterEnd(ending.endedCallRoom());
+      sessionBindings.announceAttendanceAfterEnd(ending.endedCallRoom());
+    }
     if (!ending.observed() && ending.endedCallRoom() == null) return Outcome.NOT_FOUND;
     if (ending.endedNow()) notifyEnded(conversation, members, ending.row());
     return Outcome.OK;

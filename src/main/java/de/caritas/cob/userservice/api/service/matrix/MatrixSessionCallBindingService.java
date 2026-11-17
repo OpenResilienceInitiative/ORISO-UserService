@@ -278,6 +278,15 @@ public class MatrixSessionCallBindingService {
     }
   }
 
+  /** After the end committed: the counsellors who took part are reminded to document. */
+  public void announceAttendanceAfterEnd(String mediaRoomId) {
+    try {
+      lifecycle.announceExplicitEnd(mediaRoomId);
+    } catch (RuntimeException unavailable) {
+      log.warn("Call attendance not announced ({})", unavailable.getClass().getSimpleName());
+    }
+  }
+
   private enum Result {
     CREATED,
     EXISTING,

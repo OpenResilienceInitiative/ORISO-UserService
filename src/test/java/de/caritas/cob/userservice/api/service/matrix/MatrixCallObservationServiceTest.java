@@ -570,6 +570,7 @@ class MatrixCallObservationServiceTest {
 
     assertThat(service.end(colleague, SOURCE, "call")).isEqualTo(Outcome.OK);
     verify(sessionBindings).revokeGuestsAfterEnd(MEDIA);
+    verify(sessionBindings).announceAttendanceAfterEnd(MEDIA);
   }
 
   // --- #1630 (a): no database transaction stays open while Matrix is called ---

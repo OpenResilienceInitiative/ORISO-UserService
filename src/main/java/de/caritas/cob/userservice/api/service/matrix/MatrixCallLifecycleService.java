@@ -265,16 +265,7 @@ public class MatrixCallLifecycleService {
                   .orElse(now);
       binding.finishByLifecycle(lastPresenceEnd);
       if (retainedClosure) return;
-      var attended =
-          binding.getDevices().values().stream()
-              .filter(MatrixCallDevice::isAttended)
-              .map(MatrixCallDevice::getSenderMatrixId)
-              .distinct()
-              .filter(members::contains)
-              .map(sender -> identity(sender, binding.getTenantId()))
-              .flatMap(Optional::stream)
-              .distinct()
-              .toList();
+      var attended = attendedRecipients(binding, members);
       announceSessionCall(binding, attended);
       attended.stream()
           .filter(recipient -> isActiveRecipient(recipient.id()))
@@ -311,6 +302,40 @@ public class MatrixCallLifecycleService {
                       binding.getMediaRoomId(),
                       binding.isVideo()));
     }
+  }
+
+  /**
+   * An explicit end closes the binding before any lifecycle pass sees the last departure, so the
+   * attendance recorded until then is announced from here, after the end committed.
+   */
+  @Transactional
+  public void announceExplicitEnd(String room) {
+    var binding = bindings.lockByMediaRoomId(room).orElse(null);
+    if (binding == null
+        || binding.getEndedAt() == null
+        || binding.getSessionId() == null
+        || binding.getChatId() != null) return;
+    var session = conversations.resolve(binding.getSourceRoomId()).orElse(null);
+    if (session == null
+        || !Objects.equals(session.getSessionId(), binding.getSessionId())
+        || session.getChatId() != null
+        || !Objects.equals(session.getTenantId(), binding.getTenantId())) return;
+    var members = matrix.getCallRoomMembers(binding.getSourceRoomId()).orElse(null);
+    if (members == null || !conversations.lockCurrentForWriting(session)) return;
+    announceSessionCall(binding, attendedRecipients(binding, members));
+  }
+
+  private List<Recipient> attendedRecipients(
+      de.caritas.cob.userservice.api.model.MatrixCallBinding binding, List<String> members) {
+    return binding.getDevices().values().stream()
+        .filter(MatrixCallDevice::isAttended)
+        .map(MatrixCallDevice::getSenderMatrixId)
+        .distinct()
+        .filter(members::contains)
+        .map(sender -> identity(sender, binding.getTenantId()))
+        .flatMap(Optional::stream)
+        .distinct()
+        .toList();
   }
 
   private void announceSessionCall(
