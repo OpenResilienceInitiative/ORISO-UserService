@@ -104,6 +104,9 @@ class CalendarServiceTest {
     assertThat(entries.get(1).getMovable()).isFalse();
     assertThat(entries.get(2).getTitle()).isEqualTo("private note");
     assertThat(entries.get(2).getSeriesId()).isEqualTo("series-1");
+    assertThat(entries.get(2).getAllDay()).as("ORISO-UserService#1663").isTrue();
+    assertThat(entries.get(1).getAllDay()).as("an imported busy time").isNull();
+    assertThat(entries.get(3).getAllDay()).as("an appointment").isNull();
     assertThat(entries.get(2).getMovable()).isTrue();
     assertThat(entries.get(4).getTitle()).isEqualTo("group topic");
     assertThat(entries.get(4).getMovable()).isFalse();
@@ -187,7 +190,7 @@ class CalendarServiceTest {
     assertThat(entries.get(3).getKind()).isEqualTo(AppointmentKind.PHONE);
     var json = json(entries);
     assertThat(json)
-        .doesNotContain("sessionId", "seriesId", "title", "series-1")
+        .doesNotContain("sessionId", "seriesId", "title", "series-1", "allDay")
         .doesNotContain("asker-name", "private note", "group topic", "BUSY");
     for (Map<String, Object> entry : parsed(json)) {
       assertThat(entry.keySet())
@@ -238,6 +241,9 @@ class CalendarServiceTest {
     assertThat(result.getColleagues().get(0).getDisplayName()).isEqualTo("Colleague Name");
     assertThat(result.getColleagues().get(0).getAgencyName()).isEqualTo("Centre North");
     assertThat(result.getColleagues().get(0).getRelation()).isEqualTo(RelationEnum.SAME_AGENCY);
+    // ORISO-UserService#1663: tells two colleagues of the same name apart (Frank: the username).
+    assertThat(result.getColleagues().get(0).getSecondaryLabel()).isEqualTo("colleague.login");
+    assertThat(result.getColleagues().get(1).getSecondaryLabel()).isNull();
     assertThat(result.getColleagues().get(1).getAgencyName()).isEmpty();
   }
 
@@ -275,7 +281,8 @@ class CalendarServiceTest {
                     null,
                     "private note",
                     null,
-                    "series-1"),
+                    "series-1",
+                    true),
                 new CalendarEntry(
                     "busy",
                     CalendarEntryType.BUSY,
@@ -320,6 +327,9 @@ class CalendarServiceTest {
     var consultant = new Consultant();
     consultant.setId(id);
     consultant.setTenantId(tenantId);
+    if (COLLEAGUE.equals(id)) {
+      consultant.setUsername("colleague.login");
+    }
     return consultant;
   }
 

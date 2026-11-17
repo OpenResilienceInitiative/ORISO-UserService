@@ -29,6 +29,7 @@ import java.util.Set;
 import java.util.TreeSet;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
 
 /**
@@ -90,6 +91,8 @@ public class CalendarService {
                         new CalendarColleagueDTO()
                             .id(colleague.consultant().getId())
                             .displayName(colleague.name())
+                            .secondaryLabel(
+                                StringUtils.trimToNull(colleague.consultant().getUsername()))
                             .agencyName(
                                 colleague.agencyId() == null
                                     ? ""
@@ -146,6 +149,7 @@ public class CalendarService {
         .title(entry.title())
         .sessionId(entry.sessionId())
         .seriesId(entry.seriesId())
+        .allDay(entry.type() == CalendarEntryType.BLOCKER ? entry.allDay() : null)
         .movable(movable);
   }
 

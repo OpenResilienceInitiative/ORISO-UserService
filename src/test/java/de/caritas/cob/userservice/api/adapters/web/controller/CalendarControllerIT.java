@@ -295,6 +295,41 @@ class CalendarControllerIT {
     assertThat(list(entries(in(0), in(24 * 30)))).isEmpty();
   }
 
+  /** ORISO-UserService#1663: a blocker entered as whole days says so when it is read back. */
+  @Test
+  void blockers_Should_ReturnAllDay_AsEntered() throws Exception {
+    actAsCounsellor(counsellor);
+    var day = LocalDate.now(ZoneOffset.UTC).plusDays(3).atStartOfDay().toInstant(ZoneOffset.UTC);
+    var created =
+        parse(
+            mockMvc
+                .perform(
+                    csrf(post("/users/calendar/blockers"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(
+                            JSON.writeValueAsString(
+                                Map.of(
+                                    "start",
+                                    day.toString(),
+                                    "end",
+                                    day.plus(1, ChronoUnit.DAYS).toString(),
+                                    "allDay",
+                                    true))))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+    var timed = createBlocker(in(30), in(31), null, null);
+
+    assertThat(created.get(0)).containsEntry("allDay", true);
+    assertThat(timed.get(0)).containsEntry("allDay", false);
+    var read = list(entries(day.minus(1, ChronoUnit.DAYS), day.plus(2, ChronoUnit.DAYS)));
+    assertThat(read)
+        .filteredOn(row -> created.get(0).get("id").equals(row.get("id")))
+        .singleElement()
+        .satisfies(row -> assertThat(row).containsEntry("allDay", true));
+  }
+
   @Test
   void colleagues_Should_ListThoseInScope() throws Exception {
     actAsCounsellor(counsellor);
@@ -313,6 +348,9 @@ class CalendarControllerIT {
                 "Synthetic Colleague",
                 "agencyName",
                 "Synthetic Centre",
+                // ORISO-UserService#1663: the username tells colleagues of one name apart.
+                "secondaryLabel",
+                colleague.getUsername(),
                 "relation",
                 "SAME_AGENCY"));
 
