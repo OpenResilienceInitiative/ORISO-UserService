@@ -127,8 +127,9 @@ paths:
       summary: 'The times the asker may book with the counsellor of the session (self-booking,
         ORISO-Frontend#1050): slots inside the counsellor''s working hours (day exceptions and the
         public holidays of their region count) that no appointment, group date, blocker or imported
-        busy time touches, starting no earlier than the self-booking lead time, earliest first. A
-        counsellor without working hours offers none. [Authorization: the asker of the session]'
+        busy time touches, starting no earlier than the self-booking lead time and less than 14
+        days ahead (the booking horizon), earliest first. A counsellor without working hours
+        offers none. [Authorization: the asker of the session]'
       operationId: getSessionAppointmentSlots
       parameters:
         - $ref: '#/components/parameters/SessionId'
@@ -204,7 +205,17 @@ paths:
         404:
           description: NOT FOUND - no such session, or the caller is no participant of it
         409:
-          description: CONFLICT - the time is no longer free, or the conversation is not running
+          description: 'CONFLICT - the time is no longer free, or the conversation is not running.
+            X-Reason SELF_BOOKING_LIMIT_REACHED: the conversation already has an upcoming
+            appointment (one at a time). X-Reason SLOT_OUTSIDE_BOOKING_WINDOW: the start lies
+            inside the lead time or 14 days or more ahead.'
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                enum:
+                  - SELF_BOOKING_LIMIT_REACHED
+                  - SLOT_OUTSIDE_BOOKING_WINDOW
       security:
         - Bearer: [ ]
   /users/appointments/upcoming:

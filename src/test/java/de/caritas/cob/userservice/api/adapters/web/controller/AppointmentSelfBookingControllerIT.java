@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -317,6 +318,94 @@ class AppointmentSelfBookingControllerIT {
     mockMvc
         .perform(book(session.getId(), start, start.plus(Duration.ofHours(1)), "VIDEO"))
         .andExpect(status().isCreated());
+  }
+
+  @Test
+  void book_Should_AllowOnlyOneUpcomingAppointmentPerConversation() throws Exception {
+    worksEveryDay("00:00", "23:30");
+    actAsAsker(asker);
+    var slots = slots(session.getId(), Instant.now(), Instant.now().plus(Duration.ofDays(3)));
+    var first = Instant.parse((String) slots.get(0).get("startTime"));
+    var later = Instant.parse((String) slots.get(4).get("startTime"));
+    var id = booked(first);
+
+    mockMvc
+        .perform(book(session.getId(), later, later.plus(Duration.ofHours(1)), "VIDEO"))
+        .andExpect(status().isConflict())
+        .andExpect(header().string("X-Reason", "SELF_BOOKING_LIMIT_REACHED"));
+
+    // Cancelled, it no longer counts.
+    mockMvc
+        .perform(
+            csrf(post("/users/sessions/" + session.getId() + "/appointments/" + id + "/cancel")))
+        .andExpect(status().isOk());
+    mockMvc
+        .perform(book(session.getId(), later, later.plus(Duration.ofHours(1)), "VIDEO"))
+        .andExpect(status().isCreated());
+  }
+
+  @Test
+  void book_Should_CountTheCounsellorsUpcomingAppointmentAsWell() throws Exception {
+    worksEveryDay("00:00", "23:30");
+    actAsAsker(asker);
+    var start = firstSlotStart(session.getId(), Instant.now());
+    actAsCounsellor(counsellor);
+    var soon = Instant.now().plus(Duration.ofHours(3)).truncatedTo(ChronoUnit.SECONDS);
+    mockMvc
+        .perform(
+            csrf(post("/users/sessions/" + session.getId() + "/appointments"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(times(soon, soon.plus(Duration.ofHours(1)), "PHONE")))
+        .andExpect(status().isCreated());
+
+    actAsAsker(asker);
+    mockMvc
+        .perform(book(session.getId(), start, start.plus(Duration.ofHours(1)), "VIDEO"))
+        .andExpect(status().isConflict())
+        .andExpect(header().string("X-Reason", "SELF_BOOKING_LIMIT_REACHED"));
+  }
+
+  @Test
+  void book_Should_RefuseAStartOutsideTheBookingWindow() throws Exception {
+    worksEveryDay("00:00", "23:30");
+    actAsAsker(asker);
+    var beyond = Instant.now().plus(Duration.ofDays(15)).truncatedTo(ChronoUnit.HOURS);
+    var soon = Instant.now().plus(Duration.ofHours(2)).truncatedTo(ChronoUnit.HOURS);
+
+    for (var start : List.of(beyond, soon)) {
+      mockMvc
+          .perform(book(session.getId(), start, start.plus(Duration.ofHours(1)), "VIDEO"))
+          .andExpect(status().isConflict())
+          .andExpect(header().string("X-Reason", "SLOT_OUTSIDE_BOOKING_WINDOW"));
+    }
+  }
+
+  @Test
+  void slots_Should_OfferNothingBeyondTheBookingHorizon() throws Exception {
+    worksEveryDay("00:00", "23:30");
+    actAsAsker(asker);
+    var now = Instant.now();
+
+    assertThat(slots(session.getId(), now.plus(Duration.ofDays(20)), now.plus(Duration.ofDays(25))))
+        .isEmpty();
+    var lastStart =
+        slots(session.getId(), now.plus(Duration.ofDays(10)), now.plus(Duration.ofDays(20)))
+            .stream()
+            .map(slot -> Instant.parse((String) slot.get("startTime")))
+            .max(Instant::compareTo)
+            .orElseThrow();
+    assertThat(lastStart).isBefore(now.plus(Duration.ofDays(14)).plusSeconds(60));
+  }
+
+  private String booked(Instant start) throws Exception {
+    var response =
+        mockMvc
+            .perform(book(session.getId(), start, start.plus(Duration.ofHours(1)), "VIDEO"))
+            .andExpect(status().isCreated())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    return (String) JSON.readValue(response, Map.class).get("id");
   }
 
   private Instant firstSlotStart(long sessionId, Instant now) throws Exception {

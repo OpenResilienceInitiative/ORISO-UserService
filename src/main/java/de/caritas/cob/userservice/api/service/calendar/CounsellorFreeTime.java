@@ -43,6 +43,7 @@ public class CounsellorFreeTime {
   private final Duration leadTime;
   private final Duration slotLength;
   private final Duration step;
+  private final Duration horizon;
 
   @Autowired
   public CounsellorFreeTime(
@@ -54,7 +55,8 @@ public class CounsellorFreeTime {
       @Value("${calendar.zone:Europe/Berlin}") String zone,
       @Value("${appointment.self-booking.lead-time:PT24H}") Duration leadTime,
       @Value("${appointment.self-booking.slot-length:PT60M}") Duration slotLength,
-      @Value("${appointment.self-booking.step:PT30M}") Duration step) {
+      @Value("${appointment.self-booking.step:PT30M}") Duration step,
+      @Value("${appointment.self-booking.horizon:P14D}") Duration horizon) {
     this.workingHours = workingHours;
     this.settings = settings;
     this.exceptions = exceptions;
@@ -64,11 +66,29 @@ public class CounsellorFreeTime {
     this.leadTime = leadTime;
     this.slotLength = slotLength;
     this.step = step;
+    this.horizon = horizon;
   }
 
-  /** The free slots of the counsellor that start in [from, to), earliest first. */
+  /** The earliest start a self-booking may have: now plus the lead time. */
+  public Instant earliestStart() {
+    return Instant.now(clock).plus(leadTime);
+  }
+
+  /** The booking horizon: every offered or booked slot starts before now plus this. */
+  public Instant latestStart() {
+    return Instant.now(clock).plus(horizon);
+  }
+
+  /**
+   * The free slots of the counsellor that start in [from, to), earliest first, never inside the
+   * lead time and never beyond the horizon.
+   */
   public List<FreeSlot> slots(String consultantId, Instant from, Instant to) {
-    var earliest = Instant.now(clock).plus(leadTime);
+    var earliest = earliestStart();
+    var latest = latestStart();
+    if (to.isAfter(latest)) {
+      to = latest;
+    }
     var notBefore = earliest.isAfter(from) ? earliest : from;
     if (!notBefore.isBefore(to)) {
       return List.of();

@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Session;
@@ -155,8 +156,19 @@ public class SessionAppointmentService {
     if (!end.isAfter(start)) {
       throw new BadRequestException("The end of an appointment must be after its start.");
     }
+    if (start.isBefore(freeTime.earliestStart()) || !start.isBefore(freeTime.latestStart())) {
+      throw new ConflictException(
+          "The start lies inside the lead time or beyond the booking horizon.",
+          HttpStatusExceptionReason.SLOT_OUTSIDE_BOOKING_WINDOW);
+    }
     var consultantId = session.getConsultant().getId();
     consultants.lockConsultant(consultantId);
+    // One upcoming appointment per conversation: an asker cannot flood the counsellor's calendar.
+    if (!appointments.lockUpcomingOfSession(session.getId(), Instant.now()).isEmpty()) {
+      throw new ConflictException(
+          "This conversation already has an upcoming appointment.",
+          HttpStatusExceptionReason.SELF_BOOKING_LIMIT_REACHED);
+    }
     if (!freeTime.isFreeSlot(consultantId, start, end)
         || !appointments.lockScheduledOfConsultantBetween(consultantId, start, end).isEmpty()) {
       throw new ConflictException("This time is not free any more.");

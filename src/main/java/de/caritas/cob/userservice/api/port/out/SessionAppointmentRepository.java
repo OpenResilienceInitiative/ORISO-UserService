@@ -111,4 +111,15 @@ public interface SessionAppointmentRepository extends CrudRepository<SessionAppo
       @Param("consultantId") String consultantId,
       @Param("from") Instant from,
       @Param("to") Instant to);
+
+  /**
+   * The conversation's scheduled appointments that have not ended, read with a lock: the
+   * self-booking limit counts what other transactions committed meanwhile (security review).
+   */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "SELECT a FROM SessionAppointment a WHERE a.session.id = :sessionId "
+          + "AND a.status = 'SCHEDULED' AND a.endTime > :now")
+  List<SessionAppointment> lockUpcomingOfSession(
+      @Param("sessionId") Long sessionId, @Param("now") Instant now);
 }
