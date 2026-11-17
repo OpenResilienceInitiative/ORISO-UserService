@@ -211,6 +211,55 @@ public class CreateUserFacadeTest {
   private ProvisioningCompensator provisioningCompensator =
       new ProvisioningCompensator(new SimpleMeterRegistry());
 
+  /** #1662: a temporary account never saves an e-mail address, also not at registration. */
+  @Test
+  void aTemporaryRegistrationWithAnEmailAddressIsRefusedBeforeAnyIdentityEffects() {
+    var dto =
+        UserDTO.builder()
+            .username("guest-login")
+            .password("pw")
+            .postcode("12345")
+            .agencyId(700L)
+            .consultingType("1")
+            .termsAccepted("true")
+            .email("guest@example.org")
+            .build();
+    dto.setTemporary(true);
+    var settings =
+        new de.caritas.cob.userservice.tenantservice.generated.web.model.Settings()
+            .featureAskerEmailEnabled(true)
+            .featureAskerEmailCollectionAgencyCounsellingEnabled(true)
+            .featureAskerEmailCollectionSelfHelpEnabled(true);
+    org.mockito.Mockito.lenient()
+        .when(tenantService.getRestrictedTenantDataFresh(42L))
+        .thenReturn(new RestrictedTenantDTO().id(42L).settings(settings));
+    var policy =
+        new de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy(
+            tenantService,
+            mock(de.caritas.cob.userservice.api.port.out.SessionRepository.class),
+            mock(de.caritas.cob.userservice.api.port.out.UserChatRepository.class),
+            mock(org.springframework.transaction.PlatformTransactionManager.class));
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        createUserFacade, "emailCollectionPolicy", policy);
+    var group = new Chat();
+    group.setConversationType(ConversationType.SELF_HELP);
+    when(groupInviteRegistration.resolveInvitation(dto))
+        .thenReturn(
+            Optional.of(
+                new GroupInviteRegistration.Invitation(
+                    group, de.caritas.cob.userservice.api.model.GuestAccountMode.GUEST_CHOOSES)));
+    TenantContext.setCurrentTenant(42L);
+    try {
+      assertThrows(
+          de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+          () -> createUserFacade.createUserAccountWithInitializedConsultingType(dto));
+    } finally {
+      TenantContext.clear();
+    }
+    org.mockito.Mockito.verifyNoInteractions(
+        identityClient, matrixSynapseService, userService, createNewSessionFacade);
+  }
+
   @org.junit.jupiter.params.ParameterizedTest
   @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
   void registrationCollectionUsesTheVerifiedPurposeBeforeAnyIdentityEffects(boolean groupSignup) {

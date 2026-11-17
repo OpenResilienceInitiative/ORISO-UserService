@@ -651,4 +651,21 @@ class AccountManagerTest {
 
     assertThat(accountManager.patchUser(patch)).isPresent();
   }
+
+  // #1662: a temporary account never saves an e-mail address through a patch either.
+
+  @Test
+  void aTemporaryAccountCannotPatchInAnEmailAddress() {
+    var guest = new User();
+    guest.setUserId("guest-id");
+    guest.setTemporaryAccount(true);
+    Mockito.when(userRepository.findByUserIdAndDeleteDateIsNull("guest-id"))
+        .thenReturn(Optional.of(guest));
+    var patch = Map.<String, Object>of("id", "guest-id", "email", "guest@example.org");
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> accountManager.patchUser(patch))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    Mockito.verify(userRepository, Mockito.never()).save(Mockito.any());
+  }
 }

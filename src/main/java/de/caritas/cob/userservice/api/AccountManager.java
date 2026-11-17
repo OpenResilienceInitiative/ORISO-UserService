@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO;
 import de.caritas.cob.userservice.api.admin.service.search.AccountSearch;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
@@ -23,6 +24,7 @@ import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.port.out.SearchSort;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.matrix.ConsultantRenameSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.AskerNotificationChannelPolicy;
@@ -243,6 +245,13 @@ public class AccountManager implements AccountManaging {
     if (patchMap.get("emailNotifications") instanceof EmailNotificationsDTO notifications
         && Boolean.TRUE.equals(notifications.getEmailNotificationsEnabled())) {
       AskerNotificationChannelPolicy.requireNotificationOptInAllowed(adviceSeeker);
+    }
+    // #1662: a temporary account never saves an e-mail address; clearing one stays possible.
+    if (adviceSeeker.isTemporaryAccount()
+        && patchMap.get("email") instanceof String email
+        && !email.isBlank()
+        && !AskerEmailCollectionPolicy.sameAddress(adviceSeeker.getEmail(), email)) {
+      throw new ForbiddenException("A temporary account cannot save an e-mail address");
     }
     var patchedAdviceSeeker = userServiceMapper.adviceSeekerOf(adviceSeeker, patchMap);
     var savedAdviceSeeker = userRepository.save(patchedAdviceSeeker);

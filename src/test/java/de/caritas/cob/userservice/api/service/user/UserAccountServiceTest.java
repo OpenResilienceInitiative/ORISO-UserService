@@ -105,6 +105,13 @@ public class UserAccountServiceTest {
                             .featureAskerEmailEnabled(true)));
   }
 
+  /** A random asker that is not a temporary account (#1662 gives those no e-mail address). */
+  private static User permanentAsker() {
+    User user = EASY_RANDOM.nextObject(User.class);
+    user.setTemporaryAccount(false);
+    return user;
+  }
+
   private void givenOwnedCounsellingSession(User user) {
     var session = new de.caritas.cob.userservice.api.model.Session();
     session.setUser(user);
@@ -115,7 +122,7 @@ public class UserAccountServiceTest {
 
   @Test
   void disabledAskerEmailCollectionRejectsChangeBeforeAnyIdentityWrite() {
-    var user = EASY_RANDOM.nextObject(User.class);
+    var user = permanentAsker();
     user.setTenantId(42L);
     user.setEmail("old@example.org");
     when(authenticatedUser.getUserId()).thenReturn("user");
@@ -142,7 +149,7 @@ public class UserAccountServiceTest {
         "featureAskerEmailCollectionSelfHelpEnabled"
       })
   void restrictedCollectionCannotBeBypassedByTheGlobalProfileWithoutAnOwnedContext(String key) {
-    var user = EASY_RANDOM.nextObject(User.class);
+    var user = permanentAsker();
     user.setTenantId(42L);
     user.setEmail("old@example.org");
     when(authenticatedUser.getUserId()).thenReturn("user");
@@ -167,7 +174,7 @@ public class UserAccountServiceTest {
 
   @Test
   void legacySingleTenantEmailChangeStillEnforcesConfiguredCollectionProhibition() {
-    var user = EASY_RANDOM.nextObject(User.class);
+    var user = permanentAsker();
     user.setTenantId(null);
     user.setEmail("old@example.org");
     when(authenticatedUser.getUserId()).thenReturn("user");
@@ -322,10 +329,41 @@ public class UserAccountServiceTest {
     verifyNoInteractions(userHelper);
   }
 
+  // #1662: a temporary account never saves an e-mail address; clearing one stays possible.
+
+  @Test
+  public void changeUserAccountEmailAddress_Should_Return403_When_TheAccountIsTemporary() {
+    User guest = permanentAsker();
+    guest.setTenantId(42L);
+    guest.setTemporaryAccount(true);
+    when(this.authenticatedUser.getUserId()).thenReturn("user");
+    when(this.userService.getUser("user")).thenReturn(Optional.of(guest));
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class,
+        () -> accountProvider.changeUserAccountEmailAddress(Optional.of("new@example.org")));
+    verifyNoInteractions(identityEmailAddressUpdater);
+    verify(userService, never()).saveUser(any());
+  }
+
+  @Test
+  public void changeUserAccountEmailAddress_Should_ClearTheAddress_When_TheAccountIsTemporary() {
+    User guest = permanentAsker();
+    guest.setTenantId(42L);
+    guest.setTemporaryAccount(true);
+    when(this.authenticatedUser.getUserId()).thenReturn("user");
+    when(this.userService.getUser("user")).thenReturn(Optional.of(guest));
+    when(userHelper.getDummyEmail("user")).thenReturn("user@dummy.example");
+
+    accountProvider.changeUserAccountEmailAddress(Optional.empty());
+
+    verify(userService).saveUser(guest);
+  }
+
   @Test
   public void
       changeUserAccountEmailAddress_Should_changeNonEmptyAddressInKeycloakAndUserRepository_When_authenticatedUserIsUser() {
-    User user = EASY_RANDOM.nextObject(User.class);
+    User user = permanentAsker();
     user.setTenantId(42L);
     givenOwnedCounsellingSession(user);
     when(this.authenticatedUser.getUserId()).thenReturn("user");
@@ -346,7 +384,7 @@ public class UserAccountServiceTest {
 
   @Test
   public void changeUserAccountEmailAddress_Should_UseGermanNotice_WhenUserLanguageIsMissing() {
-    User user = EASY_RANDOM.nextObject(User.class);
+    User user = permanentAsker();
     user.setTenantId(42L);
     givenOwnedCounsellingSession(user);
     user.setLanguageCode(null);
@@ -364,7 +402,7 @@ public class UserAccountServiceTest {
   @Test
   public void
       changeUserAccountEmailAddress_Should_changeNonEmptyAddressInKeycloakAndUserRepository_When_authenticatedUserHasNoLegacyChatId() {
-    User user = EASY_RANDOM.nextObject(User.class);
+    User user = permanentAsker();
     user.setTenantId(42L);
     givenOwnedCounsellingSession(user);
     user.setMatrixUserId(null);
@@ -408,7 +446,7 @@ public class UserAccountServiceTest {
   @Test
   public void
       changeUserAccountEmailAddress_Should_changeEmptyAddressInKeycloakAndUserRepository_When_authenticatedUserIsUser() {
-    var user = EASY_RANDOM.nextObject(User.class);
+    var user = permanentAsker();
     var userId = RandomStringUtils.randomAlphabetic(16);
     var dummyEmail = RandomStringUtils.randomAlphabetic(16);
     when(authenticatedUser.getUserId()).thenReturn(userId);

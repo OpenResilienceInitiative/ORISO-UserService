@@ -166,7 +166,8 @@ public class CreateUserFacade {
               : ConversationType.AGENCY_COUNSELLING;
       Long tenantId = TenantContext.getCurrentTenant();
       if (userDTO.getEmail() != null && !userDTO.getEmail().isBlank()) {
-        emailCollectionPolicy.requireForRegistration(tenantId, registrationType);
+        emailCollectionPolicy.requireForRegistration(
+            tenantId, registrationType, userDTO.isTemporary());
       }
       var displayName =
           sessionDataService.validateRegistrationNames(
