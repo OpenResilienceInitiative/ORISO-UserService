@@ -120,6 +120,93 @@ paths:
           description: NOT FOUND - no such session or appointment, or the caller is no participant
       security:
         - Bearer: [ ]
+  /users/sessions/{sessionId}/appointment-slots:
+    get:
+      tags:
+        - session-appointment-controller
+      summary: 'The times the asker may book with the counsellor of the session (self-booking,
+        ORISO-Frontend#1050): slots inside the counsellor''s working hours (day exceptions and the
+        public holidays of their region count) that no appointment, group date, blocker or imported
+        busy time touches, starting no earlier than the self-booking lead time, earliest first. A
+        counsellor without working hours offers none. [Authorization: the asker of the session]'
+      operationId: getSessionAppointmentSlots
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          description: At most 14 days after from.
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: medium
+          in: query
+          description: How the booked appointment would take place; both offer the same free time.
+          required: true
+          schema:
+            $ref: '#/components/schemas/SelfBookingMedium'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AppointmentSlotDTO'
+        400:
+          description: BAD REQUEST - window not ordered, longer than 14 days, or unknown medium
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - a counsellor of the session, or no/invalid role
+        404:
+          description: NOT FOUND - no such session, or the caller is no participant of it
+        409:
+          description: CONFLICT - the conversation is not running or has no counsellor
+      security:
+        - Bearer: [ ]
+  /users/sessions/{sessionId}/appointment-slots/booking:
+    post:
+      tags:
+        - session-appointment-controller
+      summary: 'Books one of the offered slots as a scheduled video or phone appointment. The slot
+        is checked again while the counsellor''s calendar is locked, so two bookings never take the
+        same time. [Authorization: the asker of the session]'
+      operationId: bookSessionAppointmentSlot
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionAppointmentTimeDTO'
+      responses:
+        201:
+          description: CREATED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionAppointmentDTO'
+        400:
+          description: BAD REQUEST - kind not VIDEO or PHONE, or end not after start
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - a counsellor of the session, or no/invalid role or CSRF token
+        404:
+          description: NOT FOUND - no such session, or the caller is no participant of it
+        409:
+          description: CONFLICT - the time is no longer free, or the conversation is not running
+      security:
+        - Bearer: [ ]
   /users/appointments/upcoming:
     get:
       tags:
@@ -161,6 +248,23 @@ components:
         type: string
         format: uuid
   schemas:
+    SelfBookingMedium:
+      type: string
+      enum:
+        - VIDEO
+        - PHONE
+    AppointmentSlotDTO:
+      type: object
+      required:
+        - startTime
+        - endTime
+      properties:
+        startTime:
+          type: string
+          format: date-time
+        endTime:
+          type: string
+          format: date-time
     SessionAppointmentTimeDTO:
       type: object
       required:

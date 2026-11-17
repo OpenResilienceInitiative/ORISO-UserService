@@ -826,6 +826,10 @@ public class SecurityConfig {
                     "/service/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}",
                     "/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}/cancel",
                     "/service/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}/cancel",
+                    "/users/sessions/{sessionId:[0-9]+}/appointment-slots",
+                    "/service/users/sessions/{sessionId:[0-9]+}/appointment-slots",
+                    "/users/sessions/{sessionId:[0-9]+}/appointment-slots/booking",
+                    "/service/users/sessions/{sessionId:[0-9]+}/appointment-slots/booking",
                     "/users/appointments/upcoming",
                     "/service/users/appointments/upcoming")
                 .hasAnyAuthority(USER_DEFAULT, ANONYMOUS_DEFAULT, CONSULTANT_DEFAULT)

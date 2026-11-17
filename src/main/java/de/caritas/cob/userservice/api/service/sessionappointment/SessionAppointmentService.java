@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.sessionappointment;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AppointmentKind;
+import de.caritas.cob.userservice.api.adapters.web.dto.AppointmentSlotDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionAppointmentCounterpartDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionAppointmentDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionAppointmentTimeDTO;
@@ -14,10 +15,14 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.SessionAppointment;
 import de.caritas.cob.userservice.api.model.SessionAppointment.Status;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionAppointmentRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.CaseHandoverService;
+import de.caritas.cob.userservice.api.service.calendar.CounsellorFreeTime;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Objects;
@@ -37,6 +42,12 @@ import org.springframework.transaction.annotation.Transactional;
  * else gets the same 404 as for a session that does not exist. A finished or archived session
  * refuses create and move with 409; cancel stays allowed. No Matrix notice is posted here: the
  * backend holds no Megolm keys and cannot post into an encrypted room.
+ *
+ * <p>Self-booking (ORISO-Frontend#1050, ADR-020 §4): the asker of a running conversation reads the
+ * free slots of its counsellor and books one of them as a video or phone appointment. The slot is
+ * checked again while the counsellor's row is locked, so two askers never get the same time. The
+ * counsellor learns of it like the asker learns of a counsellor's appointment: from the notice the
+ * Frontend posts into the conversation, and from the appointment in their calendar.
  */
 @Service
 @RequiredArgsConstructor
@@ -48,11 +59,16 @@ public class SessionAppointmentService {
   private static final long LEGACY_TENANT = 1L;
   private static final Set<SessionStatus> FINISHED =
       Set.of(SessionStatus.DONE, SessionStatus.IN_ARCHIVE);
+  static final Duration MAX_SLOT_WINDOW = Duration.ofDays(14);
+  private static final Set<AppointmentKind> SELF_BOOKABLE =
+      Set.of(AppointmentKind.VIDEO, AppointmentKind.PHONE);
 
   private final SessionAppointmentRepository appointments;
   private final SessionRepository sessions;
   private final AuthenticatedUser caller;
   private final CaseHandoverService caseHandovers;
+  private final CounsellorFreeTime freeTime;
+  private final ConsultantRepository consultants;
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
   @Transactional(readOnly = true)
@@ -99,6 +115,59 @@ public class SessionAppointmentService {
     var appointment = appointmentOf(session, appointmentId);
     appointment.setStatus(Status.CANCELLED);
     return toDto(appointment);
+  }
+
+  /** The slots the asker may book with the counsellor of the session, earliest first. */
+  @Transactional(readOnly = true)
+  public List<AppointmentSlotDTO> freeSlots(
+      Long sessionId, OffsetDateTime from, OffsetDateTime to) {
+    if (from == null || to == null || !from.isBefore(to)) {
+      throw new BadRequestException("The slot window must start before it ends.");
+    }
+    if (Duration.between(from, to).compareTo(MAX_SLOT_WINDOW) > 0) {
+      throw new BadRequestException("The slot window must not exceed 14 days.");
+    }
+    var session = selfBookableSession(sessionId);
+    return freeTime
+        .slots(session.getConsultant().getId(), from.toInstant(), to.toInstant())
+        .stream()
+        .map(
+            slot ->
+                new AppointmentSlotDTO()
+                    .startTime(slot.start().atOffset(ZoneOffset.UTC))
+                    .endTime(slot.end().atOffset(ZoneOffset.UTC)))
+        .toList();
+  }
+
+  /**
+   * Books one offered slot for the asker. The counsellor's row is locked first, so bookings with
+   * one counsellor run one after another; the slot is then checked against the free time and, with
+   * a locking read, against the appointments another booking committed meanwhile.
+   */
+  @Transactional
+  public SessionAppointmentDTO book(Long sessionId, SessionAppointmentTimeDTO time) {
+    var session = selfBookableSession(sessionId);
+    if (time.getKind() == null || !SELF_BOOKABLE.contains(time.getKind())) {
+      throw new BadRequestException("A booked appointment takes place by video or phone.");
+    }
+    var start = time.getStartTime().toInstant();
+    var end = time.getEndTime().toInstant();
+    if (!end.isAfter(start)) {
+      throw new BadRequestException("The end of an appointment must be after its start.");
+    }
+    var consultantId = session.getConsultant().getId();
+    consultants.lockConsultant(consultantId);
+    if (!freeTime.isFreeSlot(consultantId, start, end)
+        || !appointments.lockScheduledOfConsultantBetween(consultantId, start, end).isEmpty()) {
+      throw new ConflictException("This time is not free any more.");
+    }
+    var appointment = new SessionAppointment();
+    appointment.setSession(session);
+    appointment.setStatus(Status.SCHEDULED);
+    appointment.setStartTime(start);
+    appointment.setEndTime(end);
+    appointment.setKind(SessionAppointment.Kind.valueOf(time.getKind().name()));
+    return toDto(appointments.save(appointment));
   }
 
   @Transactional(readOnly = true)
@@ -151,6 +220,21 @@ public class SessionAppointmentService {
     if (!isResponsibleCounsellor(session)) {
       throw new ForbiddenException("Only a responsible counsellor schedules appointments.");
     }
+  }
+
+  /**
+   * The session of the calling asker, running and with a counsellor. Strangers get the 404 of a
+   * session that does not exist, its counsellors a 403: they schedule, they do not self-book.
+   */
+  private Session selfBookableSession(Long sessionId) {
+    var session = sessionOfParticipant(sessionId);
+    if (!isAsker(session)) {
+      throw new ForbiddenException("Only the asker of the conversation books a free slot.");
+    }
+    if (session.getStatus() != SessionStatus.IN_PROGRESS || session.getConsultant() == null) {
+      throw new ConflictException("Only a running conversation with a counsellor takes bookings.");
+    }
+    return session;
   }
 
   private void requireNotFinished(Session session) {

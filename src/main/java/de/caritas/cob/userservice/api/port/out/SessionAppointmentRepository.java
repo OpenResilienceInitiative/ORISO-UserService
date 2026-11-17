@@ -96,4 +96,19 @@ public interface SessionAppointmentRepository extends CrudRepository<SessionAppo
       @Param("from") Instant from,
       @Param("to") Instant to,
       Pageable pageable);
+
+  /**
+   * The counsellor's scheduled appointments in their own conversations that overlap the window,
+   * read with a lock (self-booking, ORISO-Frontend#1050). A locking read sees what other
+   * transactions committed after this one began, which a plain read at REPEATABLE READ does not:
+   * the last check before a booking is stored must not miss the booking that won the race.
+   */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "SELECT a FROM SessionAppointment a WHERE a.session.consultant.id = :consultantId "
+          + "AND a.status = 'SCHEDULED' AND a.startTime < :to AND a.endTime > :from")
+  List<SessionAppointment> lockScheduledOfConsultantBetween(
+      @Param("consultantId") String consultantId,
+      @Param("from") Instant from,
+      @Param("to") Instant to);
 }
