@@ -138,7 +138,11 @@ public class MatrixCallGuestService {
     // FE#2209 review (Frank): in a 1:1 session call, any counsellor of the Träger who is in the
     // call itself, with a live MatrixRTC membership in its call room, may open it to somebody else.
     // Group chats are out of scope and keep the conversation rule (round 3).
-    if (binding.getSessionId() != null && !binding.isInCall(counsellor, System.currentTimeMillis()))
+    // CodeRabbit 4585987235: an unobserved call room (observation lost, e.g. a dropped batch) holds
+    // device expiries nobody can vouch for; the media gate refuses its seats, so none is granted.
+    if (binding.getSessionId() != null
+        && (binding.getMediaObservedAt() == null
+            || !binding.isInCall(counsellor, System.currentTimeMillis())))
       return CounsellorCall.of(Outcome.NOT_FOUND);
     return new CounsellorCall(Outcome.ADMITTED, binding, counsellor, members);
   }
