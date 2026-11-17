@@ -293,4 +293,5 @@
   <include file="db/changelog/changeset/20261116_agency_contact_person_1534/changeSet.xml"/>
   <include file="db/changelog/changeset/20261114_direct_invitation_appointment_2252/changeSet.xml"/>
   <include file="db/changelog/changeset/20261117_calendar_move_proposal_reason_1663/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261117_account_invite_deletion_1522/changeSet.xml"/>
 </databaseChangeLog>

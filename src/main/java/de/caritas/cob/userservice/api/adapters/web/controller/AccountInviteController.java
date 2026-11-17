@@ -293,6 +293,17 @@ public class AccountInviteController {
             accountInviteService.calculateAccessGate(invite)));
   }
 
+  /**
+   * Deletes an invite (ORISO-Admin#1522): revoked at once if still open, no longer listed, removed
+   * by the nightly purge. 409 once its account exists or while an account is set up through it.
+   */
+  @PreAuthorize(ADMIN_AUTH)
+  @DeleteMapping("/useradmin/account-invites/{inviteId}")
+  public ResponseEntity<Void> deleteInvite(@PathVariable Long inviteId) {
+    accountInviteService.deleteInvite(inviteId);
+    return ResponseEntity.noContent().build();
+  }
+
   /** Also after the account exists; the counsellor's own permission follows. */
   @PreAuthorize(ADMIN_AUTH)
   @PutMapping("/useradmin/account-invites/{inviteId}/topic-permission")

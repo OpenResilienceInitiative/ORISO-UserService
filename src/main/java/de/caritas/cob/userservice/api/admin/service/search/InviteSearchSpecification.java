@@ -18,6 +18,8 @@ public final class InviteSearchSpecification {
     var search = AdminSearchQuery.parse(raw);
     return (r, q, b) -> {
       List<Predicate> all = new ArrayList<>();
+      // Deleted by an admin (ORISO-Admin#1522): gone for every list and search until purged.
+      all.add(b.isNull(r.get("deletionRequestedAt")));
       if (tenant != null) all.add(b.equal(r.get("tenantId"), tenant));
       if (role != null) all.add(b.equal(r.get("targetRole"), role));
       if (status != null) all.add(b.equal(r.get("status"), status));
