@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
@@ -269,6 +270,25 @@ class CallShareLinkServiceTest {
     assertThat(view.link().isTemporaryAccount()).isFalse();
     assertThat(view.temporaryAccount()).isFalse();
     assertThat(view.temporaryAccountAllowed()).isFalse();
+  }
+
+  /*
+   * #1662 (Frank, 17 Nov): a group call started by a plain member or an advice seeker has no
+   * binding and never gets a link. The app must tell that from "no link yet" so it can stop asking
+   * after a bounded number of tries instead of every 10 s for the whole call.
+   */
+  @Test
+  void current_Should_NameTheMissingCall_When_TheCallHasNoBindingForThisCounsellor() {
+    when(callGuests.counsellorCall(TENANT, "stranger", SOURCE, CALL_ID))
+        .thenReturn(new CounsellorCall(Outcome.NOT_FOUND, null, null, null));
+
+    var refusal = catchThrowable(() -> service.current(TENANT, "stranger", SOURCE, CALL_ID));
+
+    assertThat(refusal).isInstanceOf(CustomValidationHttpStatusException.class);
+    var custom = (CustomValidationHttpStatusException) refusal;
+    assertThat(custom.getHttpStatus()).isEqualTo(org.springframework.http.HttpStatus.NOT_FOUND);
+    assertThat(custom.getCustomHttpHeaders().getFirst("X-Reason"))
+        .isEqualTo("CALL_SHARE_LINK_NO_CALL");
   }
 
   @Test

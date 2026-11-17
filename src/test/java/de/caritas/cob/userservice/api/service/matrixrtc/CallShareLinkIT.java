@@ -315,6 +315,32 @@ class CallShareLinkIT {
         });
   }
 
+  /*
+   * #1662 (Frank, 17 Nov): the app tells "no call to share" (a call without a binding, e.g. a group
+   * call a plain member started) from "no link yet", so it can stop asking.
+   */
+  @Test
+  void current_Should_NameAMissingCall_But_NotAMissingLink() throws Exception {
+    mvc(counsellor.getId(), "consultant", null)
+        .perform(
+            get("/matrix/calls/share-links")
+                .param("sourceRoomId", SOURCE)
+                .param("callId", "no-such-call"))
+        .andExpect(status().isNotFound())
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
+                .string("X-Reason", "CALL_SHARE_LINK_NO_CALL"));
+    mvc(counsellor.getId(), "consultant", null)
+        .perform(
+            get("/matrix/calls/share-links")
+                .param("sourceRoomId", SOURCE)
+                .param("callId", "share-call"))
+        .andExpect(status().isNotFound())
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
+                .doesNotExist("X-Reason"));
+  }
+
   @Test
   void audioSwitchedOff_Should_RefuseTheShareLink_ButNotTheOtherMedia() throws Exception {
     allowDirectInvites(true, false, true);
@@ -779,7 +805,9 @@ class CallShareLinkIT {
       // A member who is not in the conversation room cannot manage it (no IDOR).
       when(matrix.getCallRoomMembers(groupRoom)).thenReturn(Optional.of(List.of(ASKER, caller)));
       assertThatThrownBy(() -> shareLinks.current(7L, colleague.getId(), groupRoom, "group-call"))
-          .isInstanceOf(NotFoundException.class);
+          .isInstanceOf(
+              de.caritas.cob.userservice.api.exception.httpresponses
+                  .CustomValidationHttpStatusException.class);
     } finally {
       transaction.executeWithoutResult(
           status -> {

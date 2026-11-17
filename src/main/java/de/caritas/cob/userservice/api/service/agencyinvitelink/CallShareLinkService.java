@@ -1,6 +1,9 @@
 package de.caritas.cob.userservice.api.service.agencyinvitelink;
 
+import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.CALL_SHARE_LINK_NO_CALL;
+
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
@@ -149,7 +152,14 @@ public class CallShareLinkService {
   /** The share link of a running call, for a counsellor in that call. */
   @Transactional
   public ShareLink current(Long tenant, String consultantId, String sourceRoomId, String callId) {
-    var binding = requireCounsellorCall(tenant, consultantId, sourceRoomId, callId);
+    MatrixCallBinding binding;
+    try {
+      binding = requireCounsellorCall(tenant, consultantId, sourceRoomId, callId);
+    } catch (NotFoundException noCall) {
+      // #1662: no call to share (e.g. a group call a plain member started), not just no link yet;
+      // the app stops asking after a bounded number of tries.
+      throw new CustomValidationHttpStatusException(CALL_SHARE_LINK_NO_CALL, HttpStatus.NOT_FOUND);
+    }
     var link =
         links
             .findByCallBindingId(binding.getId())
