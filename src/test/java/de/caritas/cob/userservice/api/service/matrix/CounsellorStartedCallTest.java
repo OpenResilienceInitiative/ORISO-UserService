@@ -4,8 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.MatrixCallBinding;
 import de.caritas.cob.userservice.api.model.MatrixCallDevice;
@@ -15,29 +18,34 @@ import de.caritas.cob.userservice.api.port.out.MatrixCallBindingRepository;
 import de.caritas.cob.userservice.api.port.out.MatrixCallObservationRepository;
 import de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
  * Frank, 17 Nov 2026: only counsellors start calls; advice seekers and guests only join a call a
- * counsellor started. "Started by a counsellor and running" is read from server-side records only.
+ * counsellor started, and only while a counsellor is in it right now (the rule guest seats in 1:1
+ * calls already follow). Read from server-side records and Matrix state only.
  */
 class CounsellorStartedCallTest {
   private static final String SOURCE = "!source:example";
   private static final String MEDIA = "!media:example";
   private static final String COUNSELLOR = "@counsellor:example";
+  private static final String COLLEAGUE = "@colleague:example";
+  private static final String FOREIGN = "@foreign:example";
   private static final String ASKER = "@asker:example";
   private static final long TENANT = 7L;
-  private static final long NOW = 1_000_000L;
+  private static final long NOW = System.currentTimeMillis();
 
   private final MatrixCallBindingRepository bindings = mock(MatrixCallBindingRepository.class);
   private final MatrixCallObservationRepository observations =
       mock(MatrixCallObservationRepository.class);
   private final ConsultantRepository consultants = mock(ConsultantRepository.class);
   private final AccountInactivityService accounts = mock(AccountInactivityService.class);
+  private final MatrixSynapseService matrix = mock(MatrixSynapseService.class);
   private final CounsellorStartedCall calls =
-      new CounsellorStartedCall(bindings, observations, consultants, accounts);
+      new CounsellorStartedCall(bindings, observations, consultants, accounts, matrix);
 
   @BeforeEach
   void setUp() {
@@ -46,10 +54,13 @@ class CounsellorStartedCallTest {
     lenient()
         .when(consultants.findAllByMatrixUserIdAndDeleteDateIsNull(anyString()))
         .thenReturn(List.of());
-    lenient()
-        .when(consultants.findAllByMatrixUserIdAndDeleteDateIsNull(COUNSELLOR))
-        .thenReturn(List.of(consultant("c1", TENANT)));
+    counsellor(COUNSELLOR, "c1", TENANT);
+    counsellor(COLLEAGUE, "c2", TENANT);
+    counsellor(FOREIGN, "c3", 8L);
     lenient().when(accounts.snapshot(anyString())).thenReturn(Optional.empty());
+    lenient()
+        .when(matrix.getCallRoomMembers(MEDIA))
+        .thenReturn(Optional.of(List.of(COUNSELLOR, ASKER)));
   }
 
   @Test
@@ -70,7 +81,8 @@ class CounsellorStartedCallTest {
   @Test
   void aMatrixIdHeldByTwoAccountsOfTheTraegerStandsForNobody() {
     when(consultants.findAllByMatrixUserIdAndDeleteDateIsNull(COUNSELLOR))
-        .thenReturn(List.of(consultant("c1", TENANT), consultant("c2", TENANT)));
+        .thenReturn(
+            List.of(consultant(COUNSELLOR, "c1", TENANT), consultant(COUNSELLOR, "c9", TENANT)));
 
     assertThat(calls.isCounsellor(COUNSELLOR, TENANT)).isFalse();
   }
@@ -86,94 +98,172 @@ class CounsellorStartedCallTest {
     assertThat(calls.isRunning(SOURCE, " ", TENANT, NOW)).isFalse();
   }
 
+  // --- bound calls: the listener's observed MatrixRTC memberships ---------------------------
+
   @Test
-  void aRingingCallOfTheCounsellorIsRunning() {
-    when(bindings.findByMediaRoomId(MEDIA)).thenReturn(Optional.of(ringing(COUNSELLOR)));
+  void aCallWithTheCounsellorInItIsJoinable() {
+    bound(call(COUNSELLOR, device(COUNSELLOR, NOW + 60_000), device(ASKER, NOW + 60_000)));
 
     assertThat(calls.isRunning(SOURCE, MEDIA, TENANT, NOW)).isTrue();
   }
 
   @Test
-  void aConnectedCallOfTheCounsellorIsRunning() {
-    var binding = ringing(COUNSELLOR);
-    binding.recordAttendance(NOW - 10);
-    binding.getDevices().put("_c_D", device(COUNSELLOR, NOW + 60_000));
-    when(bindings.findByMediaRoomId(MEDIA)).thenReturn(Optional.of(binding));
+  void aCallStillRingingWithNoCounsellorInItIsNotJoinable() {
+    bound(call(COUNSELLOR));
+
+    assertThat(calls.isRunning(SOURCE, MEDIA, TENANT, NOW)).isFalse();
+  }
+
+  @Test
+  void aCallEveryCounsellorLeftIsNotJoinable() {
+    bound(call(COUNSELLOR, device(COUNSELLOR, NOW - 1), device(ASKER, NOW + 60_000)));
+
+    assertThat(calls.isRunning(SOURCE, MEDIA, TENANT, NOW)).isFalse();
+  }
+
+  @Test
+  void anotherCounsellorOfTheTraegerInTheCallKeepsItJoinable() {
+    bound(call(COUNSELLOR, device(COUNSELLOR, NOW - 1), device(COLLEAGUE, NOW + 60_000)));
 
     assertThat(calls.isRunning(SOURCE, MEDIA, TENANT, NOW)).isTrue();
   }
 
   @Test
-  void theAskersOwnCallIsNoCounsellorCall() {
-    when(bindings.findByMediaRoomId(MEDIA)).thenReturn(Optional.of(ringing(ASKER)));
+  void aCounsellorOfAnotherTraegerInTheCallDoesNotCount() {
+    bound(call(COUNSELLOR, device(FOREIGN, NOW + 60_000)));
 
     assertThat(calls.isRunning(SOURCE, MEDIA, TENANT, NOW)).isFalse();
   }
 
   @Test
-  void anEndedCounsellorCallIsNotRunning() {
-    var binding = ringing(COUNSELLOR);
-    binding.finishByLifecycle(NOW - 1);
-    when(bindings.findByMediaRoomId(MEDIA)).thenReturn(Optional.of(binding));
+  void aSuspendedCounsellorInTheCallDoesNotCount() {
+    bound(call(COUNSELLOR, device(COUNSELLOR, NOW + 60_000)));
+    suspend("c1");
+
+    assertThat(calls.isRunning(SOURCE, MEDIA, TENANT, NOW)).isFalse();
+  }
+
+  /** Once the call room's observation is lost its memberships may be stale: nobody counts. */
+  @Test
+  void anUnobservedCallRoomProvesNobodyIsInIt() {
+    var call = call(COUNSELLOR, device(COUNSELLOR, NOW + 60_000));
+    call.loseMediaObservation();
+    bound(call);
 
     assertThat(calls.isRunning(SOURCE, MEDIA, TENANT, NOW)).isFalse();
   }
 
   @Test
-  void aCounsellorCallWhoseInviteRanOutUnansweredIsNotRunning() {
-    var binding = ringing(COUNSELLOR, SOURCE, TENANT, NOW - 1);
-    when(bindings.findByMediaRoomId(MEDIA)).thenReturn(Optional.of(binding));
+  void theAskersOwnCallIsNoCounsellorCallEvenWithACounsellorInIt() {
+    bound(call(ASKER, device(COUNSELLOR, NOW + 60_000)));
+
+    assertThat(calls.isRunning(SOURCE, MEDIA, TENANT, NOW)).isFalse();
+  }
+
+  @Test
+  void anEndedCounsellorCallIsNotJoinable() {
+    var call = call(COUNSELLOR, device(COUNSELLOR, NOW + 60_000));
+    call.finishByLifecycle(NOW - 1);
+    bound(call);
 
     assertThat(calls.isRunning(SOURCE, MEDIA, TENANT, NOW)).isFalse();
   }
 
   @Test
   void aCallRoomOfAnotherConversationIsNotThisConversationsCall() {
-    when(bindings.findByMediaRoomId(MEDIA))
-        .thenReturn(Optional.of(ringing(COUNSELLOR, "!other:example", TENANT)));
+    bound(call(COUNSELLOR, "!other:example", TENANT, device(COUNSELLOR, NOW + 60_000)));
 
     assertThat(calls.isRunning(SOURCE, MEDIA, TENANT, NOW)).isFalse();
   }
 
   @Test
   void aCallOfAnotherTraegerIsNotRunningHere() {
-    when(bindings.findByMediaRoomId(MEDIA))
-        .thenReturn(Optional.of(ringing(COUNSELLOR, SOURCE, 8L)));
+    bound(call(COUNSELLOR, SOURCE, 8L, device(COUNSELLOR, NOW + 60_000)));
 
     assertThat(calls.isRunning(SOURCE, MEDIA, TENANT, NOW)).isFalse();
   }
 
   @Test
-  void aCallStartedByASuspendedCounsellorDoesNotCount() {
-    when(bindings.findByMediaRoomId(MEDIA)).thenReturn(Optional.of(ringing(COUNSELLOR)));
-    when(accounts.snapshot("c1"))
+  void aBindingIsAnsweredWithoutAskingMatrix() {
+    bound(call(COUNSELLOR, device(COUNSELLOR, NOW + 60_000)));
+
+    calls.isRunning(SOURCE, MEDIA, TENANT, NOW);
+
+    verify(matrix, never()).getCallRoomState(anyString(), anyString());
+  }
+
+  /** The binding is the authority of its call room: a lingering observation cannot reopen it. */
+  @Test
+  void anEndedBindingIsNotReopenedByALingeringObservation() {
+    var call = call(COUNSELLOR, device(COUNSELLOR, NOW + 60_000));
+    call.finishExplicitly(NOW - 1);
+    bound(call);
+    lenient()
+        .when(observations.findByMediaRoomId(MEDIA))
+        .thenReturn(Optional.of(observation(COUNSELLOR)));
+    lenient()
+        .when(matrix.getCallRoomState(MEDIA, COUNSELLOR))
+        .thenReturn(Optional.of(List.of(membership(COUNSELLOR, NOW - 1_000))));
+
+    assertThat(calls.isRunning(SOURCE, MEDIA, TENANT, NOW)).isFalse();
+  }
+
+  // --- encrypted calls known through their creator's registration: live Matrix state -------
+
+  @Test
+  void anObservedCallWithTheCounsellorInItIsJoinable() {
+    observed(observation(COUNSELLOR));
+    when(matrix.getCallRoomState(MEDIA, COUNSELLOR))
         .thenReturn(
             Optional.of(
-                new AccountInactivityService.Snapshot(
-                    "c1",
-                    TENANT,
-                    24,
-                    0,
-                    null,
-                    null,
-                    AccountInactivityService.Status.SUSPENDED,
-                    0,
-                    null)));
-
-    assertThat(calls.isRunning(SOURCE, MEDIA, TENANT, NOW)).isFalse();
-  }
-
-  /** Encrypted group and 1:1 calls are known through the creator's verified registration. */
-  @Test
-  void aLiveObservationOfTheCounsellorsCallIsRunning() {
-    when(observations.findByMediaRoomId(MEDIA)).thenReturn(Optional.of(observation(COUNSELLOR)));
+                List.of(membership(COUNSELLOR, NOW - 1_000), membership(ASKER, NOW - 500))));
 
     assertThat(calls.isRunning(SOURCE, MEDIA, TENANT, NOW)).isTrue();
   }
 
   @Test
+  void anObservedCallWithOnlyAskersInItIsNotJoinable() {
+    observed(observation(COUNSELLOR));
+    when(matrix.getCallRoomState(MEDIA, COUNSELLOR))
+        .thenReturn(
+            Optional.of(List.of(departure(COUNSELLOR, NOW - 2_000), membership(ASKER, NOW - 500))));
+
+    assertThat(calls.isRunning(SOURCE, MEDIA, TENANT, NOW)).isFalse();
+  }
+
+  @Test
+  void anObservedCallIsReadByAnotherMemberOnceTheCreatorLeftTheCallRoom() {
+    observed(observation(COUNSELLOR));
+    when(matrix.getCallRoomMembers(MEDIA)).thenReturn(Optional.of(List.of(ASKER, COLLEAGUE)));
+    when(matrix.getCallRoomState(MEDIA, ASKER))
+        .thenReturn(Optional.of(List.of(membership(COLLEAGUE, NOW - 1_000))));
+
+    assertThat(calls.isRunning(SOURCE, MEDIA, TENANT, NOW)).isTrue();
+  }
+
+  @Test
+  void anUnreadableCallRoomAdmitsNobody() {
+    observed(observation(COUNSELLOR));
+    when(matrix.getCallRoomState(MEDIA, COUNSELLOR))
+        .thenThrow(new MatrixSynapseService.CallLookupUnavailableException("down"));
+
+    assertThat(calls.isRunning(SOURCE, MEDIA, TENANT, NOW)).isFalse();
+  }
+
+  @Test
+  void anUnknownCallRoomMembershipAdmitsNobody() {
+    observed(observation(COUNSELLOR));
+    when(matrix.getCallRoomMembers(MEDIA)).thenReturn(Optional.empty());
+
+    assertThat(calls.isRunning(SOURCE, MEDIA, TENANT, NOW)).isFalse();
+  }
+
+  @Test
   void anObservationOfTheAskersCallDoesNotCount() {
-    when(observations.findByMediaRoomId(MEDIA)).thenReturn(Optional.of(observation(ASKER)));
+    observed(observation(ASKER));
+    lenient()
+        .when(matrix.getCallRoomState(anyString(), anyString()))
+        .thenReturn(Optional.of(List.of(membership(COUNSELLOR, NOW - 1_000))));
 
     assertThat(calls.isRunning(SOURCE, MEDIA, TENANT, NOW)).isFalse();
   }
@@ -182,54 +272,51 @@ class CounsellorStartedCallTest {
   void anEndedObservationDoesNotCount() {
     var observation = observation(COUNSELLOR);
     observation.finishAt(NOW - 1);
-    when(observations.findByMediaRoomId(MEDIA)).thenReturn(Optional.of(observation));
+    observed(observation);
 
     assertThat(calls.isRunning(SOURCE, MEDIA, TENANT, NOW)).isFalse();
   }
 
   @Test
   void anObservationOfAnotherConversationDoesNotCount() {
-    var observation = observation(COUNSELLOR, "!other:example");
+    observed(observation(COUNSELLOR, "!other:example"));
+
+    assertThat(calls.isRunning(SOURCE, MEDIA, TENANT, NOW)).isFalse();
+  }
+
+  // --- fixtures ----------------------------------------------------------------------------
+
+  private void bound(MatrixCallBinding call) {
+    when(bindings.findByMediaRoomId(MEDIA)).thenReturn(Optional.of(call));
+  }
+
+  private void observed(MatrixCallObservation observation) {
     when(observations.findByMediaRoomId(MEDIA)).thenReturn(Optional.of(observation));
-
-    assertThat(calls.isRunning(SOURCE, MEDIA, TENANT, NOW)).isFalse();
   }
 
-  /** The binding is the authority of its call room: a lingering observation cannot reopen it. */
-  @Test
-  void anEndedBindingIsNotReopenedByALingeringObservation() {
-    var binding = ringing(COUNSELLOR);
-    binding.finishExplicitly(NOW - 1);
-    when(bindings.findByMediaRoomId(MEDIA)).thenReturn(Optional.of(binding));
-    lenient()
-        .when(observations.findByMediaRoomId(MEDIA))
-        .thenReturn(Optional.of(observation(COUNSELLOR)));
-
-    assertThat(calls.isRunning(SOURCE, MEDIA, TENANT, NOW)).isFalse();
+  private static MatrixCallBinding call(String caller, MatrixCallDevice... devices) {
+    return call(caller, SOURCE, TENANT, devices);
   }
 
-  private static MatrixCallBinding ringing(String caller) {
-    return ringing(caller, SOURCE, TENANT);
-  }
-
-  private static MatrixCallBinding ringing(String caller, String source, long tenant) {
-    return ringing(caller, source, tenant, NOW + 60_000);
-  }
-
-  private static MatrixCallBinding ringing(
-      String caller, String source, long tenant, long inviteExpiresAt) {
-    return MatrixCallBinding.builder()
-        .id(1L)
-        .sourceRoomId(source)
-        .callId("call")
-        .mediaRoomId(MEDIA)
-        .callerMatrixId(caller)
-        .sessionId(45L)
-        .tenantId(tenant)
-        .invitedAt(NOW - 1_000)
-        .inviteExpiresAt(inviteExpiresAt)
-        .video(true)
-        .build();
+  private static MatrixCallBinding call(
+      String caller, String source, long tenant, MatrixCallDevice... devices) {
+    var call =
+        MatrixCallBinding.builder()
+            .id(1L)
+            .sourceRoomId(source)
+            .callId("call")
+            .mediaRoomId(MEDIA)
+            .callerMatrixId(caller)
+            .sessionId(45L)
+            .tenantId(tenant)
+            .invitedAt(NOW - 1_000)
+            .inviteExpiresAt(NOW + 60_000)
+            .mediaObservedAt(NOW - 1_000)
+            .video(true)
+            .build();
+    if (devices.length > 0) call.recordAttendance(NOW - 900);
+    for (var device : devices) call.getDevices().put("_" + device.getSenderMatrixId(), device);
+    return call;
   }
 
   private static MatrixCallObservation observation(String creator) {
@@ -252,14 +339,82 @@ class CounsellorStartedCallTest {
   }
 
   private static MatrixCallDevice device(String sender, long expiresAt) {
-    return new MatrixCallDevice(sender, NOW - 10, expiresAt, true, "$e" + sender);
+    return new MatrixCallDevice(sender, NOW - 900, expiresAt, true, "$e" + sender);
   }
 
-  private static Consultant consultant(String id, long tenant) {
+  private static Map<String, Object> membership(String sender, long at) {
+    return Map.of(
+        "type",
+        "org.matrix.msc3401.call.member",
+        "event_id",
+        "$m" + sender + at,
+        "sender",
+        sender,
+        "state_key",
+        "_" + sender + "_DEVICE",
+        "origin_server_ts",
+        at,
+        "content",
+        Map.of(
+            "application",
+            "m.call",
+            "scope",
+            "m.room",
+            "call_id",
+            "",
+            "device_id",
+            "DEVICE",
+            "focus_active",
+            Map.of("type", "livekit"),
+            "foci_preferred",
+            List.of(),
+            "expires",
+            3_600_000L));
+  }
+
+  private static Map<String, Object> departure(String sender, long at) {
+    return Map.of(
+        "type",
+        "org.matrix.msc3401.call.member",
+        "event_id",
+        "$d" + sender + at,
+        "sender",
+        sender,
+        "state_key",
+        "_" + sender + "_DEVICE",
+        "origin_server_ts",
+        at,
+        "content",
+        Map.of());
+  }
+
+  private void counsellor(String matrixId, String id, long tenant) {
+    lenient()
+        .when(consultants.findAllByMatrixUserIdAndDeleteDateIsNull(matrixId))
+        .thenReturn(List.of(consultant(matrixId, id, tenant)));
+  }
+
+  private void suspend(String id) {
+    when(accounts.snapshot(id))
+        .thenReturn(
+            Optional.of(
+                new AccountInactivityService.Snapshot(
+                    id,
+                    TENANT,
+                    24,
+                    0,
+                    null,
+                    null,
+                    AccountInactivityService.Status.SUSPENDED,
+                    0,
+                    null)));
+  }
+
+  private static Consultant consultant(String matrixId, String id, long tenant) {
     var consultant = new Consultant();
     consultant.setId(id);
     consultant.setTenantId(tenant);
-    consultant.setMatrixUserId(COUNSELLOR);
+    consultant.setMatrixUserId(matrixId);
     return consultant;
   }
 }

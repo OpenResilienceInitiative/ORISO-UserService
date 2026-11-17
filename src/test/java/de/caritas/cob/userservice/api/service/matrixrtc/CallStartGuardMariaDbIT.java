@@ -237,9 +237,95 @@ class CallStartGuardMariaDbIT {
   @Test
   void theAskerJoinsTheCounsellorsEncryptedCallKnownThroughItsObservation() {
     String room = observedCallOf(counsellor.getMatrixUserId(), "observed-call");
+    callRoomState(room, membership(counsellor.getMatrixUserId()));
 
     assertThat(gate.resolve(source, askerMatrixId, room))
         .isEqualTo(new CallMediaPolicy(true, true));
+  }
+
+  /** Frank, 17 Nov 2026: a counsellor must be in the call right now. */
+  @Test
+  void theAskerCannotJoinTheCounsellorsEncryptedCallOnceNoCounsellorIsInIt() {
+    String room = observedCallOf(counsellor.getMatrixUserId(), "observed-left");
+    callRoomState(room, membership(askerMatrixId));
+
+    assertThat(gate.resolve(source, askerMatrixId, room).denialReason())
+        .isEqualTo(CallMediaPolicy.CALL_START_REQUIRES_COUNSELLOR);
+  }
+
+  @Test
+  void theAskerCannotJoinOnceTheCounsellorLeftTheCall() {
+    String room = callOf(counsellor.getMatrixUserId(), "counsellor-left");
+    long now = System.currentTimeMillis();
+    var binding = bindings.findByMediaRoomId(room).orElseThrow();
+    new JdbcTemplate(dataSource)
+        .update(
+            "UPDATE matrix_call_device SET expires_at = ? WHERE binding_id = ?",
+            now - 1,
+            binding.getId());
+    new JdbcTemplate(dataSource)
+        .update(
+            "INSERT INTO matrix_call_device(binding_id,state_key,sender_matrix_id,event_timestamp,"
+                + "expires_at,attended,event_id) VALUES (?,?,?,?,?,1,?)",
+            binding.getId(),
+            "_" + askerMatrixId + "_A",
+            askerMatrixId,
+            now - 1_000,
+            now + 3_600_000,
+            "$" + UUID.randomUUID());
+
+    assertThat(gate.resolve(source, askerMatrixId, room).denialReason())
+        .isEqualTo(CallMediaPolicy.CALL_START_REQUIRES_COUNSELLOR);
+  }
+
+  @Test
+  void theAskerCannotJoinACallStillRingingBeforeTheCounsellorIsInIt() {
+    String room = callOf(counsellor.getMatrixUserId(), "ringing");
+    var binding = bindings.findByMediaRoomId(room).orElseThrow();
+    new JdbcTemplate(dataSource)
+        .update("DELETE FROM matrix_call_device WHERE binding_id = ?", binding.getId());
+    new JdbcTemplate(dataSource)
+        .update("UPDATE matrix_call_binding SET started_at = NULL WHERE id = ?", binding.getId());
+
+    assertThat(gate.resolve(source, askerMatrixId, room).denialReason())
+        .isEqualTo(CallMediaPolicy.CALL_START_REQUIRES_COUNSELLOR);
+  }
+
+  private void callRoomState(String room, java.util.Map<String, Object> membership) {
+    when(matrix.getCallRoomMembers(room))
+        .thenReturn(Optional.of(List.of(counsellor.getMatrixUserId(), askerMatrixId)));
+    when(matrix.getCallRoomState(room, counsellor.getMatrixUserId()))
+        .thenReturn(Optional.of(List.of(membership)));
+  }
+
+  private static java.util.Map<String, Object> membership(String sender) {
+    return java.util.Map.of(
+        "type",
+        "org.matrix.msc3401.call.member",
+        "event_id",
+        "$" + UUID.randomUUID(),
+        "sender",
+        sender,
+        "state_key",
+        "_" + sender + "_DEVICE",
+        "origin_server_ts",
+        System.currentTimeMillis() - 1_000,
+        "content",
+        java.util.Map.of(
+            "application",
+            "m.call",
+            "scope",
+            "m.room",
+            "call_id",
+            "",
+            "device_id",
+            "DEVICE",
+            "focus_active",
+            java.util.Map.of("type", "livekit"),
+            "foci_preferred",
+            List.of(),
+            "expires",
+            3_600_000L));
   }
 
   @Test
