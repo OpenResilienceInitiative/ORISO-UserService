@@ -179,6 +179,18 @@ class StatisticsReaderAuthorizationIT {
   }
 
   @Test
+  void searchRejectsUnknownSortFields() throws Exception {
+    mvc.perform(get(READERS + "/search").param("field", "PASSWORD").with(platformAdmin()))
+        .andExpect(status().isBadRequest());
+    mvc.perform(
+            get(READERS + "/search")
+                .param("field", "LASTNAME")
+                .param("order", "DESC")
+                .with(platformAdmin()))
+        .andExpect(status().isOk());
+  }
+
+  @Test
   void unauthenticatedCallsAreRejected() throws Exception {
     mvc.perform(get(READERS + "/search")).andExpect(status().isUnauthorized());
     mvc.perform(get(DASHBOARD)).andExpect(status().isUnauthorized());

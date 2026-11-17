@@ -6,12 +6,14 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PatchAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.AdminDtoMapper;
 import de.caritas.cob.userservice.api.admin.service.admin.StatisticsReaderUserService;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.port.out.SearchSort;
 import jakarta.validation.Valid;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -34,6 +36,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class StatisticsReaderController {
 
+  private static final Set<String> SORT_FIELDS =
+      Set.of("FIRSTNAME", "LASTNAME", "EMAIL", "UPDATE_DATE");
+
   private final @NonNull StatisticsReaderUserService statisticsReaderUserService;
   private final @NonNull AdminDtoMapper adminDtoMapper;
 
@@ -49,10 +54,21 @@ public class StatisticsReaderController {
       @RequestParam(defaultValue = "20") Integer perPage,
       @RequestParam(defaultValue = "FIRSTNAME") String field,
       @RequestParam(defaultValue = "ASC") String order) {
+    if (!SORT_FIELDS.contains(field)
+        || !("ASC".equalsIgnoreCase(order) || "DESC".equalsIgnoreCase(order))
+        || page < 1
+        || perPage < 1) {
+      throw new BadRequestException("Unsupported paging or sort parameters");
+    }
     var decodedInfix = URLDecoder.decode(query, StandardCharsets.UTF_8).trim();
     var resultMap =
         statisticsReaderUserService.search(
-            decodedInfix, PageRequest.of(Math.max(page, 1) - 1, Math.max(perPage, 1)));
+            decodedInfix,
+            SearchSort.pageRequestOf(
+                page - 1,
+                perPage,
+                adminDtoMapper.mappedFieldOf(field),
+                "ASC".equalsIgnoreCase(order)));
     return ResponseEntity.ok(
         adminDtoMapper.adminSearchResultOf(resultMap, query, page, perPage, field, order));
   }
