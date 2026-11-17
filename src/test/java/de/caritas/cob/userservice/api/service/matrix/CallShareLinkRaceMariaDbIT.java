@@ -96,6 +96,7 @@ import org.testcontainers.containers.MariaDBContainer;
   MatrixCallConversationResolver.class,
   MatrixCallGuestService.class,
   CallShareLinkService.class,
+  de.caritas.cob.userservice.api.service.matrix.GroupCallCreatorAgency.class,
   CallShareLinkSweep.class,
   DirectCallKnockService.class,
   EffectiveDirectInvitePolicy.class,
@@ -160,6 +161,7 @@ class CallShareLinkRaceMariaDbIT {
   @MockitoBean private MatrixFeedUpdateSignalService feedUpdateSignals;
   @MockitoBean private IdentityTombstoneService tombstones;
   @MockitoBean private TenantService tenantService;
+  @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
   @MockitoBean private EffectiveAgencySettingsLookup effectiveAgencySettings;
 
   @MockitoBean

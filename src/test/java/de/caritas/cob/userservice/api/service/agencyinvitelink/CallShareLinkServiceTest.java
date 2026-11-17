@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.agencyinvitelink;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -70,6 +71,9 @@ class CallShareLinkServiceTest {
   @Mock private de.caritas.cob.userservice.api.port.out.UserRepository users;
 
   @Mock private ChatAgencyRepository chatAgencies;
+
+  @Mock private de.caritas.cob.userservice.api.service.matrix.GroupCallCreatorAgency creatorAgency;
+
   @InjectMocks private CallShareLinkService service;
   private MatrixCallBinding binding;
   private User guest;
@@ -121,6 +125,66 @@ class CallShareLinkServiceTest {
 
     assertThat(share.temporaryAccountAllowed()).isFalse();
     assertThat(share.temporaryAccount()).isFalse();
+  }
+
+  // --- #1662: a group call's link registers under the call creator's Beratungsstelle ---
+
+  @Test
+  void groupCallLinkCarriesTheCallCreatorsAgencyAndItsConsultingType() {
+    useBinding(runningCall(null, 600L, MEDIA));
+    when(creatorAgency.of(binding)).thenReturn(Optional.of(99L));
+    when(creatorAgency.consultingTypeOf(99L)).thenReturn(Optional.of(3));
+
+    var share = service.create(TENANT, COUNSELLOR, SOURCE, CALL_ID, true, true);
+
+    assertThat(share.link().getAgencyId()).isEqualTo(99L);
+    assertThat(share.link().getConsultingTypeId()).isEqualTo(3);
+    // A group has no main topic of its own; the registration names none.
+    assertThat(share.link().getTopicId()).isNull();
+    assertThat(share.temporaryAccountAllowed()).isTrue();
+    assertThat(share.temporaryAccount()).isTrue();
+    assertThat(share.allowedGuestAccountModes()).contains(GuestAccountMode.GUEST_CHOOSES);
+  }
+
+  @Test
+  void groupCallLinkStillNeedsEveryAgencyOfTheGroupToAllowDirectInvites() {
+    useBinding(runningCall(null, 600L, MEDIA));
+    when(creatorAgency.of(binding)).thenReturn(Optional.of(99L));
+    when(creatorAgency.consultingTypeOf(99L)).thenReturn(Optional.of(3));
+    when(chatAgencies.findByChat_Id(600L))
+        .thenReturn(
+            List.of(
+                ChatAgency.builder().agencyId(99L).build(),
+                ChatAgency.builder().agencyId(101L).build()));
+    when(directInvitePolicy.allows(TENANT, 101L, InviteLinkChatType.VIDEO)).thenReturn(false);
+
+    assertThatThrownBy(() -> service.create(TENANT, COUNSELLOR, SOURCE, CALL_ID, true, true))
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void groupCallLinkEndsOnceTheCreatorNoLongerStandsForItsAgency() {
+    useBinding(runningCall(null, 600L, MEDIA));
+    when(creatorAgency.of(binding)).thenReturn(Optional.of(99L));
+    var link = link(true, true);
+    assertThat(catchThrowable(() -> service.requireUsable(link))).isNull();
+
+    when(creatorAgency.of(binding)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> service.requireUsable(link))
+        .isInstanceOf(CallShareLinkEndedException.class);
+  }
+
+  @Test
+  void groupCallWhoseAgencyHasNoKnownConsultingTypeOnlyTakesExistingAccounts() {
+    useBinding(runningCall(null, 600L, MEDIA));
+    when(creatorAgency.of(binding)).thenReturn(Optional.of(99L));
+    when(creatorAgency.consultingTypeOf(99L)).thenReturn(Optional.empty());
+
+    var share = service.create(TENANT, COUNSELLOR, SOURCE, CALL_ID, true, true);
+
+    assertThat(share.temporaryAccountAllowed()).isFalse();
+    assertThat(share.guestAccountMode()).isEqualTo(GuestAccountMode.PERMANENT);
   }
 
   @Test

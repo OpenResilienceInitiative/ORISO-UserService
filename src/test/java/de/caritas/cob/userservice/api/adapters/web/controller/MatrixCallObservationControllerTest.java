@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService;
 import de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService;
 import de.caritas.cob.userservice.api.service.matrix.MatrixCallStateService;
+import de.caritas.cob.userservice.api.service.matrix.MatrixGroupCallBindingService;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionCallBindingService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -39,6 +40,8 @@ class MatrixCallObservationControllerTest {
       mock(MatrixCallObservationService.class);
   private final MatrixSessionCallBindingService sessionBindings =
       mock(MatrixSessionCallBindingService.class);
+  private final MatrixGroupCallBindingService groupBindings =
+      mock(MatrixGroupCallBindingService.class);
   private MockMvc mvc;
 
   @BeforeEach
@@ -50,6 +53,7 @@ class MatrixCallObservationControllerTest {
                     mock(MatrixCallGuestService.class),
                     observations,
                     sessionBindings,
+                    groupBindings,
                     new AuthenticatedUser()))
             .build();
   }
@@ -188,6 +192,21 @@ class MatrixCallObservationControllerTest {
         .thenReturn(true);
 
     register().andExpect(status().isNoContent());
+  }
+
+  @Test
+  void theGroupModeratorsVerifiedRegistrationAlsoBindsTheGroupCall() throws Exception {
+    // #1662: a group call's share link needs a binding; the encrypted invite never creates one.
+    when(observations.register(any(), anyString(), anyString(), anyString(), anyBoolean()))
+        .thenReturn(MatrixCallObservationService.Outcome.NOT_FOUND);
+    when(sessionBindings.bind(any(), anyString(), anyString(), anyString(), anyBoolean()))
+        .thenReturn(false);
+    when(groupBindings.bind(any(), anyString(), anyString(), anyString(), anyBoolean()))
+        .thenReturn(true);
+
+    register().andExpect(status().isNoContent());
+    verify(groupBindings)
+        .bind(any(), eq("!source:example"), eq("call"), eq("!media:example"), eq(true));
   }
 
   @Test

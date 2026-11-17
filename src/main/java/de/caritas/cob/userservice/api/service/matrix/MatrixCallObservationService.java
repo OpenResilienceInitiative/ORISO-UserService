@@ -36,8 +36,10 @@ import org.springframework.transaction.support.TransactionTemplate;
  * registration request behind it. When the registering person is the assigned counsellor of a 1:1
  * session, {@link MatrixSessionCallBindingService} re-checks that request against Matrix on its own
  * (conversation, assignment, membership, call-room binding and creator) and may then write the
- * authoritative {@code MatrixCallBinding}. Group chats, advice seekers, other counsellors and
- * guests never get a binding this way, and nothing here may derive one from a stored observation.
+ * authoritative {@code MatrixCallBinding}. #1662: in a group chat, {@link
+ * MatrixGroupCallBindingService} does the same for a moderator who started the call. Advice
+ * seekers, other counsellors and guests never get a binding this way, and nothing here may derive
+ * one from a stored observation.
  *
  * <p>#1630: no database transaction is open while Matrix is called. Every Matrix lookup happens
  * first, then one short transaction writes, then the notifications follow (each in its own

@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.port.out.ChatAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.MatrixCallBindingRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.matrix.GroupCallCreatorAgency;
 import de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService;
 import de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService.Admission;
 import de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService.Outcome;
@@ -62,6 +63,7 @@ public class CallShareLinkService {
   private final @NonNull GuestAccountModePolicy guestAccountModes;
   private final @NonNull TenantService tenantService;
   private final @NonNull UserRepository users;
+  private final @NonNull GroupCallCreatorAgency creatorAgency;
 
   /** Backstop when the end of a call is never observed: no link outlives this. */
   @Value("${call-share-links.max-lifetime-minutes:480}")
@@ -99,16 +101,20 @@ public class CallShareLinkService {
         binding.getSessionId() == null
             ? Optional.<Session>empty()
             : sessions.findById(binding.getSessionId());
-    // The entry room needs the Beratungsstelle for its consent and legal texts (decision pending,
-    // see the PR); policies read it from the call, not from the link.
-    Long agencyId = session.map(Session::getAgencyId).orElse(null);
+    // The entry room needs the Beratungsstelle for its consent and legal texts: the session's, or
+    // for a group call the call creator's (#1662, Frank 17 Nov). Policies read it from the call,
+    // not from the link.
+    Long agencyId = agencyOf(binding);
     requireDirectInvites(binding, agencyId);
     if (existing.isPresent()) {
       requireUsable(existing.get(), binding);
       requireSameAgency(existing.get(), agencyId);
       return view(existing.get(), false);
     }
-    Integer consultingTypeId = session.map(Session::getConsultingTypeId).orElse(null);
+    Integer consultingTypeId =
+        binding.getSessionId() != null
+            ? session.map(Session::getConsultingTypeId).orElse(null)
+            : creatorAgency.consultingTypeOf(agencyId).orElse(null);
     var allowed = allowedModes(tenant, agencyId, consultingTypeId, medium);
     var mode =
         chosenMode(
@@ -416,8 +422,9 @@ public class CallShareLinkService {
   }
 
   /**
-   * Without a Beratungsstelle and consulting type a new person cannot register (a group call), so
-   * only existing, permanent accounts.
+   * Without a Beratungsstelle and consulting type a new person cannot register (a group call whose
+   * creator stands for no single Beratungsstelle of the group), so only existing, permanent
+   * accounts.
    */
   private Set<GuestAccountMode> allowedModes(
       Long tenant, Long agencyId, Integer consultingTypeId, InviteLinkChatType medium) {
@@ -444,9 +451,10 @@ public class CallShareLinkService {
     return allowedModes(link).stream().anyMatch(GuestAccountMode::offersTemporaryAccounts);
   }
 
+  /** The session's Beratungsstelle, or for a group call the call creator's (#1662). */
   private Long agencyOf(MatrixCallBinding binding) {
     return binding.getSessionId() == null
-        ? null
+        ? creatorAgency.of(binding).orElse(null)
         : sessions.findById(binding.getSessionId()).map(Session::getAgencyId).orElse(null);
   }
 
@@ -470,7 +478,8 @@ public class CallShareLinkService {
     }
     var tenant = binding.getTenantId();
     var medium = mediumOf(binding);
-    if (agencyId == null && binding.getChatId() != null) {
+    // A group call: every Beratungsstelle of the group must allow it, the creator's included.
+    if (binding.getChatId() != null) {
       var groupAgencies =
           chatAgencies.findByChat_Id(binding.getChatId()).stream()
               .map(ChatAgency::getAgencyId)
