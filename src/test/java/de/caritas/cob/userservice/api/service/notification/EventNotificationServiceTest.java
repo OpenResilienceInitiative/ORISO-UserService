@@ -68,6 +68,11 @@ class EventNotificationServiceTest {
   @Mock private SessionRepository sessionRepository;
   @Mock private UserRepository userRepository;
   @Mock private ConsultantRepository consultantRepository;
+
+  @Mock
+  private org.springframework.beans.factory.ObjectProvider<MatrixCaseReplyActorAuthorizer>
+      caseWriterAuthorizer;
+
   @Mock private IdentityTombstoneService identityTombstoneService;
   @Mock private EventNotificationDeduplicationWriter deduplicationWriter;
 
