@@ -57,6 +57,7 @@ class CalendarServiceTest {
   @Mock CalendarColleagueScope colleagues;
   @Mock AgencyService agencyService;
   @Mock CalendarColleagueAppointmentReader meetings;
+  @Mock CalendarChatReach chatReach;
 
   private final AuthenticatedUser caller = new AuthenticatedUser();
   private CalendarService service;
@@ -68,7 +69,13 @@ class CalendarServiceTest {
     caller.setRoles(Set.of(UserRole.CONSULTANT.getValue()));
     service =
         new CalendarService(
-            caller, reader, meetings, colleagues, agencyService, Clock.fixed(NOW, ZoneOffset.UTC));
+            caller,
+            reader,
+            meetings,
+            colleagues,
+            chatReach,
+            agencyService,
+            Clock.fixed(NOW, ZoneOffset.UTC));
   }
 
   @Test
@@ -234,6 +241,7 @@ class CalendarServiceTest {
                         true))));
     when(agencyService.getAgencies(anyList()))
         .thenReturn(List.of(new AgencyDTO().id(10L).name("Centre North")));
+    when(chatReach.of(eq(ME), anyList())).thenReturn(Optional.of(Set.of(COLLEAGUE)));
 
     var result = service.colleagues("an");
 
@@ -248,6 +256,21 @@ class CalendarServiceTest {
     assertThat(result.getColleagues().get(0).getSecondaryLabel()).isEqualTo("colleague.login");
     assertThat(result.getColleagues().get(1).getSecondaryLabel()).isNull();
     assertThat(result.getColleagues().get(1).getAgencyName()).isEmpty();
+    // ORISO-Frontend#2305: without an internal chat only an on-site appointment is offered.
+    assertThat(result.getColleagues().get(0).getInternalChat()).isTrue();
+    assertThat(result.getColleagues().get(1).getInternalChat()).isFalse();
+  }
+
+  @Test
+  void colleagues_Should_LeaveTheChatReachOut_When_ItIsUnknown() {
+    when(colleagues.list(ME, null, CalendarService.COLLEAGUE_LIMIT))
+        .thenReturn(
+            new Listing(
+                new CalendarPolicy(CalendarVisibilityScope.AGENCY, false),
+                List.of(colleague(false))));
+    when(chatReach.of(eq(ME), anyList())).thenReturn(Optional.empty());
+
+    assertThat(service.colleagues(null).getColleagues().get(0).getInternalChat()).isNull();
   }
 
   @Test

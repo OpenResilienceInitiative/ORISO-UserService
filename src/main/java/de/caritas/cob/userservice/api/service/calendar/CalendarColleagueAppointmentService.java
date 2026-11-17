@@ -34,8 +34,9 @@ import org.springframework.transaction.annotation.Transactional;
  * <ul>
  *   <li>Every kind is allowed; the appointment belongs to the private internal chat of the two,
  *       which is opened (or reused) through {@link InternalSubsetChatFacade}.
- *   <li>The colleague must be inside the caller's calendar reach ({@link CalendarColleagueScope})
- *       and inside the Träger's internal-chat reach (enforced by the facade).
+ *   <li>The colleague must be inside the caller's calendar reach ({@link CalendarColleagueScope}).
+ *       Where the Träger's internal-chat reach does not include them, only an on-site appointment
+ *       is possible, without a chat.
  *   <li>It is fixed at once when the colleague accepts the caller automatically ({@code
  *       calendar_auto_accept}); otherwise it waits for the colleague's answer.
  *   <li>Either of the two may cancel it; only the invited one answers.
@@ -83,20 +84,33 @@ public class CalendarColleagueAppointmentService {
         consultants
             .findByIdAndDeleteDateIsNull(me)
             .orElseThrow(() -> new ForbiddenException("The caller is no active counsellor."));
-    // Refuses a colleague outside the Träger's internal-chat reach; nothing is stored then.
+    var kind = SessionAppointment.Kind.valueOf(request.getKind().name());
+    var withChat =
+        rooms
+            .reachableColleagues(creator, List.of(colleague.consultant()))
+            .contains(colleague.consultant().getId());
+    // Without an internal chat only an on-site appointment is possible (Frank, 2026-11-17).
+    if (!withChat && kind != SessionAppointment.Kind.ONSITE) {
+      throw new ForbiddenException(
+          "Without an internal chat with this colleague only an on-site appointment is possible.");
+    }
     var room =
-        rooms.open(
-            new InternalSubsetChatDTO().consultantIds(List.of(colleague.consultant().getId())),
-            creator);
+        withChat
+            ? rooms.open(
+                new InternalSubsetChatDTO().consultantIds(List.of(colleague.consultant().getId())),
+                creator)
+            : null;
 
     var appointment = new CalendarColleagueAppointment();
     appointment.setOrganizerId(me);
     appointment.setInviteeId(colleague.consultant().getId());
-    appointment.setChatId(room.chatId());
-    appointment.setMatrixRoomId(room.matrixRoomId());
+    if (room != null) {
+      appointment.setChatId(room.chatId());
+      appointment.setMatrixRoomId(room.matrixRoomId());
+    }
     appointment.setStartTime(start);
     appointment.setEndTime(end);
-    appointment.setKind(SessionAppointment.Kind.valueOf(request.getKind().name()));
+    appointment.setKind(kind);
     var acceptsMe =
         TenantContext.supplyAcrossTenants(
             () ->

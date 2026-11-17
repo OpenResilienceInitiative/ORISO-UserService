@@ -58,6 +58,7 @@ public class CalendarService {
   private final CalendarEntryReader reader;
   private final CalendarColleagueAppointmentReader meetings;
   private final CalendarColleagueScope colleagues;
+  private final CalendarChatReach chatReach;
   private final AgencyService agencyService;
   private final Clock clock;
 
@@ -83,6 +84,10 @@ public class CalendarService {
     requireConsultant();
     var listing = colleagues.list(caller.getUserId(), search, COLLEAGUE_LIMIT);
     var agencyNames = agencyNamesOf(listing.colleagues());
+    // Unknown reach leaves the field out; the app then offers every kind and the server decides.
+    var chats =
+        chatReach.of(
+            caller.getUserId(), listing.colleagues().stream().map(Colleague::consultant).toList());
     return new CalendarColleaguesDTO()
         .visibilityScope(
             CalendarColleaguesDTO.VisibilityScopeEnum.valueOf(
@@ -102,7 +107,11 @@ public class CalendarService {
                                     : agencyNames.getOrDefault(colleague.agencyId(), ""))
                             .relation(
                                 CalendarColleagueDTO.RelationEnum.valueOf(
-                                    colleague.relation().name())))
+                                    colleague.relation().name()))
+                            .internalChat(
+                                chats
+                                    .map(ids -> ids.contains(colleague.consultant().getId()))
+                                    .orElse(null)))
                 .toList());
   }
 

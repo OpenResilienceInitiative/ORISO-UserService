@@ -104,6 +104,7 @@ class CalendarColleagueAppointmentServiceTest {
         .thenReturn(
             Optional.of(
                 new Colleague(colleague, "Kai Colleague", Relation.SAME_AGENCY, 5L, false)));
+    lenient().when(rooms.reachableColleagues(eq(me), any())).thenReturn(Set.of(COLLEAGUE));
     lenient().when(rooms.open(any(), eq(me))).thenReturn(new OpenedRoom("!room:oriso", 77L, true));
   }
 
@@ -173,6 +174,28 @@ class CalendarColleagueAppointmentServiceTest {
     when(rooms.open(any(), eq(me))).thenThrow(new ForbiddenException("out of chat reach"));
 
     assertThatThrownBy(() -> service.create(request())).isInstanceOf(ForbiddenException.class);
+    assertThat(saved).isEmpty();
+  }
+
+  @Test
+  void create_Should_MakeAnOnSiteAppointmentWithoutChat_When_NoInternalChatIsAllowed() {
+    when(rooms.reachableColleagues(eq(me), any())).thenReturn(Set.of());
+
+    var created = service.create(request().kind(AppointmentKind.ONSITE));
+
+    verify(rooms, never()).open(any(), any());
+    assertThat(saved.get(0).getChatId()).isNull();
+    assertThat(saved.get(0).getMatrixRoomId()).isNull();
+    assertThat(created.getMatrixRoomId()).isNull();
+    assertThat(created.getKind()).isEqualTo(AppointmentKind.ONSITE);
+  }
+
+  @Test
+  void create_Should_RefuseOtherKinds_When_NoInternalChatIsAllowed() {
+    when(rooms.reachableColleagues(eq(me), any())).thenReturn(Set.of());
+
+    assertThatThrownBy(() -> service.create(request())).isInstanceOf(ForbiddenException.class);
+    verify(rooms, never()).open(any(), any());
     assertThat(saved).isEmpty();
   }
 

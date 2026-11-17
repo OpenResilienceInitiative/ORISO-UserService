@@ -183,6 +183,43 @@ public class InternalSubsetChatFacade {
   /**
    * The tenant and centre switch for internal group chats, for a room anchored to {@code anchor}.
    */
+  /**
+   * The colleagues {@link #open} would accept for a room with {@code creator} alone
+   * (ORISO-Frontend#2305): encryption on, and one of the creator's centres where internal chats are
+   * switched on and the colleague is inside the recipient scope. Answers without touching Matrix,
+   * so the calendar can offer an on-site appointment only where no chat is possible.
+   */
+  public Set<String> reachableColleagues(
+      Consultant creator, java.util.Collection<Consultant> colleagues) {
+    if (!matrixConfig.isEncryptionEnabled() || creator.getConsultantAgencies() == null) {
+      return Set.of();
+    }
+    var scope = recipientScopes.resolve(creator.getTenantId());
+    var centres =
+        creator.getConsultantAgencies().stream()
+            .map(agency -> agency.getAgencyId())
+            .filter(Objects::nonNull)
+            .distinct()
+            .filter(centre -> featureEnabled(creator, centre))
+            .toList();
+    var reachable = new LinkedHashSet<String>();
+    for (var colleague : colleagues) {
+      if (centres.stream().anyMatch(centre -> permits(creator, colleague, scope, centre))) {
+        reachable.add(colleague.getId());
+      }
+    }
+    return reachable;
+  }
+
+  private boolean featureEnabled(Consultant creator, Long agencyId) {
+    try {
+      featureGate.requireEnabled(creator, ChatDTO.builder().agencyId(agencyId).build());
+      return true;
+    } catch (RuntimeException refused) {
+      return false;
+    }
+  }
+
   void requireFeatureEnabled(Consultant anchor, Long agencyId) {
     featureGate.requireEnabled(anchor, ChatDTO.builder().agencyId(agencyId).build());
   }

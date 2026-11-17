@@ -68,6 +68,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 @Import(TenantFixtures.class)
 @WithTenant(CalendarColleagueAppointmentControllerIT.TENANT)
 @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
+@SuppressWarnings("unchecked")
 class CalendarColleagueAppointmentControllerIT {
 
   static final long TENANT = 1L;
@@ -105,6 +106,11 @@ class CalendarColleagueAppointmentControllerIT {
     when(policies.resolve(any()))
         .thenReturn(new CalendarPolicy(CalendarVisibilityScope.AGENCY, true));
     when(rooms.open(any(), any())).thenReturn(new OpenedRoom("!pair:synthetic", 4711L, true));
+    when(rooms.reachableColleagues(any(), any()))
+        .thenAnswer(
+            call ->
+                ((java.util.Collection<Consultant>) call.getArgument(1))
+                    .stream().map(Consultant::getId).collect(java.util.stream.Collectors.toSet()));
     counsellor = fixtures.consultant(TENANT, AGENCY);
     colleague = fixtures.consultant(TENANT, AGENCY);
     third = fixtures.consultant(TENANT, AGENCY);
@@ -174,6 +180,27 @@ class CalendarColleagueAppointmentControllerIT {
 
     actAs(counsellor);
     assertThat(create(colleague, "ONSITE").get("colleagueStatus")).isEqualTo("CONFIRMED");
+  }
+
+  @Test
+  void onSiteOnly_Should_HoldWithoutAnInternalChat() throws Exception {
+    org.mockito.Mockito.doReturn(Set.of()).when(rooms).reachableColleagues(any(), any());
+    actAs(counsellor);
+
+    var created = create(colleague, "ONSITE");
+    assertThat(created).doesNotContainKey("matrixRoomId");
+    mockMvc
+        .perform(
+            csrf(post("/users/calendar/colleague-appointments"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    JSON.writeValueAsString(
+                        Map.of(
+                            "colleagueId", colleague.getId(),
+                            "start", in(30).toString(),
+                            "end", in(31).toString(),
+                            "kind", "VIDEO"))))
+        .andExpect(status().isForbidden());
   }
 
   @Test
