@@ -53,6 +53,13 @@ public class SessionAppointmentController implements UsersApi {
   }
 
   @Override
+  public ResponseEntity<Void> claimSessionAppointmentExpiryNotice(
+      Long sessionId, UUID appointmentId) {
+    service.claimExpiryNotice(sessionId, appointmentId);
+    return ResponseEntity.noContent().build();
+  }
+
+  @Override
   public ResponseEntity<SessionAppointmentDTO> declineSessionAppointment(
       Long sessionId, UUID appointmentId) {
     return ResponseEntity.ok(service.decline(sessionId, appointmentId));

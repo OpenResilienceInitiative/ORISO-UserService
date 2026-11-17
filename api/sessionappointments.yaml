@@ -295,6 +295,31 @@ paths:
                   - APPOINTMENT_NOT_REQUESTED
       security:
         - Bearer: [ ]
+  /users/sessions/{sessionId}/appointments/{appointmentId}/expiry-notice:
+    post:
+      tags:
+        - session-appointment-controller
+      summary: 'Claims the conversation notice of a request declined automatically because nobody
+        answered it by its start (ORISO-Frontend#2287). The first participant''s client that claims
+        it posts the notice into the conversation, like after a counsellor''s decline; every later
+        claim gets 409. [Authorization: the asker of the session or a responsible counsellor]'
+      operationId: claimSessionAppointmentExpiryNotice
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/AppointmentId'
+      responses:
+        204:
+          description: NO CONTENT - claimed; the caller posts the notice
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role or CSRF token
+        404:
+          description: NOT FOUND - no such session or appointment, or the caller is no participant
+        409:
+          description: CONFLICT - no notice pending (not expired, or already claimed)
+      security:
+        - Bearer: [ ]
   /users/appointments/upcoming:
     get:
       tags:
@@ -423,6 +448,14 @@ components:
             - DECLINED
         kind:
           $ref: '#/components/schemas/AppointmentKind'
+        expired:
+          description: A DECLINED request that nobody answered by its start, declined
+            automatically (ORISO-Frontend#2287). Absent otherwise.
+          type: boolean
+        noticePending:
+          description: The conversation notice of that automatic decline is still to be posted;
+            claim it with POST .../expiry-notice first. Absent otherwise.
+          type: boolean
         counterpart:
           $ref: '#/components/schemas/SessionAppointmentCounterpartDTO'
     SessionAppointmentCounterpartDTO:

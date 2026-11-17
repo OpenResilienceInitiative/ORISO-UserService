@@ -22,13 +22,16 @@ import de.caritas.cob.userservice.api.model.CalendarWorkingHours;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.model.SessionAppointment;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.CalendarBlockerRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarBookingSettingRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarConsultationHoursRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarWorkingHoursRepository;
+import de.caritas.cob.userservice.api.port.out.SessionAppointmentRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.sessionappointment.AppointmentRequestExpiry;
 import de.caritas.cob.userservice.api.tenant.TenantFixtures;
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
 import de.caritas.cob.userservice.api.tenant.Tenants;
@@ -96,6 +99,8 @@ class AppointmentSelfBookingControllerIT {
   @Autowired private CalendarBlockerRepository blockers;
   @Autowired private CalendarConsultationHoursRepository consultationHours;
   @Autowired private CalendarBookingSettingRepository bookingSettings;
+  @Autowired private SessionAppointmentRepository appointmentRepository;
+  @Autowired private AppointmentRequestExpiry requestExpiry;
 
   @MockitoBean TenantService tenantService;
   @MockitoBean TenantResolverService tenantResolverService;
@@ -459,6 +464,82 @@ class AppointmentSelfBookingControllerIT {
   }
 
   @Test
+  void expiry_Should_DeclineAnUnansweredRequest_AtItsStart_AndNotAMomentBefore() throws Exception {
+    opensEveryDay("00:00", "23:30");
+    actAsAsker(asker);
+    var start = firstSlotStart(session.getId(), Instant.now(), "REQUEST");
+    var id = booked(start);
+
+    assertThat(requestExpiry.declineUnanswered(start.minusMillis(1))).isZero();
+    assertThat(upcoming()).containsEntry(id, "REQUESTED");
+
+    assertThat(requestExpiry.declineUnanswered(start)).isEqualTo(1);
+    assertThat(upcoming()).doesNotContainKey(id);
+    var row = sessionAppointment(id);
+    assertThat(row.get("status")).isEqualTo("DECLINED");
+    assertThat(row.get("expired")).isEqualTo(true);
+    assertThat(row.get("noticePending")).isEqualTo(true);
+    assertThat(requestExpiry.declineUnanswered(start.plusSeconds(60))).isZero();
+  }
+
+  @Test
+  void expiry_Should_LeaveConfirmedAndDeclinedAppointmentsAlone() throws Exception {
+    opensEveryDay("00:00", "23:30");
+    actAsAsker(asker);
+    var start = firstSlotStart(session.getId(), Instant.now(), "REQUEST");
+    var id = booked(start);
+    actAsCounsellor(counsellor);
+    mockMvc.perform(decide(id, "confirm")).andExpect(status().isOk());
+
+    assertThat(requestExpiry.declineUnanswered(start.plusSeconds(1))).isZero();
+    var row = sessionAppointment(id);
+    assertThat(row.get("status")).isEqualTo("SCHEDULED");
+    assertThat(row.get("expired")).isNotEqualTo(true);
+  }
+
+  @Test
+  void startedRequest_Should_NoLongerBlockTheConversationsOneAppointment_EvenBeforeTheSweep()
+      throws Exception {
+    opensEveryDay("00:00", "23:30");
+    var now = Instant.now();
+    var started = storedRequest(now.minus(Duration.ofMinutes(10)));
+
+    actAsAsker(asker);
+    assertThat(upcoming()).doesNotContainKey(started);
+    var later = firstSlotStart(session.getId(), now, "INSTANT");
+    mockMvc
+        .perform(book(session.getId(), later, later.plus(Duration.ofHours(1)), "VIDEO"))
+        .andExpect(status().isCreated());
+    actAsCounsellor(counsellor);
+    assertThat(upcoming()).doesNotContainKey(started);
+    assertThat(calendarEntry(started, now.minus(Duration.ofHours(1)))).isNull();
+  }
+
+  @Test
+  void expiryNotice_Should_BeClaimedOnce_ByAParticipant() throws Exception {
+    opensEveryDay("00:00", "23:30");
+    actAsAsker(asker);
+    var start = firstSlotStart(session.getId(), Instant.now(), "REQUEST");
+    var id = booked(start);
+    var notice =
+        csrf(post("/users/sessions/" + session.getId() + "/appointments/" + id + "/expiry-notice"));
+
+    mockMvc.perform(notice).andExpect(status().isConflict());
+    requestExpiry.declineUnanswered(start);
+
+    actAsAsker(otherAsker);
+    mockMvc.perform(notice).andExpect(status().isNotFound());
+    actAsCounsellor(otherCounsellor);
+    mockMvc.perform(notice).andExpect(status().isNotFound());
+
+    actAsAsker(asker);
+    mockMvc.perform(notice).andExpect(status().isNoContent());
+    assertThat(sessionAppointment(id).get("noticePending")).isNotEqualTo(true);
+    actAsCounsellor(counsellor);
+    mockMvc.perform(notice).andExpect(status().isConflict());
+  }
+
+  @Test
   void reschedule_Should_Refuse_ARequestWaitingForConfirmation() throws Exception {
     opensEveryDay("00:00", "23:30");
     actAsAsker(asker);
@@ -716,6 +797,28 @@ class AppointmentSelfBookingControllerIT {
             .getResponse()
             .getContentAsString();
     return (String) JSON.readValue(response, Map.class).get("id");
+  }
+
+  /** One appointment of the conversation as the caller's session list shows it. */
+  private Map<String, Object> sessionAppointment(String id) throws Exception {
+    return body(get("/users/sessions/" + session.getId() + "/appointments")).stream()
+        .filter(row -> id.equals(row.get("id")))
+        .findFirst()
+        .orElseThrow();
+  }
+
+  /** A request stored directly, e.g. one whose start has passed; returns its id. */
+  private String storedRequest(Instant start) {
+    return Tenants.acrossAll(
+        () -> {
+          var appointment = new SessionAppointment();
+          appointment.setSession(sessions.findById(session.getId()).orElseThrow());
+          appointment.setStatus(SessionAppointment.Status.REQUESTED);
+          appointment.setKind(SessionAppointment.Kind.VIDEO);
+          appointment.setStartTime(start);
+          appointment.setEndTime(start.plus(Duration.ofHours(1)));
+          return appointmentRepository.save(appointment).getId().toString();
+        });
   }
 
   /** The caller's upcoming appointments as id → status. */

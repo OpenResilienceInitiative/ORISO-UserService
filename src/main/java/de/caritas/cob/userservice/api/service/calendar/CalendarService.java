@@ -73,7 +73,10 @@ public class CalendarService {
     var now = Instant.now(clock);
     var entries = entriesOfConsultant(me, window);
     // Requests waiting for this counsellor: in their own view only, provisionally (#2287).
-    entries.addAll(reader.requestsOfConsultant(me, window.from(), window.to()));
+    // A request whose start has come is expired, also before the sweep declines it.
+    reader.requestsOfConsultant(me, window.from(), window.to()).stream()
+        .filter(request -> request.start().isAfter(now))
+        .forEach(entries::add);
     entries.sort(BY_START);
     return entries.stream().map(entry -> own(entry, me, isMovable(entry, now))).toList();
   }

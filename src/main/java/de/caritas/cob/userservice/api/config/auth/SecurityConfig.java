@@ -832,6 +832,8 @@ public class SecurityConfig {
                     "/service/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}/confirm",
                     "/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}/decline",
                     "/service/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}/decline",
+                    "/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}/expiry-notice",
+                    "/service/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}/expiry-notice",
                     "/users/sessions/{sessionId:[0-9]+}/appointment-slots",
                     "/service/users/sessions/{sessionId:[0-9]+}/appointment-slots",
                     "/users/sessions/{sessionId:[0-9]+}/appointment-slots/booking",

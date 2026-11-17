@@ -9,6 +9,7 @@ import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.CrudRepository;
 import org.springframework.data.repository.query.Param;
@@ -44,7 +45,8 @@ public interface SessionAppointmentRepository extends CrudRepository<SessionAppo
       "SELECT a FROM SessionAppointment a JOIN FETCH a.session s JOIN FETCH s.user "
           + "WHERE ((a.status = 'SCHEDULED' "
           + "AND (s.consultant.id = :consultantId OR s.id IN :coAccessSessionIds)) "
-          + "OR (a.status = 'REQUESTED' AND s.consultant.id = :consultantId)) "
+          + "OR (a.status = 'REQUESTED' AND s.consultant.id = :consultantId "
+          + "AND a.startTime > :now)) "
           + "AND a.endTime > :now "
           + "ORDER BY a.startTime")
   List<SessionAppointment> findUpcomingOfConsultant(
@@ -53,10 +55,14 @@ public interface SessionAppointmentRepository extends CrudRepository<SessionAppo
       @Param("now") Instant now,
       Pageable pageable);
 
-  /** The asker's upcoming appointments and their own requests still waiting (#2287). */
+  /**
+   * The asker's upcoming appointments and their own requests still waiting (#2287); a request whose
+   * start has come is expired, even before the sweep declines it.
+   */
   @Query(
       "SELECT a FROM SessionAppointment a JOIN FETCH a.session s LEFT JOIN FETCH s.consultant "
-          + "WHERE s.user.userId = :userId AND a.status IN ('SCHEDULED', 'REQUESTED') "
+          + "WHERE s.user.userId = :userId "
+          + "AND (a.status = 'SCHEDULED' OR (a.status = 'REQUESTED' AND a.startTime > :now)) "
           + "AND a.endTime > :now "
           + "ORDER BY a.startTime")
   List<SessionAppointment> findUpcomingOfAsker(
@@ -125,12 +131,14 @@ public interface SessionAppointmentRepository extends CrudRepository<SessionAppo
   /**
    * The conversation's scheduled and requested appointments that have not ended, read with a lock:
    * the self-booking limit counts what other transactions committed meanwhile (security review); a
-   * request waiting for the counsellor counts as well (ORISO-Frontend#2287).
+   * request waiting for the counsellor counts as well (ORISO-Frontend#2287), until its start: then
+   * it is expired.
    */
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query(
       "SELECT a FROM SessionAppointment a WHERE a.session.id = :sessionId "
-          + "AND a.status IN ('SCHEDULED', 'REQUESTED') AND a.endTime > :now")
+          + "AND (a.status = 'SCHEDULED' OR (a.status = 'REQUESTED' AND a.startTime > :now)) "
+          + "AND a.endTime > :now")
   List<SessionAppointment> lockUpcomingOfSession(
       @Param("sessionId") Long sessionId, @Param("now") Instant now);
 
@@ -149,4 +157,24 @@ public interface SessionAppointmentRepository extends CrudRepository<SessionAppo
       @Param("consultantId") String consultantId,
       @Param("from") Instant from,
       @Param("to") Instant to);
+
+  /**
+   * Declines every request nobody answered by its start (ORISO-Frontend#2287, Frank 17 Nov 2026):
+   * at the start itself it is expired. Marks the conversation notice as pending.
+   */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE SessionAppointment a SET a.status = :declined, a.autoDeclined = true, "
+          + "a.noticePending = true WHERE a.status = :requested AND a.startTime <= :now")
+  int declineRequestsStartedBy(
+      @Param("now") Instant now,
+      @Param("requested") SessionAppointment.Status requested,
+      @Param("declined") SessionAppointment.Status declined);
+
+  /** Claims the pending notice of an automatic decline; 1 for the one caller that got it. */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE SessionAppointment a SET a.noticePending = false "
+          + "WHERE a.id = :id AND a.autoDeclined = true AND a.noticePending = true")
+  int claimExpiryNotice(@Param("id") UUID id);
 }

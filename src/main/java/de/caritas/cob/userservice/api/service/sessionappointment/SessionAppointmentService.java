@@ -241,6 +241,19 @@ public class SessionAppointmentService {
     return toDto(appointment);
   }
 
+  /**
+   * A participant's client claims the conversation notice of an automatically declined request
+   * (#2287) before posting it, so it is posted once. 409 when there is none (any more).
+   */
+  @Transactional
+  public void claimExpiryNotice(Long sessionId, UUID appointmentId) {
+    var session = sessionOfParticipant(sessionId);
+    appointmentOf(session, appointmentId);
+    if (appointments.claimExpiryNotice(appointmentId) != 1) {
+      throw new ConflictException("This appointment has no expiry notice to post.");
+    }
+  }
+
   private SessionAppointment requestOf(Session session, UUID appointmentId) {
     var appointment = appointmentOf(session, appointmentId);
     if (appointment.getStatus() != Status.REQUESTED) {
@@ -361,6 +374,8 @@ public class SessionAppointmentService {
             appointment.getKind() == null
                 ? null
                 : AppointmentKind.valueOf(appointment.getKind().name()))
+        .expired(appointment.isAutoDeclined() ? Boolean.TRUE : null)
+        .noticePending(appointment.isNoticePending() ? Boolean.TRUE : null)
         .counterpart(counterpartOf(appointment.getSession()));
   }
 

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- ORISO-Frontend#2287 (Frank, 17 Nov 2026): a request nobody answered by its start is
+       declined automatically; auto_declined marks it, notice_pending says its conversation
+       notice is still to be posted by a participant's client. -->
+  <changeSet id="20261117-session-appointment-request-expiry-2287" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <columnExists tableName="session_appointment" columnName="auto_declined"/>
+      </not>
+    </preConditions>
+    <addColumn tableName="session_appointment">
+      <column name="auto_declined" type="BOOLEAN" defaultValueBoolean="false">
+        <constraints nullable="false"/>
+      </column>
+      <column name="notice_pending" type="BOOLEAN" defaultValueBoolean="false">
+        <constraints nullable="false"/>
+      </column>
+    </addColumn>
+    <rollback>
+      <dropColumn tableName="session_appointment" columnName="notice_pending"/>
+      <dropColumn tableName="session_appointment" columnName="auto_declined"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>
