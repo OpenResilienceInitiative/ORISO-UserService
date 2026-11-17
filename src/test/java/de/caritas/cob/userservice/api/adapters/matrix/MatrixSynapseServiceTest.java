@@ -302,6 +302,25 @@ class MatrixSynapseServiceTest {
     assertThat(matrixSynapseService().deactivateUser(MATRIX_USER_ID)).isTrue();
   }
 
+  /** ORISO-Admin#1523: a Matrix user that no longer exists counts as already deleted. */
+  @Test
+  void deactivateUserShouldReturnTrueWhenSynapseNoLongerKnowsTheUser() {
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            eq(
+                URI.create(
+                    "https://matrix.example.com/_synapse/admin/v1/deactivate/"
+                        + "%40seeker%3Amatrix.example.com")),
+            eq(HttpMethod.POST),
+            any(HttpEntity.class),
+            eq(String.class)))
+        .thenThrow(
+            org.springframework.web.client.HttpClientErrorException.create(
+                HttpStatus.NOT_FOUND, "Not Found", null, null, null));
+
+    assertThat(matrixSynapseService().deactivateUser(MATRIX_USER_ID)).isTrue();
+  }
+
   @Test
   void deactivateUserShouldReturnFalseWhenSynapseReturnsServiceUnavailable() {
     stubAdminLogin();

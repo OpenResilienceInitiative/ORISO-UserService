@@ -3,7 +3,6 @@ package de.caritas.cob.userservice.api.workflow.delete.action.consultant;
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType.CONSULTANT;
 
-import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.actions.ActionCommand;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
@@ -20,10 +19,14 @@ import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionAuditService;
 import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
+import java.util.List;
+import java.util.regex.Pattern;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /** Deletes a {@link Consultant} in database. */
 @Slf4j
@@ -34,6 +37,13 @@ public class DeleteDatabaseConsultantAction
 
   private static final String RELEASED_USERNAME_PREFIX = "deleted:";
 
+  private static final List<SessionStatus> ALL_SESSION_STATUSES = List.of(SessionStatus.values());
+
+  /** MariaDB: {@code CONSTRAINT `session_ibfk_2`}; H2: {@code violation: "SESSION_IBFK_2: ...}. */
+  private static final Pattern CONSTRAINT_NAME =
+      Pattern.compile("CONSTRAINT `([A-Za-z0-9_]+)`|constraint violation: \"([A-Za-z0-9_]+):");
+
+  private final @NonNull PlatformTransactionManager transactionManager;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull SessionOwnershipService sessionOwnershipService;
   private final @NonNull SessionSupervisorRepository sessionSupervisorRepository;
@@ -69,40 +79,34 @@ public class DeleteDatabaseConsultantAction
       return;
     }
 
+    // One transaction for every database step (ORISO-Admin#1523). The job calls this outside a
+    // transaction; the supervision bulk delete then threw on every run, so not one counsellor row
+    // was ever deleted. Together they also commit or roll back as one: no tombstone for a kept row.
+    var consultant = actionTarget.getConsultant();
+    var step = new String[] {"unassign the counsellor from their sessions"};
     try {
-      sessionOwnershipService.clearOwnerFromSessions(
-          actionTarget.getConsultant(),
-          Lists.newArrayList(SessionStatus.NEW, SessionStatus.INITIAL));
+      new TransactionTemplate(transactionManager)
+          .executeWithoutResult(
+              status -> {
+                // Marking already refused running or archived sessions unless the admin chose to
+                // delete them anyway, so every session left keeps its history without an owner.
+                sessionOwnershipService.clearOwnerFromSessions(consultant, ALL_SESSION_STATUSES);
+                step[0] = "delete the counsellor's supervisions";
+                sessionSupervisorRepository.deleteAllByConsultantId(consultant.getId());
+                step[0] = "delete the counsellor's mobile tokens";
+                consultantMobileTokenRepository.deleteAll(
+                    consultantMobileTokenRepository.findByConsultant(consultant));
+                step[0] = "delete the counsellor in the database";
+                identityTombstoneService.recordDeletedConsultant(consultant);
+                // The managed row, not the claim's detached copy: removing it cascades to its
+                // topics and languages, which a merge of the stale copy cannot do.
+                consultantRepository
+                    .findById(consultant.getId())
+                    .ifPresent(consultantRepository::delete);
+                consultantRepository.flush();
+              });
     } catch (Exception e) {
-      handleExceptionWithMessage(
-          actionTarget,
-          e,
-          "Unable to unassign consultant from his sessions with state NEW or INITIAL");
-      return;
-    }
-
-    try {
-      this.sessionSupervisorRepository.deleteAllByConsultantId(
-          actionTarget.getConsultant().getId());
-    } catch (Exception e) {
-      handleExceptionWithMessage(actionTarget, e, "Unable to delete consultant supervisions");
-      return;
-    }
-
-    try {
-      var mobileTokens =
-          this.consultantMobileTokenRepository.findByConsultant(actionTarget.getConsultant());
-      this.consultantMobileTokenRepository.deleteAll(mobileTokens);
-    } catch (Exception e) {
-      handleExceptionWithMessage(actionTarget, e, "Unable to delete consultant mobile tokens");
-      return;
-    }
-
-    try {
-      identityTombstoneService.recordDeletedConsultant(actionTarget.getConsultant());
-      this.consultantRepository.delete(actionTarget.getConsultant());
-    } catch (Exception e) {
-      handleExceptionWithMessage(actionTarget, e, "Unable to delete consultant in database");
+      handleExceptionWithMessage(actionTarget, e, "Unable to " + step[0] + blockingReference(e));
       return;
     }
 
@@ -186,6 +190,28 @@ public class DeleteDatabaseConsultantAction
   private static boolean wentThroughDeletionLifecycle(Consultant consultant) {
     var state = consultant.getDeletionLifecycleState();
     return state != null && state != DeletionLifecycleState.ACTIVE;
+  }
+
+  /**
+   * Names the foreign key that blocked the delete, e.g. {@code ": blocked by session_ibfk_2"}, so a
+   * kept counsellor shows which reference to clear (epic ORISO-Admin#1520, rule 6). The constraint
+   * name is schema text, never personal data; anything else reads as an empty suffix.
+   */
+  static String blockingReference(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      var message = cause.getMessage();
+      if (message == null) {
+        continue;
+      }
+      var matcher = CONSTRAINT_NAME.matcher(message);
+      if (matcher.find()) {
+        return ": blocked by "
+            + (matcher.group(1) != null
+                ? matcher.group(1)
+                : matcher.group(2).toLowerCase(java.util.Locale.ROOT));
+      }
+    }
+    return "";
   }
 
   private static void handleExceptionWithMessage(
