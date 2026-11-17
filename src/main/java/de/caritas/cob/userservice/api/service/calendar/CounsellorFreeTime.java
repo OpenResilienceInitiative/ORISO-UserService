@@ -77,6 +77,11 @@ public class CounsellorFreeTime {
     this.clock = clock;
     this.zone = ZoneId.of(zone);
     this.leadTime = leadTime;
+    // A step that does not move forward never leaves a working window: fail at startup instead.
+    if (step == null || step.isZero() || step.isNegative()) {
+      throw new IllegalArgumentException(
+          "appointment.self-booking.step must be a positive duration, got " + step);
+    }
     this.step = step;
     this.horizon = horizon;
   }
@@ -96,6 +101,11 @@ public class CounsellorFreeTime {
    * minimum lead time and never beyond the horizon, each with how it is booked.
    */
   public List<FreeSlot> slots(String consultantId, Instant from, Instant to) {
+    return slots(consultantId, from, to, settingOf(consultantId));
+  }
+
+  private List<FreeSlot> slots(
+      String consultantId, Instant from, Instant to, CalendarBookingSetting setting) {
     var earliest = earliestStart();
     var latest = latestStart();
     if (to.isAfter(latest)) {
@@ -109,7 +119,6 @@ public class CounsellorFreeTime {
     if (plan.weekly().isEmpty()) {
       return List.of();
     }
-    var setting = settingOf(consultantId);
     var length = Duration.ofMinutes(setting.getSlotMinutes());
     var slotStep = step.compareTo(length) > 0 ? length : step;
     // A slot starting just before `to` runs past it; its busy time must be known as well.
@@ -125,9 +134,18 @@ public class CounsellorFreeTime {
         .toList();
   }
 
-  /** Exactly the slot [start, end) as it is offered right now, with its mode, if it is. */
+  /**
+   * Exactly the slot [start, end) as it is offered right now, with its mode, if it is. Called by a
+   * booking that holds the counsellor's row: the booking setting is read with a lock, so it is the
+   * one the counsellor committed last, also after the booking's snapshot was taken (their settings
+   * change under the same row lock).
+   */
   public Optional<FreeSlot> offeredSlot(String consultantId, Instant start, Instant end) {
-    return slots(consultantId, start, start.plusNanos(1)).stream()
+    var setting =
+        bookingSettings
+            .lockById(consultantId)
+            .orElseGet(() -> CalendarBookingSetting.defaults(consultantId));
+    return slots(consultantId, start, start.plusNanos(1), setting).stream()
         .filter(slot -> slot.start().equals(start) && slot.end().equals(end))
         .findFirst();
   }

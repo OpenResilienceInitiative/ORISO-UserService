@@ -19,6 +19,9 @@ import de.caritas.cob.userservice.api.model.CalendarBlocker;
 import de.caritas.cob.userservice.api.model.CalendarBookingSetting;
 import de.caritas.cob.userservice.api.model.CalendarConsultationHours;
 import de.caritas.cob.userservice.api.model.CalendarWorkingHours;
+import de.caritas.cob.userservice.api.model.CaseHandoverConsentMode;
+import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
+import de.caritas.cob.userservice.api.model.CaseHandoverRequest.AccessType;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
@@ -28,6 +31,7 @@ import de.caritas.cob.userservice.api.port.out.CalendarBlockerRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarBookingSettingRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarConsultationHoursRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarWorkingHoursRepository;
+import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.SessionAppointmentRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -40,8 +44,10 @@ import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTe
 import jakarta.servlet.http.Cookie;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -101,6 +107,7 @@ class AppointmentSelfBookingControllerIT {
   @Autowired private CalendarBookingSettingRepository bookingSettings;
   @Autowired private SessionAppointmentRepository appointmentRepository;
   @Autowired private AppointmentRequestExpiry requestExpiry;
+  @Autowired private CaseHandoverRequestRepository handovers;
 
   @MockitoBean TenantService tenantService;
   @MockitoBean TenantResolverService tenantResolverService;
@@ -115,6 +122,7 @@ class AppointmentSelfBookingControllerIT {
   private User asker;
   private User otherAsker;
   private Session session;
+  private final List<CaseHandoverRequest> seededHandovers = new ArrayList<>();
 
   @BeforeEach
   void seed() {
@@ -129,6 +137,7 @@ class AppointmentSelfBookingControllerIT {
 
   @AfterEach
   void removeSeededRows() {
+    Tenants.in(TENANT, () -> handovers.deleteAll(seededHandovers));
     Tenants.acrossAll(
         () -> {
           workingHours.deleteAll(
@@ -314,6 +323,26 @@ class AppointmentSelfBookingControllerIT {
         .perform(decide(id, "decline"))
         .andExpect(status().isConflict())
         .andExpect(header().string("X-Reason", "APPOINTMENT_NOT_REQUESTED"));
+  }
+
+  @Test
+  void coAccessCounsellor_Should_NotDecideARequest() throws Exception {
+    opensEveryDay("00:00", "23:30");
+    grantCoAccess(otherCounsellor);
+    actAsAsker(asker);
+    var start = firstSlotStart(session.getId(), Instant.now(), "REQUEST");
+    var id = booked(start);
+
+    // A request is the conversation's own counsellor's to answer (#2287), co-access or not.
+    actAsCounsellor(otherCounsellor);
+    mockMvc.perform(decide(id, "confirm")).andExpect(status().isForbidden());
+    mockMvc.perform(decide(id, "decline")).andExpect(status().isForbidden());
+
+    actAsCounsellor(counsellor);
+    mockMvc
+        .perform(decide(id, "confirm"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("SCHEDULED"));
   }
 
   @Test
@@ -700,6 +729,8 @@ class AppointmentSelfBookingControllerIT {
   }
 
   @Test
+  // Replaces the class-level principal: only the anonymous authority reaches the booking route.
+  @WithMockUser(authorities = AuthorityValue.ANONYMOUS_DEFAULT)
   void anonymousAsker_Should_BookLikeARegisteredOne() throws Exception {
     opensEveryDay("00:00", "23:30");
     Tenants.actAs(caller, asker.getUserId(), TENANT, UserRole.ANONYMOUS);
@@ -987,5 +1018,27 @@ class AppointmentSelfBookingControllerIT {
   private void actAsAsker(User user) {
     Tenants.actAs(caller, user.getUserId(), TENANT, UserRole.USER);
     caller.setGrantedAuthorities(Set.of(AuthorityValue.USER_DEFAULT));
+  }
+
+  /** A live co-access grant on the conversation for a colleague (case handover, ADR-032). */
+  private void grantCoAccess(Consultant colleague) {
+    var request =
+        CaseHandoverRequest.builder()
+            .session(session)
+            .requesterConsultant(colleague)
+            .reasonCode("ADVICE_NEEDED")
+            .reasonLabel("Advice needed")
+            .explanation("synthetic")
+            .status(CaseHandoverRequest.Status.GRANTED)
+            .clientConsentRequired(false)
+            .clientConsent(CaseHandoverConsentMode.NONE)
+            .policyAuthority("synthetic")
+            .auditOutcome("synthetic")
+            .createdAt(LocalDateTime.now())
+            .accessType(AccessType.CO_ACCESS)
+            .expiresAt(LocalDateTime.now().plusDays(1))
+            .tenantId(TENANT)
+            .build();
+    seededHandovers.add(Tenants.in(TENANT, () -> handovers.save(request)));
   }
 }

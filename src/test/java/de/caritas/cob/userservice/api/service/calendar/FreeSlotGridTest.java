@@ -145,6 +145,31 @@ class FreeSlotGridTest {
   }
 
   @Test
+  void slots_Should_OfferEachTimeOnce_When_TheClocksSpringForward() {
+    // 29 March 2026, a Sunday: Berlin skips from 02:00 to 03:00, so 02:00 does not exist.
+    var springForward = LocalDate.of(2026, 3, 29);
+    var plan = weekly(SUNDAY, window("01:00", "05:00"));
+
+    var slots =
+        FreeSlotGrid.slots(
+            plan,
+            List.of(),
+            at(springForward, "00:00"),
+            at(springForward.plusDays(1), "00:00"),
+            at(springForward, "00:00"),
+            HOUR,
+            HOUR,
+            BERLIN);
+
+    assertThat(slots)
+        .extracting(FreeSlot::start)
+        .containsExactly(
+            Instant.parse("2026-03-29T00:00:00Z"),
+            Instant.parse("2026-03-29T01:00:00Z"),
+            Instant.parse("2026-03-29T02:00:00Z"));
+  }
+
+  @Test
   void slots_Should_OfferOnlyStartsInsideTheAskedWindow() {
     var plan = weekly(MON, window("09:00", "12:00"));
 

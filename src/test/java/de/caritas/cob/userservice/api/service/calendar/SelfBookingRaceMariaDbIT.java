@@ -8,11 +8,13 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AppointmentKind;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionAppointmentTimeDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.model.CalendarBookingSetting;
 import de.caritas.cob.userservice.api.model.CalendarConsultationHours;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.SessionAppointment;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.CalendarBookingSettingRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarConsultationHoursRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionAppointmentRepository;
@@ -29,6 +31,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -121,6 +124,7 @@ class SelfBookingRaceMariaDbIT {
   @Autowired private SessionAppointmentRepository appointments;
   @Autowired private CalendarConsultationHoursRepository consultationHours;
   @Autowired private CounsellorFreeTime freeTime;
+  @Autowired private CalendarBookingSettingRepository bookingSettings;
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private javax.sql.DataSource dataSource;
 
@@ -134,6 +138,8 @@ class SelfBookingRaceMariaDbIT {
   private Consultant counsellor;
   private Session first;
   private Session second;
+  private Consultant colleague;
+  private Session colleaguesSession;
 
   @BeforeEach
   void setUp() {
@@ -163,12 +169,22 @@ class SelfBookingRaceMariaDbIT {
     var jdbc = new JdbcTemplate(dataSource);
     jdbc.update(
         "DELETE FROM calendar_consultation_hours WHERE consultant_id = ?", counsellor.getId());
+    jdbc.update("DELETE FROM calendar_booking_setting WHERE consultant_id = ?", counsellor.getId());
     for (var session : new Session[] {first, second}) {
       jdbc.update("DELETE FROM session_appointment WHERE session_id = ?", session.getId());
       jdbc.update("DELETE FROM session WHERE id = ?", session.getId());
       jdbc.update("DELETE FROM user WHERE user_id = ?", session.getUser().getUserId());
     }
     jdbc.update("DELETE FROM consultant WHERE consultant_id = ?", counsellor.getId());
+    if (colleague != null) {
+      jdbc.update(
+          "DELETE FROM calendar_consultation_hours WHERE consultant_id = ?", colleague.getId());
+      jdbc.update(
+          "DELETE FROM session_appointment WHERE session_id = ?", colleaguesSession.getId());
+      jdbc.update("DELETE FROM session WHERE id = ?", colleaguesSession.getId());
+      jdbc.update("DELETE FROM user WHERE user_id = ?", colleaguesSession.getUser().getUserId());
+      jdbc.update("DELETE FROM consultant WHERE consultant_id = ?", colleague.getId());
+    }
   }
 
   @Test
@@ -214,7 +230,7 @@ class SelfBookingRaceMariaDbIT {
         transaction.execute(
             status ->
                 appointments.lockScheduledOfConsultantBetween(
-                    counsellor.getId(), slot.start(), slot.end()));
+                    counsellor.getId(), Set.of(), slot.start(), slot.end()));
     assertThat(stored).hasSize(1);
   }
 
@@ -274,10 +290,136 @@ class SelfBookingRaceMariaDbIT {
         transaction.execute(
             status ->
                 appointments.lockScheduledOfConsultantBetween(
-                    counsellor.getId(), slot.start(), slot.end()));
+                    counsellor.getId(), Set.of(), slot.start(), slot.end()));
     assertThat(stored)
         .extracting(SessionAppointment::getStatus)
         .containsExactly(SessionAppointment.Status.SCHEDULED);
+  }
+
+  /**
+   * The counsellor turns automatic acceptance off while a booking waits on their row: the booking
+   * read its conversation before, yet it must follow the setting the counsellor committed and store
+   * a request, not a booked appointment (CodeRabbit on UserService#1669).
+   */
+  @Test
+  void aBookingWaitingOnTheCounsellor_Should_FollowAutoAcceptTurnedOffMeanwhile() throws Exception {
+    var now = Instant.now();
+    var slot =
+        freeTime.slots(counsellor.getId(), now, now.plus(Duration.ofDays(3))).stream()
+            .filter(free -> free.mode() == FreeSlot.BookingMode.INSTANT)
+            .findFirst()
+            .orElseThrow();
+    var time =
+        new SessionAppointmentTimeDTO()
+            .startTime(slot.start().atOffset(ZoneOffset.UTC))
+            .endTime(slot.end().atOffset(ZoneOffset.UTC))
+            .kind(AppointmentKind.VIDEO);
+
+    var pool = Executors.newFixedThreadPool(2);
+    var holding = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    try {
+      // Changes the setting the way the counsellor's settings do: under the counsellor's row.
+      var counsellorTurnsItOff =
+          CompletableFuture.runAsync(
+              () ->
+                  transaction.executeWithoutResult(
+                      status -> {
+                        consultants.lockConsultant(counsellor.getId());
+                        holding.countDown();
+                        await(release);
+                        var setting = CalendarBookingSetting.defaults(counsellor.getId());
+                        setting.setAutoAccept(false);
+                        bookingSettings.save(setting);
+                      }),
+              pool);
+      assertThat(holding.await(15, TimeUnit.SECONDS)).isTrue();
+
+      var booking = CompletableFuture.supplyAsync(() -> book(first, time), pool);
+      awaitWaitersOnTheCounsellor(1, booking);
+      release.countDown();
+      counsellorTurnsItOff.get(15, TimeUnit.SECONDS);
+
+      assertThat(outcome(booking)).isEqualTo("booked");
+    } finally {
+      release.countDown();
+      pool.shutdownNow();
+    }
+    var stored =
+        transaction.execute(
+            status ->
+                appointments.lockScheduledOfConsultantBetween(
+                    counsellor.getId(), Set.of(), slot.start(), slot.end()));
+    assertThat(stored)
+        .extracting(SessionAppointment::getStatus)
+        .containsExactly(SessionAppointment.Status.REQUESTED);
+  }
+
+  /**
+   * A colleague's conversation the counsellor holds co-access to shows in the counsellor's calendar
+   * and takes their time. An asker's booking that waits on the counsellor's row must still see an
+   * appointment booked in that conversation meanwhile (CodeRabbit on UserService#1669).
+   */
+  @Test
+  void aBookingInACoAccessConversation_Should_KeepTheCounsellorsTimeTaken() throws Exception {
+    transaction.executeWithoutResult(
+        status -> {
+          colleague = consultants.save(consultant());
+          colleaguesSession = sessions.save(session(users.save(user()), colleague));
+          for (int weekday = 0; weekday <= 6; weekday++) {
+            var row = new CalendarConsultationHours();
+            row.setConsultantId(colleague.getId());
+            row.setWeekday(weekday);
+            row.setStartTime(LocalTime.of(0, 0));
+            row.setEndTime(LocalTime.of(23, 30));
+            consultationHours.save(row);
+          }
+        });
+    when(caseHandovers.sessionIdsWithActiveCoAccess(counsellor.getId()))
+        .thenReturn(Set.of(colleaguesSession.getId()));
+    var now = Instant.now();
+    // Booked at once, so it is a scheduled appointment: a request in a co-access conversation
+    // does not take the counsellor's time, in their calendar or here.
+    var slot =
+        freeTime.slots(counsellor.getId(), now, now.plus(Duration.ofDays(3))).stream()
+            .filter(free -> free.mode() == FreeSlot.BookingMode.INSTANT)
+            .findFirst()
+            .orElseThrow();
+    var time =
+        new SessionAppointmentTimeDTO()
+            .startTime(slot.start().atOffset(ZoneOffset.UTC))
+            .endTime(slot.end().atOffset(ZoneOffset.UTC))
+            .kind(AppointmentKind.VIDEO);
+
+    var pool = Executors.newFixedThreadPool(3);
+    var holding = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    try {
+      var holder =
+          CompletableFuture.runAsync(
+              () ->
+                  transaction.executeWithoutResult(
+                      status -> {
+                        consultants.lockConsultant(counsellor.getId());
+                        holding.countDown();
+                        await(release);
+                      }),
+              pool);
+      assertThat(holding.await(15, TimeUnit.SECONDS)).isTrue();
+
+      // The counsellor's asker reads the conversation, then waits on the counsellor's row.
+      var ownBooking = CompletableFuture.supplyAsync(() -> book(first, time), pool);
+      awaitWaitersOnTheCounsellor(1, ownBooking);
+      // Meanwhile the colleague's asker books the same time in the co-access conversation.
+      assertThat(book(colleaguesSession, time)).isEqualTo("booked");
+      release.countDown();
+      holder.get(15, TimeUnit.SECONDS);
+
+      assertThat(outcome(ownBooking)).isEqualTo("conflict");
+    } finally {
+      release.countDown();
+      pool.shutdownNow();
+    }
   }
 
   private String confirm(UUID appointmentId) {
@@ -319,6 +461,8 @@ class SelfBookingRaceMariaDbIT {
         var statement =
             connection.prepareStatement(
                 "SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE COMMAND = 'Query'"
+                    // The monitoring statement matches its own pattern: leave it out.
+                    + " AND ID <> CONNECTION_ID()"
                     + " AND LOWER(INFO) LIKE '%from consultant where consultant_id%for update%'")) {
       while (true) {
         try (var result = statement.executeQuery()) {

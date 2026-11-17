@@ -113,18 +113,21 @@ public interface SessionAppointmentRepository extends CrudRepository<SessionAppo
       Pageable pageable);
 
   /**
-   * The counsellor's scheduled and requested appointments in their own conversations that overlap
-   * the window, read with a lock (self-booking, ORISO-Frontend#1050, #2287). A locking read sees
+   * The appointments that take a counsellor's time in the window, read with a lock (self-booking,
+   * ORISO-Frontend#1050, #2287): scheduled and requested ones in their own conversations, scheduled
+   * ones in conversations they hold co-access to, as their calendar shows them. A locking read sees
    * what other transactions committed after this one began, which a plain read at REPEATABLE READ
    * does not: the last check before a booking is stored must not miss the booking that won the
-   * race.
+   * race, also not one in a co-access conversation, whose booking locks another counsellor's row.
    */
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query(
-      "SELECT a FROM SessionAppointment a WHERE a.session.consultant.id = :consultantId "
-          + "AND a.status IN ('SCHEDULED', 'REQUESTED') AND a.startTime < :to AND a.endTime > :from")
+      "SELECT a FROM SessionAppointment a WHERE a.startTime < :to AND a.endTime > :from AND ("
+          + "(a.session.consultant.id = :consultantId AND a.status IN ('SCHEDULED', 'REQUESTED'))"
+          + " OR (a.session.id IN :coAccessSessionIds AND a.status = 'SCHEDULED'))")
   List<SessionAppointment> lockScheduledOfConsultantBetween(
       @Param("consultantId") String consultantId,
+      @Param("coAccessSessionIds") Collection<Long> coAccessSessionIds,
       @Param("from") Instant from,
       @Param("to") Instant to);
 

@@ -184,7 +184,10 @@ public class SessionAppointmentService {
     }
     var offered = freeTime.offeredSlot(consultantId, start, end);
     if (offered.isEmpty()
-        || !appointments.lockScheduledOfConsultantBetween(consultantId, start, end).isEmpty()) {
+        || !appointments
+            .lockScheduledOfConsultantBetween(
+                consultantId, caseHandovers.sessionIdsWithActiveCoAccess(consultantId), start, end)
+            .isEmpty()) {
       throw new ConflictException("This time is not free any more.");
     }
     var appointment = new SessionAppointment();
@@ -205,7 +208,7 @@ public class SessionAppointmentService {
   @Transactional
   public SessionAppointmentDTO confirm(Long sessionId, UUID appointmentId) {
     var session = sessionOfParticipant(sessionId);
-    requireResponsibleCounsellor(session);
+    requireConversationsCounsellor(session);
     if (session.getConsultant() == null) {
       throw new ConflictException(
           "The conversation has no counsellor whose time could be taken.",
@@ -217,7 +220,10 @@ public class SessionAppointmentService {
     var start = appointment.getStartTime();
     var end = appointment.getEndTime();
     var others =
-        appointments.lockScheduledOfConsultantBetween(consultantId, start, end).stream()
+        appointments
+            .lockScheduledOfConsultantBetween(
+                consultantId, caseHandovers.sessionIdsWithActiveCoAccess(consultantId), start, end)
+            .stream()
             .filter(other -> !other.getId().equals(appointment.getId()))
             .toList();
     if (!start.isAfter(Instant.now())
@@ -235,7 +241,7 @@ public class SessionAppointmentService {
   @Transactional
   public SessionAppointmentDTO decline(Long sessionId, UUID appointmentId) {
     var session = sessionOfParticipant(sessionId);
-    requireResponsibleCounsellor(session);
+    requireConversationsCounsellor(session);
     var appointment = requestOf(session, appointmentId);
     appointment.setStatus(Status.DECLINED);
     return toDto(appointment);
@@ -308,6 +314,18 @@ public class SessionAppointmentService {
   private boolean isAsker(Session session) {
     return !caller.isConsultant()
         && Objects.equals(session.getUser().getUserId(), caller.getUserId());
+  }
+
+  /**
+   * A request is answered by the counsellor the conversation is assigned to (#2287): a colleague
+   * with co-access may schedule, but not decide on what the asker asked of the counsellor.
+   */
+  private void requireConversationsCounsellor(Session session) {
+    if (!caller.isConsultant()
+        || session.getConsultant() == null
+        || !Objects.equals(session.getConsultant().getId(), caller.getUserId())) {
+      throw new ForbiddenException("Only the counsellor of the conversation answers a request.");
+    }
   }
 
   private void requireResponsibleCounsellor(Session session) {

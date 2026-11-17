@@ -71,6 +71,11 @@ final class FreeSlotGrid {
         for (var local = LocalDateTime.of(day, window.start());
             local.toLocalDate().equals(day);
             local = local.plus(step)) {
+          if (zone.getRules().getValidOffsets(local).isEmpty()) {
+            // Skipped when the clocks spring forward: java.time would move it to the next hour,
+            // which the grid offers in its own turn.
+            continue;
+          }
           var start = local.atZone(zone).toInstant();
           var end = start.plus(length);
           if (end.isAfter(windowEnd)) {

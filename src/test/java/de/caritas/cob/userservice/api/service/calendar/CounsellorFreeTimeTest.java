@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.calendar;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -84,6 +85,28 @@ class CounsellorFreeTimeTest {
     when(appointments.findRequestedOfConsultantBetween(anyString(), any(), any()))
         .thenReturn(requested);
     freeTime = freeTimeAt(NOW);
+  }
+
+  @Test
+  void construction_Should_Fail_When_TheSlotStepIsNotPositive() {
+    for (var step : List.of(Duration.ZERO, Duration.ofMinutes(-30))) {
+      assertThatThrownBy(
+              () ->
+                  new CounsellorFreeTime(
+                      consultationHours,
+                      bookingSettings,
+                      workingHoursSettings,
+                      exceptions,
+                      entries,
+                      appointments,
+                      Clock.fixed(NOW, BERLIN),
+                      "Europe/Berlin",
+                      Duration.ofHours(2),
+                      step,
+                      Duration.ofDays(14)))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("appointment.self-booking.step");
+    }
   }
 
   private CounsellorFreeTime freeTimeAt(Instant now) {
