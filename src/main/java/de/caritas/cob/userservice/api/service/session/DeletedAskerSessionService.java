@@ -4,11 +4,13 @@ import de.caritas.cob.userservice.api.model.DeletedAskerSession;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.DeletedAskerSessionRepository;
 import de.caritas.cob.userservice.api.port.out.EventNotificationRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -39,10 +41,12 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class DeletedAskerSessionService {
 
   public static final String EVENT_TYPE = "session.asker_deleted";
+  static final String ACTION_PATH_PREFIX = "/sessions/consultant/sessionView/deleted/";
 
   private final @NonNull DeletedAskerSessionRepository deletedAskerSessionRepository;
   private final @NonNull EventNotificationRepository eventNotificationRepository;
   private final @NonNull EventNotificationService eventNotificationService;
+  private final @NonNull SessionRepository sessionRepository;
   private final @NonNull PlatformTransactionManager transactionManager;
 
   @Value("${deleted.asker.session.retention.days:30}")
@@ -97,22 +101,31 @@ public class DeletedAskerSessionService {
     if (placeholder == null) {
       return;
     }
+    var alreadyArchived = new AtomicBoolean(false);
     inOwnTransaction(
         placeholder,
         "placeholder",
         status -> {
-          if (!deletedAskerSessionRepository.existsByConsultantIdAndFormerSessionId(
-              placeholder.consultantId(), placeholder.formerSessionId())) {
-            deletedAskerSessionRepository.save(
-                DeletedAskerSession.builder()
-                    .consultantId(placeholder.consultantId())
-                    .formerSessionId(placeholder.formerSessionId())
-                    .agencyId(placeholder.agencyId())
-                    .tenantId(placeholder.tenantId())
-                    .deletedAt(LocalDateTime.now(ZoneOffset.UTC))
-                    .build());
+          var existing =
+              deletedAskerSessionRepository.findByConsultantIdAndFormerSessionId(
+                  placeholder.consultantId(), placeholder.formerSessionId());
+          if (existing.isPresent()) {
+            alreadyArchived.set(existing.get().getArchivedAt() != null);
+            return;
           }
+          deletedAskerSessionRepository.save(
+              DeletedAskerSession.builder()
+                  .consultantId(placeholder.consultantId())
+                  .formerSessionId(placeholder.formerSessionId())
+                  .agencyId(placeholder.agencyId())
+                  .tenantId(placeholder.tenantId())
+                  .deletedAt(LocalDateTime.now(ZoneOffset.UTC))
+                  .build());
         });
+    // The counsellor archived the chat while its deletion was still pending: no timeline entry.
+    if (alreadyArchived.get()) {
+      return;
+    }
     inOwnTransaction(
         placeholder,
         "timeline entry",
@@ -125,9 +138,14 @@ public class DeletedAskerSessionService {
                 "Deleted advice seeker",
                 "An advice seeker's chat was deleted. Their data is no longer available.",
                 null,
-                null,
+                actionPath(placeholder.formerSessionId()),
                 null,
                 placeholder.tenantId()));
+  }
+
+  /** Where the counsellor sees the deletion notice and can archive the placeholder. */
+  public static String actionPath(Long formerSessionId) {
+    return ACTION_PATH_PREFIX + formerSessionId;
   }
 
   private void inOwnTransaction(
@@ -145,14 +163,75 @@ public class DeletedAskerSessionService {
     }
   }
 
-  /** The counsellor's placeholders from within the retention period, newest first. */
+  /**
+   * The counsellor's placeholders from within the retention period, newest first: the active ones
+   * for the conversation list, or the ones they moved into their archive.
+   */
   @Transactional(readOnly = true)
-  public List<DeletedAskerSession> findForConsultant(String consultantId) {
+  public List<DeletedAskerSession> findForConsultant(String consultantId, boolean archived) {
     if (consultantId == null || consultantId.isBlank()) {
       return List.of();
     }
-    return deletedAskerSessionRepository.findByConsultantIdAndDeletedAtAfterOrderByDeletedAtDesc(
-        consultantId, LocalDateTime.now(ZoneOffset.UTC).minusDays(Math.max(retentionDays, 0)));
+    var deletedAfter = LocalDateTime.now(ZoneOffset.UTC).minusDays(Math.max(retentionDays, 0));
+    return archived
+        ? deletedAskerSessionRepository
+            .findByConsultantIdAndArchivedAtIsNotNullAndDeletedAtAfterOrderByDeletedAtDesc(
+                consultantId, deletedAfter)
+        : deletedAskerSessionRepository
+            .findByConsultantIdAndArchivedAtIsNullAndDeletedAtAfterOrderByDeletedAtDesc(
+                consultantId, deletedAfter);
+  }
+
+  /**
+   * Moves the counsellor's placeholder into their archive and takes its timeline entry out of the
+   * activity stream, so the deleted chat no longer shows up in the conversation list. The session
+   * itself is gone, so the regular session archive cannot be used. Idempotent.
+   *
+   * @return false when the counsellor has no such placeholder (never someone else's)
+   */
+  @Transactional
+  public boolean archive(String consultantId, Long formerSessionId) {
+    if (consultantId == null || consultantId.isBlank() || formerSessionId == null) {
+      return false;
+    }
+    var placeholder =
+        deletedAskerSessionRepository
+            .findByConsultantIdAndFormerSessionId(consultantId, formerSessionId)
+            .or(() -> pendingDeletionPlaceholder(consultantId, formerSessionId));
+    if (placeholder.isEmpty()) {
+      return false;
+    }
+    var row = placeholder.get();
+    if (row.getArchivedAt() == null) {
+      row.setArchivedAt(LocalDateTime.now(ZoneOffset.UTC));
+      deletedAskerSessionRepository.save(row);
+    }
+    eventNotificationRepository.deleteByRecipientUserIdAndDeduplicationKey(
+        consultantId, EVENT_TYPE + ":" + formerSessionId);
+    return true;
+  }
+
+  /**
+   * A chat whose advice seeker is marked for deletion still exists until the deletion job runs; the
+   * list already shows it as deleted. Archiving it leaves a placeholder now, so the later hard
+   * deletion keeps it archived. Only the counsellor the chat is assigned to.
+   */
+  private Optional<DeletedAskerSession> pendingDeletionPlaceholder(
+      String consultantId, Long sessionId) {
+    return sessionRepository
+        .findById(sessionId)
+        .filter(session -> session.getUser() != null && session.getUser().getDeleteDate() != null)
+        .flatMap(Placeholder::of)
+        .filter(owner -> consultantId.equals(owner.consultantId()))
+        .map(
+            owner ->
+                DeletedAskerSession.builder()
+                    .consultantId(owner.consultantId())
+                    .formerSessionId(owner.formerSessionId())
+                    .agencyId(owner.agencyId())
+                    .tenantId(owner.tenantId())
+                    .deletedAt(LocalDateTime.now(ZoneOffset.UTC))
+                    .build());
   }
 
   /**

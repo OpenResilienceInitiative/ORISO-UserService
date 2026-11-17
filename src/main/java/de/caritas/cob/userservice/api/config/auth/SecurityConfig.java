@@ -537,6 +537,8 @@ public class SecurityConfig {
                     "/users/sessions/consultants",
                     "/users/sessions/consultants/deleted-askers",
                     "/service/users/sessions/consultants/deleted-askers",
+                    "/users/sessions/consultants/deleted-askers/{formerSessionId:[0-9]+}/archive",
+                    "/service/users/sessions/consultants/deleted-askers/{formerSessionId:[0-9]+}/archive",
                     "/users/sessions/teams",
                     "/conversations/askers/anonymous/{sessionId:[0-9]+}/accept",
                     "/service/conversations/askers/anonymous/{sessionId:[0-9]+}/accept",

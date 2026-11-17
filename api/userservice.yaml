@@ -2822,6 +2822,14 @@ paths:
       operationId: getDeletedAskerSessions
       # Dedicated handwritten controller owns both prefixes; prevent a duplicate UsersApi mapping.
       x-internal: true
+      parameters:
+        - name: archived
+          in: query
+          required: false
+          description: true lists the placeholders the counsellor moved into their archive
+          schema:
+            type: boolean
+            default: false
       responses:
         '200':
           description: Placeholders, possibly empty
@@ -2835,6 +2843,34 @@ paths:
           description: Authentication required
         '403':
           description: Not a counsellor
+      security:
+        - Bearer: []
+  /users/sessions/consultants/deleted-askers/{formerSessionId}/archive:
+    put:
+      tags: [deleted-asker-session-controller]
+      summary: Move a deleted advice-seeker chat's placeholder into the counsellor's archive
+      description: >-
+        Also available with /service prefix. The session no longer exists, so the regular session
+        archive does not apply. Removes the placeholder from the conversation list and its entry
+        from the activity stream. Idempotent; only the calling counsellor's own placeholders.
+      operationId: archiveDeletedAskerSession
+      x-internal: true
+      parameters:
+        - name: formerSessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '204':
+          description: Archived
+        '401':
+          description: Authentication required
+        '403':
+          description: Not a counsellor
+        '404':
+          description: The counsellor has no such placeholder
       security:
         - Bearer: []
   /users/sessions/{sessionId}/case-handover/consent-preference:
@@ -4554,6 +4590,10 @@ components:
           type: string
           format: date-time
           description: When the chat was deleted (UTC)
+        archivedAt:
+          type: string
+          format: date-time
+          description: When the counsellor archived the placeholder (UTC); absent while active
     CaseHandoverConsentPreferenceDTO:
       type: object
       required: [sessionId, alwaysAskBeforeAdditionalAccess]

@@ -15,12 +15,15 @@ import static org.springframework.test.util.ReflectionTestUtils.setField;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.DeletedAskerSession;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.DeletedAskerSessionRepository;
 import de.caritas.cob.userservice.api.port.out.EventNotificationRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -41,6 +44,7 @@ class DeletedAskerSessionServiceTest {
   @Mock private EventNotificationRepository notifications;
   @Mock private EventNotificationService eventNotificationService;
   @Mock private PlatformTransactionManager transactionManager;
+  @Mock private SessionRepository sessionRepository;
 
   @BeforeEach
   void setUp() {
@@ -80,7 +84,7 @@ class DeletedAskerSessionServiceTest {
             anyString(),
             anyString(),
             isNull(),
-            isNull(),
+            eq("/sessions/consultant/sessionView/deleted/77"),
             isNull(),
             eq(3L));
   }
@@ -106,7 +110,8 @@ class DeletedAskerSessionServiceTest {
 
   @Test
   void recordDeletion_addsNoSecondPlaceholder_When_theDeletionIsRetried() {
-    when(repository.existsByConsultantIdAndFormerSessionId("consultant-1", 77L)).thenReturn(true);
+    when(repository.findByConsultantIdAndFormerSessionId("consultant-1", 77L))
+        .thenReturn(Optional.of(DeletedAskerSession.builder().formerSessionId(77L).build()));
 
     underTest.recordDeletion(placeholder());
 
@@ -114,8 +119,68 @@ class DeletedAskerSessionServiceTest {
   }
 
   @Test
+  void recordDeletion_addsNoTimelineEntry_When_theCounsellorArchivedTheChatBeforehand() {
+    when(repository.findByConsultantIdAndFormerSessionId("consultant-1", 77L))
+        .thenReturn(
+            Optional.of(
+                DeletedAskerSession.builder()
+                    .formerSessionId(77L)
+                    .archivedAt(LocalDateTime.now(ZoneOffset.UTC))
+                    .build()));
+
+    underTest.recordDeletion(placeholder());
+
+    verify(repository, never()).save(any());
+    verifyNoInteractions(eventNotificationService);
+  }
+
+  @Test
+  void archive_leavesAnArchivedPlaceholder_When_theAdviceSeekerIsOnlyMarkedForDeletion() {
+    var session = assignedSession();
+    var user = new User();
+    user.setDeleteDate(LocalDateTime.now());
+    session.setUser(user);
+    when(repository.findByConsultantIdAndFormerSessionId("consultant-1", 77L))
+        .thenReturn(Optional.empty());
+    when(sessionRepository.findById(77L)).thenReturn(Optional.of(session));
+    var captor = ArgumentCaptor.forClass(DeletedAskerSession.class);
+
+    assertThat(underTest.archive("consultant-1", 77L)).isTrue();
+
+    verify(repository).save(captor.capture());
+    assertThat(captor.getValue().getArchivedAt()).isNotNull();
+    assertThat(captor.getValue().getAgencyId()).isEqualTo(5L);
+  }
+
+  @Test
+  void archive_refuses_When_theAdviceSeekerIsNotMarkedForDeletion() {
+    var session = assignedSession();
+    session.setUser(new User());
+    when(repository.findByConsultantIdAndFormerSessionId("consultant-1", 77L))
+        .thenReturn(Optional.empty());
+    when(sessionRepository.findById(77L)).thenReturn(Optional.of(session));
+
+    assertThat(underTest.archive("consultant-1", 77L)).isFalse();
+    verify(repository, never()).save(any());
+  }
+
+  @Test
+  void archive_refuses_When_theMarkedChatBelongsToAnotherCounsellor() {
+    var session = assignedSession();
+    var user = new User();
+    user.setDeleteDate(LocalDateTime.now());
+    session.setUser(user);
+    when(repository.findByConsultantIdAndFormerSessionId("consultant-2", 77L))
+        .thenReturn(Optional.empty());
+    when(sessionRepository.findById(77L)).thenReturn(Optional.of(session));
+
+    assertThat(underTest.archive("consultant-2", 77L)).isFalse();
+    verify(repository, never()).save(any());
+  }
+
+  @Test
   void recordDeletion_stillCreatesTheTimelineEntry_When_savingThePlaceholderFails() {
-    when(repository.existsByConsultantIdAndFormerSessionId(any(), any()))
+    when(repository.findByConsultantIdAndFormerSessionId(any(), any()))
         .thenThrow(new RuntimeException("db down"));
 
     assertDoesNotThrow(() -> underTest.recordDeletion(placeholder()));
@@ -180,22 +245,85 @@ class DeletedAskerSessionServiceTest {
   }
 
   @Test
-  void findForConsultant_readsOnlyTheRetentionWindow() {
+  void findForConsultant_readsOnlyActivePlaceholdersInsideTheRetentionWindow() {
     var cutoff = ArgumentCaptor.forClass(LocalDateTime.class);
-    when(repository.findByConsultantIdAndDeletedAtAfterOrderByDeletedAtDesc(
+    when(repository.findByConsultantIdAndArchivedAtIsNullAndDeletedAtAfterOrderByDeletedAtDesc(
             eq("consultant-1"), cutoff.capture()))
         .thenReturn(List.of());
 
-    underTest.findForConsultant("consultant-1");
+    underTest.findForConsultant("consultant-1", false);
 
     var expected = LocalDateTime.now(ZoneOffset.UTC).minusDays(30);
     assertThat(cutoff.getValue()).isBetween(expected.minusMinutes(1), expected.plusMinutes(1));
   }
 
   @Test
+  void findForConsultant_readsTheArchivedPlaceholders_When_askedForTheArchive() {
+    var archived =
+        DeletedAskerSession.builder()
+            .consultantId("consultant-1")
+            .formerSessionId(77L)
+            .deletedAt(LocalDateTime.now(ZoneOffset.UTC))
+            .archivedAt(LocalDateTime.now(ZoneOffset.UTC))
+            .build();
+    when(repository.findByConsultantIdAndArchivedAtIsNotNullAndDeletedAtAfterOrderByDeletedAtDesc(
+            eq("consultant-1"), any(LocalDateTime.class)))
+        .thenReturn(List.of(archived));
+
+    assertThat(underTest.findForConsultant("consultant-1", true)).containsExactly(archived);
+  }
+
+  @Test
   void findForConsultant_returnsNothingWithoutAConsultant() {
-    assertThat(underTest.findForConsultant(" ")).isEmpty();
+    assertThat(underTest.findForConsultant(" ", false)).isEmpty();
     verifyNoInteractions(repository);
+  }
+
+  @Test
+  void archive_marksThePlaceholderArchivedAndRemovesItsTimelineEntry() {
+    var row =
+        DeletedAskerSession.builder()
+            .consultantId("consultant-1")
+            .formerSessionId(77L)
+            .deletedAt(LocalDateTime.now(ZoneOffset.UTC))
+            .build();
+    when(repository.findByConsultantIdAndFormerSessionId("consultant-1", 77L))
+        .thenReturn(Optional.of(row));
+
+    assertThat(underTest.archive("consultant-1", 77L)).isTrue();
+
+    assertThat(row.getArchivedAt()).isNotNull();
+    verify(repository).save(row);
+    verify(notifications)
+        .deleteByRecipientUserIdAndDeduplicationKey("consultant-1", "session.asker_deleted:77");
+  }
+
+  @Test
+  void archive_keepsTheFirstArchiveDate_When_repeated() {
+    var first = LocalDateTime.of(2026, 11, 1, 8, 0);
+    var row =
+        DeletedAskerSession.builder()
+            .consultantId("consultant-1")
+            .formerSessionId(77L)
+            .deletedAt(first.minusDays(1))
+            .archivedAt(first)
+            .build();
+    when(repository.findByConsultantIdAndFormerSessionId("consultant-1", 77L))
+        .thenReturn(Optional.of(row));
+
+    assertThat(underTest.archive("consultant-1", 77L)).isTrue();
+
+    assertThat(row.getArchivedAt()).isEqualTo(first);
+    verify(repository, never()).save(any());
+  }
+
+  @Test
+  void archive_findsNothing_When_thePlaceholderIsNotTheCounsellorsOwn() {
+    when(repository.findByConsultantIdAndFormerSessionId("consultant-2", 77L))
+        .thenReturn(Optional.empty());
+
+    assertThat(underTest.archive("consultant-2", 77L)).isFalse();
+    verifyNoInteractions(notifications);
   }
 
   @Test

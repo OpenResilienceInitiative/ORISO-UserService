@@ -38,6 +38,26 @@ class DeletedAskerSessionRepositoryIT {
   }
 
   @Test
+  void separatesActiveFromArchivedPlaceholders() {
+    save("consultant-1", 1L, NOW.minusDays(2));
+    var archived = save("consultant-1", 2L, NOW.minusDays(1));
+    archived.setArchivedAt(NOW);
+    underTest.save(archived);
+
+    assertThat(
+            underTest.findByConsultantIdAndArchivedAtIsNullAndDeletedAtAfterOrderByDeletedAtDesc(
+                "consultant-1", NOW.minusDays(30)))
+        .extracting(DeletedAskerSession::getFormerSessionId)
+        .containsExactly(1L);
+    assertThat(
+            underTest.findByConsultantIdAndArchivedAtIsNotNullAndDeletedAtAfterOrderByDeletedAtDesc(
+                "consultant-1", NOW.minusDays(30)))
+        .extracting(DeletedAskerSession::getFormerSessionId)
+        .containsExactly(2L);
+    assertThat(underTest.findByConsultantIdAndFormerSessionId("consultant-2", 2L)).isEmpty();
+  }
+
+  @Test
   void deleteDeletedBefore_removesOnlyExpiredPlaceholders() {
     save("consultant-1", 1L, NOW.minusDays(40));
     save("consultant-1", 2L, NOW.minusDays(5));
@@ -84,8 +104,9 @@ class DeletedAskerSessionRepositoryIT {
             .build());
   }
 
-  private void save(String consultantId, Long formerSessionId, LocalDateTime deletedAt) {
-    underTest.save(
+  private DeletedAskerSession save(
+      String consultantId, Long formerSessionId, LocalDateTime deletedAt) {
+    return underTest.save(
         DeletedAskerSession.builder()
             .consultantId(consultantId)
             .formerSessionId(formerSessionId)

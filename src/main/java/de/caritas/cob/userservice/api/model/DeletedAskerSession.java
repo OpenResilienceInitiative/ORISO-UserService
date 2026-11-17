@@ -50,4 +50,8 @@ public class DeletedAskerSession {
 
   @Column(name = "deleted_at", nullable = false, updatable = false)
   private LocalDateTime deletedAt;
+
+  /** When the counsellor moved the placeholder into their archive; null while it is active. */
+  @Column(name = "archived_at")
+  private LocalDateTime archivedAt;
 }
