@@ -66,9 +66,6 @@ public class AccountInviteService {
           AccountInviteStatus.DRAFT,
           AccountInviteStatus.EMAIL_SENT);
 
-  private static final List<AccountInviteStatus> EXPIRABLE_STATUSES =
-      List.of(AccountInviteStatus.DRAFT, AccountInviteStatus.EMAIL_SENT);
-
   /** Everything but ACCEPTED and REVOKED, as before the revoke became conditional. */
   private static final List<AccountInviteStatus> REVOCABLE_STATUSES =
       List.of(
@@ -79,6 +76,9 @@ public class AccountInviteService {
           AccountInviteStatus.SUPERSEDED);
 
   private static final int EXPIRY_SWEEP_BATCH = 100;
+
+  /** Bounds one sweep run to 2,000 invites; the next run, minutes later, takes the rest. */
+  private static final int EXPIRY_SWEEP_MAX_BATCHES = 20;
 
   /** Expiry already freed the address claim and the reserved numbers. */
   private static final String INACTIVE_RESEND_MESSAGE = "Inactive invites cannot be resent";
@@ -651,42 +651,72 @@ public class AccountInviteService {
   }
 
   /**
-   * Expires elapsed invites that still hold a Träger or Beratungsstelle number; run by {@link
-   * ExpiredInviteReservationSweep}.
+   * Expires every sent invite whose link has lapsed, and a lapsed draft that holds a Träger or
+   * Beratungsstelle number, giving back a number no other invite needs; run by {@link
+   * ExpiredInviteReservationSweep}. Before ORISO-Admin#1522 only number-holding invites were swept,
+   * so a never-opened counsellor invite stayed {@code EMAIL_SENT} and was listed as open forever
+   * (ORISO-UserService#1617). A number-free draft is left alone: sending it re-arms its expiry.
+   *
+   * <p>Existing-account setup links are left to {@link ExistingAccountSetupService}, which keeps
+   * their private recovery data. Works in id order, at most {@link #EXPIRY_SWEEP_MAX_BATCHES}
+   * batches per run, so a legacy backlog drains over a few runs and a row that is busy this time
+   * never blocks the rows after it.
    *
    * @return how many invites were expired
    */
   public int expireElapsedInvites() {
     LocalDateTime now = LocalDateTime.now();
-    List<Long> elapsed =
-        requiresNewTransaction()
-            .execute(
-                transaction ->
-                    accountInviteRepository
-                        .findElapsedHoldingANumber(
-                            EXPIRABLE_STATUSES,
-                            ReservationLedger.RESERVING_MODES,
-                            now,
-                            PageRequest.of(0, EXPIRY_SWEEP_BATCH))
-                        .stream()
-                        .map(AccountInvite::getId)
-                        .toList());
     int expired = 0;
-    // One transaction per invite: the sweep never holds one invite's locks while taking another's.
-    for (Long inviteId : elapsed == null ? List.<Long>of() : elapsed) {
-      Boolean done =
+    long afterId = 0L;
+    for (int batch = 0; batch < EXPIRY_SWEEP_MAX_BATCHES; batch++) {
+      long cursor = afterId;
+      List<Long> elapsed =
           requiresNewTransaction()
               .execute(
                   transaction ->
-                      accountInviteRepository
-                          .findById(inviteId)
-                          .map(invite -> expireAndReleaseNumbers(invite, now))
-                          .orElse(false));
-      if (Boolean.TRUE.equals(done)) {
-        expired++;
+                      accountInviteRepository.findElapsedInviteIdsToExpire(
+                          AccountInvitePurpose.INVITE,
+                          AccountInviteStatus.EMAIL_SENT,
+                          AccountInviteStatus.DRAFT,
+                          ReservationLedger.RESERVING_MODES,
+                          now,
+                          cursor,
+                          PageRequest.of(0, EXPIRY_SWEEP_BATCH)));
+      if (elapsed == null || elapsed.isEmpty()) {
+        break;
+      }
+      // One transaction per invite: the sweep never holds one invite's locks while taking
+      // another's.
+      for (Long inviteId : elapsed) {
+        Boolean done =
+            requiresNewTransaction()
+                .execute(
+                    transaction ->
+                        accountInviteRepository
+                            .findById(inviteId)
+                            .map(invite -> expireAndReleaseNumbers(invite, now))
+                            .orElse(false));
+        if (Boolean.TRUE.equals(done)) {
+          expired++;
+        }
+      }
+      afterId = elapsed.get(elapsed.size() - 1);
+      if (elapsed.size() < EXPIRY_SWEEP_BATCH) {
+        break;
       }
     }
     return expired;
+  }
+
+  /**
+   * A sent invite whose link has lapsed, as the expiry sweep will store it. Lets a view report
+   * {@code EXPIRED} in the minutes between two sweeps without writing to the row.
+   */
+  public static boolean isElapsedOpenInvite(AccountInvite invite, LocalDateTime now) {
+    return invite.getPurpose() == AccountInvitePurpose.INVITE
+        && invite.getStatus() == AccountInviteStatus.EMAIL_SENT
+        && invite.getExpiresAt() != null
+        && !invite.getExpiresAt().isAfter(now);
   }
 
   /**

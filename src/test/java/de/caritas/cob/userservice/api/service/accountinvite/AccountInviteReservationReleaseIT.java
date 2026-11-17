@@ -266,7 +266,114 @@ class AccountInviteReservationReleaseIT {
     verify(agencyIdAllocationClient, never()).release(anyLong());
   }
 
+  // --- expiry of invites without a number (ORISO-Admin#1522, ORISO-UserService#1617) -----------
+
+  @Test
+  void anElapsedSentCounsellorInvite_Should_BeExpired_AndFreeItsAddress_EvenUnopened() {
+    AccountInvite sent = savedInvite(AccountInviteStatus.EMAIL_SENT, minutesAgo(1));
+
+    int expired = service.expireElapsedInvites();
+
+    AccountInvite stored = reload(sent);
+    assertThat(expired).isEqualTo(1);
+    assertThat(stored.getStatus()).isEqualTo(AccountInviteStatus.EXPIRED);
+    assertThat(stored.getActiveRecipientKey()).isNull();
+    verify(agencyIdAllocationClient, never()).release(anyLong());
+  }
+
+  @Test
+  void anElapsedDraftWithoutANumber_Should_StayADraft_BecauseSendingReArmsItsExpiry() {
+    AccountInvite draft =
+        service.createInvite(
+            command(
+                AccountInviteTargetRole.COUNSELLOR,
+                null,
+                null,
+                EXISTING_AGENCY,
+                IdAllocationMode.EXISTING));
+    elapse(draft);
+
+    int expired = service.expireElapsedInvites();
+
+    assertThat(expired).isZero();
+    assertThat(reload(draft).getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
+  }
+
+  @Test
+  void theExpirySweep_Should_LeaveAcceptedRevokedAndValidInvitesAlone() {
+    AccountInvite accepted = savedInvite(AccountInviteStatus.ACCEPTED, minutesAgo(1));
+    AccountInvite revoked = savedInvite(AccountInviteStatus.REVOKED, minutesAgo(1));
+    AccountInvite valid =
+        savedInvite(AccountInviteStatus.EMAIL_SENT, LocalDateTime.now().plusDays(1));
+
+    int expired = service.expireElapsedInvites();
+
+    assertThat(expired).isZero();
+    assertThat(reload(accepted).getStatus()).isEqualTo(AccountInviteStatus.ACCEPTED);
+    assertThat(reload(revoked).getStatus()).isEqualTo(AccountInviteStatus.REVOKED);
+    assertThat(reload(valid).getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+  }
+
+  @Test
+  void theExpirySweep_Should_LeaveExistingAccountSetupLinksToTheirOwnFlow() {
+    AccountInvite setup =
+        accountInviteRepository.save(
+            inviteRow(AccountInviteStatus.EMAIL_SENT, minutesAgo(1))
+                .purpose(AccountInvitePurpose.EXISTING_ACCOUNT_SETUP)
+                .build());
+
+    service.expireElapsedInvites();
+
+    assertThat(reload(setup).getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+  }
+
+  @Test
+  void theExpirySweep_Should_WorkThroughABacklogLargerThanOneBatch() {
+    int backlog = 250;
+    for (int i = 0; i < backlog; i++) {
+      savedInvite(AccountInviteStatus.EMAIL_SENT, minutesAgo(1 + i));
+    }
+
+    int expired = service.expireElapsedInvites();
+
+    assertThat(expired).isEqualTo(backlog);
+    assertThat(
+            accountInviteRepository.findAll().stream()
+                .filter(invite -> invite.getStatus() != AccountInviteStatus.EXPIRED)
+                .count())
+        .isZero();
+  }
+
   // --- helpers ----------------------------------------------------------------------------------
+
+  private AccountInvite savedInvite(AccountInviteStatus status, LocalDateTime expiresAt) {
+    return accountInviteRepository.save(inviteRow(status, expiresAt).build());
+  }
+
+  private static AccountInvite.AccountInviteBuilder inviteRow(
+      AccountInviteStatus status, LocalDateTime expiresAt) {
+    String email = UUID.randomUUID() + "@example.org";
+    boolean holdsAddress =
+        status == AccountInviteStatus.DRAFT || status == AccountInviteStatus.EMAIL_SENT;
+    return AccountInvite.builder()
+        .targetRole(AccountInviteTargetRole.COUNSELLOR)
+        .tenantId(OWN_TENANT)
+        .recipientEmail(email)
+        .activeRecipientKey(holdsAddress ? email : null)
+        .agencyId(EXISTING_AGENCY)
+        .agencyIdAllocationMode(IdAllocationMode.EXISTING)
+        .status(status)
+        .expiresAt(expiresAt)
+        .provisioningStatus(AccountInviteProvisioningStatus.PENDING)
+        .emailVerificationStatus(EmailVerificationStatus.PENDING)
+        .twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP)
+        .createDate(LocalDateTime.now())
+        .updateDate(LocalDateTime.now());
+  }
+
+  private static LocalDateTime minutesAgo(long minutes) {
+    return LocalDateTime.now().minusMinutes(minutes);
+  }
 
   private void elapse(AccountInvite invite) {
     AccountInvite stored = reload(invite);

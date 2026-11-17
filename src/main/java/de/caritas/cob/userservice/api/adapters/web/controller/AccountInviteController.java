@@ -874,7 +874,11 @@ public class AccountInviteController {
               ? invite.getProvisioningFailureReason()
               : null;
       dto.provisionedUserId = invite.getProvisionedUserId();
-      dto.inviteStatus = invite.getStatus() == null ? null : invite.getStatus().name();
+      // Lapsed but not yet swept: shown as the sweep will store it (ORISO-Admin#1522).
+      dto.inviteStatus =
+          AccountInviteService.isElapsedOpenInvite(invite, LocalDateTime.now())
+              ? AccountInviteStatus.EXPIRED.name()
+              : invite.getStatus() == null ? null : invite.getStatus().name();
       dto.emailVerificationStatus =
           invite.getEmailVerificationStatus() == null
               ? null
