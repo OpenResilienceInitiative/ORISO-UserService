@@ -56,6 +56,7 @@ public class CalendarService {
 
   private final AuthenticatedUser caller;
   private final CalendarEntryReader reader;
+  private final CalendarColleagueAppointmentReader meetings;
   private final CalendarColleagueScope colleagues;
   private final AgencyService agencyService;
   private final Clock clock;
@@ -71,9 +72,10 @@ public class CalendarService {
       return entries.stream().sorted(BY_START).map(entry -> own(entry, me, false)).toList();
     }
     var now = Instant.now(clock);
-    return entriesOfConsultant(me, window).stream()
-        .map(entry -> own(entry, me, isMovable(entry, now)))
-        .toList();
+    var entries = new ArrayList<>(entriesOfConsultant(me, window));
+    entries.addAll(meetingsOf(me, window, false));
+    entries.sort(BY_START);
+    return entries.stream().map(entry -> own(entry, me, isMovable(entry, now))).toList();
   }
 
   /** The colleagues in the caller's scope, with the setting that selected them. */
@@ -115,7 +117,13 @@ public class CalendarService {
             .orElseThrow(() -> new NotFoundException(NOT_FOUND));
     // The scope check above is the authorisation; the rows may lie in the colleague's Träger.
     List<CalendarEntry> entries =
-        TenantContext.supplyAcrossTenants(() -> entriesOfConsultant(consultantId, window));
+        TenantContext.supplyAcrossTenants(
+            () -> {
+              var all = new ArrayList<>(entriesOfConsultant(consultantId, window));
+              all.addAll(meetingsOf(consultantId, window, true));
+              all.sort(BY_START);
+              return all;
+            });
     return entries.stream()
         .map(entry -> redacted(entry, consultantId, colleague.showAskerUsernames()))
         .toList();
@@ -130,16 +138,45 @@ public class CalendarService {
     return entries;
   }
 
+  /**
+   * Appointments with colleagues: one's own calendar shows the waiting ones too, a colleague's view
+   * only those that are fixed.
+   */
+  private List<CalendarEntry> meetingsOf(
+      String consultantId, Window window, boolean confirmedOnly) {
+    return meetings.entriesOf(consultantId, window.from(), window.to(), confirmedOnly);
+  }
+
   private static boolean isMovable(CalendarEntry entry, Instant now) {
     return switch (entry.type()) {
         // An unopened direct invitation (no conversation yet) moves with its invitation (#2252).
-      case APPOINTMENT -> entry.sessionId() != null && entry.start().isAfter(now);
+        // An appointment with a colleague is moved by cancelling it and making a new one (#2305).
+      case APPOINTMENT ->
+          entry.sessionId() != null && entry.meeting() == null && entry.start().isAfter(now);
       case BLOCKER -> true;
       case GROUP, BUSY -> false;
     };
   }
 
   static CalendarEntryDTO own(CalendarEntry entry, String ownerId, boolean movable) {
+    var dto = ownWithoutMeeting(entry, ownerId, movable);
+    var meeting = entry.meeting();
+    if (meeting != null) {
+      dto.colleagueId(meeting.colleagueId())
+          .colleagueName(meeting.colleagueName())
+          .colleagueStatus(
+              meeting.confirmed()
+                  ? CalendarEntryDTO.ColleagueStatusEnum.CONFIRMED
+                  : CalendarEntryDTO.ColleagueStatusEnum.PENDING)
+          .invited(meeting.invited())
+          .matrixRoomId(meeting.matrixRoomId())
+          .chatId(meeting.chatId());
+    }
+    return dto;
+  }
+
+  private static CalendarEntryDTO ownWithoutMeeting(
+      CalendarEntry entry, String ownerId, boolean movable) {
     return new CalendarEntryDTO()
         .id(entry.id())
         .type(entry.type())
@@ -165,7 +202,8 @@ public class CalendarService {
         .end(entry.end().atOffset(ZoneOffset.UTC))
         .ownerId(ownerId)
         .kind(appointment ? kindOf(entry) : null)
-        .title(appointment && showAskerUsernames ? entry.title() : null)
+        // Who meets whom is not shown to third colleagues (ORISO-Frontend#2305).
+        .title(appointment && showAskerUsernames && entry.meeting() == null ? entry.title() : null)
         .movable(false);
   }
 

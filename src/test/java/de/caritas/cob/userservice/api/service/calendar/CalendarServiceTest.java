@@ -24,6 +24,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.SessionAppointment;
 import de.caritas.cob.userservice.api.model.SessionAppointment.Kind;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.calendar.CalendarColleagueScope.Colleague;
@@ -55,6 +56,7 @@ class CalendarServiceTest {
   @Mock CalendarEntryReader reader;
   @Mock CalendarColleagueScope colleagues;
   @Mock AgencyService agencyService;
+  @Mock CalendarColleagueAppointmentReader meetings;
 
   private final AuthenticatedUser caller = new AuthenticatedUser();
   private CalendarService service;
@@ -66,7 +68,7 @@ class CalendarServiceTest {
     caller.setRoles(Set.of(UserRole.CONSULTANT.getValue()));
     service =
         new CalendarService(
-            caller, reader, colleagues, agencyService, Clock.fixed(NOW, ZoneOffset.UTC));
+            caller, reader, meetings, colleagues, agencyService, Clock.fixed(NOW, ZoneOffset.UTC));
   }
 
   @Test
@@ -361,5 +363,60 @@ class CalendarServiceTest {
   @SuppressWarnings("unchecked")
   private static List<Map<String, Object>> parsed(String json) throws Exception {
     return new ObjectMapper().readValue(json, List.class);
+  }
+
+  private static CalendarEntry meeting(String id, boolean invited, boolean confirmed) {
+    return new CalendarEntry(
+        id,
+        CalendarEntryType.APPOINTMENT,
+        Instant.parse("2026-11-20T09:00:00Z"),
+        Instant.parse("2026-11-20T10:00:00Z"),
+        SessionAppointment.Kind.VIDEO,
+        "Kai Colleague",
+        null,
+        null,
+        false,
+        new CalendarEntry.Meeting("kai", "Kai Colleague", confirmed, invited, "!room:oriso", 77L));
+  }
+
+  @Test
+  void ownEntries_Should_ShowAppointmentsWithColleagues_WithTheOtherCounsellor() {
+    when(meetings.entriesOf(eq(ME), any(), any(), eq(false)))
+        .thenReturn(List.of(meeting("meet-1", true, false)));
+
+    var entries = service.ownEntries(FROM, TO);
+
+    assertThat(entries).extracting(CalendarEntryDTO::getId).containsExactly("meet-1");
+    var entry = entries.get(0);
+    assertThat(entry.getType()).isEqualTo(CalendarEntryType.APPOINTMENT);
+    assertThat(entry.getTitle()).isEqualTo("Kai Colleague");
+    assertThat(entry.getColleagueId()).isEqualTo("kai");
+    assertThat(entry.getColleagueName()).isEqualTo("Kai Colleague");
+    assertThat(entry.getColleagueStatus()).isEqualTo(CalendarEntryDTO.ColleagueStatusEnum.PENDING);
+    assertThat(entry.getInvited()).isTrue();
+    assertThat(entry.getMatrixRoomId()).isEqualTo("!room:oriso");
+    assertThat(entry.getChatId()).isEqualTo(77L);
+    assertThat(entry.getMovable()).as("moved by cancelling and making a new one").isFalse();
+  }
+
+  @Test
+  void colleagueEntries_Should_ShowAppointmentsWithColleagues_AsBusyAndKindOnly() {
+    when(colleagues.find(ME, COLLEAGUE)).thenReturn(Optional.of(colleague(true)));
+    when(meetings.entriesOf(eq(COLLEAGUE), any(), any(), eq(true)))
+        .thenReturn(List.of(meeting("meet-1", false, true)));
+
+    var entries = service.colleagueEntries(COLLEAGUE, FROM, TO);
+
+    assertThat(entries).hasSize(1);
+    var entry = entries.get(0);
+    assertThat(entry.getType()).isEqualTo(CalendarEntryType.APPOINTMENT);
+    assertThat(entry.getKind()).isEqualTo(AppointmentKind.VIDEO);
+    assertThat(entry.getTitle()).as("no names, even where asker names are shown").isNull();
+    assertThat(entry.getColleagueId()).isNull();
+    assertThat(entry.getColleagueName()).isNull();
+    assertThat(entry.getColleagueStatus()).isNull();
+    assertThat(entry.getInvited()).isNull();
+    assertThat(entry.getMatrixRoomId()).isNull();
+    assertThat(entry.getChatId()).isNull();
   }
 }
