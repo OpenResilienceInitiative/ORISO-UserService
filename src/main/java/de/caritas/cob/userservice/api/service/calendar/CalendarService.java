@@ -143,6 +143,7 @@ public class CalendarService {
     entries.addAll(reader.appointmentsOfConsultant(consultantId, window.from(), window.to()));
     entries.addAll(reader.groupOccurrencesOfConsultant(consultantId, window.from(), window.to()));
     entries.addAll(reader.blockersOf(consultantId, window.from(), window.to()));
+    entries.addAll(reader.absenceOf(consultantId, window.from(), window.to()));
     entries.sort(BY_START);
     return entries;
   }
@@ -163,7 +164,7 @@ public class CalendarService {
       case APPOINTMENT ->
           entry.sessionId() != null && entry.meeting() == null && entry.start().isAfter(now);
       case BLOCKER -> true;
-      case GROUP, BUSY -> false;
+      case GROUP, BUSY, ABSENCE -> false;
     };
   }
 
@@ -196,7 +197,7 @@ public class CalendarService {
         .title(entry.title())
         .sessionId(entry.sessionId())
         .seriesId(entry.seriesId())
-        .allDay(entry.type() == CalendarEntryType.BLOCKER ? entry.allDay() : null)
+        .allDay(allDayOf(entry))
         .movable(movable);
   }
 
@@ -213,7 +214,17 @@ public class CalendarService {
         .kind(appointment ? kindOf(entry) : null)
         // Who meets whom is not shown to third colleagues (ORISO-Frontend#2305).
         .title(appointment && showAskerUsernames && entry.meeting() == null ? entry.title() : null)
+        // A colleague's absence (ORISO-Frontend#2303) reads as whole days, without its message.
+        .allDay(entry.type() == CalendarEntryType.ABSENCE ? Boolean.TRUE : null)
         .movable(false);
+  }
+
+  private static Boolean allDayOf(CalendarEntry entry) {
+    return switch (entry.type()) {
+      case BLOCKER -> entry.allDay();
+      case ABSENCE -> true;
+      default -> null;
+    };
   }
 
   /**

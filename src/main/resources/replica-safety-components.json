@@ -713,6 +713,22 @@
       "status": "bounded"
     },
     {
+      "id": "deleted-unit-invite-retry-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/delete/scheduler/DeletedUnitInviteRetryScheduler.java",
+      "kind": "scheduler",
+      "owner": "account-invites",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "retryUnfinishedRevocations"
+      ],
+      "decision": "Leases the run through ScheduledTaskClaimService; it revokes only the still open invitations and active links of units the deletion log reports as deleted, through the same idempotent conditional updates as the report-time revocation, so a replayed run changes nothing.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
       "id": "account-invite-retention-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/workflow/inviteretention/scheduler/InviteRetentionScheduler.java",
       "kind": "scheduler",

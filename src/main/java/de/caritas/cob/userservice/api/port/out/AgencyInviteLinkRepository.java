@@ -17,6 +17,12 @@ public interface AgencyInviteLinkRepository
 
   Optional<AgencyInviteLink> findByToken(String token);
 
+  /** Links of a Beratungsstelle in one status; for its deletion (ORISO-Admin#1522). */
+  List<AgencyInviteLink> findByAgencyIdAndStatus(Long agencyId, String status);
+
+  /** Links of a Träger in one status; for its deletion (ORISO-Admin#1522). */
+  List<AgencyInviteLink> findByTenantIdAndStatus(Long tenantId, String status);
+
   /**
    * The invitation one of whose tokens "Neuen Link senden" replaced, however many renewals ago
    * (ORISO-Frontend#2252).

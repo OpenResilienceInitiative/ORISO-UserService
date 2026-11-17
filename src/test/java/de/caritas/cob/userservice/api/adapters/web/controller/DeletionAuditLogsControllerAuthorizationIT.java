@@ -72,6 +72,10 @@ class DeletionAuditLogsControllerAuthorizationIT {
   @MockitoBean private DeletionAuditService deletionAuditService;
   @MockitoBean private AdminScope adminScope;
 
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.accountinvite.DeletedUnitInviteRevocation
+      deletedUnitInviteRevocation;
+
   @BeforeEach
   void returnEmptyAuditLogPage() {
     when(deletionAuditLogsService.listAuditLogs(anyInt(), anyInt(), isNull(), isNull(), isNull()))
@@ -209,6 +213,20 @@ class DeletionAuditLogsControllerAuthorizationIT {
             DeletionAuditOutcome.SCHEDULED,
             "admin-7",
             "AGENCY_ADMIN");
+  }
+
+  /** ORISO-Admin#1522: a reported deletion revokes the unit's invitations right away. */
+  @Test
+  void report_Should_RevokeTheInvitationsOfTheDeletedUnit() throws Exception {
+    mvc.perform(
+            postWithCsrf()
+                .with(jwt().authorities(new SimpleGrantedAuthority(TECHNICAL_DEFAULT)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(AGENCY_REPORT))
+        .andExpect(status().isNoContent());
+
+    verify(deletedUnitInviteRevocation)
+        .onDeletionReported(DeletionAuditTargetType.AGENCY, "268", DeletionAuditOutcome.SCHEDULED);
   }
 
   @Test
