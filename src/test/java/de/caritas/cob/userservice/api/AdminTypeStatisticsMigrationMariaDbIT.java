@@ -16,7 +16,7 @@ import org.testcontainers.containers.MariaDBContainer;
 
 /**
  * ORISO-UserService#1666 on MariaDB: admin.type becomes VARCHAR(16) NOT NULL, and a column that was
- * already widened further by hand is never narrowed.
+ * already widened further by hand keeps its width and still becomes NOT NULL.
  */
 class AdminTypeStatisticsMigrationMariaDbIT {
 
@@ -61,7 +61,7 @@ class AdminTypeStatisticsMigrationMariaDbIT {
   }
 
   @Test
-  void aColumnWidenedFurtherByHandIsNeverNarrowed() throws Exception {
+  void aColumnWidenedFurtherByHandKeepsItsWidthAndBecomesNotNull() throws Exception {
     try (Connection c = connect()) {
       reset(c, "type VARCHAR(32)");
       exec(c, "INSERT INTO admin (admin_id, type) VALUES ('a1', 'A_TYPE_LONGER_THAN_SIXTEEN')");
@@ -69,8 +69,8 @@ class AdminTypeStatisticsMigrationMariaDbIT {
       update(c);
 
       assertThat(execType(c, WIDTH)).isEqualTo("MARK_RAN");
-      assertThat(execType(c, NOT_NULL)).isEqualTo("MARK_RAN");
-      assertThat(column(c)).isEqualTo("32|YES");
+      assertThat(execType(c, NOT_NULL)).isEqualTo("EXECUTED");
+      assertThat(column(c)).isEqualTo("32|NO");
       assertThat(typeOf(c, "a1")).isEqualTo("A_TYPE_LONGER_THAN_SIXTEEN");
     }
   }
