@@ -403,6 +403,10 @@ public class SecurityConfig {
                     "/users/live-chat-account/conversion",
                     "/service/users/live-chat-account/conversion")
                 .access(this::isUnprivilegedLiveChatUser)
+                // #1662 "keep account": only the advice seeker, for their own temporary account.
+                .requestMatchers(
+                    "/users/temporary-account/keep", "/service/users/temporary-account/keep")
+                .access(this::isUnprivilegedLiveChatUser)
                 // The caller's own direct-link temporary account (#1476).
                 .requestMatchers(
                     "/users/temporary-account",

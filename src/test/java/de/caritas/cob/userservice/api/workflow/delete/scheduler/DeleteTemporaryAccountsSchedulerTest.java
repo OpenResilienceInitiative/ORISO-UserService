@@ -145,8 +145,8 @@ class DeleteTemporaryAccountsSchedulerTest {
     var realService = new DeleteTemporaryAccountsService(userRepository, deletionUnit, errorMail);
     setField(realService, "maxAge", Duration.ofDays(1));
     when(userRepository.findTemporaryAccountIdsCreatedBefore(any())).thenReturn(List.of("a", "b"));
-    when(deletionUnit.deleteUser("a")).thenThrow(new IllegalStateException("boom"));
-    when(deletionUnit.deleteUser("b")).thenReturn(List.of());
+    when(deletionUnit.deleteTemporaryUser("a")).thenThrow(new IllegalStateException("boom"));
+    when(deletionUnit.deleteTemporaryUser("b")).thenReturn(List.of());
     var realScheduler =
         new DeleteTemporaryAccountsScheduler(
             realService,
@@ -160,7 +160,7 @@ class DeleteTemporaryAccountsSchedulerTest {
 
     realScheduler.performDeletionWorkflow();
 
-    verify(deletionUnit).deleteUser("b");
+    verify(deletionUnit).deleteTemporaryUser("b");
     ArgumentCaptor<List<DeletionWorkflowError>> reported = ArgumentCaptor.forClass(List.class);
     verify(errorMail).buildAndSendErrorMail(reported.capture());
     assertThat(reported.getValue())
