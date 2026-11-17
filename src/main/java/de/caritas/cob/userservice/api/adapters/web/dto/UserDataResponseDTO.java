@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import de.caritas.cob.userservice.api.adapters.web.dto.serialization.DecodeUsernameJsonSerializer;
 import io.swagger.annotations.ApiModel;
 import io.swagger.annotations.ApiModelProperty;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -56,6 +57,14 @@ public class UserDataResponseDTO {
 
   @ApiModelProperty(example = "Bin mal weg...", position = 8)
   private String absenceMessage;
+
+  /** First day of a planned absence (ORISO-Frontend#2303); only while it is not over. */
+  @ApiModelProperty(example = "2026-12-21")
+  private LocalDate absenceStart;
+
+  /** Last day of the absence, inclusive; missing = until switched off. */
+  @ApiModelProperty(example = "2027-01-03")
+  private LocalDate absenceEnd;
 
   @ApiModelProperty(example = "true", position = 9)
   private boolean isInTeamAgency;

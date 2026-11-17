@@ -295,6 +295,7 @@
   <include file="db/changelog/changeset/20261117_calendar_move_proposal_reason_1663/changeSet.xml"/>
   <include file="db/changelog/changeset/20261117_account_invite_deletion_1522/changeSet.xml"/>
   <include file="db/changelog/changeset/20261117_admin_type_statistics_1666/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261117_consultant_planned_absence_2303/changeSet.xml"/>
   <include file="db/changelog/changeset/20261117_guest_account_mode_1662/changeSet.xml"/>
   <include file="db/changelog/changeset/20261117_guest_account_mode_at_entry_1662/changeSet.xml"/>
 </databaseChangeLog>
