@@ -18,6 +18,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.lifecycle.LifecycleEventPublisher.DeletedSession;
+import de.caritas.cob.userservice.api.service.lifecycle.LifecycleEventPublisher.SessionInteraction;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.UUID;
@@ -121,6 +122,46 @@ class LifecycleEventPublisherTest {
     var payload = payloadOf(sent("user.deleted"));
     assertThat(payload.get("tenantId").asLong()).isEqualTo(1L);
     assertThat(payload.get("role").asText()).isEqualTo("consultant");
+  }
+
+  @Test
+  void userRegisteredCarriesTheAccountAndTheAddonReferenceOnly() throws Exception {
+    publisher.userRegistered(3L, ASKER_ID, "ref_42-A");
+
+    var payload = payloadOf(sent("user.registered"));
+    assertThat(fieldNames(payload))
+        .containsExactly("id", "type", "occurredAt", "tenantId", "userId", "registrationRef");
+    assertThat(payload.get("type").asText()).isEqualTo("user.registered");
+    assertThat(payload.get("tenantId").asLong()).isEqualTo(3L);
+    assertThat(payload.get("userId").asText()).isEqualTo(ASKER_ID);
+    assertThat(payload.get("registrationRef").asText()).isEqualTo("ref_42-A");
+  }
+
+  @Test
+  void sessionInteractionCarriesIdsTypeAndTheTimeOfTheInteraction() throws Exception {
+    var at = Instant.parse("2026-11-17T09:30:00Z");
+
+    publisher.sessionInteraction(
+        new SessionInteraction(3L, 16L, 4L, "consultant-1", "video_call", at));
+
+    var payload = payloadOf(sent("session.interaction"));
+    assertThat(fieldNames(payload))
+        .containsExactly(
+            "id",
+            "type",
+            "occurredAt",
+            "tenantId",
+            "sessionId",
+            "agencyId",
+            "consultantId",
+            "interactionType");
+    assertThat(payload.get("type").asText()).isEqualTo("session.interaction");
+    assertThat(payload.get("occurredAt").asText()).isEqualTo("2026-11-17T09:30:00Z");
+    assertThat(payload.get("tenantId").asLong()).isEqualTo(3L);
+    assertThat(payload.get("sessionId").asLong()).isEqualTo(16L);
+    assertThat(payload.get("agencyId").asLong()).isEqualTo(4L);
+    assertThat(payload.get("consultantId").asText()).isEqualTo("consultant-1");
+    assertThat(payload.get("interactionType").asText()).isEqualTo("video_call");
   }
 
   @Test

@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.matrix;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
@@ -43,6 +44,10 @@ class MatrixCallLifecycleServiceTest {
   private final MatrixCallConversationResolver conversations =
       mock(MatrixCallConversationResolver.class);
   private final UserRepository users = mock(UserRepository.class);
+  private final ConsultantRepository consultants = mock(ConsultantRepository.class);
+  private final de.caritas.cob.userservice.api.service.lifecycle.SessionInteractionService
+      sessionInteractions =
+          mock(de.caritas.cob.userservice.api.service.lifecycle.SessionInteractionService.class);
   private MatrixCallLifecycleService lifecycle;
   private MatrixCallBinding binding;
   private long now;
@@ -57,10 +62,11 @@ class MatrixCallLifecycleServiceTest {
             matrix,
             conversations,
             users,
-            mock(ConsultantRepository.class),
+            consultants,
             mock(EventNotificationService.class),
             mock(AccountInactivityService.class),
-            mock(MatrixCallGuestService.class));
+            mock(MatrixCallGuestService.class),
+            sessionInteractions);
     now = System.currentTimeMillis();
     victimExpiry = now + 3_600_000;
     binding =
@@ -152,6 +158,72 @@ class MatrixCallLifecycleServiceTest {
     when(matrix.getCallRoomMembers(SOURCE)).thenReturn(Optional.empty());
 
     assertThat(lifecycle.handleRoom(MEDIA, Map.of())).isTrue();
+  }
+
+  @org.junit.jupiter.api.Test
+  void anEndedSessionCallIsAnnouncedForTheCounsellorWhoTookPart() {
+    String counsellor = "@counsellor:example";
+    String counsellorKey = "_" + counsellor + "_COUNSELLORDEVICE";
+    binding =
+        MatrixCallBinding.builder()
+            .sourceRoomId(SOURCE)
+            .callId("call")
+            .mediaRoomId(MEDIA)
+            .callerMatrixId(counsellor)
+            .sessionId(16L)
+            .tenantId(TENANT)
+            .invitedAt(now - 60_000)
+            .inviteExpiresAt(now + 60_000)
+            .startedAt(now - 50_000)
+            .mediaObservedAt(now - 50_000)
+            .video(true)
+            .build();
+    binding
+        .getDevices()
+        .put(VICTIM_KEY, new MatrixCallDevice(VICTIM, now - 50_000, victimExpiry, true, "$v1"));
+    when(bindings.lockByMediaRoomId(MEDIA)).thenReturn(Optional.of(binding));
+    binding
+        .getDevices()
+        .put(
+            counsellorKey,
+            new MatrixCallDevice(counsellor, now - 50_000, victimExpiry, true, "$c1"));
+    when(conversations.resolve(SOURCE))
+        .thenReturn(Optional.of(new MatrixCallConversation(SOURCE, TENANT, 16L, null)));
+    when(matrix.getCallRoomMembers(SOURCE)).thenReturn(Optional.of(List.of(VICTIM, counsellor)));
+    var consultant = new de.caritas.cob.userservice.api.model.Consultant();
+    consultant.setId("consultant-1");
+    consultant.setTenantId(TENANT);
+    consultant.setMatrixUserId(counsellor);
+    when(consultants.findAllByMatrixUserIdAndDeleteDateIsNull(counsellor))
+        .thenReturn(List.of(consultant));
+
+    lifecycle.handleRoom(
+        MEDIA,
+        Map.of(
+            "timeline",
+            Map.of(
+                "events",
+                List.of(
+                    shortening(VICTIM, VICTIM_KEY, true),
+                    shortening(counsellor, counsellorKey, true)))));
+
+    assertThat(binding.getEndedAt()).isNotNull();
+    verify(sessionInteractions)
+        .callEnded(
+            16L,
+            "consultant-1",
+            "call",
+            true,
+            java.time.Instant.ofEpochMilli(binding.getEndedAt()));
+    org.mockito.Mockito.verifyNoMoreInteractions(sessionInteractions);
+  }
+
+  @org.junit.jupiter.api.Test
+  void anEndedGroupCallIsNoSessionInteraction() {
+    lifecycle.handleRoom(MEDIA, batch(shortening(VICTIM, VICTIM_KEY, true)));
+
+    assertThat(binding.getEndedAt()).isNotNull();
+    org.mockito.Mockito.verifyNoInteractions(sessionInteractions);
   }
 
   private void assertVictimStillPresent(String key) {

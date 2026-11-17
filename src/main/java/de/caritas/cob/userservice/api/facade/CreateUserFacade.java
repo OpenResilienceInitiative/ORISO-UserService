@@ -42,6 +42,7 @@ import de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkKind;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.service.email.WelcomeEmailService;
+import de.caritas.cob.userservice.api.service.lifecycle.LifecycleEventPublisher;
 import de.caritas.cob.userservice.api.service.provisioning.CompensationResult;
 import de.caritas.cob.userservice.api.service.provisioning.ProvisioningAttempt;
 import de.caritas.cob.userservice.api.service.provisioning.ProvisioningCompensator;
@@ -108,6 +109,8 @@ public class CreateUserFacade {
   private final @NonNull de.caritas.cob.userservice.api.service.temporaryaccount
           .TemporaryAccountSettingsService
       temporaryAccountSettings;
+
+  private final @NonNull LifecycleEventPublisher lifecycleEvents;
 
   @Value("${feature.multitenancy.with.single.domain.enabled:false}")
   private boolean multitenancyWithSingleDomain;
@@ -275,6 +278,7 @@ public class CreateUserFacade {
       }
 
       activeAttempt.complete();
+      announceRegistration(tenantId, user, userDTO.getRegistrationRef());
 
       // The welcome mail carries the generated user name, which ORISO cannot
       // recover. Sent after the attempt is marked complete and guarded here:
@@ -291,6 +295,12 @@ public class CreateUserFacade {
     } finally {
       compensateProvisioning(provisioningAttempt);
       de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.clear();
+    }
+  }
+
+  private void announceRegistration(Long tenantId, User user, String registrationRef) {
+    if (registrationRef != null && user != null && user.getUserId() != null) {
+      lifecycleEvents.userRegistered(tenantId, user.getUserId(), registrationRef);
     }
   }
 

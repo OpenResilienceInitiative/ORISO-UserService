@@ -13,6 +13,7 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService.CallRoomOrigin;
+import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.MatrixCallBinding;
@@ -68,6 +69,9 @@ class MatrixCallObservationServiceTest {
   private final MatrixCallLifecycleService lifecycle = mock(MatrixCallLifecycleService.class);
   private final MatrixSessionCallBindingService sessionBindings =
       mock(MatrixSessionCallBindingService.class);
+  private final de.caritas.cob.userservice.api.service.lifecycle.SessionInteractionService
+      sessionInteractions =
+          mock(de.caritas.cob.userservice.api.service.lifecycle.SessionInteractionService.class);
   private final java.util.List<MatrixCallObservation> saved = new java.util.ArrayList<>();
   private MatrixCallObservationService service;
   private AuthenticatedUser actor;
@@ -88,7 +92,8 @@ class MatrixCallObservationServiceTest {
             notifications,
             lifecycle,
             sessionBindings,
-            tx);
+            tx,
+            sessionInteractions);
     actor = new AuthenticatedUser();
     actor.setUserId("creator");
     actor.setTenantId(7L);
@@ -463,6 +468,46 @@ class MatrixCallObservationServiceTest {
   }
 
   // --- FE#2209 review (CodeRabbit): the session binding ends with the observation ---
+
+  @Test
+  void aSessionCallACounsellorStartedIsAnnouncedAsTheirInteractionWhenItEnds() {
+    var counsellor = consultant("counsellor-1", CREATOR, 7L);
+    directoryUsers.removeIf(u -> CREATOR.equals(u.getMatrixUserId()));
+    directoryConsultants.add(counsellor);
+    when(consultants.findByIdAndDeleteDateIsNull("counsellor-1"))
+        .thenReturn(Optional.of(counsellor));
+    actor.setUserId("counsellor-1");
+    actor.setRoles(java.util.Set.of(UserRole.CONSULTANT.getValue()));
+    when(conversations.resolve(SOURCE))
+        .thenReturn(Optional.of(new MatrixCallConversation(SOURCE, 7L, 16L, null)));
+    long now = System.currentTimeMillis();
+    var row = sessionRow(16L, now - 1000, now + 60_000);
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
+
+    verify(sessionInteractions)
+        .callEnded(
+            16L,
+            "counsellor-1",
+            "call",
+            row.isVideo(),
+            java.time.Instant.ofEpochMilli(row.getEndedAt()));
+  }
+
+  @Test
+  void aSessionCallTheAdviceSeekerStartedIsNoCounsellorInteractionOfTheObservation() {
+    when(conversations.resolve(SOURCE))
+        .thenReturn(Optional.of(new MatrixCallConversation(SOURCE, 7L, 16L, null)));
+    long now = System.currentTimeMillis();
+    var row = sessionRow(16L, now - 1000, now + 60_000);
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
+
+    assertThat(row.getEndedAt()).isNotNull();
+    org.mockito.Mockito.verifyNoInteractions(sessionInteractions);
+  }
 
   @Test
   void aSessionCallsBindingEndsInTheObservationsTransactionEvenWhenNotifyingFails() {

@@ -19,7 +19,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 /**
  * Publishes lifecycle events (ADR-034) to the topic exchange {@code oriso.lifecycle}, so add-ons
- * can delete their own data when the UserService deleted a user or a session.
+ * can delete their own data when the UserService deleted a user or a session, link data stored
+ * before a registration to the new account, and react to counsellor interactions in a session.
  *
  * <p>Delivery is best effort on purpose: the core deletion is the priority. A publishing failure is
  * logged at ERROR with the event id and type and never fails or rolls back the deletion. The price
@@ -36,6 +37,8 @@ public class LifecycleEventPublisher {
 
   public static final String USER_DELETED = "user.deleted";
   public static final String SESSION_DELETED = "session.deleted";
+  public static final String USER_REGISTERED = "user.registered";
+  public static final String SESSION_INTERACTION = "session.interaction";
   public static final String ROLE_ASKER = "asker";
   public static final String ROLE_CONSULTANT = "consultant";
 
@@ -90,7 +93,49 @@ public class LifecycleEventPublisher {
     publish(SESSION_DELETED, session.tenantId(), fields);
   }
 
+  /**
+   * Announces a new advice seeker account that a registration add-on prepared.
+   *
+   * @param tenantId the tenant of the account, {@code null} for legacy tenant one
+   * @param userId the Keycloak id of the account
+   * @param registrationRef the opaque reference the add-on handed to the registration
+   */
+  public void userRegistered(Long tenantId, String userId, String registrationRef) {
+    var fields = new LinkedHashMap<String, Object>();
+    fields.put("userId", userId);
+    fields.put("registrationRef", registrationRef);
+    publish(USER_REGISTERED, tenantId, fields);
+  }
+
+  /**
+   * Announces that a counsellor interacted with a session. Carries no content and no advice seeker
+   * identifiers beyond the session id.
+   *
+   * @param interaction the ids of the interaction
+   */
+  public void sessionInteraction(SessionInteraction interaction) {
+    var fields = new LinkedHashMap<String, Object>();
+    fields.put("sessionId", interaction.sessionId());
+    fields.put("agencyId", interaction.agencyId());
+    fields.put("consultantId", interaction.consultantId());
+    fields.put("interactionType", interaction.interactionType());
+    publish(SESSION_INTERACTION, interaction.tenantId(), interaction.occurredAt(), fields);
+  }
+
+  /** The ids of a counsellor interaction in a session. */
+  public record SessionInteraction(
+      Long tenantId,
+      Long sessionId,
+      Long agencyId,
+      String consultantId,
+      String interactionType,
+      Instant occurredAt) {}
+
   private void publish(String type, Long tenantId, Map<String, Object> fields) {
+    publish(type, tenantId, Instant.now(), fields);
+  }
+
+  private void publish(String type, Long tenantId, Instant occurredAt, Map<String, Object> fields) {
     if (!lifecycleEventsEnabled) {
       return;
     }
@@ -99,7 +144,7 @@ public class LifecycleEventPublisher {
       var payload = new LinkedHashMap<String, Object>();
       payload.put("id", id);
       payload.put("type", type);
-      payload.put("occurredAt", Instant.now().toString());
+      payload.put("occurredAt", occurredAt.toString());
       payload.put("tenantId", tenantId == null ? LEGACY_TENANT : tenantId);
       payload.putAll(fields);
       var body = objectMapper.writeValueAsBytes(payload);

@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.port.out.MatrixCallBindingRepository;
 import de.caritas.cob.userservice.api.port.out.MatrixCallObservationEndRepository;
 import de.caritas.cob.userservice.api.port.out.MatrixCallObservationRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.lifecycle.SessionInteractionService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -72,6 +73,7 @@ public class MatrixCallObservationService {
   private final MatrixCallLifecycleService lifecycle;
   private final MatrixSessionCallBindingService sessionBindings;
   private final PlatformTransactionManager transactionManager;
+  private final SessionInteractionService sessionInteractions;
 
   public Outcome register(
       AuthenticatedUser actor,
@@ -389,7 +391,8 @@ public class MatrixCallObservationService {
 
   private void notifyEnded(
       MatrixCallConversation conversation, List<String> members, MatrixCallObservation row) {
-    var identities = identities(members, null, row.getTenantId());
+    var identities = identities(members, row.getCreatorMatrixId(), row.getTenantId());
+    announceSessionCall(conversation, identities.get(row.getCreatorMatrixId()), row);
     for (String member : members) {
       var recipient = identities.get(member);
       if (recipient == null || !lifecycle.isActiveRecipient(recipient.id())) continue;
@@ -402,6 +405,26 @@ public class MatrixCallObservationService {
           row.getRegisteredAt(),
           row.getEndedAt());
     }
+  }
+
+  /**
+   * Only the creator is known to have taken part in an observed call, so only a call a counsellor
+   * started counts as their interaction here. Calls with a binding are also announced by {@link
+   * MatrixCallLifecycleService} from the observed attendance.
+   */
+  private void announceSessionCall(
+      MatrixCallConversation conversation, Identity creator, MatrixCallObservation row) {
+    if (conversation.getSessionId() == null
+        || conversation.getChatId() != null
+        || creator == null
+        || !creator.consultant()
+        || row.getEndedAt() == null) return;
+    sessionInteractions.callEnded(
+        conversation.getSessionId(),
+        creator.id(),
+        row.getCallId(),
+        row.isVideo(),
+        java.time.Instant.ofEpochMilli(row.getEndedAt()));
   }
 
   /**

@@ -5,8 +5,10 @@ import de.caritas.cob.userservice.api.model.MatrixCallDevice;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.MatrixCallBindingRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.lifecycle.SessionInteractionService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -29,6 +31,7 @@ public class MatrixCallLifecycleService {
   private final EventNotificationService notifications;
   private final AccountInactivityService accountLifecycle;
   private final MatrixCallGuestService callGuests;
+  private final SessionInteractionService sessionInteractions;
 
   @org.springframework.beans.factory.annotation.Value("${matrix.calls.observation-retry-ms:30000}")
   private long observationRetryMillis = 30000;
@@ -262,14 +265,18 @@ public class MatrixCallLifecycleService {
                   .orElse(now);
       binding.finishByLifecycle(lastPresenceEnd);
       if (retainedClosure) return;
-      binding.getDevices().values().stream()
-          .filter(MatrixCallDevice::isAttended)
-          .map(MatrixCallDevice::getSenderMatrixId)
-          .distinct()
-          .filter(members::contains)
-          .map(sender -> identity(sender, binding.getTenantId()))
-          .flatMap(Optional::stream)
-          .distinct()
+      var attended =
+          binding.getDevices().values().stream()
+              .filter(MatrixCallDevice::isAttended)
+              .map(MatrixCallDevice::getSenderMatrixId)
+              .distinct()
+              .filter(members::contains)
+              .map(sender -> identity(sender, binding.getTenantId()))
+              .flatMap(Optional::stream)
+              .distinct()
+              .toList();
+      announceSessionCall(binding, attended);
+      attended.stream()
           .filter(recipient -> isActiveRecipient(recipient.id()))
           .forEach(
               recipient ->
@@ -304,6 +311,21 @@ public class MatrixCallLifecycleService {
                       binding.getMediaRoomId(),
                       binding.isVideo()));
     }
+  }
+
+  private void announceSessionCall(
+      de.caritas.cob.userservice.api.model.MatrixCallBinding binding, List<Recipient> attended) {
+    if (binding.getSessionId() == null || binding.getChatId() != null) return;
+    attended.stream()
+        .filter(Recipient::consultant)
+        .forEach(
+            counsellor ->
+                sessionInteractions.callEnded(
+                    binding.getSessionId(),
+                    counsellor.id(),
+                    binding.getCallId(),
+                    binding.isVideo(),
+                    Instant.ofEpochMilli(binding.getEndedAt())));
   }
 
   private boolean startedBeforeRejection(
