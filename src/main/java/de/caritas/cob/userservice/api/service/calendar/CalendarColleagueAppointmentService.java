@@ -94,20 +94,9 @@ public class CalendarColleagueAppointmentService {
       throw new ForbiddenException(
           "Without an internal chat with this colleague only an on-site appointment is possible.");
     }
-    var room =
-        withChat
-            ? rooms.open(
-                new InternalSubsetChatDTO().consultantIds(List.of(colleague.consultant().getId())),
-                creator)
-            : null;
-
     var appointment = new CalendarColleagueAppointment();
     appointment.setOrganizerId(me);
     appointment.setInviteeId(colleague.consultant().getId());
-    if (room != null) {
-      appointment.setChatId(room.chatId());
-      appointment.setMatrixRoomId(room.matrixRoomId());
-    }
     appointment.setStartTime(start);
     appointment.setEndTime(end);
     appointment.setKind(kind);
@@ -117,6 +106,16 @@ public class CalendarColleagueAppointmentService {
                 autoAccept.existsByConsultantIdAndColleagueId(colleague.consultant().getId(), me));
     appointment.setStatus(Boolean.TRUE.equals(acceptsMe) ? Status.CONFIRMED : Status.PENDING);
     appointment.setCreatedAt(Instant.now(clock));
+    // The Matrix room is the one step a rollback cannot undo, so it comes last, after every check
+    // and read. Opening is find-or-create: should the save still fail, a retry reuses the room.
+    if (withChat) {
+      var room =
+          rooms.open(
+              new InternalSubsetChatDTO().consultantIds(List.of(colleague.consultant().getId())),
+              creator);
+      appointment.setChatId(room.chatId());
+      appointment.setMatrixRoomId(room.matrixRoomId());
+    }
     var saved = appointments.save(appointment);
     return view(saved, me, colleague.name());
   }

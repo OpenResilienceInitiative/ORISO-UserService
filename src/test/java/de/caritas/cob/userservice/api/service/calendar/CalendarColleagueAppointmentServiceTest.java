@@ -170,6 +170,17 @@ class CalendarColleagueAppointmentServiceTest {
   }
 
   @Test
+  void create_Should_OpenNoMatrixRoom_When_AReadBeforeTheSaveFails() {
+    // A Matrix room cannot be rolled back, so it is opened only after every check and read.
+    when(autoAccept.existsByConsultantIdAndColleagueId(COLLEAGUE, ME))
+        .thenThrow(new IllegalStateException("database unavailable"));
+
+    assertThatThrownBy(() -> service.create(request())).isInstanceOf(IllegalStateException.class);
+    verify(rooms, never()).open(any(), any());
+    assertThat(saved).isEmpty();
+  }
+
+  @Test
   void create_Should_StoreNothing_When_TheInternalChatIsRefused() {
     when(rooms.open(any(), eq(me))).thenThrow(new ForbiddenException("out of chat reach"));
 

@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.facade;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.doThrow;
@@ -93,10 +94,47 @@ class InternalSubsetChatFacadeReachTest {
         .containsExactly("same");
   }
 
+  /**
+   * The same rule as {@code open}: a room without a requested centre is anchored to the first
+   * centre that admits the colleague. Chats switched on in another shared centre do not help.
+   */
+  @Test
+  void reachableColleagues_Should_FollowTheCentreOpenPicks_NotAnyCentreWithChatsOn() {
+    var both = consultant("me2", 1L, 10L, 20L);
+    var inBoth = consultant("both", 1L, 10L, 20L);
+    lenient()
+        .doThrow(new ForbiddenException("off"))
+        .when(featureGate)
+        .requireEnabled(any(), argThat(chat -> chat != null && chat.getAgencyId() == 10L));
+
+    assertThat(facade.reachableColleagues(both, List.of(inBoth))).isEmpty();
+  }
+
+  @Test
+  void reachableColleagues_Should_LeaveOut_A_ColleagueWithoutAMatrixAccount() {
+    var noMatrix = consultant("nomatrix", 1L, 10L);
+    noMatrix.setMatrixUserId(null);
+
+    assertThat(facade.reachableColleagues(me, List.of(sameCentre, noMatrix)))
+        .containsExactly("same");
+  }
+
+  @Test
+  void reachableColleagues_Should_Fail_When_TheSwitchCannotBeRead() {
+    // An outage is "unknown", never "switched off": the calendar then leaves the field out.
+    doThrow(new IllegalStateException("tenant service down"))
+        .when(featureGate)
+        .requireEnabled(any(), any());
+
+    assertThatThrownBy(() -> facade.reachableColleagues(me, List.of(sameCentre)))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
   private static Consultant consultant(String id, Long tenantId, Long... agencyIds) {
     var consultant = new Consultant();
     consultant.setId(id);
     consultant.setTenantId(tenantId);
+    consultant.setMatrixUserId("@" + id + ":matrix.test");
     Set<ConsultantAgency> agencies =
         java.util.Arrays.stream(agencyIds)
             .map(
