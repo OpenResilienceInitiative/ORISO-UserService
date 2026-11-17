@@ -6,16 +6,19 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
+import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.MatrixCallBinding;
 import de.caritas.cob.userservice.api.port.out.ChatAgencyRepository;
+import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,13 +34,15 @@ class GroupCallCreatorAgencyTest {
   private final ConsultantRepository consultants = mock(ConsultantRepository.class);
   private final ChatAgencyRepository chatAgencies = mock(ChatAgencyRepository.class);
   private final AgencyService agencyService = mock(AgencyService.class);
+  private final ChatRepository chats = mock(ChatRepository.class);
   private final GroupCallCreatorAgency creatorAgency =
-      new GroupCallCreatorAgency(consultants, chatAgencies, agencyService);
+      new GroupCallCreatorAgency(consultants, chatAgencies, chats, agencyService);
 
   @BeforeEach
   void setUp() {
     groupAgencies(99L, 101L);
     creatorIn(TENANT, agency(99L), agency(50L));
+    when(chats.findById(CHAT)).thenReturn(Optional.empty());
   }
 
   @Test
@@ -46,15 +51,86 @@ class GroupCallCreatorAgencyTest {
   }
 
   @Test
-  void noneWhenTheCreatorServesTwoAgenciesOfTheGroup() {
+  void noneWhenTheCreatorServesTwoAgenciesOfTheGroupAndTheGroupHasNoOwner() {
     // Which consent text applies would be a guess: fail closed (only existing accounts).
     creatorIn(TENANT, agency(99L), agency(101L));
     assertThat(creatorAgency.of(groupCall())).isEmpty();
   }
 
   @Test
-  void noneWhenTheCreatorServesNoAgencyOfTheGroup() {
+  void noneWhenTheCreatorServesNoAgencyOfTheGroupAndTheGroupHasNoOwner() {
     creatorIn(TENANT, agency(50L));
+    assertThat(creatorAgency.of(groupCall())).isEmpty();
+  }
+
+  // Frank, 17 Nov: a creator with several or none of the group's Beratungsstellen hands over to
+  // the group chat's owner.
+  @Test
+  void theOwnersAgencyWhenTheCreatorServesTwoAgenciesOfTheGroup() {
+    creatorIn(TENANT, agency(99L), agency(101L));
+    ownedBy(owner(TENANT, agency(101L), agency(50L)));
+    assertThat(creatorAgency.of(groupCall())).contains(101L);
+  }
+
+  @Test
+  void theOwnersAgencyWhenTheCreatorServesNoAgencyOfTheGroup() {
+    creatorIn(TENANT, agency(50L));
+    ownedBy(owner(TENANT, agency(99L)));
+    assertThat(creatorAgency.of(groupCall())).contains(99L);
+  }
+
+  @Test
+  void theCreatorsOwnAgencyStillComesBeforeTheOwners() {
+    ownedBy(owner(TENANT, agency(101L)));
+    assertThat(creatorAgency.of(groupCall())).contains(99L);
+  }
+
+  @Test
+  void anOwnerOfSeveralGroupAgenciesGivesTheLowestIdSoTheLinkStaysStable() {
+    creatorIn(TENANT, agency(50L));
+    ownedBy(owner(TENANT, agency(101L), agency(99L)));
+    assertThat(creatorAgency.of(groupCall())).contains(99L);
+  }
+
+  @Test
+  void noneWhenTheOwnerServesNoAgencyOfTheGroupEither() {
+    creatorIn(TENANT, agency(50L));
+    ownedBy(owner(TENANT, agency(51L)));
+    assertThat(creatorAgency.of(groupCall())).isEmpty();
+  }
+
+  @Test
+  void anOwnerWhoLeftTheAgencyOrWasDeletedOrBelongsElsewhereDoesNotCount() {
+    creatorIn(TENANT, agency(50L));
+    var left = agency(99L);
+    left.setDeleteDate(LocalDateTime.now());
+    ownedBy(owner(TENANT, left));
+    assertThat(creatorAgency.of(groupCall())).isEmpty();
+
+    var deleted = owner(TENANT, agency(99L));
+    deleted.setDeleteDate(LocalDateTime.now());
+    ownedBy(deleted);
+    assertThat(creatorAgency.of(groupCall())).isEmpty();
+
+    ownedBy(owner(8L, agency(99L)));
+    assertThat(creatorAgency.of(groupCall())).isEmpty();
+  }
+
+  @Test
+  void noOwnerFallbackForACallAnAdviceSeekerStarted() {
+    when(consultants.findAllByMatrixUserIdAndDeleteDateIsNull(CREATOR)).thenReturn(List.of());
+    ownedBy(owner(TENANT, agency(99L)));
+    assertThat(creatorAgency.of(groupCall())).isEmpty();
+  }
+
+  @Test
+  void noOwnerFallbackWhenTheCreatorsMatrixIdStandsForTwoAccounts() {
+    var first = consultant(TENANT, agency(50L));
+    var twin = consultant(TENANT, agency(50L));
+    twin.setId("twin");
+    when(consultants.findAllByMatrixUserIdAndDeleteDateIsNull(CREATOR))
+        .thenReturn(List.of(first, twin));
+    ownedBy(owner(TENANT, agency(99L)));
     assertThat(creatorAgency.of(groupCall())).isEmpty();
   }
 
@@ -130,6 +206,20 @@ class GroupCallCreatorAgencyTest {
   private void creatorIn(long tenant, ConsultantAgency... memberships) {
     var creator = consultant(tenant, memberships);
     when(consultants.findAllByMatrixUserIdAndDeleteDateIsNull(any())).thenReturn(List.of(creator));
+  }
+
+  private void ownedBy(Consultant owner) {
+    var chat = new Chat();
+    chat.setId(CHAT);
+    chat.setChatOwner(owner);
+    when(chats.findById(CHAT)).thenReturn(Optional.of(chat));
+  }
+
+  private static Consultant owner(long tenant, ConsultantAgency... memberships) {
+    var owner = consultant(tenant, memberships);
+    owner.setId("owner");
+    owner.setMatrixUserId("@owner:example");
+    return owner;
   }
 
   private static Consultant consultant(long tenant, ConsultantAgency... memberships) {
