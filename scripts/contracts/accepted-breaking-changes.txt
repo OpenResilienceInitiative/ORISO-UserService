@@ -12,10 +12,13 @@
 GET /users/notifications api path removed without deprecation
 # ADR-032 / ORISO-UserService#1650: the cal.com feature flag is no longer sent.
 GET /users/data removed the optional property `appointmentFeatureEnabled` from the response with the `200` status
-# ORISO-Frontend#2303: the calendar shows a planned absence as entry type ABSENCE. The frontend
-# reads an unknown type as "busy" and knows ABSENCE from ORISO-Frontend#2306 on.
+# ADR-032 / ORISO-Frontend#2303: planned absence as calendar entry type ABSENCE; the frontend reads unknown types as busy.
 POST /users/calendar/blockers added the new `ABSENCE` enum value to the `items/type` response property for the response status `201`
+# ADR-032 / ORISO-Frontend#2303: planned absence as calendar entry type ABSENCE; the frontend reads unknown types as busy.
 PUT /users/calendar/blockers/{blockerId} added the new `ABSENCE` enum value to the `type` response property for the response status `200`
+# ADR-032 / ORISO-Frontend#2303: planned absence as calendar entry type ABSENCE; the frontend reads unknown types as busy.
 GET /users/calendar/colleagues/{consultantId}/entries added the new `ABSENCE` enum value to the `items/type` response property for the response status `200`
+# ADR-032 / ORISO-Frontend#2303: planned absence as calendar entry type ABSENCE; the frontend reads unknown types as busy.
 GET /users/calendar/entries added the new `ABSENCE` enum value to the `items/type` response property for the response status `200`
+# ADR-032 / ORISO-Frontend#2303: planned absence as calendar entry type ABSENCE; the frontend reads unknown types as busy.
 POST /users/calendar/proposals/{proposalId}/accept added the new `ABSENCE` enum value to the `type` response property for the response status `200`
