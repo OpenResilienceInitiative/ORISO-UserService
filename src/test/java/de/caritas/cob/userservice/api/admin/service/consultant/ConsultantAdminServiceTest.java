@@ -86,6 +86,10 @@ public class ConsultantAdminServiceTest {
   private de.caritas.cob.userservice.api.workflow.delete.service.DeletionAuditService
       deletionAuditService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.lifecycle.LifecycleEventPublisher
+      lifecycleEventPublisher;
+
   @Test
   public void createNewConsultant_Should_enrichResponseWithTopicNames() {
     var embedded = new ConsultantDTO().id("c1");
@@ -340,6 +344,12 @@ public class ConsultantAdminServiceTest {
     var consultant = new Consultant();
     consultant.setId("c-1");
     var session = new de.caritas.cob.userservice.api.model.Session();
+    session.setId(77L);
+    session.setTenantId(3L);
+    session.setAgencyId(5L);
+    var asker = new de.caritas.cob.userservice.api.model.User();
+    asker.setUserId("asker-1");
+    session.setUser(asker);
     when(pictureStore.lockActiveConsultant("c-1")).thenReturn(consultant);
     when(sessionRepository.findByConsultantAndStatusIn(any(Consultant.class), any(List.class)))
         .thenReturn(List.of(session))
@@ -348,10 +358,19 @@ public class ConsultantAdminServiceTest {
     consultantAdminService.markConsultantForDeletion("c-1", true);
 
     var deletionOrder =
-        inOrder(caseHandoverRequestRepository, sessionSupervisorRepository, sessionRepository);
+        inOrder(
+            caseHandoverRequestRepository,
+            sessionSupervisorRepository,
+            sessionRepository,
+            lifecycleEventPublisher);
     deletionOrder.verify(caseHandoverRequestRepository).deleteAllBySessionId(session.getId());
     deletionOrder.verify(sessionSupervisorRepository).deleteAllBySessionId(session.getId());
     deletionOrder.verify(sessionRepository).delete(session);
+    deletionOrder
+        .verify(lifecycleEventPublisher)
+        .sessionDeleted(
+            new de.caritas.cob.userservice.api.service.lifecycle.LifecycleEventPublisher
+                .DeletedSession(3L, 77L, "asker-1", 5L));
     verify(sessionOwnershipService).clearOwnerFromSessions(any(), any());
     verify(deletionLifecycleService).beginConsultantDeletion(any(), any());
   }
@@ -373,6 +392,7 @@ public class ConsultantAdminServiceTest {
 
     verify(membersOnlyRevocation).keepCaseOnDeletionOf(session, consultant);
     verify(sessionRepository, org.mockito.Mockito.never()).delete(session);
+    verify(lifecycleEventPublisher, org.mockito.Mockito.never()).sessionDeleted(any());
     verify(sessionSupervisorRepository, org.mockito.Mockito.never())
         .deleteAllBySessionId(session.getId());
   }

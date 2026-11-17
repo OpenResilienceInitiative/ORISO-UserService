@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -34,6 +35,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.core.task.TaskRejectedException;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -97,6 +101,44 @@ class AddonNotificationServiceTest {
     service.create(askerRequest(true));
 
     verify(mailer).sendIfWanted(RecipientKind.ASKER, ASKER_ID, 1L);
+  }
+
+  @Test
+  void mailWaitsForTheCommitOfTheNotification() {
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      service.create(askerRequest(true));
+
+      verify(mailer, never()).sendIfWanted(any(), anyString(), anyLong());
+      TransactionSynchronizationManager.getSynchronizations()
+          .forEach(TransactionSynchronization::afterCommit);
+      verify(mailer).sendIfWanted(RecipientKind.ASKER, ASKER_ID, 1L);
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+  }
+
+  @Test
+  void rolledBackNotificationSendsNoMail() {
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      service.create(askerRequest(true));
+
+      TransactionSynchronizationManager.getSynchronizations()
+          .forEach(sync -> sync.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+      verify(mailer, never()).sendIfWanted(any(), anyString(), anyLong());
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+  }
+
+  @Test
+  void fullMailExecutorKeepsTheNotification() {
+    doThrow(new TaskRejectedException("queue full"))
+        .when(mailer)
+        .sendIfWanted(any(), anyString(), anyLong());
+
+    assertThat(service.create(askerRequest(true))).isEqualTo(42L);
   }
 
   @Test

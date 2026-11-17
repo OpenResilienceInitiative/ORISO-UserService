@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -22,6 +23,7 @@ import java.util.stream.Stream;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,7 +36,7 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class AddonContextService {
 
-  static final int MAX_CONSULTANT_SESSIONS = 500;
+  static final int SESSION_PAGE_SIZE = 500;
   static final String ASKER = "asker";
   static final String CONSULTANT = "consultant";
 
@@ -98,18 +100,29 @@ public class AddonContextService {
             .distinct()
             .sorted()
             .toList();
-    var newestFirst =
-        PageRequest.of(
-            0,
-            MAX_CONSULTANT_SESSIONS,
-            Sort.by(Sort.Order.desc("createDate"), Sort.Order.desc("id")));
     var sessions =
-        sessionRepository.findByConsultantId(consultant.getId(), newestFirst).stream()
+        allSessionsOf(consultant.getId()).stream()
             .filter(session -> inTenant(session.getTenantId(), tenantId))
             .map(AddonContextService::sessionRef)
             .toList();
     return new AddonContextDTO(
         consultant.getId(), CONSULTANT, agencyIds, sessions, List.of(consultantRef(consultant)));
+  }
+
+  /** Every session of the consultant, newest first, read in pages so none is left out. */
+  private List<Session> allSessionsOf(String consultantId) {
+    var sessions = new ArrayList<Session>();
+    Pageable page =
+        PageRequest.of(
+            0, SESSION_PAGE_SIZE, Sort.by(Sort.Order.desc("createDate"), Sort.Order.desc("id")));
+    while (true) {
+      var result = sessionRepository.findByConsultantId(consultantId, page);
+      sessions.addAll(result.getContent());
+      if (!result.hasNext()) {
+        return sessions;
+      }
+      page = result.nextPageable();
+    }
   }
 
   private static SessionRef sessionRef(Session session) {

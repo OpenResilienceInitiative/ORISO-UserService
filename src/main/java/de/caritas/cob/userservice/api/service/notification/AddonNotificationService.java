@@ -16,13 +16,17 @@ import java.util.TreeSet;
 import java.util.regex.Pattern;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * Stores an add-on notification (contract oriso-addon/v1, section 1) as an Activity Timeline event
  * of its recipient and hands delivery beyond the feed to {@link AddonNotificationMailer}.
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class AddonNotificationService {
@@ -123,9 +127,35 @@ public class AddonNotificationService {
             actionPath(slot, addon, appId),
             sessionId);
     if (important) {
-      mailer.sendIfWanted(recipient, userId, tenantId);
+      mailAfterCommit(recipient, userId, tenantId);
     }
     return id;
+  }
+
+  /**
+   * The mail goes out only once the notification is committed, and as best effort: a full mail
+   * executor never rolls the notification back.
+   */
+  private void mailAfterCommit(RecipientKind recipient, String userId, Long tenantId) {
+    Runnable send =
+        () -> {
+          try {
+            mailer.sendIfWanted(recipient, userId, tenantId);
+          } catch (RuntimeException e) {
+            log.warn("Add-on notification mail not queued for tenant {}", tenantId, e);
+          }
+        };
+    if (TransactionSynchronizationManager.isSynchronizationActive()) {
+      TransactionSynchronizationManager.registerSynchronization(
+          new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+              send.run();
+            }
+          });
+    } else {
+      send.run();
+    }
   }
 
   private RecipientKind recipientKind(String userId, Long tenantId) {

@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -34,6 +35,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 
@@ -135,6 +137,36 @@ class AddonContextServiceTest {
     assertThat(pageable.getValue().getPageSize()).isEqualTo(500);
     assertThat(pageable.getValue().getSort().getOrderFor("createDate").getDirection())
         .isEqualTo(Sort.Direction.DESC);
+  }
+
+  @Test
+  void consultantContextReadsEverySessionPage() {
+    when(consultantRepository.findByIdAndDeleteDateIsNull(CONSULTANT_ID))
+        .thenReturn(Optional.of(consultant));
+    when(consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(CONSULTANT_ID))
+        .thenReturn(List.of());
+    var firstPage = PageRequest.of(0, AddonContextService.SESSION_PAGE_SIZE);
+    when(sessionRepository.findByConsultantId(eq(CONSULTANT_ID), any(Pageable.class)))
+        .thenReturn(
+            new PageImpl<>(
+                List.of(session(30L, 7L, consultant, SessionStatus.IN_PROGRESS, 1L)),
+                firstPage,
+                AddonContextService.SESSION_PAGE_SIZE + 1L))
+        .thenReturn(
+            new PageImpl<>(
+                List.of(session(3L, 7L, consultant, SessionStatus.IN_PROGRESS, 1L)),
+                firstPage.next(),
+                AddonContextService.SESSION_PAGE_SIZE + 1L));
+
+    var context = service.contextOf(CONSULTANT_ID, 1L);
+
+    assertThat(context.sessions())
+        .containsExactly(
+            new SessionRef(30L, 7L, CONSULTANT_ID, "IN_PROGRESS"),
+            new SessionRef(3L, 7L, CONSULTANT_ID, "IN_PROGRESS"));
+    var pageable = ArgumentCaptor.forClass(Pageable.class);
+    verify(sessionRepository, times(2)).findByConsultantId(eq(CONSULTANT_ID), pageable.capture());
+    assertThat(pageable.getAllValues()).extracting(Pageable::getPageNumber).containsExactly(0, 1);
   }
 
   @Test
