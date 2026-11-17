@@ -22,6 +22,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.SessionAppointment.Kind;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -344,7 +345,8 @@ class CalendarServiceTest {
     consultant.setId(id);
     consultant.setTenantId(tenantId);
     if (COLLEAGUE.equals(id)) {
-      consultant.setUsername("colleague.login");
+      // Stored encoded, as provisioning does (review 4595469701).
+      consultant.setUsername(new UsernameTranscoder().encodeUsername("colleague.login"));
     }
     return consultant;
   }

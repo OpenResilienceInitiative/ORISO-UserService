@@ -18,6 +18,7 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.model.CalendarBlocker;
 import de.caritas.cob.userservice.api.model.CalendarBlocker.Source;
@@ -350,7 +351,7 @@ class CalendarControllerIT {
                 "Synthetic Centre",
                 // ORISO-UserService#1663: the username tells colleagues of one name apart.
                 "secondaryLabel",
-                colleague.getUsername(),
+                new UsernameTranscoder().decodeUsername(colleague.getUsername()),
                 "relation",
                 "SAME_AGENCY"));
 

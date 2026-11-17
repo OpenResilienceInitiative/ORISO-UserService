@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.SessionAppointment;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.calendar.CalendarColleagueScope.Colleague;
@@ -25,6 +26,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 import lombok.RequiredArgsConstructor;
@@ -172,10 +174,15 @@ public class CalendarService {
    * consultant lists show it already; another Träger's colleague is told apart by their counselling
    * centre, so the username does not leave the Träger.
    */
+  // Provisioning stores usernames encoded ("enc.…"); colleagues read the login name.
+  private static final UsernameTranscoder USERNAMES = new UsernameTranscoder();
+
   private static String secondaryLabelOf(Colleague colleague) {
     return colleague.relation() == CalendarColleagueScope.Relation.OTHER_TENANT
         ? null
-        : StringUtils.trimToNull(colleague.consultant().getUsername());
+        : Optional.ofNullable(StringUtils.trimToNull(colleague.consultant().getUsername()))
+            .map(USERNAMES::decodeUsername)
+            .orElse(null);
   }
 
   private static AppointmentKind kindOf(CalendarEntry entry) {
