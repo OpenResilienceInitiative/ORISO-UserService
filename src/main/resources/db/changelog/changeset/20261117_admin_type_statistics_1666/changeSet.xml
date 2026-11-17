@@ -4,7 +4,9 @@
        Two steps, each with its own precondition (onFail="MARK_RAN", master changelog rule), so a
        database that already received either change by hand skips only that step. MariaDB drops
        NOT NULL on MODIFY COLUMN, so the second step sees the column nullable again after the
-       first and restores it. -->
+       first and restores it. The NOT NULL step only touches a VARCHAR(16) column: on MariaDB it
+       rewrites the column type, so a column someone widened further by hand is left as it is
+       rather than narrowed. -->
   <changeSet id="20261117-admin-type-width-1666" author="oriso">
     <preConditions onFail="MARK_RAN">
       <or>
@@ -39,7 +41,7 @@
           <sqlCheck expectedResult="1">
             SELECT COUNT(*) FROM information_schema.columns
             WHERE table_schema = DATABASE() AND table_name = 'admin' AND column_name = 'type'
-              AND is_nullable = 'YES'
+              AND is_nullable = 'YES' AND character_maximum_length = 16
           </sqlCheck>
         </and>
         <and>
@@ -48,6 +50,7 @@
             SELECT COUNT(*) FROM information_schema.columns
             WHERE table_schema = CURRENT_SCHEMA() AND LOWER(table_name) = 'admin'
               AND LOWER(column_name) = 'type' AND is_nullable = 'YES'
+              AND character_maximum_length = 16
           </sqlCheck>
         </and>
       </or>
