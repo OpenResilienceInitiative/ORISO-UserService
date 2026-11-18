@@ -69,6 +69,7 @@ import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityTenantUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService;
@@ -242,6 +243,7 @@ class ConsultantTenantChangeMariaDbIT {
   private IdentityTenantUpdater identityTenantUpdater;
   @MockitoBean private ConsultingTypeManager consultingTypeManager;
   @MockitoBean private MatrixSynapseService matrixSynapseService;
+  @MockitoBean private SessionRoomGateway sessionRoomGateway;
 
   private TransactionTemplate transactions;
   private Long sessionId;

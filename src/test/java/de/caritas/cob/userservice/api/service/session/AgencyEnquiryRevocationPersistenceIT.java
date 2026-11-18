@@ -5,7 +5,6 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
@@ -13,6 +12,7 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.AgencyEnquiryRevocationTaskRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
 import java.time.Clock;
@@ -58,7 +58,7 @@ class AgencyEnquiryRevocationPersistenceIT {
   @MockitoBean private SessionRepository sessions;
   @MockitoBean private ConsultantRepository consultants;
   @MockitoBean private AgencyMatrixCredentialClient agencyCredentials;
-  @MockitoBean private MatrixSynapseService matrix;
+  @MockitoBean private SessionRoomGateway rooms;
 
   @Test
   void retrySurvivesTheCommittedDetachAndIsNotRepeatedAfterConfirmation() {
@@ -85,8 +85,8 @@ class AgencyEnquiryRevocationPersistenceIT {
     var operator = new AgencyMatrixCredentialsDTO();
     operator.setMatrixUserId(OPERATOR_ID);
     when(agencyCredentials.fetchMatrixCredentials(AGENCY_ID)).thenReturn(Optional.of(operator));
-    when(matrix.loginAsUserAccessToken(OPERATOR_ID)).thenReturn(TOKEN);
-    when(matrix.removeUserFromRoom(ROOM, MEMBER_ID, TOKEN)).thenReturn(false, true);
+    when(rooms.loginAsUser(OPERATOR_ID)).thenReturn(TOKEN);
+    when(rooms.removeUserFromRoom(ROOM, MEMBER_ID, TOKEN)).thenReturn(false, true);
 
     var transaction = new TransactionTemplate(transactionManager);
     transaction.executeWithoutResult(
@@ -112,6 +112,6 @@ class AgencyEnquiryRevocationPersistenceIT {
     revocations.retryDue();
 
     assertThat(tasks.pendingSessionIds(RELATION_ID)).isEmpty();
-    verify(matrix, times(2)).removeUserFromRoom(ROOM, MEMBER_ID, TOKEN);
+    verify(rooms, times(2)).removeUserFromRoom(ROOM, MEMBER_ID, TOKEN);
   }
 }
