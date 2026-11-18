@@ -752,6 +752,36 @@ class AdminDashboardStatisticsServiceTest {
     assertThat(tenantTwo.metrics()).isNull();
   }
 
+  @Test
+  void buildDashboard_Should_ReturnPlatformScope_ForStatisticsReader() {
+    givenPlatformAdminWithTenants(List.of(groupCount(1L, 6), groupCount(3L, 8)));
+    authenticatedUser.setRoles(Set.of(UserRole.STATISTICS_READER.getValue()));
+
+    var dashboard = service.buildDashboard();
+
+    assertThat(dashboard.scope()).isEqualTo(DashboardScope.PLATFORM);
+    assertThat(dashboard.targets().get(0).targetType()).isEqualTo(TargetType.PLATFORM);
+  }
+
+  @Test
+  void buildDashboard_Should_ThrowForbidden_When_StatisticsReaderIsNotOnThePlatformTenant() {
+    // a valid platform context must not stand in for the reader's own tenant
+    TenantContext.setCurrentTenant(0L);
+    authenticatedUser.setRoles(Set.of(UserRole.STATISTICS_READER.getValue()));
+    authenticatedUser.setTenantId(4L);
+
+    assertThatThrownBy(() -> service.buildDashboard()).isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void buildDashboard_Should_ThrowForbidden_When_StatisticsReaderHasNoTenant() {
+    TenantContext.setCurrentTenant(0L);
+    authenticatedUser.setRoles(Set.of(UserRole.STATISTICS_READER.getValue()));
+    authenticatedUser.setTenantId(null);
+
+    assertThatThrownBy(() -> service.buildDashboard()).isInstanceOf(ForbiddenException.class);
+  }
+
   private void givenPlatformAdminWithTenants(List<GroupCountProjection> counsellorsByTenant) {
     authenticatedUser.setRoles(
         Set.of(UserRole.TENANT_ADMIN.getValue(), UserRole.AGENCY_ADMIN.getValue()));

@@ -84,6 +84,10 @@ class UserAccountControllerDelegate {
       partialUserData = consultantDataProvider.retrieveData(consultant);
       enrichConsultantDisplayName(partialUserData);
       enrichConsultantAvailability(partialUserData);
+    } else if (authenticatedUser.isStatisticsReader()) {
+      // Read-only statistics account (#1666): Keycloak profile only; 2FA is mandatory.
+      partialUserData = keycloakUserDataProvider.retrieveAuthenticatedUserData();
+      partialUserData.setEncourage2fa(true);
     } else if (isTenantAdmin() || isAgencyAdmin()) {
       // A Beratungsstellen-Admin needs their assigned agencies so the Admin UI can land them on
       // their own agency. The tenant-admin branch stays Keycloak-only.

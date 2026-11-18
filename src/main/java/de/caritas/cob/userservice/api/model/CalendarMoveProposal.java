@@ -93,4 +93,8 @@ public class CalendarMoveProposal {
 
   @Column(name = "decided_at")
   private Instant decidedAt;
+
+  /** Why the proposer asks (ORISO-UserService#1663); null when they gave none. */
+  @Column(length = 500)
+  private String reason;
 }

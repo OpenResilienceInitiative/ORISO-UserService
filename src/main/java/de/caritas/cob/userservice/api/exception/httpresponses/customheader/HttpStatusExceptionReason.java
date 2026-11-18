@@ -104,6 +104,12 @@ public enum HttpStatusExceptionReason {
    */
   GROUP_INVITE_INVALID,
   /**
+   * #1662: the running call has no share-link binding this counsellor may use (a group call a plain
+   * member or an advice seeker started, or a call the server has not registered yet). Unlike a
+   * plain 404 ("no link yet") this one stays: the app stops asking after a bounded number of tries.
+   */
+  CALL_SHARE_LINK_NO_CALL,
+  /**
    * An admin switched this feature off for the Träger or Beratungsstelle (#1564), or the switch
    * cannot be read. The counselling app hides the button; this is the server refusing the action.
    */

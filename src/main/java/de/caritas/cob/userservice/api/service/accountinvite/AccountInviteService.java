@@ -66,9 +66,6 @@ public class AccountInviteService {
           AccountInviteStatus.DRAFT,
           AccountInviteStatus.EMAIL_SENT);
 
-  private static final List<AccountInviteStatus> EXPIRABLE_STATUSES =
-      List.of(AccountInviteStatus.DRAFT, AccountInviteStatus.EMAIL_SENT);
-
   /** Everything but ACCEPTED and REVOKED, as before the revoke became conditional. */
   private static final List<AccountInviteStatus> REVOCABLE_STATUSES =
       List.of(
@@ -78,7 +75,15 @@ public class AccountInviteService {
           AccountInviteStatus.EXPIRED,
           AccountInviteStatus.SUPERSEDED);
 
+  /** No link of these works any more; only such an invite is marked for deletion. */
+  private static final List<AccountInviteStatus> SETTLED_STATUSES =
+      List.of(
+          AccountInviteStatus.REVOKED, AccountInviteStatus.EXPIRED, AccountInviteStatus.SUPERSEDED);
+
   private static final int EXPIRY_SWEEP_BATCH = 100;
+
+  /** Bounds one sweep run to 2,000 invites; the next run, minutes later, takes the rest. */
+  private static final int EXPIRY_SWEEP_MAX_BATCHES = 20;
 
   /** Expiry already freed the address claim and the reserved numbers. */
   private static final String INACTIVE_RESEND_MESSAGE = "Inactive invites cannot be resent";
@@ -651,42 +656,93 @@ public class AccountInviteService {
   }
 
   /**
-   * Expires elapsed invites that still hold a Träger or Beratungsstelle number; run by {@link
-   * ExpiredInviteReservationSweep}.
+   * Expires every sent invite whose link has lapsed, and a lapsed draft that holds a Träger or
+   * Beratungsstelle number, giving back a number no other invite needs; run by {@link
+   * ExpiredInviteReservationSweep}. Before ORISO-Admin#1522 only number-holding invites were swept,
+   * so a never-opened counsellor invite stayed {@code EMAIL_SENT} and was listed as open forever
+   * (ORISO-UserService#1617). A number-free draft is left alone: sending it re-arms its expiry.
+   *
+   * <p>Existing-account setup links are left to {@link ExistingAccountSetupService}, which keeps
+   * their private recovery data. Works in id order, at most {@link #EXPIRY_SWEEP_MAX_BATCHES}
+   * batches per run, so a legacy backlog drains over a few runs and a row that is busy this time
+   * never blocks the rows after it.
    *
    * @return how many invites were expired
    */
   public int expireElapsedInvites() {
     LocalDateTime now = LocalDateTime.now();
-    List<Long> elapsed =
-        requiresNewTransaction()
-            .execute(
-                transaction ->
-                    accountInviteRepository
-                        .findElapsedHoldingANumber(
-                            EXPIRABLE_STATUSES,
-                            ReservationLedger.RESERVING_MODES,
-                            now,
-                            PageRequest.of(0, EXPIRY_SWEEP_BATCH))
-                        .stream()
-                        .map(AccountInvite::getId)
-                        .toList());
     int expired = 0;
-    // One transaction per invite: the sweep never holds one invite's locks while taking another's.
-    for (Long inviteId : elapsed == null ? List.<Long>of() : elapsed) {
+    long afterId = 0L;
+    for (int batch = 0; batch < EXPIRY_SWEEP_MAX_BATCHES; batch++) {
+      long cursor = afterId;
+      List<Long> elapsed =
+          requiresNewTransaction()
+              .execute(
+                  transaction ->
+                      accountInviteRepository.findElapsedInviteIdsToExpire(
+                          AccountInvitePurpose.INVITE,
+                          AccountInviteStatus.EMAIL_SENT,
+                          AccountInviteStatus.DRAFT,
+                          ReservationLedger.RESERVING_MODES,
+                          now,
+                          cursor,
+                          PageRequest.of(0, EXPIRY_SWEEP_BATCH)));
+      if (elapsed == null || elapsed.isEmpty()) {
+        break;
+      }
+      // One transaction per invite: the sweep never holds one invite's locks while taking
+      // another's.
+      for (Long inviteId : elapsed) {
+        if (expireIfStillElapsed(inviteId, now)) {
+          expired++;
+        }
+      }
+      afterId = elapsed.get(elapsed.size() - 1);
+      if (elapsed.size() < EXPIRY_SWEEP_BATCH) {
+        break;
+      }
+    }
+    return expired;
+  }
+
+  /**
+   * Expires one invite the sweep picked, under its row lock. A send that renewed the lapsed link
+   * after the pick (new token and expiry, still EMAIL_SENT) wins: the expiry is checked again under
+   * the lock. A row another writer holds is skipped and left to the next run, so it never stops the
+   * rest of the sweep; any other failure still surfaces.
+   */
+  private boolean expireIfStillElapsed(Long inviteId, LocalDateTime now) {
+    try {
       Boolean done =
           requiresNewTransaction()
               .execute(
                   transaction ->
-                      accountInviteRepository
-                          .findById(inviteId)
+                      InviteRowHold.lock(accountInviteRepository, inviteId)
+                          .filter(invite -> hasLapsed(invite, now))
                           .map(invite -> expireAndReleaseNumbers(invite, now))
                           .orElse(false));
-      if (Boolean.TRUE.equals(done)) {
-        expired++;
+      return Boolean.TRUE.equals(done);
+    } catch (CustomValidationHttpStatusException conflict) {
+      if (!InviteRowHold.isBusy(conflict)) {
+        throw conflict;
       }
+      return false;
     }
-    return expired;
+  }
+
+  private static boolean hasLapsed(AccountInvite invite, LocalDateTime now) {
+    return invite.getExpiresAt() != null && !invite.getExpiresAt().isAfter(now);
+  }
+
+  /**
+   * A sent invite whose link has lapsed, as the expiry sweep will store it. Lets a view report
+   * {@code EXPIRED} in the minutes between two sweeps without writing to the row.
+   */
+  public static boolean isElapsedOpenInvite(AccountInvite invite, LocalDateTime now) {
+    return invite.getPurpose() == AccountInvitePurpose.INVITE
+        && invite.getStatus() == AccountInviteStatus.EMAIL_SENT
+        && invite.getExpiresAt() != null
+        && !invite.getExpiresAt().isAfter(now);
   }
 
   /**
@@ -695,7 +751,42 @@ public class AccountInviteService {
    */
   @Transactional
   public AccountInvite revokeInvite(Long inviteId) {
+    return revokeLocked(findAuthorizedInviteForUpdate(inviteId));
+  }
+
+  /**
+   * An admin deletes an invite (ORISO-Admin#1522): an open one is revoked at once — its link stops
+   * working, its address and any reserved number are given back — and the row is marked, so it is
+   * no longer listed and the nightly invite purge removes it. An expired or replaced invite keeps
+   * its status and is only marked. Repeating the call changes nothing.
+   *
+   * <p>Refused with 409 {@code INVITE_ALREADY_ACCEPTED} once the account exists (the invite goes
+   * with the account), and with 409 {@code INVITE_BUSY} while an existing account is being set up
+   * through it.
+   */
+  @Transactional
+  public void deleteInvite(Long inviteId) {
     AccountInvite invite = findAuthorizedInviteForUpdate(inviteId);
+    if (invite.getDeletionRequestedAt() != null) {
+      return;
+    }
+    if (invite.getStatus() == AccountInviteStatus.ACCEPTED) {
+      throw inviteAlreadyAccepted();
+    }
+    AccountInvite settled =
+        ReservationLedger.PENDING_STATUSES.contains(invite.getStatus())
+            ? revokeLocked(invite)
+            : invite;
+    if (!SETTLED_STATUSES.contains(settled.getStatus())) {
+      throw InviteRowHold.conflict(HttpStatusExceptionReason.INVITE_BUSY);
+    }
+    accountInviteRepository.markForDeletion(
+        inviteId, SETTLED_STATUSES, authenticatedUser.getUserId(), LocalDateTime.now());
+  }
+
+  /** Revokes an invite already locked and authorized; see {@link #revokeInvite(Long)}. */
+  private AccountInvite revokeLocked(AccountInvite invite) {
+    Long inviteId = invite.getId();
     if (invite.getStatus() == AccountInviteStatus.ACCEPTED) {
       throw inviteAlreadyAccepted();
     }
@@ -705,7 +796,7 @@ public class AccountInviteService {
     LocalDateTime now = LocalDateTime.now();
     int revoked =
         accountInviteRepository.revokeWhileStatusIn(
-            invite.getId(), REVOCABLE_STATUSES, authenticatedUser.getUserId(), now);
+            inviteId, REVOCABLE_STATUSES, authenticatedUser.getUserId(), now);
     AccountInvite current = findInvite(inviteId);
     if (revoked == 0) {
       if (current.getStatus() == AccountInviteStatus.ACCEPTED) {

@@ -59,7 +59,9 @@ public enum Authority {
   SUPERVISOR_CONSULTANT(
       UserRole.SUPERVISOR_CONSULTANT, List.of(CONSULTANT_DEFAULT, VIEW_AGENCY_CONSULTANTS)),
   GLOBAL_SUPPORT_ADMIN(
-      UserRole.GLOBAL_SUPPORT_ADMIN, singletonList(AuthorityValue.GLOBAL_SUPPORT_ADMIN));
+      UserRole.GLOBAL_SUPPORT_ADMIN, singletonList(AuthorityValue.GLOBAL_SUPPORT_ADMIN)),
+  /** Exactly one authority: reading the platform statistics. Nothing else may map to it. */
+  STATISTICS_READER(UserRole.STATISTICS_READER, singletonList(AuthorityValue.STATISTICS_READER));
 
   private final UserRole userRole;
   private final List<String> grantedAuthorities;
@@ -100,5 +102,6 @@ public enum Authority {
     public static final String TENANT_ADMIN = PREFIX + "TENANT_ADMIN";
     public static final String RESTRICTED_AGENCY_ADMIN = PREFIX + "RESTRICTED_AGENCY_ADMIN";
     public static final String GLOBAL_SUPPORT_ADMIN = PREFIX + "GLOBAL_SUPPORT_ADMIN";
+    public static final String STATISTICS_READER = PREFIX + "STATISTICS_READER";
   }
 }

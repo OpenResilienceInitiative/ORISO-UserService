@@ -93,6 +93,8 @@ class MatrixCallObservationIsolationTest {
     // that was already ended (#1641 "ending wins"); the row never grants anything there.
     // FE#2209 round 6: SessionCallRevival reads the stored end rows only to KEEP an ended binding
     // ended (the assigned counsellor's own end blocks its revival); they never grant anything.
+    // #1662: MatrixGroupCallBindingService reads the rows only to REFUSE binding a group call its
+    // moderator already ended ("ending wins"), as the session path does; they never grant anything.
     // Frank, 17 Nov 2026: CounsellorStartedCall reads a live row only to tell a counsellor's
     // running call from an advice seeker's start. It narrows the media gate (before, every member
     // got media for any call room); it never seats a guest and never passes a rule the gate's
@@ -103,6 +105,7 @@ class MatrixCallObservationIsolationTest {
             "CounsellorStartedCall",
             "MatrixCallStateController",
             "MatrixCallStateService",
+            "MatrixGroupCallBindingService",
             "MatrixSessionCallBindingService",
             "SessionCallRevival");
   }

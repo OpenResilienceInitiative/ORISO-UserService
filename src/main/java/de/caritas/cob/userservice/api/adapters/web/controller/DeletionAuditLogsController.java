@@ -42,6 +42,9 @@ public class DeletionAuditLogsController {
   private final @NonNull DeletionAuditService deletionAuditService;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull AdminScope adminScope;
+  private final @NonNull de.caritas.cob.userservice.api.service.accountinvite
+          .DeletedUnitInviteRevocation
+      deletedUnitInviteRevocation;
 
   /**
    * Records an agency or tenant deletion. Best effort: the write never reports a failure back, so
@@ -107,6 +110,10 @@ public class DeletionAuditLogsController {
           request.getTenantId(),
           request.getOutcome());
     }
+    // A deleted Träger or Beratungsstelle keeps no working invitation (ORISO-Admin#1522); best
+    // effort like the log entry itself.
+    deletedUnitInviteRevocation.onDeletionReported(
+        request.getTargetType(), request.getTargetId(), request.getOutcome());
     return ResponseEntity.noContent().build();
   }
 

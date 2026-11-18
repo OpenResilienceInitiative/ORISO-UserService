@@ -191,6 +191,16 @@ public class User implements TenantAware, NotificationsAware {
   @jakarta.persistence.Embedded private TemporaryAccountSnapshot temporaryAccountSnapshot;
 
   /**
+   * #1662: the guest account mode a temporary guest entered under (the link's or circle's mode as
+   * capped at registration). "Konto behalten" is judged by it, so a later switch of the link only
+   * affects new guests. Null for permanent accounts and for temporary accounts created before it
+   * was stored.
+   */
+  @Enumerated(EnumType.STRING)
+  @Column(name = "guest_account_mode_at_entry", length = 16)
+  private GuestAccountMode guestAccountModeAtEntry;
+
+  /**
    * The animal the advice seeker chose in their profile (#1240), as its lower-case file stem. Null
    * shows the default the app derives from the user id.
    */

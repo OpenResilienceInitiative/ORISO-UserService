@@ -93,6 +93,38 @@ class AskerEmailCollectionPolicyTest {
         .isEqualTo(type == ConversationType.AGENCY_COUNSELLING);
   }
 
+  // --- #1662: a temporary account never saves an e-mail address ---
+
+  @Test
+  void aTemporaryAccountMayNotSaveAnEmailAddress_EvenWhereTheContextAllowsIt() {
+    allowOnly(ConversationType.SELF_HELP);
+    user.setTemporaryAccount(true);
+
+    assertThat(policy.allowedForAccount(user)).isFalse();
+    assertThat(policy.capabilityForAccount(user)).isFalse();
+    assertThatThrownBy(() -> policy.requireForAccount(user)).isInstanceOf(ForbiddenException.class);
+    verifyNoInteractions(tenants, sessions, userChats, transactions);
+  }
+
+  @Test
+  void aKeptAccountMaySaveAnEmailAddressAgain() {
+    allowOnly(ConversationType.SELF_HELP);
+    when(userChats.findByUser(user))
+        .thenReturn(List.of(membership(ConversationType.SELF_HELP, user)));
+    user.setTemporaryAccount(false);
+
+    assertThat(policy.allowedForAccount(user)).isTrue();
+  }
+
+  @Test
+  void aTemporaryRegistrationMayNotLeaveAnEmailAddress() {
+    allowOnly(ConversationType.SELF_HELP);
+
+    assertThatThrownBy(() -> policy.requireForRegistration(42L, ConversationType.SELF_HELP, true))
+        .isInstanceOf(ForbiddenException.class);
+    policy.requireForRegistration(42L, ConversationType.SELF_HELP, false);
+  }
+
   @Test
   void genuineJoinedSelfHelpMembershipAuthorizesTheSelfHelpContext() {
     allowOnly(ConversationType.SELF_HELP);

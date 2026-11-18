@@ -5,6 +5,7 @@ public enum DeletionAuditTargetType {
   CONSULTANT,
   AGENCY_ADMIN,
   TENANT_ADMIN,
+  STATISTICS_READER,
   /** Written by AgencyService/TenantService once they report their deletions (not yet wired). */
   AGENCY,
   TENANT

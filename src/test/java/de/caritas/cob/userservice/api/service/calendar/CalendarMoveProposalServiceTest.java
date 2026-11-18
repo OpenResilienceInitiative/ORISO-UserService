@@ -141,6 +141,44 @@ class CalendarMoveProposalServiceTest {
     assertThat(told.getValue().proposedStart()).isEqualTo(NEW_START);
   }
 
+  /** ORISO-UserService#1663: the proposer may say why; the colleague reads it with the time. */
+  @Test
+  void create_Should_KeepTheTrimmedReason_And_ReturnIt() {
+    stageVisibleAppointment();
+
+    var created =
+        service.create(
+            request(appointment.getId().toString(), NEW_START, NEW_END).reason("  Room taken  "));
+
+    var stored = ArgumentCaptor.forClass(CalendarMoveProposal.class);
+    verify(proposals).save(stored.capture());
+    assertThat(stored.getValue().getReason()).isEqualTo("Room taken");
+    assertThat(created.getReason()).isEqualTo("Room taken");
+  }
+
+  @Test
+  void create_Should_StoreNoReason_When_ItIsBlank() {
+    stageVisibleAppointment();
+
+    var created =
+        service.create(request(appointment.getId().toString(), NEW_START, NEW_END).reason("   "));
+
+    var stored = ArgumentCaptor.forClass(CalendarMoveProposal.class);
+    verify(proposals).save(stored.capture());
+    assertThat(stored.getValue().getReason()).isNull();
+    assertThat(created.getReason()).isNull();
+  }
+
+  @Test
+  void create_Should_BeRefused_When_TheReasonIsLongerThan500Characters() {
+    var id = appointment.getId().toString();
+
+    assertThatThrownBy(
+            () -> service.create(request(id, NEW_START, NEW_END).reason("x".repeat(501))))
+        .isInstanceOf(BadRequestException.class);
+    verify(proposals, never()).save(any());
+  }
+
   @Test
   void create_Should_ReplaceTheCallersOpenProposal_ForTheSameAppointment() {
     stageVisibleAppointment();
@@ -268,6 +306,7 @@ class CalendarMoveProposalServiceTest {
     var receivedAppointment = copyOf(appointment);
     receivedAppointment.getSession().setConsultant(consultant(ME, "Me"));
     received.setAppointment(receivedAppointment);
+    received.setReason("Room taken");
     when(proposals.findReceived(ME, Status.OPEN)).thenReturn(List.of(received));
     when(consultants.findAllById(any()))
         .thenReturn(
@@ -285,6 +324,8 @@ class CalendarMoveProposalServiceTest {
         .extracting(dto -> dto.getId())
         .containsExactly(received.getId());
     assertThat(listing.getReceived().get(0).getProposerName()).isEqualTo("Someone");
+    assertThat(listing.getReceived().get(0).getReason()).isEqualTo("Room taken");
+    assertThat(listing.getSent().get(0).getReason()).isNull();
   }
 
   @Test

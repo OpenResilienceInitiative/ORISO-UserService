@@ -1075,6 +1075,13 @@ public class MatrixSynapseService implements MatrixUserClient, MatrixRoomMembers
       log.info("Successfully deactivated Matrix user: {}", redactor.pseudonym(matrixUserId));
       return response.getStatusCode().is2xxSuccessful();
 
+    } catch (org.springframework.web.client.HttpClientErrorException.NotFound gone) {
+      // Nobody can sign in with a user Synapse no longer knows: deactivation has already happened
+      // (ORISO-Admin#1523), as for a missing Keycloak user.
+      log.warn(
+          "Matrix user {} not found, treating it as already deactivated",
+          redactor.pseudonym(matrixUserId));
+      return true;
     } catch (Exception ex) {
       log.warn(
           "Failed to deactivate Matrix user {}: {}",

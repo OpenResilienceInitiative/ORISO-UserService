@@ -159,6 +159,19 @@ public class MatrixCallBinding {
   }
 
   /**
+   * Who may end this call explicitly (FE#2209, Frank 13 Nov; #1662, Frank 17 Nov: group calls
+   * follow the same rule): the caller who registered it, or a counsellor who is in the call right
+   * now and whose account is active. {@code activeCounsellor} is asked only for somebody in the
+   * call.
+   */
+  public boolean mayBeEndedBy(
+      String enderMatrixId, java.util.function.BooleanSupplier activeCounsellor, long now) {
+    if (enderMatrixId == null) return false;
+    if (enderMatrixId.equals(callerMatrixId)) return true;
+    return isInCall(enderMatrixId, now) && activeCounsellor.getAsBoolean();
+  }
+
+  /**
    * FE#2209 review: the session's assigned counsellor takes over a binding that somebody else's
    * plaintext invite created for the same call (same source room and call id, so the unique key
    * stays). It becomes a fresh, not yet observed call in the counsellor's call room; nothing of the

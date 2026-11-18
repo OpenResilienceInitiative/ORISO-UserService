@@ -108,8 +108,11 @@ import org.springframework.transaction.support.TransactionTemplate;
   DirectCallKnockService.class,
   EffectiveDirectInvitePolicy.class,
   ConfiguredTemporaryAccountPolicy.class,
+  de.caritas.cob.userservice.api.service.agencyinvitelink.PlatformGuestAccountModePolicy.class,
   de.caritas.cob.userservice.api.service.matrix.DedicatedCallRoom.class,
   de.caritas.cob.userservice.api.service.matrix.MatrixSessionCallBindingService.class,
+  de.caritas.cob.userservice.api.service.matrix.MatrixGroupCallBindingService.class,
+  de.caritas.cob.userservice.api.service.matrix.GroupCallCreatorAgency.class,
   de.caritas.cob.userservice.api.service.matrix.MatrixCallBindingService.class,
   de.caritas.cob.userservice.api.service.matrix.MatrixCallBindingWriter.class,
   de.caritas.cob.userservice.api.service.matrix.OrisoRoomRegistry.class,
@@ -187,6 +190,21 @@ class CallShareLinkIT {
   @MockitoBean private MatrixFeedUpdateSignalService feedUpdateSignals;
   @MockitoBean private IdentityTombstoneService tombstones;
   @MockitoBean private TenantService tenantService;
+
+  // #1662: the group's moderator rule and the Beratungsstelle's consulting type.
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.chat.GroupChatConsultantAccess groupAccess;
+
+  @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.service.matrix.MatrixGroupCallBindingService groupBindings;
+
+  @Autowired private de.caritas.cob.userservice.api.port.out.ChatAgencyRepository chatAgencyRows;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository consultantAgencyRows;
+
   @MockitoBean private EffectiveAgencySettingsLookup effectiveAgencySettings;
 
   private final ObjectMapper json = new ObjectMapper();
@@ -301,6 +319,32 @@ class CallShareLinkIT {
         });
   }
 
+  /*
+   * #1662 (Frank, 17 Nov): the app tells "no call to share" (a call without a binding, e.g. a group
+   * call a plain member started) from "no link yet", so it can stop asking.
+   */
+  @Test
+  void current_Should_NameAMissingCall_But_NotAMissingLink() throws Exception {
+    mvc(counsellor.getId(), "consultant", null)
+        .perform(
+            get("/matrix/calls/share-links")
+                .param("sourceRoomId", SOURCE)
+                .param("callId", "no-such-call"))
+        .andExpect(status().isNotFound())
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
+                .string("X-Reason", "CALL_SHARE_LINK_NO_CALL"));
+    mvc(counsellor.getId(), "consultant", null)
+        .perform(
+            get("/matrix/calls/share-links")
+                .param("sourceRoomId", SOURCE)
+                .param("callId", "share-call"))
+        .andExpect(status().isNotFound())
+        .andExpect(
+            org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
+                .doesNotExist("X-Reason"));
+  }
+
   @Test
   void audioSwitchedOff_Should_RefuseTheShareLink_ButNotTheOtherMedia() throws Exception {
     allowDirectInvites(true, false, true);
@@ -370,6 +414,8 @@ class CallShareLinkIT {
             .andExpect(jsonPath("$.knock").value(true))
             .andExpect(jsonPath("$.temporaryAccount").value(true))
             .andExpect(jsonPath("$.temporaryAccountAllowed").value(true))
+            .andExpect(jsonPath("$.guestAccountMode").value("TEMPORARY"))
+            .andExpect(jsonPath("$.allowedGuestAccountModes.length()").value(3))
             .andExpect(jsonPath("$.medium").value("AUDIO"))
             .andExpect(jsonPath("$.active").value(true))
             .andReturn();
@@ -425,6 +471,17 @@ class CallShareLinkIT {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.token").value(token))
         .andExpect(jsonPath("$.knock").value(false));
+    // #1662: the guest account mode changes on the same link; the old switch follows it.
+    mvc(counsellor.getId(), "consultant", null)
+        .perform(
+            patch("/matrix/calls/share-links/" + linkId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"guestAccountMode\":\"GUEST_CHOOSES\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.guestAccountMode").value("GUEST_CHOOSES"))
+        .andExpect(jsonPath("$.temporaryAccount").value(true));
+    assertThat(links.findById(linkId).orElseThrow().getGuestAccountMode())
+        .isEqualTo(de.caritas.cob.userservice.api.model.GuestAccountMode.GUEST_CHOOSES);
     var second = shareLinks.join(token, users.findById("share-guest-2").orElseThrow());
     assertThat(second.callAdmitted()).isTrue();
     assertThat(second.admission()).isEqualTo(InviteLinkAdmission.DIRECT);
@@ -646,6 +703,136 @@ class CallShareLinkIT {
                 encryptedMedia,
                 true))
         .isFalse();
+  }
+
+  /**
+   * #1662 (Frank, 17 Nov): an encrypted group call gets its binding from the verified registration
+   * of a moderator who started it. Its share link then carries that moderator's Beratungsstelle and
+   * its consulting type, so new guests can register and consent; nobody else can bind it.
+   */
+  @Test
+  void aGroupModeratorsVerifiedRegistrationGivesTheGroupCallALinkUnderTheirAgency() {
+    String groupRoom = "!share-group:example";
+    String groupMedia = "!share-group-media:example";
+    String caller = counsellor.getMatrixUserId();
+    var chat =
+        transaction.execute(
+            status -> {
+              var start = LocalDateTime.now();
+              var owner = consultants.findById(counsellor.getId()).orElseThrow();
+              var saved =
+                  chats.save(
+                      de.caritas.cob.userservice.api.model.Chat.builder()
+                          .topic("Synthetic Gesprächskreis")
+                          .createDate(start)
+                          .updateDate(start)
+                          .consultingTypeId(1)
+                          .chatOwner(owner)
+                          .initialStartDate(start)
+                          .startDate(start)
+                          .duration(60)
+                          .repetitive(false)
+                          .conversationType(
+                              de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP)
+                          .matrixRoomId(groupRoom)
+                          .active(true)
+                          .build());
+              chatAgencyRows.save(
+                  de.caritas.cob.userservice.api.model.ChatAgency.builder()
+                      .chat(saved)
+                      .agencyId(99L)
+                      .build());
+              consultantAgencyRows.save(
+                  de.caritas.cob.userservice.api.model.ConsultantAgency.builder()
+                      .consultant(owner)
+                      .agencyId(99L)
+                      .tenantId(7L)
+                      .createDate(start)
+                      .updateDate(start)
+                      .status(de.caritas.cob.userservice.api.model.ConsultantAgencyStatus.CREATED)
+                      .build());
+              return saved;
+            });
+    try {
+      when(groupAccess.mayModerate(
+              org.mockito.ArgumentMatchers.any(),
+              org.mockito.ArgumentMatchers.argThat(
+                  value -> value != null && counsellor.getId().equals(value.getId()))))
+          .thenReturn(true);
+      when(agencyService.getAgency(99L))
+          .thenReturn(
+              new de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO()
+                  .id(99L)
+                  .consultingType(1));
+      var members = List.of(ASKER, caller, colleague.getMatrixUserId());
+      when(matrix.getCallRoomMembers(groupRoom)).thenReturn(Optional.of(members));
+      when(matrix.getRoomMembers(groupRoom)).thenReturn(Optional.of(members));
+      when(matrix.getCallRoomBinding(eq(groupMedia), anyString()))
+          .thenReturn(Optional.of(Map.of("call_id", "group-call", "source_room_id", groupRoom)));
+
+      // A member colleague who may not moderate, and an advice seeker, get no binding.
+      assertThat(
+              groupBindings.bind(
+                  actor(colleague.getId(), "consultant"),
+                  groupRoom,
+                  "group-call",
+                  groupMedia,
+                  true))
+          .isFalse();
+      assertThat(
+              groupBindings.bind(
+                  actor("share-asker", "user"), groupRoom, "group-call", groupMedia, true))
+          .isFalse();
+      // A counsellor of another Träger gets none either.
+      var foreign = actor(counsellor.getId(), "consultant");
+      foreign.setTenantId(8L);
+      assertThat(groupBindings.bind(foreign, groupRoom, "group-call", groupMedia, true)).isFalse();
+      assertThat(bindings.findBySourceRoomIdAndCallId(groupRoom, "group-call")).isEmpty();
+
+      assertThat(
+              groupBindings.bind(
+                  actor(counsellor.getId(), "consultant"),
+                  groupRoom,
+                  "group-call",
+                  groupMedia,
+                  true))
+          .isTrue();
+      var bound = bindings.findBySourceRoomIdAndCallId(groupRoom, "group-call").orElseThrow();
+      assertThat(bound.getChatId()).isEqualTo(chat.getId());
+      assertThat(bound.getSessionId()).isNull();
+      inCall(groupMedia, caller, System.currentTimeMillis() + 600000);
+
+      var share = shareLinks.create(7L, counsellor.getId(), groupRoom, "group-call", null, null);
+      assertThat(share.link().getAgencyId()).isEqualTo(99L);
+      assertThat(share.link().getConsultingTypeId()).isEqualTo(1);
+      assertThat(share.link().getTopicId()).isNull();
+      assertThat(share.temporaryAccountAllowed()).isTrue();
+      shareLinks.requireUsable(share.link());
+
+      // A colleague in the conversation and in the call reaches the link ...
+      inCall(groupMedia, colleague.getMatrixUserId(), System.currentTimeMillis() + 600000);
+      assertThat(shareLinks.current(7L, colleague.getId(), groupRoom, "group-call").link().getId())
+          .isEqualTo(share.link().getId());
+      // ... and loses it with the conversation membership alone (no IDOR).
+      when(matrix.getCallRoomMembers(groupRoom)).thenReturn(Optional.of(List.of(ASKER, caller)));
+      assertThatThrownBy(() -> shareLinks.current(7L, colleague.getId(), groupRoom, "group-call"))
+          .isInstanceOf(
+              de.caritas.cob.userservice.api.exception.httpresponses
+                  .CustomValidationHttpStatusException.class);
+    } finally {
+      transaction.executeWithoutResult(
+          status -> {
+            links.deleteAll();
+            bindings.deleteAll();
+            chatAgencyRows.deleteAll(chatAgencyRows.findByChat_Id(chat.getId()));
+            consultantAgencyRows.deleteAll(
+                java.util.stream.StreamSupport.stream(
+                        consultantAgencyRows.findAll().spliterator(), false)
+                    .filter(row -> counsellor.getId().equals(row.getConsultant().getId()))
+                    .toList());
+            chats.deleteById(chat.getId());
+          });
+    }
   }
 
   private static de.caritas.cob.userservice.api.helper.AuthenticatedUser actor(
