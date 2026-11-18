@@ -102,7 +102,10 @@ public class StatelessCsrfFilter extends OncePerRequestFilter {
           && "/internal/matrix/group-join-policy".equals(request.getRequestURI())) return true;
       // The AddonService is a machine client as well and holds only a technical service token.
       if ("POST".equals(request.getMethod())
-          && "/users/event-notifications/addon".equals(request.getRequestURI())) return true;
+          && ("/users/event-notifications/addon".equals(request.getRequestURI())
+              || "/service/users/event-notifications/addon".equals(request.getRequestURI()))) {
+        return true;
+      }
       if ("/internal/matrixrtc/call-policy".equals(request.getRequestURI())
           || "/internal/matrixrtc/media-access".equals(request.getRequestURI())) {
         return true;
