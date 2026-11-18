@@ -7,14 +7,12 @@ import java.time.Duration;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Profile;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 @Component
 @Profile("!testing")
-@ConditionalOnProperty(name = "matrix.membership.lateJoiner.enabled", matchIfMissing = true)
 class AgencyEnquiryRevocationScheduler {
 
   private static final String TASK_NAME = "agency-enquiry-access-revocation";
