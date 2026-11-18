@@ -105,8 +105,9 @@ public class StatelessCsrfFilter extends OncePerRequestFilter {
       // the /service prefix, exactly.
       if ("POST".equals(request.getMethod())
           && ("/users/event-notifications/addon".equals(request.getRequestURI())
-              || "/service/users/event-notifications/addon".equals(request.getRequestURI())))
+              || "/service/users/event-notifications/addon".equals(request.getRequestURI()))) {
         return true;
+      }
       if ("/internal/matrixrtc/call-policy".equals(request.getRequestURI())
           || "/internal/matrixrtc/media-access".equals(request.getRequestURI())) {
         return true;
