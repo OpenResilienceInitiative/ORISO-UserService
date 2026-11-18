@@ -63,6 +63,9 @@ class MessengerTest {
   private de.caritas.cob.userservice.api.service.matrixrtc.CallParticipantEviction
       callParticipantEviction;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.livechat.LiveChatQueuePolicy liveChatQueuePolicy;
+
   @InjectMocks private Messenger messenger;
 
   @BeforeEach
@@ -455,5 +458,48 @@ class MessengerTest {
     assertThat(messenger.removeConsultantFromSession(1L, "c-1")).isTrue();
     verify(groupChatMembershipService)
         .removeMemberFromRoom("!room:matrix.example.org", "@c1:matrix.example.org");
+  }
+
+  @Test
+  void requireFirstLiveChatEnquiry_Should_Refuse_When_EarlierGuestWaitsAndQueueIsStrict() {
+    when(liveChatQueuePolicy.freeChoiceEnabled()).thenReturn(false);
+    when(sessionRepository.countPendingEnquiriesAheadOf(
+            any(), any(), any(), any(), any(), any(), any(), any()))
+        .thenReturn(1L);
+
+    var refusal =
+        org.assertj.core.api.Assertions.catchThrowableOfType(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class,
+            () -> messenger.requireFirstLiveChatEnquiry(waitingLiveChatGuest()));
+
+    assertThat(refusal).isNotNull();
+    assertThat(refusal.getCustomHttpHeaders().getFirst("X-Reason"))
+        .isEqualTo("LIVE_CHAT_QUEUE_NOT_FIRST");
+  }
+
+  @Test
+  void requireFirstLiveChatEnquiry_Should_AcceptAnyGuest_When_PlatformAllowsFreeChoice() {
+    when(liveChatQueuePolicy.freeChoiceEnabled()).thenReturn(true);
+    when(sessionRepository.countPendingEnquiriesAheadOf(
+            any(), any(), any(), any(), any(), any(), any(), any()))
+        .thenReturn(3L);
+
+    messenger.requireFirstLiveChatEnquiry(waitingLiveChatGuest());
+
+    verify(sessionRepository, never())
+        .countPendingEnquiriesAheadOf(any(), any(), any(), any(), any(), any(), any(), any());
+  }
+
+  private static Session waitingLiveChatGuest() {
+    var session = new Session();
+    session.setId(7L);
+    session.setStatus(de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW);
+    session.setMainTopicId(3L);
+    session.setConsultingTypeId(1);
+    session.setAgencyId(10L);
+    session.setCreateDate(LocalDateTime.now());
+    session.setConversationType(de.caritas.cob.userservice.api.model.ConversationType.LIVE_CHAT);
+    return session;
   }
 }

@@ -95,6 +95,10 @@ components:
         oneTopicPerAgencyEnabled:
           allOf:
             - $ref: '#/components/schemas/FeatureToggleDTO'
+        # ORISO-Admin#1497: false/missing keeps the strict live-chat queue order.
+        liveChatFreeChoiceEnabled:
+          allOf:
+            - $ref: '#/components/schemas/FeatureToggleDTO'
         enableWalkthrough:
           allOf:
             - $ref: '#/components/schemas/FeatureToggleDTO'
