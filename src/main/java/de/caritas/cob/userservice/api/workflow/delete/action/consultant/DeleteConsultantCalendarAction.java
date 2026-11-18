@@ -7,7 +7,9 @@ import de.caritas.cob.userservice.api.actions.ActionCommand;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.CalendarAutoAcceptRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarBlockerRepository;
+import de.caritas.cob.userservice.api.port.out.CalendarBookingSettingRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarColleagueAppointmentRepository;
+import de.caritas.cob.userservice.api.port.out.CalendarConsultationHoursRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarMoveProposalRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarSyncRepository;
 import de.caritas.cob.userservice.api.port.out.CalendarWorkingDayExceptionRepository;
@@ -43,6 +45,8 @@ public class DeleteConsultantCalendarAction
   private final CalendarWorkingDayExceptionRepository calendarWorkingDayExceptionRepository;
   private final CalendarWorkingHoursSettingRepository calendarWorkingHoursSettingRepository;
   private final CalendarMoveProposalRepository calendarMoveProposalRepository;
+  private final CalendarConsultationHoursRepository calendarConsultationHoursRepository;
+  private final CalendarBookingSettingRepository calendarBookingSettingRepository;
   private final CalendarColleagueAppointmentRepository calendarColleagueAppointmentRepository;
   private final CalendarAutoAcceptRepository calendarAutoAcceptRepository;
   private final TransactionTemplate transaction;
@@ -54,6 +58,8 @@ public class DeleteConsultantCalendarAction
       CalendarWorkingDayExceptionRepository calendarWorkingDayExceptionRepository,
       CalendarWorkingHoursSettingRepository calendarWorkingHoursSettingRepository,
       CalendarMoveProposalRepository calendarMoveProposalRepository,
+      CalendarConsultationHoursRepository calendarConsultationHoursRepository,
+      CalendarBookingSettingRepository calendarBookingSettingRepository,
       CalendarColleagueAppointmentRepository calendarColleagueAppointmentRepository,
       CalendarAutoAcceptRepository calendarAutoAcceptRepository,
       PlatformTransactionManager transactionManager) {
@@ -63,6 +69,8 @@ public class DeleteConsultantCalendarAction
     this.calendarWorkingDayExceptionRepository = calendarWorkingDayExceptionRepository;
     this.calendarWorkingHoursSettingRepository = calendarWorkingHoursSettingRepository;
     this.calendarMoveProposalRepository = calendarMoveProposalRepository;
+    this.calendarConsultationHoursRepository = calendarConsultationHoursRepository;
+    this.calendarBookingSettingRepository = calendarBookingSettingRepository;
     this.calendarColleagueAppointmentRepository = calendarColleagueAppointmentRepository;
     this.calendarAutoAcceptRepository = calendarAutoAcceptRepository;
     this.transaction = new TransactionTemplate(transactionManager);
@@ -84,6 +92,8 @@ public class DeleteConsultantCalendarAction
             calendarWorkingHoursRepository.deleteByConsultantId(consultantId);
             calendarWorkingDayExceptionRepository.deleteByConsultantId(consultantId);
             calendarWorkingHoursSettingRepository.deleteByConsultantId(consultantId);
+            calendarConsultationHoursRepository.deleteByConsultantId(consultantId);
+            calendarBookingSettingRepository.deleteByConsultantId(consultantId);
             calendarMoveProposalRepository.deleteByConsultantId(consultantId);
             calendarColleagueAppointmentRepository.deleteByConsultantId(consultantId);
             calendarAutoAcceptRepository.deleteByConsultantOrColleague(consultantId);

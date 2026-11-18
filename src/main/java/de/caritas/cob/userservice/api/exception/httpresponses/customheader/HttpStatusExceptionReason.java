@@ -122,5 +122,22 @@ public enum HttpStatusExceptionReason {
    */
   TECHNICAL_GROUP_CHAT_ACCOUNT,
   /** The advice seeker is already marked for deletion; marking again changes nothing (#1521). */
-  ASKER_ALREADY_MARKED_FOR_DELETION
+  ASKER_ALREADY_MARKED_FOR_DELETION,
+  /**
+   * Self-booking (ORISO-Frontend#1050): the conversation already has an upcoming appointment; an
+   * advice seeker books one at a time (security review, calendar flooding).
+   */
+  SELF_BOOKING_LIMIT_REACHED,
+  /**
+   * Self-booking (ORISO-Frontend#1050): the start lies inside the lead time or beyond the booking
+   * horizon, the window the free slots are offered in.
+   */
+  SLOT_OUTSIDE_BOOKING_WINDOW,
+  /** ORISO-Frontend#2287: only a request waiting for the counsellor is confirmed or declined. */
+  APPOINTMENT_NOT_REQUESTED,
+  /**
+   * ORISO-Frontend#2287: the requested time has passed or something else takes it now, so the
+   * request cannot be confirmed; the counsellor declines it instead.
+   */
+  REQUESTED_TIME_TAKEN
 }

@@ -299,4 +299,6 @@
   <include file="db/changelog/changeset/20261117_guest_account_mode_1662/changeSet.xml"/>
   <include file="db/changelog/changeset/20261117_guest_account_mode_at_entry_1662/changeSet.xml"/>
   <include file="db/changelog/changeset/20261117_calendar_colleague_appointment_2305/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261117_calendar_consultation_hours_2287/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261117_session_appointment_request_expiry_2287/changeSet.xml"/>
 </databaseChangeLog>
