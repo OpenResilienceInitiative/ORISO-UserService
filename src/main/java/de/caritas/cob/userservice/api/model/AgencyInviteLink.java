@@ -123,7 +123,11 @@ public class AgencyInviteLink {
   @Column(name = "scheduled_at")
   private LocalDateTime scheduledAt;
 
-  /** Direct links: people without an account get a temporary one (ADR-029 §3). */
+  /**
+   * Mirror of {@link #guestAccountMode} for older releases (#1662): true while the link may create
+   * temporary accounts. Written by {@link #applyGuestAccountMode}; read only for rows without a
+   * mode.
+   */
   @Builder.Default
   @Column(name = "temporary_account", nullable = false)
   private boolean temporaryAccount = false;
@@ -157,12 +161,20 @@ public class AgencyInviteLink {
   private Integer validityAfterEndMinutes;
 
   /**
-   * Who may enter (ORISO-Frontend#2252). Empty for links from before: read from {@link
-   * #temporaryAccount} then, see {@link #effectiveAccessMode()}.
+   * Who may enter (ORISO-Frontend#2252). Since #1662 a mirror of {@link #guestAccountMode} for
+   * older releases, see {@link #effectiveAccessMode()}.
    */
   @Enumerated(EnumType.STRING)
   @Column(name = "access_mode", length = 16)
   private DirectInvitationAccessMode accessMode;
+
+  /**
+   * Which account a person without one gets (#1662). Empty for rows the migration did not reach:
+   * read through {@link #effectiveGuestAccountMode()}.
+   */
+  @Enumerated(EnumType.STRING)
+  @Column(name = "guest_account_mode", length = 16)
+  private GuestAccountMode guestAccountMode;
 
   /** The invitation was created from an existing 1:1 and adds people to it (#2252). */
   @Builder.Default
@@ -182,12 +194,29 @@ public class AgencyInviteLink {
   @ToString.Exclude
   private java.util.Set<String> replacedTokens = new java.util.HashSet<>();
 
-  public DirectInvitationAccessMode effectiveAccessMode() {
-    if (accessMode != null) {
-      return accessMode;
+  /** The link's guest account mode; a row without one reads as the #1662 migration sets it. */
+  public GuestAccountMode effectiveGuestAccountMode() {
+    if (guestAccountMode != null) {
+      return guestAccountMode;
     }
-    return temporaryAccount
-        ? DirectInvitationAccessMode.BOTH
-        : DirectInvitationAccessMode.ACCOUNTS_ONLY;
+    if (accessMode != null) {
+      return GuestAccountMode.of(accessMode);
+    }
+    if ("CALL".equals(linkKind)) {
+      return temporaryAccount ? GuestAccountMode.TEMPORARY : GuestAccountMode.PERMANENT;
+    }
+    // A direct link from before #2252 that created temporary accounts let the person choose.
+    return temporaryAccount ? GuestAccountMode.GUEST_CHOOSES : GuestAccountMode.PERMANENT;
+  }
+
+  public DirectInvitationAccessMode effectiveAccessMode() {
+    return effectiveGuestAccountMode().toAccessMode();
+  }
+
+  /** Sets the mode and the two fields an older release still reads. */
+  public void applyGuestAccountMode(GuestAccountMode mode) {
+    this.guestAccountMode = mode;
+    this.accessMode = mode.toAccessMode();
+    this.temporaryAccount = mode.offersTemporaryAccounts();
   }
 }

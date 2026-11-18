@@ -25,6 +25,8 @@ public class MatrixCallStateController {
       observations;
   private final de.caritas.cob.userservice.api.service.matrix.MatrixSessionCallBindingService
       sessionBindings;
+  private final de.caritas.cob.userservice.api.service.matrix.MatrixGroupCallBindingService
+      groupBindings;
   private final AuthenticatedUser authenticatedUser;
 
   @GetMapping("/state")
@@ -75,8 +77,9 @@ public class MatrixCallStateController {
    * Creator of an active encrypted group or session call registers it for observation. FE#2209: in
    * a 1:1 session, the same registration by the session's assigned counsellor, verified against
    * Matrix by {@code MatrixSessionCallBindingService}, also creates the call's authoritative
-   * binding, which share links, knocks and guest seats need. Once bound, observation steps aside
-   * and renewals are answered by the binding.
+   * binding, which share links, knocks and guest seats need. #1662: in a group chat, a moderator's
+   * registration does the same ({@code MatrixGroupCallBindingService}). Once bound, observation
+   * steps aside and renewals are answered by the binding.
    */
   @PostMapping("/observations")
   public ResponseEntity<?> register(@RequestBody ObservationRequest request) {
@@ -89,13 +92,21 @@ public class MatrixCallStateController {
               request.callId(),
               request.callRoomId(),
               video);
+      // #1662: the same verified registration by a moderator of a group chat binds the group
+      // call, so group calls can have a share link too. Each path refuses the other's rooms.
       boolean bound =
           sessionBindings.bind(
-              authenticatedUser,
-              request.sourceRoomId(),
-              request.callId(),
-              request.callRoomId(),
-              video);
+                  authenticatedUser,
+                  request.sourceRoomId(),
+                  request.callId(),
+                  request.callRoomId(),
+                  video)
+              || groupBindings.bind(
+                  authenticatedUser,
+                  request.sourceRoomId(),
+                  request.callId(),
+                  request.callRoomId(),
+                  video);
       return observationResponse(
           bound
               ? de.caritas.cob.userservice.api.service.matrix.MatrixCallObservationService.Outcome
