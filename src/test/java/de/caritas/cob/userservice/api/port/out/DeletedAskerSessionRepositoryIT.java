@@ -38,6 +38,45 @@ class DeletedAskerSessionRepositoryIT {
   }
 
   @Test
+  void separatesActiveFromArchivedPlaceholders_ownInsideTheWindow_newestFirst() {
+    // Active: two own rows inside the window, one expired, one foreign.
+    save("consultant-1", 1L, NOW.minusDays(5));
+    save("consultant-1", 2L, NOW.minusDays(1));
+    save("consultant-1", 3L, NOW.minusDays(40));
+    save("consultant-2", 4L, NOW.minusDays(2));
+    // Archived: the same mix.
+    archive(save("consultant-1", 11L, NOW.minusDays(6)));
+    archive(save("consultant-1", 12L, NOW.minusDays(2)));
+    archive(save("consultant-1", 13L, NOW.minusDays(41)));
+    archive(save("consultant-2", 14L, NOW.minusDays(3)));
+
+    assertThat(
+            underTest.findByConsultantIdAndArchivedAtIsNullAndDeletedAtAfterOrderByDeletedAtDesc(
+                "consultant-1", NOW.minusDays(30)))
+        .extracting(DeletedAskerSession::getFormerSessionId)
+        .containsExactly(2L, 1L);
+    assertThat(
+            underTest.findByConsultantIdAndArchivedAtIsNotNullAndDeletedAtAfterOrderByDeletedAtDesc(
+                "consultant-1", NOW.minusDays(30)))
+        .extracting(DeletedAskerSession::getFormerSessionId)
+        .containsExactly(12L, 11L);
+  }
+
+  @Test
+  void findByConsultantIdAndFormerSessionId_findsOnlyTheCounsellorsOwnPlaceholder() {
+    save("consultant-1", 21L, NOW);
+
+    assertThat(underTest.findByConsultantIdAndFormerSessionId("consultant-1", 21L)).isPresent();
+    assertThat(underTest.findByConsultantIdAndFormerSessionId("consultant-2", 21L)).isEmpty();
+    assertThat(underTest.findByConsultantIdAndFormerSessionId("consultant-1", 22L)).isEmpty();
+  }
+
+  private void archive(DeletedAskerSession placeholder) {
+    placeholder.setArchivedAt(NOW);
+    underTest.save(placeholder);
+  }
+
+  @Test
   void deleteDeletedBefore_removesOnlyExpiredPlaceholders() {
     save("consultant-1", 1L, NOW.minusDays(40));
     save("consultant-1", 2L, NOW.minusDays(5));
@@ -84,8 +123,9 @@ class DeletedAskerSessionRepositoryIT {
             .build());
   }
 
-  private void save(String consultantId, Long formerSessionId, LocalDateTime deletedAt) {
-    underTest.save(
+  private DeletedAskerSession save(
+      String consultantId, Long formerSessionId, LocalDateTime deletedAt) {
+    return underTest.save(
         DeletedAskerSession.builder()
             .consultantId(consultantId)
             .formerSessionId(formerSessionId)
