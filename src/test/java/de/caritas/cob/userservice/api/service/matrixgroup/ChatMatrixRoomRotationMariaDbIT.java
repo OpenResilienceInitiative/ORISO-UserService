@@ -750,7 +750,9 @@ class ChatMatrixRoomRotationMariaDbIT {
             org.mockito.Mockito.mock(
                 de.caritas.cob.userservice.api.service.chat.MembersOnlyRevocation.class),
             cleanup,
-            entityManager);
+            entityManager,
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.service.matrix.GroupModeratorPowerService.class));
     var worker = java.util.concurrent.Executors.newSingleThreadExecutor();
     var transfer =
         new java.util.concurrent.atomic.AtomicReference<java.util.concurrent.Future<?>>();

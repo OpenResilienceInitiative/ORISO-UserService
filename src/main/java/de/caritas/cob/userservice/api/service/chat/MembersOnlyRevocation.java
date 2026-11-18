@@ -56,6 +56,8 @@ public class MembersOnlyRevocation {
   private final GroupChatMembershipService membershipService;
   private final ChatRepository chatRepository;
   private final MatrixChatShutdownService shutdownService;
+  private final de.caritas.cob.userservice.api.service.matrix.GroupModeratorPowerService
+      moderatorPower;
 
   /**
    * Call before the participation of {@code leaving} is deleted, in the same transaction. Does
@@ -178,8 +180,8 @@ public class MembersOnlyRevocation {
    * Call when an owner of a chat leaves or is deleted, in the same transaction: the remaining
    * active participant who takes the chat over (an owner, else a co-moderator, else the
    * longest-standing participant, the lowest id) becomes {@link Chat#getChatOwner()} when the
-   * leaving consultant was it, and an OWNER when no owner is left. Database only, like a transfer
-   * of primary ownership; Matrix power levels are not touched.
+   * leaving consultant was it, and an OWNER when no owner is left. A participant made owner is
+   * raised to the Matrix moderator level; the owner level (100) stays with the room creator.
    *
    * @return {@code false} when nobody active remains to own the chat
    */
@@ -189,6 +191,7 @@ public class MembersOnlyRevocation {
       return false;
     }
     var successor = next.get();
+    var promoted = successor.participation().getRole() != ParticipantRole.OWNER;
     TenantContext.supplyAcrossTenants(
         () -> {
           if (successor.participation().getRole() != ParticipantRole.OWNER) {
@@ -203,6 +206,10 @@ public class MembersOnlyRevocation {
           }
           return null;
         });
+    if (promoted) {
+      // Whoever is made owner moderates the room from now on (ORISO-Frontend#2229).
+      moderatorPower.reconcile(chat, successor.account().getMatrixUserId(), ParticipantRole.OWNER);
+    }
     return true;
   }
 

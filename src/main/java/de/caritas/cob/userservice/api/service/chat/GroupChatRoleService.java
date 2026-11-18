@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
+import de.caritas.cob.userservice.api.service.matrix.GroupModeratorPowerService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.LockModeType;
@@ -36,6 +37,7 @@ public class GroupChatRoleService {
   private final MembersOnlyRevocation revocation;
   private final GroupChatMatrixCleanupService matrixCleanup;
   private final EntityManager entityManager;
+  private final GroupModeratorPowerService moderatorPower;
 
   @Transactional
   public void changeRole(
@@ -68,6 +70,7 @@ public class GroupChatRoleService {
 
     var demotedOwner =
         target.getRole() == ParticipantRole.OWNER && newRole != ParticipantRole.OWNER;
+    var wasModerator = GroupModeratorPowerService.isModerator(target.getRole());
     target.setRole(newRole);
     participantRepository.save(target);
     if (demotedOwner) {
@@ -75,6 +78,33 @@ public class GroupChatRoleService {
       chatRepository
           .findById(seriesId)
           .ifPresent(series -> revocation.passOwnershipOn(series, targetConsultantId));
+    }
+    syncModeratorPower(
+        seriesId,
+        targetConsultantId,
+        newRole,
+        wasModerator && !GroupModeratorPowerService.isModerator(newRole));
+  }
+
+  /**
+   * Brings the Matrix moderator level of a member in line with their new role
+   * (ORISO-Frontend#2229). A demotion is strict: when Matrix cannot take the level back, the role
+   * change rolls back.
+   */
+  private void syncModeratorPower(
+      Long seriesId, String consultantId, ParticipantRole role, boolean demotion) {
+    var series = chatRepository.findById(seriesId);
+    if (series.isEmpty()) {
+      return;
+    }
+    var matrixUserId =
+        TenantContext.supplyAcrossTenants(() -> consultantRepository.findById(consultantId))
+            .map(Consultant::getMatrixUserId)
+            .orElse(null);
+    if (demotion) {
+      moderatorPower.reconcileOrFail(series.get(), matrixUserId, role);
+    } else {
+      moderatorPower.reconcile(series.get(), matrixUserId, role);
     }
   }
 
@@ -109,6 +139,8 @@ public class GroupChatRoleService {
     participantRepository.save(actor);
     participantRepository.save(target);
     chatRepository.save(series);
+    // The new primary owner is a moderator; the former one stays a co-moderator.
+    moderatorPower.reconcile(series, newPrimaryOwner.getMatrixUserId(), ParticipantRole.OWNER);
   }
 
   @Transactional
@@ -142,6 +174,8 @@ public class GroupChatRoleService {
 
     revocation.revokeAccessOf(series, target);
     participantRepository.delete(target);
+    // Taken back before the leave: a level left behind would return with a later rejoin.
+    moderatorPower.reconcile(series, targetConsultant.getMatrixUserId(), null);
     groupChatMembershipService.removeParticipantFromRoom(
         series, targetConsultant.getMatrixUserId());
   }
@@ -176,6 +210,7 @@ public class GroupChatRoleService {
         // Another owner remains (checked above); the chat must not keep naming the one who left.
         revocation.passOwnershipOn(series, consultant.getId());
       }
+      moderatorPower.reconcile(series, consultant.getMatrixUserId(), null);
     }
 
     groupChatMembershipService.removeParticipantFromRoom(series, consultant.getMatrixUserId());

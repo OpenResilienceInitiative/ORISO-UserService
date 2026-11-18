@@ -42,6 +42,8 @@ class CreateChatMatrixMembershipTest {
     var names = mock(ConsultantDisplayNameResolver.class);
     var membership =
         new AgencySilentMembershipService(consultants, gateway, helper, transcoder, names);
+    var moderatorPower =
+        mock(de.caritas.cob.userservice.api.service.matrix.GroupModeratorPowerService.class);
     var facade =
         new CreateChatFacade(
             chats,
@@ -58,7 +60,8 @@ class CreateChatMatrixMembershipTest {
             membership,
             mock(de.caritas.cob.userservice.api.service.chat.GroupCounsellingDpaPolicy.class),
             mock(de.caritas.cob.userservice.api.service.chat.GroupChatMatrixCleanupService.class),
-            mock(org.springframework.transaction.PlatformTransactionManager.class));
+            mock(org.springframework.transaction.PlatformTransactionManager.class),
+            moderatorPower);
     var owner = new Consultant();
     owner.setId("owner");
     owner.setTenantId(40L);

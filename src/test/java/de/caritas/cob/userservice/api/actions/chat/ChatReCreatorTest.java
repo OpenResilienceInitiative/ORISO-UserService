@@ -72,6 +72,9 @@ class ChatReCreatorTest {
 
   @Mock private MatrixIdentifierRedactor redactor;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.matrix.GroupModeratorPowerService moderatorPower;
+
   @BeforeEach
   void resolveRoomIdFromChatFixture() {
     lenient()
@@ -115,6 +118,40 @@ class ChatReCreatorTest {
     order
         .verify(matrixSynapseService)
         .createRoomAsMatrixUser(eq("topic"), startsWith("group_chat_"), eq(OWNER_MATRIX_USER_ID));
+    order.verify(matrixChatShutdownService).shutdownRoom(chat);
+  }
+
+  /**
+   * ORISO-Frontend#2229: the room of the next occurrence starts with its creator as the only
+   * moderator; the group's co-moderators are raised there once they are carried over.
+   */
+  @Test
+  void recreateShouldRaiseTheGroupsModeratorsInTheNewRoomAfterCarryingThemOver()
+      throws MatrixCreateRoomException {
+    var chat = buildRepetitiveChat(OWNER_MATRIX_USER_ID);
+    var coModeratorMatrixId = "@co-moderator:matrix.local";
+    var response = new MatrixCreateRoomResponseDTO();
+    response.setRoomId(NEW_MATRIX_ROOM_ID);
+    when(groupChatMembershipService.resolveHumanMembers(OLD_MATRIX_ROOM_ID))
+        .thenReturn(
+            List.of(
+                new ResolvedRoomMember(
+                    OWNER_MATRIX_USER_ID, "owner-id", "owner", "Owner Owner", true, null, null),
+                new ResolvedRoomMember(
+                    coModeratorMatrixId, "co-id", "co", "Co Moderator", true, null, null)));
+    when(matrixSynapseService.createRoomAsMatrixUser(anyString(), anyString(), anyString()))
+        .thenReturn(ResponseEntity.ok(response));
+    when(groupChatMembershipService.addMemberToRoom(
+            NEW_MATRIX_ROOM_ID, OWNER_MATRIX_USER_ID, coModeratorMatrixId))
+        .thenReturn(true);
+
+    chatReCreator.recreateMessengerChat(chat);
+
+    var order = inOrder(groupChatMembershipService, moderatorPower, matrixChatShutdownService);
+    order
+        .verify(groupChatMembershipService)
+        .addMemberToRoom(NEW_MATRIX_ROOM_ID, OWNER_MATRIX_USER_ID, coModeratorMatrixId);
+    order.verify(moderatorPower).grantModeratorsOf(chat, NEW_MATRIX_ROOM_ID);
     order.verify(matrixChatShutdownService).shutdownRoom(chat);
   }
 

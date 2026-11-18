@@ -40,9 +40,19 @@ class MembersOnlyRevocationTest {
       mock(de.caritas.cob.userservice.api.port.out.ChatRepository.class);
   private final de.caritas.cob.userservice.api.actions.chat.MatrixChatShutdownService shutdown =
       mock(de.caritas.cob.userservice.api.actions.chat.MatrixChatShutdownService.class);
+  private final de.caritas.cob.userservice.api.service.matrix.GroupModeratorPowerService
+      moderatorPower =
+          mock(de.caritas.cob.userservice.api.service.matrix.GroupModeratorPowerService.class);
   private final MembersOnlyRevocation revocation =
       new MembersOnlyRevocation(
-          sessions, consultants, participants, supervisions, membership, chats, shutdown);
+          sessions,
+          consultants,
+          participants,
+          supervisions,
+          membership,
+          chats,
+          shutdown,
+          moderatorPower);
 
   private final Consultant creator = consultant("creator");
   private final Consultant owner = consultant("owner");
@@ -473,6 +483,34 @@ class MembersOnlyRevocationTest {
 
     verify(chat, never()).setChatOwner(any());
     verify(chats, never()).save(any());
+  }
+
+  /** ORISO-Frontend#2229: whoever is made owner moderates the group's room from now on. */
+  @Test
+  void aParticipantWhoIsMadeOwnerIsRaisedToTheMatrixModeratorLevel() {
+    var leaving = stored(1L, "owner", ParticipantRole.OWNER);
+    var successor = stored(2L, "creator", ParticipantRole.PARTICIPANT);
+    creator.setMatrixUserId("@creator:oriso");
+    when(chat.getChatOwner()).thenReturn(consultant("owner"));
+    when(participants.findBySeriesId(5L)).thenReturn(List.of(leaving, successor));
+    when(consultants.findByIdAndDeleteDateIsNull("creator")).thenReturn(Optional.of(creator));
+
+    revocation.passOwnershipOn(chat, "owner");
+
+    verify(moderatorPower).reconcile(chat, "@creator:oriso", ParticipantRole.OWNER);
+  }
+
+  @Test
+  void aRemainingOwnerWhoTakesThePrimaryOwnershipOverKeepsTheirMatrixLevelUntouched() {
+    var leaving = stored(1L, "owner", ParticipantRole.OWNER);
+    var other = stored(2L, "member", ParticipantRole.OWNER);
+    when(chat.getChatOwner()).thenReturn(consultant("owner"));
+    when(participants.findBySeriesId(5L)).thenReturn(List.of(leaving, other));
+    when(consultants.findByIdAndDeleteDateIsNull("member")).thenReturn(Optional.of(member));
+
+    revocation.passOwnershipOn(chat, "owner");
+
+    verifyNoInteractions(moderatorPower);
   }
 
   private static GroupChatParticipant stored(Long id, String consultantId, ParticipantRole role) {

@@ -355,7 +355,7 @@ public class MatrixRoomClient {
   }
 
   /** A power level as Matrix sends it: a number, or a numeric string in rooms up to version 9. */
-  private static int level(Object raw, int fallback) {
+  static int level(Object raw, int fallback) {
     if (raw instanceof Number number) {
       return Math.toIntExact(number.longValue());
     }
@@ -931,6 +931,103 @@ public class MatrixRoomClient {
       log.warn("Could not raise a Matrix power level ({})", failure.getClass().getSimpleName());
       return PowerRaise.FAILED;
     }
+  }
+
+  /** What {@link #syncModeratorPower} found and did. */
+  public enum ModeratorPowerSync {
+    /** Every listed user already held the right level; nothing was written. */
+    UNCHANGED,
+    /** The new levels were written. */
+    WRITTEN,
+    /** The holder may not make this change (Synapse would refuse it); nothing was written. */
+    NOT_PERMITTED,
+    /** The room's power levels could not be read or written. */
+    FAILED
+  }
+
+  /**
+   * Gives every user flagged {@code true} at least the moderator level (50) and takes it back from
+   * every user flagged {@code false} who holds exactly that level (ORISO-Frontend#2229). Nobody
+   * above the moderator level is ever lowered, so the room creator keeps 100. A user does not have
+   * to be joined: a level written before an invited moderator joins holds once they are in.
+   *
+   * <p>One read-modify-write with the token of {@code holderId}. Synapse lets a member change power
+   * levels only from the {@code m.room.power_levels} event level on, never above their own level
+   * and never for someone at or above it; a holder who could not make the whole change gets {@link
+   * ModeratorPowerSync#NOT_PERMITTED} without a write.
+   *
+   * <p>Never throws. Logs the exception type only, never a user ID.
+   *
+   * @param moderators Matrix user ID to whether the user is a moderator of the room
+   */
+  public ModeratorPowerSync syncModeratorPower(
+      String roomId, Map<String, Boolean> moderators, String holderId, String holderToken) {
+    try {
+      var power = readPowerLevels(roomId, holderToken);
+      var changes = moderatorPowerChanges(power, moderators);
+      if (changes.isEmpty()) {
+        return ModeratorPowerSync.UNCHANGED;
+      }
+      if (!mayChangePowerLevels(power, holderId, changes)) {
+        return ModeratorPowerSync.NOT_PERMITTED;
+      }
+      var users = new HashMap<>(extractUsers(power));
+      users.putAll(changes);
+      power.put("users", users);
+      restTemplate.put(
+          buildUrl(ENDPOINT_POWER_LEVELS, Map.of("roomId", roomId)),
+          new HttpEntity<>(power, getClientHttpHeaders(holderToken)));
+      return ModeratorPowerSync.WRITTEN;
+    } catch (RuntimeException failure) {
+      log.warn(
+          "Could not sync the Matrix moderator level in room {} ({})",
+          roomId,
+          failure.getClass().getSimpleName());
+      return ModeratorPowerSync.FAILED;
+    }
+  }
+
+  /**
+   * The {@code users} entries {@link #syncModeratorPower} has to write into {@code power}: a
+   * moderator below the moderator level is raised to it, a former moderator who holds exactly it
+   * falls back to 0. Empty when the room is already right.
+   */
+  static Map<String, Integer> moderatorPowerChanges(
+      Map<String, Object> power, Map<String, Boolean> moderators) {
+    var users = objectMap(power.get("users"));
+    int usersDefault = level(power.get("users_default"), 0);
+    var changes = new HashMap<String, Integer>();
+    moderators.forEach(
+        (userId, moderator) -> {
+          int current = level(users.get(userId), usersDefault);
+          if (Boolean.TRUE.equals(moderator) && current < MODERATOR_POWER_LEVEL) {
+            changes.put(userId, MODERATOR_POWER_LEVEL);
+          } else if (!Boolean.TRUE.equals(moderator) && current == MODERATOR_POWER_LEVEL) {
+            changes.put(userId, 0);
+          }
+        });
+    return changes;
+  }
+
+  /** Synapse's auth rules for an {@code m.room.power_levels} event that changes {@code users}. */
+  private static boolean mayChangePowerLevels(
+      Map<String, Object> power, String holderId, Map<String, Integer> changes) {
+    var users = objectMap(power.get("users"));
+    int usersDefault = level(power.get("users_default"), 0);
+    int holder = level(users.get(holderId), usersDefault);
+    int required =
+        level(
+            objectMap(power.get("events")).get("m.room.power_levels"),
+            level(power.get("state_default"), MODERATOR_POWER_LEVEL));
+    if (holder < required) {
+      return false;
+    }
+    return changes.entrySet().stream()
+        .allMatch(
+            change ->
+                change.getValue() <= holder
+                    && (change.getKey().equals(holderId)
+                        || level(users.get(change.getKey()), usersDefault) < holder));
   }
 
   /**

@@ -49,6 +49,10 @@ class GroupChatAdmissionProcessorTest {
   @Mock private GroupChatMembershipService membership;
   @Mock private GroupAppointmentSeriesEventProducer appointmentEvents;
   @Mock private GroupChatAdmissionMatrixRepairService repair;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.matrix.GroupModeratorPowerService moderatorPower;
+
   @InjectMocks private GroupChatAdmissionProcessor processor;
 
   private GroupChatJoinRequest request;
@@ -120,6 +124,31 @@ class GroupChatAdmissionProcessorTest {
     processor.process(7L);
     verify(membership, times(2)).addMemberToRoom(series, "@r:test");
     verify(appointmentEvents).recordMemberJoined(series, RecipientRole.COUNSELOR, "requester");
+  }
+
+  /** ORISO-Frontend#2229: a colleague admitted as co-moderator may blur passages right away. */
+  @Test
+  void aColleagueAdmittedAsCoModeratorIsRaisedToTheMatrixModeratorLevel() {
+    request.setAdmittedRole(ParticipantRole.CO_MODERATOR);
+    when(membership.isMemberInRoom(series, "@r:test")).thenReturn(Optional.of(false));
+    when(membership.addMemberToRoom(series, "@r:test")).thenReturn(true);
+
+    processor.process(7L);
+
+    var order = org.mockito.Mockito.inOrder(participants, moderatorPower);
+    order.verify(participants).save(any());
+    order.verify(moderatorPower).reconcile(series, "@r:test", ParticipantRole.CO_MODERATOR);
+  }
+
+  /** A former moderator who comes back as a participant does not keep an old moderator level. */
+  @Test
+  void aColleagueAdmittedAsParticipantHoldsNoMatrixModeratorLevel() {
+    when(membership.isMemberInRoom(series, "@r:test")).thenReturn(Optional.of(false));
+    when(membership.addMemberToRoom(series, "@r:test")).thenReturn(true);
+
+    processor.process(7L);
+
+    verify(moderatorPower).reconcile(series, "@r:test", ParticipantRole.PARTICIPANT);
   }
 
   @Test
