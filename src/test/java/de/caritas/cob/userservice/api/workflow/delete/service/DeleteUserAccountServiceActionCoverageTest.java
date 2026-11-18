@@ -24,6 +24,7 @@ import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteDatabas
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteDatabaseAskerAgencyAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteKeycloakAskerAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteMatrixAskerAction;
+import de.caritas.cob.userservice.api.workflow.delete.action.asker.PublishAskerDeletedEventAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteCaseHandoverRequestsForConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteChatAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantCalendarAction;
@@ -35,6 +36,7 @@ import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteDa
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteDatabaseConsultantAgencyAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteKeycloakConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteMatrixConsultantAction;
+import de.caritas.cob.userservice.api.workflow.delete.action.consultant.PublishConsultantDeletedEventAction;
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
 import java.util.List;
@@ -72,7 +74,8 @@ class DeleteUserAccountServiceActionCoverageTest {
           DeleteAskerDraftMessagesAction.class,
           DeleteAskerEventNotificationsAction.class,
           DeleteAskerReplyEmailDeliveriesAction.class,
-          DeleteDatabaseAskerAction.class);
+          DeleteDatabaseAskerAction.class,
+          PublishAskerDeletedEventAction.class);
 
   private static final List<Class<?>> EXPECTED_CONSULTANT_CHAIN =
       List.of(
@@ -86,7 +89,8 @@ class DeleteUserAccountServiceActionCoverageTest {
           DeleteConsultantMessageEmailDeliveriesAction.class,
           DeleteConsultantMessageStatsAction.class,
           DeleteConsultantCalendarAction.class,
-          DeleteDatabaseConsultantAction.class);
+          DeleteDatabaseConsultantAction.class,
+          PublishConsultantDeletedEventAction.class);
 
   @InjectMocks private DeleteUserAccountService deleteUserAccountService;
 

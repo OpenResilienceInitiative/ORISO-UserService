@@ -131,6 +131,10 @@ class MatrixCallGuestMediaGateMariaDbIT {
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private javax.sql.DataSource dataSource;
 
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.lifecycle.SessionInteractionService
+      sessionInteractions;
+
   @MockitoBean private MatrixSynapseService matrix;
   @MockitoBean private EventNotificationService notifications;
   @MockitoBean private AccountInactivityService accountLifecycle;

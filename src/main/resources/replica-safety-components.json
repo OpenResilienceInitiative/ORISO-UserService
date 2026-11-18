@@ -145,6 +145,21 @@
       "status": "blocker"
     },
     {
+      "id": "session-interaction-debounce",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/lifecycle/SessionInteractionService.java",
+      "kind": "local-state",
+      "owner": "sessions-matrix",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "claimedUntil"
+      ],
+      "decision": "Retain locally: message interactions come from the single-leader Matrix sync loop, and a second replica can at most announce one extra session.interaction per session, counsellor and interval, which add-ons treat as a hint.",
+      "signals": [
+        "userservice.replica.local_state"
+      ],
+      "status": "bounded"
+    },
+    {
       "id": "notification-active-view-map",
       "source": "src/main/java/de/caritas/cob/userservice/api/service/notification/EventNotificationService.java",
       "kind": "local-state",

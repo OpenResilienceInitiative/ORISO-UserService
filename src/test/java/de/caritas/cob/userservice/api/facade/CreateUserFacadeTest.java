@@ -106,6 +106,9 @@ public class CreateUserFacadeTest {
   private de.caritas.cob.userservice.api.service.temporaryaccount.TemporaryAccountSettingsService
       temporaryAccountSettings;
 
+  @org.mockito.Mock
+  private de.caritas.cob.userservice.api.service.lifecycle.LifecycleEventPublisher lifecycleEvents;
+
   @org.junit.jupiter.api.BeforeEach
   void recoveryPolicyFixture() {
     TenantContext.setCurrentTenant(1L);
@@ -147,7 +150,8 @@ public class CreateUserFacadeTest {
             mock(de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy.class),
             mock(de.caritas.cob.userservice.api.service.SessionDataService.class),
             temporaryAccountLinkResolver,
-            temporaryAccountSettings);
+            temporaryAccountSettings,
+            lifecycleEvents);
 
     org.mockito.Mockito.lenient()
         .when(consultingTypeManager.getConsultingTypeSettings(org.mockito.ArgumentMatchers.any()))
@@ -1145,6 +1149,72 @@ public class CreateUserFacadeTest {
     assertThat(user.getTemporaryAccountSnapshot(), nullValue());
     assertThat(user.getGuestAccountModeAtEntry(), nullValue());
     org.mockito.Mockito.verifyNoInteractions(createNewSessionFacade, temporaryAccountSettings);
+  }
+
+  @Test
+  void registrationWithAnAddonReferenceAnnouncesTheCommittedAccount() throws Exception {
+    givenBasicRegistrationStubs();
+    User user = givenAFullyPersistedUser();
+    user.setUserId(USER_ID);
+    var registration = registrationWithReference("ref_42-A");
+    PlainCredentialsHolder.set("plainuser", "plainpw");
+
+    createUserFacade.createUserAccountWithInitializedConsultingType(registration);
+
+    var order = inOrder(createNewSessionFacade, lifecycleEvents, welcomeEmailService);
+    order
+        .verify(createNewSessionFacade)
+        .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
+    order.verify(lifecycleEvents).userRegistered(1L, USER_ID, "ref_42-A");
+    order.verify(welcomeEmailService).sendWelcomeEmail(any(), any());
+  }
+
+  @Test
+  void registrationWithoutAnAddonReferenceAnnouncesNothing() throws Exception {
+    givenBasicRegistrationStubs();
+    givenAFullyPersistedUser().setUserId(USER_ID);
+    PlainCredentialsHolder.set("plainuser", "plainpw");
+
+    createUserFacade.createUserAccountWithInitializedConsultingType(
+        registrationWithReference(null));
+
+    org.mockito.Mockito.verifyNoInteractions(lifecycleEvents);
+  }
+
+  @Test
+  void failedRegistrationAnnouncesNothing() throws Exception {
+    lenient().when(agencyService.getAgencyWithoutCaching(any())).thenReturn(new AgencyDTO());
+    when(consultingTypeManager.getConsultingTypeSettings(any()))
+        .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
+    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    givenMatrixProvisioningSucceeds();
+    givenAFullyPersistedUser().setUserId(USER_ID);
+    PlainCredentialsHolder.set("plainuser", "plainpw");
+    when(createNewSessionFacade.initializeNewSession(
+            any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
+        .thenThrow(new IllegalStateException("session failed"));
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            createUserFacade.createUserAccountWithInitializedConsultingType(
+                registrationWithReference("ref_42-A")));
+
+    org.mockito.Mockito.verifyNoInteractions(lifecycleEvents);
+  }
+
+  private static UserDTO registrationWithReference(String registrationRef) {
+    var registration =
+        new UserDTO(
+            USER_DTO_SUCHT.getUsername(),
+            USER_DTO_SUCHT.getPostcode(),
+            USER_DTO_SUCHT.getAgencyId(),
+            USER_DTO_SUCHT.getPassword(),
+            USER_DTO_SUCHT.getEmail(),
+            USER_DTO_SUCHT.getTermsAccepted(),
+            USER_DTO_SUCHT.getConsultingType());
+    registration.setRegistrationRef(registrationRef);
+    return registration;
   }
 
   private User givenAFullyPersistedUser() {

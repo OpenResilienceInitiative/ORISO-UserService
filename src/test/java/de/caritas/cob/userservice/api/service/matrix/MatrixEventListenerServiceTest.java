@@ -1221,6 +1221,46 @@ class MatrixEventListenerServiceTest {
     verify(communicationStatService, never()).recordAdviceSeekerMessage(any(), any());
   }
 
+  @Test
+  void aCounsellorMessageInASessionIsReportedAsInteractionWithItsServerTime() {
+    var service = newServiceWithSyncExecutor();
+    var interactions =
+        mock(de.caritas.cob.userservice.api.service.lifecycle.SessionInteractionService.class);
+    service.setSessionInteractions(interactions);
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultantWithId(CONSULTANT_DOMAIN_ID)));
+    var message = messageEvent(CONSULTANT_MATRIX_ID, "m.text", "hello", "$evt-1");
+    message.put("origin_server_ts", 1_763_370_000_000L);
+    var notice = messageEvent(CONSULTANT_MATRIX_ID, "m.notice", "bot", "$evt-2");
+    notice.put("origin_server_ts", 1_763_370_000_000L);
+
+    invokeProcessMatrixSyncEvents(
+        service, syncResultWithEvents(MATRIX_ROOM_ID, List.of(message, notice)));
+
+    verify(interactions)
+        .messageWritten(
+            10L, CONSULTANT_DOMAIN_ID, java.time.Instant.ofEpochMilli(1_763_370_000_000L));
+    org.mockito.Mockito.verifyNoMoreInteractions(interactions);
+  }
+
+  @Test
+  void anAdviceSeekerMessageIsNoInteraction() {
+    var service = newServiceWithSyncExecutor();
+    var interactions =
+        mock(de.caritas.cob.userservice.api.service.lifecycle.SessionInteractionService.class);
+    service.setSessionInteractions(interactions);
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(SENDER_MATRIX_ID))
+        .thenReturn(Optional.of(userWithId(ASKER_DOMAIN_ID)));
+    var message = messageEvent(SENDER_MATRIX_ID, "m.text", "hello", "$evt-1");
+    message.put("origin_server_ts", 1_763_370_000_000L);
+
+    invokeProcessMatrixSyncEvents(service, syncResultWithEvents(MATRIX_ROOM_ID, List.of(message)));
+
+    org.mockito.Mockito.verifyNoInteractions(interactions);
+  }
+
   // ── Admin Statistik communication tracking ─────────────────────────────────
 
   @Test

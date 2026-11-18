@@ -181,6 +181,11 @@ class CallShareLinkIT {
 
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private javax.sql.DataSource dataSource;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.lifecycle.SessionInteractionService
+      sessionInteractions;
+
   @MockitoBean private MatrixSynapseService matrix;
 
   // Group waiting rooms (#2237) are not part of the call-share-link flow.

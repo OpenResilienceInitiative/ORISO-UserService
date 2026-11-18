@@ -164,6 +164,51 @@ public class StatelessCsrfFilterTest {
   }
 
   @Test
+  void addonNotificationPostShouldNotRequireCsrf_ForTheAddonServiceMachineClient()
+      throws IOException, ServletException {
+    when(request.getRequestURI()).thenReturn("/users/event-notifications/addon");
+    when(request.getMethod()).thenReturn("POST");
+
+    this.csrfFilter.doFilterInternal(request, response, filterChain);
+
+    verify(this.filterChain, times(1)).doFilter(request, response);
+  }
+
+  @Test
+  void addonNotificationPostShouldNotRequireCsrf_UnderTheServicePrefix()
+      throws IOException, ServletException {
+    // Deployments run with SERVER_SERVLET_CONTEXT_PATH=/service, and getRequestURI() includes it.
+    when(request.getRequestURI()).thenReturn("/service/users/event-notifications/addon");
+    when(request.getMethod()).thenReturn("POST");
+
+    this.csrfFilter.doFilterInternal(request, response, filterChain);
+
+    verify(this.filterChain, times(1)).doFilter(request, response);
+    verifyNoMoreInteractions(accessDeniedHandler);
+  }
+
+  @Test
+  void addonNotificationExemptionShouldStayExact() throws IOException, ServletException {
+    when(request.getRequestURI()).thenReturn("/service/users/event-notifications/addon/extra");
+    when(request.getMethod()).thenReturn("POST");
+
+    this.csrfFilter.doFilterInternal(request, response, filterChain);
+
+    verify(this.filterChain, never()).doFilter(request, response);
+  }
+
+  @Test
+  void siblingEventNotificationWritesShouldStillRequireCsrf() throws IOException, ServletException {
+    when(request.getRequestURI()).thenReturn("/users/event-notifications/read-all");
+    when(request.getMethod()).thenReturn("PATCH");
+
+    this.csrfFilter.doFilterInternal(request, response, filterChain);
+
+    verify(this.accessDeniedHandler, times(1)).handle(any(), any(), any());
+    verifyNoMoreInteractions(this.filterChain);
+  }
+
+  @Test
   public void doFilterInternal_Should_requireCsrf_ForOtherInternalMatrixRtcEndpoints()
       throws IOException, ServletException {
     when(request.getRequestURI()).thenReturn("/internal/matrixrtc/call-policy-extra");

@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteDatabas
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteDatabaseAskerAgencyAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteKeycloakAskerAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteMatrixAskerAction;
+import de.caritas.cob.userservice.api.workflow.delete.action.asker.PublishAskerDeletedEventAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteCaseHandoverRequestsForConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteChatAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantCalendarAction;
@@ -27,6 +28,7 @@ import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteDa
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteDatabaseConsultantAgencyAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteKeycloakConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteMatrixConsultantAction;
+import de.caritas.cob.userservice.api.workflow.delete.action.consultant.PublishConsultantDeletedEventAction;
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionFailureSummary;
@@ -116,6 +118,8 @@ public class DeleteUserAccountService {
         .addActionToExecute(DeleteAskerEventNotificationsAction.class)
         .addActionToExecute(DeleteAskerReplyEmailDeliveriesAction.class)
         .addActionToExecute(DeleteDatabaseAskerAction.class)
+        // Last: announces user.deleted to add-ons (ADR-034) once the account row is gone.
+        .addActionToExecute(PublishAskerDeletedEventAction.class)
         .executeActions(deletionWorkflowDTO);
 
     return deletionWorkflowDTO.getDeletionWorkflowErrors();
@@ -158,6 +162,8 @@ public class DeleteUserAccountService {
         .addActionToExecute(DeleteConsultantMessageStatsAction.class)
         .addActionToExecute(DeleteConsultantCalendarAction.class)
         .addActionToExecute(DeleteDatabaseConsultantAction.class)
+        // Last: announces user.deleted to add-ons (ADR-034) once the account row is gone.
+        .addActionToExecute(PublishConsultantDeletedEventAction.class)
         .executeActions(deletionWorkflowDTO);
 
     return deletionWorkflowDTO.getDeletionWorkflowErrors();

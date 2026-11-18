@@ -89,6 +89,10 @@ class MatrixCallTenantIT {
    * here a counsellor may write in the case when it is assigned to them.
    */
   @MockitoBean
+  private de.caritas.cob.userservice.api.service.lifecycle.SessionInteractionService
+      sessionInteractions;
+
+  @MockitoBean
   private de.caritas.cob.userservice.api.service.notification.MatrixCaseReplyActorAuthorizer
       caseWriterAuthorizer;
 

@@ -70,6 +70,9 @@ class CreateUserFacadeMatrixUserTest {
   private de.caritas.cob.userservice.api.service.temporaryaccount.TemporaryAccountSettingsService
       temporaryAccountSettings;
 
+  @org.mockito.Mock
+  private de.caritas.cob.userservice.api.service.lifecycle.LifecycleEventPublisher lifecycleEvents;
+
   @org.junit.jupiter.api.BeforeEach
   void recoveryPolicyFixture() {
     TenantContext.setCurrentTenant(1L);
@@ -113,7 +116,8 @@ class CreateUserFacadeMatrixUserTest {
             org.mockito.Mockito.mock(
                 de.caritas.cob.userservice.api.service.SessionDataService.class),
             temporaryAccountLinkResolver,
-            temporaryAccountSettings);
+            temporaryAccountSettings,
+            lifecycleEvents);
 
     org.mockito.Mockito.lenient()
         .when(consultingTypeManager.getConsultingTypeSettings(org.mockito.ArgumentMatchers.any()))

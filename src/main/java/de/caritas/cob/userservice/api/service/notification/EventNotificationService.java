@@ -47,6 +47,7 @@ public class EventNotificationService {
 
   public static final String CATEGORY_SYSTEM = "system";
   public static final String CATEGORY_MESSAGE = "message";
+  public static final String ADDON_NOTIFICATION_EVENT = "ADDON_NOTIFICATION";
 
   /** Matches the {@code deduplication_key} column length (VARCHAR(191), changeset 0063). */
   static final int MAX_DEDUPLICATION_KEY_LENGTH = 191;
@@ -1181,6 +1182,32 @@ public class EventNotificationService {
     // P2 feed-update signal (ADR-020): nudge the recipient's clients to refresh the Activity
     // Timeline now instead of on the next 15 s poll. Best-effort and content-free.
     signalFeedUpdatedSafely(recipientUserId);
+  }
+
+  @Transactional
+  public Long createAddonNotification(
+      String recipientUserId,
+      Long tenantId,
+      String title,
+      String text,
+      String params,
+      String actionPath,
+      Long sourceSessionId) {
+    var saved =
+        eventNotificationRepository.save(
+            buildEvent(
+                recipientUserId,
+                ADDON_NOTIFICATION_EVENT,
+                CATEGORY_SYSTEM,
+                title,
+                text,
+                params,
+                actionPath,
+                sourceSessionId,
+                tenantId,
+                null));
+    signalFeedUpdatedSafely(recipientUserId);
+    return saved.getId();
   }
 
   /** Keeps invite identity stable across repeated sync batches and application restarts. */

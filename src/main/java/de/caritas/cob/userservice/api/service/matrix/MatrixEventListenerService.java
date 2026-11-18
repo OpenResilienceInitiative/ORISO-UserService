@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.lifecycle.SessionInteractionService;
 import de.caritas.cob.userservice.api.service.mobilepushmessage.MobilePushNotificationService;
 import de.caritas.cob.userservice.api.service.notification.AdviceSeekerReplyEmailService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
@@ -61,6 +62,7 @@ public class MatrixEventListenerService {
   private LiveChatDiagnosticMetrics diagnosticMetrics;
   private ObservationRegistry observationRegistry = ObservationRegistry.NOOP;
   private TenantContextProvider tenantContextProvider;
+  private SessionInteractionService sessionInteractions;
 
   // Maps Matrix room ID to session ID for quick lookup
   private final Map<String, Long> roomToSessionMap = new ConcurrentHashMap<>();
@@ -97,6 +99,11 @@ public class MatrixEventListenerService {
   @Autowired(required = false)
   void setTenantContextProvider(TenantContextProvider tenantContextProvider) {
     this.tenantContextProvider = tenantContextProvider;
+  }
+
+  @Autowired(required = false)
+  void setSessionInteractions(SessionInteractionService sessionInteractions) {
+    this.sessionInteractions = sessionInteractions;
   }
 
   @Autowired(required = false)
@@ -617,7 +624,8 @@ public class MatrixEventListenerService {
           senderId,
           senderDomainUserId,
           sessionId,
-          privacyEnvelope == null ? null : privacyEnvelope.getMessageId());
+          privacyEnvelope == null ? null : privacyEnvelope.getMessageId(),
+          interactionTime(event, msgtype, messageBody));
     }
 
     // Get users who should receive notification (exclude sender)
@@ -681,12 +689,18 @@ public class MatrixEventListenerService {
 
   /** Runs {@link #recordMessageStatistics} on the notification worker, off the sync loop. */
   private void scheduleMessageStatistics(
-      String senderId, String senderDomainUserId, Long sessionId, String eventId) {
+      String senderId,
+      String senderDomainUserId,
+      Long sessionId,
+      String eventId,
+      java.time.Instant interactionAt) {
     try {
       Runnable record =
           () ->
               inTechnicalTenant(
-                  () -> recordMessageStatistics(senderId, senderDomainUserId, sessionId, eventId));
+                  () ->
+                      recordMessageStatistics(
+                          senderId, senderDomainUserId, sessionId, eventId, interactionAt));
       if (executorService == null) {
         record.run();
       } else {
@@ -703,7 +717,11 @@ public class MatrixEventListenerService {
    * rooms are end-to-end encrypted, so the msgtype is opaque to the server.
    */
   private void recordMessageStatistics(
-      String senderId, String senderDomainUserId, Long sessionId, String eventId) {
+      String senderId,
+      String senderDomainUserId,
+      Long sessionId,
+      String eventId,
+      java.time.Instant interactionAt) {
     boolean consultantSender;
     try {
       consultantSender = isConsultantMatrixUser(senderId);
@@ -724,6 +742,20 @@ public class MatrixEventListenerService {
               : "Failed to record advice-seeker message statistic",
           e);
     }
+    if (consultantSender && interactionAt != null && sessionInteractions != null) {
+      sessionInteractions.messageWritten(sessionId, senderDomainUserId, interactionAt);
+    }
+  }
+
+  /** A counsellor's own message counts as an interaction; notices and system messages do not. */
+  private static java.time.Instant interactionTime(
+      Map<String, Object> event, String msgtype, String messageBody) {
+    if ("m.notice".equals(msgtype)
+        || (messageBody != null && messageBody.startsWith("[SYSTEM_NOTIFICATION]"))
+        || !(event.get("origin_server_ts") instanceof Number timestamp)) {
+      return null;
+    }
+    return java.time.Instant.ofEpochMilli(timestamp.longValue());
   }
 
   /**

@@ -4320,6 +4320,16 @@ components:
             The secret part of that group's invite link. Required with `groupChatId`; a missing
             or wrong token answers 403 before any account is created, the same check as joining
             by invite link.
+        registrationRef:
+          type: string
+          maxLength: 64
+          pattern: '^[A-Za-z0-9_-]+$'
+          description: >-
+            Opaque reference created by a registration add-on (ADR-034). It is not stored: once the
+            account is committed, UserService publishes `user.registered` with `userId`, `tenantId`
+            and this reference on the `oriso.lifecycle` exchange, so the add-on can link what it
+            stored before the account existed. An invalid value answers 400.
+          example: r3f_a1-B2
         directLinkToken:
           type: string
           description: >-

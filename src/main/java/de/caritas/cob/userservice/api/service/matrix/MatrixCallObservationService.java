@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.port.out.MatrixCallBindingRepository;
 import de.caritas.cob.userservice.api.port.out.MatrixCallObservationEndRepository;
 import de.caritas.cob.userservice.api.port.out.MatrixCallObservationRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.lifecycle.SessionInteractionService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -82,6 +83,7 @@ public class MatrixCallObservationService {
   private final MatrixCallLifecycleService lifecycle;
   private final MatrixSessionCallBindingService sessionBindings;
   private final PlatformTransactionManager transactionManager;
+  private final SessionInteractionService sessionInteractions;
 
   public Outcome register(
       AuthenticatedUser actor,
@@ -295,8 +297,10 @@ public class MatrixCallObservationService {
               boundId(oneToOne, sourceRoomId, callId));
     }
     // After the commit: first the guest seats, then the notifications; neither can undo the end.
-    if (ending.endedCallRoom() != null)
+    if (ending.endedCallRoom() != null) {
       sessionBindings.revokeGuestsAfterEnd(ending.endedCallRoom());
+      sessionBindings.announceAttendanceAfterEnd(ending.endedCallRoom());
+    }
     if (!ending.observed() && ending.endedCallRoom() == null) return Outcome.NOT_FOUND;
     if (ending.endedNow()) notifyEnded(conversation, members, ending.row());
     return Outcome.OK;
@@ -464,7 +468,8 @@ public class MatrixCallObservationService {
    */
   private void notifyEnded(
       MatrixCallConversation conversation, List<String> members, MatrixCallObservation row) {
-    var identities = identities(members, null, row.getTenantId());
+    var identities = identities(members, row.getCreatorMatrixId(), row.getTenantId());
+    announceSessionCall(conversation, identities.get(row.getCreatorMatrixId()), row);
     var binding =
         bindings.findBySourceRoomIdAndCallId(conversation.getMatrixRoomId(), row.getCallId());
     var attendees =
@@ -506,6 +511,26 @@ public class MatrixCallObservationService {
           row.getRegisteredAt(),
           row.getEndedAt());
     }
+  }
+
+  /**
+   * Only the creator is known to have taken part in an observed call, so only a call a counsellor
+   * started counts as their interaction here. Calls with a binding are also announced by {@link
+   * MatrixCallLifecycleService} from the observed attendance.
+   */
+  private void announceSessionCall(
+      MatrixCallConversation conversation, Identity creator, MatrixCallObservation row) {
+    if (conversation.getSessionId() == null
+        || conversation.getChatId() != null
+        || creator == null
+        || !creator.consultant()
+        || row.getEndedAt() == null) return;
+    sessionInteractions.callEnded(
+        conversation.getSessionId(),
+        creator.id(),
+        row.getCallId(),
+        row.isVideo(),
+        java.time.Instant.ofEpochMilli(row.getEndedAt()));
   }
 
   /**

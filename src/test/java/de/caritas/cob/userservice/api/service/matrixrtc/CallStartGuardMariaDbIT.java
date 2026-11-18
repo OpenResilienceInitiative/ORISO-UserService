@@ -22,6 +22,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.lifecycle.SessionInteractionService;
 import de.caritas.cob.userservice.api.service.matrix.CounsellorStartedCall;
 import de.caritas.cob.userservice.api.service.matrix.DedicatedCallRoom;
 import de.caritas.cob.userservice.api.service.matrix.MatrixCallBindingService;
@@ -134,6 +135,8 @@ class CallStartGuardMariaDbIT {
   @MockitoBean private EventNotificationService notifications;
   @MockitoBean private AccountInactivityService accountLifecycle;
   @MockitoBean private CallParticipantEviction eviction;
+
+  @MockitoBean private SessionInteractionService sessionInteractions;
 
   private final TenantService tenants = mock(TenantService.class);
   private MatrixRtcCallPolicyService gate;
