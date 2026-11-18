@@ -5,7 +5,7 @@ import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 
 /**
- * Outbound room-provisioning boundary owned by the session/consultant module.
+ * Outbound room boundary owned by the session/consultant module.
  *
  * <p>The application layer exchanges only stable identifiers and booleans. Matrix transport DTOs
  * and HTTP response wrappers remain inside the adapter.
@@ -46,6 +46,12 @@ public interface SessionRoomGateway {
   boolean setUserPowerLevel(String roomId, String matrixUserId, int powerLevel, String accessToken);
 
   boolean removeUserFromRoom(String roomId, String matrixUserId, String accessToken);
+
+  /** Requests that the token's owner leave the room. */
+  void leaveRoom(String roomId, String accessToken);
+
+  /** True only when room state confirms there is no active membership or invitation. */
+  boolean isConfirmedOutOfRoom(String roomId, String matrixUserId);
 
   String userIdFor(String localpart);
 }

@@ -8,7 +8,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.model.AgencyEnquiryRevocationTask;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
@@ -18,6 +17,7 @@ import de.caritas.cob.userservice.api.port.out.AgencyEnquiryRevocationTaskReposi
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
 import java.time.Clock;
@@ -57,7 +57,7 @@ class AgencyEnquiryRevocationsTest {
   @Mock private ConsultantRepository consultants;
   @Mock private SessionRepository sessions;
   @Mock private AgencyMatrixCredentialClient agencyCredentials;
-  @Mock private MatrixSynapseService matrix;
+  @Mock private SessionRoomGateway rooms;
   @Mock private PlatformTransactionManager transactionManager;
   @Mock private Clock clock;
   @Captor private ArgumentCaptor<Iterable<AgencyEnquiryRevocationTask>> staged;
@@ -72,7 +72,7 @@ class AgencyEnquiryRevocationsTest {
             consultants,
             sessions,
             agencyCredentials,
-            matrix,
+            rooms,
             transactionManager,
             clock);
     when(clock.getZone()).thenReturn(ZoneOffset.UTC);
@@ -110,7 +110,7 @@ class AgencyEnquiryRevocationsTest {
     assertThat(staged.getValue())
         .extracting(AgencyEnquiryRevocationTask::getMemberId)
         .containsOnly(MEMBER_ID);
-    verifyNoInteractions(matrix, agencyCredentials);
+    verifyNoInteractions(rooms, agencyCredentials);
   }
 
   @Test
@@ -119,7 +119,7 @@ class AgencyEnquiryRevocationsTest {
     ready(task);
     when(sessions.findByIdForUpdate(SESSION_ID))
         .thenReturn(Optional.of(enquiry(SESSION_ID, SessionStatus.NEW)));
-    when(matrix.removeUserFromRoom(ROOM, MEMBER_ID, OPERATOR_TOKEN)).thenReturn(false, true);
+    when(rooms.removeUserFromRoom(ROOM, MEMBER_ID, OPERATOR_TOKEN)).thenReturn(false, true);
 
     revocations.retryDue();
 
@@ -133,10 +133,10 @@ class AgencyEnquiryRevocationsTest {
 
     revocations.retryDue();
 
-    var order = inOrder(consultants, sessions, matrix, tasks);
+    var order = inOrder(consultants, sessions, rooms, tasks);
     order.verify(consultants).lockConsultant(CONSULTANT_ID);
     order.verify(sessions).findByIdForUpdate(SESSION_ID);
-    order.verify(matrix).removeUserFromRoom(ROOM, MEMBER_ID, OPERATOR_TOKEN);
+    order.verify(rooms).removeUserFromRoom(ROOM, MEMBER_ID, OPERATOR_TOKEN);
     order.verify(tasks).delete(task);
   }
 
@@ -150,7 +150,7 @@ class AgencyEnquiryRevocationsTest {
     revocations.retryDue();
 
     verify(tasks).delete(task);
-    verify(matrix, never()).removeUserFromRoom(any(), any(), any());
+    verify(rooms, never()).removeUserFromRoom(any(), any(), any());
   }
 
   @Test
@@ -162,13 +162,13 @@ class AgencyEnquiryRevocationsTest {
     owner.setId("new-owner");
     accepted.setConsultant(owner);
     when(sessions.findByIdForUpdate(SESSION_ID)).thenReturn(Optional.of(accepted));
-    when(matrix.loginAsUserAccessToken(MEMBER_ID)).thenReturn("member-token");
-    when(matrix.isOutOfRoom(ROOM, MEMBER_ID)).thenReturn(Optional.of(false), Optional.of(true));
+    when(rooms.loginAsUser(MEMBER_ID)).thenReturn("member-token");
+    when(rooms.isConfirmedOutOfRoom(ROOM, MEMBER_ID)).thenReturn(false, true);
 
     revocations.retryDue();
 
-    verify(matrix, never()).removeUserFromRoom(any(), any(), any());
-    verify(matrix).leaveRoom(ROOM, "member-token");
+    verify(rooms, never()).removeUserFromRoom(any(), any(), any());
+    verify(rooms).leaveRoom(ROOM, "member-token");
     verify(tasks).delete(task);
   }
 
@@ -184,8 +184,8 @@ class AgencyEnquiryRevocationsTest {
 
     revocations.retryDue();
 
-    verify(matrix, never()).removeUserFromRoom(any(), any(), any());
-    verify(matrix, never()).leaveRoom(any(), any());
+    verify(rooms, never()).removeUserFromRoom(any(), any(), any());
+    verify(rooms, never()).leaveRoom(any(), any());
     verify(tasks).delete(task);
   }
 
@@ -195,13 +195,13 @@ class AgencyEnquiryRevocationsTest {
     ready(task);
     when(sessions.findByIdForUpdate(SESSION_ID))
         .thenReturn(Optional.of(enquiry(SESSION_ID, SessionStatus.NEW)));
-    when(matrix.loginAsUserAccessToken(OPERATOR_ID)).thenThrow(new IllegalStateException());
+    when(rooms.loginAsUser(OPERATOR_ID)).thenThrow(new IllegalStateException());
 
     revocations.retryDue();
 
     assertThat(task.getRetryAt()).isEqualTo(now().plus(AgencyEnquiryRevocations.RETRY_DELAY));
     verify(tasks, never()).delete(task);
-    verify(matrix, never()).removeUserFromRoom(any(), any(), any());
+    verify(rooms, never()).removeUserFromRoom(any(), any(), any());
   }
 
   @Test
@@ -210,7 +210,7 @@ class AgencyEnquiryRevocationsTest {
     ready(task);
     when(sessions.findByIdForUpdate(SESSION_ID))
         .thenReturn(Optional.of(enquiry(SESSION_ID, SessionStatus.NEW)));
-    when(matrix.removeUserFromRoom(ROOM, MEMBER_ID, OPERATOR_TOKEN))
+    when(rooms.removeUserFromRoom(ROOM, MEMBER_ID, OPERATOR_TOKEN))
         .thenThrow(new IllegalStateException());
 
     revocations.retryDue();
@@ -230,9 +230,9 @@ class AgencyEnquiryRevocationsTest {
     revocations.retryDue();
 
     verify(tasks, never()).delete(task);
-    verify(matrix).isOutOfRoom(ROOM, MEMBER_ID);
+    verify(rooms).isConfirmedOutOfRoom(ROOM, MEMBER_ID);
     assertThat(task.getRetryAt()).isEqualTo(now().plus(AgencyEnquiryRevocations.RETRY_DELAY));
-    verify(matrix, never()).removeUserFromRoom(any(), any(), any());
+    verify(rooms, never()).removeUserFromRoom(any(), any(), any());
   }
 
   @Test
@@ -241,7 +241,7 @@ class AgencyEnquiryRevocationsTest {
     ready(task);
     when(sessions.findByIdForUpdate(SESSION_ID))
         .thenReturn(Optional.of(enquiry(SESSION_ID, SessionStatus.INITIAL)));
-    when(matrix.isOutOfRoom(ROOM, MEMBER_ID)).thenReturn(Optional.of(true));
+    when(rooms.isConfirmedOutOfRoom(ROOM, MEMBER_ID)).thenReturn(true);
 
     revocations.retryDue();
 
@@ -256,7 +256,7 @@ class AgencyEnquiryRevocationsTest {
     var credentials = new AgencyMatrixCredentialsDTO();
     credentials.setMatrixUserId(OPERATOR_ID);
     when(agencyCredentials.fetchMatrixCredentials(AGENCY_ID)).thenReturn(Optional.of(credentials));
-    when(matrix.loginAsUserAccessToken(OPERATOR_ID)).thenReturn(OPERATOR_TOKEN);
+    when(rooms.loginAsUser(OPERATOR_ID)).thenReturn(OPERATOR_TOKEN);
     when(transactionManager.getTransaction(any()))
         .thenAnswer(ignored -> new SimpleTransactionStatus());
   }

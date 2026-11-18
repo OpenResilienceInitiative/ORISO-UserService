@@ -2,13 +2,13 @@ package de.caritas.cob.userservice.api.service.session;
 
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
-import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.model.AgencyEnquiryRevocationTask;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.port.out.AgencyEnquiryRevocationTaskRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import java.time.Clock;
 import java.time.Duration;
@@ -43,7 +43,7 @@ public class AgencyEnquiryRevocations {
   private final ConsultantRepository consultants;
   private final SessionRepository sessions;
   private final AgencyMatrixCredentialClient agencyCredentials;
-  private final MatrixSynapseService matrix;
+  private final SessionRoomGateway rooms;
   private final PlatformTransactionManager transactionManager;
   private final Clock clock;
 
@@ -159,7 +159,7 @@ public class AgencyEnquiryRevocations {
 
   private void retryUnlessConfirmedOut(AgencyEnquiryRevocationTask task) {
     try {
-      if (matrix.isOutOfRoom(task.getRoomId(), task.getMemberId()).orElse(false)) {
+      if (rooms.isConfirmedOutOfRoom(task.getRoomId(), task.getMemberId())) {
         tasks.delete(task);
         return;
       }
@@ -178,21 +178,20 @@ public class AgencyEnquiryRevocations {
     try {
       if (open
           && !isBlank(token)
-          && matrix.removeUserFromRoom(task.getRoomId(), task.getMemberId(), token)) {
+          && rooms.removeUserFromRoom(task.getRoomId(), task.getMemberId(), token)) {
         return true;
       }
-      if (matrix.isOutOfRoom(task.getRoomId(), task.getMemberId()).orElse(false)) {
+      if (rooms.isConfirmedOutOfRoom(task.getRoomId(), task.getMemberId())) {
         return true;
       }
       if (open) {
         return false;
       }
-      var memberToken = matrix.loginAsUserAccessToken(task.getMemberId());
+      var memberToken = rooms.loginAsUser(task.getMemberId());
       if (!isBlank(memberToken)) {
-        matrix.leaveRoom(task.getRoomId(), memberToken);
+        rooms.leaveRoom(task.getRoomId(), memberToken);
       }
-      // The adapter treats some forbidden responses as idempotent. Confirm absence independently.
-      return matrix.isOutOfRoom(task.getRoomId(), task.getMemberId()).orElse(false);
+      return rooms.isConfirmedOutOfRoom(task.getRoomId(), task.getMemberId());
     } catch (RuntimeException failure) {
       log.warn(
           "Matrix could not confirm revocation task {} ({})",
@@ -207,7 +206,7 @@ public class AgencyEnquiryRevocations {
       return agencyCredentials
           .fetchMatrixCredentials(agencyId)
           .filter(credentials -> !isBlank(credentials.getMatrixUserId()))
-          .map(credentials -> matrix.loginAsUserAccessToken(credentials.getMatrixUserId()))
+          .map(credentials -> rooms.loginAsUser(credentials.getMatrixUserId()))
           .orElse(null);
     } catch (RuntimeException failure) {
       log.warn(
