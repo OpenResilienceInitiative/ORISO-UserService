@@ -54,6 +54,7 @@ class AgencyEnquiryRevocationPersistenceIT {
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private AgencyEnquiryRevocationTaskRepository tasks;
   @Autowired private AgencyEnquiryRevocations revocations;
+  @MockitoBean private AgencyEnquiryRoomRetirements retiredRooms;
   @MockitoBean private Clock clock;
   @MockitoBean private SessionRepository sessions;
   @MockitoBean private ConsultantRepository consultants;

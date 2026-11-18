@@ -42,6 +42,7 @@ public class AgencyEnquiryRevocations {
   private final ConsultantAgencyRepository assignments;
   private final ConsultantRepository consultants;
   private final SessionRepository sessions;
+  private final AgencyEnquiryRoomRetirements retiredRooms;
   private final AgencyMatrixCredentialClient agencyCredentials;
   private final SessionRoomGateway rooms;
   private final PlatformTransactionManager transactionManager;
@@ -136,10 +137,7 @@ public class AgencyEnquiryRevocations {
     // The original room may have been accepted while a kick was pending. An accepted room keeps
     // silent members but drops the agency operator. Never remove the case owner in that room.
     var session = sessions.findByIdForUpdate(task.getSessionId()).orElse(null);
-    if (session == null
-        || !Objects.equals(task.getAgencyId(), session.getAgencyId())
-        || !Objects.equals(task.getRoomId(), session.getMatrixRoomId())) {
-      // There is no live matching binding to authorize a membership mutation.
+    if (session == null || !Objects.equals(task.getAgencyId(), session.getAgencyId())) {
       retryUnlessConfirmedOut(task);
       return;
     }
@@ -149,7 +147,14 @@ public class AgencyEnquiryRevocations {
       return;
     }
 
-    var open = AgencyOpenEnquiryMembership.isOpenToDepartment(session, task.getAgencyId());
+    boolean sameRoom = Objects.equals(task.getRoomId(), session.getMatrixRoomId());
+    if (!sameRoom && !retiredRooms.provesRetirement(task, session)) {
+      retryUnlessConfirmedOut(task);
+      return;
+    }
+
+    var open =
+        sameRoom && AgencyOpenEnquiryMembership.isOpenToDepartment(session, task.getAgencyId());
     if (matrixConfirmedOut(task, token, open)) {
       tasks.delete(task);
     } else {

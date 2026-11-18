@@ -195,6 +195,10 @@ class ConsultantTenantChangeMariaDbIT {
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private ConsultantTenantChangeService tenantChangeService;
   @Autowired private ApplicationEvents events;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomRetirements retiredRooms;
+
   @MockitoBean private IdentityTombstoneService identityTombstoneService;
 
   @MockitoBean

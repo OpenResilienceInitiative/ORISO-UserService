@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -56,6 +57,7 @@ class AgencyEnquiryRevocationsTest {
   @Mock private ConsultantAgencyRepository assignments;
   @Mock private ConsultantRepository consultants;
   @Mock private SessionRepository sessions;
+  @Mock private AgencyEnquiryRoomRetirements retiredRooms;
   @Mock private AgencyMatrixCredentialClient agencyCredentials;
   @Mock private SessionRoomGateway rooms;
   @Mock private PlatformTransactionManager transactionManager;
@@ -71,6 +73,7 @@ class AgencyEnquiryRevocationsTest {
             assignments,
             consultants,
             sessions,
+            retiredRooms,
             agencyCredentials,
             rooms,
             transactionManager,
@@ -217,6 +220,60 @@ class AgencyEnquiryRevocationsTest {
 
     assertThat(task.getRetryAt()).isEqualTo(now().plus(AgencyEnquiryRevocations.RETRY_DELAY));
     verify(tasks, never()).delete(task);
+  }
+
+  @Test
+  void aRetiredEnquiryRoomStillLosesTheDepartedMember() {
+    var task = queuedTask();
+    ready(task);
+    var accepted = enquiry(SESSION_ID, SessionStatus.IN_PROGRESS);
+    accepted.setMatrixRoomId("!replacement:example.org");
+    when(sessions.findByIdForUpdate(SESSION_ID)).thenReturn(Optional.of(accepted));
+    when(retiredRooms.provesRetirement(task, accepted)).thenReturn(true);
+    when(rooms.loginAsUser(MEMBER_ID)).thenReturn("member-token");
+    when(rooms.isConfirmedOutOfRoom(ROOM, MEMBER_ID)).thenReturn(false, true);
+
+    revocations.retryDue();
+
+    verify(rooms).leaveRoom(ROOM, "member-token");
+    verify(rooms, never()).leaveRoom(eq(accepted.getMatrixRoomId()), any());
+    verify(rooms, never()).removeUserFromRoom(any(), any(), any());
+    verify(tasks).delete(task);
+  }
+
+  @Test
+  void aRetiredRoomWithUnconfirmedAbsenceStaysPending() {
+    var task = queuedTask();
+    ready(task);
+    var accepted = enquiry(SESSION_ID, SessionStatus.IN_PROGRESS);
+    accepted.setMatrixRoomId("!replacement:example.org");
+    when(sessions.findByIdForUpdate(SESSION_ID)).thenReturn(Optional.of(accepted));
+    when(retiredRooms.provesRetirement(task, accepted)).thenReturn(true);
+    when(rooms.loginAsUser(MEMBER_ID)).thenReturn("member-token");
+
+    revocations.retryDue();
+
+    verify(rooms).leaveRoom(ROOM, "member-token");
+    verify(tasks, never()).delete(task);
+    assertThat(task.getRetryAt()).isEqualTo(now().plus(AgencyEnquiryRevocations.RETRY_DELAY));
+  }
+
+  @Test
+  void oldTaskDoesNotRemoveTheCurrentOwnerAfterAReplacement() {
+    var task = queuedTask();
+    ready(task);
+    var accepted = enquiry(SESSION_ID, SessionStatus.IN_PROGRESS);
+    accepted.setMatrixRoomId("!replacement:example.org");
+    var owner = new Consultant();
+    owner.setId(CONSULTANT_ID);
+    accepted.setConsultant(owner);
+    when(sessions.findByIdForUpdate(SESSION_ID)).thenReturn(Optional.of(accepted));
+
+    revocations.retryDue();
+
+    verifyNoInteractions(retiredRooms);
+    verify(rooms, never()).leaveRoom(any(), any());
+    verify(tasks).delete(task);
   }
 
   @Test

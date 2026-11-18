@@ -418,6 +418,7 @@ class AgencyPasswordFreeSynapseIT {
             mock(UsernameTranscoder.class),
             mock(ConsultantDisplayNameResolver.class),
             identities,
+            mock(de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomRetirements.class),
             mock(
                 de.caritas.cob.userservice.api.service.notification.EventNotificationService.class),
             mock(
