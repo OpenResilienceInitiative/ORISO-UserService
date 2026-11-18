@@ -178,6 +178,7 @@ class AccountManagerTest {
   // ---------------------------------------------------------------------------
 
   @Mock UserRepository userRepository;
+  @Mock org.springframework.transaction.PlatformTransactionManager transactionManager;
   @Mock SessionRepository sessionRepository;
   @Mock UsernameTranscoder usernameTranscoder;
   @Mock AuthenticatedUser authenticatedUser;
@@ -329,12 +330,49 @@ class AccountManagerTest {
 
   // patchUser
 
+  // #1662: the patch reads the advice seeker under the row lock "Konto behalten" takes, so a stale
+  // copy can never write temporary_account back over a concurrent keep.
+
+  @Test
+  void patchUser_Should_ReadTheAdviceSeekerUnderTheRowLockInsideATransaction() {
+    var kept = new User("u-1", null, "username", "email@test.com", false);
+    kept.setTemporaryAccount(false);
+    Map<String, Object> patch = new HashMap<>();
+    patch.put("id", "u-1");
+    Mockito.when(userRepository.findByUserIdForUpdate("u-1")).thenReturn(Optional.of(kept));
+    Mockito.when(userServiceMapper.adviceSeekerOf(kept, patch)).thenReturn(kept);
+    Mockito.when(userRepository.save(kept)).thenReturn(kept);
+    Mockito.when(userServiceMapper.mapOf(kept)).thenReturn(Map.of("userId", "u-1"));
+
+    assertThat(accountManager.patchUser(patch)).isPresent();
+
+    var order = Mockito.inOrder(transactionManager, userRepository);
+    order.verify(transactionManager).getTransaction(Mockito.any());
+    order.verify(userRepository).findByUserIdForUpdate("u-1");
+    order.verify(userRepository).save(kept);
+    order.verify(transactionManager).commit(Mockito.any());
+    Mockito.verify(userRepository, Mockito.never()).findByUserIdAndDeleteDateIsNull("u-1");
+  }
+
+  @Test
+  void patchUser_Should_NotPatchADeletedAdviceSeeker_When_ReadUnderTheLock() {
+    var deleted = new User("u-1", null, "username", "email@test.com", false);
+    deleted.setDeleteDate(java.time.LocalDateTime.now());
+    Map<String, Object> patch = new HashMap<>();
+    patch.put("id", "u-1");
+    Mockito.when(userRepository.findByUserIdForUpdate("u-1")).thenReturn(Optional.of(deleted));
+    Mockito.when(consultantRepository.findByIdAndDeleteDateIsNull("u-1"))
+        .thenReturn(Optional.empty());
+
+    assertThat(accountManager.patchUser(patch)).isEmpty();
+    Mockito.verify(userRepository, Mockito.never()).save(Mockito.any());
+  }
+
   @Test
   void patchUser_Should_ReturnEmpty_When_NeitherUserNorConsultantFound() {
     Map<String, Object> patch = new HashMap<>();
     patch.put("id", "u-1");
-    Mockito.when(userRepository.findByUserIdAndDeleteDateIsNull("u-1"))
-        .thenReturn(Optional.empty());
+    Mockito.when(userRepository.findByUserIdForUpdate("u-1")).thenReturn(Optional.empty());
     Mockito.when(consultantRepository.findByIdAndDeleteDateIsNull("u-1"))
         .thenReturn(Optional.empty());
 
@@ -347,8 +385,7 @@ class AccountManagerTest {
     var patched = new User("u-1", null, "username", "new@test.com", false);
     Map<String, Object> patch = new HashMap<>();
     patch.put("id", "u-1");
-    Mockito.when(userRepository.findByUserIdAndDeleteDateIsNull("u-1"))
-        .thenReturn(Optional.of(user));
+    Mockito.when(userRepository.findByUserIdForUpdate("u-1")).thenReturn(Optional.of(user));
     Mockito.when(userServiceMapper.adviceSeekerOf(user, patch)).thenReturn(patched);
     Mockito.when(userRepository.save(patched)).thenReturn(patched);
     Mockito.when(userServiceMapper.mapOf(patched)).thenReturn(Map.of("userId", "u-1"));
@@ -605,5 +642,74 @@ class AccountManagerTest {
             Mockito.any(),
             captor.capture());
     assertThat(captor.getValue()).doesNotContainKey("c-1");
+  }
+
+  // #1662: a temporary account cannot opt into e-mail notifications; opting out stays possible.
+
+  @Test
+  void aTemporaryAccountCannotTurnOnEmailNotifications() {
+    var guest = new User();
+    guest.setUserId("guest-id");
+    guest.setTemporaryAccount(true);
+    Mockito.when(userRepository.findByUserIdForUpdate("guest-id")).thenReturn(Optional.of(guest));
+    var patch =
+        Map.<String, Object>of(
+            "id",
+            "guest-id",
+            "emailNotifications",
+            new de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO()
+                .emailNotificationsEnabled(true));
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> accountManager.patchUser(patch))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    Mockito.verify(userRepository, Mockito.never()).save(Mockito.any());
+  }
+
+  @Test
+  void aTemporaryAccountMayTurnEmailNotificationsOff() {
+    var guest = new User();
+    guest.setUserId("guest-id");
+    guest.setTemporaryAccount(true);
+    // Notifications on (stored before #1662), so a no-op update cannot pass.
+    guest.setNotificationsEnabled(true);
+    Mockito.when(userRepository.findByUserIdForUpdate("guest-id")).thenReturn(Optional.of(guest));
+    // The real notification mapping, not a pass-through stub.
+    var realMapper = new UserServiceMapper(Mockito.mock(UsernameTranscoder.class));
+    Mockito.when(userServiceMapper.adviceSeekerOf(Mockito.eq(guest), Mockito.anyMap()))
+        .thenAnswer(call -> realMapper.adviceSeekerOf(call.getArgument(0), call.getArgument(1)));
+    Mockito.when(userRepository.save(guest)).thenReturn(guest);
+    Mockito.when(userServiceMapper.mapOf(guest)).thenReturn(Map.of("id", "guest-id"));
+    var patch =
+        Map.<String, Object>of(
+            "id",
+            "guest-id",
+            "emailNotifications",
+            new de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO()
+                .emailNotificationsEnabled(false)
+                .settings(
+                    new de.caritas.cob.userservice.api.adapters.web.dto
+                        .NotificationsSettingsDTO()));
+
+    assertThat(accountManager.patchUser(patch)).isPresent();
+    var saved = org.mockito.ArgumentCaptor.forClass(User.class);
+    Mockito.verify(userRepository).save(saved.capture());
+    assertThat(saved.getValue().isNotificationsEnabled()).isFalse();
+  }
+
+  // #1662: a temporary account never saves an e-mail address through a patch either.
+
+  @Test
+  void aTemporaryAccountCannotPatchInAnEmailAddress() {
+    var guest = new User();
+    guest.setUserId("guest-id");
+    guest.setTemporaryAccount(true);
+    Mockito.when(userRepository.findByUserIdForUpdate("guest-id")).thenReturn(Optional.of(guest));
+    var patch = Map.<String, Object>of("id", "guest-id", "email", "guest@example.org");
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> accountManager.patchUser(patch))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException.class);
+    Mockito.verify(userRepository, Mockito.never()).save(Mockito.any());
   }
 }

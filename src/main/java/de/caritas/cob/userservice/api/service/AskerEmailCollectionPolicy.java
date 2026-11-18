@@ -30,6 +30,16 @@ public class AskerEmailCollectionPolicy {
   private final @NonNull UserChatRepository userChats;
   private final @NonNull PlatformTransactionManager transactionManager;
 
+  /**
+   * #1662: a temporary account never saves an e-mail address, also not at registration. After
+   * "Konto behalten" the account is permanent and the tenant's rules apply.
+   */
+  public void requireForRegistration(
+      Long tenantId, ConversationType verifiedType, boolean temporaryAccount) {
+    if (temporaryAccount) temporaryDenied();
+    requireForRegistration(tenantId, verifiedType);
+  }
+
   public void requireForRegistration(Long tenantId, ConversationType verifiedType) {
     Settings settings = AskerIdentityPolicy.currentSettings(tenants, tenantId);
     if (!masterAllowed(settings) || !typeAllowed(settings, verifiedType)) denied();
@@ -50,6 +60,8 @@ public class AskerEmailCollectionPolicy {
 
   public boolean allowedForAccount(User user) {
     Objects.requireNonNull(user, "Actual asker required");
+    // #1662: no e-mail address for a temporary account; clearing one needs no permission.
+    if (user.isTemporaryAccount()) return false;
     if (user.getUserId() == null)
       throw new ServiceUnavailableException("Asker identity unavailable");
     // Complete the fresh HTTP request before acquiring a database connection for context reads.
@@ -121,6 +133,10 @@ public class AskerEmailCollectionPolicy {
         && !existing.isBlank()
         && target != null
         && existing.trim().equalsIgnoreCase(target.trim());
+  }
+
+  private void temporaryDenied() {
+    throw new ForbiddenException("A temporary account cannot save an e-mail address");
   }
 
   private void denied() {

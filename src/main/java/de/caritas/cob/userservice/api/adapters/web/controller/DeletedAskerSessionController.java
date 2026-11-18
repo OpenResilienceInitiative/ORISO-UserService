@@ -11,6 +11,9 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -29,17 +32,35 @@ public class DeletedAskerSessionController {
     "/users/sessions/consultants/deleted-askers",
     "/service/users/sessions/consultants/deleted-askers"
   })
-  public ResponseEntity<List<DeletedAskerSessionDTO>> getDeletedAskerSessions() {
+  public ResponseEntity<List<DeletedAskerSessionDTO>> getDeletedAskerSessions(
+      @RequestParam(name = "archived", required = false, defaultValue = "false") boolean archived) {
     return ResponseEntity.ok(
-        deletedAskerSessionService.findForConsultant(authenticatedUser.getUserId()).stream()
+        deletedAskerSessionService
+            .findForConsultant(authenticatedUser.getUserId(), archived)
+            .stream()
             .map(DeletedAskerSessionController::toDto)
             .toList());
+  }
+
+  /** Moves the calling counsellor's placeholder into their archive. */
+  @PutMapping({
+    "/users/sessions/consultants/deleted-askers/{formerSessionId}/archive",
+    "/service/users/sessions/consultants/deleted-askers/{formerSessionId}/archive"
+  })
+  public ResponseEntity<Void> archiveDeletedAskerSession(@PathVariable Long formerSessionId) {
+    return deletedAskerSessionService.archive(authenticatedUser.getUserId(), formerSessionId)
+        ? ResponseEntity.noContent().build()
+        : ResponseEntity.notFound().build();
   }
 
   private static DeletedAskerSessionDTO toDto(DeletedAskerSession placeholder) {
     return new DeletedAskerSessionDTO()
         .formerSessionId(placeholder.getFormerSessionId())
         .agencyId(placeholder.getAgencyId())
-        .deletedAt(placeholder.getDeletedAt().atOffset(ZoneOffset.UTC));
+        .deletedAt(placeholder.getDeletedAt().atOffset(ZoneOffset.UTC))
+        .archivedAt(
+            placeholder.getArchivedAt() == null
+                ? null
+                : placeholder.getArchivedAt().atOffset(ZoneOffset.UTC));
   }
 }

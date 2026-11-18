@@ -96,10 +96,12 @@ import org.testcontainers.containers.MariaDBContainer;
   MatrixCallConversationResolver.class,
   MatrixCallGuestService.class,
   CallShareLinkService.class,
+  de.caritas.cob.userservice.api.service.matrix.GroupCallCreatorAgency.class,
   CallShareLinkSweep.class,
   DirectCallKnockService.class,
   EffectiveDirectInvitePolicy.class,
   ConfiguredTemporaryAccountPolicy.class,
+  de.caritas.cob.userservice.api.service.agencyinvitelink.PlatformGuestAccountModePolicy.class,
   de.caritas.cob.userservice.api.service.matrix.DedicatedCallRoom.class,
   MatrixSessionCallBindingService.class,
   MatrixCallBindingService.class,
@@ -154,11 +156,17 @@ class CallShareLinkRaceMariaDbIT {
   @Autowired private javax.sql.DataSource dataSource;
 
   @MockitoSpyBean private MatrixSessionCallBindingService sessionBindings;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.lifecycle.SessionInteractionService
+      sessionInteractions;
+
   @MockitoBean private MatrixSynapseService matrix;
   @MockitoBean private AccountInactivityService accountLifecycle;
   @MockitoBean private MatrixFeedUpdateSignalService feedUpdateSignals;
   @MockitoBean private IdentityTombstoneService tombstones;
   @MockitoBean private TenantService tenantService;
+  @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
   @MockitoBean private EffectiveAgencySettingsLookup effectiveAgencySettings;
 
   @MockitoBean

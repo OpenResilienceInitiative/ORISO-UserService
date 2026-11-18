@@ -319,6 +319,59 @@ paths:
           description: FORBIDDEN - no/invalid role/authorization or CSRF token
       security:
         - Bearer: [ ]
+  /users/calendar/consultation-hours:
+    get:
+      tags:
+        - calendar-controller
+      summary: 'The caller''s Sprechstunden (ORISO-Frontend#2287): the weekly windows advice
+        seekers can book, separate from the working hours, in local wall-clock time of the
+        platform''s zone (Europe/Berlin), none set is an empty list; and how they are booked:
+        autoAccept, noticeDays and slotMinutes, the defaults when never saved. [Authorization:
+        counsellor, their own only]'
+      operationId: getCalendarConsultationHours
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarConsultationHoursDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization
+      security:
+        - Bearer: [ ]
+    put:
+      tags:
+        - calendar-controller
+      summary: 'Replaces all Sprechstunden and the booking settings of the caller at once; an
+        empty list removes the windows, so advice seekers find no free time. A setting left out
+        takes its default. [Authorization: counsellor, their own only]'
+      operationId: setCalendarConsultationHours
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CalendarConsultationHoursDTO'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarConsultationHoursDTO'
+        400:
+          description: BAD REQUEST - more than 14 windows, a weekday outside 0..6, a time not in
+            HH:mm, a start not before its end, two windows of one weekday overlapping,
+            noticeDays outside 0..30 or slotMinutes not 30 or 60; nothing is stored
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+      security:
+        - Bearer: [ ]
   /users/calendar/working-hours/exceptions/{date}:
     put:
       tags:
@@ -504,6 +557,157 @@ paths:
           description: NOT FOUND - no such proposal
       security:
         - Bearer: [ ]
+  /users/calendar/colleague-appointments:
+    post:
+      tags:
+        - calendar-controller
+      summary: 'Makes an appointment with a colleague (ORISO-Frontend#2305). Opens the private
+        internal chat of the two (an existing one is reused). The appointment is fixed at once
+        when the caller is on the colleague''s auto-accept list, else it waits for the colleague.
+        [Authorization: counsellor; the colleague must be inside both the calendar reach and the
+        internal-chat reach of the caller''s Träger]'
+      operationId: createCalendarColleagueAppointment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ColleagueAppointmentCreateDTO'
+      responses:
+        201:
+          description: CREATED - the appointment as the caller's own calendar shows it
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarEntryDTO'
+        400:
+          description: BAD REQUEST - end not after start, start in the past, or the colleague is
+            the caller
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token, or a kind other
+            than ONSITE with a colleague outside the internal-chat reach
+        404:
+          description: NOT FOUND - the colleague is unknown or outside the calendar reach
+      security:
+        - Bearer: [ ]
+  /users/calendar/colleague-appointments/{appointmentId}:
+    delete:
+      tags:
+        - calendar-controller
+      summary: 'Cancels an appointment with a colleague; it leaves both calendars.
+        [Authorization: either of the two counsellors]'
+      operationId: cancelCalendarColleagueAppointment
+      parameters:
+        - $ref: '#/components/parameters/ColleagueAppointmentId'
+      responses:
+        204:
+          description: NO CONTENT
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+        404:
+          description: NOT FOUND - no such appointment of the caller
+      security:
+        - Bearer: [ ]
+  /users/calendar/colleague-appointments/{appointmentId}/accept:
+    post:
+      tags:
+        - calendar-controller
+      summary: 'Accepts a waiting appointment with a colleague. [Authorization: the invited
+        counsellor]'
+      operationId: acceptCalendarColleagueAppointment
+      parameters:
+        - $ref: '#/components/parameters/ColleagueAppointmentId'
+      responses:
+        200:
+          description: OK - the appointment as the caller's own calendar shows it
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarEntryDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+        404:
+          description: NOT FOUND - no such appointment for which the caller was invited
+        409:
+          description: CONFLICT - the appointment no longer waits for an answer
+      security:
+        - Bearer: [ ]
+  /users/calendar/colleague-appointments/{appointmentId}/decline:
+    post:
+      tags:
+        - calendar-controller
+      summary: 'Declines a waiting appointment with a colleague; it leaves both calendars.
+        [Authorization: the invited counsellor]'
+      operationId: declineCalendarColleagueAppointment
+      parameters:
+        - $ref: '#/components/parameters/ColleagueAppointmentId'
+      responses:
+        204:
+          description: NO CONTENT
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+        404:
+          description: NOT FOUND - no such appointment for which the caller was invited
+        409:
+          description: CONFLICT - the appointment no longer waits for an answer
+      security:
+        - Bearer: [ ]
+  /users/calendar/auto-accept:
+    get:
+      tags:
+        - calendar-controller
+      summary: 'The colleagues whose appointments the caller accepts automatically
+        (ORISO-Frontend#2305). [Authorization: counsellor]'
+      operationId: getCalendarAutoAccept
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarAutoAcceptDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization
+      security:
+        - Bearer: [ ]
+    put:
+      tags:
+        - calendar-controller
+      summary: 'Replaces the auto-accept list. Every colleague must be inside the caller''s
+        calendar reach. [Authorization: counsellor]'
+      operationId: setCalendarAutoAccept
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CalendarAutoAcceptDTO'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarAutoAcceptDTO'
+        400:
+          description: BAD REQUEST - more than 200 colleagues, the caller, or a colleague outside
+            the calendar reach
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+      security:
+        - Bearer: [ ]
   /users/calendar/feed/{feedId}/{signature}.ics:
     get:
       tags:
@@ -565,6 +769,13 @@ components:
         type: string
         format: date
         example: '2026-11-16'
+    ColleagueAppointmentId:
+      name: appointmentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
     ProposalId:
       name: proposalId
       in: path
@@ -632,7 +843,38 @@ components:
           description: Own view, blockers only - entered as whole days (ORISO-UserService#1663).
             Absent on every other entry and in a colleague's view.
           type: boolean
+        colleagueId:
+          description: Own view, appointments with a colleague only (ORISO-Frontend#2305) - the
+            other counsellor
+          type: string
+        colleagueName:
+          description: Own view, appointments with a colleague only - the other counsellor's name
+          type: string
+        colleagueStatus:
+          description: Own view, appointments with a colleague only - PENDING while the invited
+            counsellor has not answered
+          type: string
+          enum:
+            - PENDING
+            - CONFIRMED
+        invited:
+          description: Own view, appointments with a colleague only - true when the caller was
+            invited (and may accept or decline)
+          type: boolean
+        matrixRoomId:
+          description: Own view, appointments with a colleague only - the private internal chat
+            of the two
+          type: string
+        chatId:
+          description: Own view, appointments with a colleague only - the id of that chat
+          type: integer
+          format: int64
         movable:
+          type: boolean
+        requested:
+          description: Own view only - an advice seeker's appointment request waiting for this
+            counsellor's confirmation (ORISO-Frontend#2287), shown provisionally. Confirmed it is
+            an ordinary appointment, declined it is gone. Absent otherwise.
           type: boolean
     CalendarColleagueDTO:
       type: object
@@ -648,6 +890,11 @@ components:
           type: string
         agencyName:
           type: string
+        internalChat:
+          description: Whether the caller may have a private internal chat with this colleague
+            (ORISO-Frontend#2305). False - an appointment with them can only be on site. Absent
+            when unknown.
+          type: boolean
         secondaryLabel:
           description: Tells colleagues of the same display name apart (ORISO-UserService#1663);
             the counsellor's ORISO username. Only for colleagues of the caller's own Träger
@@ -785,6 +1032,35 @@ components:
           type: string
           pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
           example: '17:00'
+    CalendarConsultationHoursDTO:
+      description: A counsellor's Sprechstunden and how advice seekers book them
+        (ORISO-Frontend#2287)
+      type: object
+      required:
+        - windows
+      properties:
+        windows:
+          description: Weekly windows advice seekers can book, ordered by weekday and start, at
+            most 14; windows of one weekday do not overlap
+          type: array
+          maxItems: 14
+          items:
+            $ref: '#/components/schemas/CalendarWorkingHoursWindowDTO'
+        autoAccept:
+          description: A booking outside the notice period is confirmed at once; otherwise every
+            booking is a request the counsellor confirms or declines. Default true.
+          type: boolean
+        noticeDays:
+          description: From this many days before its start a booking is a request even with
+            autoAccept (start earlier than now plus noticeDays). Default 1.
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 30
+        slotMinutes:
+          description: Length of a bookable slot in minutes, 30 or 60. Default 60.
+          type: integer
+          format: int32
     CalendarWorkingHoursDTO:
       type: object
       required:
@@ -875,6 +1151,36 @@ components:
           maxItems: 4
           items:
             $ref: '#/components/schemas/CalendarWorkingTimeWindowDTO'
+    ColleagueAppointmentCreateDTO:
+      type: object
+      required:
+        - colleagueId
+        - start
+        - end
+        - kind
+      properties:
+        colleagueId:
+          type: string
+          maxLength: 36
+        start:
+          type: string
+          format: date-time
+        end:
+          type: string
+          format: date-time
+        kind:
+          $ref: '#/components/schemas/AppointmentKind'
+    CalendarAutoAcceptDTO:
+      type: object
+      required:
+        - colleagueIds
+      properties:
+        colleagueIds:
+          type: array
+          maxItems: 200
+          items:
+            type: string
+            maxLength: 36
     CalendarMoveProposalCreateDTO:
       type: object
       required:

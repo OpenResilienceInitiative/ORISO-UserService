@@ -28,12 +28,26 @@ public class AnonymousUserDeletionUnit {
    *
    * <p>The user is loaded here rather than handed in, so it is managed by this transaction's own
    * persistence context and the delete does not take Hibernate's merge path. A user that no longer
-   * exists is treated as already deleted.
+   * exists is treated as already deleted. The row lock lasts until the commit, so notifications
+   * created for this user meanwhile wait and then find no recipient.
    */
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public List<DeletionWorkflowError> deleteUser(String userId) {
     return userRepository
-        .findById(userId)
+        .findByUserIdForUpdate(userId)
+        .map(this::performDeletion)
+        .orElseGet(java.util.Collections::emptyList);
+  }
+
+  /**
+   * Deletes a temporary account, read under the row lock "Konto behalten" (#1662) also takes: an
+   * account the guest kept in the meantime is left alone.
+   */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public List<DeletionWorkflowError> deleteTemporaryUser(String userId) {
+    return userRepository
+        .findByUserIdForUpdate(userId)
+        .filter(User::isTemporaryAccount)
         .map(this::performDeletion)
         .orElseGet(java.util.Collections::emptyList);
   }

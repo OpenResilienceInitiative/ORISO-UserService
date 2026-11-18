@@ -23,6 +23,8 @@ public class MatrixRtcCallPolicyService {
   private final @NonNull org.springframework.jdbc.core.JdbcTemplate jdbc;
   private final @NonNull de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService
       callGuests;
+  private final @NonNull de.caritas.cob.userservice.api.service.matrix.CounsellorStartedCall
+      counsellorCalls;
 
   public CallMediaPolicy resolve(String sourceRoomId, String matrixUserId) {
     return resolve(sourceRoomId, matrixUserId, null);
@@ -137,6 +139,19 @@ public class MatrixRtcCallPolicyService {
           correlationId,
           CallPolicyDenialReason.NO_TENANT_CONTEXT);
       return CallMediaPolicy.denied();
+    }
+
+    // Frank, 17 Nov 2026: only counsellors start calls. Anybody else gets media only for a running
+    // call a counsellor of the Träger started (CounsellorStartedCall); asking for any other call
+    // room is a start and is refused, whatever the client shows.
+    if (!counsellorCalls.isCounsellor(matrixUserId, context.get().tenantId())
+        && !counsellorCalls.isRunning(sourceRoomId, callRoomId, context.get().tenantId())) {
+      log.info(
+          "Call policy denied [{}]: reason={}, tenant={}",
+          correlationId,
+          CallPolicyDenialReason.CALL_START_REQUIRES_COUNSELLOR,
+          context.get().tenantId());
+      return CallMediaPolicy.refused(CallMediaPolicy.CALL_START_REQUIRES_COUNSELLOR);
     }
 
     var tenant = getTenant(context.get().tenantId());

@@ -61,6 +61,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @Import({
   CounsellorDirectLinkService.class,
+  PlatformGuestAccountModePolicy.class,
+  ConfiguredTemporaryAccountPolicy.class,
   DirectInvitationService.class,
   DirectInvitationMemberships.class,
   DirectInvitationExpiryService.class,

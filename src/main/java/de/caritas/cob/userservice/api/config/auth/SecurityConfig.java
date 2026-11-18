@@ -216,6 +216,10 @@ public class SecurityConfig {
                 .permitAll()
                 .requestMatchers(HttpMethod.GET, "/users/invitelinks/*/context")
                 .permitAll()
+                // #1662: a Gesprächskreis entry page reads the circle's guest account mode; the
+                // invite secret is the credential and GroupInviteRegistration checks it.
+                .requestMatchers(HttpMethod.GET, "/users/chat/*/invite-context")
+                .permitAll()
                 // Calendar subscription feed (ADR-032): a calendar app sends no token; the signed
                 // address is the credential and CalendarFeedService checks it in constant time.
                 .requestMatchers(
@@ -340,6 +344,10 @@ public class SecurityConfig {
                     "/matrix/calls/share-links/{linkId:[0-9]+}/guests/remove",
                     "/service/matrix/calls/share-links/{linkId:[0-9]+}/guests/remove")
                 .hasAuthority(CONSULTANT_DEFAULT)
+                .requestMatchers(HttpMethod.POST, "/users/event-notifications/addon")
+                .hasAuthority(TECHNICAL_DEFAULT)
+                .requestMatchers(HttpMethod.GET, "/users/addon-context")
+                .hasAuthority(TECHNICAL_DEFAULT)
                 .requestMatchers(
                     "/users/email",
                     "/users/drafts",
@@ -415,6 +423,10 @@ public class SecurityConfig {
                 .requestMatchers(
                     "/users/live-chat-account/conversion",
                     "/service/users/live-chat-account/conversion")
+                .access(this::isUnprivilegedLiveChatUser)
+                // #1662 "keep account": only the advice seeker, for their own temporary account.
+                .requestMatchers(
+                    "/users/temporary-account/keep", "/service/users/temporary-account/keep")
                 .access(this::isUnprivilegedLiveChatUser)
                 // The caller's own direct-link temporary account (#1476).
                 .requestMatchers(
@@ -550,6 +562,8 @@ public class SecurityConfig {
                     "/users/sessions/consultants",
                     "/users/sessions/consultants/deleted-askers",
                     "/service/users/sessions/consultants/deleted-askers",
+                    "/users/sessions/consultants/deleted-askers/{formerSessionId:[0-9]+}/archive",
+                    "/service/users/sessions/consultants/deleted-askers/{formerSessionId:[0-9]+}/archive",
                     "/users/sessions/teams",
                     "/conversations/askers/anonymous/{sessionId:[0-9]+}/accept",
                     "/service/conversations/askers/anonymous/{sessionId:[0-9]+}/accept",
@@ -852,6 +866,8 @@ public class SecurityConfig {
                     "/service/users/calendar/sync/import",
                     "/users/calendar/working-hours",
                     "/service/users/calendar/working-hours",
+                    "/users/calendar/consultation-hours",
+                    "/service/users/calendar/consultation-hours",
                     "/users/calendar/working-hours/exceptions/{date}",
                     "/service/users/calendar/working-hours/exceptions/{date}",
                     "/users/calendar/proposals",
@@ -861,7 +877,17 @@ public class SecurityConfig {
                     "/users/calendar/proposals/{proposalId}/accept",
                     "/service/users/calendar/proposals/{proposalId}/accept",
                     "/users/calendar/proposals/{proposalId}/decline",
-                    "/service/users/calendar/proposals/{proposalId}/decline")
+                    "/service/users/calendar/proposals/{proposalId}/decline",
+                    "/users/calendar/colleague-appointments",
+                    "/service/users/calendar/colleague-appointments",
+                    "/users/calendar/colleague-appointments/{appointmentId}",
+                    "/service/users/calendar/colleague-appointments/{appointmentId}",
+                    "/users/calendar/colleague-appointments/{appointmentId}/accept",
+                    "/service/users/calendar/colleague-appointments/{appointmentId}/accept",
+                    "/users/calendar/colleague-appointments/{appointmentId}/decline",
+                    "/service/users/calendar/colleague-appointments/{appointmentId}/decline",
+                    "/users/calendar/auto-accept",
+                    "/service/users/calendar/auto-accept")
                 .hasAuthority(CONSULTANT_DEFAULT)
                 // 1:1 appointments (ORISO-Frontend#1960): who may do what is decided per session in
                 // SessionAppointmentService.
@@ -872,6 +898,16 @@ public class SecurityConfig {
                     "/service/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}",
                     "/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}/cancel",
                     "/service/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}/cancel",
+                    "/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}/confirm",
+                    "/service/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}/confirm",
+                    "/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}/decline",
+                    "/service/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}/decline",
+                    "/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}/expiry-notice",
+                    "/service/users/sessions/{sessionId:[0-9]+}/appointments/{appointmentId}/expiry-notice",
+                    "/users/sessions/{sessionId:[0-9]+}/appointment-slots",
+                    "/service/users/sessions/{sessionId:[0-9]+}/appointment-slots",
+                    "/users/sessions/{sessionId:[0-9]+}/appointment-slots/booking",
+                    "/service/users/sessions/{sessionId:[0-9]+}/appointment-slots/booking",
                     "/users/appointments/upcoming",
                     "/service/users/appointments/upcoming")
                 .hasAnyAuthority(USER_DEFAULT, ANONYMOUS_DEFAULT, CONSULTANT_DEFAULT)

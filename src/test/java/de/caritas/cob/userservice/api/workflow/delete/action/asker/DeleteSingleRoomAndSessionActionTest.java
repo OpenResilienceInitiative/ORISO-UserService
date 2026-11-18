@@ -25,6 +25,8 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.port.out.SessionTopicRepository;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
+import de.caritas.cob.userservice.api.service.lifecycle.LifecycleEventPublisher;
+import de.caritas.cob.userservice.api.service.lifecycle.LifecycleEventPublisher.DeletedSession;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
 import de.caritas.cob.userservice.api.workflow.delete.model.SessionDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.service.TeamDiscussionPurgeService;
@@ -60,6 +62,8 @@ class DeleteSingleRoomAndSessionActionTest {
   @Mock private TeamDiscussionRepository teamDiscussionRepository;
 
   @Mock private TeamDiscussionPurgeService teamDiscussionPurgeService;
+
+  @Mock private LifecycleEventPublisher lifecycleEventPublisher;
 
   private LogbackCaptor logCaptor;
 
@@ -251,5 +255,36 @@ class DeleteSingleRoomAndSessionActionTest {
         workflowErrors.get(0).getReason(), is("Unable to delete team discussion for session"));
     assertThat(workflowErrors.get(0).getTimestamp(), notNullValue());
     verify(this.sessionRepository).delete(session);
+  }
+
+  @Test
+  void execute_Should_publishSessionDeleted_When_theSessionWasDeleted() {
+    Session session = new EasyRandom().nextObject(Session.class);
+
+    this.deleteSingleRoomAndSessionAction.execute(
+        new SessionDeletionWorkflowDTO(session, new ArrayList<>()));
+
+    // ADR-034: announced only after the row is gone, with the ids captured before.
+    InOrder order = inOrder(this.sessionRepository, this.lifecycleEventPublisher);
+    order.verify(this.sessionRepository).delete(session);
+    order
+        .verify(this.lifecycleEventPublisher)
+        .sessionDeleted(
+            new DeletedSession(
+                session.getTenantId(),
+                session.getId(),
+                session.getUser().getUserId(),
+                session.getAgencyId()));
+  }
+
+  @Test
+  void execute_Should_notPublishSessionDeleted_When_theSessionCouldNotBeDeleted() {
+    Session session = new EasyRandom().nextObject(Session.class);
+    doThrow(new RuntimeException()).when(this.sessionRepository).delete(any());
+
+    this.deleteSingleRoomAndSessionAction.execute(
+        new SessionDeletionWorkflowDTO(session, new ArrayList<>()));
+
+    verify(this.lifecycleEventPublisher, never()).sessionDeleted(any());
   }
 }
