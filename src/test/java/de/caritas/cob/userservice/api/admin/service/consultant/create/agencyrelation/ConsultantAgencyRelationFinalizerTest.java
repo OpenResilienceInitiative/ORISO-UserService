@@ -128,7 +128,7 @@ class ConsultantAgencyRelationFinalizerTest {
     assertThat(consultant.isTeamConsultant()).isFalse();
 
     var order = inOrder(consultantRepository, consultantAgencyRepository);
-    order.verify(consultantRepository).findActiveByIdForUpdate(consultant.getId());
+    order.verify(consultantRepository).findFreshActiveByIdForUpdate(consultant.getId());
     order.verify(consultantAgencyRepository).findById(earlier.getId());
     verify(consultantAgencyRepository, never()).save(any());
     verify(consultantRepository, never()).save(any());
@@ -138,7 +138,7 @@ class ConsultantAgencyRelationFinalizerTest {
     var consultant = new Consultant();
     consultant.setId("consultantId");
     consultant.setStatus(ConsultantStatus.IN_PROGRESS);
-    when(consultantRepository.findActiveByIdForUpdate(consultant.getId()))
+    when(consultantRepository.findFreshActiveByIdForUpdate(consultant.getId()))
         .thenReturn(Optional.of(consultant));
     return consultant;
   }

@@ -25,7 +25,7 @@ public class ConsultantAgencyRelationFinalizer {
   @Transactional
   public boolean finalizeConsultantAgencyRelation(Consultant consultant, AgencyDTO agency) {
     return consultantRepository
-        .findActiveByIdForUpdate(consultant.getId())
+        .findFreshActiveByIdForUpdate(consultant.getId())
         .map(
             current ->
                 updateConsultantStatus(
@@ -44,7 +44,7 @@ public class ConsultantAgencyRelationFinalizer {
   public boolean finalizeConsultantAgencyRelation(
       Consultant consultant, AgencyDTO agency, ConsultantAgency persistedRelation) {
     return consultantRepository
-        .findActiveByIdForUpdate(consultant.getId())
+        .findFreshActiveByIdForUpdate(consultant.getId())
         .flatMap(
             current ->
                 consultantAgencyRepository

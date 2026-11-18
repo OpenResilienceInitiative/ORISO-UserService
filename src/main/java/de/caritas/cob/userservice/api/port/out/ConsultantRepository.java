@@ -19,7 +19,9 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.transaction.annotation.Transactional;
 
 public interface ConsultantRepository
-    extends JpaRepository<Consultant, String>, JpaSpecificationExecutor<Consultant> {
+    extends JpaRepository<Consultant, String>,
+        JpaSpecificationExecutor<Consultant>,
+        ConsultantRowLock {
 
   boolean existsByIdAndManagedPausedTrue(String id);
 
