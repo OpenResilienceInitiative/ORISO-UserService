@@ -12,3 +12,34 @@
 GET /users/notifications api path removed without deprecation
 # ADR-032 / ORISO-UserService#1650: the cal.com feature flag is no longer sent.
 GET /users/data removed the optional property `appointmentFeatureEnabled` from the response with the `200` status
+
+# ADR-020 / ORISO-Frontend#2287: REQUESTED/DECLINED requests; ORISO-Frontend#2298 reads them.
+GET /users/appointments/upcoming added the new `DECLINED` enum value to the `items/status` response property for the response status `200`
+# ADR-020 / ORISO-Frontend#2287: REQUESTED/DECLINED requests; ORISO-Frontend#2298 reads them.
+GET /users/appointments/upcoming added the new `REQUESTED` enum value to the `items/status` response property for the response status `200`
+# ADR-020 / ORISO-Frontend#2287: REQUESTED/DECLINED requests; ORISO-Frontend#2298 reads them.
+GET /users/sessions/{sessionId}/appointments added the new `DECLINED` enum value to the `items/status` response property for the response status `200`
+# ADR-020 / ORISO-Frontend#2287: REQUESTED/DECLINED requests; ORISO-Frontend#2298 reads them.
+GET /users/sessions/{sessionId}/appointments added the new `REQUESTED` enum value to the `items/status` response property for the response status `200`
+# ADR-020 / ORISO-Frontend#2287: REQUESTED/DECLINED requests; ORISO-Frontend#2298 reads them.
+POST /users/sessions/{sessionId}/appointments added the new `DECLINED` enum value to the `status` response property for the response status `201`
+# ADR-020 / ORISO-Frontend#2287: REQUESTED/DECLINED requests; ORISO-Frontend#2298 reads them.
+POST /users/sessions/{sessionId}/appointments added the new `REQUESTED` enum value to the `status` response property for the response status `201`
+# ADR-020 / ORISO-Frontend#2287: REQUESTED/DECLINED requests; ORISO-Frontend#2298 reads them.
+PUT /users/sessions/{sessionId}/appointments/{appointmentId} added the new `DECLINED` enum value to the `status` response property for the response status `200`
+# ADR-020 / ORISO-Frontend#2287: REQUESTED/DECLINED requests; ORISO-Frontend#2298 reads them.
+PUT /users/sessions/{sessionId}/appointments/{appointmentId} added the new `REQUESTED` enum value to the `status` response property for the response status `200`
+# ADR-020 / ORISO-Frontend#2287: REQUESTED/DECLINED requests; ORISO-Frontend#2298 reads them.
+POST /users/sessions/{sessionId}/appointments/{appointmentId}/cancel added the new `DECLINED` enum value to the `status` response property for the response status `200`
+# ADR-020 / ORISO-Frontend#2287: REQUESTED/DECLINED requests; ORISO-Frontend#2298 reads them.
+POST /users/sessions/{sessionId}/appointments/{appointmentId}/cancel added the new `REQUESTED` enum value to the `status` response property for the response status `200`
+# ADR-032 / ORISO-Frontend#2303: planned absence as calendar entry type ABSENCE; the frontend reads unknown types as busy.
+POST /users/calendar/blockers added the new `ABSENCE` enum value to the `items/type` response property for the response status `201`
+# ADR-032 / ORISO-Frontend#2303: planned absence as calendar entry type ABSENCE; the frontend reads unknown types as busy.
+PUT /users/calendar/blockers/{blockerId} added the new `ABSENCE` enum value to the `type` response property for the response status `200`
+# ADR-032 / ORISO-Frontend#2303: planned absence as calendar entry type ABSENCE; the frontend reads unknown types as busy.
+GET /users/calendar/colleagues/{consultantId}/entries added the new `ABSENCE` enum value to the `items/type` response property for the response status `200`
+# ADR-032 / ORISO-Frontend#2303: planned absence as calendar entry type ABSENCE; the frontend reads unknown types as busy.
+GET /users/calendar/entries added the new `ABSENCE` enum value to the `items/type` response property for the response status `200`
+# ADR-032 / ORISO-Frontend#2303: planned absence as calendar entry type ABSENCE; the frontend reads unknown types as busy.
+POST /users/calendar/proposals/{proposalId}/accept added the new `ABSENCE` enum value to the `type` response property for the response status `200`

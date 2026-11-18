@@ -2,6 +2,8 @@ package de.caritas.cob.userservice.api.service.matrix;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.model.MatrixCallBinding;
+import de.caritas.cob.userservice.api.model.MatrixCallDevice;
 import de.caritas.cob.userservice.api.model.MatrixCallObservation;
 import de.caritas.cob.userservice.api.model.MatrixCallObservationEnd;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
@@ -19,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -37,8 +40,15 @@ import org.springframework.transaction.support.TransactionTemplate;
  * registration request behind it. When the registering person is the assigned counsellor of a 1:1
  * session, {@link MatrixSessionCallBindingService} re-checks that request against Matrix on its own
  * (conversation, assignment, membership, call-room binding and creator) and may then write the
- * authoritative {@code MatrixCallBinding}. Group chats, advice seekers, other counsellors and
- * guests never get a binding this way, and nothing here may derive one from a stored observation.
+ * authoritative {@code MatrixCallBinding}. #1662: in a group chat, {@link
+ * MatrixGroupCallBindingService} does the same for a moderator who started the call. Advice
+ * seekers, other counsellors and guests never get a binding this way, and nothing here may derive
+ * one from a stored observation.
+ *
+ * <p>Frank, 17 Nov 2026: {@code CounsellorStartedCall} reads a live row whose creator is a
+ * counsellor as "a counsellor started this call", so an advice seeker may join it. That only
+ * narrows: without such a row the media gate refuses the advice seeker, and it grants nobody a
+ * guest seat.
  *
  * <p>#1630: no database transaction is open while Matrix is called. Every Matrix lookup happens
  * first, then one short transaction writes, then the notifications follow (each in its own
@@ -303,9 +313,59 @@ public class MatrixCallObservationService {
   private record Ending(
       MatrixCallObservation row, boolean endedNow, boolean observed, String endedCallRoom) {}
 
-  /** Outside the transaction: the session call's binding, which the end locks first. */
+  /**
+   * Outside the transaction: the call's binding, which the end locks first. #1662: a group call has
+   * one too (MatrixGroupCallBindingService), and its explicit end must end it as well.
+   */
   private Long boundId(boolean oneToOne, String sourceRoomId, String callId) {
-    return oneToOne ? sessionBindings.boundCallId(sourceRoomId, callId).orElse(null) : null;
+    if (oneToOne) return sessionBindings.boundCallId(sourceRoomId, callId).orElse(null);
+    if (blank(sourceRoomId, 255) || blank(callId, 191)) return null;
+    return bindings
+        .findBySourceRoomIdAndCallId(sourceRoomId, callId)
+        .filter(binding -> binding.getSessionId() == null && binding.getChatId() != null)
+        .map(MatrixCallBinding::getId)
+        .orElse(null);
+  }
+
+  /**
+   * #1662 (CodeRabbit): a group call's binding stays live until its memberships expire, and share
+   * link and guest admission follow that. It is ended explicitly here, in the end transaction and
+   * in the same lock order as the session path (binding, conversation, observation), by whoever may
+   * end a 1:1 call (Frank, 17 Nov): the caller who registered it, or a counsellor or moderator who
+   * is in the call. Returns its call room for the guest revocation after the commit, else null.
+   */
+  private String endGroupBindingWhileLocked(
+      AuthenticatedUser actor,
+      MatrixCallConversation conversation,
+      String caller,
+      String callId,
+      long now,
+      Long lockedId) {
+    var known =
+        bindings
+            .findBySourceRoomIdAndCallId(conversation.getMatrixRoomId(), callId)
+            .filter(binding -> binding.getSessionId() == null && binding.getChatId() != null)
+            .orElse(null);
+    if (known == null) return null;
+    if (!Objects.equals(known.getId(), lockedId)) {
+      throw new MatrixSessionCallBindingService.LockOrderRetry();
+    }
+    var binding = bindings.lockById(known.getId()).orElse(null);
+    if (binding == null
+        || binding.getEndedAt() != null
+        || binding.getSessionId() != null
+        || !Objects.equals(binding.getChatId(), conversation.getChatId())
+        || !Objects.equals(binding.getTenantId(), conversation.getTenantId())
+        || !callId.equals(binding.getCallId())
+        || !binding.mayBeEndedBy(
+            caller,
+            () -> actor.isConsultant() && lifecycle.isActiveRecipient(actor.getUserId()),
+            now)) {
+      return null;
+    }
+    binding.finishExplicitly(now);
+    bindings.save(binding);
+    return binding.getMediaRoomId();
   }
 
   private Ending writeEnd(
@@ -320,7 +380,10 @@ public class MatrixCallObservationService {
             status -> {
               // Lock order: binding (as the lifecycle takes it), session, observation, as bind and
               // registration take session before observation.
-              if (boundId != null) sessionBindings.lockBinding(boundId);
+              if (boundId != null) {
+                if (conversation.getChatId() == null) sessionBindings.lockBinding(boundId);
+                else bindings.lockById(boundId);
+              }
               // The session's call lock; a closed session still holds it, and ending is always
               // allowed.
               conversations.lockCurrentForWriting(conversation);
@@ -330,7 +393,10 @@ public class MatrixCallObservationService {
                   conversation.getSessionId() != null && conversation.getChatId() == null
                       ? sessionBindings.endWhileSessionLocked(
                           actor, conversation, callId, now, boundId)
-                      : null;
+                      : conversation.getChatId() != null
+                          ? endGroupBindingWhileLocked(
+                              actor, conversation, caller, callId, now, boundId)
+                          : null;
               return observed == null
                   ? new Ending(null, false, false, endedCallRoom)
                   : new Ending(observed.row(), observed.endedNow(), true, endedCallRoom);
@@ -391,13 +457,51 @@ public class MatrixCallObservationService {
             .build());
   }
 
+  /**
+   * FE#1211: "ended" is for the people who were in the call. An invitee who never joined hears that
+   * they missed it, as the lifecycle tells them when the call room empties; both writers share the
+   * missed event's key, so whichever runs first wins and the other adds nothing. A group call has
+   * no binding: there, who was in it is read from the MatrixRTC memberships of its media room, and
+   * every member of the conversation was invited (Frank, 18 Nov: "as in 1:1"). When neither is
+   * known, every member hears that the call ended. The caller always hears that it ended, even
+   * before their own device was seen.
+   */
   private void notifyEnded(
       MatrixCallConversation conversation, List<String> members, MatrixCallObservation row) {
     var identities = identities(members, row.getCreatorMatrixId(), row.getTenantId());
     announceSessionCall(conversation, identities.get(row.getCreatorMatrixId()), row);
+    var binding =
+        bindings.findBySourceRoomIdAndCallId(conversation.getMatrixRoomId(), row.getCallId());
+    var attendees =
+        binding
+            .map(
+                known ->
+                    known.getDevices().values().stream()
+                        .filter(MatrixCallDevice::isAttended)
+                        .map(MatrixCallDevice::getSenderMatrixId)
+                        .collect(Collectors.toSet()))
+            .or(() -> mediaRoomAttendees(row))
+            .orElse(null);
     for (String member : members) {
       var recipient = identities.get(member);
       if (recipient == null || !lifecycle.isActiveRecipient(recipient.id())) continue;
+      boolean caller =
+          member.equals(row.getCreatorMatrixId())
+              || binding.map(known -> member.equals(known.getCallerMatrixId())).orElse(false);
+      if (attendees != null && !attendees.contains(member) && !caller) {
+        boolean invited =
+            binding.map(known -> known.getInvitedMatrixIds().contains(member)).orElse(true);
+        if (invited) {
+          notifications.createCallMissedNotification(
+              conversation,
+              recipient.id(),
+              recipient.consultant(),
+              row.getCallId(),
+              row.getMediaRoomId(),
+              binding.map(MatrixCallBinding::isVideo).orElse(row.isVideo()));
+        }
+        continue;
+      }
       notifications.createCallEndedNotification(
           conversation,
           recipient.id(),
@@ -427,6 +531,27 @@ public class MatrixCallObservationService {
         row.getCallId(),
         row.isVideo(),
         java.time.Instant.ofEpochMilli(row.getEndedAt()));
+  }
+
+  /**
+   * FE#1211: everybody who ever joined the call holds a MatrixRTC membership in its media room (a
+   * departure keeps the event, only empties it); a member who never joined has none. Read as the
+   * creator; empty when the room cannot be read, so the caller falls back to "ended" for all.
+   */
+  private Optional<java.util.Set<String>> mediaRoomAttendees(MatrixCallObservation row) {
+    try {
+      return matrix
+          .getCallRoomState(row.getMediaRoomId(), row.getCreatorMatrixId())
+          .map(
+              state ->
+                  state.stream()
+                      .map(event -> MatrixRtcMembershipEvent.parse(event).orElse(null))
+                      .filter(Objects::nonNull)
+                      .map(MatrixRtcMembershipEvent::sender)
+                      .collect(Collectors.toSet()));
+    } catch (RuntimeException unreadable) {
+      return Optional.empty();
+    }
   }
 
   /**

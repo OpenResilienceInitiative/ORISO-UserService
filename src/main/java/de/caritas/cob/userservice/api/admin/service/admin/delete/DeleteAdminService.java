@@ -49,6 +49,24 @@ public class DeleteAdminService {
     logExecuted(DeletionAuditTargetType.TENANT_ADMIN, adminId, tenantId);
   }
 
+  /**
+   * Deletes a read-only statistics account (ORISO-UserService#1666). Only an admin of exactly that
+   * type is found here, so this path can never remove a Träger or Beratungsstelle admin.
+   */
+  @Transactional
+  public void deleteStatisticsReader(String adminId) {
+    var admin =
+        this.adminRepository
+            .findByIdAndType(adminId, Admin.AdminType.STATISTICS)
+            .orElseThrow(
+                () ->
+                    new de.caritas.cob.userservice.api.exception.httpresponses.NoContentException(
+                        "Statistics reader not found"));
+    this.identityAccountRemover.deleteUser(adminId);
+    this.adminRepository.deleteById(adminId);
+    logExecuted(DeletionAuditTargetType.STATISTICS_READER, adminId, admin.getTenantId());
+  }
+
   /** Read before the row is gone; only the tenant id is kept, no personal data. */
   private Long tenantIdOf(String adminId) {
     return this.adminRepository.findById(adminId).map(Admin::getTenantId).orElse(null);

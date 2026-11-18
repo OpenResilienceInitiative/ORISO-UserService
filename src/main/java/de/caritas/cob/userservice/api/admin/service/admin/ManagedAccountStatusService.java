@@ -212,7 +212,8 @@ public class ManagedAccountStatusService {
     Boolean required =
         target.admin() != null
                 && (target.admin().getType() == Admin.AdminType.TENANT
-                    || target.admin().getType() == Admin.AdminType.AGENCY)
+                    || target.admin().getType() == Admin.AdminType.AGENCY
+                    || target.admin().getType() == Admin.AdminType.STATISTICS)
             ? Boolean.TRUE
             : consultant != null ? consultant.getTwoFactorRequired() : null;
     Boolean configured = null, factorActive = null;

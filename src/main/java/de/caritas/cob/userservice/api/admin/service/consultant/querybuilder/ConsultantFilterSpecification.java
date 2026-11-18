@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import jakarta.persistence.criteria.JoinType;
 import jakarta.persistence.criteria.Predicate;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Set;
 import org.springframework.data.jpa.domain.Specification;
@@ -34,7 +35,19 @@ public class ConsultantFilterSpecification {
           predicates.add(cb.like(cb.lower(root.<String>get("email")), contains(filter.getEmail())));
         }
         if (nonNull(filter.getAbsent())) {
-          predicates.add(cb.equal(root.get("absent"), filter.getAbsent()));
+          // Absent today, as Consultant#isAbsent decides it (ORISO-Frontend#2303).
+          var today = LocalDate.now(Consultant.ABSENCE_ZONE);
+          var absentToday =
+              cb.and(
+                  cb.isTrue(root.get("absent")),
+                  cb.or(
+                      cb.isNull(root.get("absenceStart")),
+                      cb.lessThanOrEqualTo(root.<LocalDate>get("absenceStart"), today)),
+                  cb.or(
+                      cb.isNull(root.get("absenceEnd")),
+                      cb.greaterThanOrEqualTo(root.<LocalDate>get("absenceEnd"), today)));
+          predicates.add(
+              Boolean.TRUE.equals(filter.getAbsent()) ? absentToday : cb.not(absentToday));
         }
         if (nonNull(filter.getAgencyId())) {
           var agencyJoin = root.join("consultantAgencies", JoinType.INNER);

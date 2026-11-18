@@ -133,6 +133,7 @@ class DeleteMatrixDeletionWorkflowTest {
     new DeleteChatAction(
             chatRepository,
             matrixSynapseService,
+            org.mockito.Mockito.mock(de.caritas.cob.userservice.api.service.ChatService.class),
             org.mockito.Mockito.mock(
                 de.caritas.cob.userservice.api.service.matrixgroup.GroupMatrixLifecycleCleanup
                     .class))

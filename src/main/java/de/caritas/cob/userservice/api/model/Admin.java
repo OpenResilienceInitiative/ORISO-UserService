@@ -55,7 +55,9 @@ public class Admin implements TenantAware {
     TENANT,
     SUPER,
     /** Global Support Admin (ADR-018) — additive support identity, separate from Platform Admin. */
-    SUPPORT
+    SUPPORT,
+    /** Read-only platform statistics account (ORISO-UserService#1666); always on tenant 0. */
+    STATISTICS
   }
 
   /** Explicit management pause; independent identity and lifecycle restrictions stay intact. */
@@ -108,7 +110,7 @@ public class Admin implements TenantAware {
   private String contactEmail;
 
   @Enumerated(EnumType.STRING)
-  @Column(length = 6, nullable = false)
+  @Column(length = 16, nullable = false)
   private AdminType type;
 
   @Column(name = "id_old", updatable = false)

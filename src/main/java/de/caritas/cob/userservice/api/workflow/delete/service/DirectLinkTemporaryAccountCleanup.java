@@ -139,8 +139,10 @@ public class DirectLinkTemporaryAccountCleanup {
   /** Deletes one account in a transaction of its own; failures come back as workflow errors. */
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public List<DeletionWorkflowError> delete(String userId, LocalDateTime now) {
-    var user = userRepository.findById(userId).orElse(null);
+    // Under the row lock "Konto behalten" (#1662) also takes: a kept account is never deleted.
+    var user = userRepository.findByUserIdForUpdate(userId).orElse(null);
     if (user == null
+        || !user.isTemporaryAccount()
         || user.getTemporaryAccountSnapshot() == null
         || user.getTemporaryAccountSnapshot().getDeletedAt() != null) {
       return List.of();

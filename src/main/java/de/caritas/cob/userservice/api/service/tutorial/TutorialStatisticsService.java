@@ -91,7 +91,7 @@ public class TutorialStatisticsService {
 
   @Transactional(readOnly = true)
   public TutorialStatistics getStatistics() {
-    if (authenticatedUser.isPlatformAdmin()) {
+    if (authenticatedUser.isPlatformAdmin() || authenticatedUser.isPlatformStatisticsReader()) {
       return build(TutorialStatisticsScope.PLATFORM, tutorialStatisticsRepository.countGlobal());
     }
     if (authenticatedUser.isTenantSuperAdmin() || authenticatedUser.isSingleTenantAdmin()) {

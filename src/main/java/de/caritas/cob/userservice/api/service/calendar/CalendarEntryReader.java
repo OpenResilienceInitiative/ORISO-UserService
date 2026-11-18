@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.model.SessionAppointment;
 import de.caritas.cob.userservice.api.port.out.CalendarBlockerRepository;
 import de.caritas.cob.userservice.api.port.out.ChatOccurrenceExceptionRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionAppointmentRepository;
 import de.caritas.cob.userservice.api.service.CaseHandoverService;
@@ -58,6 +59,7 @@ class CalendarEntryReader {
   private final GroupChatParticipantRepository participants;
   private final ChatOccurrenceExceptionRepository occurrenceExceptions;
   private final CalendarBlockerRepository blockers;
+  private final ConsultantRepository consultants;
   private final ChatOccurrenceProjector projector = new ChatOccurrenceProjector();
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
@@ -89,6 +91,30 @@ class CalendarEntryReader {
         .findUnopenedInvitationsOfConsultantBetween(consultantId, from, to, page)
         .forEach(appointment -> found.add(appointment(appointment, null)));
     return complete(found);
+  }
+
+  /**
+   * The advice seekers' requests waiting for this counsellor in their own conversations
+   * (ORISO-Frontend#2287), marked requested; title = asker. Only the counsellor's own view reads
+   * them: not a colleague's view, not co-access, not the subscription feed.
+   */
+  List<CalendarEntry> requestsOfConsultant(String consultantId, Instant from, Instant to) {
+    return complete(appointments.findRequestedOfConsultantBetween(consultantId, from, to)).stream()
+        .map(
+            appointment ->
+                new CalendarEntry(
+                    appointment.getId().toString(),
+                    CalendarEntryType.APPOINTMENT,
+                    appointment.getStartTime(),
+                    appointment.getEndTime(),
+                    appointment.getKind(),
+                    usernameTranscoder.decodeUsername(
+                        appointment.getSession().getUser().getUsername()),
+                    appointment.getSession().getId(),
+                    null,
+                    false,
+                    true))
+        .toList();
   }
 
   /** One appointment as a counsellor's own calendar shows it; title = asker. */
@@ -155,6 +181,51 @@ class CalendarEntryReader {
         .toList();
   }
 
+  /**
+   * The counsellor's planned absence (ORISO-Frontend#2303) as one all-day entry over its days,
+   * clipped to the window. An absence without dates has no days to show; one switched off has none.
+   */
+  List<CalendarEntry> absenceOf(String consultantId, Instant from, Instant to) {
+    return consultants
+        .findById(consultantId)
+        .filter(Consultant::isAbsenceSwitchedOn)
+        .filter(c -> c.getAbsenceStart() != null || c.getAbsenceEnd() != null)
+        .map(
+            c -> {
+              var start =
+                  c.getAbsenceStart() == null
+                      ? from
+                      : later(from, c.getAbsenceStart().atStartOfDay(Consultant.ABSENCE_ZONE));
+              var end =
+                  c.getAbsenceEnd() == null
+                      ? to
+                      : earlier(
+                          to, c.getAbsenceEnd().plusDays(1).atStartOfDay(Consultant.ABSENCE_ZONE));
+              return start.isBefore(end)
+                  ? List.of(
+                      new CalendarEntry(
+                          "absence-" + consultantId,
+                          CalendarEntryType.ABSENCE,
+                          start,
+                          end,
+                          null,
+                          null,
+                          null,
+                          null,
+                          true))
+                  : List.<CalendarEntry>of();
+            })
+        .orElse(List.of());
+  }
+
+  private static Instant later(Instant a, java.time.ZonedDateTime b) {
+    return a.isAfter(b.toInstant()) ? a : b.toInstant();
+  }
+
+  private static Instant earlier(Instant a, java.time.ZonedDateTime b) {
+    return a.isBefore(b.toInstant()) ? a : b.toInstant();
+  }
+
   static CalendarEntry blocker(CalendarBlocker blocker) {
     var own = blocker.getSource() == CalendarBlocker.Source.ORISO;
     return new CalendarEntry(
@@ -165,7 +236,8 @@ class CalendarEntryReader {
         null,
         own ? blocker.getNote() : null,
         null,
-        own && blocker.getSeriesId() != null ? blocker.getSeriesId().toString() : null);
+        own && blocker.getSeriesId() != null ? blocker.getSeriesId().toString() : null,
+        own && blocker.isAllDay());
   }
 
   private List<CalendarEntry> occurrencesOf(Collection<Chat> found, Instant from, Instant to) {

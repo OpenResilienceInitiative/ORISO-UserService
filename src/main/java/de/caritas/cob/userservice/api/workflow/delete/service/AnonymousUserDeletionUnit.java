@@ -39,6 +39,19 @@ public class AnonymousUserDeletionUnit {
         .orElseGet(java.util.Collections::emptyList);
   }
 
+  /**
+   * Deletes a temporary account, read under the row lock "Konto behalten" (#1662) also takes: an
+   * account the guest kept in the meantime is left alone.
+   */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public List<DeletionWorkflowError> deleteTemporaryUser(String userId) {
+    return userRepository
+        .findByUserIdForUpdate(userId)
+        .filter(User::isTemporaryAccount)
+        .map(this::performDeletion)
+        .orElseGet(java.util.Collections::emptyList);
+  }
+
   private List<DeletionWorkflowError> performDeletion(User user) {
     return deleteUserAccountService.performUserDeletion(user);
   }

@@ -18,6 +18,7 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.model.CalendarBlocker;
 import de.caritas.cob.userservice.api.model.CalendarBlocker.Source;
@@ -295,6 +296,41 @@ class CalendarControllerIT {
     assertThat(list(entries(in(0), in(24 * 30)))).isEmpty();
   }
 
+  /** ORISO-UserService#1663: a blocker entered as whole days says so when it is read back. */
+  @Test
+  void blockers_Should_ReturnAllDay_AsEntered() throws Exception {
+    actAsCounsellor(counsellor);
+    var day = LocalDate.now(ZoneOffset.UTC).plusDays(3).atStartOfDay().toInstant(ZoneOffset.UTC);
+    var created =
+        parse(
+            mockMvc
+                .perform(
+                    csrf(post("/users/calendar/blockers"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(
+                            JSON.writeValueAsString(
+                                Map.of(
+                                    "start",
+                                    day.toString(),
+                                    "end",
+                                    day.plus(1, ChronoUnit.DAYS).toString(),
+                                    "allDay",
+                                    true))))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+    var timed = createBlocker(in(30), in(31), null, null);
+
+    assertThat(created.get(0)).containsEntry("allDay", true);
+    assertThat(timed.get(0)).containsEntry("allDay", false);
+    var read = list(entries(day.minus(1, ChronoUnit.DAYS), day.plus(2, ChronoUnit.DAYS)));
+    assertThat(read)
+        .filteredOn(row -> created.get(0).get("id").equals(row.get("id")))
+        .singleElement()
+        .satisfies(row -> assertThat(row).containsEntry("allDay", true));
+  }
+
   @Test
   void colleagues_Should_ListThoseInScope() throws Exception {
     actAsCounsellor(counsellor);
@@ -313,8 +349,15 @@ class CalendarControllerIT {
                 "Synthetic Colleague",
                 "agencyName",
                 "Synthetic Centre",
+                // ORISO-UserService#1663: the username tells colleagues of one name apart.
+                "secondaryLabel",
+                new UsernameTranscoder().decodeUsername(colleague.getUsername()),
                 "relation",
-                "SAME_AGENCY"));
+                "SAME_AGENCY",
+                // ORISO-Frontend#2305: internal chats are not available in this test setup, so no
+                // chat is possible and the calendar offers an on-site appointment only.
+                "internalChat",
+                false));
 
     policy(CalendarVisibilityScope.TENANT, true);
     var tenantScope = body(get("/users/calendar/colleagues"));
@@ -330,8 +373,13 @@ class CalendarControllerIT {
     policy(CalendarVisibilityScope.PLATFORM, false);
     assertThat(colleaguesOf(body(get("/users/calendar/colleagues"))))
         .filteredOn(row -> row.get("id").equals(counsellorOfOtherTenant.getId()))
-        .extracting(row -> row.get("relation"))
-        .containsExactly("OTHER_TENANT");
+        .singleElement()
+        .satisfies(
+            row -> {
+              assertThat(row).containsEntry("relation", "OTHER_TENANT");
+              // ORISO-UserService#1663: the username does not leave the Träger.
+              assertThat(row).doesNotContainKey("secondaryLabel");
+            });
   }
 
   @Test

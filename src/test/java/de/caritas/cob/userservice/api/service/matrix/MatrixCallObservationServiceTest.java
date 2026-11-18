@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.MatrixCallBinding;
+import de.caritas.cob.userservice.api.model.MatrixCallDevice;
 import de.caritas.cob.userservice.api.model.MatrixCallObservation;
 import de.caritas.cob.userservice.api.model.MatrixCallObservationEnd;
 import de.caritas.cob.userservice.api.model.User;
@@ -467,6 +468,129 @@ class MatrixCallObservationServiceTest {
             any(), eq("other"), eq(false), eq("call"), eq(MEDIA), anyLong(), anyLong());
   }
 
+  // --- FE#1211: ending tells each member what happened to them ---
+
+  private MatrixCallBinding bindingWithAttendees(long now, String... attendees) {
+    var binding =
+        MatrixCallBinding.builder()
+            .sourceRoomId(SOURCE)
+            .callId("call")
+            .mediaRoomId(MEDIA)
+            .callerMatrixId(CREATOR)
+            .tenantId(7L)
+            .invitedAt(now - 2000)
+            .inviteExpiresAt(now - 1000)
+            .video(true)
+            .invitedMatrixIds(new java.util.HashSet<>(List.of(OTHER)))
+            .build();
+    for (String attendee : attendees) {
+      binding
+          .getDevices()
+          .put(
+              attendee + "-device",
+              new de.caritas.cob.userservice.api.model.MatrixCallDevice(
+                  attendee, now - 1500, now - 10, true, "$" + attendee));
+    }
+    when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(binding));
+    return binding;
+  }
+
+  @Test
+  void anInviteeWhoNeverJoinedHearsTheCallWasMissedNotThatItEnded() {
+    long now = System.currentTimeMillis();
+    var row = row(now - 1000, now + 60_000, null);
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    bindingWithAttendees(now, CREATOR);
+
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
+
+    verify(notifications, never())
+        .createCallEndedNotification(
+            any(), eq("other"), anyBoolean(), anyString(), anyString(), anyLong(), anyLong());
+    verify(notifications)
+        .createCallMissedNotification(
+            any(), eq("other"), eq(false), eq("call"), eq(MEDIA), eq(true));
+    verify(notifications)
+        .createCallEndedNotification(
+            any(), eq("creator"), eq(false), eq("call"), eq(MEDIA), anyLong(), anyLong());
+  }
+
+  @Test
+  void theCallerHearsTheCallEndedEvenBeforeTheirDeviceWasSeen() {
+    long now = System.currentTimeMillis();
+    var row = row(now - 1000, now + 60_000, null);
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    bindingWithAttendees(now);
+
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
+
+    verify(notifications)
+        .createCallEndedNotification(
+            any(), eq("creator"), eq(false), eq("call"), eq(MEDIA), anyLong(), anyLong());
+    verify(notifications)
+        .createCallMissedNotification(
+            any(), eq("other"), eq(false), eq("call"), eq(MEDIA), eq(true));
+  }
+
+  @Test
+  void anInviteeWhoJoinedHearsTheCallEnded() {
+    long now = System.currentTimeMillis();
+    var row = row(now - 1000, now + 60_000, null);
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    bindingWithAttendees(now, CREATOR, OTHER);
+
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
+
+    verify(notifications)
+        .createCallEndedNotification(
+            any(), eq("other"), eq(false), eq("call"), eq(MEDIA), anyLong(), anyLong());
+    verify(notifications, never())
+        .createCallMissedNotification(
+            any(), anyString(), anyBoolean(), anyString(), anyString(), anyBoolean());
+  }
+
+  // FE#1211 (Frank, 18 Nov): a group call has no binding; who was in it is read from the
+  // MatrixRTC memberships of its media room, so a member who never joined hears it was missed.
+
+  @Test
+  void aGroupMemberWhoNeverJoinedHearsTheCallWasMissed() {
+    long now = System.currentTimeMillis();
+    var row = row(now - 1000, now + 60_000, null);
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    when(matrix.getCallRoomState(MEDIA, CREATOR))
+        .thenReturn(Optional.of(List.of(departed(CREATOR, now - 500))));
+
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
+
+    verify(notifications)
+        .createCallMissedNotification(
+            any(), eq("other"), eq(false), eq("call"), eq(MEDIA), anyBoolean());
+    verify(notifications, never())
+        .createCallEndedNotification(
+            any(), eq("other"), anyBoolean(), anyString(), anyString(), anyLong(), anyLong());
+    verify(notifications)
+        .createCallEndedNotification(
+            any(), eq("creator"), eq(false), eq("call"), eq(MEDIA), anyLong(), anyLong());
+  }
+
+  @Test
+  void aGroupMemberWhoWasInTheCallHearsItEnded() {
+    long now = System.currentTimeMillis();
+    var row = row(now - 1000, now + 60_000, null);
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    when(matrix.getCallRoomState(MEDIA, CREATOR))
+        .thenReturn(Optional.of(List.of(departed(CREATOR, now - 500), departed(OTHER, now - 600))));
+
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
+
+    verify(notifications)
+        .createCallEndedNotification(
+            any(), eq("other"), eq(false), eq("call"), eq(MEDIA), anyLong(), anyLong());
+    verify(notifications, never())
+        .createCallMissedNotification(
+            any(), anyString(), anyBoolean(), anyString(), anyString(), anyBoolean());
+  }
+
   // --- FE#2209 review (CodeRabbit): the session binding ends with the observation ---
 
   @Test
@@ -571,6 +695,167 @@ class MatrixCallObservationServiceTest {
     assertThat(service.end(colleague, SOURCE, "call")).isEqualTo(Outcome.OK);
     verify(sessionBindings).revokeGuestsAfterEnd(MEDIA);
     verify(sessionBindings).announceAttendanceAfterEnd(MEDIA);
+  }
+
+  // --- #1662 (CodeRabbit): an explicit end of a group call ends its binding and guest seats ---
+
+  private MatrixCallBinding groupBinding(String callerMatrixId) {
+    long now = System.currentTimeMillis();
+    var binding =
+        MatrixCallBinding.builder()
+            .id(9L)
+            .sourceRoomId(SOURCE)
+            .callId("call")
+            .mediaRoomId(MEDIA)
+            .callerMatrixId(callerMatrixId)
+            .chatId(45L)
+            .tenantId(7L)
+            .invitedAt(now - 1000)
+            .inviteExpiresAt(now + 60_000)
+            .build();
+    when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(binding));
+    when(bindings.lockById(9L)).thenReturn(Optional.of(binding));
+    return binding;
+  }
+
+  @Test
+  void theCallersEndOfAGroupCallEndsItsBindingAndThenRevokesTheGuestSeats() {
+    long now = System.currentTimeMillis();
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call"))
+        .thenReturn(Optional.of(row(now - 1000, now + 60_000, null)));
+    var binding = groupBinding(CREATOR);
+    var order = new java.util.ArrayList<String>();
+    when(bindings.lockById(9L))
+        .thenAnswer(
+            i -> {
+              order.add("lock binding " + tx.isOpen());
+              return Optional.of(binding);
+            });
+    when(conversations.lockCurrentForWriting(any()))
+        .thenAnswer(
+            i -> {
+              order.add("lock conversation " + tx.isOpen());
+              return true;
+            });
+    org.mockito.Mockito.doAnswer(
+            i -> {
+              order.add("revoke guests " + tx.isOpen());
+              return null;
+            })
+        .when(sessionBindings)
+        .revokeGuestsAfterEnd(MEDIA);
+
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
+
+    assertThat(binding.getEndedAt()).isNotNull();
+    verify(bindings).save(binding);
+    assertThat(order.get(0)).isEqualTo("lock binding true");
+    assertThat(order.get(1)).isEqualTo("lock conversation true");
+    assertThat(order.get(order.size() - 1)).isEqualTo("revoke guests false");
+    verify(sessionBindings, org.mockito.Mockito.never())
+        .endWhileSessionLocked(any(), any(), anyString(), anyLong(), any());
+  }
+
+  @Test
+  void anotherMembersEndOfAGroupCallLeavesTheCallersBindingLive() {
+    long now = System.currentTimeMillis();
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call"))
+        .thenReturn(Optional.of(row(now - 1000, now + 60_000, null)));
+    var binding = groupBinding(CREATOR);
+    var member = new AuthenticatedUser();
+    member.setUserId("other");
+    member.setTenantId(7L);
+    when(users.findByUserIdAndDeleteDateIsNull("other"))
+        .thenReturn(Optional.of(user("other", OTHER)));
+
+    assertThat(service.end(member, SOURCE, "call")).isEqualTo(Outcome.OK);
+
+    assertThat(binding.getEndedAt()).isNull();
+    verify(bindings, org.mockito.Mockito.never()).save(any());
+    verify(sessionBindings, org.mockito.Mockito.never()).revokeGuestsAfterEnd(anyString());
+  }
+
+  // --- #1662 (Frank, 17 Nov): a group call ends like a 1:1 call; any counsellor in the call ---
+
+  private static final String MODERATOR = "@moderator:example";
+
+  private AuthenticatedUser groupMember(String id, String matrixId, boolean counsellor) {
+    var member = new AuthenticatedUser();
+    member.setUserId(id);
+    member.setTenantId(7L);
+    member.setRoles(java.util.Set.of(counsellor ? "consultant" : "user"));
+    if (counsellor) {
+      when(consultants.findByIdAndDeleteDateIsNull(id))
+          .thenReturn(Optional.of(consultant(id, matrixId, 7L)));
+    } else {
+      when(users.findByUserIdAndDeleteDateIsNull(id)).thenReturn(Optional.of(user(id, matrixId)));
+    }
+    when(matrix.getCallRoomMembers(SOURCE))
+        .thenReturn(Optional.of(List.of(CREATOR, OTHER, matrixId)));
+    return member;
+  }
+
+  private static void joinCall(MatrixCallBinding binding, String matrixId) {
+    long now = System.currentTimeMillis();
+    binding
+        .getDevices()
+        .put(
+            "_" + matrixId + "_D",
+            new MatrixCallDevice(matrixId, now - 1000, now + 60_000, true, "$e"));
+  }
+
+  @Test
+  void aCounsellorInTheGroupCallEndsTheCallersBindingAndRevokesTheGuestSeats() {
+    var binding = groupBinding(CREATOR);
+    var moderator = groupMember("moderator", MODERATOR, true);
+    joinCall(binding, MODERATOR);
+
+    assertThat(service.end(moderator, SOURCE, "call")).isEqualTo(Outcome.OK);
+
+    assertThat(binding.getEndedAt()).isNotNull();
+    verify(bindings).save(binding);
+    verify(lifecycle).isActiveRecipient("moderator");
+    verify(sessionBindings).revokeGuestsAfterEnd(MEDIA);
+  }
+
+  @Test
+  void aCounsellorWhoIsNotInTheGroupCallLeavesTheBindingLive() {
+    var binding = groupBinding(CREATOR);
+    var moderator = groupMember("moderator", MODERATOR, true);
+    joinCall(binding, CREATOR);
+
+    service.end(moderator, SOURCE, "call");
+
+    assertThat(binding.getEndedAt()).isNull();
+    verify(bindings, org.mockito.Mockito.never()).save(any());
+    verify(sessionBindings, org.mockito.Mockito.never()).revokeGuestsAfterEnd(anyString());
+  }
+
+  @Test
+  void anAskerInTheGroupCallLeavesTheBindingLive() {
+    var binding = groupBinding(CREATOR);
+    var asker = groupMember("asker", "@asker:example", false);
+    joinCall(binding, "@asker:example");
+
+    service.end(asker, SOURCE, "call");
+
+    assertThat(binding.getEndedAt()).isNull();
+    verify(bindings, org.mockito.Mockito.never()).save(any());
+    verify(sessionBindings, org.mockito.Mockito.never()).revokeGuestsAfterEnd(anyString());
+  }
+
+  @Test
+  void aSuspendedCounsellorInTheGroupCallLeavesTheBindingLive() {
+    var binding = groupBinding(CREATOR);
+    var moderator = groupMember("moderator", MODERATOR, true);
+    joinCall(binding, MODERATOR);
+    when(lifecycle.isActiveRecipient("moderator")).thenReturn(false);
+
+    service.end(moderator, SOURCE, "call");
+
+    assertThat(binding.getEndedAt()).isNull();
+    verify(bindings, org.mockito.Mockito.never()).save(any());
+    verify(sessionBindings, org.mockito.Mockito.never()).revokeGuestsAfterEnd(anyString());
   }
 
   // --- #1630 (a): no database transaction stays open while Matrix is called ---

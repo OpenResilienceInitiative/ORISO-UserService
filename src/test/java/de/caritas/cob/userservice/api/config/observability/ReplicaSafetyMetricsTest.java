@@ -32,7 +32,7 @@ class ReplicaSafetyMetricsTest {
                 .tag("risk", "duplicate-side-effect")
                 .gauge()
                 .value())
-        .isEqualTo(1);
+        .isEqualTo(2);
     assertThat(
             registry
                 .get("userservice.replica.local_state")

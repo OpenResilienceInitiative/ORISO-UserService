@@ -88,6 +88,18 @@ public class AuthenticatedUser {
     return isSingleTenantAdmin() || isTenantSuperAdmin();
   }
 
+  /** Read-only platform statistics account (ORISO-UserService#1666). */
+  @JsonIgnore
+  public boolean isStatisticsReader() {
+    return nonNull(roles) && roles.contains(UserRole.STATISTICS_READER.getValue());
+  }
+
+  /** A statistics reader on the platform tenant 0: reads the platform statistics, nothing else. */
+  @JsonIgnore
+  public boolean isPlatformStatisticsReader() {
+    return Long.valueOf(0L).equals(tenantId) && isStatisticsReader();
+  }
+
   @JsonIgnore
   public boolean isPlatformAdmin() {
     return Long.valueOf(0L).equals(tenantId) && isAgencySuperAdmin() && isTenantSuperAdmin();

@@ -22,7 +22,9 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.SessionAppointment;
 import de.caritas.cob.userservice.api.model.SessionAppointment.Kind;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.calendar.CalendarColleagueScope.Colleague;
@@ -54,6 +56,8 @@ class CalendarServiceTest {
   @Mock CalendarEntryReader reader;
   @Mock CalendarColleagueScope colleagues;
   @Mock AgencyService agencyService;
+  @Mock CalendarColleagueAppointmentReader meetings;
+  @Mock CalendarChatReach chatReach;
 
   private final AuthenticatedUser caller = new AuthenticatedUser();
   private CalendarService service;
@@ -65,7 +69,13 @@ class CalendarServiceTest {
     caller.setRoles(Set.of(UserRole.CONSULTANT.getValue()));
     service =
         new CalendarService(
-            caller, reader, colleagues, agencyService, Clock.fixed(NOW, ZoneOffset.UTC));
+            caller,
+            reader,
+            meetings,
+            colleagues,
+            chatReach,
+            agencyService,
+            Clock.fixed(NOW, ZoneOffset.UTC));
   }
 
   @Test
@@ -104,6 +114,9 @@ class CalendarServiceTest {
     assertThat(entries.get(1).getMovable()).isFalse();
     assertThat(entries.get(2).getTitle()).isEqualTo("private note");
     assertThat(entries.get(2).getSeriesId()).isEqualTo("series-1");
+    assertThat(entries.get(2).getAllDay()).as("ORISO-UserService#1663").isTrue();
+    assertThat(entries.get(1).getAllDay()).as("an imported busy time").isNull();
+    assertThat(entries.get(3).getAllDay()).as("an appointment").isNull();
     assertThat(entries.get(2).getMovable()).isTrue();
     assertThat(entries.get(4).getTitle()).isEqualTo("group topic");
     assertThat(entries.get(4).getMovable()).isFalse();
@@ -187,7 +200,7 @@ class CalendarServiceTest {
     assertThat(entries.get(3).getKind()).isEqualTo(AppointmentKind.PHONE);
     var json = json(entries);
     assertThat(json)
-        .doesNotContain("sessionId", "seriesId", "title", "series-1")
+        .doesNotContain("sessionId", "seriesId", "title", "series-1", "allDay")
         .doesNotContain("asker-name", "private note", "group topic", "BUSY");
     for (Map<String, Object> entry : parsed(json)) {
       assertThat(entry.keySet())
@@ -228,6 +241,7 @@ class CalendarServiceTest {
                         true))));
     when(agencyService.getAgencies(anyList()))
         .thenReturn(List.of(new AgencyDTO().id(10L).name("Centre North")));
+    when(chatReach.of(eq(ME), anyList())).thenReturn(Optional.of(Set.of(COLLEAGUE)));
 
     var result = service.colleagues("an");
 
@@ -238,7 +252,41 @@ class CalendarServiceTest {
     assertThat(result.getColleagues().get(0).getDisplayName()).isEqualTo("Colleague Name");
     assertThat(result.getColleagues().get(0).getAgencyName()).isEqualTo("Centre North");
     assertThat(result.getColleagues().get(0).getRelation()).isEqualTo(RelationEnum.SAME_AGENCY);
+    // ORISO-UserService#1663: tells two colleagues of the same name apart (Frank: the username).
+    assertThat(result.getColleagues().get(0).getSecondaryLabel()).isEqualTo("colleague.login");
+    assertThat(result.getColleagues().get(1).getSecondaryLabel()).isNull();
     assertThat(result.getColleagues().get(1).getAgencyName()).isEmpty();
+    // ORISO-Frontend#2305: without an internal chat only an on-site appointment is offered.
+    assertThat(result.getColleagues().get(0).getInternalChat()).isTrue();
+    assertThat(result.getColleagues().get(1).getInternalChat()).isFalse();
+  }
+
+  @Test
+  void colleagues_Should_LeaveTheChatReachOut_When_ItIsUnknown() {
+    when(colleagues.list(ME, null, CalendarService.COLLEAGUE_LIMIT))
+        .thenReturn(
+            new Listing(
+                new CalendarPolicy(CalendarVisibilityScope.AGENCY, false),
+                List.of(colleague(false))));
+    when(chatReach.of(eq(ME), anyList())).thenReturn(Optional.empty());
+
+    assertThat(service.colleagues(null).getColleagues().get(0).getInternalChat()).isNull();
+  }
+
+  @Test
+  void colleagues_Should_KeepTheUsernameInTheTraeger() {
+    var otherTraeger =
+        new Colleague(
+            consultant(COLLEAGUE, 2L), "Colleague Name", Relation.OTHER_TENANT, 10L, false);
+    when(colleagues.list(ME, null, CalendarService.COLLEAGUE_LIMIT))
+        .thenReturn(
+            new Listing(
+                new CalendarPolicy(CalendarVisibilityScope.PLATFORM, false),
+                List.of(otherTraeger)));
+
+    var result = service.colleagues(null);
+
+    assertThat(result.getColleagues().get(0).getSecondaryLabel()).isNull();
   }
 
   @Test
@@ -275,7 +323,8 @@ class CalendarServiceTest {
                     null,
                     "private note",
                     null,
-                    "series-1"),
+                    "series-1",
+                    true),
                 new CalendarEntry(
                     "busy",
                     CalendarEntryType.BUSY,
@@ -320,6 +369,10 @@ class CalendarServiceTest {
     var consultant = new Consultant();
     consultant.setId(id);
     consultant.setTenantId(tenantId);
+    if (COLLEAGUE.equals(id)) {
+      // Stored encoded, as provisioning does (review 4595469701).
+      consultant.setUsername(new UsernameTranscoder().encodeUsername("colleague.login"));
+    }
     return consultant;
   }
 
@@ -333,5 +386,60 @@ class CalendarServiceTest {
   @SuppressWarnings("unchecked")
   private static List<Map<String, Object>> parsed(String json) throws Exception {
     return new ObjectMapper().readValue(json, List.class);
+  }
+
+  private static CalendarEntry meeting(String id, boolean invited, boolean confirmed) {
+    return new CalendarEntry(
+        id,
+        CalendarEntryType.APPOINTMENT,
+        Instant.parse("2026-11-20T09:00:00Z"),
+        Instant.parse("2026-11-20T10:00:00Z"),
+        SessionAppointment.Kind.VIDEO,
+        "Kai Colleague",
+        null,
+        null,
+        false,
+        new CalendarEntry.Meeting("kai", "Kai Colleague", confirmed, invited, "!room:oriso", 77L));
+  }
+
+  @Test
+  void ownEntries_Should_ShowAppointmentsWithColleagues_WithTheOtherCounsellor() {
+    when(meetings.entriesOf(eq(ME), any(), any(), eq(false)))
+        .thenReturn(List.of(meeting("meet-1", true, false)));
+
+    var entries = service.ownEntries(FROM, TO);
+
+    assertThat(entries).extracting(CalendarEntryDTO::getId).containsExactly("meet-1");
+    var entry = entries.get(0);
+    assertThat(entry.getType()).isEqualTo(CalendarEntryType.APPOINTMENT);
+    assertThat(entry.getTitle()).isEqualTo("Kai Colleague");
+    assertThat(entry.getColleagueId()).isEqualTo("kai");
+    assertThat(entry.getColleagueName()).isEqualTo("Kai Colleague");
+    assertThat(entry.getColleagueStatus()).isEqualTo(CalendarEntryDTO.ColleagueStatusEnum.PENDING);
+    assertThat(entry.getInvited()).isTrue();
+    assertThat(entry.getMatrixRoomId()).isEqualTo("!room:oriso");
+    assertThat(entry.getChatId()).isEqualTo(77L);
+    assertThat(entry.getMovable()).as("moved by cancelling and making a new one").isFalse();
+  }
+
+  @Test
+  void colleagueEntries_Should_ShowAppointmentsWithColleagues_AsBusyAndKindOnly() {
+    when(colleagues.find(ME, COLLEAGUE)).thenReturn(Optional.of(colleague(true)));
+    when(meetings.entriesOf(eq(COLLEAGUE), any(), any(), eq(true)))
+        .thenReturn(List.of(meeting("meet-1", false, true)));
+
+    var entries = service.colleagueEntries(COLLEAGUE, FROM, TO);
+
+    assertThat(entries).hasSize(1);
+    var entry = entries.get(0);
+    assertThat(entry.getType()).isEqualTo(CalendarEntryType.APPOINTMENT);
+    assertThat(entry.getKind()).isEqualTo(AppointmentKind.VIDEO);
+    assertThat(entry.getTitle()).as("no names, even where asker names are shown").isNull();
+    assertThat(entry.getColleagueId()).isNull();
+    assertThat(entry.getColleagueName()).isNull();
+    assertThat(entry.getColleagueStatus()).isNull();
+    assertThat(entry.getInvited()).isNull();
+    assertThat(entry.getMatrixRoomId()).isNull();
+    assertThat(entry.getChatId()).isNull();
   }
 }
