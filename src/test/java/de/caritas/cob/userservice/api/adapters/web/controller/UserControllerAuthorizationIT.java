@@ -956,6 +956,18 @@ class UserControllerAuthorizationIT {
     verify(deletedAskerSessionService).archive("consultant-1", 77L);
   }
 
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/sessions/consultants/deleted-askers/77/archive",
+        "/service/users/sessions/consultants/deleted-askers/77/archive"
+      })
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void archiveDeletedAskerSessionRequiresCsrfToken(String path) throws Exception {
+    mvc.perform(put(path)).andExpect(status().isForbidden());
+    verifyNoMoreInteractions(deletedAskerSessionService);
+  }
+
   /** GET on /users/sessions/consultants (role: consultants) */
   @Test
   void
