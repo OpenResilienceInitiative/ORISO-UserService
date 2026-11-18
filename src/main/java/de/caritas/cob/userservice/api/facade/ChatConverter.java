@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.model.Chat.ChatInterval;
 import de.caritas.cob.userservice.api.model.Chat.ChatModality;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConversationType;
+import de.caritas.cob.userservice.api.model.GuestAccountMode;
 import java.time.DateTimeException;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -71,7 +72,11 @@ public class ChatConverter {
             .hintMessage(chatDTO.getHintMessage())
             .sourceLanguage(chatDTO.getSourceLanguage())
             .hintMessageTranslations(chatDTO.getHintMessageTranslations())
-            .groupChatRulesTranslations(chatDTO.getGroupChatRulesTranslations());
+            .groupChatRulesTranslations(chatDTO.getGroupChatRulesTranslations())
+            .guestAccountMode(
+                nonNull(chatDTO.getGuestAccountMode())
+                    ? chatDTO.getGuestAccountMode()
+                    : GuestAccountMode.GUEST_CHOOSES);
 
     if (nonNull(agencyDTO)) {
       builder.consultingTypeId(agencyDTO.getConsultingType());

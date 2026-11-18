@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
+import de.caritas.cob.userservice.api.model.GuestAccountMode;
 import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -27,9 +28,22 @@ public class TemporaryAccountLinkResolver {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull DirectInvitePolicy directInvitePolicy;
   private final @NonNull CallShareLinkService callShareLinks;
+  private final @NonNull GuestAccountModePolicy guestAccountModes;
+
+  /**
+   * The link a registration came through and the guest account mode it admits the guest under
+   * (#1662): the link's mode as capped now. A temporary account stores it as the mode it entered
+   * under.
+   */
+  public record Entry(AgencyInviteLink link, GuestAccountMode mode) {}
 
   /** The direct link the registration names, or empty for every other registration. */
   public Optional<AgencyInviteLink> resolve(UserDTO userDTO) {
+    return resolveEntry(userDTO).map(Entry::link);
+  }
+
+  /** {@link #resolve} with the mode the registration enters under. */
+  public Optional<Entry> resolveEntry(UserDTO userDTO) {
     if (isBlank(userDTO.getDirectLinkToken())) {
       return Optional.empty();
     }
@@ -47,8 +61,7 @@ public class TemporaryAccountLinkResolver {
                         ? new DirectLinkExpiredException()
                         : new ForbiddenException("The direct link is not valid"));
     if (InviteLinkKind.CALL.name().equals(link.getLinkKind())) {
-      requireCallRegistration(link, userDTO);
-      return Optional.of(link);
+      return Optional.of(new Entry(link, requireCallRegistration(link, userDTO)));
     }
     if (!InviteLinkKind.COUNSELLOR.name().equals(link.getLinkKind())
         || !InviteLinkChatType.isDirectMedium(link.getChatType())) {
@@ -62,7 +75,14 @@ public class TemporaryAccountLinkResolver {
     if (!InviteLinkStatus.ACTIVE.name().equals(link.getStatus())) {
       throw new BadRequestException("Invite link expired");
     }
-    requireAdmittedAccountType(userDTO, link.effectiveAccessMode());
+    // #1662: the link's mode, capped by what the platform and the Träger allow now.
+    var mode =
+        guestAccountModes.cap(
+            link.getTenantId(),
+            link.getAgencyId(),
+            InviteLinkChatType.valueOf(link.getChatType()),
+            link.effectiveGuestAccountMode());
+    requireAdmittedAccountType(userDTO, mode);
     var registrationTenant = TenantContext.getCurrentTenant();
     if (registrationTenant != null && !Objects.equals(registrationTenant, link.getTenantId())) {
       throw new ForbiddenException("Invite link belongs to another tenant");
@@ -72,10 +92,10 @@ public class TemporaryAccountLinkResolver {
       throw new DirectLinkInactiveException();
     }
     DirectLinkOwner.requireStillServing(consultantRepository, link);
-    return Optional.of(link);
+    return Optional.of(new Entry(link, mode));
   }
 
-  private void requireCallRegistration(AgencyInviteLink link, UserDTO userDTO) {
+  private GuestAccountMode requireCallRegistration(AgencyInviteLink link, UserDTO userDTO) {
     if (link.getTenantId() == null
         || !Objects.equals(TenantContext.getCurrentTenant(), link.getTenantId())
         || link.getAgencyId() == null
@@ -90,24 +110,19 @@ public class TemporaryAccountLinkResolver {
     }
     callShareLinks.requireUsable(link);
     callShareLinks.requireDirectInviteAllowed(link);
-    requireMatchingAccountType(
-        userDTO, link.isTemporaryAccount() && callShareLinks.temporaryAccountAllowed(link));
+    var mode = callShareLinks.effectiveGuestAccountMode(link);
+    requireAdmittedAccountType(userDTO, mode);
+    return mode;
   }
 
-  /** ORISO-Frontend#2252: the invitation's access mode decides which accounts may register. */
-  private static void requireAdmittedAccountType(UserDTO userDTO, DirectInvitationAccessMode mode) {
+  /**
+   * #1662: TEMPORARY takes only temporary registrations, PERMANENT only permanent ones,
+   * GUEST_CHOOSES both.
+   */
+  private static void requireAdmittedAccountType(UserDTO userDTO, GuestAccountMode mode) {
     if (!mode.admits(userDTO.isTemporary())) {
       throw new BadRequestException(
-          mode == DirectInvitationAccessMode.GUESTS_ONLY
-              ? "This direct link creates temporary accounts."
-              : "This direct link does not create temporary accounts.");
-    }
-  }
-
-  private static void requireMatchingAccountType(UserDTO userDTO, boolean temporary) {
-    if (userDTO.isTemporary() != temporary) {
-      throw new BadRequestException(
-          temporary
+          mode == GuestAccountMode.TEMPORARY
               ? "This direct link creates temporary accounts."
               : "This direct link does not create temporary accounts.");
     }
