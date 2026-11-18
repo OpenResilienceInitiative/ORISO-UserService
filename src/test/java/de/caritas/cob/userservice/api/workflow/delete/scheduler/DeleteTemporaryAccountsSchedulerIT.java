@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.workflow.delete.scheduler;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -300,12 +301,11 @@ class DeleteTemporaryAccountsSchedulerIT {
   @Test
   void aTemporaryAccountWithoutAGroupInviteIsRejected() throws Exception {
     var registration = aRegistration(true);
+    var before = userRepository.count();
 
     send(registration).andExpect(status().isBadRequest());
 
-    assertTrue(
-        StreamSupport.stream(userRepository.findAll().spliterator(), false)
-            .noneMatch(user -> registration.getEmail().equals(user.getEmail())));
+    assertEquals(before, userRepository.count());
     verify(identityAccounts, never()).createUser(any(UserDTO.class));
   }
 
@@ -388,12 +388,15 @@ class DeleteTemporaryAccountsSchedulerIT {
       registration.setGroupChatId(inviteGroup.getId());
       registration.setGroupChatInviteToken(inviteGroup.getInviteToken());
     }
+    var existing =
+        StreamSupport.stream(userRepository.findAll().spliterator(), false)
+            .map(User::getUserId)
+            .collect(java.util.stream.Collectors.toSet());
     send(registration).andExpect(status().isCreated());
-    var email = registration.getEmail();
 
     var registered =
         StreamSupport.stream(userRepository.findAll().spliterator(), false)
-            .filter(user -> email.equals(user.getEmail()))
+            .filter(user -> !existing.contains(user.getUserId()))
             .findFirst()
             .orElseThrow();
     registeredUserIds.add(registered.getUserId());
@@ -411,7 +414,10 @@ class DeleteTemporaryAccountsSchedulerIT {
     userDTO.setState("8");
     userDTO.setTermsAccepted("true");
     userDTO.setConsultingType("1");
-    userDTO.setEmail(RandomStringUtils.randomAlphabetic(8) + "@example.com");
+    if (!temporary) {
+      // #1662: a temporary account never saves an e-mail address.
+      userDTO.setEmail(RandomStringUtils.randomAlphabetic(8) + "@example.com");
+    }
     userDTO.setMainTopicId(1L);
     userDTO.setTopicIds(List.of(1L));
     userDTO.setTemporary(temporary);

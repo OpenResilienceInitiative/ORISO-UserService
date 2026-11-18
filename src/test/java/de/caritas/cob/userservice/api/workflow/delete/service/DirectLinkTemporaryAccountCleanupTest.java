@@ -79,6 +79,7 @@ class DirectLinkTemporaryAccountCleanupTest {
     session.setUpdateDate(NOW.minusHours(1));
     when(userRepository.findLiveDirectLinkTemporaryAccountIds()).thenReturn(List.of(USER_ID));
     when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+    when(userRepository.findByUserIdForUpdate(USER_ID)).thenReturn(Optional.of(user));
     when(sessionRepository.findByUser(user)).thenReturn(List.of(session));
     when(callBindings.findBySessionIdIn(any())).thenReturn(List.of());
     when(matrix.setAccountSuspended(anyString(), eq(true))).thenReturn(true);
@@ -174,6 +175,22 @@ class DirectLinkTemporaryAccountCleanupTest {
   }
 
   /** Selection can be stale by the time the account comes up; delete checks again. */
+  /**
+   * #1662: "Konto behalten" and this job lock the same row. The job reads the account under the
+   * lock, so a guest who kept the account in the meantime is never deleted.
+   */
+  @Test
+  void delete_Should_LeaveAKeptAccount_ReadUnderTheRowLock() {
+    // Otherwise due for deletion (fixture: snapshot, closed session); only the flag differs, so
+    // the temporary-account check alone must keep it.
+    user.setTemporaryAccount(false);
+
+    assertThat(cleanup.delete(USER_ID, NOW)).isEmpty();
+
+    verify(identityAccountRemover, never()).deleteUser(anyString());
+    verify(matrix, never()).setAccountSuspended(anyString(), anyBoolean());
+  }
+
   @Test
   void delete_Should_LeaveTheAccount_When_ItIsNoLongerDue() {
     session.setStatus(SessionStatus.IN_PROGRESS);

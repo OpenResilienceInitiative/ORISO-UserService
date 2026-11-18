@@ -136,6 +136,11 @@ public class ChatDTO {
   @JsonProperty("consultantIds")
   private java.util.List<String> consultantIds;
 
+  /** Gesprächskreis (#1662): defaults to GUEST_CHOOSES; ignored for internal team chats. */
+  @ApiModelProperty(required = false, example = "GUEST_CHOOSES", position = 15)
+  @JsonProperty("guestAccountMode")
+  private de.caritas.cob.userservice.api.model.GuestAccountMode guestAccountMode;
+
   @Override
   public String toString() {
     return "ChatDTO [topic="

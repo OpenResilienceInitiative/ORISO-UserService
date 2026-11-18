@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
+import de.caritas.cob.userservice.api.service.notification.AskerNotificationChannelPolicy;
 import de.caritas.cob.userservice.api.service.notification.SupervisorAddedEmailNotificationService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.DeleteAccountStatisticsEvent;
@@ -258,10 +259,14 @@ public class UserAccountService {
    *
    * @param mobileToken the new mobile device identifier token
    */
+  @org.springframework.transaction.annotation.Transactional
   public void updateUserMobileToken(String mobileToken) {
     ensureCurrentAccountIsWritable();
+    if (mobileToken != null && !mobileToken.isBlank()) ensurePushRegistrationAllowed();
+    // #1662: write to the row read under the lock "Konto behalten" takes. User has no version
+    // column; a copy read before a concurrent keep would merge temporary_account back.
     this.userService
-        .getUser(this.authenticatedUser.getUserId())
+        .getUserForUpdate(this.authenticatedUser.getUserId())
         .ifPresent(user -> updateMobileToken(user, mobileToken));
   }
 
@@ -277,8 +282,16 @@ public class UserAccountService {
    */
   public void addMobileAppToken(String mobileToken) {
     ensureCurrentAccountIsWritable();
+    ensurePushRegistrationAllowed();
     this.userService.addMobileAppToken(this.authenticatedUser.getUserId(), mobileToken);
     this.consultantService.addMobileAppToken(this.authenticatedUser.getUserId(), mobileToken);
+  }
+
+  /** #1662: a temporary account cannot register a device or browser for push notifications. */
+  private void ensurePushRegistrationAllowed() {
+    this.userService
+        .getUser(this.authenticatedUser.getUserId())
+        .ifPresent(AskerNotificationChannelPolicy::requireNotificationOptInAllowed);
   }
 
   private void ensureCurrentAccountIsWritable() {

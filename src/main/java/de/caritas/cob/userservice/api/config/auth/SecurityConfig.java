@@ -216,6 +216,10 @@ public class SecurityConfig {
                 .permitAll()
                 .requestMatchers(HttpMethod.GET, "/users/invitelinks/*/context")
                 .permitAll()
+                // #1662: a Gesprächskreis entry page reads the circle's guest account mode; the
+                // invite secret is the credential and GroupInviteRegistration checks it.
+                .requestMatchers(HttpMethod.GET, "/users/chat/*/invite-context")
+                .permitAll()
                 // Calendar subscription feed (ADR-032): a calendar app sends no token; the signed
                 // address is the credential and CalendarFeedService checks it in constant time.
                 .requestMatchers(
@@ -415,6 +419,10 @@ public class SecurityConfig {
                 .requestMatchers(
                     "/users/live-chat-account/conversion",
                     "/service/users/live-chat-account/conversion")
+                .access(this::isUnprivilegedLiveChatUser)
+                // #1662 "keep account": only the advice seeker, for their own temporary account.
+                .requestMatchers(
+                    "/users/temporary-account/keep", "/service/users/temporary-account/keep")
                 .access(this::isUnprivilegedLiveChatUser)
                 // The caller's own direct-link temporary account (#1476).
                 .requestMatchers(

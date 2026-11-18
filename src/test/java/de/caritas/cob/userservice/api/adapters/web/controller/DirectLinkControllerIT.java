@@ -145,6 +145,7 @@ class DirectLinkControllerIT {
             .andExpect(jsonPath("$.name", is("Flyer Schule")))
             .andExpect(jsonPath("$.topicName", is("Schulden")))
             .andExpect(jsonPath("$.temporary", is(true)))
+            .andExpect(jsonPath("$.guestAccountMode", is("GUEST_CHOOSES")))
             .andExpect(jsonPath("$.active", is(true)))
             .andExpect(jsonPath("$.admission", is("KNOCK")))
             .andExpect(jsonPath("$.agencyId", is((int) AGENCY_ID)))
@@ -167,6 +168,7 @@ class DirectLinkControllerIT {
         .andExpect(jsonPath("$.active", is(false)))
         .andExpect(jsonPath("$.name", is("Signatur")))
         .andExpect(jsonPath("$.temporary", is(false)))
+        .andExpect(jsonPath("$.guestAccountMode", is("PERMANENT")))
         .andExpect(jsonPath("$.medium", is("VIDEO")));
 
     mvc.perform(get("/users/invitelinks/{token}/context", token))
@@ -176,6 +178,41 @@ class DirectLinkControllerIT {
     asConsultant(delete("/users/directlinks/{id}", id)).andExpect(status().isNoContent());
     asConsultant(get("/users/directlinks")).andExpect(jsonPath("$", hasSize(0)));
     assertThat(linkRepository.findById(id)).isEmpty();
+  }
+
+  /** #1662: the guest account mode is set and changed per link; the old fields follow it. */
+  @Test
+  void counsellorSetsTheGuestAccountMode_AndTheEntryPageSeesIt() throws Exception {
+    actAsConsultant(owner);
+    var created =
+        asConsultant(
+                post("/users/directlinks")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(
+                        "{\"medium\":\"CHAT\",\"topicId\":"
+                            + TOPIC_ID
+                            + ",\"guestAccountMode\":\"TEMPORARY\"}"))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.guestAccountMode", is("TEMPORARY")))
+            .andExpect(jsonPath("$.accessMode", is("GUESTS_ONLY")))
+            .andExpect(jsonPath("$.temporary", is(true)))
+            .andReturn();
+    var body = objectMapper.readTree(created.getResponse().getContentAsString());
+    long id = body.get("id").asLong();
+
+    mvc.perform(get("/users/invitelinks/{token}/context", body.get("token").asText()))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.guestAccountMode", is("TEMPORARY")));
+
+    asConsultant(
+            patch("/users/directlinks/{id}", id)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"guestAccountMode\":\"GUEST_CHOOSES\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.guestAccountMode", is("GUEST_CHOOSES")))
+        .andExpect(jsonPath("$.accessMode", is("BOTH")));
+    assertThat(linkRepository.findById(id).orElseThrow().getGuestAccountMode())
+        .isEqualTo(de.caritas.cob.userservice.api.model.GuestAccountMode.GUEST_CHOOSES);
   }
 
   @Test

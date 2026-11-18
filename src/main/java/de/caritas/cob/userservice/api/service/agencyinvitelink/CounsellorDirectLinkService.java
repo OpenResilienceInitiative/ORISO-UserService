@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.GroupChatJoinRequest;
+import de.caritas.cob.userservice.api.model.GuestAccountMode;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
@@ -63,6 +64,7 @@ public class CounsellorDirectLinkService {
   private final @NonNull DirectInvitationService invitations;
   private final @NonNull SessionAppointmentRepository sessionAppointments;
   private final @NonNull DirectInvitationExpiryService invitationEnd;
+  private final @NonNull GuestAccountModePolicy guestAccountModes;
 
   public List<AgencyInviteLink> listOwn(Consultant owner) {
     return repository.findAllByConsultantIdAndLinkKindAndChatTypeInOrderByCreateDateDesc(
@@ -89,7 +91,8 @@ public class CounsellorDirectLinkService {
     link.setName(normalizeName(cmd.name()));
     link.setScheduledAt(cmd.scheduledAt());
     var temporary = cmd.temporary() != null ? cmd.temporary() : defaultTemporary(medium);
-    applyAccess(link, cmd.accessMode(), temporary);
+    applyGuestAccountMode(
+        link, explicitMode(cmd.guestAccountMode(), cmd.accessMode()), legacyMode(temporary));
     link.setKnock(cmd.knock() == null || cmd.knock());
     if (cmd.appointmentStart() != null || cmd.appointmentEnd() != null) {
       invitations.attachAppointment(
@@ -140,8 +143,10 @@ public class CounsellorDirectLinkService {
             session.getMainTopicId());
     link.setChatType(medium.name());
     link.setName(normalizeName(cmd.name()));
-    applyAccess(
-        link, cmd.accessMode() == null ? DirectInvitationAccessMode.BOTH : cmd.accessMode(), true);
+    applyGuestAccountMode(
+        link,
+        explicitMode(cmd.guestAccountMode(), cmd.accessMode()),
+        GuestAccountMode.GUEST_CHOOSES);
     link.setKnock(cmd.knock() == null || cmd.knock());
     link.setJoinsExistingSession(true);
     if (cmd.appointmentId() != null) {
@@ -181,17 +186,38 @@ public class CounsellorDirectLinkService {
         .build();
   }
 
-  /** The access mode wins over the temporary switch; the switch follows it. */
-  private static void applyAccess(
-      AgencyInviteLink link, DirectInvitationAccessMode mode, boolean temporary) {
-    var effective =
-        mode != null
-            ? mode
-            : temporary
-                ? DirectInvitationAccessMode.BOTH
-                : DirectInvitationAccessMode.ACCOUNTS_ONLY;
-    link.setAccessMode(effective);
-    link.setTemporaryAccount(effective.createsTemporaryAccounts());
+  /**
+   * #1662: {@code guestAccountMode} wins over the #2252 {@code accessMode}, which wins over the old
+   * temporary switch. A mode the counsellor chose must be allowed (403 otherwise); one derived from
+   * the old switch or the default falls back to {@link GuestAccountMode#PERMANENT} instead, so an
+   * older app keeps working under the platform cap.
+   */
+  private void applyGuestAccountMode(
+      AgencyInviteLink link, GuestAccountMode explicit, GuestAccountMode fallback) {
+    var medium = InviteLinkChatType.valueOf(link.getChatType());
+    GuestAccountMode mode;
+    if (explicit != null) {
+      if (!guestAccountModes.allows(link.getTenantId(), link.getAgencyId(), medium, explicit)) {
+        throw new ForbiddenException("This guest account mode is not allowed here");
+      }
+      mode = explicit;
+    } else {
+      mode = guestAccountModes.cap(link.getTenantId(), link.getAgencyId(), medium, fallback);
+    }
+    link.applyGuestAccountMode(mode);
+  }
+
+  private static GuestAccountMode explicitMode(
+      GuestAccountMode guestAccountMode, DirectInvitationAccessMode accessMode) {
+    if (guestAccountMode != null) {
+      return guestAccountMode;
+    }
+    return accessMode == null ? null : GuestAccountMode.of(accessMode);
+  }
+
+  /** The old switch, read as #2252 reads it: on lets the person choose. */
+  private static GuestAccountMode legacyMode(boolean temporary) {
+    return temporary ? GuestAccountMode.GUEST_CHOOSES : GuestAccountMode.PERMANENT;
   }
 
   /**
@@ -230,10 +256,11 @@ public class CounsellorDirectLinkService {
       requireTopic(cmd.topicId());
       link.setTopicId(cmd.topicId());
     }
-    if (cmd.accessMode() != null) {
-      applyAccess(link, cmd.accessMode(), link.isTemporaryAccount());
+    var explicit = explicitMode(cmd.guestAccountMode(), cmd.accessMode());
+    if (explicit != null) {
+      applyGuestAccountMode(link, explicit, null);
     } else if (cmd.temporary() != null) {
-      applyAccess(link, null, cmd.temporary());
+      applyGuestAccountMode(link, null, legacyMode(cmd.temporary()));
     }
     if (cmd.knock() != null) {
       link.setKnock(cmd.knock());
@@ -564,7 +591,51 @@ public class CounsellorDirectLinkService {
       LocalDateTime appointmentEnd,
       Integer validityAfterEndMinutes,
       DirectInvitationAccessMode accessMode,
-      Boolean knock) {
+      Boolean knock,
+      GuestAccountMode guestAccountMode) {
+
+    public CreateCommand(
+        InviteLinkChatType medium,
+        Long topicId,
+        String name,
+        Boolean temporary,
+        Long agencyId,
+        LocalDateTime scheduledAt,
+        LocalDateTime appointmentStart,
+        LocalDateTime appointmentEnd,
+        Integer validityAfterEndMinutes,
+        DirectInvitationAccessMode accessMode,
+        Boolean knock) {
+      this(
+          medium,
+          topicId,
+          name,
+          temporary,
+          agencyId,
+          scheduledAt,
+          appointmentStart,
+          appointmentEnd,
+          validityAfterEndMinutes,
+          accessMode,
+          knock,
+          null);
+    }
+
+    public CreateCommand withGuestAccountMode(GuestAccountMode mode) {
+      return new CreateCommand(
+          medium,
+          topicId,
+          name,
+          temporary,
+          agencyId,
+          scheduledAt,
+          appointmentStart,
+          appointmentEnd,
+          validityAfterEndMinutes,
+          accessMode,
+          knock,
+          mode);
+    }
 
     public CreateCommand(
         InviteLinkChatType medium, Long topicId, String name, Boolean temporary, Long agencyId) {
@@ -591,7 +662,30 @@ public class CounsellorDirectLinkService {
       String name,
       Integer validityAfterEndMinutes,
       DirectInvitationAccessMode accessMode,
-      Boolean knock) {}
+      Boolean knock,
+      GuestAccountMode guestAccountMode) {
+
+    public SessionInvitationCommand(
+        UUID appointmentId,
+        LocalDateTime appointmentStart,
+        LocalDateTime appointmentEnd,
+        InviteLinkChatType medium,
+        String name,
+        Integer validityAfterEndMinutes,
+        DirectInvitationAccessMode accessMode,
+        Boolean knock) {
+      this(
+          appointmentId,
+          appointmentStart,
+          appointmentEnd,
+          medium,
+          name,
+          validityAfterEndMinutes,
+          accessMode,
+          knock,
+          null);
+    }
+  }
 
   /**
    * Absent fields stay unchanged. {@code clearScheduledAt} removes the date, since a missing {@code
@@ -608,7 +702,51 @@ public class CounsellorDirectLinkService {
       LocalDateTime appointmentEnd,
       Integer validityAfterEndMinutes,
       DirectInvitationAccessMode accessMode,
-      Boolean knock) {
+      Boolean knock,
+      GuestAccountMode guestAccountMode) {
+
+    public UpdateCommand(
+        String name,
+        Long topicId,
+        Boolean temporary,
+        Boolean active,
+        LocalDateTime scheduledAt,
+        boolean clearScheduledAt,
+        LocalDateTime appointmentStart,
+        LocalDateTime appointmentEnd,
+        Integer validityAfterEndMinutes,
+        DirectInvitationAccessMode accessMode,
+        Boolean knock) {
+      this(
+          name,
+          topicId,
+          temporary,
+          active,
+          scheduledAt,
+          clearScheduledAt,
+          appointmentStart,
+          appointmentEnd,
+          validityAfterEndMinutes,
+          accessMode,
+          knock,
+          null);
+    }
+
+    public UpdateCommand withGuestAccountMode(GuestAccountMode mode) {
+      return new UpdateCommand(
+          name,
+          topicId,
+          temporary,
+          active,
+          scheduledAt,
+          clearScheduledAt,
+          appointmentStart,
+          appointmentEnd,
+          validityAfterEndMinutes,
+          accessMode,
+          knock,
+          mode);
+    }
 
     public UpdateCommand(String name, Long topicId, Boolean temporary, Boolean active) {
       this(name, topicId, temporary, active, null, false);

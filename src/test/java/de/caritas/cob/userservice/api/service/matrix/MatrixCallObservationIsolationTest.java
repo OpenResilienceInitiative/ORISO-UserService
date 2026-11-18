@@ -93,11 +93,14 @@ class MatrixCallObservationIsolationTest {
     // that was already ended (#1641 "ending wins"); the row never grants anything there.
     // FE#2209 round 6: SessionCallRevival reads the stored end rows only to KEEP an ended binding
     // ended (the assigned counsellor's own end blocks its revival); they never grant anything.
+    // #1662: MatrixGroupCallBindingService reads the rows only to REFUSE binding a group call its
+    // moderator already ended ("ending wins"), as the session path does; they never grant anything.
     assertThat(holders)
         .containsExactly(
             "CallObservationRetentionService",
             "MatrixCallStateController",
             "MatrixCallStateService",
+            "MatrixGroupCallBindingService",
             "MatrixSessionCallBindingService",
             "SessionCallRevival");
   }

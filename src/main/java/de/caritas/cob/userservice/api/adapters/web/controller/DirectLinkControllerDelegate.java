@@ -131,7 +131,8 @@ public class DirectLinkControllerDelegate {
                 endOf(body.getAppointment()),
                 body.getValidityAfterEndMinutes(),
                 accessMode(body.getAccessMode()),
-                body.getKnock()));
+                body.getKnock(),
+                guestAccountMode(body.getGuestAccountMode())));
     return new ResponseEntity<>(toDto(link, topicService.getAllTopicsMap()), HttpStatus.CREATED);
   }
 
@@ -151,7 +152,8 @@ public class DirectLinkControllerDelegate {
                 endOf(body.getAppointment()),
                 body.getValidityAfterEndMinutes(),
                 accessMode(body.getAccessMode()),
-                body.getKnock());
+                body.getKnock(),
+                guestAccountMode(body.getGuestAccountMode()));
     var link = service.update(owner, linkId, cmd);
     return ResponseEntity.ok(toDto(link, topicService.getAllTopicsMap()));
   }
@@ -192,8 +194,16 @@ public class DirectLinkControllerDelegate {
                 body.getName(),
                 body.getValidityAfterEndMinutes(),
                 accessMode(body.getAccessMode()),
-                body.getKnock()));
+                body.getKnock(),
+                guestAccountMode(body.getGuestAccountMode())));
     return new ResponseEntity<>(toDto(link, topicService.getAllTopicsMap()), HttpStatus.CREATED);
+  }
+
+  private static de.caritas.cob.userservice.api.model.GuestAccountMode guestAccountMode(
+      de.caritas.cob.userservice.api.adapters.web.dto.GuestAccountMode mode) {
+    return mode == null
+        ? null
+        : de.caritas.cob.userservice.api.model.GuestAccountMode.valueOf(mode.name());
   }
 
   private static DirectInvitationAccessMode accessMode(
@@ -330,6 +340,9 @@ public class DirectLinkControllerDelegate {
     dto.accessMode(
         de.caritas.cob.userservice.api.adapters.web.dto.DirectInvitationAccessMode.valueOf(
             link.effectiveAccessMode().name()));
+    dto.guestAccountMode(
+        de.caritas.cob.userservice.api.adapters.web.dto.GuestAccountMode.valueOf(
+            link.effectiveGuestAccountMode().name()));
     if (medium != InviteLinkChatType.CHAT) {
       dto.knock(link.isKnock());
       // With "Anklopfen" off, people of an invitation with an appointment come in directly.
