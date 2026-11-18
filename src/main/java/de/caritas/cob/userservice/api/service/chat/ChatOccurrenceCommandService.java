@@ -59,7 +59,7 @@ public class ChatOccurrenceCommandService {
     exception.setOverrideModality(null);
     exceptionRepository.save(exception);
     appointmentMailQueue.recordOccurrence(series, index, originalStartUtc, null);
-    publishCancelled(series, originalStartUtc);
+    publishCancelled(series, originalStartUtc, actingConsultantId);
   }
 
   @Transactional
@@ -133,7 +133,9 @@ public class ChatOccurrenceCommandService {
     }
   }
 
-  private void publishCancelled(Chat series, LocalDateTime originalStartUtc) {
+  /** FE#1211: the moderator who cancels the occurrence needs no notice of their own action. */
+  private void publishCancelled(
+      Chat series, LocalDateTime originalStartUtc, String actingConsultantId) {
     lifecycleNotificationService.createCancelledNotifications(
         series.getId(),
         occurrenceIndex(series, originalStartUtc),
@@ -141,7 +143,9 @@ public class ChatOccurrenceCommandService {
         series.getMatrixRoomId(),
         null,
         series.getChatModality() == ChatModality.VIDEO,
-        notificationRecipientService.resolveRecipientIds(series));
+        notificationRecipientService.resolveRecipientIds(series).stream()
+            .filter(recipientId -> !recipientId.equals(actingConsultantId))
+            .toList());
   }
 
   private Integer occurrenceIndex(Chat series, LocalDateTime originalStartUtc) {

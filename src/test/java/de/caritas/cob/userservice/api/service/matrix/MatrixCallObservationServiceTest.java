@@ -463,6 +463,129 @@ class MatrixCallObservationServiceTest {
             any(), eq("other"), eq(false), eq("call"), eq(MEDIA), anyLong(), anyLong());
   }
 
+  // --- FE#1211: ending tells each member what happened to them ---
+
+  private MatrixCallBinding bindingWithAttendees(long now, String... attendees) {
+    var binding =
+        MatrixCallBinding.builder()
+            .sourceRoomId(SOURCE)
+            .callId("call")
+            .mediaRoomId(MEDIA)
+            .callerMatrixId(CREATOR)
+            .tenantId(7L)
+            .invitedAt(now - 2000)
+            .inviteExpiresAt(now - 1000)
+            .video(true)
+            .invitedMatrixIds(new java.util.HashSet<>(List.of(OTHER)))
+            .build();
+    for (String attendee : attendees) {
+      binding
+          .getDevices()
+          .put(
+              attendee + "-device",
+              new de.caritas.cob.userservice.api.model.MatrixCallDevice(
+                  attendee, now - 1500, now - 10, true, "$" + attendee));
+    }
+    when(bindings.findBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(binding));
+    return binding;
+  }
+
+  @Test
+  void anInviteeWhoNeverJoinedHearsTheCallWasMissedNotThatItEnded() {
+    long now = System.currentTimeMillis();
+    var row = row(now - 1000, now + 60_000, null);
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    bindingWithAttendees(now, CREATOR);
+
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
+
+    verify(notifications, never())
+        .createCallEndedNotification(
+            any(), eq("other"), anyBoolean(), anyString(), anyString(), anyLong(), anyLong());
+    verify(notifications)
+        .createCallMissedNotification(
+            any(), eq("other"), eq(false), eq("call"), eq(MEDIA), eq(true));
+    verify(notifications)
+        .createCallEndedNotification(
+            any(), eq("creator"), eq(false), eq("call"), eq(MEDIA), anyLong(), anyLong());
+  }
+
+  @Test
+  void theCallerHearsTheCallEndedEvenBeforeTheirDeviceWasSeen() {
+    long now = System.currentTimeMillis();
+    var row = row(now - 1000, now + 60_000, null);
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    bindingWithAttendees(now);
+
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
+
+    verify(notifications)
+        .createCallEndedNotification(
+            any(), eq("creator"), eq(false), eq("call"), eq(MEDIA), anyLong(), anyLong());
+    verify(notifications)
+        .createCallMissedNotification(
+            any(), eq("other"), eq(false), eq("call"), eq(MEDIA), eq(true));
+  }
+
+  @Test
+  void anInviteeWhoJoinedHearsTheCallEnded() {
+    long now = System.currentTimeMillis();
+    var row = row(now - 1000, now + 60_000, null);
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    bindingWithAttendees(now, CREATOR, OTHER);
+
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
+
+    verify(notifications)
+        .createCallEndedNotification(
+            any(), eq("other"), eq(false), eq("call"), eq(MEDIA), anyLong(), anyLong());
+    verify(notifications, never())
+        .createCallMissedNotification(
+            any(), anyString(), anyBoolean(), anyString(), anyString(), anyBoolean());
+  }
+
+  // FE#1211 (Frank, 18 Nov): a group call has no binding; who was in it is read from the
+  // MatrixRTC memberships of its media room, so a member who never joined hears it was missed.
+
+  @Test
+  void aGroupMemberWhoNeverJoinedHearsTheCallWasMissed() {
+    long now = System.currentTimeMillis();
+    var row = row(now - 1000, now + 60_000, null);
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    when(matrix.getCallRoomState(MEDIA, CREATOR))
+        .thenReturn(Optional.of(List.of(departed(CREATOR, now - 500))));
+
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
+
+    verify(notifications)
+        .createCallMissedNotification(
+            any(), eq("other"), eq(false), eq("call"), eq(MEDIA), anyBoolean());
+    verify(notifications, never())
+        .createCallEndedNotification(
+            any(), eq("other"), anyBoolean(), anyString(), anyString(), anyLong(), anyLong());
+    verify(notifications)
+        .createCallEndedNotification(
+            any(), eq("creator"), eq(false), eq("call"), eq(MEDIA), anyLong(), anyLong());
+  }
+
+  @Test
+  void aGroupMemberWhoWasInTheCallHearsItEnded() {
+    long now = System.currentTimeMillis();
+    var row = row(now - 1000, now + 60_000, null);
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    when(matrix.getCallRoomState(MEDIA, CREATOR))
+        .thenReturn(Optional.of(List.of(departed(CREATOR, now - 500), departed(OTHER, now - 600))));
+
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
+
+    verify(notifications)
+        .createCallEndedNotification(
+            any(), eq("other"), eq(false), eq("call"), eq(MEDIA), anyLong(), anyLong());
+    verify(notifications, never())
+        .createCallMissedNotification(
+            any(), anyString(), anyBoolean(), anyString(), anyString(), anyBoolean());
+  }
+
   // --- FE#2209 review (CodeRabbit): the session binding ends with the observation ---
 
   @Test
