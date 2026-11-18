@@ -99,6 +99,9 @@ class MatrixCallStateControllerTest {
                     org.mockito.Mockito.mock(
                         de.caritas.cob.userservice.api.service.matrix
                             .MatrixSessionCallBindingService.class),
+                    org.mockito.Mockito.mock(
+                        de.caritas.cob.userservice.api.service.matrix.MatrixGroupCallBindingService
+                            .class),
                     actor))
             .build();
   }
