@@ -4,6 +4,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.BlockerCreateDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.BlockerTimeDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.CalendarAutoAcceptDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarColleaguesDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarEntryDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarImportDTO;
@@ -14,7 +15,9 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CalendarSyncDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarWorkingDayExceptionDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarWorkingDayExceptionWindowsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CalendarWorkingHoursDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ColleagueAppointmentCreateDTO;
 import de.caritas.cob.userservice.api.service.calendar.CalendarBlockerService;
+import de.caritas.cob.userservice.api.service.calendar.CalendarColleagueAppointmentService;
 import de.caritas.cob.userservice.api.service.calendar.CalendarFeedService;
 import de.caritas.cob.userservice.api.service.calendar.CalendarMoveProposalService;
 import de.caritas.cob.userservice.api.service.calendar.CalendarService;
@@ -51,6 +54,7 @@ public class CalendarController implements UsersApi {
   private final CalendarFeedService feed;
   private final CalendarWorkingHoursService workingHours;
   private final CalendarMoveProposalService proposals;
+  private final CalendarColleagueAppointmentService meetings;
 
   @Override
   public ResponseEntity<List<CalendarEntryDTO>> getCalendarEntries(
@@ -154,6 +158,40 @@ public class CalendarController implements UsersApi {
   public ResponseEntity<Void> declineCalendarMoveProposal(UUID proposalId) {
     proposals.decline(proposalId);
     return ResponseEntity.noContent().build();
+  }
+
+  @Override
+  public ResponseEntity<CalendarEntryDTO> createCalendarColleagueAppointment(
+      ColleagueAppointmentCreateDTO request) {
+    return new ResponseEntity<>(meetings.create(request), HttpStatus.CREATED);
+  }
+
+  @Override
+  public ResponseEntity<Void> cancelCalendarColleagueAppointment(UUID appointmentId) {
+    meetings.cancel(appointmentId);
+    return ResponseEntity.noContent().build();
+  }
+
+  @Override
+  public ResponseEntity<CalendarEntryDTO> acceptCalendarColleagueAppointment(UUID appointmentId) {
+    return ResponseEntity.ok(meetings.accept(appointmentId));
+  }
+
+  @Override
+  public ResponseEntity<Void> declineCalendarColleagueAppointment(UUID appointmentId) {
+    meetings.decline(appointmentId);
+    return ResponseEntity.noContent().build();
+  }
+
+  @Override
+  public ResponseEntity<CalendarAutoAcceptDTO> getCalendarAutoAccept() {
+    return ResponseEntity.ok(meetings.autoAccept());
+  }
+
+  @Override
+  public ResponseEntity<CalendarAutoAcceptDTO> setCalendarAutoAccept(
+      CalendarAutoAcceptDTO request) {
+    return ResponseEntity.ok(meetings.replaceAutoAccept(request));
   }
 
   /** Public: the signed address is the credential. A calendar app polls it, so it may cache. */

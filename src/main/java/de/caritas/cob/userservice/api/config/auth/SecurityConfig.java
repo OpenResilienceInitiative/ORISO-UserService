@@ -859,7 +859,17 @@ public class SecurityConfig {
                     "/users/calendar/proposals/{proposalId}/accept",
                     "/service/users/calendar/proposals/{proposalId}/accept",
                     "/users/calendar/proposals/{proposalId}/decline",
-                    "/service/users/calendar/proposals/{proposalId}/decline")
+                    "/service/users/calendar/proposals/{proposalId}/decline",
+                    "/users/calendar/colleague-appointments",
+                    "/service/users/calendar/colleague-appointments",
+                    "/users/calendar/colleague-appointments/{appointmentId}",
+                    "/service/users/calendar/colleague-appointments/{appointmentId}",
+                    "/users/calendar/colleague-appointments/{appointmentId}/accept",
+                    "/service/users/calendar/colleague-appointments/{appointmentId}/accept",
+                    "/users/calendar/colleague-appointments/{appointmentId}/decline",
+                    "/service/users/calendar/colleague-appointments/{appointmentId}/decline",
+                    "/users/calendar/auto-accept",
+                    "/service/users/calendar/auto-accept")
                 .hasAuthority(CONSULTANT_DEFAULT)
                 // 1:1 appointments (ORISO-Frontend#1960): who may do what is decided per session in
                 // SessionAppointmentService.
