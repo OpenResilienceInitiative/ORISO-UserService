@@ -38,6 +38,15 @@ class DeleteConsultantCalendarActionTest {
   @Mock private CalendarMoveProposalRepository calendarMoveProposalRepository;
   @Mock private CalendarConsultationHoursRepository calendarConsultationHoursRepository;
   @Mock private CalendarBookingSettingRepository calendarBookingSettingRepository;
+
+  @Mock
+  private de.caritas.cob.userservice.api.port.out.CalendarColleagueAppointmentRepository
+      calendarColleagueAppointmentRepository;
+
+  @Mock
+  private de.caritas.cob.userservice.api.port.out.CalendarAutoAcceptRepository
+      calendarAutoAcceptRepository;
+
   @Mock private PlatformTransactionManager transactionManager;
 
   private DeleteConsultantCalendarAction action;
@@ -54,6 +63,8 @@ class DeleteConsultantCalendarActionTest {
             calendarMoveProposalRepository,
             calendarConsultationHoursRepository,
             calendarBookingSettingRepository,
+            calendarColleagueAppointmentRepository,
+            calendarAutoAcceptRepository,
             transactionManager);
   }
 
@@ -73,6 +84,8 @@ class DeleteConsultantCalendarActionTest {
     verify(calendarBookingSettingRepository).deleteByConsultantId(CONSULTANT_ID);
     // Proposals they made and proposals they were asked to decide: one query covers both roles.
     verify(calendarMoveProposalRepository).deleteByConsultantId(CONSULTANT_ID);
+    verify(calendarColleagueAppointmentRepository).deleteByConsultantId(CONSULTANT_ID);
+    verify(calendarAutoAcceptRepository).deleteByConsultantOrColleague(CONSULTANT_ID);
     verify(transactionManager).commit(any());
     assertThat(workflow.getDeletionWorkflowErrors()).isEmpty();
   }

@@ -113,7 +113,8 @@ class MatrixRtcInactivityPolicyHttpTest {
               hasher,
               jdbc,
               org.mockito.Mockito.mock(
-                  de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService.class));
+                  de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService.class),
+              de.caritas.cob.userservice.testutils.CallStartRules.everyCallRunsForACounsellor());
       var mvc =
           MockMvcBuilders.standaloneSetup(
                   new MatrixRtcCallPolicyController(

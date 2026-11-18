@@ -42,6 +42,11 @@ import org.springframework.transaction.support.TransactionTemplate;
  * seekers, other counsellors and guests never get a binding this way, and nothing here may derive
  * one from a stored observation.
  *
+ * <p>Frank, 17 Nov 2026: {@code CounsellorStartedCall} reads a live row whose creator is a
+ * counsellor as "a counsellor started this call", so an advice seeker may join it. That only
+ * narrows: without such a row the media gate refuses the advice seeker, and it grants nobody a
+ * guest seat.
+ *
  * <p>#1630: no database transaction is open while Matrix is called. Every Matrix lookup happens
  * first, then one short transaction writes, then the notifications follow (each in its own
  * transaction). The methods are therefore deliberately not {@code @Transactional}.

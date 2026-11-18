@@ -353,7 +353,11 @@ class CalendarControllerIT {
                 "secondaryLabel",
                 new UsernameTranscoder().decodeUsername(colleague.getUsername()),
                 "relation",
-                "SAME_AGENCY"));
+                "SAME_AGENCY",
+                // ORISO-Frontend#2305: internal chats are not available in this test setup, so no
+                // chat is possible and the calendar offers an on-site appointment only.
+                "internalChat",
+                false));
 
     policy(CalendarVisibilityScope.TENANT, true);
     var tenantScope = body(get("/users/calendar/colleagues"));

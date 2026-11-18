@@ -21,5 +21,10 @@ public enum CallPolicyDenialReason {
   /** The admin switched calls off for this form of counselling (#1564). */
   CONSULTING_TYPE_CALLS_DISABLED,
   /** The form of counselling is unknown or its setting cannot be read; calls stay closed. */
-  CONSULTING_TYPE_UNAVAILABLE
+  CONSULTING_TYPE_UNAVAILABLE,
+  /**
+   * Frank, 17 Nov 2026: an advice seeker or guest asked for a call room that holds no running call
+   * a counsellor of the Träger started. Only counsellors start calls.
+   */
+  CALL_START_REQUIRES_COUNSELLOR
 }
