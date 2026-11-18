@@ -924,7 +924,48 @@ class UserControllerAuthorizationIT {
   void deletedAskerSessionsReturnOnlyCallingCounsellorsData(String path) throws Exception {
     when(authenticatedUser.getUserId()).thenReturn("consultant-1");
     mvc.perform(get(path)).andExpect(status().isOk());
-    verify(deletedAskerSessionService).findForConsultant("consultant-1");
+    verify(deletedAskerSessionService).findForConsultant("consultant-1", false);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/sessions/consultants/deleted-askers/77/archive",
+        "/service/users/sessions/consultants/deleted-askers/77/archive"
+      })
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void archiveDeletedAskerSessionRejectsAskers(String path) throws Exception {
+    mvc.perform(put(path).cookie(CSRF_COOKIE).header(CSRF_HEADER, CSRF_VALUE))
+        .andExpect(status().isForbidden());
+    verifyNoMoreInteractions(deletedAskerSessionService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/sessions/consultants/deleted-askers/77/archive",
+        "/service/users/sessions/consultants/deleted-askers/77/archive"
+      })
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void archiveDeletedAskerSessionArchivesOnlyTheCallingCounsellorsPlaceholder(String path)
+      throws Exception {
+    when(authenticatedUser.getUserId()).thenReturn("consultant-1");
+    when(deletedAskerSessionService.archive("consultant-1", 77L)).thenReturn(true);
+    mvc.perform(put(path).cookie(CSRF_COOKIE).header(CSRF_HEADER, CSRF_VALUE))
+        .andExpect(status().isNoContent());
+    verify(deletedAskerSessionService).archive("consultant-1", 77L);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/sessions/consultants/deleted-askers/77/archive",
+        "/service/users/sessions/consultants/deleted-askers/77/archive"
+      })
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void archiveDeletedAskerSessionRequiresCsrfToken(String path) throws Exception {
+    mvc.perform(put(path)).andExpect(status().isForbidden());
+    verifyNoMoreInteractions(deletedAskerSessionService);
   }
 
   /** GET on /users/sessions/consultants (role: consultants) */
