@@ -136,6 +136,7 @@ import org.springframework.transaction.support.TransactionTemplate;
   ConsultantTenantChangeService.class,
   OldTraegerRoomFinder.class,
   ConsultantAgencyAdminService.class,
+  de.caritas.cob.userservice.api.service.session.AgencyEnquiryRevocations.class,
   ConsultantAgencyDeletionValidationService.class,
   ConsultantAgencyService.class,
   ConsultantAgencyRelationCreatorService.class,
@@ -200,6 +201,11 @@ class ConsultantTenantChangeMariaDbIT {
       matrixFeedUpdateSignalService;
 
   @MockitoBean private AgencyService agencyService;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient
+      agencyMatrixCredentialClient;
+
   @MockitoBean private AgencyAdminService agencyAdminService;
   @MockitoBean private RemoveConsultantFromSessionRoomsService removeFromSessionRoomsService;
   @MockitoBean private AccountManaging accountManaging;

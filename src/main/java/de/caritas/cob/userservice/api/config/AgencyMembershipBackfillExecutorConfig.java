@@ -27,6 +27,19 @@ public class AgencyMembershipBackfillExecutorConfig {
 
   public static final String EXECUTOR_BEAN = "agencyMembershipBackfillExecutor";
 
+  public static final String REVOCATION_EXECUTOR_BEAN = "agencyEnquiryRevocationExecutor";
+
+  @Bean(name = REVOCATION_EXECUTOR_BEAN)
+  public ThreadPoolTaskExecutor agencyEnquiryRevocationExecutor() {
+    var executor = new ThreadPoolTaskExecutor();
+    executor.setCorePoolSize(1);
+    executor.setMaxPoolSize(1);
+    executor.setQueueCapacity(0);
+    executor.setThreadNamePrefix("enquiry-revocation-");
+    executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
+    return executor;
+  }
+
   @Bean(name = EXECUTOR_BEAN, destroyMethod = "shutdown")
   public ThreadPoolTaskExecutor agencyMembershipBackfillExecutor(
       ObjectProvider<TenantContextProvider> tenantContextProvider) {
