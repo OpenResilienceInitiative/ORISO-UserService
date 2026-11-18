@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatInfoResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatMembersResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateChatResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.InternalChatInvitationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.InternalChatRecipientDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.InternalSubsetChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.InternalSubsetChatResponseDTO;
@@ -15,6 +16,7 @@ import de.caritas.cob.userservice.api.facade.AssignChatFacade;
 import de.caritas.cob.userservice.api.facade.CreateChatFacade;
 import de.caritas.cob.userservice.api.facade.GetChatFacade;
 import de.caritas.cob.userservice.api.facade.GetChatMembersFacade;
+import de.caritas.cob.userservice.api.facade.InternalChatInvitationFacade;
 import de.caritas.cob.userservice.api.facade.InternalSubsetChatFacade;
 import de.caritas.cob.userservice.api.facade.JoinAndLeaveChatFacade;
 import de.caritas.cob.userservice.api.facade.StartChatFacade;
@@ -46,6 +48,7 @@ class UserChatControllerDelegate {
   private final @NonNull AssignChatFacade assignChatFacade;
   private final @NonNull CreateChatFacade createChatFacade;
   private final @NonNull InternalSubsetChatFacade internalSubsetChatFacade;
+  private final @NonNull InternalChatInvitationFacade internalChatInvitationFacade;
   private final @NonNull StopChatFacade stopChatFacade;
   private final @NonNull GetChatMembersFacade getChatMembersFacade;
   private final @NonNull AccountManaging accountManager;
@@ -87,6 +90,23 @@ class UserChatControllerDelegate {
             .matrixRoomId(opened.matrixRoomId())
             .chatId(opened.chatId());
     return new ResponseEntity<>(response, opened.created() ? HttpStatus.CREATED : HttpStatus.OK);
+  }
+
+  ResponseEntity<List<InternalChatRecipientDTO>> listInternalChatInvitationRecipients(Long chatId) {
+    var caller = userAccountProvider.retrieveValidatedConsultant();
+    var recipients = internalChatInvitationFacade.recipients(caller, chatId);
+    return recipients.isEmpty()
+        ? ResponseEntity.noContent().build()
+        : ResponseEntity.ok(recipients);
+  }
+
+  ResponseEntity<Void> inviteInternalChatParticipant(
+      Long chatId, InternalChatInvitationDTO request) {
+    var caller = userAccountProvider.retrieveValidatedConsultant();
+    var added =
+        internalChatInvitationFacade.invite(
+            caller, chatId, request == null ? null : request.getConsultantId());
+    return new ResponseEntity<>(added ? HttpStatus.CREATED : HttpStatus.OK);
   }
 
   ResponseEntity<Void> startChat(Long chatId) {

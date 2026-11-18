@@ -1,11 +1,15 @@
 package de.caritas.cob.userservice.api.service.agencyinvitelink;
 
+import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.CALL_SHARE_LINK_NO_CALL;
+
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.GroupChatJoinRequest;
+import de.caritas.cob.userservice.api.model.GuestAccountMode;
 import de.caritas.cob.userservice.api.model.MatrixCallBinding;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
@@ -14,16 +18,19 @@ import de.caritas.cob.userservice.api.port.out.ChatAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.MatrixCallBindingRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.matrix.GroupCallCreatorAgency;
 import de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService;
 import de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService.Admission;
 import de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService.Outcome;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.Base64;
+import java.util.EnumSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -56,9 +63,10 @@ public class CallShareLinkService {
   private final @NonNull ChatAgencyRepository chatAgencies;
   private final @NonNull DirectCallKnockService knocks;
   private final @NonNull DirectInvitePolicy directInvitePolicy;
-  private final @NonNull TemporaryAccountPolicy temporaryAccountPolicy;
+  private final @NonNull GuestAccountModePolicy guestAccountModes;
   private final @NonNull TenantService tenantService;
   private final @NonNull UserRepository users;
+  private final @NonNull GroupCallCreatorAgency creatorAgency;
 
   /** Backstop when the end of a call is never observed: no link outlives this. */
   @Value("${call-share-links.max-lifetime-minutes:480}")
@@ -73,6 +81,22 @@ public class CallShareLinkService {
       String callId,
       Boolean knock,
       Boolean temporaryAccount) {
+    return create(tenant, consultantId, sourceRoomId, callId, knock, temporaryAccount, null);
+  }
+
+  /**
+   * #1662: {@code guestAccountMode} wins over the old {@code temporaryAccount} switch (on by
+   * default: TEMPORARY). A chosen mode must be allowed (403); the old switch is clamped as before.
+   */
+  @Transactional
+  public ShareLink create(
+      Long tenant,
+      String consultantId,
+      String sourceRoomId,
+      String callId,
+      Boolean knock,
+      Boolean temporaryAccount,
+      GuestAccountMode guestAccountMode) {
     var binding = requireCounsellorCall(tenant, consultantId, sourceRoomId, callId);
     var existing = links.findByCallBindingId(binding.getId());
     var medium = mediumOf(binding);
@@ -80,20 +104,28 @@ public class CallShareLinkService {
         binding.getSessionId() == null
             ? Optional.<Session>empty()
             : sessions.findById(binding.getSessionId());
-    // The entry room needs the Beratungsstelle for its consent and legal texts (decision pending,
-    // see the PR); policies read it from the call, not from the link.
-    Long agencyId = session.map(Session::getAgencyId).orElse(null);
+    // The entry room needs the Beratungsstelle for its consent and legal texts: the session's, or
+    // for a group call the call creator's (#1662, Frank 17 Nov). Policies read it from the call,
+    // not from the link.
+    Long agencyId = agencyOf(binding);
     requireDirectInvites(binding, agencyId);
     if (existing.isPresent()) {
       requireUsable(existing.get(), binding);
       requireSameAgency(existing.get(), agencyId);
       return view(existing.get(), false);
     }
-    Integer consultingTypeId = session.map(Session::getConsultingTypeId).orElse(null);
-    boolean temporaryAllowed =
-        agencyId != null
-            && consultingTypeId != null
-            && temporaryAccountPolicy.allows(tenant, agencyId, medium);
+    Integer consultingTypeId =
+        binding.getSessionId() != null
+            ? session.map(Session::getConsultingTypeId).orElse(null)
+            : creatorAgency.consultingTypeOf(agencyId).orElse(null);
+    var allowed = allowedModes(tenant, agencyId, consultingTypeId, medium);
+    var mode =
+        chosenMode(
+            guestAccountMode,
+            temporaryAccount == null || temporaryAccount
+                ? GuestAccountMode.TEMPORARY
+                : GuestAccountMode.PERMANENT,
+            allowed);
     var now = LocalDateTime.now();
     var link =
         AgencyInviteLink.builder()
@@ -108,19 +140,26 @@ public class CallShareLinkService {
             .consultantId(consultantId)
             .createdByUserId(consultantId)
             .knock(knock == null || knock)
-            .temporaryAccount((temporaryAccount == null || temporaryAccount) && temporaryAllowed)
             .callBindingId(binding.getId())
             .createDate(now)
             .expiresAt(now.plusMinutes(maxLifetimeMinutes))
             .status(InviteLinkStatus.ACTIVE.name())
             .build();
+    link.applyGuestAccountMode(mode);
     return view(links.save(link), true);
   }
 
   /** The share link of a running call, for a counsellor in that call. */
   @Transactional
   public ShareLink current(Long tenant, String consultantId, String sourceRoomId, String callId) {
-    var binding = requireCounsellorCall(tenant, consultantId, sourceRoomId, callId);
+    MatrixCallBinding binding;
+    try {
+      binding = requireCounsellorCall(tenant, consultantId, sourceRoomId, callId);
+    } catch (NotFoundException noCall) {
+      // #1662: no call to share (e.g. a group call a plain member started), not just no link yet;
+      // the app stops asking after a bounded number of tries.
+      throw new CustomValidationHttpStatusException(CALL_SHARE_LINK_NO_CALL, HttpStatus.NOT_FOUND);
+    }
     var link =
         links
             .findByCallBindingId(binding.getId())
@@ -140,6 +179,19 @@ public class CallShareLinkService {
   @Transactional
   public ShareLink update(
       Long tenant, String consultantId, Long linkId, Boolean knock, Boolean temporaryAccount) {
+    return update(tenant, consultantId, linkId, knock, temporaryAccount, null);
+  }
+
+  /** #1662: as {@link #create}, {@code guestAccountMode} wins over the old switch. */
+  @Transactional
+  public ShareLink update(
+      Long tenant,
+      String consultantId,
+      Long linkId,
+      Boolean knock,
+      Boolean temporaryAccount,
+      GuestAccountMode guestAccountMode) {
+    lockCallOf(linkId);
     var link =
         links
             .findByIdForUpdate(linkId)
@@ -154,8 +206,14 @@ public class CallShareLinkService {
     var agencyId = agencyOf(binding);
     requireSameAgency(link, agencyId);
     requireDirectInvites(binding, agencyId);
-    if (temporaryAccount != null) {
-      link.setTemporaryAccount(temporaryAccount && temporaryAccountAllowed(link));
+    if (guestAccountMode != null || temporaryAccount != null) {
+      link.applyGuestAccountMode(
+          chosenMode(
+              guestAccountMode,
+              Boolean.TRUE.equals(temporaryAccount)
+                  ? GuestAccountMode.TEMPORARY
+                  : GuestAccountMode.PERMANENT,
+              allowedModes(link)));
     }
     if (knock != null && knock != link.isKnock()) {
       link.setKnock(knock);
@@ -188,7 +246,9 @@ public class CallShareLinkService {
     var unlocked = bindingOf(found);
     requireUsable(found, unlocked);
     requireGuestMayUse(found, unlocked, guest);
-    // Serialise visits on the link, so parallel visits of one guest insert one knock.
+    // Serialise visits on the link, so parallel visits of one guest insert one knock. The call's
+    // binding is locked first (FE#2209 round 3 lock order: binding before link).
+    lockCallOf(found.getId());
     var link = links.findByIdForUpdate(found.getId()).orElseThrow(CallShareLinkEndedException::new);
     var binding = bindingOf(link);
     requireUsable(link, binding);
@@ -234,6 +294,7 @@ public class CallShareLinkService {
    */
   @Transactional
   public void removeGuest(Long tenant, String consultantId, Long linkId, String guestMatrixUserId) {
+    lockCallOf(linkId);
     var link =
         links
             .findByIdForUpdate(linkId)
@@ -308,13 +369,7 @@ public class CallShareLinkService {
    * second half closes the link even when the hang-up event itself was missed.
    */
   static boolean isLive(MatrixCallBinding binding, long now) {
-    if (binding.getEndedAt() != null) {
-      return false;
-    }
-    if (binding.getStartedAt() == null) {
-      return binding.getInviteExpiresAt() > now;
-    }
-    return binding.getDevices().values().stream().anyMatch(device -> device.getExpiresAt() > now);
+    return binding.isLive(now);
   }
 
   /**
@@ -343,13 +398,24 @@ public class CallShareLinkService {
     requireDirectInviteAllowed(bindingOf(link));
   }
 
-  /** Whether temporary accounts may be offered; the effective value is the setting AND this. */
+  /**
+   * #1662: the mode the link works with now. Without the registration context (Beratungsstelle and
+   * consulting type) or while temporary accounts are not allowed, only permanent accounts; a mode
+   * the Träger no longer allows falls back to the closest one it does.
+   */
   @Transactional(readOnly = true)
-  public boolean temporaryAccountAllowed(AgencyInviteLink link) {
+  public GuestAccountMode effectiveGuestAccountMode(AgencyInviteLink link) {
+    var mode = link.effectiveGuestAccountMode();
+    return GuestAccountModePolicy.fallbackWithin(allowedModes(link), mode);
+  }
+
+  /** The modes a counsellor may choose for this link now. */
+  @Transactional(readOnly = true)
+  public Set<GuestAccountMode> allowedModes(AgencyInviteLink link) {
     if (link.getAgencyId() == null
         || link.getConsultingTypeId() == null
         || link.getCallBindingId() == null) {
-      return false;
+      return EnumSet.of(GuestAccountMode.PERMANENT);
     }
     return bindings
         .findById(link.getCallBindingId())
@@ -357,14 +423,48 @@ public class CallShareLinkService {
         .filter(binding -> Objects.equals(link.getAgencyId(), agencyOf(binding)))
         .map(
             binding ->
-                temporaryAccountPolicy.allows(
-                    link.getTenantId(), link.getAgencyId(), mediumOf(binding)))
-        .orElse(false);
+                allowedModes(
+                    link.getTenantId(),
+                    link.getAgencyId(),
+                    link.getConsultingTypeId(),
+                    mediumOf(binding)))
+        .orElse(EnumSet.of(GuestAccountMode.PERMANENT));
   }
 
+  /**
+   * Without a Beratungsstelle and consulting type a new person cannot register (a group call whose
+   * creator stands for no single Beratungsstelle of the group), so only existing, permanent
+   * accounts.
+   */
+  private Set<GuestAccountMode> allowedModes(
+      Long tenant, Long agencyId, Integer consultingTypeId, InviteLinkChatType medium) {
+    if (agencyId == null || consultingTypeId == null) {
+      return EnumSet.of(GuestAccountMode.PERMANENT);
+    }
+    return guestAccountModes.allowedModes(tenant, agencyId, medium);
+  }
+
+  private static GuestAccountMode chosenMode(
+      GuestAccountMode chosen, GuestAccountMode fromSwitch, Set<GuestAccountMode> allowed) {
+    if (chosen != null) {
+      if (!allowed.contains(chosen)) {
+        throw new ForbiddenException("This guest account mode is not allowed here");
+      }
+      return chosen;
+    }
+    return GuestAccountModePolicy.fallbackWithin(allowed, fromSwitch);
+  }
+
+  /** Whether temporary accounts may be offered; the effective value is the setting AND this. */
+  @Transactional(readOnly = true)
+  public boolean temporaryAccountAllowed(AgencyInviteLink link) {
+    return allowedModes(link).stream().anyMatch(GuestAccountMode::offersTemporaryAccounts);
+  }
+
+  /** The session's Beratungsstelle, or for a group call the call creator's (#1662). */
   private Long agencyOf(MatrixCallBinding binding) {
     return binding.getSessionId() == null
-        ? null
+        ? creatorAgency.of(binding).orElse(null)
         : sessions.findById(binding.getSessionId()).map(Session::getAgencyId).orElse(null);
   }
 
@@ -388,7 +488,8 @@ public class CallShareLinkService {
     }
     var tenant = binding.getTenantId();
     var medium = mediumOf(binding);
-    if (agencyId == null && binding.getChatId() != null) {
+    // A group call: every Beratungsstelle of the group must allow it, the creator's included.
+    if (binding.getChatId() != null) {
       var groupAgencies =
           chatAgencies.findByChat_Id(binding.getChatId()).stream()
               .map(ChatAgency::getAgencyId)
@@ -413,9 +514,39 @@ public class CallShareLinkService {
         || !InviteLinkStatus.ACTIVE.name().equals(link.getStatus())
         || outlived(link)
         || !hasSeparateMediaRoom(binding)
-        || !isLive(binding, System.currentTimeMillis())) {
+        || !isLive(binding, System.currentTimeMillis())
+        // FE#2209 review: a 1:1 session call placed by anybody but its assigned, active
+        // counsellor rings, but never takes guests, knocks or links.
+        || !callGuests.grantsGuestAuthority(binding)) {
       throw new CallShareLinkEndedException();
     }
+  }
+
+  /**
+   * FE#2209 round 3: one lock order on session-call paths (binding, session, observation, link,
+   * knocks). The link's call binding, then its session, are locked before the link, so a takeover
+   * or an end, which hold the binding while they retire the link, never wait on a link this
+   * transaction holds.
+   */
+  private void lockCallOf(Long linkId) {
+    links
+        .findCallBindingIdById(linkId)
+        .flatMap(bindings::lockById)
+        .map(MatrixCallBinding::getSessionId)
+        // CodeRabbit 4563094668: the authority check after the locks reads the session's assigned
+        // counsellor. The session is locked and re-read here (binding, session, link), so a
+        // reassignment that committed after the first, unlocked check is seen, and one that comes
+        // later waits for this join.
+        //
+        // Round 6 (F3), a known trade-off: join then seats the guest under these locks, and the
+        // seat goes through Matrix (the call room's members, the admitter's login, the invite). So
+        // a guest's join holds this session's row lock, not only the binding's, for those HTTP
+        // calls; bind, end and registration of calls in the same session wait meanwhile. Moving
+        // the lookup out of the lock is not clean: the invite must follow the seat reservation
+        // under the binding lock (no invited guest the cleanup cannot find, no seat in an ended
+        // call), and the authority decision must read the locked session. The binding lock was
+        // already held across these calls before round 5.
+        .ifPresent(sessions::lockFresh);
   }
 
   private boolean outlived(AgencyInviteLink link) {
@@ -430,8 +561,9 @@ public class CallShareLinkService {
   }
 
   /**
-   * The admitting counsellor, then the link owner, then any other counsellor still in the
-   * conversation vouches: either may have left it while the call runs on.
+   * The admitting counsellor, then the link owner, then any other counsellor still in the call
+   * vouches: either may have left it while the call runs on. Each must be active and in the call
+   * (FE#2209 review), so seating stops once no such counsellor is left.
    */
   private Admission seatOnAuthority(
       AgencyInviteLink link, MatrixCallBinding binding, GroupChatJoinRequest admitted, User guest) {
@@ -447,8 +579,7 @@ public class CallShareLinkService {
         return seat;
       }
     }
-    for (var counsellor :
-        callGuests.counsellorsInConversation(link.getTenantId(), binding.getSourceRoomId())) {
+    for (var counsellor : callGuests.counsellorsInCall(link.getTenantId(), binding)) {
       if (tried.contains(counsellor)) {
         continue;
       }
@@ -497,8 +628,16 @@ public class CallShareLinkService {
   }
 
   private ShareLink view(AgencyInviteLink link, boolean created) {
-    boolean allowed = temporaryAccountAllowed(link);
-    return new ShareLink(link, link.isTemporaryAccount() && allowed, allowed, created);
+    var allowed = allowedModes(link);
+    var mode = link.effectiveGuestAccountMode();
+    var effective = GuestAccountModePolicy.fallbackWithin(allowed, mode);
+    return new ShareLink(
+        link,
+        effective.offersTemporaryAccounts(),
+        allowed.stream().anyMatch(GuestAccountMode::offersTemporaryAccounts),
+        created,
+        effective,
+        allowed);
   }
 
   private static InviteLinkChatType mediumOf(MatrixCallBinding binding) {
@@ -513,12 +652,16 @@ public class CallShareLinkService {
 
   /**
    * @param temporaryAccount effective: the counsellor's setting, and allowed by platform and Träger
+   * @param guestAccountMode effective mode (#1662), PERMANENT while the chosen one is not allowed
+   * @param allowedGuestAccountModes the modes the counsellor may choose now
    */
   public record ShareLink(
       AgencyInviteLink link,
       boolean temporaryAccount,
       boolean temporaryAccountAllowed,
-      boolean created) {}
+      boolean created,
+      GuestAccountMode guestAccountMode,
+      Set<GuestAccountMode> allowedGuestAccountModes) {}
 
   /** What a guest's visit led to; call data only once the guest holds a seat. */
   public record Join(

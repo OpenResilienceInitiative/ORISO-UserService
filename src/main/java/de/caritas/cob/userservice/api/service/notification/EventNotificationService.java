@@ -21,6 +21,7 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -46,6 +47,7 @@ public class EventNotificationService {
 
   public static final String CATEGORY_SYSTEM = "system";
   public static final String CATEGORY_MESSAGE = "message";
+  public static final String ADDON_NOTIFICATION_EVENT = "ADDON_NOTIFICATION";
 
   /** Matches the {@code deduplication_key} column length (VARCHAR(191), changeset 0063). */
   static final int MAX_DEDUPLICATION_KEY_LENGTH = 191;
@@ -58,6 +60,10 @@ public class EventNotificationService {
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull UserRepository userRepository;
   private final @NonNull ConsultantRepository consultantRepository;
+  // Optional so slim contexts that only need notifications still start; production always has it.
+  private final @NonNull org.springframework.beans.factory.ObjectProvider<
+          MatrixCaseReplyActorAuthorizer>
+      caseWriterAuthorizer;
   private final @NonNull IdentityTombstoneService identityTombstoneService;
   private final @NonNull EventNotificationDeduplicationWriter deduplicationWriter;
   private final @NonNull MatrixFeedUpdateSignalService feedUpdateSignalService;
@@ -480,6 +486,54 @@ public class EventNotificationService {
           session.getId(),
           ex);
     }
+  }
+
+  public static final String DIRECT_INVITATION_RENEWAL_REQUESTED_EVENT =
+      "direct_invitation.renewal_requested";
+
+  /**
+   * "Neuen Link anfragen" (ORISO-Frontend#2252): a person in a direct invitation's conversation
+   * asks its counsellor for a new link. One notice per person and token; the card offers "Neuen
+   * Link senden" with {@code linkId}. A notice that could not be stored throws, so the request
+   * never answers "sent" for nothing.
+   */
+  public void createDirectInvitationRenewalRequestedNotification(
+      Session session, Long linkId, String requesterUserId, String token) {
+    if (session == null
+        || session.getId() == null
+        || linkId == null
+        || session.getConsultant() == null
+        || session.getConsultant().getId() == null
+        || session.getConsultant().getId().isBlank()) {
+      // Nobody to tell: the request must not read as delivered.
+      throw new IllegalStateException("The invitation's conversation has no counsellor");
+    }
+    Map<String, Object> params = baseParams(session);
+    params.put("linkId", linkId);
+    createEventOnce(
+        truncateKey(
+            DIRECT_INVITATION_RENEWAL_REQUESTED_EVENT
+                + ":"
+                + linkId
+                + ":"
+                + requesterUserId
+                + ":"
+                + Integer.toHexString(token == null ? 0 : token.hashCode())),
+        session.getConsultant().getId(),
+        DIRECT_INVITATION_RENEWAL_REQUESTED_EVENT,
+        CATEGORY_SYSTEM,
+        "New link requested",
+        "Someone asks for a new link to your appointment.",
+        serializeParams(params),
+        buildSessionActionPath(session, null, true),
+        session.getId(),
+        session.getTenantId());
+  }
+
+  private static String truncateKey(String key) {
+    return key.length() <= MAX_DEDUPLICATION_KEY_LENGTH
+        ? key
+        : key.substring(0, MAX_DEDUPLICATION_KEY_LENGTH);
   }
 
   private String buildNewClientRequestParams(Session session) {
@@ -1130,6 +1184,32 @@ public class EventNotificationService {
     signalFeedUpdatedSafely(recipientUserId);
   }
 
+  @Transactional
+  public Long createAddonNotification(
+      String recipientUserId,
+      Long tenantId,
+      String title,
+      String text,
+      String params,
+      String actionPath,
+      Long sourceSessionId) {
+    var saved =
+        eventNotificationRepository.save(
+            buildEvent(
+                recipientUserId,
+                ADDON_NOTIFICATION_EVENT,
+                CATEGORY_SYSTEM,
+                title,
+                text,
+                params,
+                actionPath,
+                sourceSessionId,
+                tenantId,
+                null));
+    signalFeedUpdatedSafely(recipientUserId);
+    return saved.getId();
+  }
+
   /** Keeps invite identity stable across repeated sync batches and application restarts. */
   @Transactional
   public void createCallInvitationNotification(
@@ -1140,6 +1220,9 @@ public class EventNotificationService {
       String callId,
       String mediaRoomId,
       boolean video) {
+    if (!isSessionCallParticipant(session, recipientId)) {
+      return;
+    }
     var params = callParams(session, callId, mediaRoomId);
     params.put("callType", video ? "video" : "audio");
     params.put("callerName", resolveSenderName(senderId));
@@ -1168,6 +1251,9 @@ public class EventNotificationService {
       String callId,
       String mediaRoomId,
       boolean video) {
+    if (!isSessionCallParticipant(session, recipientId)) {
+      return;
+    }
     var params = callParams(session, callId, mediaRoomId);
     params.put("callType", video ? "video" : "audio");
     String key = callEventKey("call.started", session.getMatrixRoomId(), callId);
@@ -1193,6 +1279,9 @@ public class EventNotificationService {
       String mediaRoomId,
       long startedAt,
       long endedAt) {
+    if (!isSessionCallParticipant(session, recipientId)) {
+      return;
+    }
     var params = callParams(session, callId, mediaRoomId);
     params.put("durationSeconds", Long.toString(Math.max(0, endedAt - startedAt) / 1000));
     String key = callEventKey("call.ended", session.getMatrixRoomId(), callId);
@@ -1217,6 +1306,9 @@ public class EventNotificationService {
       String callId,
       String mediaRoomId,
       boolean video) {
+    if (!isSessionCallParticipant(session, recipientId)) {
+      return;
+    }
     var params = callParams(session, callId, mediaRoomId);
     params.put("callType", video ? "video" : "audio");
     String key = callEventKey("call.missed", session.getMatrixRoomId(), callId);
@@ -1231,6 +1323,59 @@ public class EventNotificationService {
         session.actionPath(consultantRecipient),
         session.getSessionId(),
         session.getTenantId());
+  }
+
+  /**
+   * A 1:1 session room also holds the department's other counsellors as silent members (ADR-002
+   * §1). A call there is the session's own: only its advice seeker and its assigned counsellor get
+   * call activity. Before this gate every silent member received an "internal group call"
+   * invitation for a case they cannot open (Activity showed only "Open chat", which led nowhere). A
+   * group chat's call keeps notifying every member.
+   */
+  /**
+   * A 1:1 session room also holds the agency's silent counsellors (ADR-002 §1). Call activity of a
+   * session reaches a counsellor only while they may write in the case: its assigned counsellor or
+   * a permitted team writer (the same rule as a case reply). Advice seekers and group chats are not
+   * gated here.
+   */
+  private boolean isSessionCallParticipant(
+      de.caritas.cob.userservice.api.service.matrix.MatrixCallConversation conversation,
+      String recipientId) {
+    if (conversation.getSessionId() == null) {
+      return true;
+    }
+    if (recipientId == null || recipientId.isBlank()) {
+      return false;
+    }
+    var counsellor = consultantRepository.findById(recipientId);
+    if (counsellor.isEmpty()) {
+      return true;
+    }
+    if (conversation.getMatrixRoomId() == null) {
+      return false;
+    }
+    // Same lookup as MatrixCallConversationResolver: the call's source room names the session.
+    return sessionRepository
+        .findByMatrixRoomId(conversation.getMatrixRoomId())
+        .filter(session -> Objects.equals(session.getId(), conversation.getSessionId()))
+        .filter(session -> Objects.equals(session.getTenantId(), conversation.getTenantId()))
+        // The authorizer leaves tenant and identity checks to its caller (as isCurrentWriter does).
+        .filter(
+            session ->
+                counsellor.get().getDeleteDate() == null
+                    && Objects.equals(counsellor.get().getTenantId(), session.getTenantId()))
+        .map(session -> isCaseWriter(session, counsellor.get()))
+        .orElse(false);
+  }
+
+  /** Without the case-writer rule (a slim context), only the assigned counsellor qualifies. */
+  private boolean isCaseWriter(
+      de.caritas.cob.userservice.api.model.Session session,
+      de.caritas.cob.userservice.api.model.Consultant counsellor) {
+    var authorizer = caseWriterAuthorizer.getIfAvailable();
+    return authorizer != null
+        ? authorizer.isCurrentAssignedOrTeamWriter(session, counsellor)
+        : session.isAdvisedBy(counsellor);
   }
 
   private Map<String, Object> callParams(

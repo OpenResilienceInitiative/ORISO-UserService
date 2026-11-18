@@ -1,0 +1,338 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- ORISO-Frontend#2252 (Direkteinladung): a direct link can carry an appointment. The appointment
+       is the same session_appointment as "Termin anlegen" (ORISO-Frontend#1960); the link expires
+       validity_after_end_minutes after its end (expires_at, already present, is set from it). Who
+       may enter (access_mode) and the knock switch (knock, already present) are per link. -->
+  <!-- One step per changeSet, each with its own precondition: MariaDB commits every DDL statement
+       on its own, so a run that stopped half way finishes the rest on the next start; a new table
+       is created with its keys in one step and checked before it on every start. The ids are
+       new (the first version held every step in one changeSet), so a database that already ran
+       that version marks these as ran instead of failing on a changed checksum. -->
+  <changeSet id="20261114-direct-invitation-columns-2252" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <columnExists tableName="agency_invite_link" columnName="appointment_id"/>
+      </not>
+    </preConditions>
+    <addColumn tableName="agency_invite_link">
+      <column name="appointment_id" type="CHAR(36)"/>
+      <column name="validity_after_end_minutes" type="INT"/>
+      <column name="access_mode" type="VARCHAR(16)"/>
+      <column name="joins_existing_session" type="BOOLEAN" defaultValueBoolean="false">
+        <constraints nullable="false"/>
+      </column>
+    </addColumn>
+    <!-- Additive and nullable: an older application ignores the columns. The rollback keeps them
+         (same rule as 20261112_direct_link_scheduled_at_2142), since it also runs after MARK_RAN. -->
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+
+  <changeSet id="20261114-direct-invitation-appointment-index-2252" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <indexExists tableName="agency_invite_link" indexName="idx_agency_invite_link_appointment"/>
+      </not>
+    </preConditions>
+    <createIndex tableName="agency_invite_link" indexName="idx_agency_invite_link_appointment">
+      <column name="appointment_id"/>
+    </createIndex>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+
+  <!-- Existing direct links read their access mode from the temporary-account switch: a link
+       that created temporary accounts lets both in, one that did not only accounts. Only rows
+       without a mode change, so a rerun is harmless. -->
+  <changeSet id="20261114-direct-invitation-access-mode-backfill-2252" author="oriso">
+    <update tableName="agency_invite_link">
+      <column name="access_mode" value="BOTH"/>
+      <where>link_kind = 'COUNSELLOR' AND temporary_account = 1 AND access_mode IS NULL</where>
+    </update>
+    <update tableName="agency_invite_link">
+      <column name="access_mode" value="ACCOUNTS_ONLY"/>
+      <where>link_kind = 'COUNSELLOR' AND temporary_account = 0 AND access_mode IS NULL</where>
+    </update>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+
+  <!-- The appointment of an invitation nobody opened yet has no conversation: the first person
+       who opens it creates the appointment conversation. -->
+  <changeSet id="20261114-session-appointment-session-nullable-2252" author="oriso">
+    <!-- No precondition: dropping NOT NULL from a column that is nullable already changes
+         nothing, so a database that received it by hand is safe. -->
+    <dropNotNullConstraint tableName="session_appointment" columnName="session_id"
+      columnDataType="BIGINT UNSIGNED"/>
+    <!-- Making it required again would need the open invitations' appointments removed first. -->
+    <rollback/>
+  </changeSet>
+
+  <!-- An appointment conversation is marked for good: the 1:1 lookup leaves it out also after
+       its invitation was deleted. Set once when the conversation is created; ordinary sessions keep
+       false. -->
+  <changeSet id="20261114-session-direct-invitation-conversation-2252" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <columnExists tableName="session" columnName="direct_invitation_conversation"/>
+      </not>
+    </preConditions>
+    <addColumn tableName="session">
+      <column name="direct_invitation_conversation" type="BOOLEAN" defaultValueBoolean="false">
+        <constraints nullable="false"/>
+      </column>
+    </addColumn>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+
+  <!-- The member table is created with both keys in one changeSet. MariaDB commits each DDL on its
+       own, so a run can stop after the table. The check before it runs on every start (and again
+       when it changes) and stops the update unless the table is either absent and not created yet,
+       or present with its columns, its unique key on (session_id, user_id) and its session key
+       ON DELETE CASCADE. It never drops or repairs anything: the message names the procedure. -->
+  <changeSet id="20261114-direct-invitation-member-verify-2252" author="oriso" runAlways="true"
+    runOnChange="true">
+    <preConditions onFail="HALT"
+      onFailMessage="direct_invitation_member does not match changeSet 20261114-direct-invitation-member-2252, or is missing although that changeSet ran. Do not drop it, it holds who may be in which room. Compare it with that changeSet (columns; unique uq_direct_invitation_member_session_user on session_id, user_id; fk_direct_invitation_member_session on session_id to session(id) ON DELETE CASCADE), add what is missing by hand after review (or recreate it and remove that changeSet's DATABASECHANGELOG row if it is missing), then restart.">
+      <or>
+        <and>
+          <not>
+            <tableExists tableName="direct_invitation_member"/>
+          </not>
+          <not>
+            <changeSetExecuted id="20261114-direct-invitation-member-2252" author="oriso"
+              changeLogFile="db/changelog/changeset/20261114_direct_invitation_appointment_2252/changeSet.xml"/>
+          </not>
+        </and>
+        <and>
+          <tableExists tableName="direct_invitation_member"/>
+          <columnExists tableName="direct_invitation_member" columnName="id"/>
+          <columnExists tableName="direct_invitation_member" columnName="session_id"/>
+          <columnExists tableName="direct_invitation_member" columnName="user_id"/>
+          <columnExists tableName="direct_invitation_member" columnName="invite_link_id"/>
+          <columnExists tableName="direct_invitation_member" columnName="guest"/>
+          <columnExists tableName="direct_invitation_member" columnName="joined_at"/>
+          <columnExists tableName="direct_invitation_member" columnName="revoke_due_at"/>
+          <columnExists tableName="direct_invitation_member" columnName="removed_at"/>
+          <sqlCheck expectedResult="1">
+            SELECT CASE WHEN COUNT(*) = 2 AND SUM(CASE WHEN LOWER(k.column_name) IN ('session_id','user_id')
+              THEN 1 ELSE 0 END) = 2 THEN 1 ELSE 0 END
+            FROM information_schema.table_constraints c
+            JOIN information_schema.key_column_usage k ON k.constraint_schema = c.constraint_schema
+              AND k.constraint_name = c.constraint_name AND k.table_name = c.table_name
+            WHERE c.constraint_schema = SCHEMA() AND c.constraint_type = 'UNIQUE'
+              AND LOWER(c.table_name) = 'direct_invitation_member' AND LOWER(c.constraint_name) = 'uq_direct_invitation_member_session_user'
+          </sqlCheck>
+          <!-- The key's target too: MariaDB names it on key_column_usage, H2 only through the
+               referenced key. -->
+          <or>
+            <and>
+              <dbms type="h2"/>
+              <sqlCheck expectedResult="1">
+                SELECT COUNT(*) FROM information_schema.referential_constraints r
+                JOIN information_schema.key_column_usage k ON k.constraint_schema = r.constraint_schema
+                  AND k.constraint_name = r.constraint_name
+                JOIN information_schema.key_column_usage t
+                  ON t.constraint_schema = r.unique_constraint_schema
+                  AND t.constraint_name = r.unique_constraint_name
+                WHERE r.constraint_schema = SCHEMA() AND r.delete_rule = 'CASCADE'
+                  AND LOWER(r.constraint_name) = 'fk_direct_invitation_member_session' AND LOWER(k.table_name) = 'direct_invitation_member'
+                  AND LOWER(k.column_name) = 'session_id' AND LOWER(t.table_name) = 'session'
+                  AND LOWER(t.column_name) = 'id'
+              </sqlCheck>
+            </and>
+            <and>
+              <not>
+                <dbms type="h2"/>
+              </not>
+              <sqlCheck expectedResult="1">
+                SELECT COUNT(*) FROM information_schema.referential_constraints r
+                JOIN information_schema.key_column_usage k ON k.constraint_schema = r.constraint_schema
+                  AND k.constraint_name = r.constraint_name AND k.table_name = r.table_name
+                WHERE r.constraint_schema = SCHEMA() AND r.delete_rule = 'CASCADE'
+                  AND LOWER(r.constraint_name) = 'fk_direct_invitation_member_session' AND LOWER(k.table_name) = 'direct_invitation_member'
+                  AND LOWER(k.column_name) = 'session_id' AND LOWER(k.referenced_table_name) = 'session'
+                  AND LOWER(k.referenced_column_name) = 'id'
+              </sqlCheck>
+            </and>
+          </or>
+        </and>
+      </or>
+    </preConditions>
+    <sql>SELECT 1</sql>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+
+  <changeSet id="20261114-direct-invitation-member-2252" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <tableExists tableName="direct_invitation_member"/>
+      </not>
+    </preConditions>
+    <createTable tableName="direct_invitation_member">
+      <column name="id" type="BIGINT UNSIGNED" autoIncrement="true">
+        <constraints primaryKey="true" nullable="false"/>
+      </column>
+      <column name="session_id" type="BIGINT UNSIGNED"><constraints nullable="false"/></column>
+      <column name="user_id" type="VARCHAR(36)"><constraints nullable="false"/></column>
+      <column name="invite_link_id" type="BIGINT UNSIGNED"><constraints nullable="false"/></column>
+      <column name="guest" type="BOOLEAN"><constraints nullable="false"/></column>
+      <column name="joined_at" type="DATETIME"><constraints nullable="false"/></column>
+      <column name="revoke_due_at" type="DATETIME"/>
+      <column name="removed_at" type="DATETIME"/>
+    </createTable>
+    <!-- A unique constraint, so the check above can read it from information_schema. -->
+    <addUniqueConstraint tableName="direct_invitation_member" columnNames="session_id, user_id"
+      constraintName="uq_direct_invitation_member_session_user"/>
+    <addForeignKeyConstraint baseTableName="direct_invitation_member" baseColumnNames="session_id"
+      referencedTableName="session" referencedColumnNames="id"
+      constraintName="fk_direct_invitation_member_session" onDelete="CASCADE"/>
+    <rollback><dropTable tableName="direct_invitation_member"/></rollback>
+  </changeSet>
+
+  <!-- A join attempt owns its member row (join_attempt), and the sweep never overwrites a change a
+       join made meanwhile (version, optimistic lock). New changeSet with its own precondition, so
+       a database that ran the member table before gets the columns too. -->
+  <changeSet id="20261114-direct-invitation-member-join-attempt-2252" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <columnExists tableName="direct_invitation_member" columnName="join_attempt"/>
+      </not>
+    </preConditions>
+    <addColumn tableName="direct_invitation_member">
+      <column name="join_attempt" type="VARCHAR(36)"/>
+      <column name="version" type="BIGINT" defaultValueNumeric="0">
+        <constraints nullable="false"/>
+      </column>
+    </addColumn>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+
+  <!-- FE#2252 decision B: each person of a shared appointment conversation passes the consent gate
+       (ADR-022) themselves; the owner keeps session.consented_legal_version_id. Same pointer shape
+       as on session (no timestamp, no actor: a pointer, not a log). Own changeSet and guard, so a
+       database that ran the member table before gets the column too. -->
+  <changeSet id="20261116-direct-invitation-member-consent-2252" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <columnExists tableName="direct_invitation_member"
+          columnName="consented_legal_version_id"/>
+      </not>
+    </preConditions>
+    <addColumn tableName="direct_invitation_member">
+      <column name="consented_legal_version_id" type="BIGINT"/>
+    </addColumn>
+    <rollback>
+      <dropColumn tableName="direct_invitation_member" columnName="consented_legal_version_id"/>
+    </rollback>
+  </changeSet>
+
+  <!-- FE#2252: without a consent text of the advice centre the platform text counts, as for askers
+       today. The member then agreed without a version: consent_given marks it. No timestamp and no
+       actor beside it (ADR-022). Own changeSet and guard, like the one above. -->
+  <changeSet id="20261116-direct-invitation-member-consent-given-2252" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <columnExists tableName="direct_invitation_member" columnName="consent_given"/>
+      </not>
+    </preConditions>
+    <addColumn tableName="direct_invitation_member">
+      <column name="consent_given" type="BOOLEAN" defaultValueBoolean="false">
+        <constraints nullable="false"/>
+      </column>
+    </addColumn>
+    <rollback>
+      <dropColumn tableName="direct_invitation_member" columnName="consent_given"/>
+    </rollback>
+  </changeSet>
+
+  <!-- Every token "Neuen Link senden" replaced, not only the last one: an older link still reads
+       as expired and still asks for a new one. Same check and single creation as the member
+       table. -->
+  <changeSet id="20261114-direct-invitation-replaced-token-verify-2252" author="oriso"
+    runAlways="true" runOnChange="true">
+    <preConditions onFail="HALT"
+      onFailMessage="agency_invite_link_replaced_token does not match changeSet 20261114-direct-invitation-replaced-token-2252, or is missing although that changeSet ran. Do not drop it, old links would stop reading as expired. Compare it with that changeSet (columns; unique uq_agency_invite_link_replaced_token on token; fk_agency_invite_link_replaced_token_link on invite_link_id to agency_invite_link(id) ON DELETE CASCADE), add what is missing by hand after review (or recreate it and remove that changeSet's DATABASECHANGELOG row if it is missing), then restart.">
+      <or>
+        <and>
+          <not>
+            <tableExists tableName="agency_invite_link_replaced_token"/>
+          </not>
+          <not>
+            <changeSetExecuted id="20261114-direct-invitation-replaced-token-2252" author="oriso"
+              changeLogFile="db/changelog/changeset/20261114_direct_invitation_appointment_2252/changeSet.xml"/>
+          </not>
+        </and>
+        <and>
+          <tableExists tableName="agency_invite_link_replaced_token"/>
+          <columnExists tableName="agency_invite_link_replaced_token" columnName="invite_link_id"/>
+          <columnExists tableName="agency_invite_link_replaced_token" columnName="token"/>
+          <sqlCheck expectedResult="1">
+            SELECT CASE WHEN COUNT(*) = 1 AND SUM(CASE WHEN LOWER(k.column_name) IN ('token')
+              THEN 1 ELSE 0 END) = 1 THEN 1 ELSE 0 END
+            FROM information_schema.table_constraints c
+            JOIN information_schema.key_column_usage k ON k.constraint_schema = c.constraint_schema
+              AND k.constraint_name = c.constraint_name AND k.table_name = c.table_name
+            WHERE c.constraint_schema = SCHEMA() AND c.constraint_type = 'UNIQUE'
+              AND LOWER(c.table_name) = 'agency_invite_link_replaced_token' AND LOWER(c.constraint_name) = 'uq_agency_invite_link_replaced_token'
+          </sqlCheck>
+          <!-- The key's target too: MariaDB names it on key_column_usage, H2 only through the
+               referenced key. -->
+          <or>
+            <and>
+              <dbms type="h2"/>
+              <sqlCheck expectedResult="1">
+                SELECT COUNT(*) FROM information_schema.referential_constraints r
+                JOIN information_schema.key_column_usage k ON k.constraint_schema = r.constraint_schema
+                  AND k.constraint_name = r.constraint_name
+                JOIN information_schema.key_column_usage t
+                  ON t.constraint_schema = r.unique_constraint_schema
+                  AND t.constraint_name = r.unique_constraint_name
+                WHERE r.constraint_schema = SCHEMA() AND r.delete_rule = 'CASCADE'
+                  AND LOWER(r.constraint_name) = 'fk_agency_invite_link_replaced_token_link' AND LOWER(k.table_name) = 'agency_invite_link_replaced_token'
+                  AND LOWER(k.column_name) = 'invite_link_id' AND LOWER(t.table_name) = 'agency_invite_link'
+                  AND LOWER(t.column_name) = 'id'
+              </sqlCheck>
+            </and>
+            <and>
+              <not>
+                <dbms type="h2"/>
+              </not>
+              <sqlCheck expectedResult="1">
+                SELECT COUNT(*) FROM information_schema.referential_constraints r
+                JOIN information_schema.key_column_usage k ON k.constraint_schema = r.constraint_schema
+                  AND k.constraint_name = r.constraint_name AND k.table_name = r.table_name
+                WHERE r.constraint_schema = SCHEMA() AND r.delete_rule = 'CASCADE'
+                  AND LOWER(r.constraint_name) = 'fk_agency_invite_link_replaced_token_link' AND LOWER(k.table_name) = 'agency_invite_link_replaced_token'
+                  AND LOWER(k.column_name) = 'invite_link_id' AND LOWER(k.referenced_table_name) = 'agency_invite_link'
+                  AND LOWER(k.referenced_column_name) = 'id'
+              </sqlCheck>
+            </and>
+          </or>
+        </and>
+      </or>
+    </preConditions>
+    <sql>SELECT 1</sql>
+    <rollback><sql>SELECT 1</sql></rollback>
+  </changeSet>
+
+  <changeSet id="20261114-direct-invitation-replaced-token-2252" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <tableExists tableName="agency_invite_link_replaced_token"/>
+      </not>
+    </preConditions>
+    <createTable tableName="agency_invite_link_replaced_token">
+      <column name="invite_link_id" type="BIGINT"><constraints nullable="false"/></column>
+      <column name="token" type="VARCHAR(64)"><constraints nullable="false"/></column>
+    </createTable>
+    <!-- A unique constraint, so the check above can read it from information_schema. -->
+    <addUniqueConstraint tableName="agency_invite_link_replaced_token" columnNames="token"
+      constraintName="uq_agency_invite_link_replaced_token"/>
+    <addForeignKeyConstraint baseTableName="agency_invite_link_replaced_token"
+      baseColumnNames="invite_link_id" referencedTableName="agency_invite_link"
+      referencedColumnNames="id" constraintName="fk_agency_invite_link_replaced_token_link"
+      onDelete="CASCADE"/>
+    <rollback><dropTable tableName="agency_invite_link_replaced_token"/></rollback>
+  </changeSet>
+</databaseChangeLog>

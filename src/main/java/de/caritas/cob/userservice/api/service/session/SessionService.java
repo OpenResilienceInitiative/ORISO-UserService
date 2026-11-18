@@ -214,6 +214,8 @@ public class SessionService {
    * @param userId Keycloak/MariaDB user ID
    * @return {@link List} of {@link UserSessionResponseDTO}
    */
+  // #2175: the asker alias reads the lazy sessionData while mapping.
+  @Transactional(readOnly = true)
   public List<UserSessionResponseDTO> getSessionsForUserId(String userId) {
     List<UserSessionResponseDTO> sessionResponseDTOs = new ArrayList<>();
     List<Session> sessions = sessionRepository.findByUserUserId(userId);
@@ -601,8 +603,10 @@ public class SessionService {
   }
 
   private UserSessionResponseDTO buildUserSessionDTO(Session session, List<AgencyDTO> agencies) {
+    var mapper = new SessionMapper();
     return new UserSessionResponseDTO()
-        .session(new SessionMapper().convertToSessionDTO(session))
+        .session(mapper.convertToSessionDTO(session))
+        .user(mapper.toOwnSessionAlias(session))
         .agency(
             agencies.stream()
                 .filter(agency -> agency.getId().longValue() == session.getAgencyId().longValue())
@@ -643,6 +647,8 @@ public class SessionService {
    * @param roles the roles of the given user
    * @return {@link UserSessionResponseDTO}
    */
+  // #2175: the asker alias reads the lazy sessionData while mapping.
+  @Transactional(readOnly = true)
   public List<UserSessionResponseDTO> getSessionsByUserAndRoomIds(
       String userId, Set<String> matrixRoomIds, Set<String> roles) {
     checkForAskerRoles(roles);
@@ -660,6 +666,8 @@ public class SessionService {
    * @param roles the roles of the given user
    * @return {@link UserSessionResponseDTO}
    */
+  // #2175: the asker alias reads the lazy sessionData while mapping.
+  @Transactional(readOnly = true)
   public List<UserSessionResponseDTO> getSessionsByUserAndSessionIds(
       String userId, Set<Long> sessionIds, Set<String> roles) {
     checkForAskerRoles(roles);
@@ -765,6 +773,29 @@ public class SessionService {
                     SessionStatus.NEW,
                     RegistrationType.ANONYMOUS));
     return mapSessionsToConsultantSessionDto(sessions);
+  }
+
+  /**
+   * The anonymous Live Chat enquiry with this id, if the anonymous queue shows it to the
+   * consultant: same topic-based, cross-tenant visibility as {@link
+   * #getVisibleAnonymousLiveChatEnquiriesByIds}, returned as the entity.
+   */
+  @Transactional(readOnly = true)
+  public Optional<Session> findVisibleAnonymousLiveChatEnquiry(
+      Consultant consultant, Long sessionId) {
+    var topicIds = consultantTopicRepository.findTopicIdsByConsultantId(consultant.getId());
+    if (topicIds == null || topicIds.isEmpty()) {
+      return Optional.empty();
+    }
+    return TenantContext.supplyAcrossTenants(
+            () ->
+                sessionRepository.findVisibleAnonymousLiveChatEnquiriesForConsultantByIds(
+                    Set.of(sessionId),
+                    new HashSet<>(topicIds),
+                    SessionStatus.NEW,
+                    RegistrationType.ANONYMOUS))
+        .stream()
+        .findFirst();
   }
 
   /**
@@ -964,6 +995,7 @@ public class SessionService {
    * @param consultant the calling consultant
    * @return {@link ConsultantSessionDTO} entity for the specific session
    */
+  @Transactional(readOnly = true)
   public ConsultantSessionDTO fetchSessionForConsultant(
       @NonNull Long sessionId, @NonNull Consultant consultant) {
 
@@ -1120,8 +1152,9 @@ public class SessionService {
   public Optional<Session> findSessionByConsultantAndUserAndConsultingType(
       Consultant consultant, User user, Integer consultingTypeId) {
     if (nonNull(consultant) && nonNull(user)) {
-      return sessionRepository.findByConsultantAndUserAndConsultingTypeId(
-          consultant, user, consultingTypeId);
+      // ORISO-Frontend#2252: never an appointment conversation, and never "more than one row".
+      return sessionRepository.findOneToOneSessions(consultant, user, consultingTypeId).stream()
+          .findFirst();
     }
     return Optional.empty();
   }

@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.GuestAccountMode;
 import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -36,6 +37,7 @@ class TemporaryAccountLinkResolverTest {
   @Mock private ConsultantRepository consultantRepository;
   @Mock private DirectInvitePolicy directInvitePolicy;
   @Mock private CallShareLinkService callShareLinks;
+  @Mock private GuestAccountModePolicy guestAccountModes;
   @InjectMocks private TemporaryAccountLinkResolver resolver;
 
   private AgencyInviteLink link;
@@ -61,6 +63,12 @@ class TemporaryAccountLinkResolverTest {
         new HashSet<>(Set.of(ConsultantAgency.builder().id(1L).agencyId(99L).build())));
     when(consultantRepository.findByIdAndDeleteDateIsNull("owner")).thenReturn(Optional.of(owner));
     when(directInvitePolicy.allows(5L, 99L, InviteLinkChatType.VIDEO)).thenReturn(true);
+    when(guestAccountModes.cap(
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(i -> i.getArgument(3));
     TenantContext.setCurrentTenant(5L);
   }
 
@@ -144,6 +152,13 @@ class TemporaryAccountLinkResolverTest {
     link.setConsultingTypeId(2);
     link.setTopicId(3L);
     when(callShareLinks.temporaryAccountAllowed(link)).thenReturn(true);
+    // The effective mode follows the cap the way CallShareLinkService decides it.
+    when(callShareLinks.effectiveGuestAccountMode(link))
+        .thenAnswer(
+            i ->
+                callShareLinks.temporaryAccountAllowed(link)
+                    ? link.effectiveGuestAccountMode()
+                    : GuestAccountMode.PERMANENT);
     var registration = registration("tok", temporary);
     registration.setAgencyId(99L);
     registration.setConsultingType("2");
@@ -152,10 +167,118 @@ class TemporaryAccountLinkResolverTest {
     return registration;
   }
 
+  // --- guest account mode (#1662) ---
+
   @Test
-  void resolve_Should_RequireTheTemporaryFlag_When_TheLinkCreatesTemporaryAccounts() {
+  void aCallLinkWhereGuestsChooseTakesBothKindsOfRegistration() {
+    var temporary = callRegistration(true);
+    link.applyGuestAccountMode(GuestAccountMode.GUEST_CHOOSES);
+
+    assertThat(resolver.resolve(temporary)).contains(link);
+    temporary.setTemporary(false);
+    assertThat(resolver.resolve(temporary)).contains(link);
+  }
+
+  @Test
+  void aPermanentCallLinkRefusesATemporaryRegistration() {
+    var registration = callRegistration(true);
+    link.applyGuestAccountMode(GuestAccountMode.PERMANENT);
+
+    assertThatThrownBy(() -> resolver.resolve(registration))
+        .isInstanceOf(BadRequestException.class);
+  }
+
+  @Test
+  void aCallLinkWhereGuestsChooseTakesOnlyPermanentAccountsWhileTemporaryOnesAreNotAllowed() {
+    var registration = callRegistration(true);
+    link.applyGuestAccountMode(GuestAccountMode.GUEST_CHOOSES);
+    when(callShareLinks.temporaryAccountAllowed(link)).thenReturn(false);
+
+    assertThatThrownBy(() -> resolver.resolve(registration))
+        .isInstanceOf(BadRequestException.class);
+    registration.setTemporary(false);
+    assertThat(resolver.resolve(registration)).contains(link);
+  }
+
+  @Test
+  void theCapAppliesToDirectLinksToo() {
+    link.applyGuestAccountMode(GuestAccountMode.GUEST_CHOOSES);
+    when(guestAccountModes.cap(5L, 99L, InviteLinkChatType.VIDEO, GuestAccountMode.GUEST_CHOOSES))
+        .thenReturn(GuestAccountMode.PERMANENT);
+
+    assertThatThrownBy(() -> resolver.resolve(registration("tok", true)))
+        .isInstanceOf(BadRequestException.class);
+    assertThat(resolver.resolve(registration("tok", false))).contains(link);
+  }
+
+  @Test
+  void resolveEntry_Should_NameTheCappedModeTheGuestEntersUnder() {
+    link.applyGuestAccountMode(GuestAccountMode.PERMANENT);
+    when(guestAccountModes.cap(5L, 99L, InviteLinkChatType.VIDEO, GuestAccountMode.PERMANENT))
+        .thenReturn(GuestAccountMode.GUEST_CHOOSES);
+
+    var entry = resolver.resolveEntry(registration("tok", true)).orElseThrow();
+
+    assertThat(entry.link()).isSameAs(link);
+    assertThat(entry.mode()).isEqualTo(GuestAccountMode.GUEST_CHOOSES);
+  }
+
+  @Test
+  void resolveEntry_Should_NameTheCallLinksEffectiveMode() {
+    var registration = callRegistration(true);
+    link.applyGuestAccountMode(GuestAccountMode.GUEST_CHOOSES);
+
+    assertThat(resolver.resolveEntry(registration).orElseThrow().mode())
+        .isEqualTo(GuestAccountMode.GUEST_CHOOSES);
+  }
+
+  @Test
+  void resolve_Should_RequireTheTemporaryFlag_When_TheInvitationIsForGuestsOnly() {
+    link.setAccessMode(DirectInvitationAccessMode.GUESTS_ONLY);
     assertThatThrownBy(() -> resolver.resolve(registration("tok", false)))
         .isInstanceOf(BadRequestException.class);
+  }
+
+  /**
+   * ORISO-Frontend#2252: a link that creates temporary accounts reads "both" (the person chooses),
+   * so a permanent registration through it is allowed as well.
+   */
+  @Test
+  void resolve_Should_LetThePersonChoose_When_TheInvitationIsForBoth() {
+    assertThat(resolver.resolve(registration("tok", false))).contains(link);
+    assertThat(resolver.resolve(registration("tok", true))).contains(link);
+  }
+
+  @Test
+  void resolve_Should_RefuseATemporaryRegistration_When_TheInvitationIsForAccountsOnly() {
+    link.setAccessMode(DirectInvitationAccessMode.ACCOUNTS_ONLY);
+    assertThatThrownBy(() -> resolver.resolve(registration("tok", true)))
+        .isInstanceOf(BadRequestException.class);
+  }
+
+  @Test
+  void resolve_Should_SayExpired_ForAnExpiredInvitation_AndAReplacedToken() {
+    link.setExpiresAt(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusMinutes(1));
+    assertThatThrownBy(() -> resolver.resolve(registration("tok", true)))
+        .isInstanceOf(DirectLinkExpiredException.class);
+
+    when(repository.findFirstByPreviousToken("old")).thenReturn(Optional.of(link));
+    assertThatThrownBy(() -> resolver.resolve(registration("old", true)))
+        .isInstanceOf(DirectLinkExpiredException.class);
+  }
+
+  @Test
+  void resolve_Should_DecideExpiryInUtc_When_TheServerRunsAheadOfUtc() {
+    // One expiry decision, in UTC: a server clock east of UTC must not end the link early.
+    link.setExpiresAt(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).plusMinutes(30));
+    var previous = java.util.TimeZone.getDefault();
+    try {
+      java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Pacific/Kiritimati"));
+
+      assertThat(resolver.resolve(registration("tok", true))).contains(link);
+    } finally {
+      java.util.TimeZone.setDefault(previous);
+    }
   }
 
   @Test

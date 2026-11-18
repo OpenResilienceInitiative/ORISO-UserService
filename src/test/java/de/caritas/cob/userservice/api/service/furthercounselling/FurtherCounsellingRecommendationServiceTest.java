@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -13,9 +14,11 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -38,6 +41,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 
 @ExtendWith(MockitoExtension.class)
 class FurtherCounsellingRecommendationServiceTest {
@@ -51,6 +55,7 @@ class FurtherCounsellingRecommendationServiceTest {
   @Mock TopicService topicService;
   @Mock ConsultantDisplayNameResolver displayNames;
   @Mock MatrixSessionSystemMessageService systemMessages;
+  @Mock LiveChatFurtherCounsellingGate liveChatGate;
   @InjectMocks FurtherCounsellingRecommendationService service;
 
   private Session session;
@@ -214,5 +219,41 @@ class FurtherCounsellingRecommendationServiceTest {
 
     assertThatThrownBy(() -> service.recommend(SESSION_ID, TOPIC_ID, null))
         .isInstanceOf(InternalServerErrorException.class);
+  }
+
+  @Test
+  void liveChatOfAnEnabledCentreGetsTheCard() {
+    session.setConversationType(ConversationType.LIVE_CHAT);
+    session.setRegistrationType(Session.RegistrationType.ANONYMOUS);
+
+    service.recommend(SESSION_ID, TOPIC_ID, "Schuldnerberatung");
+
+    verify(liveChatGate).requireAllowed(session);
+    verify(systemMessages).postSystemMessage(eq(session), anyString(), eq(true));
+  }
+
+  @Test
+  void liveChatRefusedByTheCentreSwitchPostsNothing() {
+    session.setConversationType(ConversationType.LIVE_CHAT);
+    session.setRegistrationType(Session.RegistrationType.ANONYMOUS);
+    doThrow(
+            new CustomValidationHttpStatusException(
+                HttpStatusExceptionReason.FEATURE_DISABLED, HttpStatus.FORBIDDEN))
+        .when(liveChatGate)
+        .requireAllowed(session);
+
+    assertThatThrownBy(() -> service.recommend(SESSION_ID, TOPIC_ID, null))
+        .isInstanceOf(CustomValidationHttpStatusException.class);
+    verify(systemMessages, never()).postSystemMessage(any(), anyString(), anyBoolean());
+  }
+
+  @Test
+  void liveChatGateIsNotAskedForAnotherConsultant() {
+    session.setConversationType(ConversationType.LIVE_CHAT);
+    when(authenticatedUser.getUserId()).thenReturn("someone-else");
+
+    assertThatThrownBy(() -> service.recommend(SESSION_ID, TOPIC_ID, null))
+        .isInstanceOf(ForbiddenException.class);
+    verify(liveChatGate, never()).requireAllowed(any());
   }
 }

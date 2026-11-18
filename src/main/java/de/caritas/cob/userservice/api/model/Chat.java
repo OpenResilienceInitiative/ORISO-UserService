@@ -174,6 +174,17 @@ public class Chat {
   @Column(name = "group_chat_rules_translations", columnDefinition = "json")
   private Map<String, List<String>> groupChatRulesTranslations;
 
+  /**
+   * Gesprächskreis (#1662): which account a person without one gets through the invite link. The
+   * default is today's behaviour: the guest chooses "Ohne Konto beitreten" or "Konto anlegen".
+   * Group-join temporaries keep their 24 h lifetime (DeleteTemporaryAccountsScheduler).
+   */
+  @Builder.Default
+  @jakarta.persistence.Enumerated(jakarta.persistence.EnumType.STRING)
+  @org.hibernate.annotations.ColumnDefault("'GUEST_CHOOSES'")
+  @Column(name = "guest_account_mode", length = 16, nullable = false)
+  private GuestAccountMode guestAccountMode = GuestAccountMode.GUEST_CHOOSES;
+
   /** Secret part of the invite link (#1237); never serialised. */
   @JsonIgnore
   @Exclude

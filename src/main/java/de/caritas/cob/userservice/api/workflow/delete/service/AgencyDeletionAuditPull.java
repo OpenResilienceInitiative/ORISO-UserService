@@ -31,6 +31,9 @@ public class AgencyDeletionAuditPull {
   private final @NonNull AgencyDeletionAuditOutboxClient outbox;
   private final @NonNull DeletionAuditService deletionAuditService;
   private final @NonNull DeletionAuditLogRepository deletionAuditLogRepository;
+  private final @NonNull de.caritas.cob.userservice.api.service.accountinvite
+          .DeletedUnitInviteRevocation
+      deletedUnitInviteRevocation;
 
   /** Processes one batch; returns the number of rows acknowledged. */
   public int pullOnce() {
@@ -47,6 +50,12 @@ public class AgencyDeletionAuditPull {
         if (!logged(agencyId)) {
           continue;
         }
+      }
+      // Second chance after the mark-time report (ORISO-Admin#1522); repeating it is harmless. A
+      // failed revocation keeps the row, so the next pull tries again; its log entry is already
+      // stored and is not written twice.
+      if (!deletedUnitInviteRevocation.onDeletionReported(AGENCY, agencyId, EXECUTED)) {
+        continue;
       }
       recorded.add(row.id());
     }

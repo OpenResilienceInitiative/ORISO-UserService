@@ -2,23 +2,31 @@ package de.caritas.cob.userservice.api.admin.facade;
 
 import static java.util.Objects.nonNull;
 
+import de.caritas.cob.userservice.api.adapters.web.dto.AskerFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerReactivationRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AskerSearchResultDTO;
 import de.caritas.cob.userservice.api.admin.service.IdentityReactivationRepairService;
 import de.caritas.cob.userservice.api.admin.service.IdentityReactivationSagaStore;
 import de.caritas.cob.userservice.api.admin.service.IdentityReactivationUnmutatedException;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
+import de.caritas.cob.userservice.api.admin.service.asker.AskerAdminSearchService;
+import de.caritas.cob.userservice.api.admin.service.asker.GroupChatSystemAccounts;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.workflow.delete.service.AskerEnquiryCloser;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 
@@ -36,6 +44,13 @@ public class AskerUserAdminFacade {
   private final @NonNull UsernameTranscoder usernameTranscoder;
   private final @NonNull DeletionLifecycleService deletionLifecycleService;
   private final @NonNull AdminScope adminScope;
+  private final @NonNull AskerAdminSearchService askerAdminSearchService;
+  private final @NonNull AskerEnquiryCloser askerEnquiryCloser;
+
+  /** Advice seekers within the caller's reach, including those already marked for deletion. */
+  public AskerSearchResultDTO findAskers(Integer page, Integer perPage, AskerFilter filter) {
+    return askerAdminSearchService.findAskers(page, perPage, filter);
+  }
 
   /**
    * Marks the asker with the given id for deletion.
@@ -50,14 +65,25 @@ public class AskerUserAdminFacade {
             .orElseThrow(() -> new NotFoundException("Asker with id %s does not exist", userId));
 
     if (nonNull(user.getDeleteDate())) {
-      throw new ConflictException(
-          String.format("Asker with id %s is already marked for deletion", userId));
+      // Its own X-Reason, so a caller can tell it from other 409s (e.g. a live-chat transition).
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.ASKER_ALREADY_MARKED_FOR_DELETION, HttpStatus.CONFLICT);
     }
+    assertNotTechnicalAccount(user);
 
     liveChatClaims.claimIntentionalDeletion(userId);
     this.identityDeactivator.deactivateUser(userId);
     this.deletionLifecycleService.beginUserDeletion(user, null);
     this.userService.saveUser(user);
+    this.askerEnquiryCloser.closeOpenEnquiries(user);
+  }
+
+  /** A group-chat system account owns its Träger's group chats and only goes with the Träger. */
+  private static void assertNotTechnicalAccount(User user) {
+    if (GroupChatSystemAccounts.isTechnical(user.getUserId())) {
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.TECHNICAL_GROUP_CHAT_ACCOUNT, HttpStatus.CONFLICT);
+    }
   }
 
   public void pauseAskerDeletion(String userId, String reason, Integer months, String pausedBy) {

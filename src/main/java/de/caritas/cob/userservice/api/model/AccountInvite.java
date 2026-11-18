@@ -257,6 +257,16 @@ public class AccountInvite {
   private Long supersededByInviteId;
 
   /**
+   * Set when an admin deletes the invite (ORISO-Admin#1522): it is revoked at once, no longer
+   * listed, and removed by the nightly invite purge. A marked invite is never ACCEPTED.
+   */
+  @Column(name = "deletion_requested_at", columnDefinition = "datetime")
+  private LocalDateTime deletionRequestedAt;
+
+  @Column(name = "deletion_requested_by_user_id", length = 36)
+  private String deletionRequestedByUserId;
+
+  /**
    * TOTP secret issued to the invitee during the public tenant-admin onboarding (#569 chain fix).
    * The public two-factor endpoint only receives the one-time password, so the secret shown at
    * registration must be kept server-side until the activation succeeds; it is cleared once the OTP

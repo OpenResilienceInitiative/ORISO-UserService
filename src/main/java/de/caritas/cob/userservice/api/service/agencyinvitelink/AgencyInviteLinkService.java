@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
+import de.caritas.cob.userservice.api.model.GuestAccountMode;
 import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.ConsultingTypeService;
@@ -33,6 +34,7 @@ import java.util.Objects;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -74,6 +76,21 @@ public class AgencyInviteLinkService {
 
   /** Call share links (#1487) in the public context; not {@code @NonNull} for older test wiring. */
   private final CallShareLinkService callShareLinkService;
+
+  /**
+   * Direct invitations with an appointment (ORISO-Frontend#2252). Optional, so a slim context that
+   * wires only the invite-link beans (for example GuestIdentityHttpTest) still starts.
+   */
+  private final ObjectProvider<DirectInvitationService> directInvitations;
+
+  /** The end of an invitation with an appointment (#2252); optional for the same reason. */
+  private final ObjectProvider<DirectInvitationExpiryService> invitationEnd;
+
+  /**
+   * #1662: caps the guest account mode the entry page shows. Not {@code @NonNull} for older test
+   * wiring; without it the link's own mode applies.
+   */
+  private final GuestAccountModePolicy guestAccountModes;
 
   /** Create a new invite link. All classification fields are optional — defaults are applied. */
   public AgencyInviteLink create(CreateInviteLinkCommand cmd) {
@@ -220,9 +237,11 @@ public class AgencyInviteLinkService {
   @Transactional
   public AgencyInviteLink deactivate(Long linkId) {
     Long callerTenantId = resolveCallerTenantId();
+    // Locked by the first read (ORISO-Frontend#2252): a first visitor creating the conversation
+    // holds this lock, so the switch-off sees that conversation and ends its access.
     AgencyInviteLink link =
         repository
-            .findById(linkId)
+            .findByIdForUpdate(linkId)
             .filter(l -> Objects.equals(l.getTenantId(), callerTenantId))
             .filter(l -> !InviteLinkKind.CALL.name().equals(l.getLinkKind()))
             .orElseThrow(() -> new NotFoundException("Invite link %s not found", linkId));
@@ -236,7 +255,13 @@ public class AgencyInviteLinkService {
     }
     link.setStatus(InviteLinkStatus.DISABLED.name());
     link.setUpdateDate(LocalDateTime.now());
-    return repository.save(link);
+    var saved = repository.save(link);
+    // ORISO-Frontend#2252: switched off by an admin ends access as when its counsellor does it.
+    var end = invitationEnd == null ? null : invitationEnd.getIfAvailable();
+    if (end != null && link.getAppointmentId() != null) {
+      end.revoke(link);
+    }
+    return saved;
   }
 
   /**
@@ -338,10 +363,8 @@ public class AgencyInviteLinkService {
    */
   @Transactional(readOnly = true)
   public Object getPublicContext(String token) {
-    AgencyInviteLink link =
-        repository
-            .findByToken(token)
-            .orElseThrow(() -> new NotFoundException("Invite link not found"));
+    // A token replaced by "Neuen Link senden" reads as expired (ORISO-Frontend#2252).
+    AgencyInviteLink link = CounsellorDirectLinkService.findForEntry(repository, token);
     return InviteLinkKind.CALL.name().equals(link.getLinkKind())
         ? callShareContext(link)
         : contextOf(link);
@@ -384,12 +407,29 @@ public class AgencyInviteLinkService {
     }
   }
 
+  private GuestAccountMode cappedMode(AgencyInviteLink link) {
+    var mode = link.effectiveGuestAccountMode();
+    return guestAccountModes == null
+        ? mode
+        : guestAccountModes.cap(
+            link.getTenantId(),
+            link.getAgencyId(),
+            InviteLinkChatType.valueOf(link.getChatType()),
+            mode);
+  }
+
   private InvitationContext contextOf(AgencyInviteLink link) {
     rejectPausedLink(link);
+    if (InviteLinkChatType.isDirectMedium(link.getChatType())) {
+      CounsellorDirectLinkService.requireNotExpired(link);
+    }
     if (!InviteLinkStatus.ACTIVE.name().equals(link.getStatus())) {
       throw new BadRequestException("Invite link is not active");
     }
-    if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now())) {
+    // An invitation with an appointment expires in UTC, decided above (410); the rest as before.
+    if (link.getAppointmentId() == null
+        && link.getExpiresAt() != null
+        && link.getExpiresAt().isBefore(LocalDateTime.now())) {
       throw new BadRequestException("Invite link expired");
     }
     requireDirectInviteAllowed(link);
@@ -404,20 +444,29 @@ public class AgencyInviteLinkService {
               ? null
               : resolveAgencyIdForRegistration(link, consultingTypeId);
       boolean direct = InviteLinkChatType.isDirectMedium(link.getChatType());
+      // #1662: the mode the registration will accept, capped as TemporaryAccountLinkResolver caps.
+      var mode = direct ? cappedMode(link) : null;
+      boolean temporary = mode != null && mode.offersTemporaryAccounts();
       // A link that creates temporary accounts tells the registration page what applies to
       // people who join now (ADR-029 §3–§5, #1476).
-      var settings =
-          direct && link.isTemporaryAccount() ? temporaryAccountSettings.current() : null;
+      var settings = temporary ? temporaryAccountSettings.current() : null;
       return new InvitationContext(
           link.getTenantId(),
           agencyId,
           consultingTypeId,
           link.getTopicId(),
           link.getChatType(),
-          direct ? link.isTemporaryAccount() : null,
-          direct ? InviteLinkChatType.valueOf(link.getChatType()).admission().name() : null,
+          direct ? temporary : null,
+          direct ? admissionOf(link) : null,
           settings == null ? null : settings.hidePasswordField(),
-          settings == null ? null : settings.messageRetention().name());
+          settings == null ? null : settings.messageRetention().name(),
+          direct ? mode.toAccessMode().name() : null,
+          direct && !InviteLinkChatType.CHAT.name().equals(link.getChatType())
+              ? link.isKnock()
+              : null,
+          direct ? scheduleOf(link) : null,
+          direct && link.getAppointmentId() != null ? link.getExpiresAt() : null,
+          direct ? mode.name() : null);
     } finally {
       if (previousTenant == null) {
         TenantContext.clear();
@@ -440,8 +489,8 @@ public class AgencyInviteLinkService {
       TenantContext.setCurrentTenantData(new TenantData(link.getTenantId(), null));
       callShareLinkService.requireUsable(link);
       callShareLinkService.requireDirectInviteAllowed(link);
-      boolean temporary =
-          link.isTemporaryAccount() && callShareLinkService.temporaryAccountAllowed(link);
+      var mode = callShareLinkService.effectiveGuestAccountMode(link);
+      boolean temporary = mode.offersTemporaryAccounts();
       var settings = temporary ? temporaryAccountSettings.current() : null;
       return new CallShareContext(
           link.getTenantId(),
@@ -453,7 +502,8 @@ public class AgencyInviteLinkService {
           (link.isKnock() ? InviteLinkAdmission.KNOCK : InviteLinkAdmission.DIRECT).name(),
           InviteLinkKind.CALL.name(),
           settings == null ? null : settings.hidePasswordField(),
-          settings == null ? null : settings.messageRetention().name());
+          settings == null ? null : settings.messageRetention().name(),
+          mode.name());
     } finally {
       if (previousTenant == null) {
         TenantContext.clear();
@@ -474,7 +524,8 @@ public class AgencyInviteLinkService {
       String admission,
       String linkKind,
       @JsonInclude(JsonInclude.Include.NON_NULL) Boolean hidePasswordField,
-      @JsonInclude(JsonInclude.Include.NON_NULL) String messageRetention) {}
+      @JsonInclude(JsonInclude.Include.NON_NULL) String messageRetention,
+      String guestAccountMode) {}
 
   /**
    * Public context deliberately excludes credentials and invitation administration data, including
@@ -489,7 +540,71 @@ public class AgencyInviteLinkService {
       @JsonInclude(JsonInclude.Include.NON_NULL) Boolean temporaryAccount,
       @JsonInclude(JsonInclude.Include.NON_NULL) String admission,
       @JsonInclude(JsonInclude.Include.NON_NULL) Boolean hidePasswordField,
-      @JsonInclude(JsonInclude.Include.NON_NULL) String messageRetention) {}
+      @JsonInclude(JsonInclude.Include.NON_NULL) String messageRetention,
+      @JsonInclude(JsonInclude.Include.NON_NULL) String accessMode,
+      @JsonInclude(JsonInclude.Include.NON_NULL) Boolean knock,
+      @JsonInclude(JsonInclude.Include.NON_NULL) String appointmentStartTime,
+      @JsonInclude(JsonInclude.Include.NON_NULL) String appointmentEndTime,
+      @JsonInclude(JsonInclude.Include.NON_NULL) String callOpensAt,
+      @JsonInclude(JsonInclude.Include.NON_NULL) String expiresAt,
+      @JsonInclude(JsonInclude.Include.NON_NULL) String guestAccountMode) {
+
+    InvitationContext(
+        Long tenantId,
+        Long agencyId,
+        Integer consultingTypeId,
+        Long topicId,
+        String chatType,
+        Boolean temporaryAccount,
+        String admission,
+        Boolean hidePasswordField,
+        String messageRetention,
+        String accessMode,
+        Boolean knock,
+        DirectInvitationSchedule schedule,
+        LocalDateTime expiresAt,
+        String guestAccountMode) {
+      this(
+          tenantId,
+          agencyId,
+          consultingTypeId,
+          topicId,
+          chatType,
+          temporaryAccount,
+          admission,
+          hidePasswordField,
+          messageRetention,
+          accessMode,
+          knock,
+          schedule == null ? null : iso(schedule.start()),
+          schedule == null ? null : iso(schedule.end()),
+          schedule == null ? null : iso(schedule.callOpensAt()),
+          expiresAt == null ? null : iso(expiresAt),
+          guestAccountMode);
+    }
+
+    private static String iso(LocalDateTime utc) {
+      return utc.atOffset(java.time.ZoneOffset.UTC).toString();
+    }
+  }
+
+  private DirectInvitationSchedule scheduleOf(AgencyInviteLink link) {
+    var invitations = directInvitations == null ? null : directInvitations.getIfAvailable();
+    return invitations == null || link.getAppointmentId() == null
+        ? null
+        : invitations.scheduleOf(link).orElse(null);
+  }
+
+  /** Calls knock, unless an invitation with an appointment switched "Anklopfen" off (#2252). */
+  private static String admissionOf(AgencyInviteLink link) {
+    var admission = InviteLinkChatType.valueOf(link.getChatType()).admission();
+    if (admission == InviteLinkAdmission.KNOCK
+        && link.getAppointmentId() != null
+        && !link.isKnock()) {
+      admission = InviteLinkAdmission.DIRECT;
+    }
+    return admission.name();
+  }
 
   /**
    * Redeem the token: validate, mark USED, return tenant/agency/consulting-type/topic metadata for
@@ -515,12 +630,13 @@ public class AgencyInviteLinkService {
             .orElseGet(() -> null);
 
     if (link == null) {
-      AgencyInviteLink existing =
-          repository
-              .findByToken(token)
-              .orElseThrow(() -> new NotFoundException("Invite link not found"));
+      // A replaced token, or an invitation the sweep closed, still answers 410 (#2252).
+      AgencyInviteLink existing = CounsellorDirectLinkService.findForEntry(repository, token);
       if (InviteLinkStatus.USED.name().equals(existing.getStatus())) {
         throw new BadRequestException("Invite link already used");
+      }
+      if (existing.getAppointmentId() != null) {
+        CounsellorDirectLinkService.requireNotExpired(existing);
       }
       rejectPausedLink(existing);
       throw new BadRequestException("Invite link is not active");
@@ -530,7 +646,10 @@ public class AgencyInviteLinkService {
       // A call share link opens one running call only (#1487), never a registration context.
       throw new BadRequestException("Not a registration link");
     }
-    if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now())) {
+    // An invitation with an appointment: UTC, 410, and its status stays for the sweep (#2252).
+    if (link.getAppointmentId() != null) {
+      CounsellorDirectLinkService.requireNotExpired(link);
+    } else if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now())) {
       link.setStatus(InviteLinkStatus.EXPIRED.name());
       repository.save(link);
       throw new BadRequestException("Invite link expired");
@@ -650,8 +769,13 @@ public class AgencyInviteLinkService {
     return ids.get(0);
   }
 
+  /**
+   * An invitation with an appointment is left to the expiry sweep (ORISO-Frontend#2252): it only
+   * closes ACTIVE ones, and closing removes the guests; marked EXPIRED here it would skip both.
+   */
   private AgencyInviteLink autoExpireIfNeeded(AgencyInviteLink link) {
     if (InviteLinkStatus.ACTIVE.name().equals(link.getStatus())
+        && link.getAppointmentId() == null
         && link.getExpiresAt() != null
         && link.getExpiresAt().isBefore(LocalDateTime.now())) {
       link.setStatus(InviteLinkStatus.EXPIRED.name());

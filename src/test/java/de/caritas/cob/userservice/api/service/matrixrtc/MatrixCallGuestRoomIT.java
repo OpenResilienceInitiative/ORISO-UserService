@@ -81,6 +81,9 @@ import org.springframework.transaction.support.TransactionTemplate;
     })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({
+  de.caritas.cob.userservice.api.service.matrix.CounsellorStartedCall.class,
+  de.caritas.cob.userservice.api.service.matrix.SessionCallAuthority.class,
+  de.caritas.cob.userservice.api.service.matrix.SessionCallRevival.class,
   EventNotificationService.class,
   ConsultantDisplayNameResolver.class,
   EventNotificationDeduplicationWriter.class,
@@ -90,6 +93,8 @@ import org.springframework.transaction.support.TransactionTemplate;
   MatrixCallGuestService.class,
   de.caritas.cob.userservice.api.service.matrix.MatrixCallBindingService.class,
   de.caritas.cob.userservice.api.service.matrix.MatrixCallBindingWriter.class,
+  de.caritas.cob.userservice.api.service.matrix.DedicatedCallRoom.class,
+  de.caritas.cob.userservice.api.service.matrix.OrisoRoomRegistry.class,
   de.caritas.cob.userservice.api.service.matrix.MatrixCallInviteNotificationService.class,
   MatrixCallGuestRoomIT.AccountFixture.class
 })
@@ -117,6 +122,9 @@ class MatrixCallGuestRoomIT {
   private static final String ASKER = "@guest-asker:example";
   private static final String GUEST = "@call-guest:example";
 
+  @Autowired
+  private de.caritas.cob.userservice.api.service.matrix.CounsellorStartedCall counsellorCalls;
+
   @Autowired private UserRepository users;
   @Autowired private ConsultantRepository consultants;
   @Autowired private SessionRepository sessions;
@@ -135,6 +143,11 @@ class MatrixCallGuestRoomIT {
 
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private javax.sql.DataSource dataSource;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.lifecycle.SessionInteractionService
+      sessionInteractions;
+
   @MockitoBean private MatrixSynapseService matrix;
 
   @MockitoBean
@@ -410,7 +423,17 @@ class MatrixCallGuestRoomIT {
 
   private MockMvc mvc(AuthenticatedUser actor) {
     return MockMvcBuilders.standaloneSetup(
-            new MatrixCallStateController(callStates, callGuests, observations, actor))
+            new MatrixCallStateController(
+                callStates,
+                callGuests,
+                observations,
+                mock(
+                    de.caritas.cob.userservice.api.service.matrix.MatrixSessionCallBindingService
+                        .class),
+                org.mockito.Mockito.mock(
+                    de.caritas.cob.userservice.api.service.matrix.MatrixGroupCallBindingService
+                        .class),
+                actor))
         .build();
   }
 
@@ -433,7 +456,9 @@ class MatrixCallGuestRoomIT {
         tenants,
         matrix,
         hasher,
-        new JdbcTemplate(dataSource));
+        new JdbcTemplate(dataSource),
+        callGuests,
+        counsellorCalls);
   }
 
   private AuthenticatedUser actor(String id, String role) {
@@ -468,7 +493,6 @@ class MatrixCallGuestRoomIT {
     consultant.setFirstName("Synthetic");
     consultant.setLastName("C" + id.substring(0, 8));
     consultant.setEmail(id.substring(0, 8) + "@synthetic.oriso.test");
-    consultant.setAppointments(null);
     consultant.setConsultantAgencies(new HashSet<>());
     consultant.setConsultantMobileTokens(new HashSet<>());
     consultant.setEncourage2fa(true);

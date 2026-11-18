@@ -15,7 +15,6 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.service.session.SessionOwnershipService;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteDatabaseConsultantAction;
@@ -74,6 +73,10 @@ class ConsultantPictureDatabaseIT {
   @Autowired ConsultantPictureStore store;
   @Autowired ConsultantAdminService deletion;
   @Autowired DeleteDatabaseConsultantAction hardDeletion;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.lifecycle.LifecycleEventPublisher lifecycleEvents;
+
   @MockitoBean IdentityTombstoneService tombstones;
   @Autowired ConsultantRepository consultants;
   @Autowired EntityManager em;
@@ -87,7 +90,6 @@ class ConsultantPictureDatabaseIT {
   @MockitoBean ConsultantUpdateService update;
   @MockitoBean ConsultantPreDeletionService preDelete;
   @MockitoBean AccountManager accountManager;
-  @MockitoBean AppointmentService appointments;
   @MockitoBean TopicService topics;
   @MockitoBean de.caritas.cob.userservice.api.service.chat.MembersOnlyChatAccess membersOnlyAccess;
 

@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- ORISO-Frontend#2287 (Frank, 17 Nov 2026): a counsellor's Sprechstunden, the weekly windows
+       advice seekers can book, separate from the working hours. One row per window of local
+       wall-clock time in the platform's zone; weekday 0 = Sunday .. 6 = Saturday. Table and
+       index are separate changesets, each guarded, so a table made by hand still gets its
+       index. -->
+  <changeSet id="20261117-calendar-consultation-hours-2287" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <tableExists tableName="calendar_consultation_hours"/>
+      </not>
+    </preConditions>
+    <createTable tableName="calendar_consultation_hours">
+      <column name="id" type="CHAR(36)"><constraints primaryKey="true" nullable="false"/></column>
+      <column name="consultant_id" type="VARCHAR(36)"><constraints nullable="false"/></column>
+      <column name="weekday" type="INT"><constraints nullable="false"/></column>
+      <column name="start_time" type="TIME"><constraints nullable="false"/></column>
+      <column name="end_time" type="TIME"><constraints nullable="false"/></column>
+    </createTable>
+    <rollback><dropTable tableName="calendar_consultation_hours"/></rollback>
+  </changeSet>
+  <!-- The table's rollback removes the index with it, so there is nothing to undo here. -->
+  <changeSet id="20261117-calendar-consultation-hours-index-2287" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <indexExists tableName="calendar_consultation_hours"
+          indexName="idx_calendar_consultation_hours_consultant"/>
+      </not>
+    </preConditions>
+    <createIndex tableName="calendar_consultation_hours"
+      indexName="idx_calendar_consultation_hours_consultant">
+      <column name="consultant_id"/>
+    </createIndex>
+    <rollback/>
+  </changeSet>
+  <!-- One row per counsellor: whether a booking in a Sprechstunde is confirmed at once
+       (auto_accept), how many days before its start such a booking becomes a request the
+       counsellor confirms (notice_days), and the slot length in minutes, 30 or 60. A counsellor
+       without a row has the defaults. -->
+  <changeSet id="20261117-calendar-booking-setting-2287" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <tableExists tableName="calendar_booking_setting"/>
+      </not>
+    </preConditions>
+    <createTable tableName="calendar_booking_setting">
+      <column name="consultant_id" type="VARCHAR(36)">
+        <constraints primaryKey="true" nullable="false"/>
+      </column>
+      <column name="auto_accept" type="BOOLEAN" defaultValueBoolean="true">
+        <constraints nullable="false"/>
+      </column>
+      <column name="notice_days" type="INT" defaultValueNumeric="1">
+        <constraints nullable="false"/>
+      </column>
+      <column name="slot_minutes" type="INT" defaultValueNumeric="60">
+        <constraints nullable="false"/>
+      </column>
+    </createTable>
+    <rollback><dropTable tableName="calendar_booking_setting"/></rollback>
+  </changeSet>
+</databaseChangeLog>

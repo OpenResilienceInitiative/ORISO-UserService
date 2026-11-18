@@ -302,6 +302,25 @@ class MatrixSynapseServiceTest {
     assertThat(matrixSynapseService().deactivateUser(MATRIX_USER_ID)).isTrue();
   }
 
+  /** ORISO-Admin#1523: a Matrix user that no longer exists counts as already deleted. */
+  @Test
+  void deactivateUserShouldReturnTrueWhenSynapseNoLongerKnowsTheUser() {
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            eq(
+                URI.create(
+                    "https://matrix.example.com/_synapse/admin/v1/deactivate/"
+                        + "%40seeker%3Amatrix.example.com")),
+            eq(HttpMethod.POST),
+            any(HttpEntity.class),
+            eq(String.class)))
+        .thenThrow(
+            org.springframework.web.client.HttpClientErrorException.create(
+                HttpStatus.NOT_FOUND, "Not Found", null, null, null));
+
+    assertThat(matrixSynapseService().deactivateUser(MATRIX_USER_ID)).isTrue();
+  }
+
   @Test
   void deactivateUserShouldReturnFalseWhenSynapseReturnsServiceUnavailable() {
     stubAdminLogin();
@@ -1096,6 +1115,9 @@ class MatrixSynapseServiceTest {
     when(restTemplate.postForEntity(
             eq(MATRIX_BASE_URL + "/_matrix/client/r0/login"), any(HttpEntity.class), eq(Map.class)))
         .thenReturn(ResponseEntity.ok(Map.of("access_token", MATRIX_ADMIN_TOKEN)))
+        // First browser login of this user: the credential is not set yet.
+        .thenThrow(
+            HttpClientErrorException.create(HttpStatus.FORBIDDEN, "Forbidden", null, null, null))
         .thenReturn(
             ResponseEntity.ok(
                 Map.of(
@@ -1117,18 +1139,38 @@ class MatrixSynapseServiceTest {
     assertThat(updateBody.isLogoutDevices()).isFalse();
     assertThat(updateBody.getPassword()).hasSizeGreaterThanOrEqualTo(32);
 
-    verify(restTemplate, times(2))
+    verify(restTemplate, times(3))
         .postForEntity(
             eq(MATRIX_BASE_URL + "/_matrix/client/r0/login"),
             loginRequest.capture(),
             eq(Map.class));
-    var browserLoginBody = (MatrixLoginRequestDTO) loginRequest.getAllValues().get(1).getBody();
+    var browserLoginBody = (MatrixLoginRequestDTO) loginRequest.getAllValues().get(2).getBody();
     assertThat(browserLoginBody.getType()).isEqualTo("m.login.password");
     assertThat(browserLoginBody.getUser()).isEqualTo("@alice:example.org");
     assertThat(browserLoginBody.getDeviceId()).isEqualTo("ORISO_WEB_DEVICE_ONE");
     assertThat(browserLoginBody.getInitialDeviceDisplayName()).isEqualTo("ORISO Web");
     assertThat(browserLoginBody.getPassword()).isEqualTo(updateBody.getPassword());
     assertThat(result.get("interactive_auth_password")).isEqualTo(updateBody.getPassword());
+  }
+
+  @Test
+  void loginBrowserDevice_reusesTheSetCredentialWithoutAPasswordWrite() {
+    // ORISO-Frontend#2272: the password write is a bcrypt hash on Synapse, up to 2.9 s on Dev.
+    matrixConfig.setApiUrl(MATRIX_BASE_URL);
+    matrixConfig.setAdminUsername("admin");
+    matrixConfig.setAdminPassword("admin-password");
+    when(restTemplate.postForEntity(
+            eq(MATRIX_BASE_URL + "/_matrix/client/r0/login"), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("access_token", MATRIX_ADMIN_TOKEN)))
+        .thenReturn(
+            ResponseEntity.ok(
+                Map.of("access_token", "browser-token", "device_id", "ORISO_WEB_DEVICE_ONE")));
+
+    assertThat(
+            matrixSynapseService().loginBrowserDevice("@alice:example.org", "ORISO_WEB_DEVICE_ONE"))
+        .containsEntry("access_token", "browser-token");
+    verify(restTemplate, never())
+        .exchange(any(URI.class), eq(HttpMethod.PUT), any(HttpEntity.class), eq(Map.class));
   }
 
   @org.junit.jupiter.params.ParameterizedTest
@@ -1193,6 +1235,7 @@ class MatrixSynapseServiceTest {
     ReflectionTestUtils.setField(service, "adminTokenExpiry", Long.MAX_VALUE);
     var updateUri = URI.create(MATRIX_BASE_URL + "/_synapse/admin/v2/users/%40alice%3Aexample.org");
     var updateCalls = new AtomicInteger();
+    var loginCalls = new AtomicInteger();
     var firstLoginEntered = new CountDownLatch(1);
     var releaseFirstLogin = new CountDownLatch(1);
     var secondUpdateEntered = new CountDownLatch(1);
@@ -1209,6 +1252,11 @@ class MatrixSynapseServiceTest {
             eq(MATRIX_BASE_URL + "/_matrix/client/r0/login"), any(HttpEntity.class), eq(Map.class)))
         .thenAnswer(
             invocation -> {
+              // Each request's first attempt meets a not yet set credential, so both rotate it.
+              if (loginCalls.incrementAndGet() % 2 == 1) {
+                throw HttpClientErrorException.create(
+                    HttpStatus.FORBIDDEN, "Forbidden", null, null, null);
+              }
               if (firstLoginEntered.getCount() > 0) {
                 firstLoginEntered.countDown();
                 releaseFirstLogin.await(2, TimeUnit.SECONDS);
@@ -1284,6 +1332,146 @@ class MatrixSynapseServiceTest {
   // -------------------------------------------------------------------------
   // getRoomMembers
   // -------------------------------------------------------------------------
+
+  @Test
+  void getRoomHistoryVisibility_readsTheLatestHistoryEventOfTheRoomState() {
+    // Invitations into a running internal chat need the room's history policy (#1580).
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.argThat(uri -> uri.toString().contains("/state")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(
+            ResponseEntity.ok(
+                Map.of(
+                    "state",
+                    List.of(
+                        Map.of("type", "m.room.create", "content", Map.of()),
+                        Map.of(
+                            "type",
+                            "m.room.history_visibility",
+                            "content",
+                            Map.of("history_visibility", "joined"))))));
+
+    assertThat(matrixSynapseService().getRoomHistoryVisibility(MATRIX_ROOM_ID)).contains("joined");
+  }
+
+  @Test
+  void getRoomHistoryVisibility_withoutTheEvent_isTheMatrixDefaultShared() {
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.argThat(uri -> uri.toString().contains("/state")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("state", List.of())));
+
+    assertThat(matrixSynapseService().getRoomHistoryVisibility(MATRIX_ROOM_ID)).contains("shared");
+  }
+
+  @Test
+  void getRoomHistoryVisibility_noAdminToken_isUnknown() {
+    matrixConfig.setAdminUsername("");
+
+    assertThat(matrixSynapseService().getRoomHistoryVisibility(MATRIX_ROOM_ID)).isEmpty();
+    verifyNoInteractions(restTemplate);
+  }
+
+  @Test
+  void isRoomEncrypted_Should_BeTrue_When_TheRoomHasAMegolmEncryptionEvent() {
+    // ORISO-Frontend#2252: "history from join" for a 1:1 invitation rests on Megolm.
+    stubAdminLogin();
+    stubRoomState(
+        List.of(
+            Map.of("type", "m.room.create", "content", Map.of()),
+            Map.of(
+                "type",
+                "m.room.encryption",
+                "state_key",
+                "",
+                "content",
+                Map.of("algorithm", "m.megolm.v1.aes-sha2"))));
+
+    assertThat(matrixSynapseService().isRoomEncrypted(MATRIX_ROOM_ID)).contains(true);
+  }
+
+  @Test
+  void isRoomEncrypted_Should_BeFalse_When_OnlyANonCanonicalEncryptionEventExists() {
+    // Matrix keeps the room's encryption under the empty state key; any other key is a lookalike.
+    stubAdminLogin();
+    stubRoomState(
+        List.of(
+            Map.of("type", "m.room.create", "content", Map.of()),
+            Map.of(
+                "type",
+                "m.room.encryption",
+                "state_key",
+                "other",
+                "content",
+                Map.of("algorithm", "m.megolm.v1.aes-sha2"))));
+
+    assertThat(matrixSynapseService().isRoomEncrypted(MATRIX_ROOM_ID)).contains(false);
+  }
+
+  @Test
+  void isRoomEncrypted_Should_BeFalse_When_TheRoomHasNoEncryptionEvent() {
+    stubAdminLogin();
+    stubRoomState(List.of(Map.of("type", "m.room.create", "content", Map.of())));
+
+    assertThat(matrixSynapseService().isRoomEncrypted(MATRIX_ROOM_ID)).contains(false);
+  }
+
+  @Test
+  void isRoomEncrypted_Should_BeUnknown_When_TheStateCannotBeRead() {
+    matrixConfig.setAdminUsername("");
+
+    assertThat(matrixSynapseService().isRoomEncrypted(MATRIX_ROOM_ID)).isEmpty();
+    verifyNoInteractions(restTemplate);
+  }
+
+  @Test
+  void isOutOfRoom_Should_BeTrue_When_ThePersonHasNoMembershipEventOrLeft() {
+    // ORISO-Frontend#2252: a refused join never reached the room; the sweep may count it done.
+    stubAdminLogin();
+    stubRoomState(
+        List.of(
+            Map.of("type", "m.room.create", "content", Map.of()),
+            Map.of(
+                "type",
+                "m.room.member",
+                "state_key",
+                "@left:example",
+                "content",
+                Map.of("membership", "leave"))));
+
+    assertThat(matrixSynapseService().isOutOfRoom(MATRIX_ROOM_ID, "@never:example")).contains(true);
+    assertThat(matrixSynapseService().isOutOfRoom(MATRIX_ROOM_ID, "@left:example")).contains(true);
+  }
+
+  @Test
+  void isOutOfRoom_Should_BeFalse_When_ThePersonIsInvitedOrJoined() {
+    stubAdminLogin();
+    stubRoomState(
+        List.of(
+            Map.of(
+                "type",
+                "m.room.member",
+                "state_key",
+                "@guest:example",
+                "content",
+                Map.of("membership", "invite"))));
+
+    assertThat(matrixSynapseService().isOutOfRoom(MATRIX_ROOM_ID, "@guest:example"))
+        .contains(false);
+  }
+
+  @Test
+  void isOutOfRoom_Should_BeUnknown_When_TheStateCannotBeRead() {
+    matrixConfig.setAdminUsername("");
+
+    assertThat(matrixSynapseService().isOutOfRoom(MATRIX_ROOM_ID, "@guest:example")).isEmpty();
+  }
 
   @Test
   void getRoomMembers_noAdminToken_returnsEmptyOptional() {

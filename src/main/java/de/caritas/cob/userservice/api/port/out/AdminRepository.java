@@ -135,4 +135,6 @@ public interface AdminRepository
 
   @Query("SELECT a.id, a.type FROM Admin a WHERE a.id IN :ids")
   List<Object[]> findIdAndTypeByIdIn(@Param("ids") Collection<String> ids);
+
+  long countByTenantIdAndType(Long tenantId, Admin.AdminType type);
 }

@@ -62,6 +62,8 @@ class DirectCallKnockServiceTest {
 
   @org.mockito.Mock private DirectInvitePolicy directInvitePolicy;
 
+  @Mock private de.caritas.cob.userservice.api.service.chat.GroupWaitingRoomService waitingRooms;
+
   private DirectCallKnockService service;
   private Consultant counsellor;
   private User asker;
@@ -79,7 +81,10 @@ class DirectCallKnockServiceTest {
             users,
             consultants,
             eventNotifications,
-            directInvitePolicy);
+            directInvitePolicy,
+            waitingRooms,
+            org.mockito.Mockito.mock(
+                org.springframework.transaction.PlatformTransactionManager.class));
     counsellor = consultant("counsellor-1");
     when(callBindings.findById(3L)).thenReturn(Optional.of(binding()));
     asker = new User();
@@ -88,6 +93,7 @@ class DirectCallKnockServiceTest {
     session.setId(SESSION_ID);
     session.setConsultant(counsellor);
     when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(session));
+    when(sessionRepository.lockFresh(SESSION_ID)).thenReturn(Optional.of(session));
     when(sessionRepository.findByIdForUpdate(SESSION_ID)).thenReturn(Optional.of(session));
     when(repository.save(any())).thenAnswer(i -> i.getArgument(0));
     when(repository.findSessionIdById(any())).thenReturn(Optional.of(SESSION_ID));
@@ -167,6 +173,21 @@ class DirectCallKnockServiceTest {
     } finally {
       TransactionSynchronizationManager.clearSynchronization();
     }
+  }
+
+  /** ORISO-Frontend#2252: "Anklopfen" switched off while the person was still waiting. */
+  @Test
+  void admitWithoutKnock_Should_CloseTheWaitingKnock_When_ThePersonIsLetIn() {
+    var open = pending(1L, LocalDateTime.now().minusMinutes(1));
+    when(repository.findPendingCallKnocksForUpdate(SESSION_ID, "asker-1", Via.DIRECT_LINK))
+        .thenReturn(List.of(open));
+
+    var admission = service.admitWithoutKnock(SESSION_ID, asker, 9L, InviteLinkChatType.VIDEO);
+
+    assertThat(admission.getStatus()).isEqualTo(Status.ADMITTED);
+    assertThat(open.getStatus()).isEqualTo(Status.CANCELLED);
+    assertThat(open.getDecidedAt()).isNotNull();
+    verify(repository).save(open);
   }
 
   @Test
@@ -302,13 +323,13 @@ class DirectCallKnockServiceTest {
 
     service.admit(1L, counsellor);
     var order = inOrder(sessionRepository, repository);
-    order.verify(sessionRepository).findByIdForUpdate(SESSION_ID);
+    order.verify(sessionRepository).lockFresh(SESSION_ID);
     order.verify(repository).findByIdForUpdate(1L);
     // The knock entity is not loaded unlocked first, so no stale copy can be decided.
     verify(repository, never()).findById(any());
 
     service.admitAll(counsellor, SESSION_ID, null);
-    order.verify(sessionRepository).findByIdForUpdate(SESSION_ID);
+    order.verify(sessionRepository).lockFresh(SESSION_ID);
     order
         .verify(repository)
         .findCallKnocksForConsultantForUpdate(
@@ -649,11 +670,59 @@ class DirectCallKnockServiceTest {
     when(repository.save(any())).thenAnswer(call -> call.getArgument(0));
     when(inviteLinkRepository.findById(5L)).thenReturn(Optional.of(callLink("counsellor-1")));
     inCall(counsellor, Outcome.ADMITTED);
+    when(callBindings.findIdsBySourceRoomId("!room:oriso")).thenReturn(List.of(3L));
 
     assertThat(service.admitAll(counsellor, null, "!room:oriso")).containsExactly(viaLink);
     assertThat(viaLink.getStatus()).isEqualTo(Status.ADMITTED);
     verify(repository, never())
         .findCallLinkKnocksForConsultantForUpdate(any(), any(), any(), any(), eq(null));
+  }
+
+  @Test
+  void admitAll_Should_RetryWithTheCallLockedFirst_WhenItsBindingAppearedAfterTheLookup() {
+    // FE#2209 round 5: a call, its link and a knock appear after admit-all looked the calls up.
+    // Its binding must not be locked after the session (through the in-call check); admit-all
+    // rolls back and retries once with that binding locked first.
+    var session = new Session();
+    session.setId(SESSION_ID);
+    session.setMatrixRoomId("!room:oriso");
+    when(sessionRepository.findByMatrixRoomId("!room:oriso")).thenReturn(Optional.of(session));
+    when(callBindings.findIdsBySourceRoomId("!room:oriso")).thenReturn(List.of(), List.of(3L));
+    var viaLink = callLinkKnock(2L, Status.PENDING);
+    when(repository.findCallLinkKnocksForConsultantForUpdate(
+            eq("counsellor-1"), eq(Via.CALL_LINK), eq(Status.PENDING), any(), eq("!room:oriso")))
+        .thenReturn(List.of(viaLink));
+    when(repository.save(any())).thenAnswer(call -> call.getArgument(0));
+    when(inviteLinkRepository.findById(5L)).thenReturn(Optional.of(callLink("counsellor-1")));
+    inCall(counsellor, Outcome.ADMITTED);
+
+    assertThat(service.admitAll(counsellor, null, "!room:oriso")).containsExactly(viaLink);
+
+    var order = org.mockito.Mockito.inOrder(callBindings, sessionRepository, callGuests);
+    order.verify(callBindings).lockById(3L);
+    order.verify(sessionRepository).lockFresh(SESSION_ID);
+    order.verify(callGuests).counsellorCall(TENANT, "counsellor-1", "!room:oriso", "call-1");
+    verify(callGuests, org.mockito.Mockito.times(1))
+        .counsellorCall(TENANT, "counsellor-1", "!room:oriso", "call-1");
+  }
+
+  @Test
+  void admitAll_Should_LeaveAKnockPending_WhenItsCallAppearsAgainAfterTheRetrysLookup() {
+    var session = new Session();
+    session.setId(SESSION_ID);
+    session.setMatrixRoomId("!room:oriso");
+    when(sessionRepository.findByMatrixRoomId("!room:oriso")).thenReturn(Optional.of(session));
+    when(callBindings.findIdsBySourceRoomId("!room:oriso")).thenReturn(List.of());
+    var viaLink = callLinkKnock(2L, Status.PENDING);
+    when(repository.findCallLinkKnocksForConsultantForUpdate(
+            eq("counsellor-1"), eq(Via.CALL_LINK), eq(Status.PENDING), any(), eq("!room:oriso")))
+        .thenReturn(List.of(viaLink));
+    when(inviteLinkRepository.findById(5L)).thenReturn(Optional.of(callLink("counsellor-1")));
+    inCall(counsellor, Outcome.ADMITTED);
+
+    assertThat(service.admitAll(counsellor, null, "!room:oriso")).isEmpty();
+    assertThat(viaLink.getStatus()).isEqualTo(Status.PENDING);
+    verify(callGuests, never()).counsellorCall(any(), any(), any(), any());
   }
 
   // Frank 2026-10-28: a knock on a call share link reaches every counsellor in that call.
@@ -758,6 +827,7 @@ class DirectCallKnockServiceTest {
     inCall(coModerator, Outcome.ADMITTED);
     when(callGuests.counsellorCall(TENANT, "co-moderator", "!room:oriso", "call-2"))
         .thenReturn(new CounsellorCall(Outcome.NOT_FOUND, null, null, null));
+    when(callBindings.findIdsBySourceRoomId("!room:oriso")).thenReturn(List.of(3L, 4L));
 
     assertThat(service.admitAll(coModerator, null, "!room:oriso")).containsExactly(mine);
     assertThat(other.getStatus()).isEqualTo(Status.PENDING);
@@ -802,6 +872,79 @@ class DirectCallKnockServiceTest {
     when(repository.findById(1L)).thenReturn(Optional.of(knock));
 
     assertThat(service.getOwn(1L, asker)).isSameAs(knock);
+  }
+
+  // ORISO-Frontend#2237: people in the group's waiting room join the call's knock list.
+  @Test
+  void pendingFor_Should_ListTheGroupsWaitingRoomInItsCall() {
+    when(callBindings.existsBySourceRoomId("!group:oriso")).thenReturn(true);
+    var waiting = waitingEntry(Status.PENDING);
+    when(waitingRooms.waitingIn(counsellor, "!group:oriso")).thenReturn(List.of(waiting));
+
+    assertThat(service.pendingFor(counsellor, null, "!group:oriso")).containsExactly(waiting);
+  }
+
+  @Test
+  void pendingFor_Should_NotAskForAWaitingRoomWithoutARoom() {
+    service.pendingFor(counsellor, SESSION_ID, null);
+
+    verify(waitingRooms, never()).waitingIn(any(), any());
+  }
+
+  @Test
+  void admit_Should_LetAWaitingPersonInWhenTheModeratorMay() {
+    var waiting = waitingEntry(Status.PENDING);
+    when(repository.findByIdForUpdate(77L)).thenReturn(Optional.of(waiting));
+    when(repository.save(any())).thenAnswer(call -> call.getArgument(0));
+    when(waitingRooms.mayAdmit(waiting, counsellor)).thenReturn(true);
+
+    assertThat(service.admit(77L, counsellor).getStatus()).isEqualTo(Status.ADMITTED);
+    assertThat(waiting.getDecidedBy()).isEqualTo("counsellor-1");
+  }
+
+  @Test
+  void admit_Should_RefuseAWaitingPersonToACounsellorWhoMayNotModerate() {
+    var waiting = waitingEntry(Status.PENDING);
+    when(repository.findByIdForUpdate(77L)).thenReturn(Optional.of(waiting));
+    when(waitingRooms.mayAdmit(waiting, counsellor)).thenReturn(false);
+
+    assertThatThrownBy(() -> service.admit(77L, counsellor)).isInstanceOf(NotFoundException.class);
+  }
+
+  @Test
+  void admitAll_Should_LetTheWholeWaitingRoomIn() {
+    when(callBindings.existsBySourceRoomId("!group:oriso")).thenReturn(true);
+    var waiting = waitingEntry(Status.PENDING);
+    when(waitingRooms.waitingInForUpdate(counsellor, "!group:oriso")).thenReturn(List.of(waiting));
+    when(repository.save(any())).thenAnswer(call -> call.getArgument(0));
+
+    assertThat(service.admitAll(counsellor, null, "!group:oriso")).containsExactly(waiting);
+    verify(waitingRooms, never()).waitingIn(any(), any());
+    assertThat(waiting.getStatus()).isEqualTo(Status.ADMITTED);
+  }
+
+  @Test
+  void ownWaitingEntry_Should_BeReadableAndCancellableByThePerson() {
+    var waiting = waitingEntry(Status.PENDING);
+    when(repository.findById(77L)).thenReturn(Optional.of(waiting));
+    when(repository.findByIdForUpdate(77L)).thenReturn(Optional.of(waiting));
+    when(repository.save(any())).thenAnswer(call -> call.getArgument(0));
+
+    assertThat(service.getOwn(77L, asker)).isSameAs(waiting);
+    assertThat(service.cancelOwn(77L, asker).getStatus()).isEqualTo(Status.CANCELLED);
+  }
+
+  private GroupChatJoinRequest waitingEntry(Status status) {
+    return GroupChatJoinRequest.builder()
+        .id(77L)
+        .via(Via.WAITING_ROOM)
+        .seriesId(42L)
+        .userId("asker-1")
+        .medium("VIDEO")
+        .status(status)
+        .requestedAt(LocalDateTime.now())
+        .waitingSeenAt(LocalDateTime.now())
+        .build();
   }
 
   private GroupChatJoinRequest callLinkKnock(Long id, Status status) {

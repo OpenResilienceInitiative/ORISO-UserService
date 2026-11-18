@@ -6,15 +6,21 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AdminListSortDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyConsultantResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyContactCoverageDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyContactCoverageRequestDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyContactPersonAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyTypeDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AskerFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerReactivationRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AskerSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChangeConsultantTenantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAgencyResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantTenantChangeResultDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ContactAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminAgencyRelationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
@@ -26,9 +32,13 @@ import de.caritas.cob.userservice.api.adapters.web.dto.RootDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionAdminResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
+import de.caritas.cob.userservice.api.adapters.web.dto.TenantContactPersonDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.TenantDeletionBlockersDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAgencyAdminDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.UpdateContactPersonDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantAdminDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantContactPersonDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserIdentitiesDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ViolationDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.AdminDtoMapper;
@@ -38,16 +48,17 @@ import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.hallink.RootDTOBuilder;
 import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenerator;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService;
+import de.caritas.cob.userservice.api.admin.service.contactperson.ContactPersonAdminService;
 import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPreferenceService;
 import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPreferenceService.ListSort;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantDeletionBlockerService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.PasswordPolicy;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.SearchFilter;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.identity.UserIdentitiesService;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UseradminApi;
 import io.swagger.annotations.Api;
@@ -94,7 +105,6 @@ public class UserAdminController implements UseradminApi {
   private final @NonNull ConsultantAdminFacade consultantAdminFacade;
   private final @NonNull AskerUserAdminFacade askerUserAdminFacade;
   private final @NonNull AdminUserFacade adminUserFacade;
-  private final @NonNull AppointmentService appointmentService;
   private final @NonNull AdminDtoMapper adminDtoMapper;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull GrantConsultantIdentityService grantConsultantIdentityService;
@@ -104,6 +114,8 @@ public class UserAdminController implements UseradminApi {
           .ExistingAccountSetupIssuer
       accountSetupIssuer;
   private final @NonNull UserHelper userHelper;
+  private final @NonNull TenantDeletionBlockerService tenantDeletionBlockerService;
+  private final @NonNull ContactPersonAdminService contactPersonAdminService;
 
   /** Never typed by anyone and valid until the setup link expires, so length costs nothing. */
   static final int SETUP_ONLY_PASSWORD_LENGTH = 32;
@@ -456,6 +468,20 @@ public class UserAdminController implements UseradminApi {
   }
 
   /**
+   * GET /useradmin/askers: advice seekers within the caller's reach, newest first.
+   *
+   * @param page page to return, 1-based (required)
+   * @param perPage page size, at most 100 (required)
+   * @param filter username, agency and (platform admins only) Träger
+   * @return the page and the total number of matches
+   */
+  @Override
+  public ResponseEntity<AskerSearchResultDTO> getAskers(
+      Integer page, Integer perPage, AskerFilter filter) {
+    return ResponseEntity.ok(askerUserAdminFacade.findAskers(page, perPage, filter));
+  }
+
+  /**
    * Entry point to mark a asker for deletion.
    *
    * @param askerId asker id (required)
@@ -533,6 +559,61 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<List<AdminResponseDTO>> getTenantAdmins(final Integer tenantId) {
     return new ResponseEntity<>(this.adminUserFacade.findTenantAdmins(tenantId), HttpStatus.OK);
+  }
+
+  /** What still blocks deleting the Träger; asked by TenantService before it deletes (#1466). */
+  @Override
+  public ResponseEntity<TenantDeletionBlockersDTO> getTenantDeletionBlockers(final Long tenantId) {
+    return ResponseEntity.ok(tenantDeletionBlockerService.findBlockers(tenantId));
+  }
+
+  /** Contact person of a counselling centre (ORISO-Admin#1534). */
+  @Override
+  public ResponseEntity<AgencyContactPersonAdminDTO> getAgencyContactPerson(
+      Long agencyId, Long tenantId) {
+    return ResponseEntity.ok(contactPersonAdminService.getAgencyContactPerson(agencyId, tenantId));
+  }
+
+  @Override
+  public ResponseEntity<AgencyContactPersonAdminDTO> updateAgencyContactPerson(
+      Long agencyId, UpdateContactPersonDTO updateContactPersonDTO, Long tenantId) {
+    return ResponseEntity.ok(
+        contactPersonAdminService.updateAgencyContactPerson(
+            agencyId, tenantId, updateContactPersonDTO));
+  }
+
+  @Override
+  public ResponseEntity<List<ContactAdminDTO>> getAgencyContactPersonCandidates(
+      Long agencyId, Long tenantId) {
+    return ResponseEntity.ok(
+        contactPersonAdminService.getAgencyContactPersonCandidates(agencyId, tenantId));
+  }
+
+  /** Träger default contact person and general contact e-mail (ORISO-Admin#1534). */
+  @Override
+  public ResponseEntity<TenantContactPersonDTO> getTenantContactPerson(Long tenantId) {
+    return ResponseEntity.ok(contactPersonAdminService.getTenantContactPerson(tenantId));
+  }
+
+  @Override
+  public ResponseEntity<TenantContactPersonDTO> updateTenantContactPerson(
+      Long tenantId, UpdateTenantContactPersonDTO updateTenantContactPersonDTO) {
+    return ResponseEntity.ok(
+        contactPersonAdminService.updateTenantContactPerson(
+            tenantId, updateTenantContactPersonDTO));
+  }
+
+  @Override
+  public ResponseEntity<List<ContactAdminDTO>> getTenantContactPersonCandidates(Long tenantId) {
+    return ResponseEntity.ok(contactPersonAdminService.getTenantContactPersonCandidates(tenantId));
+  }
+
+  /** Which centres have a contact person, for the admin dashboard (ORISO-Admin#1534). */
+  @Override
+  public ResponseEntity<List<AgencyContactCoverageDTO>> getAgencyContactCoverage(
+      AgencyContactCoverageRequestDTO agencyContactCoverageRequestDTO) {
+    return ResponseEntity.ok(
+        contactPersonAdminService.getAgencyContactCoverage(agencyContactCoverageRequestDTO));
   }
 
   @Override

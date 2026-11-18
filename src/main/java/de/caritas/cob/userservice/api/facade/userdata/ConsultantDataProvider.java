@@ -96,6 +96,8 @@ public class ConsultantDataProvider {
         .avatarKind(consultant.getAvatarKind() != null ? consultant.getAvatarKind().name() : null)
         .avatarId(consultant.getAvatarId())
         .absenceMessage(consultant.getAbsenceMessage())
+        .absenceStart(absenceDay(consultant, consultant.getAbsenceStart()))
+        .absenceEnd(absenceDay(consultant, consultant.getAbsenceEnd()))
         .isInTeamAgency(consultant.isTeamConsultant())
         .agencies(agencies)
         .userRoles(authenticatedUser.getRoles())
@@ -190,5 +192,12 @@ public class ConsultantDataProvider {
             List.of(SessionStatus.IN_PROGRESS, SessionStatus.IN_ARCHIVE),
             RegistrationType.REGISTERED);
     return nonNull(count) && count > 0L;
+  }
+
+  /** A day of the absence range, only while that absence still matters (ORISO-Frontend#2303). */
+  private static java.time.LocalDate absenceDay(Consultant consultant, java.time.LocalDate day) {
+    return consultant.isAbsenceOverOn(java.time.LocalDate.now(Consultant.ABSENCE_ZONE))
+        ? null
+        : day;
   }
 }

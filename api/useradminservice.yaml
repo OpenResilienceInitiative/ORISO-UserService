@@ -412,6 +412,360 @@ paths:
             in this service where a lock or a downstream step is unavailable.
       security:
         - Bearer: [ ]
+  /useradmin/tenants/{tenantId}/deletion-blockers:
+    get:
+      tags:
+        - admin-user-controller
+      summary: >-
+        Lists what still belongs to a Träger and therefore blocks its deletion.
+        [Authorization: Role: tenant-admin, single-tenant-admin or user-admin, within the caller's
+        reach]
+      description: >-
+        TenantService asks this before it deletes a Träger (ORISO-UserService#1466). Deleting a
+        Träger that still has agencies, accounts or open invitations leaves them pointing at a
+        Träger that no longer exists, and the admin interface can no longer clean them up. Each
+        count is what has to be deleted (or revoked) first. Accounts already marked for deletion
+        and soft-deleted agencies do not count; the nightly job removes them. The technical
+        group-chat-system users do not count either, they go with their Träger.
+      operationId: getTenantDeletionBlockers
+      parameters:
+        - name: tenantId
+          in: path
+          description: Träger (tenant) id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        200:
+          description: OK - successful operation
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/TenantDeletionBlockersDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid role/authorization
+        403:
+          description: FORBIDDEN - the Träger is outside the caller's reach
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
+  /useradmin/agencies/{agencyId}/contactperson:
+    get:
+      tags:
+        - admin-user-controller
+      summary: 'The contact person of a counselling centre and the Träger default (ORISO-Admin#1534) [Authorization: user-admin, tenant-admin, single-tenant-admin or restricted-agency-admin, within the caller''s reach]'
+      description: >-
+        A stored id that no longer names an admin of the centre or its Träger counts as not set. effectiveSource
+        says which pair counsellors see: the centre's own (OWN), the Träger default (TRAEGER_DEFAULT) or none (NONE).
+      operationId: getAgencyContactPerson
+      parameters:
+        - name: agencyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: tenantId
+          in: query
+          required: false
+          description: >-
+            Träger of the centre, optional. For platform admins it is checked against AgencyService and a different
+            value answers 400; everybody else always uses their own Träger.
+          schema:
+            type: integer
+            format: int64
+      responses:
+        200:
+          description: OK
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/AgencyContactPersonAdminDTO'
+        400:
+          description: BAD REQUEST - an id is no candidate, the deputy has no contact person or equals it
+        401:
+          description: UNAUTHORIZED - no/invalid role/authorization
+        403:
+          description: FORBIDDEN - outside the caller's reach (the same answer as for a non-existing target)
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
+    put:
+      tags:
+        - admin-user-controller
+      summary: 'Sets or clears the contact person and deputy of a counselling centre (ORISO-Admin#1534) [Authorization: user-admin, tenant-admin, single-tenant-admin or restricted-agency-admin, within the caller''s reach]'
+      description: >-
+        A null or absent id clears it. Both must be candidates of the centre (GET .../candidates); the deputy needs a
+        contact person and must differ from it.
+      operationId: updateAgencyContactPerson
+      parameters:
+        - name: agencyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: tenantId
+          in: query
+          required: false
+          description: >-
+            Träger of the centre, optional. For platform admins it is checked against AgencyService and a different
+            value answers 400; everybody else always uses their own Träger.
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          'application/json':
+            schema:
+              $ref: '#/components/schemas/UpdateContactPersonDTO'
+      responses:
+        200:
+          description: OK - the stored state
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/AgencyContactPersonAdminDTO'
+        400:
+          description: BAD REQUEST - an id is no candidate, the deputy has no contact person or equals it
+        401:
+          description: UNAUTHORIZED - no/invalid role/authorization
+        403:
+          description: FORBIDDEN - outside the caller's reach (the same answer as for a non-existing target)
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
+  /useradmin/agencies/{agencyId}/contactperson/candidates:
+    get:
+      tags:
+        - admin-user-controller
+      summary: 'Admins who may be the contact person of a counselling centre (ORISO-Admin#1534) [Authorization: user-admin, tenant-admin, single-tenant-admin or restricted-agency-admin, within the caller''s reach]'
+      description: The agency admins of the centre and the Träger admins of its Träger.
+      operationId: getAgencyContactPersonCandidates
+      parameters:
+        - name: agencyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: tenantId
+          in: query
+          required: false
+          description: >-
+            Träger of the centre, optional. For platform admins it is checked against AgencyService and a different
+            value answers 400; everybody else always uses their own Träger.
+          schema:
+            type: integer
+            format: int64
+      responses:
+        200:
+          description: OK - possibly empty
+          content:
+            'application/json':
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ContactAdminDTO'
+        400:
+          description: BAD REQUEST - an id is no candidate, the deputy has no contact person or equals it
+        401:
+          description: UNAUTHORIZED - no/invalid role/authorization
+        403:
+          description: FORBIDDEN - outside the caller's reach (the same answer as for a non-existing target)
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
+  /useradmin/tenants/{tenantId}/contactperson:
+    get:
+      tags:
+        - admin-user-controller
+      summary: 'The Träger default contact person and general contact e-mail (ORISO-Admin#1534) [Authorization: user-admin, tenant-admin or single-tenant-admin, within the caller''s reach]'
+      operationId: getTenantContactPerson
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        200:
+          description: OK
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/TenantContactPersonDTO'
+        400:
+          description: BAD REQUEST - an id is no candidate, the deputy has no contact person or equals it
+        401:
+          description: UNAUTHORIZED - no/invalid role/authorization
+        403:
+          description: FORBIDDEN - outside the caller's reach (the same answer as for a non-existing target)
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
+    put:
+      tags:
+        - admin-user-controller
+      summary: 'Sets or clears the Träger default contact person, deputy and general contact e-mail (ORISO-Admin#1534) [Authorization: user-admin, tenant-admin or single-tenant-admin, within the caller''s reach]'
+      description: >-
+        A null or absent id clears it; an absent generalContactEmail keeps it and a blank one clears it. Both ids must
+        be admins of the Träger (GET .../candidates); the deputy needs a
+        contact person and must differ from it.
+      operationId: updateTenantContactPerson
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          'application/json':
+            schema:
+              $ref: '#/components/schemas/UpdateTenantContactPersonDTO'
+      responses:
+        200:
+          description: OK - the stored state
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/TenantContactPersonDTO'
+        400:
+          description: BAD REQUEST - an id is no candidate, the deputy has no contact person or equals it
+        401:
+          description: UNAUTHORIZED - no/invalid role/authorization
+        403:
+          description: FORBIDDEN - outside the caller's reach (the same answer as for a non-existing target)
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
+  /useradmin/tenants/{tenantId}/contactperson/candidates:
+    get:
+      tags:
+        - admin-user-controller
+      summary: 'Admins who may be the Träger default contact person (ORISO-Admin#1534) [Authorization: user-admin, tenant-admin or single-tenant-admin, within the caller''s reach]'
+      description: The Träger admins and agency admins of the Träger.
+      operationId: getTenantContactPersonCandidates
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        200:
+          description: OK - possibly empty
+          content:
+            'application/json':
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ContactAdminDTO'
+        400:
+          description: BAD REQUEST - an id is no candidate, the deputy has no contact person or equals it
+        401:
+          description: UNAUTHORIZED - no/invalid role/authorization
+        403:
+          description: FORBIDDEN - outside the caller's reach (the same answer as for a non-existing target)
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
+  /useradmin/agencycontacts/coverage:
+    post:
+      tags:
+        - admin-user-controller
+      summary: 'Which counselling centres have a contact person (ORISO-Admin#1534) [Authorization: user-admin, tenant-admin, single-tenant-admin or restricted-agency-admin, within the caller''s reach]'
+      description: >-
+        A centre is covered by a valid own contact person or a valid Träger default; the admin fallback does not count.
+        The Träger of each centre comes from AgencyService; for platform admins a tenantIdsByAgency entry that disagrees
+        answers 400, one for a centre AgencyService does not know is ignored.
+      operationId: getAgencyContactCoverage
+      requestBody:
+        required: true
+        content:
+          'application/json':
+            schema:
+              $ref: '#/components/schemas/AgencyContactCoverageRequestDTO'
+      responses:
+        200:
+          description: OK - one entry per requested centre
+          content:
+            'application/json':
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AgencyContactCoverageDTO'
+        400:
+          description: BAD REQUEST - an id is no candidate, the deputy has no contact person or equals it
+        401:
+          description: UNAUTHORIZED - no/invalid role/authorization
+        403:
+          description: FORBIDDEN - outside the caller's reach (the same answer as for a non-existing target)
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
+  /useradmin/askers:
+    get:
+      tags:
+        - admin-user-controller
+      summary: >-
+        Returns advice seekers matching the filter, newest first, limited to the caller's reach
+        (platform, own Träger or own agencies). [Authorization: Role: user-admin]
+      description: >-
+        Advice seekers marked for deletion are included, with their deletion state, so the admin
+        interface can show them as "in deletion". The technical group-chat-system users are not. Usernames are stored encoded, so the username
+        filter matches the whole username, not a part of it.
+      operationId: getAskers
+      parameters:
+        - name: filter
+          in: query
+          description: The filter parameters to search for. Without a filter all reachable advice seekers are returned.
+          schema:
+            $ref: '#/components/schemas/AskerFilter'
+        - name: page
+          in: query
+          description: Number of page where to start in the query (1 = first page)
+          required: true
+          schema:
+            type: integer
+        - name: perPage
+          in: query
+          description: Number of items which are being returned per page (at most 100)
+          required: true
+          schema:
+            type: integer
+      responses:
+        200:
+          description: OK - successful operation
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/AskerSearchResultDTO'
+        400:
+          description: BAD REQUEST - invalid/incomplete request
+        401:
+          description: UNAUTHORIZED - no/invalid role/authorization
+        403:
+          description: FORBIDDEN - the caller has no Träger of their own to search in
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
   /useradmin/askers/{askerId}:
     get:
       tags:
@@ -464,7 +818,11 @@ paths:
         404:
           description: NOT FOUND - asker not found
         409:
-          description: CONFLICT - asker is already marked for deletion
+          description: >-
+            CONFLICT - X-Reason ASKER_ALREADY_MARKED_FOR_DELETION: already marked;
+            TECHNICAL_GROUP_CHAT_ACCOUNT: a technical group-chat-system account, which only goes
+            with its Träger. Without X-Reason: another operation on the account (e.g. a live-chat
+            transition) is in progress.
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
@@ -1544,6 +1902,26 @@ paths:
           $ref: '#/components/responses/AccountInviteConflict'
         502:
           description: BAD GATEWAY - SMTP failed
+      security:
+        - Bearer: [ ]
+  /useradmin/account-invites/{inviteId}:
+    delete:
+      x-internal: true
+      tags:
+        - account-invite-controller
+      summary: 'Deletes an invite: revokes it at once if still open (its link stops working, its address and any reserved number are given back), hides it from every list and leaves the row to the nightly invite purge; repeating the call changes nothing. 409 INVITE_ALREADY_ACCEPTED once its account exists, 409 INVITE_BUSY while an existing account is set up through it [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
+      operationId: deleteAccountInvite
+      parameters:
+        - $ref: '#/components/parameters/InviteId'
+      responses:
+        204:
+          description: NO CONTENT - deleted, or already deleted
+        403:
+          description: FORBIDDEN - invite outside the caller's scope
+        404:
+          description: NOT FOUND - no such invite
+        409:
+          $ref: '#/components/responses/AccountInviteConflict'
       security:
         - Bearer: [ ]
   /useradmin/account-invites/{inviteId}/revoke:
@@ -2718,6 +3096,11 @@ components:
         tenantId:
           type: integer
           example: "1"
+        contactEmail:
+          type: string
+          format: email
+          maxLength: 255
+          description: Optional contact e-mail counsellors see instead of the login e-mail (ORISO-Admin#1534). Blank clears it.
 
     PatchAdminDTO:
       type: object
@@ -2740,6 +3123,11 @@ components:
           type: string
           format: email
           example: "maxmuster@mann.com"
+        contactEmail:
+          type: string
+          format: email
+          maxLength: 255
+          description: Optional contact e-mail counsellors see instead of the login e-mail (ORISO-Admin#1534). Absent keeps it, blank clears it.
 
     UpdateAgencyAdminDTO:
       allOf:
@@ -2780,6 +3168,9 @@ components:
         email:
           type: string
           example: "max@mustermann.de"
+        contactEmail:
+          type: string
+          description: Optional contact e-mail counsellors see instead of the login e-mail (ORISO-Admin#1534).
         createDate:
           type: string
         updateDate:
@@ -2807,6 +3198,254 @@ components:
         hasOtherIdentity:
           type: boolean
           description: true if this admin also holds a consultant identity on the same account
+
+    AskerFilter:
+      type: object
+      properties:
+        username:
+          type: string
+          description: The complete username, plain or encoded.
+        agencyId:
+          type: array
+          description: >-
+            Only advice seekers with a session or membership in one of these agencies, sent comma
+            separated (agencyId=101,102) like the other user searches.
+          items:
+            type: integer
+            format: int64
+        tenantId:
+          type: integer
+          format: int64
+          description: Only advice seekers of this Träger. Ignored unless the caller is a platform admin.
+
+    ContactAdminDTO:
+      type: object
+      required:
+        - adminId
+        - firstName
+        - lastName
+        - loginEmail
+        - displayEmail
+        - type
+        - isConsultant
+      properties:
+        adminId:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+        loginEmail:
+          type: string
+        contactEmail:
+          type: string
+        displayEmail:
+          type: string
+          description: The contact e-mail if set, else the login e-mail.
+        type:
+          type: string
+          enum: [ AGENCY, TENANT, SUPER ]
+        isConsultant:
+          type: boolean
+          description: The admin also has an active counsellor identity (of this centre, for a centre's candidates).
+    TraegerDefaultContactDTO:
+      type: object
+      properties:
+        contact:
+          $ref: '#/components/schemas/ContactAdminDTO'
+        deputy:
+          $ref: '#/components/schemas/ContactAdminDTO'
+    AgencyContactPersonAdminDTO:
+      type: object
+      required:
+        - agencyId
+        - traegerDefault
+        - effectiveSource
+      properties:
+        agencyId:
+          type: integer
+          format: int64
+        tenantId:
+          type: integer
+          format: int64
+        contact:
+          $ref: '#/components/schemas/ContactAdminDTO'
+        deputy:
+          $ref: '#/components/schemas/ContactAdminDTO'
+        traegerDefault:
+          $ref: '#/components/schemas/TraegerDefaultContactDTO'
+        effectiveSource:
+          type: string
+          enum: [ OWN, TRAEGER_DEFAULT, NONE ]
+    UpdateContactPersonDTO:
+      type: object
+      properties:
+        contactAdminId:
+          type: string
+          nullable: true
+          maxLength: 36
+        deputyAdminId:
+          type: string
+          nullable: true
+          maxLength: 36
+    TenantContactPersonDTO:
+      type: object
+      required:
+        - tenantId
+      properties:
+        tenantId:
+          type: integer
+          format: int64
+        contact:
+          $ref: '#/components/schemas/ContactAdminDTO'
+        deputy:
+          $ref: '#/components/schemas/ContactAdminDTO'
+        generalContactEmail:
+          type: string
+    UpdateTenantContactPersonDTO:
+      type: object
+      properties:
+        contactAdminId:
+          type: string
+          nullable: true
+          maxLength: 36
+        deputyAdminId:
+          type: string
+          nullable: true
+          maxLength: 36
+        generalContactEmail:
+          type: string
+          nullable: true
+          format: email
+          maxLength: 255
+          description: Absent keeps the stored address, blank clears it.
+    AgencyContactCoverageRequestDTO:
+      type: object
+      required:
+        - agencyIds
+      properties:
+        agencyIds:
+          type: array
+          maxItems: 1000
+          items:
+            type: integer
+            format: int64
+        tenantIdsByAgency:
+          type: object
+          description: Träger per centre id, only checked for platform admins (see the operation description).
+          additionalProperties:
+            type: integer
+            format: int64
+    AgencyContactCoverageDTO:
+      type: object
+      required:
+        - agencyId
+        - covered
+        - source
+      properties:
+        agencyId:
+          type: integer
+          format: int64
+        covered:
+          type: boolean
+        source:
+          type: string
+          enum: [ OWN, TRAEGER_DEFAULT, NONE ]
+    TenantDeletionBlockersDTO:
+      type: object
+      required:
+        - deletable
+        - agencies
+        - consultants
+        - adviceSeekers
+        - agencyAdmins
+        - tenantAdmins
+        - openInvites
+      properties:
+        deletable:
+          type: boolean
+          description: true when every count below is 0
+        agencies:
+          type: integer
+          format: int64
+          description: agencies of the Träger that are not deleted
+        consultants:
+          type: integer
+          format: int64
+          description: counsellors of the Träger that are not marked for deletion
+        adviceSeekers:
+          type: integer
+          format: int64
+          description: advice seekers of the Träger that are not marked for deletion
+        agencyAdmins:
+          type: integer
+          format: int64
+        tenantAdmins:
+          type: integer
+          format: int64
+          description: Träger admins of the Träger
+        openInvites:
+          type: integer
+          format: int64
+          description: account invitations of the Träger that can still be accepted
+
+    AskerSearchResultDTO:
+      type: object
+      required:
+        - _embedded
+        - total
+      properties:
+        _embedded:
+          type: array
+          items:
+            $ref: '#/components/schemas/AskerAdminResponseDTO'
+        total:
+          type: integer
+          format: int64
+
+    AskerAdminResponseDTO:
+      type: object
+      required:
+        - id
+        - username
+        - agencyIds
+        - deletionState
+      properties:
+        id:
+          type: string
+          example: "0f2cca9c-9303-4791-a0a5-a1ce16f1524f"
+        username:
+          type: string
+          example: max94
+        tenantId:
+          type: integer
+          format: int64
+        agencyIds:
+          type: array
+          description: Agencies of the advice seeker's sessions and memberships.
+          items:
+            type: integer
+            format: int64
+        createDate:
+          type: string
+          description: Registration time, ISO-8601 in UTC without offset.
+          example: "2026-11-13T09:15:00"
+        deleteDate:
+          type: string
+          description: When the advice seeker was marked for deletion, ISO-8601 in UTC; absent while active.
+        deletionState:
+          type: string
+          description: The deletion lifecycle state, e.g. ACTIVE, READ_ONLY_SAFEGUARD or HARD_DELETE_PARTIAL_FAILURE.
+          example: ACTIVE
+        deletionFailureReason:
+          type: string
+          description: >-
+            Why the last nightly run kept this entry: each failed store with its reason, e.g.
+            "DATABASE: Unable to delete user: still referenced by session (session_ibfk_1)". Absent
+            when no run failed.
+        deletionFailedAt:
+          type: string
+          description: When that run failed, ISO-8601 in UTC.
 
     AskerResponseDTO:
       type: object

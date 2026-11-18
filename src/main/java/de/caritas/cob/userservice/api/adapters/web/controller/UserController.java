@@ -13,13 +13,13 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateChatResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateEnquiryMessageResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DeleteUserAccountDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EnquiryMessageDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GetChatSeriesOccurrences200ResponseInner;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestAdmitDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestStatusDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionListResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.InternalChatInvitationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.InternalChatRecipientDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.InternalSubsetChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.InternalSubsetChatResponseDTO;
@@ -272,6 +272,27 @@ public class UserController implements UsersApi {
   }
 
   @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkDTO>
+      renewDirectInvitation(
+          Long linkId,
+          de.caritas.cob.userservice.api.adapters.web.dto.RenewDirectInvitationDTO body) {
+    return directLinkControllerDelegate.renewDirectInvitation(linkId, body);
+  }
+
+  @Override
+  public ResponseEntity<Void> requestDirectInvitationRenewal(String token) {
+    return directLinkControllerDelegate.requestDirectInvitationRenewal(token);
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkDTO>
+      createSessionDirectInvitation(
+          Long sessionId,
+          de.caritas.cob.userservice.api.adapters.web.dto.CreateSessionDirectInvitationDTO body) {
+    return directLinkControllerDelegate.createSessionDirectInvitation(sessionId, body);
+  }
+
+  @Override
   public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.DirectLinkConversationDTO>
       startDirectLinkConversation(String token) {
     return directLinkControllerDelegate.startDirectLinkConversation(token);
@@ -301,6 +322,12 @@ public class UserController implements UsersApi {
   public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO>
       declineCallKnock(Long knockId) {
     return directLinkControllerDelegate.declineCallKnock(knockId);
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.CallKnockDTO>
+      waitInGroupChat(Long chatId) {
+    return directLinkControllerDelegate.waitInGroupChat(chatId);
   }
 
   @Override
@@ -502,11 +529,6 @@ public class UserController implements UsersApi {
   @Override
   public ResponseEntity<Void> updateAbsence(@RequestBody AbsenceDTO absence) {
     return userAccountControllerDelegate.updateAbsence(absence);
-  }
-
-  @Override
-  public ResponseEntity<EmailNotificationsDTO> getUserEmailNotifications(String email) {
-    return userAccountControllerDelegate.getUserEmailNotifications(email);
   }
 
   /**
@@ -720,10 +742,32 @@ public class UserController implements UsersApi {
     return userChatControllerDelegate.openInternalSubsetChat(request);
   }
 
+  /** Colleagues who can join a running members-only chat (ORISO-UserService#1580). */
+  @Override
+  public ResponseEntity<List<InternalChatRecipientDTO>> listInternalChatInvitationRecipients(
+      Long chatId) {
+    return userChatControllerDelegate.listInternalChatInvitationRecipients(chatId);
+  }
+
+  /** Invites a colleague into a running members-only chat (ORISO-UserService#1580). */
+  @Override
+  public ResponseEntity<Void> inviteInternalChatParticipant(
+      Long chatId, @RequestBody InternalChatInvitationDTO request) {
+    return userChatControllerDelegate.inviteInternalChatParticipant(chatId, request);
+  }
+
   @Override
   public ResponseEntity<List<AgencyAdminContactDTO>> getAgencyAdminContacts(Long agencyId) {
     return ResponseEntity.ok(
         agencyAdminContactService.contactsFor(authenticatedUser.getUserId(), agencyId));
+  }
+
+  /** The contact person of one of the caller's counselling centres (ORISO-Admin#1534). */
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAgencyContactDTO>
+      getConsultantAgencyContactPerson(Long agencyId) {
+    return ResponseEntity.ok(
+        agencyAdminContactService.contactPersonFor(authenticatedUser.getUserId(), agencyId));
   }
 
   @Override
@@ -950,6 +994,17 @@ public class UserController implements UsersApi {
   public ResponseEntity<ConsultantSessionDTO> fetchSessionForConsultant(
       @PathVariable Long sessionId) {
     return userSessionControllerDelegate.fetchSessionForConsultant(sessionId);
+  }
+
+  /**
+   * Remembers that the calling consultant has opened the given waiting enquiry.
+   *
+   * @param sessionId Session id (required)
+   * @return {@link ResponseEntity} without content
+   */
+  @Override
+  public ResponseEntity<Void> markEnquiryOpened(@PathVariable Long sessionId) {
+    return userSessionControllerDelegate.markEnquiryOpened(sessionId);
   }
 
   /**

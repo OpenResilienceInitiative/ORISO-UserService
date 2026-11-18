@@ -48,6 +48,8 @@ public class DeleteChatActionTest {
 
   @Mock private MatrixSynapseService matrixSynapseService;
 
+  @Mock private de.caritas.cob.userservice.api.service.ChatService chatService;
+
   @BeforeEach
   public void setup() {
     lenient().when(matrixSynapseService.purgeRoom(anyString())).thenReturn(true);
@@ -79,14 +81,16 @@ public class DeleteChatActionTest {
     assertThat(workflowErrors, hasSize(0));
     verify(this.matrixSynapseService, times(5)).purgeRoom(anyString());
     verify(this.chatRepository, times(1)).findByChatOwner(any());
-    verify(this.chatRepository, times(1)).deleteAll(chats);
+    // ORISO-Admin#1523: the same delete as stopping a group chat, participants included.
+    chats.forEach(chat -> verify(this.chatService).deleteChatRecords(chat));
+    verify(this.chatRepository, org.mockito.Mockito.never()).deleteAll(any());
   }
 
   @Test
   public void execute_Should_returnExpectedWorkflowErrorsAndLogErrors_When_deletionOfChatsFailes() {
     List<Chat> chats = new EasyRandom().objects(Chat.class, 5).collect(Collectors.toList());
     when(this.chatRepository.findByChatOwner(any())).thenReturn(chats);
-    doThrow(new RuntimeException()).when(this.chatRepository).deleteAll(any());
+    doThrow(new RuntimeException()).when(this.chatService).deleteChatRecords(any());
     ConsultantDeletionWorkflowDTO workflowDTO =
         new ConsultantDeletionWorkflowDTO(new Consultant(), new ArrayList<>());
 
@@ -101,7 +105,7 @@ public class DeleteChatActionTest {
       execute_Should_returnExpectedWorkflowErrorsAndLogErrors_When_deletionOfSingleChatFailes() {
     Chat chat = new EasyRandom().nextObject(Chat.class);
     when(this.chatRepository.findByChatOwner(any())).thenReturn(singletonList(chat));
-    doThrow(new RuntimeException()).when(this.chatRepository).deleteAll(any());
+    doThrow(new RuntimeException()).when(this.chatService).deleteChatRecords(any());
     ConsultantDeletionWorkflowDTO workflowDTO =
         new ConsultantDeletionWorkflowDTO(new Consultant(), new ArrayList<>());
 

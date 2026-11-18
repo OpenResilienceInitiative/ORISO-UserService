@@ -42,7 +42,10 @@ class MatrixCallGuestServiceTest {
   private final ConsultantRepository consultants = mock(ConsultantRepository.class);
   private final MatrixSynapseService matrix = mock(MatrixSynapseService.class);
   private final AccountInactivityService accounts = mock(AccountInactivityService.class);
+  private final SessionCallAuthority authority = mock(SessionCallAuthority.class);
   private final List<MatrixCallGuest> saved = new ArrayList<>();
+  private final de.caritas.cob.userservice.api.service.matrixrtc.CallParticipantEviction eviction =
+      mock(de.caritas.cob.userservice.api.service.matrixrtc.CallParticipantEviction.class);
 
   private MatrixCallGuestService service;
   private AuthenticatedUser counsellor;
@@ -52,7 +55,16 @@ class MatrixCallGuestServiceTest {
   void setUp() throws Exception {
     service =
         new MatrixCallGuestService(
-            bindings, guests, conversations, users, consultants, matrix, accounts);
+            bindings,
+            guests,
+            conversations,
+            users,
+            consultants,
+            matrix,
+            accounts,
+            authority,
+            mock(org.springframework.transaction.PlatformTransactionManager.class),
+            evictionProvider());
     counsellor = new AuthenticatedUser();
     counsellor.setUserId("counsellor");
     counsellor.setTenantId(7L);
@@ -62,6 +74,10 @@ class MatrixCallGuestServiceTest {
         .thenReturn(Optional.of(new MatrixCallConversation(SOURCE, 7L, 45L, null)));
     when(consultants.findByIdAndDeleteDateIsNull("counsellor"))
         .thenReturn(Optional.of(consultant("counsellor", COUNSELLOR, 7L)));
+    // CodeRabbit 4585785683: the admitting counsellor's Matrix id stands for them alone.
+    lenient()
+        .when(consultants.findByMatrixUserIdAndDeleteDateIsNull(COUNSELLOR))
+        .thenReturn(Optional.of(consultant("counsellor", COUNSELLOR, 7L)));
     when(users.findByUserIdAndDeleteDateIsNull("guest"))
         .thenReturn(Optional.of(user("guest", GUEST, 7L)));
     when(matrix.getCallRoomMembers(SOURCE)).thenReturn(Optional.of(List.of(COUNSELLOR)));
@@ -70,6 +86,26 @@ class MatrixCallGuestServiceTest {
     when(bindings.lockByMediaRoomId(MEDIA)).thenAnswer(i -> Optional.of(binding));
     when(matrix.loginAsUserAccessToken(COUNSELLOR)).thenReturn("counsellor-token");
     when(accounts.snapshot(anyString())).thenReturn(Optional.empty());
+    when(authority.grantsGuestAuthority(any())).thenReturn(true);
+    // Round 10: the call code reads every row of a Matrix id; the single-row stubs below stay the
+    // fixture for the ordinary one-row case.
+    lenient()
+        .when(consultants.findAllByMatrixUserIdAndDeleteDateIsNull(anyString()))
+        .thenAnswer(
+            call ->
+                consultants.findByMatrixUserIdAndDeleteDateIsNull(call.getArgument(0)).stream()
+                    .toList());
+    // CodeRabbit 4585785733: the media gate resolves every live sender in one query; the batch
+    // answers what the per-id fixture answers for each id.
+    lenient()
+        .when(consultants.findAllByMatrixUserIdInAndDeleteDateIsNull(any()))
+        .thenAnswer(
+            call -> {
+              java.util.Collection<String> ids = call.getArgument(0);
+              return ids.stream()
+                  .flatMap(id -> consultants.findAllByMatrixUserIdAndDeleteDateIsNull(id).stream())
+                  .toList();
+            });
     lenient()
         .when(guests.saveAndFlush(any(MatrixCallGuest.class)))
         .thenAnswer(
@@ -108,15 +144,367 @@ class MatrixCallGuestServiceTest {
   @Test
   void seatOfAnEndedCallIsNoLongerActive() {
     when(guests.existsByBindingIdAndMatrixUserIdAndRevokedAtIsNull(11L, GUEST)).thenReturn(true);
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull(COUNSELLOR))
+        .thenReturn(Optional.of(consultant("counsellor", COUNSELLOR, 7L)));
 
     assertThat(service.isActiveGuest(binding(null), GUEST)).isTrue();
     assertThat(service.isActiveGuest(binding(5000L), GUEST)).isFalse();
   }
 
   @Test
+  void aSeatGrantsNothingOnceTheCallLostItsAuthorityOrIsNoLongerLive() {
+    // CodeRabbit (review 5889378142): readBound lets a non-member read the call state only as an
+    // active guest; that follows the same authority and liveness as admission.
+    when(guests.existsByBindingIdAndMatrixUserIdAndRevokedAtIsNull(11L, GUEST)).thenReturn(true);
+    when(authority.grantsGuestAuthority(any())).thenReturn(false);
+    assertThat(service.isActiveGuest(binding(null), GUEST)).isFalse();
+    when(authority.grantsGuestAuthority(any())).thenReturn(true);
+    assertThat(service.isActiveGuest(callBinding(null), GUEST)).as("not live").isFalse();
+  }
+
+  @Test
+  void aSessionCallSeatGrantsNothingOnceNoCounsellorIsInTheCall() {
+    // FE#2209 round 4: a guest who keeps refreshing their own membership must not keep reading the
+    // call state after every counsellor left. A seat counts only while a counsellor is in the
+    // call.
+    when(guests.existsByBindingIdAndMatrixUserIdAndRevokedAtIsNull(11L, GUEST)).thenReturn(true);
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull(COUNSELLOR))
+        .thenReturn(Optional.of(consultant("counsellor", COUNSELLOR, 7L)));
+    var guestOnly = callBinding(null);
+    guestOnly
+        .getDevices()
+        .put(
+            "_" + GUEST + "_device",
+            new de.caritas.cob.userservice.api.model.MatrixCallDevice(
+                GUEST, 1200L, Long.MAX_VALUE, true, "$guest"));
+    assertThat(service.isActiveGuest(guestOnly, GUEST))
+        .as("only the guest is in the call")
+        .isFalse();
+
+    // With the counsellor still in the call, the seat counts.
+    guestOnly
+        .getDevices()
+        .put(
+            "device",
+            new de.caritas.cob.userservice.api.model.MatrixCallDevice(
+                COUNSELLOR, 1200L, Long.MAX_VALUE, true, "$start"));
+    assertThat(service.isActiveGuest(guestOnly, GUEST)).isTrue();
+  }
+
+  // --- Security review 5901360577 (Shirloin), point 1: the media gate and seat revocation ---
+
+  @Test
+  void theMediaGateRefusesASessionCallSeatOnceTheCallLostItsAuthority() {
+    // Reassignment, suspension, deactivation or another Träger: the caller is no longer the
+    // session's assigned, active counsellor, although a counsellor is still in the call.
+    counsellorIsAConsultant();
+    when(bindings.findById(11L)).thenReturn(Optional.of(binding(null)));
+    when(authority.grantsGuestAuthority(any())).thenReturn(false);
+
+    assertThat(service.sessionCallAdmitsGuests(11L)).isFalse();
+  }
+
+  @Test
+  void theMediaGateRefusesASessionCallSeatWhileNoCounsellorIsInTheCall() {
+    counsellorIsAConsultant();
+    var guestOnly = callBinding(null);
+    guestOnly
+        .getDevices()
+        .put(
+            "_" + GUEST + "_device",
+            new de.caritas.cob.userservice.api.model.MatrixCallDevice(
+                GUEST, 1200L, Long.MAX_VALUE, true, "$guest"));
+    guestOnly
+        .getDevices()
+        .put(
+            "device",
+            new de.caritas.cob.userservice.api.model.MatrixCallDevice(
+                COUNSELLOR, 1200L, System.currentTimeMillis() - 1, true, "$start"));
+    when(bindings.findById(11L)).thenReturn(Optional.of(guestOnly));
+
+    assertThat(service.sessionCallAdmitsGuests(11L)).isFalse();
+  }
+
+  @Test
+  void theMediaGateAdmitsASessionCallSeatWhileTheAssignedCounsellorsCallHasACounsellorInIt() {
+    counsellorIsAConsultant();
+    when(bindings.findById(11L)).thenReturn(Optional.of(binding(null)));
+
+    assertThat(service.sessionCallAdmitsGuests(11L)).isTrue();
+    assertThat(service.sessionCallAdmitsGuests(12L)).as("no such binding").isFalse();
+    when(bindings.findById(11L)).thenReturn(Optional.of(binding(5000L)));
+    assertThat(service.sessionCallAdmitsGuests(11L)).as("ended").isFalse();
+  }
+
+  @Test
+  void theMediaGateKeepsTheGroupChatRule() {
+    var group = groupCall(System.currentTimeMillis() - 1);
+    when(bindings.findById(11L)).thenReturn(Optional.of(group));
+    when(authority.grantsGuestAuthority(any())).thenReturn(false);
+
+    assertThat(service.sessionCallAdmitsGuests(11L)).isTrue();
+    verify(matrix, never()).getCallRoomMembers(anyString());
+  }
+
+  @Test
+  void aRunningSessionCallThatLostItsAuthorityLosesItsSeatsAtOnce() {
+    counsellorIsAConsultant();
+    var guest = seatThatCanBeRemoved();
+    when(authority.grantsGuestAuthority(any())).thenReturn(false);
+
+    service.revokeOnceTheSessionCallRuleLapsed(binding(null), System.currentTimeMillis());
+
+    assertThat(guest.getRevokedAt()).as("revoked, the row stays").isNotNull();
+  }
+
+  @Test
+  void aCounsellorsBriefAbsenceKeepsTheSeatsForTheGraceWindow() {
+    counsellorIsAConsultant();
+    var guest = seatThatCanBeRemoved();
+    long now = System.currentTimeMillis();
+    var call =
+        counsellorLeftAt(now - MatrixCallGuestService.COUNSELLOR_ABSENCE_GRACE_MILLIS + 5_000);
+
+    service.revokeOnceTheSessionCallRuleLapsed(call, now);
+
+    assertThat(guest.getRevokedAt()).as("within the grace window").isNull();
+    verify(guests, never()).lockOutstandingByBindingId(any());
+  }
+
+  @Test
+  void seatsAreTakenBackOnceNoCounsellorWasInTheCallForTheGraceWindow() {
+    counsellorIsAConsultant();
+    var guest = seatThatCanBeRemoved();
+    long now = System.currentTimeMillis();
+    var call = counsellorLeftAt(now - MatrixCallGuestService.COUNSELLOR_ABSENCE_GRACE_MILLIS);
+
+    service.revokeOnceTheSessionCallRuleLapsed(call, now);
+
+    assertThat(guest.getRevokedAt()).isNotNull();
+  }
+
+  @Test
+  void aSessionCallWithItsCounsellorInItOrAGroupCallKeepsItsSeats() {
+    counsellorIsAConsultant();
+    var guest = seatThatCanBeRemoved();
+
+    service.revokeOnceTheSessionCallRuleLapsed(binding(null), System.currentTimeMillis());
+    var group = groupCall(0L);
+    service.revokeOnceTheSessionCallRuleLapsed(group, System.currentTimeMillis());
+
+    assertThat(guest.getRevokedAt()).isNull();
+    verify(guests, never()).lockOutstandingByBindingId(any());
+  }
+
+  @Test
+  void theMediaGateRefusesASessionCallSeatOnceTheCounsellorInTheCallIsDeleted() {
+    // Round 8: a deleted counsellor's membership vouches for nobody, even with authority intact.
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull(COUNSELLOR))
+        .thenReturn(Optional.empty());
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull(GUEST)).thenReturn(Optional.empty());
+    when(bindings.findById(11L)).thenReturn(Optional.of(binding(null)));
+
+    assertThat(service.sessionCallAdmitsGuests(11L)).isFalse();
+  }
+
+  @Test
+  void theLapseCheckReadsCounsellorPresenceAtTheSameInstantAsTheGrace() {
+    // Round 8 (F4): one clock. At the instant passed in, the counsellor's membership ran out longer
+    // ago than the grace window, although it is still live on the wall clock.
+    counsellorIsAConsultant();
+    var guest = seatThatCanBeRemoved();
+    long wallClock = System.currentTimeMillis();
+    var call = counsellorLeftAt(wallClock + 10 * 60_000L);
+    long now =
+        wallClock + 10 * 60_000L + MatrixCallGuestService.COUNSELLOR_ABSENCE_GRACE_MILLIS + 1;
+
+    service.revokeOnceTheSessionCallRuleLapsed(call, now);
+
+    assertThat(guest.getRevokedAt()).isNotNull();
+  }
+
+  @Test
+  void aRevokedSeatIsAlsoTakenOutOfTheLiveKitRoom() {
+    // Round 8 (F1): the call-room kick does not end an open LiveKit connection.
+    counsellorIsAConsultant();
+    seatThatCanBeRemoved();
+    when(authority.grantsGuestAuthority(any())).thenReturn(false);
+
+    service.revokeOnceTheSessionCallRuleLapsed(binding(null), System.currentTimeMillis());
+
+    verify(eviction).evictFromCallRoom(MEDIA, GUEST);
+  }
+
+  @Test
+  void aGuestACounsellorRemovesIsAlsoTakenOutOfTheLiveKitRoom() {
+    when(guests.findByBindingIdAndMatrixUserId(11L, GUEST)).thenReturn(Optional.of(guest()));
+    when(matrix.removeUserFromRoom(MEDIA, GUEST, "counsellor-token")).thenReturn(true);
+    when(matrix.getRoomMembership(MEDIA, GUEST, "counsellor-token"))
+        .thenReturn(Optional.of("leave"));
+    when(matrix.clearUserPowerLevel(MEDIA, GUEST, "counsellor-token")).thenReturn(true);
+
+    assertThat(service.revokeSeat(binding(null), GUEST, COUNSELLOR)).isTrue();
+
+    verify(eviction).evictFromCallRoom(MEDIA, GUEST);
+  }
+
+  @Test
+  void theLiveKitEvictionWaitsForTheRevocationToCommit() {
+    // Round 9 (F1): the media gate reads revoked_at without a lock. An eviction before the commit
+    // lets a scripted client fetch a new token while the seat still reads as live.
+    removableSeatForTheModerator();
+    org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+    try {
+      assertThat(service.revokeSeat(binding(null), GUEST, COUNSELLOR)).isTrue();
+      verify(eviction, never()).evictFromCallRoom(anyString(), anyString());
+
+      org.springframework.transaction.support.TransactionSynchronizationUtils.triggerAfterCommit();
+
+      verify(eviction).evictFromCallRoom(MEDIA, GUEST);
+    } finally {
+      org.springframework.transaction.support.TransactionSynchronizationManager
+          .clearSynchronization();
+    }
+  }
+
+  @Test
+  void aRolledBackRevocationEvictsNobody() {
+    counsellorIsAConsultant();
+    seatThatCanBeRemoved();
+    when(authority.grantsGuestAuthority(any())).thenReturn(false);
+    org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+    try {
+      service.revokeOnceTheSessionCallRuleLapsed(binding(null), System.currentTimeMillis());
+
+      org.springframework.transaction.support.TransactionSynchronizationUtils.invokeAfterCompletion(
+          org.springframework.transaction.support.TransactionSynchronizationManager
+              .getSynchronizations(),
+          org.springframework.transaction.support.TransactionSynchronization.STATUS_ROLLED_BACK);
+
+      verify(eviction, never()).evictFromCallRoom(anyString(), anyString());
+    } finally {
+      org.springframework.transaction.support.TransactionSynchronizationManager
+          .clearSynchronization();
+    }
+  }
+
+  private void removableSeatForTheModerator() {
+    when(guests.findByBindingIdAndMatrixUserId(11L, GUEST)).thenReturn(Optional.of(guest()));
+    when(matrix.removeUserFromRoom(MEDIA, GUEST, "counsellor-token")).thenReturn(true);
+    when(matrix.getRoomMembership(MEDIA, GUEST, "counsellor-token"))
+        .thenReturn(Optional.of("leave"));
+    when(matrix.clearUserPowerLevel(MEDIA, GUEST, "counsellor-token")).thenReturn(true);
+  }
+
+  @SuppressWarnings("unchecked")
+  private org.springframework.beans.factory.ObjectProvider<
+          de.caritas.cob.userservice.api.service.matrixrtc.CallParticipantEviction>
+      evictionProvider() {
+    var provider = mock(org.springframework.beans.factory.ObjectProvider.class);
+    when(provider.getIfAvailable()).thenReturn(eviction);
+    return provider;
+  }
+
+  private void counsellorIsAConsultant() {
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull(COUNSELLOR))
+        .thenReturn(Optional.of(consultant("counsellor", COUNSELLOR, 7L)));
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull(GUEST)).thenReturn(Optional.empty());
+  }
+
+  private MatrixCallGuest seatThatCanBeRemoved() {
+    var guest = guest();
+    when(guests.lockOutstandingByBindingId(11L)).thenReturn(List.of(guest));
+    when(matrix.removeUserFromRoom(MEDIA, GUEST, "counsellor-token")).thenReturn(true);
+    when(matrix.clearUserPowerLevel(MEDIA, GUEST, "counsellor-token")).thenReturn(true);
+    when(matrix.getRoomMembership(MEDIA, GUEST, "counsellor-token"))
+        .thenReturn(Optional.of("leave"));
+    return guest;
+  }
+
+  /** A group chat's running call: only the guest's membership is live. */
+  private MatrixCallBinding groupCall(long counsellorExpiresAt) {
+    var call =
+        MatrixCallBinding.builder()
+            .id(11L)
+            .sourceRoomId(SOURCE)
+            .callId("call")
+            .mediaRoomId(MEDIA)
+            .callerMatrixId(COUNSELLOR)
+            .chatId(3L)
+            .tenantId(7L)
+            .invitedAt(1000L)
+            .inviteExpiresAt(61000L)
+            .startedAt(1200L)
+            .video(true)
+            .build();
+    call.getDevices()
+        .put(
+            "_" + GUEST + "_device",
+            new de.caritas.cob.userservice.api.model.MatrixCallDevice(
+                GUEST, 1200L, Long.MAX_VALUE, true, "$guest"));
+    call.getDevices()
+        .put(
+            "device",
+            new de.caritas.cob.userservice.api.model.MatrixCallDevice(
+                COUNSELLOR, 1200L, counsellorExpiresAt, true, "$start"));
+    return call;
+  }
+
+  /** A running session call: the asker and the guest are in it, the counsellor left. */
+  private MatrixCallBinding counsellorLeftAt(long departedAt) {
+    var call = callBinding(null);
+    call.getDevices()
+        .put(
+            "_" + GUEST + "_device",
+            new de.caritas.cob.userservice.api.model.MatrixCallDevice(
+                GUEST, 1200L, Long.MAX_VALUE, true, "$guest"));
+    call.getDevices()
+        .put(
+            "device",
+            new de.caritas.cob.userservice.api.model.MatrixCallDevice(
+                COUNSELLOR, 1200L, departedAt, true, "$start"));
+    return call;
+  }
+
+  @Test
+  void aTakeOverRevokesOnlySeatsOfTheRoomItSaw_NotOfACallThatMovedMeanwhile() {
+    // CodeRabbit 4562143165: a concurrent takeover committed and moved the row to a new call
+    // room; a seat found now belongs to that call and is not marked revoked.
+    var guest = guest();
+    when(guests.findByBindingIdAndRevokedAtIsNull(11L)).thenReturn(List.of(guest));
+    when(matrix.getRoomMembership(MEDIA, GUEST, "counsellor-token"))
+        .thenReturn(Optional.of("leave"));
+    when(matrix.clearUserPowerLevel(MEDIA, GUEST, "counsellor-token")).thenReturn(true);
+    var moved =
+        MatrixCallBinding.builder()
+            .id(11L)
+            .sourceRoomId(SOURCE)
+            .callId("call")
+            .mediaRoomId("!new-room:example")
+            .callerMatrixId(COUNSELLOR)
+            .sessionId(45L)
+            .tenantId(7L)
+            .build();
+    when(bindings.lockById(11L)).thenReturn(Optional.of(moved));
+    when(guests.findById(3L)).thenReturn(Optional.of(guest));
+    when(authority.grantsGuestAuthority(any())).thenReturn(false);
+
+    service.revokeBeforeTakeOver(binding(null));
+
+    verify(guests, never()).save(any(MatrixCallGuest.class));
+    assertThat(guest.getRevokedAt()).isNull();
+
+    // Still the room it saw: the removal is recorded.
+    when(bindings.lockById(11L)).thenReturn(Optional.of(binding(null)));
+    service.revokeBeforeTakeOver(binding(null));
+    verify(guests).save(guest);
+    assertThat(guest.getRevokedAt()).isNotNull();
+  }
+
+  @Test
   void failedPowerLevelClearKeepsTheSeatOutstanding() {
     var guest = guest();
-    when(guests.findByBindingIdAndRevokedAtIsNull(binding.getId())).thenReturn(List.of(guest));
+    when(guests.lockOutstandingByBindingId(binding.getId())).thenReturn(List.of(guest));
     when(matrix.getRoomMembership(MEDIA, GUEST, "counsellor-token"))
         .thenReturn(Optional.of("leave"));
     when(matrix.clearUserPowerLevel(MEDIA, GUEST, "counsellor-token")).thenReturn(false);
@@ -137,7 +525,7 @@ class MatrixCallGuestServiceTest {
             .admittedByMatrixId("@cocounsellor:example")
             .admittedAt(1500L)
             .build();
-    when(guests.findByBindingIdAndRevokedAtIsNull(binding.getId())).thenReturn(List.of(guest));
+    when(guests.lockOutstandingByBindingId(binding.getId())).thenReturn(List.of(guest));
     when(matrix.getRoomMembership(MEDIA, GUEST, "counsellor-token"))
         .thenReturn(Optional.of("join"));
     when(matrix.loginAsUserAccessToken("@cocounsellor:example")).thenReturn("co-token");
@@ -179,7 +567,6 @@ class MatrixCallGuestServiceTest {
 
     assertThat(service.counsellorCall(7L, "counsellor", SOURCE, "call").outcome())
         .isEqualTo(Outcome.MATRIX_UNAVAILABLE);
-    assertThat(service.counsellorsInConversation(7L, SOURCE)).isEmpty();
   }
 
   @Test
@@ -213,23 +600,133 @@ class MatrixCallGuestServiceTest {
   }
 
   @Test
-  void counsellorsInConversationAreTheTraegersCounsellorsAmongItsMembers() throws Exception {
-    when(matrix.getCallRoomMembers(SOURCE))
-        .thenReturn(Optional.of(List.of(COUNSELLOR, GUEST, "@foreign:example", "@second:example")));
+  void counsellorsInCallAreTheTraegersActiveCounsellorsWithALiveMembership() throws Exception {
+    // FE#2209 review: in the call, not merely in the conversation.
+    long now = System.currentTimeMillis();
+    device("second-device", "@second:example", now + 60_000);
+    device("left-device", "@left:example", now - 1);
+    device("foreign-device", "@foreign:example", now + 60_000);
+    device("suspended-device", "@suspended:example", now + 60_000);
     when(consultants.findByMatrixUserIdAndDeleteDateIsNull(COUNSELLOR))
         .thenReturn(Optional.of(consultant("counsellor", COUNSELLOR, 7L)));
-    when(consultants.findByMatrixUserIdAndDeleteDateIsNull("@foreign:example"))
-        .thenReturn(Optional.of(consultant("foreign", "@foreign:example", 8L)));
     when(consultants.findByMatrixUserIdAndDeleteDateIsNull("@second:example"))
         .thenReturn(Optional.of(consultant("second", "@second:example", 7L)));
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull("@left:example"))
+        .thenReturn(Optional.of(consultant("left", "@left:example", 7L)));
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull("@foreign:example"))
+        .thenReturn(Optional.of(consultant("foreign", "@foreign:example", 8L)));
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull("@suspended:example"))
+        .thenReturn(Optional.of(consultant("suspended", "@suspended:example", 7L)));
+    suspend("suspended");
 
-    assertThat(service.counsellorsInConversation(7L, SOURCE))
-        .containsExactly("counsellor", "second");
+    assertThat(service.counsellorsInCall(7L, binding))
+        .containsExactlyInAnyOrder("counsellor", "second");
+    assertThat(service.counsellorsInCall(8L, binding)).isEmpty();
   }
 
   @Test
-  void counsellorsInConversationIsEmptyForAnotherTraegersConversation() throws Exception {
-    assertThat(service.counsellorsInConversation(8L, SOURCE)).isEmpty();
+  void aCounsellorInTheConversationButNotInTheCallCannotAdmit() throws Exception {
+    binding = callBinding(null);
+    device("device", COUNSELLOR, System.currentTimeMillis() - 1);
+    device("other-device", "@second:example", System.currentTimeMillis() + 60_000);
+    assertThat(service.admit(counsellor, SOURCE, "call", "guest").outcome())
+        .isEqualTo(MatrixCallGuestService.Outcome.NOT_FOUND);
+    verify(matrix, never()).inviteUserToRoom(anyString(), anyString(), anyString());
+  }
+
+  @Test
+  void aGroupChatCallKeepsItsRule_AnyCounsellorOfTheConversationMayOpenIt() throws Exception {
+    // FE#2209 round 3: the live-membership rule is for 1:1 session calls; group chats are out of
+    // scope and keep the conversation rule.
+    binding =
+        MatrixCallBinding.builder()
+            .id(12L)
+            .sourceRoomId(SOURCE)
+            .callId("call")
+            .mediaRoomId(MEDIA)
+            .callerMatrixId("@second:example")
+            .chatId(9L)
+            .tenantId(7L)
+            .invitedAt(1000L)
+            .inviteExpiresAt(61000L)
+            .startedAt(1200L)
+            .build();
+    device("other-device", "@second:example", System.currentTimeMillis() + 60_000);
+    when(conversations.resolve(SOURCE))
+        .thenReturn(Optional.of(new MatrixCallConversation(SOURCE, 7L, null, 9L)));
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull(COUNSELLOR))
+        .thenReturn(Optional.of(consultant("counsellor", COUNSELLOR, 7L)));
+    assertThat(service.counsellorCall(7L, "counsellor", SOURCE, "call").outcome())
+        .isEqualTo(MatrixCallGuestService.Outcome.ADMITTED);
+    assertThat(service.counsellorsInCall(7L, binding)).containsExactly("counsellor");
+  }
+
+  @Test
+  void nobodyIsSeatedInAGroupCallWhoseMembershipsAllExpired() throws Exception {
+    // CodeRabbit 4563094721: a group call passes counsellorCall on the conversation rule, so only
+    // the liveness check in admitAs keeps a guest out of a group call that is over.
+    binding =
+        MatrixCallBinding.builder()
+            .id(12L)
+            .sourceRoomId(SOURCE)
+            .callId("call")
+            .mediaRoomId(MEDIA)
+            .callerMatrixId("@second:example")
+            .chatId(9L)
+            .tenantId(7L)
+            .invitedAt(1000L)
+            .inviteExpiresAt(61000L)
+            .startedAt(1200L)
+            .build();
+    device("expired-device", "@second:example", System.currentTimeMillis() - 1);
+    device("counsellor-device", COUNSELLOR, System.currentTimeMillis() - 1);
+    when(conversations.resolve(SOURCE))
+        .thenReturn(Optional.of(new MatrixCallConversation(SOURCE, 7L, null, 9L)));
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull(COUNSELLOR))
+        .thenReturn(Optional.of(consultant("counsellor", COUNSELLOR, 7L)));
+    assertThat(service.counsellorCall(7L, "counsellor", SOURCE, "call").outcome())
+        .isEqualTo(MatrixCallGuestService.Outcome.ADMITTED);
+
+    assertThat(service.admitAs(7L, "counsellor", SOURCE, "call", "guest").outcome())
+        .isEqualTo(MatrixCallGuestService.Outcome.NOT_FOUND);
+    verify(matrix, never()).inviteUserToRoom(anyString(), anyString(), anyString());
+  }
+
+  @Test
+  void aSuspendedCounsellorCannotAdmitOrVouchForALink() throws Exception {
+    suspend("counsellor");
+    assertThat(service.admit(counsellor, SOURCE, "call", "guest").outcome())
+        .isEqualTo(MatrixCallGuestService.Outcome.NOT_FOUND);
+    assertThat(service.counsellorCall(7L, "counsellor", SOURCE, "call").outcome())
+        .isEqualTo(MatrixCallGuestService.Outcome.NOT_FOUND);
+    verify(matrix, never()).inviteUserToRoom(anyString(), anyString(), anyString());
+  }
+
+  private void device(String key, String sender, long expiresAt) {
+    binding
+        .getDevices()
+        .put(
+            key,
+            new de.caritas.cob.userservice.api.model.MatrixCallDevice(
+                sender, 1200L, expiresAt, true, "$" + key));
+  }
+
+  private void suspend(String identityId) {
+    when(accounts.snapshot(identityId))
+        .thenReturn(
+            Optional.of(
+                new de.caritas.cob.userservice.api.workflow.accountinactivity
+                    .AccountInactivityService.Snapshot(
+                    identityId,
+                    7L,
+                    1,
+                    1L,
+                    null,
+                    null,
+                    de.caritas.cob.userservice.api.workflow.accountinactivity
+                        .AccountInactivityService.Status.SUSPENDED,
+                    0,
+                    null)));
   }
 
   @Test
@@ -296,7 +793,7 @@ class MatrixCallGuestServiceTest {
   @Test
   void endOfCallRemovesGuestFromCallRoomAndClearsPowerLevel() {
     var guest = guest();
-    when(guests.findByBindingIdAndRevokedAtIsNull(binding.getId())).thenReturn(List.of(guest));
+    when(guests.lockOutstandingByBindingId(binding.getId())).thenReturn(List.of(guest));
     when(matrix.loginAsUserAccessToken(COUNSELLOR)).thenReturn("caller-token");
     when(matrix.removeUserFromRoom(MEDIA, GUEST, "caller-token")).thenReturn(true);
     when(matrix.clearUserPowerLevel(MEDIA, GUEST, "caller-token")).thenReturn(true);
@@ -313,7 +810,7 @@ class MatrixCallGuestServiceTest {
   @Test
   void failedRemovalStaysOutstandingForTheNextRoomEvent() {
     var guest = guest();
-    when(guests.findByBindingIdAndRevokedAtIsNull(binding.getId())).thenReturn(List.of(guest));
+    when(guests.lockOutstandingByBindingId(binding.getId())).thenReturn(List.of(guest));
     when(matrix.removeUserFromRoom(MEDIA, GUEST, "counsellor-token")).thenReturn(false);
     when(matrix.getRoomMembership(MEDIA, GUEST, "counsellor-token"))
         .thenReturn(Optional.of("join"));
@@ -327,7 +824,7 @@ class MatrixCallGuestServiceTest {
   @Test
   void pendingInviteCountsAsGoneOnlyOnceItsMembershipIsLeave() {
     var guest = guest();
-    when(guests.findByBindingIdAndRevokedAtIsNull(binding.getId())).thenReturn(List.of(guest));
+    when(guests.lockOutstandingByBindingId(binding.getId())).thenReturn(List.of(guest));
     when(matrix.removeUserFromRoom(MEDIA, GUEST, "counsellor-token")).thenReturn(false);
     when(matrix.getRoomMembers(MEDIA)).thenReturn(Optional.of(List.of(COUNSELLOR)));
     when(matrix.getRoomMembership(MEDIA, GUEST, "counsellor-token"))
@@ -353,7 +850,7 @@ class MatrixCallGuestServiceTest {
   @Test
   void repeatedRemovalFailureIsCountedAndLoggedAtErrorPastTheThreshold() {
     var guest = guest();
-    when(guests.findByBindingIdAndRevokedAtIsNull(binding.getId())).thenReturn(List.of(guest));
+    when(guests.lockOutstandingByBindingId(binding.getId())).thenReturn(List.of(guest));
     when(matrix.getRoomMembership(MEDIA, GUEST, "counsellor-token"))
         .thenReturn(Optional.of("invite"));
 
@@ -378,7 +875,7 @@ class MatrixCallGuestServiceTest {
     org.springframework.test.util.ReflectionTestUtils.setField(
         service, "guestRevokeRetryMillis", 60_000L);
     var guest = guest();
-    when(guests.findByBindingIdAndRevokedAtIsNull(binding.getId())).thenReturn(List.of(guest));
+    when(guests.lockOutstandingByBindingId(binding.getId())).thenReturn(List.of(guest));
     when(matrix.getRoomMembership(MEDIA, GUEST, "counsellor-token"))
         .thenReturn(Optional.of("invite"));
 
@@ -406,7 +903,7 @@ class MatrixCallGuestServiceTest {
   void runningCallRevokesNothing() {
     service.revokeOutstanding(binding);
 
-    verify(guests, never()).findByBindingIdAndRevokedAtIsNull(any());
+    verify(guests, never()).lockOutstandingByBindingId(any());
     verify(matrix, never()).removeUserFromRoom(anyString(), anyString(), anyString());
   }
 
@@ -420,7 +917,159 @@ class MatrixCallGuestServiceTest {
         .build();
   }
 
+  // Round 10 (F1b): consultant.matrix_user_id is not unique. The single-row query throws on two
+  // rows; the presence checks must neither throw nor grant on an ambiguous id.
+
+  private void twoRowsFor(String matrixId, Consultant... rows) {
+    org.mockito.Mockito.doReturn(List.of(rows))
+        .when(consultants)
+        .findAllByMatrixUserIdAndDeleteDateIsNull(matrixId);
+    org.mockito.Mockito.doThrow(
+            new org.springframework.dao.IncorrectResultSizeDataAccessException(1, 2))
+        .when(consultants)
+        .findByMatrixUserIdAndDeleteDateIsNull(matrixId);
+  }
+
+  @Test
+  void aMatrixIdSharedWithAnotherTraegersAccountStillCountsForItsOwnTraeger() {
+    twoRowsFor(
+        COUNSELLOR,
+        consultant("counsellor", COUNSELLOR, 7L),
+        consultant("elsewhere", COUNSELLOR, 8L));
+
+    assertThat(service.counsellorsInCall(7L, binding(null))).containsExactly("counsellor");
+  }
+
+  @Test
+  void anAmbiguousMatrixIdWithinOneTraegerCountsAsAbsentAndTheSeatsGo() {
+    twoRowsFor(
+        COUNSELLOR, consultant("counsellor", COUNSELLOR, 7L), consultant("twin", COUNSELLOR, 7L));
+    when(consultants.findByMatrixUserIdAndDeleteDateIsNull(GUEST)).thenReturn(Optional.empty());
+    var guest = seatThatCanBeRemoved();
+
+    assertThat(service.counsellorsInCall(7L, binding(null)))
+        .as("fail closed: nobody vouches on an ambiguous id")
+        .isEmpty();
+    service.revokeOnceTheSessionCallRuleLapsed(binding(null), System.currentTimeMillis());
+
+    assertThat(guest.getRevokedAt())
+        .as("an ambiguous membership is no presence either, so the grace ran out long ago")
+        .isNotNull();
+  }
+
+  @Test
+  void aGroupCallsConversationCounsellorWithASharedMatrixIdStillCounts() {
+    var group = groupCall(0L);
+    when(conversations.resolve(SOURCE))
+        .thenReturn(Optional.of(new MatrixCallConversation(SOURCE, 7L, null, 3L)));
+    twoRowsFor(
+        COUNSELLOR,
+        consultant("counsellor", COUNSELLOR, 7L),
+        consultant("elsewhere", COUNSELLOR, 8L));
+
+    assertThat(service.counsellorsInCall(7L, group)).containsExactly("counsellor");
+  }
+
+  @Test
+  void aGroupCallsAmbiguousConversationCounsellorDoesNotCount() {
+    var group = groupCall(0L);
+    when(conversations.resolve(SOURCE))
+        .thenReturn(Optional.of(new MatrixCallConversation(SOURCE, 7L, null, 3L)));
+    twoRowsFor(
+        COUNSELLOR, consultant("counsellor", COUNSELLOR, 7L), consultant("twin", COUNSELLOR, 7L));
+
+    assertThat(service.counsellorsInCall(7L, group)).isEmpty();
+  }
+
+  @Test
+  void anUnobservedRunningSessionCallHasNoCounsellorInItAndLosesItsSeatsAtOnce() {
+    // Round 10 security scan: an unobserved call room's memberships may be stale (a dropped
+    // departure). Presence then counts as absent and there is no grace to wait for.
+    counsellorIsAConsultant();
+    var guest = seatThatCanBeRemoved();
+    var call = binding(null);
+    call.loseMediaObservation();
+
+    assertThat(service.counsellorsInCall(7L, call)).isEmpty();
+    service.revokeOnceTheSessionCallRuleLapsed(call, 1300L);
+
+    assertThat(guest.getRevokedAt()).isNotNull();
+  }
+
+  // CodeRabbit 4585785683: admission applies the media gate's unique-identity rule to the admitting
+  // counsellor too; else it would seat a guest the gate then refuses.
+  @Test
+  void aCounsellorWhoseMatrixIdAnotherAccountOfTheTraegerSharesCannotAdmit() throws Exception {
+    twoRowsFor(
+        COUNSELLOR, consultant("counsellor", COUNSELLOR, 7L), consultant("twin", COUNSELLOR, 7L));
+
+    assertThat(service.admit(counsellor, SOURCE, "call", "guest").outcome())
+        .isEqualTo(Outcome.NOT_FOUND);
+    assertThat(service.counsellorCall(7L, "counsellor", SOURCE, "call").outcome())
+        .as("the share-link owner and previous-admitter paths go through counsellorCall too")
+        .isEqualTo(Outcome.NOT_FOUND);
+    assertThat(saved).isEmpty();
+    verify(matrix, never()).inviteUserToRoom(anyString(), anyString(), anyString());
+  }
+
+  // CodeRabbit 4585987235: a session call whose media room is no longer observed (after
+  // loseObservation / loseBatch) admits nobody, as the media gate refuses its seats; devices whose
+  // expiry is still in the future must not open it.
+  @Test
+  void anUnobservedSessionCallAdmitsNobody() throws Exception {
+    binding.loseMediaObservation();
+
+    assertThat(service.admit(counsellor, SOURCE, "call", "guest").outcome())
+        .isEqualTo(Outcome.NOT_FOUND);
+    assertThat(service.counsellorCall(7L, "counsellor", SOURCE, "call").outcome())
+        .isEqualTo(Outcome.NOT_FOUND);
+    assertThat(saved).isEmpty();
+    verify(matrix, never()).inviteUserToRoom(anyString(), anyString(), anyString());
+  }
+
+  // CodeRabbit 4585785672: the session is locked after the binding and before the authority check,
+  // so the check reads a reassignment that committed after this transaction's snapshot.
+  @Test
+  void theSessionIsLockedAfterTheBindingAndBeforeTheAuthorityCheck() {
+    service.counsellorCall(7L, "counsellor", SOURCE, "call");
+
+    var order = org.mockito.Mockito.inOrder(bindings, authority);
+    order.verify(bindings).lockByMediaRoomId(MEDIA);
+    order.verify(authority).lockSessionOf(binding);
+    order.verify(authority).grantsGuestAuthority(binding);
+  }
+
+  // CodeRabbit 4585785733: the media gate resolves every live sender in one query.
+  @Test
+  void theMediaGateResolvesAllLiveSendersInOneQuery() {
+    long now = System.currentTimeMillis();
+    for (int i = 0; i < 20; i++)
+      device("guest-device-" + i, "@guest" + i + ":example", now + 60_000);
+    when(bindings.findById(11L)).thenReturn(Optional.of(binding));
+    org.mockito.Mockito.doReturn(List.of(consultant("counsellor", COUNSELLOR, 7L)))
+        .when(consultants)
+        .findAllByMatrixUserIdInAndDeleteDateIsNull(any());
+
+    assertThat(service.sessionCallAdmitsGuests(11L)).isTrue();
+    verify(consultants, org.mockito.Mockito.times(1))
+        .findAllByMatrixUserIdInAndDeleteDateIsNull(any());
+    verify(consultants, never()).findAllByMatrixUserIdAndDeleteDateIsNull(anyString());
+  }
+
   private MatrixCallBinding binding(Long endedAt) {
+    var binding = callBinding(endedAt);
+    // A running call: one device whose membership has not expired (FE#2209 review: admission
+    // requires a live call).
+    binding
+        .getDevices()
+        .put(
+            "device",
+            new de.caritas.cob.userservice.api.model.MatrixCallDevice(
+                COUNSELLOR, 1200L, Long.MAX_VALUE, true, "$start"));
+    return binding;
+  }
+
+  private MatrixCallBinding callBinding(Long endedAt) {
     return MatrixCallBinding.builder()
         .id(11L)
         .sourceRoomId(SOURCE)
@@ -432,6 +1081,7 @@ class MatrixCallGuestServiceTest {
         .invitedAt(1000L)
         .inviteExpiresAt(61000L)
         .startedAt(1200L)
+        .mediaObservedAt(1200L)
         .endedAt(endedAt)
         .video(true)
         .build();
@@ -453,5 +1103,29 @@ class MatrixCallGuestServiceTest {
         .matrixUserId(matrixId)
         .tenantId(tenant)
         .build();
+  }
+
+  @Test
+  void aCallThatIsNoLongerLiveSeatsNobody() throws Exception {
+    // FE#2209 review: a binding that was never seen ending must not admit guests hours later.
+    binding = callBinding(null);
+    assertThat(service.admit(counsellor, SOURCE, "call", "guest").outcome())
+        .isEqualTo(MatrixCallGuestService.Outcome.NOT_FOUND);
+    verify(matrix, never()).inviteUserToRoom(anyString(), anyString(), anyString());
+  }
+
+  @Test
+  void aRetainedDeviceWhoseMembershipExpiredSeatsNobody() throws Exception {
+    // Not ended, a device is still recorded, but its membership ran out: the call is over.
+    binding = callBinding(null);
+    binding
+        .getDevices()
+        .put(
+            "device",
+            new de.caritas.cob.userservice.api.model.MatrixCallDevice(
+                COUNSELLOR, 1200L, System.currentTimeMillis() - 1, true, "$start"));
+    assertThat(service.admit(counsellor, SOURCE, "call", "guest").outcome())
+        .isEqualTo(MatrixCallGuestService.Outcome.NOT_FOUND);
+    verify(matrix, never()).inviteUserToRoom(anyString(), anyString(), anyString());
   }
 }

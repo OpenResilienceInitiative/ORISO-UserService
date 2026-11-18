@@ -93,6 +93,7 @@ import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.service.enquiry.EnquiryRejectionService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.RequestedContactSheetService;
+import de.caritas.cob.userservice.api.service.session.EnquiryOpenedService;
 import de.caritas.cob.userservice.api.service.session.SessionConsentService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
@@ -311,6 +312,7 @@ class UserControllerIT {
 
   @MockitoBean private GroupChatJoinRequestControllerDelegate groupChatJoinRequestDelegate;
   @MockitoBean private SessionService sessionService;
+  @MockitoBean private EnquiryOpenedService enquiryOpenedService;
   @MockitoBean private AuthenticatedUser authenticatedUser;
   @MockitoBean private CreateEnquiryMessageFacade createEnquiryMessageFacade;
 
@@ -361,6 +363,7 @@ class UserControllerIT {
   @MockitoBean private AssignChatFacade assignChatFacade;
   @MockitoBean private CreateChatFacade createChatFacade;
   @MockitoBean private InternalSubsetChatFacade internalSubsetChatFacade;
+  @MockitoBean private InternalChatInvitationFacade internalChatInvitationFacade;
   @MockitoBean private ChatPermissionVerifier chatPermissionVerifier;
   @MockitoBean private StopChatFacade stopChatFacade;
   @MockitoBean private GetChatMembersFacade getChatMembersFacade;
@@ -770,6 +773,58 @@ class UserControllerIT {
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isConflict());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {
+        "",
+        "with space",
+        "slash/ref",
+        "umlaut-ä",
+        "0123456789012345678901234567890123456789012345678901234567890123x"
+      })
+  void registerUser_Should_ReturnBadRequest_When_RegistrationRefIsInvalid(String registrationRef)
+      throws Exception {
+    when(userHelper.isUsernameValid(anyString())).thenReturn(true);
+    when(mandatoryFieldsProvider.fetchMandatoryFieldsForConsultingType(anyString()))
+        .thenReturn(
+            MandatoryFields.convertMandatoryFieldsDTOtoMandatoryFields(
+                CONSULTING_TYPE_SETTINGS_WITHOUT_MANDATORY_FIELDS
+                    .getRegistration()
+                    .getMandatoryFields()));
+
+    mvc.perform(
+            post(PATH_REGISTER_USER)
+                .content(withRegistrationRef(registrationRef))
+                .contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void registerUser_Should_ReturnCreated_When_RegistrationRefIsValid() throws Exception {
+    when(userHelper.isUsernameValid(anyString())).thenReturn(true);
+    when(mandatoryFieldsProvider.fetchMandatoryFieldsForConsultingType(anyString()))
+        .thenReturn(
+            MandatoryFields.convertMandatoryFieldsDTOtoMandatoryFields(
+                CONSULTING_TYPE_SETTINGS_WITHOUT_MANDATORY_FIELDS
+                    .getRegistration()
+                    .getMandatoryFields()));
+
+    mvc.perform(
+            post(PATH_REGISTER_USER)
+                .content(withRegistrationRef("ref_42-A" + "b".repeat(56)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isCreated());
+  }
+
+  private static String withRegistrationRef(String registrationRef) {
+    return VALID_USER_REQUEST_BODY.substring(0, VALID_USER_REQUEST_BODY.length() - 1)
+        + ", \"registrationRef\": \""
+        + registrationRef
+        + "\"}";
   }
 
   @Test

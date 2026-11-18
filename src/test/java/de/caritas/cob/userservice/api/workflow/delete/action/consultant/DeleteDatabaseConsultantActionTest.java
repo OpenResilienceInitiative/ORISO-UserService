@@ -46,6 +46,8 @@ public class DeleteDatabaseConsultantActionTest {
 
   @Mock private ConsultantRepository consultantRepository;
 
+  @Mock private org.springframework.transaction.PlatformTransactionManager transactionManager;
+
   @Mock private SessionSupervisorRepository sessionSupervisorRepository;
 
   @Mock private ConsultantMobileTokenRepository consultantMobileTokenRepository;
@@ -64,6 +66,15 @@ public class DeleteDatabaseConsultantActionTest {
 
   @BeforeEach
   public void setup() {
+    // The step deletes the row it loads inside its transaction; equality is by id.
+    org.mockito.Mockito.lenient()
+        .when(consultantRepository.findById(any()))
+        .thenAnswer(
+            call -> {
+              var managed = new Consultant();
+              managed.setId(call.getArgument(0));
+              return java.util.Optional.of(managed);
+            });
     logAppender.start();
     logger.addAppender(logAppender);
   }
@@ -149,7 +160,7 @@ public class DeleteDatabaseConsultantActionTest {
   @Test
   public void execute_Should_returnEmptyListAndPerformDeletion_When_consultantCanBeDeleted() {
     ConsultantDeletionWorkflowDTO workflowDTO =
-        new ConsultantDeletionWorkflowDTO(new Consultant(), emptyList());
+        new ConsultantDeletionWorkflowDTO(consultantWithId(), emptyList());
 
     this.deleteDatabaseConsultantAction.execute(workflowDTO);
     List<DeletionWorkflowError> workflowErrors = workflowDTO.getDeletionWorkflowErrors();
@@ -165,7 +176,7 @@ public class DeleteDatabaseConsultantActionTest {
     Session session = new Session();
     session.setConsultant(new Consultant());
     ConsultantDeletionWorkflowDTO workflowDTO =
-        new ConsultantDeletionWorkflowDTO(new Consultant(), emptyList());
+        new ConsultantDeletionWorkflowDTO(consultantWithId(), emptyList());
 
     this.deleteDatabaseConsultantAction.execute(workflowDTO);
     List<DeletionWorkflowError> workflowErrors = workflowDTO.getDeletionWorkflowErrors();
@@ -181,7 +192,7 @@ public class DeleteDatabaseConsultantActionTest {
     doThrow(new RuntimeException()).when(this.consultantRepository).delete(any(Consultant.class));
 
     this.deleteDatabaseConsultantAction.execute(
-        new ConsultantDeletionWorkflowDTO(new Consultant(), new ArrayList<>()));
+        new ConsultantDeletionWorkflowDTO(consultantWithId(), new ArrayList<>()));
 
     verify(this.deletionAuditService, never()).recordAsSystem(any(), any(), any(), any());
   }
@@ -201,7 +212,8 @@ public class DeleteDatabaseConsultantActionTest {
     assertThat(workflowErrors.get(0).getDeletionSourceType(), is(CONSULTANT));
     assertThat(workflowErrors.get(0).getDeletionTargetType(), is(DATABASE));
     assertThat(workflowErrors.get(0).getIdentifier(), is("consultantId"));
-    assertThat(workflowErrors.get(0).getReason(), is("Unable to delete consultant in database"));
+    assertThat(
+        workflowErrors.get(0).getReason(), is("Unable to delete the counsellor in the database"));
     assertThat(workflowErrors.get(0).getTimestamp(), notNullValue());
     assertThat(
         logAppender.list.stream().anyMatch(event -> event.getLevel() == Level.ERROR), is(true));
@@ -227,7 +239,7 @@ public class DeleteDatabaseConsultantActionTest {
     assertThat(workflowErrors.get(0).getIdentifier(), is("consultantId"));
     assertThat(
         workflowErrors.get(0).getReason(),
-        is("Unable to unassign consultant from his sessions with state NEW or INITIAL"));
+        is("Unable to unassign the counsellor from their sessions"));
     assertThat(workflowErrors.get(0).getTimestamp(), notNullValue());
     assertThat(
         logAppender.list.stream().anyMatch(event -> event.getLevel() == Level.ERROR), is(true));
@@ -268,7 +280,8 @@ public class DeleteDatabaseConsultantActionTest {
 
     var workflowErrors = workflowDTO.getDeletionWorkflowErrors();
     assertThat(workflowErrors, hasSize(1));
-    assertThat(workflowErrors.get(0).getReason(), is("Unable to delete consultant supervisions"));
+    assertThat(
+        workflowErrors.get(0).getReason(), is("Unable to delete the counsellor's supervisions"));
     assertThat(workflowErrors.get(0).getDeletionSourceType(), is(CONSULTANT));
     assertThat(workflowErrors.get(0).getDeletionTargetType(), is(DATABASE));
   }
@@ -299,5 +312,156 @@ public class DeleteDatabaseConsultantActionTest {
     verify(this.consultantRepository, never()).delete(any(Consultant.class));
     verify(this.identityTombstoneService, never()).recordDeletedConsultant(any());
     assertThat(workflowDTO.getDeletionWorkflowErrors(), hasSize(1));
+  }
+
+  /**
+   * ORISO-Admin#1489: the username is unique, and a row whose delete failed kept it forever. It is
+   * released first, so a failing row delete no longer blocks the name.
+   */
+  @Test
+  public void execute_Should_ReleaseTheUsernameBeforeDeletingTheRow_When_consultantIsHardDeleted() {
+    var consultant = consultantInHardDeletion("c-1489");
+
+    this.deleteDatabaseConsultantAction.execute(
+        new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>()));
+
+    var order = inOrder(consultantRepository);
+    order
+        .verify(consultantRepository)
+        .releaseUsernameOfDeletedConsultant("c-1489", "deleted:c-1489");
+    order.verify(consultantRepository).delete(consultant);
+  }
+
+  @Test
+  public void execute_Should_ReleaseTheUsername_When_theRowCannotBeDeleted() {
+    var consultant = consultantInHardDeletion("c-blocked");
+    org.mockito.Mockito.doThrow(new RuntimeException("foreign key"))
+        .when(consultantRepository)
+        .delete(consultant);
+    var workflowDTO = new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>());
+
+    this.deleteDatabaseConsultantAction.execute(workflowDTO);
+
+    verify(consultantRepository)
+        .releaseUsernameOfDeletedConsultant("c-blocked", "deleted:c-blocked");
+    assertThat(workflowDTO.getDeletionWorkflowErrors(), hasSize(1));
+  }
+
+  @Test
+  public void execute_Should_ReleaseTheUsername_When_userContentCleanupFailedAndTheRowIsKept() {
+    var consultant = consultantInHardDeletion("c-content");
+    var contentError =
+        DeletionWorkflowError.builder()
+            .deletionSourceType(CONSULTANT)
+            .deletionTargetType(
+                de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType
+                    .USER_CONTENT)
+            .identifier("c-content")
+            .reason("drafts")
+            .build();
+
+    this.deleteDatabaseConsultantAction.execute(
+        new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>(List.of(contentError))));
+
+    verify(consultantRepository)
+        .releaseUsernameOfDeletedConsultant("c-content", "deleted:c-content");
+    verify(consultantRepository, never()).delete(any(Consultant.class));
+  }
+
+  @Test
+  public void execute_Should_StillDeleteTheRow_When_releasingTheUsernameFails() {
+    var consultant = consultantInHardDeletion("c-release-fails");
+    org.mockito.Mockito.when(consultantRepository.releaseUsernameOfDeletedConsultant(any(), any()))
+        .thenThrow(new RuntimeException("db down"));
+    var workflowDTO = new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>());
+
+    this.deleteDatabaseConsultantAction.execute(workflowDTO);
+
+    verify(consultantRepository).delete(consultant);
+    assertThat(workflowDTO.getDeletionWorkflowErrors(), hasSize(1));
+  }
+
+  @Test
+  public void execute_Should_NotTouchTheUsername_When_aHalfCreatedAccountIsRolledBack() {
+    var consultant = new Consultant();
+    consultant.setId("c-rollback");
+
+    this.deleteDatabaseConsultantAction.execute(
+        new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>()));
+
+    verify(consultantRepository, never()).releaseUsernameOfDeletedConsultant(any(), any());
+  }
+
+  @Test
+  public void execute_Should_KeepTheUsername_When_theMatrixAccountCouldNotBeDeactivated() {
+    var consultant = consultantInHardDeletion("c-matrix-failed");
+    consultant.setMatrixUserId("@old:matrix.example");
+    var matrixError =
+        DeletionWorkflowError.builder()
+            .deletionSourceType(CONSULTANT)
+            .deletionTargetType(
+                de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.MATRIX)
+            .identifier("@old:matrix.example")
+            .reason("deactivation failed")
+            .build();
+
+    this.deleteDatabaseConsultantAction.execute(
+        new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>(List.of(matrixError))));
+
+    verify(consultantRepository, never()).releaseUsernameOfDeletedConsultant(any(), any());
+  }
+
+  @Test
+  public void execute_Should_KeepTheUsername_When_theKeycloakAccountCouldNotBeDeleted() {
+    var consultant = consultantInHardDeletion("c-keycloak-failed");
+    var keycloakError =
+        DeletionWorkflowError.builder()
+            .deletionSourceType(CONSULTANT)
+            .deletionTargetType(
+                de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.KEYCLOAK)
+            .identifier("c-keycloak-failed")
+            .reason("Keycloak unreachable")
+            .build();
+
+    this.deleteDatabaseConsultantAction.execute(
+        new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>(List.of(keycloakError))));
+
+    verify(consultantRepository, never()).releaseUsernameOfDeletedConsultant(any(), any());
+  }
+
+  @Test
+  public void execute_Should_ReleaseTheUsername_When_onlyAGroupChatRoomCouldNotBePurged() {
+    var consultant = consultantInHardDeletion("c-room-failed");
+    consultant.setMatrixUserId("@old:matrix.example");
+    var roomError =
+        DeletionWorkflowError.builder()
+            .deletionSourceType(CONSULTANT)
+            .deletionTargetType(
+                de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.MATRIX)
+            .identifier("!room:matrix.example")
+            .reason("Unable to delete Matrix room")
+            .build();
+
+    this.deleteDatabaseConsultantAction.execute(
+        new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>(List.of(roomError))));
+
+    verify(consultantRepository)
+        .releaseUsernameOfDeletedConsultant("c-room-failed", "deleted:c-room-failed");
+  }
+
+  private static Consultant consultantInHardDeletion(String id) {
+    var consultant = new Consultant();
+    consultant.setId(id);
+    consultant.setTenantId(5L);
+    consultant.setDeletionLifecycleState(
+        de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState
+            .HARD_DELETE_IN_PROGRESS);
+    return consultant;
+  }
+
+  private static Consultant consultantWithId() {
+    var consultant = new Consultant();
+    consultant.setId("c-test");
+    return consultant;
   }
 }

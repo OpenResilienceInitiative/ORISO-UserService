@@ -29,8 +29,9 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.api.service.lifecycle.LifecycleEventPublisher;
+import de.caritas.cob.userservice.api.service.lifecycle.LifecycleEventPublisher.DeletedSession;
 import de.caritas.cob.userservice.api.service.session.SessionOwnershipService;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditOutcome;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionAuditTargetType;
@@ -67,12 +68,12 @@ public class ConsultantAdminService {
   private final @NonNull SessionOwnershipService sessionOwnershipService;
   private final @NonNull CaseHandoverRequestRepository caseHandoverRequestRepository;
   private final @NonNull SessionSupervisorRepository sessionSupervisorRepository;
+  private final @NonNull LifecycleEventPublisher lifecycleEventPublisher;
 
   private final @NonNull AuthenticatedUser authenticatedUser;
 
   private final @NonNull AccountManager accountManager;
 
-  private final @NonNull AppointmentService appointmentService;
   private final @NonNull DeletionLifecycleService deletionLifecycleService;
   private final @NonNull DeletionAuditService deletionAuditService;
 
@@ -198,10 +199,8 @@ public class ConsultantAdminService {
             .includeAdminRemarks(canAccessAdminRemarks())
             .buildResponseDTO();
 
-    this.appointmentService.updateConsultant(consultantAdminResponseDTO);
     // Same public-name contract as findConsultantById: every consultant admin response carries
-    // displayName + publicName (#996 review). After the appointment sync on purpose — the
-    // appointment payload never carried the names before.
+    // displayName + publicName (#996 review).
     enrichWithDisplayName(consultantId, consultantAdminResponseDTO);
     enrichWithTopics(consultantId, consultantAdminResponseDTO);
     return consultantAdminResponseDTO;
@@ -320,9 +319,12 @@ public class ConsultantAdminService {
                   && membersOnlyRevocation.keepCaseOnDeletionOf(session, consultant)) {
                 return;
               }
+              var deletedSession = DeletedSession.of(session);
               caseHandoverRequestRepository.deleteAllBySessionId(session.getId());
               sessionSupervisorRepository.deleteAllBySessionId(session.getId());
               sessionRepository.delete(session);
+              // Sent after this transaction commits, like the asker deletion paths (ADR-034).
+              lifecycleEventPublisher.sessionDeleted(deletedSession);
             });
   }
 }

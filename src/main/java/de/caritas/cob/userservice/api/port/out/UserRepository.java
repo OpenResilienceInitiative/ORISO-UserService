@@ -24,6 +24,12 @@ public interface UserRepository extends CrudRepository<User, String> {
 
   Optional<User> findByMatrixUserIdAndDeleteDateIsNull(String matrixUserId);
 
+  /**
+   * Every not deleted user row holding one of the given Matrix ids, in one query. The call code
+   * resolves a whole conversation's members at once (#1656) and decides ambiguity itself.
+   */
+  List<User> findAllByMatrixUserIdInAndDeleteDateIsNull(Collection<String> matrixUserIds);
+
   List<User> findAllByDeleteDateNotNull();
 
   List<User> findAllByDeletionLifecycleStateOrderByCreateDateAsc(
@@ -54,6 +60,20 @@ public interface UserRepository extends CrudRepository<User, String> {
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("SELECT user FROM User user WHERE user.userId = :userId")
   Optional<User> findByUserIdForUpdate(@Param("userId") String userId);
+
+  /** Stores why the nightly run kept this advice seeker (#1521); a deleted row is not touched. */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      """
+      UPDATE User user
+         SET user.deletionFailureReason = :reason,
+             user.deletionFailedAt = :failedAt
+       WHERE user.userId = :userId
+      """)
+  int recordHardDeleteFailure(
+      @Param("userId") String userId,
+      @Param("reason") String reason,
+      @Param("failedAt") LocalDateTime failedAt);
 
   @Modifying(clearAutomatically = true, flushAutomatically = true)
   @Query(
@@ -136,4 +156,13 @@ public interface UserRepository extends CrudRepository<User, String> {
           + " AND u.temporaryAccountSnapshot.medium IS NOT NULL"
           + " AND u.temporaryAccountSnapshot.deletedAt IS NULL")
   List<String> findLiveDirectLinkTemporaryAccountIds();
+
+  /**
+   * Advice seekers of a Träger that still count as accounts: not marked for deletion and not one of
+   * the technical {@code group-chat-system} users, which go with their Träger (#1466).
+   */
+  @Query(
+      "SELECT COUNT(u) FROM User u WHERE u.tenantId = :tenantId AND u.deleteDate IS NULL"
+          + " AND u.userId NOT LIKE 'group-chat-system%'")
+  long countActiveAdviceSeekersOfTenant(@Param("tenantId") Long tenantId);
 }

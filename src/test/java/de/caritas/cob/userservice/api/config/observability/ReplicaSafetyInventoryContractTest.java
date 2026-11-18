@@ -42,12 +42,13 @@ class ReplicaSafetyInventoryContractTest {
           "account-invite-expiry-number-release-scheduler",
           "account-invite-dpa-reconciliation-scheduler",
           "case-handover-policy-cache-refresh",
+          "live-chat-queue-policy-refresh",
           "case-handover-co-access-expiry",
           "case-handover-matrix-repair",
           "enquiry-rejection-repair",
           "inquiry-acceptance-notice-retry",
           "call-share-link-sweep",
-          "appointment-cleanup-scheduler",
+          "direct-invitation-expiry-sweep",
           "enquiry-notification-scheduler",
           "group-chat-deactivation-scheduler",
           "group-chat-admission-retry",
@@ -55,6 +56,8 @@ class ReplicaSafetyInventoryContractTest {
           "group-chat-matrix-cleanup",
           "anonymous-deactivation-scheduler",
           "group-chat-reminder-scheduler",
+          "appointment-request-expiry-scheduler",
+          "session-interaction-debounce",
           "group-appointment-mail-scheduler",
           "service-notice-mail-scheduler",
           "inactive-account-notification-scheduler",
@@ -71,12 +74,16 @@ class ReplicaSafetyInventoryContractTest {
           "event-notification-retention-scheduler",
           "statistics-feature-gate-cache",
           "statistics-retention-scheduler",
+          "deleted-unit-invite-retry-scheduler",
+          "account-invite-retention-scheduler",
           "team-discussion-retention-scheduler",
           "call-observation-retention-scheduler",
           "team-discussion-orphan-cleanup-scheduler",
           "agency-deletion-audit-pull-scheduler",
           "team-discussion-access-repair",
-          "statistics-dashboard-snapshot-scheduler");
+          "statistics-dashboard-snapshot-scheduler",
+          "calendar-import-scheduler",
+          "calendar-visibility-policy-cache");
 
   @Test
   void shouldInventoryEveryKnownReplicaLocalComponentWithAnActionableSignal() throws Exception {

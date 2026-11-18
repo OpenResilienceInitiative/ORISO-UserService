@@ -23,7 +23,7 @@ public interface ChatRepository extends CrudRepository<Chat, Long> {
               + "c.conversation_type, c.members_only, "
               + "c.consultant_id_owner, c.matrix_room_id, c.update_date, c.create_date, "
               + "c.hint_message, c.source_language, c.hint_message_translations, "
-              + "c.group_chat_rules_translations, c.invite_token FROM chat c JOIN chat_agency ca ON c"
+              + "c.group_chat_rules_translations, c.invite_token, c.guest_account_mode FROM chat c JOIN chat_agency ca ON c"
               + ".id = ca.chat_id JOIN user_agency ua ON ca.agency_id = ua.agency_id AND ua.user_id = :user_id",
       nativeQuery = true)
   List<Chat> findByUserId(@Param(value = "user_id") String userId);
@@ -36,7 +36,7 @@ public interface ChatRepository extends CrudRepository<Chat, Long> {
               + "c.conversation_type, c.members_only, "
               + "c.consultant_id_owner, c.matrix_room_id, c.update_date, c.create_date, "
               + "c.hint_message, c.source_language, c.hint_message_translations, "
-              + "c.group_chat_rules_translations, c.invite_token FROM chat c "
+              + "c.group_chat_rules_translations, c.invite_token, c.guest_account_mode FROM chat c "
               + "JOIN user_chat uc ON c.id = uc.chat_id AND uc.user_id = :user_id",
       nativeQuery = true)
   List<Chat> findAssignedByUserId(@Param(value = "user_id") String userId);
@@ -84,6 +84,14 @@ public interface ChatRepository extends CrudRepository<Chat, Long> {
   Optional<Chat> findByIdWithPermissionRelations(@Param(value = "chat_id") Long chatId);
 
   List<Chat> findByChatOwner(Consultant chatOwner);
+
+  /** The chats a counsellor owns, by id (calendar, ADR-032). */
+  @Query("select c from Chat c where c.chatOwner.id = :ownerId")
+  List<Chat> findByChatOwnerId(@Param("ownerId") String ownerId);
+
+  /** The chats an asker has joined (calendar, ADR-032). */
+  @Query("select uc.chat from UserChat uc where uc.user.userId = :userId")
+  List<Chat> findJoinedByUserId(@Param("userId") String userId);
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   List<Chat> findAllByActiveIsTrue();

@@ -18,8 +18,8 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * Invites expire by date, not by an event: without this sweep an expired founding invite would keep
- * its reserved number forever.
+ * Invites expire by date, not by an event: without this sweep a never-opened invite would be listed
+ * as open forever (ORISO-Admin#1522) and an expired founding invite would keep its reserved number.
  */
 @Component
 @Profile("!testing")
@@ -60,10 +60,10 @@ public class ExpiredInviteReservationSweep {
           TechnicalAccessTokenContext.offerDuring(
               token, accountInviteService::expireElapsedInvites);
       if (expired > 0) {
-        log.info("Expired {} elapsed invites that held a reserved number", expired);
+        log.info("Expired {} elapsed invites", expired);
       }
     } catch (RuntimeException exception) {
-      log.warn("Could not expire elapsed invites holding a reserved number", exception);
+      log.warn("Could not expire elapsed invites", exception);
     } finally {
       TenantContext.clear();
       if (lease != null) {

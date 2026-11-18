@@ -16,7 +16,9 @@ import de.caritas.cob.userservice.api.port.out.GroupChatJoinRequestRepository;
 import de.caritas.cob.userservice.api.port.out.MatrixCallBindingRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.chat.GroupWaitingRoomService;
 import de.caritas.cob.userservice.api.service.matrix.MatrixCallGuestService;
+import de.caritas.cob.userservice.api.service.matrix.MatrixSessionCallBindingService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import java.time.LocalDateTime;
 import java.util.Comparator;
@@ -61,8 +63,12 @@ public class DirectCallKnockService {
   private final @NonNull ConsultantRepository consultants;
   private final @NonNull EventNotificationService eventNotifications;
   private final @NonNull DirectInvitePolicy directInvitePolicy;
+  private final @NonNull GroupWaitingRoomService waitingRooms;
+  private final @NonNull org.springframework.transaction.PlatformTransactionManager
+      transactionManager;
 
-  private static final Set<Via> CALL_KNOCKS = EnumSet.of(Via.DIRECT_LINK, Via.CALL_LINK);
+  private static final Set<Via> CALL_KNOCKS =
+      EnumSet.of(Via.DIRECT_LINK, Via.CALL_LINK, Via.WAITING_ROOM);
   private static final Comparator<GroupChatJoinRequest> BY_REQUESTED_AT =
       Comparator.comparing(GroupChatJoinRequest::getRequestedAt)
           .thenComparing(GroupChatJoinRequest::getId);
@@ -94,6 +100,47 @@ public class DirectCallKnockService {
                     .findFirst()
                     .filter(this::stillWaitingOrSupersede))
         .orElseGet(() -> openKnock(session, user, inviteLinkId, medium));
+  }
+
+  /**
+   * A direct invitation with "Anklopfen" switched off (ORISO-Frontend#2252): the person is let in
+   * without waiting, recorded as an admission by the conversation's counsellor so every later visit
+   * finds it like a decided knock. Nobody is rung.
+   */
+  @Transactional
+  public GroupChatJoinRequest admitWithoutKnock(
+      Long sessionId, User user, Long inviteLinkId, InviteLinkChatType medium) {
+    var session =
+        sessionRepository
+            .findByIdForUpdate(sessionId)
+            .orElseThrow(() -> new NotFoundException("Session %s not found", sessionId));
+    return admissionOf(sessionId, user)
+        .orElseGet(
+            () -> {
+              var now = LocalDateTime.now();
+              // A knock from before "Anklopfen" was switched off no longer waits.
+              repository
+                  .findPendingCallKnocksForUpdate(sessionId, user.getUserId(), Via.DIRECT_LINK)
+                  .forEach(
+                      waiting -> {
+                        waiting.setStatus(Status.CANCELLED);
+                        waiting.setDecidedAt(now);
+                        repository.save(waiting);
+                      });
+              return repository.save(
+                  GroupChatJoinRequest.builder()
+                      .via(Via.DIRECT_LINK)
+                      .sessionId(session.getId())
+                      .userId(user.getUserId())
+                      .inviteLinkId(inviteLinkId)
+                      .medium(medium.name())
+                      .status(Status.ADMITTED)
+                      .requestedAt(now)
+                      .decidedAt(now)
+                      .decidedBy(
+                          session.getConsultant() == null ? null : session.getConsultant().getId())
+                      .build());
+            });
   }
 
   private GroupChatJoinRequest openKnock(
@@ -291,7 +338,8 @@ public class DirectCallKnockService {
       Consultant consultant, Long sessionId, String matrixRoomId) {
     var scope = callScope(sessionId, matrixRoomId);
     var since = waitingSince();
-    return Stream.concat(
+    return Stream.of(
+            waitingRoomOf(consultant, scope).stream(),
             scope.directLinks()
                 ? repository
                     .findCallKnocksForConsultant(
@@ -309,6 +357,7 @@ public class DirectCallKnockService {
                     .stream()
                     .filter(inCallOf(consultant))
                 : Stream.<GroupChatJoinRequest>empty())
+        .flatMap(knocks -> knocks)
         .sorted(BY_REQUESTED_AT)
         .toList();
   }
@@ -323,13 +372,55 @@ public class DirectCallKnockService {
     return decide(knockId, consultant, Status.DECLINED);
   }
 
-  /** Only the current call: letting in every knock of every conversation at once is refused. */
-  @Transactional
+  /**
+   * Only the current call: letting in every knock of every conversation at once is refused.
+   *
+   * <p>Lock rule (FE#2209 round 4): the call bindings that exist when admit-all looks them up are
+   * locked one by one by primary key, then the conversation (session row), then the knocks. Admit-
+   * all never takes a range or gap lock on the call bindings: the first bind of a call holds the
+   * session lock and then inserts the binding, so a gap lock held while waiting for that session
+   * would deadlock with the insert. A binding inserted after the lookup is not locked here; it
+   * belongs to a call that has no share link and no knock yet, so admit-all has nothing of it to
+   * let in.
+   *
+   * <p>Round 5 enforces that assumption: a knock whose call binding was not locked first (its call,
+   * link and knock appeared after the lookup) would lock that binding only after the session,
+   * through the in-call check. Instead the attempt is rolled back ({@link
+   * MatrixSessionCallBindingService.LockOrderRetry}) and run once more, whose lookup then locks
+   * that binding first. A knock whose call appears again after the retry's lookup stays pending.
+   * Not {@code @Transactional}: each attempt runs in its own transaction.
+   */
   public List<GroupChatJoinRequest> admitAll(
       Consultant consultant, Long sessionId, String matrixRoomId) {
+    var transaction =
+        new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+    try {
+      return transaction.execute(
+          status -> admitAllInLockOrder(consultant, sessionId, matrixRoomId, false));
+    } catch (MatrixSessionCallBindingService.LockOrderRetry late) {
+      return transaction.execute(
+          status -> admitAllInLockOrder(consultant, sessionId, matrixRoomId, true));
+    }
+  }
+
+  private List<GroupChatJoinRequest> admitAllInLockOrder(
+      Consultant consultant, Long sessionId, String matrixRoomId, boolean lastAttempt) {
     var scope = callScope(sessionId, matrixRoomId);
     if (!scope.scoped()) {
       throw new BadRequestException("admit-all needs sessionId or matrixRoomId");
+    }
+    // FE#2209 lock order: the calls whose knocks may be let in, then the conversation, then the
+    // knocks. Round 4: only bindings that exist are locked, each by primary key, never a range or
+    // gap of the call-binding index (see the javadoc).
+    var lockedFirst = new java.util.HashSet<Long>();
+    if (scope.callLinks()) {
+      for (Long bindingId :
+          scope.roomId() != null
+              ? callBindings.findIdsBySourceRoomId(scope.roomId())
+              : inviteLinkRepository.findActiveCallBindingIdsOfConsultant(consultant.getId())) {
+        callBindings.lockById(bindingId);
+        lockedFirst.add(bindingId);
+      }
     }
     // A group-call room has no 1:1 conversation to lock; its knocks are locked row by row below.
     if (scope.sessionId() != null) {
@@ -340,7 +431,12 @@ public class DirectCallKnockService {
     // any more; no earlier unlocked read can leave a stale entity in the persistence context.
     var since = waitingSince();
     var checkedLinks = new java.util.HashSet<Long>();
-    return Stream.concat(
+    return Stream.of(
+            // Loaded under lock in one query, like the knocks below: somebody who left meanwhile
+            // is not pending any more and is not let in.
+            scope.roomId() == null
+                ? Stream.<GroupChatJoinRequest>empty()
+                : waitingRooms.waitingInForUpdate(consultant, scope.roomId()).stream(),
             scope.directLinks()
                 ? repository
                     .findCallKnocksForConsultantForUpdate(
@@ -356,8 +452,9 @@ public class DirectCallKnockService {
                     .findCallLinkKnocksForConsultantForUpdate(
                         consultant.getId(), Via.CALL_LINK, Status.PENDING, since, scope.roomId())
                     .stream()
-                    .filter(inCallOf(consultant))
+                    .filter(inLockedCallOf(consultant, lockedFirst, lastAttempt))
                 : Stream.<GroupChatJoinRequest>empty())
+        .flatMap(knocks -> knocks)
         .sorted(BY_REQUESTED_AT)
         .map(
             knock -> {
@@ -392,6 +489,8 @@ public class DirectCallKnockService {
   }
 
   private GroupChatJoinRequest decide(Long knockId, Consultant consultant, Status outcome) {
+    // FE#2209 round 3 lock order: the call's binding, then the conversation, then the knock.
+    inviteLinkRepository.findCallBindingIdOfKnock(knockId).ifPresent(callBindings::lockById);
     repository.findSessionIdById(knockId).ifPresent(this::lockConversation);
     var knock =
         repository
@@ -453,8 +552,17 @@ public class DirectCallKnockService {
     return switch (knock.getVia()) {
       case DIRECT_LINK -> isCounsellorOf(knock.getSessionId(), consultant);
       case CALL_LINK -> isInCallOfLink(knock.getInviteLinkId(), consultant);
+      case WAITING_ROOM -> waitingRooms.mayAdmit(knock, consultant);
       default -> false;
     };
+  }
+
+  /**
+   * ORISO-Frontend#2237: in a group's call, the people in the group's waiting room knock too, so
+   * the call's "Reinlassen" lets them in (Frank, 2026-11-12: only in the running call).
+   */
+  private List<GroupChatJoinRequest> waitingRoomOf(Consultant consultant, CallScope scope) {
+    return scope.roomId() == null ? List.of() : waitingRooms.waitingIn(consultant, scope.roomId());
   }
 
   /** One membership lookup per share link, however many guests knock on it. */
@@ -464,6 +572,31 @@ public class DirectCallKnockService {
         knock.getInviteLinkId() != null
             && byLink.computeIfAbsent(
                 knock.getInviteLinkId(), linkId -> isInCallOfLink(linkId, consultant));
+  }
+
+  /**
+   * Admit-all's in-call check, only for calls whose binding it locked first (round 5). A link that
+   * is not visible yet, or whose binding was not locked first, appeared after the lookup: the
+   * attempt is retried in lock order, or on the last attempt the knock stays pending.
+   */
+  private Predicate<GroupChatJoinRequest> inLockedCallOf(
+      Consultant consultant, java.util.Set<Long> lockedFirst, boolean lastAttempt) {
+    var byLink = new HashMap<Long, Boolean>();
+    return knock ->
+        knock.getInviteLinkId() != null
+            && byLink.computeIfAbsent(
+                knock.getInviteLinkId(),
+                linkId -> {
+                  var link = inviteLinkRepository.findById(linkId).orElse(null);
+                  Long bindingId = link == null ? null : link.getCallBindingId();
+                  boolean late =
+                      link == null || (bindingId != null && !lockedFirst.contains(bindingId));
+                  if (late) {
+                    if (!lastAttempt) throw new MatrixSessionCallBindingService.LockOrderRetry();
+                    return false;
+                  }
+                  return isInCallOfLink(linkId, consultant);
+                });
   }
 
   /**
@@ -496,8 +629,10 @@ public class DirectCallKnockService {
    * knock), so an admission cannot slip between knock's admission check and its pending lookup.
    */
   private void lockConversation(Long sessionId) {
+    // Fresh (round 5): the in-call and authority checks after this lock read the session's assigned
+    // counsellor, which an earlier unlocked read could have left stale in this transaction.
     sessionRepository
-        .findByIdForUpdate(sessionId)
+        .lockFresh(sessionId)
         .orElseThrow(() -> new NotFoundException("Session %s not found", sessionId));
   }
 
