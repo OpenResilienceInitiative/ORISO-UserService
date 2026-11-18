@@ -511,6 +511,23 @@ class MatrixCallObservationServiceTest {
   }
 
   @Test
+  void theCallerHearsTheCallEndedEvenBeforeTheirDeviceWasSeen() {
+    long now = System.currentTimeMillis();
+    var row = row(now - 1000, now + 60_000, null);
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    bindingWithAttendees(now);
+
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
+
+    verify(notifications)
+        .createCallEndedNotification(
+            any(), eq("creator"), eq(false), eq("call"), eq(MEDIA), anyLong(), anyLong());
+    verify(notifications)
+        .createCallMissedNotification(
+            any(), eq("other"), eq(false), eq("call"), eq(MEDIA), eq(true));
+  }
+
+  @Test
   void anInviteeWhoJoinedHearsTheCallEnded() {
     long now = System.currentTimeMillis();
     var row = row(now - 1000, now + 60_000, null);
