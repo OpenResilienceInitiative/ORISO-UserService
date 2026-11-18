@@ -181,6 +181,10 @@ class UserControllerAuthorizationIT {
   private de.caritas.cob.userservice.api.service.livechat.LiveChatAccountConversionService
       liveChatAccountConversionService;
 
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.temporaryaccount.TemporaryAccountKeepService
+      temporaryAccountKeepService;
+
   @MockitoBean private UserService userService;
   @MockitoBean private SessionService sessionService;
   @MockitoBean private SessionRepository sessionRepository;
@@ -666,6 +670,50 @@ class UserControllerAuthorizationIT {
         .andExpect(status().isForbidden());
 
     verifyNoMoreInteractions(consultantDataFacade, logService);
+  }
+
+  // "Keep account" (#1662): only the authenticated advice seeker, for their own account.
+
+  @ParameterizedTest
+  @ValueSource(strings = {"/users/temporary-account/keep", "/service/users/temporary-account/keep"})
+  void keepTemporaryAccountRequiresAuthentication(String path) throws Exception {
+    mvc.perform(
+            post(path)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"password\":\"chosen-password-123\"}"))
+        .andExpect(status().isUnauthorized());
+    verifyNoMoreInteractions(temporaryAccountKeepService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"/users/temporary-account/keep", "/service/users/temporary-account/keep"})
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void keepTemporaryAccountRejectsCounsellors(String path) throws Exception {
+    mvc.perform(
+            post(path)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"password\":\"chosen-password-123\"}"))
+        .andExpect(status().isForbidden());
+    verifyNoMoreInteractions(temporaryAccountKeepService);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"/users/temporary-account/keep", "/service/users/temporary-account/keep"})
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void keepTemporaryAccountActsOnTheCallersOwnAccountOnly(String path) throws Exception {
+    when(authenticatedUser.getUserId()).thenReturn("guest-id");
+    mvc.perform(
+            post(path)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"password\":\"chosen-password-123\",\"userId\":\"someone-else\"}"))
+        .andExpect(status().isNoContent());
+    verify(temporaryAccountKeepService).keep("guest-id", "chosen-password-123");
   }
 
   @ParameterizedTest

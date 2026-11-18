@@ -1,8 +1,10 @@
 package de.caritas.cob.userservice.api.service.notification;
 
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
+import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.Settings;
 
 /** Uses the persisted session modality, including the server's legacy registration fallback. */
@@ -19,6 +21,16 @@ public final class AskerNotificationChannelPolicy {
 
   public static boolean isLiveChat(Session session) {
     return conversationType(session) == ConversationType.LIVE_CHAT;
+  }
+
+  /**
+   * #1662: a temporary account cannot opt into e-mail notifications or register a device or browser
+   * for push notifications. Opting out stays possible; permanent accounts keep today's rules.
+   */
+  public static void requireNotificationOptInAllowed(User asker) {
+    if (asker != null && asker.isTemporaryAccount()) {
+      throw new ForbiddenException("A temporary account cannot turn on notifications");
+    }
   }
 
   public static boolean emailAllowed(Session session, Settings settings) {

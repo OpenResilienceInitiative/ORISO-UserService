@@ -257,10 +257,9 @@ public class MatrixSessionCallBindingService {
         || !Objects.equals(binding.getTenantId(), conversation.getTenantId())) {
       return null;
     }
-    boolean caller = ender.equals(binding.getCallerMatrixId());
-    boolean colleagueInCall =
-        binding.isInCall(ender, now) && lifecycle.isActiveRecipient(actor.getUserId());
-    if (!caller && !colleagueInCall) return null;
+    if (!binding.mayBeEndedBy(ender, () -> lifecycle.isActiveRecipient(actor.getUserId()), now)) {
+      return null;
+    }
     binding.finishExplicitly(now);
     bindings.save(binding);
     return binding.getMediaRoomId();
@@ -463,25 +462,7 @@ public class MatrixSessionCallBindingService {
    * closed). The single-row finders threw on such an id, which aborted the registration.
    */
   private Set<String> invitees(List<String> members, String caller, Long tenantId) {
-    var others = new java.util.LinkedHashSet<String>();
-    for (String member : members) if (member != null && !member.equals(caller)) others.add(member);
-    if (others.isEmpty() || tenantId == null) return Set.of();
-    var askerRows = new java.util.HashMap<String, Integer>();
-    for (var user : users.findAllByMatrixUserIdInAndDeleteDateIsNull(others)) {
-      if (user == null
-          || !Objects.equals(user.getTenantId(), tenantId)
-          || !others.contains(user.getMatrixUserId())) continue;
-      askerRows.merge(user.getMatrixUserId(), 1, Integer::sum);
-    }
-    var result = new java.util.HashSet<String>();
-    askerRows.forEach(
-        (matrixId, rows) -> {
-          if (rows == 1) result.add(matrixId);
-        });
-    var rest = new java.util.LinkedHashSet<>(others);
-    rest.removeAll(askerRows.keySet());
-    if (!rest.isEmpty()) result.addAll(SoleCounsellor.allOf(consultants, rest, tenantId).keySet());
-    return result;
+    return CallInvitees.of(users, consultants, members, caller, tenantId);
   }
 
   /**

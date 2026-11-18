@@ -200,6 +200,32 @@ class GroupChatInviteLinkE2EIT {
     if (identityHttp != null) identityHttp.reset();
   }
 
+  /** #1662: the entry page reads the circle's guest account mode before anybody logs in. */
+  @Test
+  void anAnonymousHolderOfTheLinkReadsOnlyTheCirclesGuestAccountMode() throws Exception {
+    // The Träger's guest account caps are read from the TenantService.
+    permittedOwner.close();
+    permittedOwner =
+        de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures.permitWithTenantLookup(
+            ownerFactory, GROUP_TENANT);
+    mockMvc
+        .perform(
+            get("/users/chat/" + selfHelpGroup.getId() + "/invite-context")
+                .queryParam("agencyId", String.valueOf(GROUP_AGENCY))
+                .queryParam("inviteToken", inviteTokenOf(selfHelpGroup)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.guestAccountMode").value("GUEST_CHOOSES"))
+        .andExpect(jsonPath("$.length()").value(1));
+
+    mockMvc
+        .perform(
+            get("/users/chat/" + selfHelpGroup.getId() + "/invite-context")
+                .queryParam("agencyId", String.valueOf(GROUP_AGENCY))
+                .queryParam("inviteToken", "guessed"))
+        .andExpect(status().isForbidden())
+        .andExpect(header().string("X-Reason", "GROUP_INVITE_INVALID"));
+  }
+
   @Test
   @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
   void aClientCannotJoinAGroupByGuessingItsNumber() throws Exception {

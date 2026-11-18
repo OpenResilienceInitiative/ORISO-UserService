@@ -44,7 +44,7 @@ public class DeleteTemporaryAccountsService {
   /** Deletes one account; a failure is returned as a workflow error instead of thrown. */
   public List<DeletionWorkflowError> deleteIsolated(String userId) {
     try {
-      return deletionUnit.deleteUser(userId);
+      return deletionUnit.deleteTemporaryUser(userId);
     } catch (RuntimeException exception) {
       log.error(
           "Temporary account deletion failed for one user and was isolated from the rest. "

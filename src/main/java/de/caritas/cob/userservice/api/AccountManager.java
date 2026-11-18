@@ -5,8 +5,10 @@ import static java.util.Objects.isNull;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO;
 import de.caritas.cob.userservice.api.admin.service.search.AccountSearch;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
@@ -22,8 +24,10 @@ import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.port.out.SearchSort;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.AskerEmailCollectionPolicy;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.matrix.ConsultantRenameSystemMessageService;
+import de.caritas.cob.userservice.api.service.notification.AskerNotificationChannelPolicy;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -41,6 +45,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.RestClientException;
 
 @Slf4j
@@ -49,6 +55,8 @@ import org.springframework.web.client.RestClientException;
 public class AccountManager implements AccountManaging {
 
   private final ConsultantRepository consultantRepository;
+
+  private final PlatformTransactionManager transactionManager;
 
   private final AccountSearch accountSearch;
 
@@ -209,10 +217,21 @@ public class AccountManager implements AccountManaging {
     var id = (String) patchMap.get("id");
     var userMap = new HashMap<String, Object>();
 
-    userRepository
-        .findByUserIdAndDeleteDateIsNull(id)
+    // #1662: read the advice seeker under the row lock "Konto behalten" takes and save it in the
+    // same transaction. User has no version column; a copy read before a concurrent keep would
+    // otherwise merge temporary_account and the deletion snapshot back.
+    var patchedAdviceSeeker =
+        new TransactionTemplate(transactionManager)
+            .execute(
+                status ->
+                    userRepository
+                        .findByUserIdForUpdate(id)
+                        .filter(user -> user.getDeleteDate() == null)
+                        .map(user -> patchAdviceSeeker(user, patchMap)));
+    Optional.ofNullable(patchedAdviceSeeker)
+        .flatMap(java.util.function.Function.identity())
         .ifPresentOrElse(
-            user -> userMap.putAll(patchAdviceSeeker(user, patchMap)),
+            userMap::putAll,
             () ->
                 consultantRepository
                     .findByIdAndDeleteDateIsNull(id)
@@ -238,6 +257,17 @@ public class AccountManager implements AccountManaging {
   }
 
   private Map<String, Object> patchAdviceSeeker(User adviceSeeker, Map<String, Object> patchMap) {
+    if (patchMap.get("emailNotifications") instanceof EmailNotificationsDTO notifications
+        && Boolean.TRUE.equals(notifications.getEmailNotificationsEnabled())) {
+      AskerNotificationChannelPolicy.requireNotificationOptInAllowed(adviceSeeker);
+    }
+    // #1662: a temporary account never saves an e-mail address; clearing one stays possible.
+    if (adviceSeeker.isTemporaryAccount()
+        && patchMap.get("email") instanceof String email
+        && !email.isBlank()
+        && !AskerEmailCollectionPolicy.sameAddress(adviceSeeker.getEmail(), email)) {
+      throw new ForbiddenException("A temporary account cannot save an e-mail address");
+    }
     var patchedAdviceSeeker = userServiceMapper.adviceSeekerOf(adviceSeeker, patchMap);
     var savedAdviceSeeker = userRepository.save(patchedAdviceSeeker);
 

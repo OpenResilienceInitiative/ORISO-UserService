@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.model.GuestAccountMode;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.CallShareLinkService;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.CallShareLinkService.AlreadyInConversationException;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.CallShareLinkService.Join;
@@ -9,6 +10,7 @@ import de.caritas.cob.userservice.api.service.agencyinvitelink.InviteLinkStatus;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -51,7 +53,8 @@ public class CallShareLinkController {
             request.sourceRoomId(),
             request.callId(),
             request.knock(),
-            request.temporaryAccount());
+            request.temporaryAccount(),
+            request.guestAccountMode());
     return ResponseEntity.status(link.created() ? HttpStatus.CREATED : HttpStatus.OK)
         .cacheControl(CacheControl.noStore())
         .body(toResponse(link));
@@ -77,7 +80,8 @@ public class CallShareLinkController {
             authenticatedUser.getUserId(),
             linkId,
             request == null ? null : request.knock(),
-            request == null ? null : request.temporaryAccount());
+            request == null ? null : request.temporaryAccount(),
+            request == null ? null : request.guestAccountMode());
     return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(toResponse(link));
   }
 
@@ -129,7 +133,9 @@ public class CallShareLinkController {
         view.temporaryAccount(),
         view.temporaryAccountAllowed(),
         InviteLinkStatus.ACTIVE.name().equals(link.getStatus()),
-        link.getExpiresAt() == null ? null : link.getExpiresAt().atOffset(ZoneOffset.UTC));
+        link.getExpiresAt() == null ? null : link.getExpiresAt().atOffset(ZoneOffset.UTC),
+        view.guestAccountMode(),
+        view.allowedGuestAccountModes().stream().sorted().toList());
   }
 
   private static JoinResponse toResponse(Join join) {
@@ -151,15 +157,26 @@ public class CallShareLinkController {
     return base + "/invite/" + token;
   }
 
+  /**
+   * @param guestAccountMode #1662, wins over {@code temporaryAccount}; the old switch stays for one
+   *     release so an older app keeps working
+   */
   public record CreateRequest(
-      String sourceRoomId, String callId, Boolean knock, Boolean temporaryAccount) {}
+      String sourceRoomId,
+      String callId,
+      Boolean knock,
+      Boolean temporaryAccount,
+      GuestAccountMode guestAccountMode) {}
 
-  public record SettingsRequest(Boolean knock, Boolean temporaryAccount) {}
+  public record SettingsRequest(
+      Boolean knock, Boolean temporaryAccount, GuestAccountMode guestAccountMode) {}
 
   public record RemoveGuestRequest(String matrixUserId) {}
 
   /**
    * @param temporaryAccount effective value: the setting, and allowed by platform and Träger
+   * @param guestAccountMode effective mode (#1662); PERMANENT while the chosen one is not allowed
+   * @param allowedGuestAccountModes the modes the counsellor may choose now (the select's options)
    */
   public record CallShareLinkResponse(
       Long id,
@@ -170,7 +187,9 @@ public class CallShareLinkController {
       boolean temporaryAccount,
       boolean temporaryAccountAllowed,
       boolean active,
-      OffsetDateTime expiresAt) {}
+      OffsetDateTime expiresAt,
+      GuestAccountMode guestAccountMode,
+      List<GuestAccountMode> allowedGuestAccountModes) {}
 
   public record JoinResponse(
       String medium,

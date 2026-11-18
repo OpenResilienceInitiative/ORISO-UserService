@@ -277,6 +277,9 @@ class ChatServiceTest {
     assertEquals(ACTIVE_CHAT.getChatInterval(), resultList.get(0).getChat().getChatInterval());
     assertEquals(ACTIVE_CHAT.getChatModality(), resultList.get(0).getChat().getModality());
     assertEquals(ACTIVE_CHAT.getTimezone(), resultList.get(0).getChat().getTimezone());
+    assertEquals(
+        de.caritas.cob.userservice.api.model.GuestAccountMode.GUEST_CHOOSES,
+        resultList.get(0).getChat().getGuestAccountMode());
     assertNotNull(resultList.get(0).getChat().getModerators());
     assertEquals(1, resultList.get(0).getChat().getModerators().length);
     assertEquals(CONSULTANT.getMatrixUserId(), resultList.get(0).getChat().getModerators()[0]);
@@ -539,6 +542,38 @@ class ChatServiceTest {
     } catch (ConflictException conflictException) {
       assertTrue(true, "Excepted ConflictException thrown");
     }
+  }
+
+  /** #1662: an edit changes the circle's guest account mode only when it names one. */
+  @Test
+  void updateChat_Should_ChangeTheGuestAccountMode_OnlyWhenTheEditNamesOne() {
+    Chat inactiveChat = new Chat();
+    inactiveChat.setActive(false);
+    inactiveChat.setChatOwner(CONSULTANT);
+    // A non-default saved mode: an omitted field must keep it, not reset it to the default.
+    inactiveChat.setGuestAccountMode(
+        de.caritas.cob.userservice.api.model.GuestAccountMode.TEMPORARY);
+    when(chatRepository.findByIdWithPermissionRelations(Mockito.anyLong()))
+        .thenReturn(Optional.of(inactiveChat));
+
+    chatService.updateChat(CHAT_ID, CHAT_DTO, AUTHENTICATED_USER_CONSULTANT);
+    assertEquals(
+        de.caritas.cob.userservice.api.model.GuestAccountMode.TEMPORARY,
+        inactiveChat.getGuestAccountMode());
+
+    var edit =
+        de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO.builder()
+            .topic(CHAT_DTO.getTopic())
+            .startDate(CHAT_DTO.getStartDate())
+            .startTime(CHAT_DTO.getStartTime())
+            .duration(CHAT_DTO.getDuration())
+            .repetitive(CHAT_DTO.getRepetitive())
+            .guestAccountMode(de.caritas.cob.userservice.api.model.GuestAccountMode.PERMANENT)
+            .build();
+    chatService.updateChat(CHAT_ID, edit, AUTHENTICATED_USER_CONSULTANT);
+    assertEquals(
+        de.caritas.cob.userservice.api.model.GuestAccountMode.PERMANENT,
+        inactiveChat.getGuestAccountMode());
   }
 
   @Test
