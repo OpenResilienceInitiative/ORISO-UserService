@@ -51,7 +51,7 @@ jobs:
         repository: OpenResilienceInitiative/ORISO-ConsultingTypeService
         # CTS dev after PR184 merge: one-topic settings and SMTP fields plus the
         # furtherCounsellingPostcodeMode and topicDuplicateMode settings consumed here.
-        ref: ${{ github.event_name != 'push' && '77dab765598676420690ce637c5d95b1c5cd4799' || 'dev' }}
+        ref: ${{ github.event_name != 'push' && '25e7068e6c587b12fab3aa02633749023c3ed071' || 'dev' }}
         path: .providers/consulting
         persist-credentials: false
 
