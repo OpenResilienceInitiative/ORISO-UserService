@@ -71,6 +71,7 @@ import org.testcontainers.containers.MariaDBContainer;
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({
+  de.caritas.cob.userservice.api.service.matrix.CounsellorStartedCall.class,
   SessionCallAuthority.class,
   SessionCallRevival.class,
   MatrixCallBindingService.class,
@@ -112,6 +113,9 @@ class MatrixCallGuestMediaGateMariaDbIT {
     // Retry a failed removal at once: these tests run the lifecycle pass directly.
     registry.add("matrix.calls.guest-revoke-retry-ms", () -> "0");
   }
+
+  @Autowired
+  private de.caritas.cob.userservice.api.service.matrix.CounsellorStartedCall counsellorCalls;
 
   @Autowired private MatrixCallLifecycleService lifecycle;
   @Autowired private MatrixCallInviteNotificationService reconciler;
@@ -227,7 +231,8 @@ class MatrixCallGuestMediaGateMariaDbIT {
             matrix,
             hasher,
             new JdbcTemplate(dataSource),
-            callGuests);
+            callGuests,
+            counsellorCalls);
 
     // The counsellor admits the guest into the running call (US#1477).
     assertThat(callGuests.admitAs(7L, counsellor.getId(), source, "call", guestId).outcome())
