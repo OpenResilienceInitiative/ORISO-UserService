@@ -544,6 +544,48 @@ class MatrixCallObservationServiceTest {
             any(), anyString(), anyBoolean(), anyString(), anyString(), anyBoolean());
   }
 
+  // FE#1211 (Frank, 18 Nov): a group call has no binding; who was in it is read from the
+  // MatrixRTC memberships of its media room, so a member who never joined hears it was missed.
+
+  @Test
+  void aGroupMemberWhoNeverJoinedHearsTheCallWasMissed() {
+    long now = System.currentTimeMillis();
+    var row = row(now - 1000, now + 60_000, null);
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    when(matrix.getCallRoomState(MEDIA, CREATOR))
+        .thenReturn(Optional.of(List.of(departed(CREATOR, now - 500))));
+
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
+
+    verify(notifications)
+        .createCallMissedNotification(
+            any(), eq("other"), eq(false), eq("call"), eq(MEDIA), anyBoolean());
+    verify(notifications, never())
+        .createCallEndedNotification(
+            any(), eq("other"), anyBoolean(), anyString(), anyString(), anyLong(), anyLong());
+    verify(notifications)
+        .createCallEndedNotification(
+            any(), eq("creator"), eq(false), eq("call"), eq(MEDIA), anyLong(), anyLong());
+  }
+
+  @Test
+  void aGroupMemberWhoWasInTheCallHearsItEnded() {
+    long now = System.currentTimeMillis();
+    var row = row(now - 1000, now + 60_000, null);
+    when(repo.findForUpdateBySourceRoomIdAndCallId(SOURCE, "call")).thenReturn(Optional.of(row));
+    when(matrix.getCallRoomState(MEDIA, CREATOR))
+        .thenReturn(Optional.of(List.of(departed(CREATOR, now - 500), departed(OTHER, now - 600))));
+
+    assertThat(service.end(actor, SOURCE, "call")).isEqualTo(Outcome.OK);
+
+    verify(notifications)
+        .createCallEndedNotification(
+            any(), eq("other"), eq(false), eq("call"), eq(MEDIA), anyLong(), anyLong());
+    verify(notifications, never())
+        .createCallMissedNotification(
+            any(), anyString(), anyBoolean(), anyString(), anyString(), anyBoolean());
+  }
+
   // --- FE#2209 review (CodeRabbit): the session binding ends with the observation ---
 
   @Test

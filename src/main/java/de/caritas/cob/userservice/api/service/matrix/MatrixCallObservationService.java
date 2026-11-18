@@ -451,9 +451,11 @@ public class MatrixCallObservationService {
   /**
    * FE#1211: "ended" is for the people who were in the call. An invitee who never joined hears that
    * they missed it, as the lifecycle tells them when the call room empties; both writers share the
-   * missed event's key, so whichever runs first wins and the other adds nothing. Without a binding
-   * nobody's attendance is known, and every member hears that the call ended. The caller always
-   * hears that it ended, even before their own device was seen.
+   * missed event's key, so whichever runs first wins and the other adds nothing. A group call has
+   * no binding: there, who was in it is read from the MatrixRTC memberships of its media room, and
+   * every member of the conversation was invited (Frank, 18 Nov: "as in 1:1"). When neither is
+   * known, every member hears that the call ended. The caller always hears that it ended, even
+   * before their own device was seen.
    */
   private void notifyEnded(
       MatrixCallConversation conversation, List<String> members, MatrixCallObservation row) {
@@ -468,6 +470,7 @@ public class MatrixCallObservationService {
                         .filter(MatrixCallDevice::isAttended)
                         .map(MatrixCallDevice::getSenderMatrixId)
                         .collect(Collectors.toSet()))
+            .or(() -> mediaRoomAttendees(row))
             .orElse(null);
     for (String member : members) {
       var recipient = identities.get(member);
@@ -476,15 +479,16 @@ public class MatrixCallObservationService {
           member.equals(row.getCreatorMatrixId())
               || binding.map(known -> member.equals(known.getCallerMatrixId())).orElse(false);
       if (attendees != null && !attendees.contains(member) && !caller) {
-        var known = binding.get();
-        if (known.getInvitedMatrixIds().contains(member)) {
+        boolean invited =
+            binding.map(known -> known.getInvitedMatrixIds().contains(member)).orElse(true);
+        if (invited) {
           notifications.createCallMissedNotification(
               conversation,
               recipient.id(),
               recipient.consultant(),
               row.getCallId(),
               row.getMediaRoomId(),
-              known.isVideo());
+              binding.map(MatrixCallBinding::isVideo).orElse(row.isVideo()));
         }
         continue;
       }
@@ -496,6 +500,27 @@ public class MatrixCallObservationService {
           row.getMediaRoomId(),
           row.getRegisteredAt(),
           row.getEndedAt());
+    }
+  }
+
+  /**
+   * FE#1211: everybody who ever joined the call holds a MatrixRTC membership in its media room (a
+   * departure keeps the event, only empties it); a member who never joined has none. Read as the
+   * creator; empty when the room cannot be read, so the caller falls back to "ended" for all.
+   */
+  private Optional<java.util.Set<String>> mediaRoomAttendees(MatrixCallObservation row) {
+    try {
+      return matrix
+          .getCallRoomState(row.getMediaRoomId(), row.getCreatorMatrixId())
+          .map(
+              state ->
+                  state.stream()
+                      .map(event -> MatrixRtcMembershipEvent.parse(event).orElse(null))
+                      .filter(Objects::nonNull)
+                      .map(MatrixRtcMembershipEvent::sender)
+                      .collect(Collectors.toSet()));
+    } catch (RuntimeException unreadable) {
+      return Optional.empty();
     }
   }
 
