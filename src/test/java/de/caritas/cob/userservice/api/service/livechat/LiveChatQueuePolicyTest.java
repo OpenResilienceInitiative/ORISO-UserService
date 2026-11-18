@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.livechat;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
@@ -22,22 +23,28 @@ class LiveChatQueuePolicyTest {
 
   @Test
   void freeChoiceEnabled_Should_BeTrue_When_PlatformSwitchIsOn() {
-    when(applicationSettingsService.getApplicationSettings()).thenReturn(settings(true));
+    when(applicationSettingsService.fetchApplicationSettings()).thenReturn(settings(true));
+
+    policy.refresh();
 
     assertThat(policy.freeChoiceEnabled()).isTrue();
   }
 
   @Test
   void freeChoiceEnabled_Should_BeFalse_When_PlatformSwitchIsOff() {
-    when(applicationSettingsService.getApplicationSettings()).thenReturn(settings(false));
+    when(applicationSettingsService.fetchApplicationSettings()).thenReturn(settings(false));
+
+    policy.refresh();
 
     assertThat(policy.freeChoiceEnabled()).isFalse();
   }
 
   @Test
   void freeChoiceEnabled_Should_BeFalse_When_SettingIsMissing() {
-    when(applicationSettingsService.getApplicationSettings())
+    when(applicationSettingsService.fetchApplicationSettings())
         .thenReturn(new ApplicationSettingsDTO());
+
+    policy.refresh();
 
     assertThat(policy.freeChoiceEnabled()).isFalse();
   }
@@ -46,24 +53,50 @@ class LiveChatQueuePolicyTest {
   void freeChoiceEnabled_Should_BeFalse_When_ValueIsMissing() {
     var settings = new ApplicationSettingsDTO();
     settings.setLiveChatFreeChoiceEnabled(new FeatureToggleDTO());
-    when(applicationSettingsService.getApplicationSettings()).thenReturn(settings);
+    when(applicationSettingsService.fetchApplicationSettings()).thenReturn(settings);
+
+    policy.refresh();
 
     assertThat(policy.freeChoiceEnabled()).isFalse();
   }
 
   @Test
   void freeChoiceEnabled_Should_BeFalse_When_SettingsAreEmpty() {
-    when(applicationSettingsService.getApplicationSettings()).thenReturn(null);
+    when(applicationSettingsService.fetchApplicationSettings()).thenReturn(null);
+
+    policy.refresh();
 
     assertThat(policy.freeChoiceEnabled()).isFalse();
   }
 
   @Test
-  void freeChoiceEnabled_Should_BeFalse_When_SettingsAreUnreachable() {
-    when(applicationSettingsService.getApplicationSettings())
+  void freeChoiceEnabled_Should_FallBackToStrict_When_SettingsBecomeUnreachable() {
+    when(applicationSettingsService.fetchApplicationSettings())
+        .thenReturn(settings(true))
         .thenThrow(new RestClientException("ConsultingTypeService down"));
+    policy.refresh();
+
+    policy.refresh();
 
     assertThat(policy.freeChoiceEnabled()).isFalse();
+  }
+
+  @Test
+  void freeChoiceEnabled_Should_StayStrictAndNotCallOut_When_NeverRefreshed() {
+    assertThat(policy.freeChoiceEnabled()).isFalse();
+
+    verifyNoInteractions(applicationSettingsService);
+  }
+
+  @Test
+  void freeChoiceEnabled_Should_ReadTheSnapshotOnly_When_CalledAfterRefresh() {
+    when(applicationSettingsService.fetchApplicationSettings())
+        .thenReturn(settings(true))
+        .thenThrow(new AssertionError("the guard must not call ConsultingTypeService"));
+    policy.refresh();
+
+    assertThat(policy.freeChoiceEnabled()).isTrue();
+    assertThat(policy.freeChoiceEnabled()).isTrue();
   }
 
   private static ApplicationSettingsDTO settings(boolean enabled) {
