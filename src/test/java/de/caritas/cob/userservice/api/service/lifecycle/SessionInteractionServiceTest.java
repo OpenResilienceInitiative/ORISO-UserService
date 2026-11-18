@@ -10,6 +10,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.lifecycle.LifecycleEventPublisher.SessionInteraction;
@@ -22,6 +23,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -117,6 +120,42 @@ class SessionInteractionServiceTest {
     assertThat(announced())
         .extracting(SessionInteraction::interactionType)
         .containsExactly("message", "call", "call");
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = ConversationType.class,
+      names = {"INTERNAL_GROUP", "SELF_HELP"})
+  void groupChatsAnnounceNothing(ConversationType groupType) {
+    // Group chats have a shadow session too; session.interaction is for 1:1 sessions only.
+    var group = new Session();
+    group.setId(18L);
+    group.setTenantId(3L);
+    group.setAgencyId(4L);
+    group.setConversationType(groupType);
+    org.mockito.Mockito.when(sessionRepository.findById(18L)).thenReturn(Optional.of(group));
+
+    service.messageWritten(18L, COUNSELLOR, START);
+    service.callEnded(18L, COUNSELLOR, "call-9", true, START);
+
+    verify(publisher, never()).sessionInteraction(any());
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = ConversationType.class,
+      names = {"AGENCY_COUNSELLING", "LIVE_CHAT"})
+  void oneToOneConversationTypesAreAnnounced(ConversationType oneToOne) {
+    var session = new Session();
+    session.setId(19L);
+    session.setTenantId(3L);
+    session.setAgencyId(4L);
+    session.setConversationType(oneToOne);
+    org.mockito.Mockito.when(sessionRepository.findById(19L)).thenReturn(Optional.of(session));
+
+    service.messageWritten(19L, COUNSELLOR, START);
+
+    verify(publisher).sessionInteraction(any());
   }
 
   @Test

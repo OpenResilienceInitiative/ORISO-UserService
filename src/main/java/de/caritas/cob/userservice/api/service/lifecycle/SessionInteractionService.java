@@ -1,5 +1,7 @@
 package de.caritas.cob.userservice.api.service.lifecycle;
 
+import de.caritas.cob.userservice.api.model.ConversationType;
+import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.lifecycle.LifecycleEventPublisher.SessionInteraction;
 import java.time.Clock;
@@ -92,7 +94,7 @@ public class SessionInteractionService {
       Instant occurredAt) {
     try {
       var session = sessionRepository.findById(sessionId).orElse(null);
-      if (session == null || !claim(key, window)) {
+      if (session == null || isGroupChat(session) || !claim(key, window)) {
         return;
       }
       releaseOnRollback(key);
@@ -107,6 +109,15 @@ public class SessionInteractionService {
     } catch (Exception e) {
       log.error("Could not announce a {} interaction of session {}", type, sessionId, e);
     }
+  }
+
+  /**
+   * Group chats have a shadow session as well ({@code CreateChatFacade}), but the contract covers
+   * 1:1 sessions only.
+   */
+  private static boolean isGroupChat(Session session) {
+    return session.getConversationType() == ConversationType.INTERNAL_GROUP
+        || session.getConversationType() == ConversationType.SELF_HELP;
   }
 
   private boolean claim(String key, Duration window) {
