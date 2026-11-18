@@ -75,6 +75,11 @@ public class CalendarService {
     var now = Instant.now(clock);
     var entries = new ArrayList<>(entriesOfConsultant(me, window));
     entries.addAll(meetingsOf(me, window, false));
+    // Requests waiting for this counsellor: in their own view only, provisionally (#2287).
+    // A request whose start has come is expired, also before the sweep declines it.
+    reader.requestsOfConsultant(me, window.from(), window.to()).stream()
+        .filter(request -> request.start().isAfter(now))
+        .forEach(entries::add);
     entries.sort(BY_START);
     return entries.stream().map(entry -> own(entry, me, isMovable(entry, now))).toList();
   }
@@ -158,6 +163,9 @@ public class CalendarService {
   }
 
   private static boolean isMovable(CalendarEntry entry, Instant now) {
+    if (entry.requested()) {
+      return false; // a request is confirmed or declined, not moved
+    }
     return switch (entry.type()) {
         // An unopened direct invitation (no conversation yet) moves with its invitation (#2252).
         // An appointment with a colleague is moved by cancelling it and making a new one (#2305).
@@ -198,6 +206,7 @@ public class CalendarService {
         .sessionId(entry.sessionId())
         .seriesId(entry.seriesId())
         .allDay(allDayOf(entry))
+        .requested(entry.requested() ? Boolean.TRUE : null)
         .movable(movable);
   }
 

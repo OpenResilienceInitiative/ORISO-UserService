@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.api.model.Chat.ChatModality;
 import de.caritas.cob.userservice.api.port.out.ChatOccurrenceExceptionRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.service.chat.ChatOccurrenceProjector;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.LocalDateTime;
 import lombok.RequiredArgsConstructor;
@@ -76,15 +77,27 @@ public class GroupChatReminderService {
     }
 
     var recipients = notificationRecipientService.resolveRecipientIds(series);
-    for (var occurrence : occurrences) {
-      lifecycleNotificationService.createReminderNotifications(
-          seriesId,
-          occurrence.occurrenceIndex(),
-          occurrence.start(),
-          series.getMatrixRoomId(),
-          null,
-          occurrence.modality() == ChatModality.VIDEO,
-          recipients);
+    // FE#1211: the scheduler runs in the technical context, in which nothing stamps the new rows'
+    // tenant; a reminder kept tenant_id NULL and only tenant 1 could ever see it. Write it in the
+    // owner's tenant, as opening and cancelling do from the moderator's request.
+    Long ownerTenant = series.getChatOwner() != null ? series.getChatOwner().getTenantId() : null;
+    Runnable publish =
+        () -> {
+          for (var occurrence : occurrences) {
+            lifecycleNotificationService.createReminderNotifications(
+                seriesId,
+                occurrence.occurrenceIndex(),
+                occurrence.start(),
+                series.getMatrixRoomId(),
+                null,
+                occurrence.modality() == ChatModality.VIDEO,
+                recipients);
+          }
+        };
+    if (ownerTenant != null && ownerTenant > 0) {
+      TenantContext.runIn(ownerTenant, publish);
+    } else {
+      publish.run();
     }
   }
 }

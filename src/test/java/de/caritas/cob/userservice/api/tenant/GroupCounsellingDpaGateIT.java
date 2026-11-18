@@ -196,8 +196,10 @@ class GroupCounsellingDpaGateIT extends GroupCounsellingDpaHttpFixture {
               consultant.getId()));
     } else if (route == Route.FIRST_START) {
       assertTrue(chats.findById(addressedChat.getId()).orElseThrow().isActive());
+      // FE#1211: the opener is the only participant here and gets no notice of their own start;
+      // StartChatFacadeTest pins that everybody else is told.
       assertEquals(
-          1,
+          0,
           database.queryForObject(
               "SELECT COUNT(*) FROM event_notification WHERE deduplication_key LIKE ?",
               Integer.class,
