@@ -11,26 +11,38 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withNoContent;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory;
+import de.caritas.cob.userservice.api.config.auth.TaskPurpose;
 import de.caritas.cob.userservice.api.config.observability.DpaSignedNoticeMetrics;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.exception.SmtpSendException.Category;
 import de.caritas.cob.userservice.api.exception.SmtpSendException.DeliveryDisposition;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.DpaSignedNotice;
 import de.caritas.cob.userservice.api.model.DpaSignedNotice.NoticeRole;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.DpaSignedNoticeRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
+import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityLocaleLookup;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
+import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.notification.DpaAdminNoticeOutboxConsumer.Event;
 import de.caritas.cob.userservice.api.service.notification.DpaAdminNoticeOutboxConsumer.VerifiedSignature;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.DpaSignatureDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import java.io.IOException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -47,10 +59,16 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.web.client.RestTemplate;
 
 @DataJpaTest
 @ActiveProfiles("testing")
@@ -178,26 +196,78 @@ class DpaSignedNoticeRecoveryPersistenceIT {
   }
 
   @Test
-  void aLostAcknowledgementCanBeRetriedAgainstTheSameCommittedEvent() {
+  void typedAcknowledgementRunsAfterCommitAndCanBeRetriedAfterALostResponse() {
     var mail = mock(InviteMailDispatchService.class);
-    var firstService = service(mail, false);
-    var failedAck =
-        new DpaAdminNoticeOutboxConsumer(
-            firstService,
-            this::readExact,
-            event -> {
-              assertThat(notices.findByAdminSourceEventId(event.id())).isPresent();
-              throw new IllegalStateException("simulated lost acknowledgement");
+    var http = new RestTemplate();
+    var server = MockRestServiceServer.bindTo(http).build();
+    var identity = mock(IdentityClientConfig.class);
+    when(identity.isFiveActorMode()).thenReturn(true);
+    when(identity.taskAccessToken(TaskPurpose.NOTIFICATION_DISPATCH))
+        .thenReturn("synthetic-task-token");
+    var headers = new SecurityHeaderSupplier(new AuthenticatedUser());
+    ReflectionTestUtils.setField(headers, "csrfHeaderProperty", "csrfHeader");
+    ReflectionTestUtils.setField(headers, "csrfCookieProperty", "csrfCookie");
+    var client =
+        new TenantDpaSignatureReadClient(
+            headers,
+            mock(IdentityAuthentication.class),
+            identity,
+            mock(TenantAdminServiceApiControllerFactory.class),
+            http);
+    ReflectionTestUtils.setField(client, "tenantServiceApiUrl", "https://tenant.example.test");
+    ReflectionTestUtils.setField(client, "outboxReadEnabled", true);
+    String exactUrl = "https://tenant.example.test/internal/dpa-admin-notice-outbox/" + EVENT.id();
+    String proof =
+        """
+        {"id":%d,"tenantId":%d,"signedAtEpochMillis":%d,"dpaVersion":"%s",
+         "signedAt":"%s","forwardedByUserId":"forwarder","signerName":"Signer"}
+        """
+            .formatted(
+                EVENT.id(), EVENT.tenantId(), EVENT.signedAtEpochMillis(), VERSION, SIGNED_AT);
+    String body = "{\"signedAtEpochMillis\":" + EVENT.signedAtEpochMillis() + "}";
+    server
+        .expect(requestTo(exactUrl))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(withSuccess(proof, MediaType.APPLICATION_JSON));
+    server
+        .expect(requestTo(exactUrl + "/acknowledgements"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(content().string(body))
+        .andRespond(
+            request -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              assertThat(
+                      notices
+                          .findByAdminSourceEventId(EVENT.id())
+                          .orElseThrow()
+                          .getRecipientEmail())
+                  .isEqualTo(RECIPIENT);
+              throw new IOException("synthetic lost response");
             });
-    assertThatThrownBy(() -> failedAck.accept(EVENT)).isInstanceOf(IllegalStateException.class);
+    server
+        .expect(requestTo(exactUrl))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(withSuccess(proof, MediaType.APPLICATION_JSON));
+    server
+        .expect(requestTo(exactUrl + "/acknowledgements"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(content().string(body))
+        .andRespond(withNoContent());
+    server
+        .expect(requestTo(exactUrl))
+        .andExpect(method(HttpMethod.GET))
+        .andRespond(withSuccess(proof, MediaType.APPLICATION_JSON));
 
-    var acknowledged = new java.util.ArrayList<Event>();
-    var newWorker =
-        new DpaAdminNoticeOutboxConsumer(service(mail, false), this::readExact, acknowledged::add);
+    var failedAck = new DpaAdminNoticeOutboxConsumer(service(mail, false), client);
+    assertThatThrownBy(() -> failedAck.accept(EVENT)).isInstanceOf(IllegalStateException.class);
+    var newWorker = new DpaAdminNoticeOutboxConsumer(service(mail, false), client);
     assertThat(newWorker.accept(EVENT)).isTrue();
-    assertThat(acknowledged).containsExactly(EVENT);
-    assertThat(notices.findByAdminSourceEventId(EVENT.id()).orElseThrow().getRecipientEmail())
-        .isEqualTo(RECIPIENT);
+    var claim = notices.findByAdminSourceEventId(EVENT.id()).orElseThrow();
+    claim.setAdminNextAttemptAt(null);
+    notices.saveAndFlush(claim);
+    assertThat(newWorker.accept(EVENT)).isFalse();
+    assertThat(notices.findByAdminSourceEventId(EVENT.id())).isPresent();
+    server.verify();
     verifyNoInteractions(mail);
   }
 

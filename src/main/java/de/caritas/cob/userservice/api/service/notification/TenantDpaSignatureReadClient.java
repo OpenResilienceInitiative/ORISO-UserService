@@ -20,6 +20,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClientException;
@@ -142,9 +143,29 @@ public class TenantDpaSignatureReadClient {
                 .signerPosition(exact.signerPosition())));
   }
 
+  /** Called by the exact consumer after the durable receipt has committed. */
+  void acknowledge(Event event) {
+    if (!valid(event)) {
+      throw new IllegalArgumentException("Invalid DPA outbox event");
+    }
+    var headers = outboxRequest().getHeaders();
+    var url =
+        outboxUri().pathSegment(Long.toString(event.id()), "acknowledgements").build().toUri();
+    var request = new HttpEntity<>(new Acknowledgement(event.signedAtEpochMillis()), headers);
+    try {
+      if (restTemplate.exchange(url, HttpMethod.POST, request, Void.class).getStatusCode()
+          == HttpStatus.NO_CONTENT) {
+        return;
+      }
+    } catch (RestClientException failure) {
+      throw new IllegalStateException("TenantService DPA acknowledgement is unavailable");
+    }
+    throw new IllegalStateException("TenantService did not confirm the exact DPA acknowledgement");
+  }
+
   private HttpEntity<Void> outboxRequest() {
     if (!outboxReadEnabled || !identityClientConfig.isFiveActorMode()) {
-      throw new IllegalStateException("Signed DPA outbox reads are disabled");
+      throw new IllegalStateException("Signed DPA outbox transport is disabled");
     }
     String token = identityClientConfig.taskAccessToken(TaskPurpose.NOTIFICATION_DISPATCH);
     if (token == null || token.isBlank()) {
@@ -166,6 +187,8 @@ public class TenantDpaSignatureReadClient {
   }
 
   record PendingPage(List<Event> events, Long nextAfterId) {}
+
+  private record Acknowledgement(long signedAtEpochMillis) {}
 
   private record ExactSignature(
       long id,
