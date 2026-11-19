@@ -124,12 +124,18 @@ public class AgencySilentMembershipService {
     int joined = 0;
     long retryAfterMs = 0;
     List<Consultant> deferred = new ArrayList<>();
+    List<InitialRoomContact> contacts = new ArrayList<>();
     for (Consultant consultant : consultants) {
       if (retryAfterMs > 0 || System.nanoTime() - deadline >= 0) {
         deferred.add(consultant);
         continue;
       }
       var attempt = joinIntoRoom(consultant, roomId, agencyToken, false);
+      // An invite or join failure can be ambiguous. Keep the exact actor for the binding check,
+      // except when Synapse explicitly refused the invite with a rate limit.
+      if (!attempt.rateLimited() && !isBlank(consultant.getMatrixUserId())) {
+        contacts.add(new InitialRoomContact(consultant.getId(), consultant.getMatrixUserId()));
+      }
       if (attempt.joined()) {
         joined++;
       } else {
@@ -145,7 +151,7 @@ public class AgencySilentMembershipService {
         agencyId,
         roomId,
         deferred.size());
-    return new DepartmentFanOut(joined, List.copyOf(deferred), retryAfterMs);
+    return new DepartmentFanOut(joined, List.copyOf(deferred), retryAfterMs, List.copyOf(contacts));
   }
 
   /**
@@ -293,7 +299,10 @@ public class AgencySilentMembershipService {
    * Result of the in-request department pass: counsellors still to be joined, and the server's
    * retry delay when a rate limit ended the pass ({@code 0} otherwise).
    */
-  public record DepartmentFanOut(int joined, List<Consultant> deferred, long retryAfterMs) {
-    static final DepartmentFanOut NONE = new DepartmentFanOut(0, List.of(), 0);
+  public record DepartmentFanOut(
+      int joined, List<Consultant> deferred, long retryAfterMs, List<InitialRoomContact> contacts) {
+    static final DepartmentFanOut NONE = new DepartmentFanOut(0, List.of(), 0, List.of());
   }
+
+  public record InitialRoomContact(String consultantId, String matrixUserId) {}
 }
