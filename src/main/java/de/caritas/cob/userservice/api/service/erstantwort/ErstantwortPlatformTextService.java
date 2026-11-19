@@ -71,8 +71,10 @@ public class ErstantwortPlatformTextService {
 
   /**
    * Plain texts for one reader, keyed by Baustein id. Only the reader's own language counts: a
-   * missing translation means the built-in default in that language, never another language's text.
-   * Never throws — the platform level must not cost anyone their enquiry.
+   * missing translation means the built-in default in that language, never another language's text
+   * — except informal German, which falls back to the platform's German text: it is the same
+   * language, and the admin's wording must not vanish for every Träger that says "du". Never throws
+   * — the platform level must not cost anyone their enquiry.
    */
   public Map<String, String> resolvePlatformTexts(String locale, boolean informal) {
     var key = ErstantwortTranslations.validLocale(locale);
@@ -81,7 +83,11 @@ public class ErstantwortPlatformTextService {
     try {
       var result = new LinkedHashMap<String, String>();
       for (var row : platformRows()) {
-        var plain = ErstantwortTenantTextResolver.toPlainText(row.textsAsMap().get(key));
+        var texts = row.textsAsMap();
+        var plain = ErstantwortTenantTextResolver.toPlainText(texts.get(key));
+        if (plain.isEmpty() && key.equals("de@informal")) {
+          plain = ErstantwortTenantTextResolver.toPlainText(texts.get("de"));
+        }
         if (!plain.isEmpty()) result.put(row.getBaustein(), plain);
       }
       return result;

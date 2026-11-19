@@ -17,8 +17,10 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.erstantwort.ErstantwortPlatformTextService;
 import jakarta.servlet.http.Cookie;
 import java.util.Map;
@@ -49,10 +51,20 @@ class ErstantwortAgencyTextsControllerAuthorizationIT {
   @Autowired private MockMvc mvc;
   @MockitoBean private ErstantwortPlatformTextService service;
   @MockitoBean private AdminScope adminScope;
+  @MockitoBean private AgencyService agencyService;
 
   @BeforeEach
   void stub() {
     when(service.readAgencyTexts(5L)).thenReturn(Map.of("greeting", Map.of("de", "<p>Hallo</p>")));
+    when(agencyService.getAgency(5L)).thenReturn(new AgencyDTO());
+  }
+
+  @Test
+  void textsOfACentreThatDoesNotExistAreNotStored() throws Exception {
+    when(agencyService.getAgency(5L)).thenReturn(null);
+    var token = jwt().authorities(new SimpleGrantedAuthority(RESTRICTED_AGENCY_ADMIN));
+    mvc.perform(update().with(token)).andExpect(status().isNotFound());
+    verify(service, never()).replaceAgencyTexts(anyLong(), anyMap(), any());
   }
 
   @Test

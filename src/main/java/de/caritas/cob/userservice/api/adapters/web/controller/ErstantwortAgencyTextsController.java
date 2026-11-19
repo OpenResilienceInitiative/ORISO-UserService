@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
+import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.erstantwort.ErstantwortPlatformTextService;
 import java.util.List;
 import java.util.Map;
@@ -34,6 +35,7 @@ public class ErstantwortAgencyTextsController {
 
   private final @NonNull ErstantwortPlatformTextService service;
   private final @NonNull AdminScope adminScope;
+  private final @NonNull AgencyService agencyService;
 
   public record AgencyTexts(Map<String, Map<String, String>> texts) {}
 
@@ -51,6 +53,10 @@ public class ErstantwortAgencyTextsController {
     adminScope.assertMay(Target.agencies(List.of(agencyId)));
     if (request == null || request.texts() == null) {
       throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "texts missing");
+    }
+    // Texts of a centre that does not exist would be stored for nobody.
+    if (agencyService.getAgency(agencyId) == null) {
+      throw new ResponseStatusException(HttpStatus.NOT_FOUND);
     }
     try {
       service.replaceAgencyTexts(agencyId, request.texts(), jwt == null ? null : jwt.getSubject());

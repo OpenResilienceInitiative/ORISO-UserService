@@ -66,7 +66,15 @@ class ErstantwortPlatformTextServiceTest {
         .thenReturn(List.of(row("greeting", Map.of("de", "Hallo"))));
 
     assertThat(service.resolvePlatformTexts("fr", false)).isEmpty();
-    assertThat(service.resolvePlatformTexts("de", true)).isEmpty();
+  }
+
+  /** Informal German is the same language: the admin's German text applies to "du" Träger too. */
+  @Test
+  void informalGermanFallsBackToThePlatformsGermanText() {
+    when(repository.findByScopeAndScopeId(ErstantwortTextOverride.PLATFORM, 0L))
+        .thenReturn(List.of(row("greeting", Map.of("de", "Hallo"))));
+
+    assertThat(service.resolvePlatformTexts("de", true)).containsEntry("greeting", "Hallo");
   }
 
   @Test
