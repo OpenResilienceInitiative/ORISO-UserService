@@ -21,6 +21,8 @@ import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -91,8 +93,10 @@ class AgencyAdminDataProviderTest {
     verify(agencyService, never()).getAgencies(anyList());
   }
 
-  @Test
-  void retrieveData_Should_DegradeToEmptyAgencies_When_AgencyServiceAnswersWithError() {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void retrieveData_Should_DegradeToEmptyAgencies_When_AgencyServiceAnswersWithError(
+      boolean withBody) {
     when(adminAgencyRepository.findByAdminId(ADMIN_ID))
         .thenReturn(List.of(AdminAgency.builder().agencyId(3L).build()));
     when(agencyService.getAgencies(List.of(3L)))
@@ -101,7 +105,7 @@ class AgencyAdminDataProviderTest {
                 HttpStatus.SERVICE_UNAVAILABLE,
                 "unavailable",
                 null,
-                PRIVATE_DIAGNOSTIC.getBytes(StandardCharsets.UTF_8),
+                withBody ? PRIVATE_DIAGNOSTIC.getBytes(StandardCharsets.UTF_8) : null,
                 StandardCharsets.UTF_8));
 
     try (var logs = LogbackCaptor.forClass(AgencyAdminDataProvider.class)) {
@@ -109,7 +113,12 @@ class AgencyAdminDataProviderTest {
       assertThat(logs.messages(Level.WARN))
           .singleElement()
           .satisfies(
-              message -> assertThat(message).contains("503").doesNotContain(PRIVATE_DIAGNOSTIC));
+              message ->
+                  assertThat(message).contains("503").doesNotContain(PRIVATE_DIAGNOSTIC, ADMIN_ID));
+      assertThat(logs.events())
+          .singleElement()
+          .extracting(ILoggingEvent::getThrowableProxy)
+          .isNull();
     }
   }
 

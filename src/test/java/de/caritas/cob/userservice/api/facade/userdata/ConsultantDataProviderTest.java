@@ -33,6 +33,8 @@ import java.util.stream.Collectors;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
@@ -153,15 +155,17 @@ public class ConsultantDataProviderTest {
     assertEquals(AGENCY_DTO_SUCHT, result.get(0));
   }
 
-  @Test
-  public void retrieveData_Should_ReturnMinimalProfile_When_AgencyServiceReturnsServerError() {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  public void retrieveData_Should_ReturnMinimalProfile_When_AgencyServiceReturnsServerError(
+      boolean withBody) {
     when(agencyService.getAgencies(any()))
         .thenThrow(
             HttpServerErrorException.create(
                 HttpStatus.INTERNAL_SERVER_ERROR,
                 "server error",
                 null,
-                PRIVATE_DIAGNOSTIC.getBytes(StandardCharsets.UTF_8),
+                withBody ? PRIVATE_DIAGNOSTIC.getBytes(StandardCharsets.UTF_8) : null,
                 StandardCharsets.UTF_8));
 
     try (var logs = LogbackCaptor.forClass(ConsultantDataProvider.class)) {
@@ -175,6 +179,8 @@ public class ConsultantDataProviderTest {
       var message = logs.messages(Level.WARN).getFirst();
       assertTrue(message.contains("500"));
       assertFalse(message.contains(PRIVATE_DIAGNOSTIC));
+      assertFalse(message.contains(CONSULTANT_WITH_AGENCY.getId()));
+      assertNull(logs.events().getFirst().getThrowableProxy());
     }
   }
 

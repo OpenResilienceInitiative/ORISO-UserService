@@ -18,6 +18,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDataResponseDTO;
@@ -43,6 +44,8 @@ import java.util.stream.IntStream;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
@@ -168,8 +171,10 @@ class AskerDataProviderTest {
     assertEquals(AGENCY_DTO_KREUZBUND, agency);
   }
 
-  @Test
-  void retrieveData_Should_ReturnUserDataWithoutAgency_When_AgencyServiceReturnsNotFound() {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void retrieveData_Should_ReturnUserDataWithoutAgency_When_AgencyServiceReturnsNotFound(
+      boolean withBody) {
     String privateDiagnostic = "synthetic-private-diagnostic";
     givenAnEmailDummySuffixConfig();
     when(authenticatedUser.getRoles()).thenReturn(asSet(UserRole.USER.getValue()));
@@ -179,7 +184,7 @@ class AskerDataProviderTest {
                 HttpStatus.NOT_FOUND,
                 "not found",
                 null,
-                privateDiagnostic.getBytes(StandardCharsets.UTF_8),
+                withBody ? privateDiagnostic.getBytes(StandardCharsets.UTF_8) : null,
                 StandardCharsets.UTF_8));
     when(consultingTypeManager.getAllConsultingTypeIds())
         .thenReturn(IntStream.range(0, 22).boxed().collect(Collectors.toList()));
@@ -198,7 +203,14 @@ class AskerDataProviderTest {
       assertThat(logs.messages(Level.WARN))
           .singleElement()
           .satisfies(
-              message -> assertThat(message).contains("404").doesNotContain(privateDiagnostic));
+              message ->
+                  assertThat(message)
+                      .contains("404")
+                      .doesNotContain(privateDiagnostic, USER.getUserId()));
+      assertThat(logs.events())
+          .singleElement()
+          .extracting(ILoggingEvent::getThrowableProxy)
+          .isNull();
     }
   }
 
