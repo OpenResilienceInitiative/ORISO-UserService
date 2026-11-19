@@ -13,6 +13,11 @@ final class DpaAdminNoticeOutboxConsumer {
   private final Consumer<Event> acknowledge;
 
   DpaAdminNoticeOutboxConsumer(
+      DpaSignedNoticeService notices, TenantDpaSignatureReadClient client) {
+    this(notices, client::readExact, client::acknowledge);
+  }
+
+  DpaAdminNoticeOutboxConsumer(
       DpaSignedNoticeService notices,
       Function<Event, Optional<VerifiedSignature>> readExact,
       Consumer<Event> acknowledge) {

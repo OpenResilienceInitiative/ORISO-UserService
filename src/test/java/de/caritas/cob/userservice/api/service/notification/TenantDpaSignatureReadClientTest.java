@@ -6,8 +6,10 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withNoContent;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withResourceNotFound;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
@@ -115,11 +117,38 @@ class TenantDpaSignatureReadClientTest {
   void dormantByDefaultAndRefusesLegacyCredentialsEvenWhenEnabled() {
     assertThatThrownBy(() -> client.readPending(0L, 50)).isInstanceOf(IllegalStateException.class);
     assertThatThrownBy(() -> client.readExact(EVENT)).isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> client.acknowledge(EVENT)).isInstanceOf(IllegalStateException.class);
     enable();
     environment.setProperty("TASK_IDENTITY_MODEL", "LEGACY");
     assertThatThrownBy(() -> client.readPending(0L, 50)).isInstanceOf(IllegalStateException.class);
     assertThatThrownBy(() -> client.readExact(EVENT)).isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> client.acknowledge(EVENT)).isInstanceOf(IllegalStateException.class);
     verifyNoInteractions(bindings, taskLogin, legacyLogin);
+    server.verify();
+  }
+
+  @Test
+  void sendsOnlyTheExactAcknowledgementAndRequiresTheDedicatedNoContentResult() {
+    enable();
+    String url = OUTBOX + "/1704/acknowledgements";
+    String body = "{\"signedAtEpochMillis\":" + EVENT.signedAtEpochMillis() + "}";
+    server
+        .expect(requestTo(url))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(content().string(body))
+        .andExpect(request -> assertTaskBearer(request.getHeaders()))
+        .andRespond(withStatus(HttpStatus.ACCEPTED));
+    server
+        .expect(requestTo(url))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(content().string(body))
+        .andExpect(request -> assertTaskBearer(request.getHeaders()))
+        .andRespond(withNoContent());
+    assertThatThrownBy(() -> client.acknowledge(EVENT))
+        .isInstanceOf(IllegalStateException.class)
+        .hasNoCause();
+    client.acknowledge(EVENT);
+    verifyNoInteractions(legacyLogin);
     server.verify();
   }
 
@@ -219,19 +248,19 @@ class TenantDpaSignatureReadClientTest {
     server
         .expect(requestTo(url))
         .andExpect(method(HttpMethod.GET))
-        .andExpect(
-            request -> {
-              var authorization = request.getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
-              assertThat(authorization).startsWith("Bearer ");
-              var jwt = receiver.decode(authorization.substring("Bearer ".length()));
-              assertThat(jwt.getSubject()).isEqualTo(SUBJECT);
-              assertThat(jwt.getClaimAsString("azp")).isEqualTo(CLIENT);
-              assertThat(jwt.getAudience()).contains("tenantservice");
-              assertThat(jwt.getClaimAsMap("realm_access")).containsKey("roles");
-              verify(bindings, org.mockito.Mockito.atLeastOnce())
-                  .require(TaskPurpose.NOTIFICATION_DISPATCH);
-            })
+        .andExpect(request -> assertTaskBearer(request.getHeaders()))
         .andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
+  }
+
+  private void assertTaskBearer(HttpHeaders headers) {
+    var authorization = headers.getFirst(HttpHeaders.AUTHORIZATION);
+    assertThat(authorization).startsWith("Bearer ");
+    var jwt = receiver.decode(authorization.substring("Bearer ".length()));
+    assertThat(jwt.getSubject()).isEqualTo(SUBJECT);
+    assertThat(jwt.getClaimAsString("azp")).isEqualTo(CLIENT);
+    assertThat(jwt.getAudience()).contains("tenantservice");
+    assertThat(jwt.getClaimAsMap("realm_access")).containsKey("roles");
+    verify(bindings, org.mockito.Mockito.atLeastOnce()).require(TaskPurpose.NOTIFICATION_DISPATCH);
   }
 
   private static String audit(long id, long tenantId, long signingEpoch) {
