@@ -123,4 +123,16 @@ class JourneyRulesTest {
     assertThat(JourneyRules.slugOf("Über 25 – Sucht")).isEqualTo("ueber-25-sucht");
     assertThat(JourneyRules.slugOf("")).isEqualTo("link");
   }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void registrationTopicsAreTopicIds() {
+    var journey = JourneyFixtures.mail("j1");
+    ((Map<String, Object>) journey.get("routes"))
+        .put("registration", new java.util.ArrayList<>(List.of("1")));
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> JourneyRules.checkJourney("j1", journey))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("topic ids");
+  }
 }

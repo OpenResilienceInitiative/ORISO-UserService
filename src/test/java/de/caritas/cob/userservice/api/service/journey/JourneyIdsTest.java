@@ -61,4 +61,15 @@ class JourneyIdsTest {
     var ids = JourneyRules.stepIds(Map.of("phases", phases));
     assertThat(ids).singleElement().satisfies(id -> assertThat(id).matches("step-[0-9a-z]{12}"));
   }
+
+  @Test
+  void refusesAReferenceToADraftIdThatNothingHas() {
+    var journey = mail("j1");
+    var asked = step("s1", "question", null);
+    asked.put("prototypeId", "new:question-9");
+    phase(journey, "flight").add(asked);
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> JourneyIds.issueAll(journey, new HashSet<>()))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
 }

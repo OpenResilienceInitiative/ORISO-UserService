@@ -61,7 +61,32 @@ public final class JourneyIds {
     if (!issued.isEmpty()) {
       replace(body, issued);
     }
+    if (refersToDraft(body)) {
+      throw new IllegalArgumentException("a reference names a draft id that nothing has");
+    }
     return issued;
+  }
+
+  /** Whether an id field still names a draft: a reference to something that is not there. */
+  private static boolean refersToDraft(Object node) {
+    if (node instanceof Map<?, ?> map) {
+      for (var entry : map.entrySet()) {
+        var key = String.valueOf(entry.getKey());
+        var value = entry.getValue();
+        if (namesId(key)
+            && (value instanceof String text && isDraft(text)
+                || value instanceof List<?> ids
+                    && ids.stream().anyMatch(id -> id instanceof String text && isDraft(text)))) {
+          return true;
+        }
+        if (refersToDraft(value)) {
+          return true;
+        }
+      }
+    } else if (node instanceof List<?> list) {
+      return list.stream().anyMatch(JourneyIds::refersToDraft);
+    }
+    return false;
   }
 
   private static void collect(Object node, Map<String, String> issued, Set<String> taken) {

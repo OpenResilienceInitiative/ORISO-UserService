@@ -17,7 +17,6 @@ import java.util.NoSuchElementException;
 import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -41,6 +40,7 @@ public class JourneyService {
       new TypeReference<>() {};
 
   private final @NonNull JourneyRecordRepository repository;
+  private final @NonNull JourneyLockRow lockRow;
 
   /** A stored journey or layer with the version a writer has to send back. */
   public record Stored(String journeyId, long version, Map<String, Object> body) {}
@@ -172,27 +172,17 @@ public class JourneyService {
 
   /**
    * Waits for and takes the journeys' write lock until the transaction ends. The lock row is made
-   * by the changeset; where it is missing (a database built without Liquibase) it is made here, and
-   * a concurrent writer making it as well only means locking the row it made.
+   * by the changeset; where it is missing it is made in a transaction of its own (JourneyLockRow).
    */
   private void lockJourneys() {
     if (repository
         .lockRow(JourneyRecord.LOCK, PLATFORM_SCOPE_ID, JourneyRecord.LOCK_ID)
-        .isPresent()) {
-      return;
+        .isEmpty()) {
+      lockRow.ensure();
+      repository
+          .lockRow(JourneyRecord.LOCK, PLATFORM_SCOPE_ID, JourneyRecord.LOCK_ID)
+          .orElseThrow(() -> new IllegalStateException("journey lock row missing"));
     }
-    try {
-      var row = new JourneyRecord();
-      row.setScope(JourneyRecord.LOCK);
-      row.setScopeId(PLATFORM_SCOPE_ID);
-      row.setJourneyId(JourneyRecord.LOCK_ID);
-      row.setConversationType("-");
-      row.setBody("{}");
-      repository.saveAndFlush(row);
-    } catch (DataIntegrityViolationException alreadyMade) {
-      // Someone else made it first; locking it below waits for them.
-    }
-    repository.lockRow(JourneyRecord.LOCK, PLATFORM_SCOPE_ID, JourneyRecord.LOCK_ID);
   }
 
   /**

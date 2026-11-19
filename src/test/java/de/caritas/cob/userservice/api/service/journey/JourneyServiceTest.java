@@ -34,6 +34,7 @@ class JourneyServiceTest {
   private static final ObjectMapper MAPPER = new ObjectMapper();
 
   @Mock private JourneyRecordRepository repository;
+  @Mock private JourneyLockRow lockRow;
   @InjectMocks private JourneyService service;
 
   @BeforeEach
@@ -203,15 +204,12 @@ class JourneyServiceTest {
   }
 
   @Test
-  void makesTheLockRowWhereTheDatabaseHasNone() {
-    when(repository.lockRow(any(), any(), any())).thenReturn(Optional.empty());
+  void makesTheLockRowInItsOwnTransactionWhereTheDatabaseHasNone() {
+    when(repository.lockRow(any(), any(), any()))
+        .thenReturn(Optional.empty())
+        .thenReturn(Optional.of(new JourneyRecord()));
     service.savePlatformJourney("j1", 0, mail("j1"), "admin");
-    verify(repository)
-        .saveAndFlush(
-            org.mockito.ArgumentMatchers.argThat(
-                row ->
-                    JourneyRecord.LOCK.equals(row.getScope())
-                        && JourneyRecord.LOCK_ID.equals(row.getJourneyId())));
+    verify(lockRow).ensure();
     verify(repository, org.mockito.Mockito.times(2))
         .lockRow(JourneyRecord.LOCK, 0L, JourneyRecord.LOCK_ID);
   }

@@ -44,9 +44,11 @@ class PublicJourneysControllerIT {
   }
 
   @Test
-  void noStoredJourneyIsNotFoundSoTheFormOfTodayStays() throws Exception {
+  void noStoredJourneyIsAnEmptyAnswerSoTheFormOfTodayStays() throws Exception {
     when(service.forRegistration(anyLong(), any())).thenReturn(Optional.empty());
-    mvc.perform(get(BASE + "/registration").param("topicId", "5")).andExpect(status().isNotFound());
+    mvc.perform(get(BASE + "/registration").param("topicId", "5"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.journey").doesNotExist());
   }
 
   @Test

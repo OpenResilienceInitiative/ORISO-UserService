@@ -14,6 +14,7 @@ import java.util.NoSuchElementException;
 import java.util.Objects;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -43,6 +44,7 @@ import org.springframework.web.bind.annotation.RestController;
  * Every write carries the version the writer read ({@code 0} for something new); another version is
  * answered with 409 and the current version.
  */
+@Slf4j
 @RestController
 @RequiredArgsConstructor
 @RequestMapping({"/useradmin/journeys", "/service/useradmin/journeys"})
@@ -120,10 +122,11 @@ public class JourneysController {
     return ResponseEntity.badRequest().body(Map.of("error", String.valueOf(invalid.getMessage())));
   }
 
+  /** No body: what is missing goes to the log, not to the caller (docs/api-error-contract.md). */
   @ExceptionHandler(NoSuchElementException.class)
-  public ResponseEntity<Map<String, String>> missing(NoSuchElementException missing) {
-    return ResponseEntity.status(HttpStatus.NOT_FOUND)
-        .body(Map.of("error", String.valueOf(missing.getMessage())));
+  public ResponseEntity<Void> missing(NoSuchElementException missing) {
+    log.info("Journey not found: {}", missing.getMessage());
+    return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
   }
 
   @ExceptionHandler(JourneyConflictException.class)

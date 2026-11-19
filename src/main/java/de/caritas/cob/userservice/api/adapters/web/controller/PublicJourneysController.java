@@ -16,8 +16,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * The journey an advice seeker runs, read without a login (ADR-036 part E, ORISO-Frontend#2333).
- * 404 means no journey is stored for this way in: the registration keeps its form of today.
+ * The journey an advice seeker runs, read without a login (ADR-036 part E, ORISO-Frontend#2333). No
+ * journey stored for this way in is an expected empty state: 200 with empty fields, and the
+ * registration keeps its form of today. An unknown or offline centre is 404.
  */
 @RestController
 @RequiredArgsConstructor
@@ -47,11 +48,12 @@ public class PublicJourneysController {
     return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
   }
 
+  private static final PublicJourney NONE = new PublicJourney(null, null, null);
+
   private static ResponseEntity<PublicJourney> answer(PublicJourney journey) {
-    if (journey == null) {
-      return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
-    }
-    // Browsers ask again each time; the service itself shares one parse for half a minute.
-    return ResponseEntity.ok().cacheControl(CacheControl.noCache()).body(journey);
+    // Browsers ask again each time, so a saved change shows on the next registration.
+    return ResponseEntity.ok()
+        .cacheControl(CacheControl.noCache())
+        .body(journey == null ? NONE : journey);
   }
 }

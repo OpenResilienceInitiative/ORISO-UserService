@@ -63,6 +63,12 @@ public final class JourneyRules {
     var routes = asMap(journey.get("routes"), "routes");
     var registration = list(routes.get("registration"), "routes.registration");
     require(
+        registration.stream()
+            .allMatch(
+                id ->
+                    (id instanceof Integer || id instanceof Long) && ((Number) id).longValue() > 0),
+        "registration topics must be topic ids");
+    require(
         registration.isEmpty() || "AGENCY_COUNSELLING".equals(type),
         "only Mailberatung has a registration route");
     var linkIds = new HashSet<String>();
