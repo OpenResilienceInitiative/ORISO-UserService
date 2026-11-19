@@ -60,18 +60,19 @@ class AgencyDepartmentMembershipBackfillTest {
   void setUp() {
     underTest =
         new AgencyDepartmentMembershipBackfill(
-            membership,
+            new AgencyOpenEnquiryMembership(
+                consultantRepository, consultantAgencyRepository, sessionRepository, membership),
             sessionRoomGateway,
             pause,
-            executor,
-            consultantRepository,
-            consultantAgencyRepository,
-            sessionRepository);
+            executor);
     openEnquiry = new Session();
     openEnquiry.setId(SESSION_ID);
+    openEnquiry.setAgencyId(AGENCY_ID);
     openEnquiry.setStatus(SessionStatus.INITIAL);
     openEnquiry.setMatrixRoomId(ROOM_ID);
-    lenient().when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(openEnquiry));
+    lenient()
+        .when(sessionRepository.findByIdForUpdate(SESSION_ID))
+        .thenReturn(Optional.of(openEnquiry));
     lenient()
         .when(
             consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
@@ -85,7 +86,7 @@ class AgencyDepartmentMembershipBackfillTest {
     consultant.setId(id);
     consultant.setMatrixUserId("@" + id + ":example.org");
     lenient()
-        .when(consultantRepository.findByIdAndDeleteDateIsNull(id))
+        .when(consultantRepository.findActiveByIdForUpdate(id))
         .thenReturn(Optional.of(consultant));
     return consultant;
   }
@@ -213,6 +214,7 @@ class AgencyDepartmentMembershipBackfillTest {
   @Test
   @DisplayName("a counsellor detached from the agency while queued is never joined")
   void backfill_skipsConsultantNoLongerInAgency() {
+    when(sessionRoomGateway.loginAsUser(AGENCY_MATRIX_ID)).thenReturn(AGENCY_TOKEN);
     var detached = consultant("detached");
     when(consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
             "detached", AGENCY_ID))
@@ -226,9 +228,10 @@ class AgencyDepartmentMembershipBackfillTest {
   @Test
   @DisplayName("a deleted counsellor is never joined")
   void backfill_skipsDeletedConsultant() {
+    when(sessionRoomGateway.loginAsUser(AGENCY_MATRIX_ID)).thenReturn(AGENCY_TOKEN);
     var deleted = new Consultant();
     deleted.setId("deleted");
-    when(consultantRepository.findByIdAndDeleteDateIsNull("deleted")).thenReturn(Optional.empty());
+    when(consultantRepository.findActiveByIdForUpdate("deleted")).thenReturn(Optional.empty());
 
     assertEquals(
         0, underTest.backfill(AGENCY_ID, SESSION_ID, ROOM_ID, AGENCY_MATRIX_ID, List.of(deleted)));
@@ -238,6 +241,7 @@ class AgencyDepartmentMembershipBackfillTest {
   @Test
   @DisplayName("once the enquiry is accepted, the department backfill stops")
   void backfill_stopsWhenEnquiryWasAccepted() {
+    when(sessionRoomGateway.loginAsUser(AGENCY_MATRIX_ID)).thenReturn(AGENCY_TOKEN);
     var queued = consultant("a");
     openEnquiry.setStatus(SessionStatus.IN_PROGRESS);
     openEnquiry.setConsultant(new Consultant());
@@ -248,23 +252,26 @@ class AgencyDepartmentMembershipBackfillTest {
   }
 
   @Test
-  @DisplayName("entitlement lost during the join is revoked again right away")
-  void backfill_revokesWhenEntitlementEndsDuringJoin() {
+  void queuedBackfillRechecksAssignmentAfterWaitingForRateLimit() {
     var consultant = consultant("a");
     when(consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
             "a", AGENCY_ID))
-        .thenReturn(true)
-        .thenReturn(false);
+        .thenReturn(true, false);
     when(sessionRoomGateway.loginAsUser(AGENCY_MATRIX_ID)).thenReturn(AGENCY_TOKEN);
     when(membership.tryJoinConsultantIntoRoom(consultant, ROOM_ID, AGENCY_TOKEN))
-        .thenReturn(JoinAttempt.JOINED);
-    when(sessionRoomGateway.removeUserFromRoom(ROOM_ID, "@a:example.org", AGENCY_TOKEN))
-        .thenReturn(true);
+        .thenReturn(JoinAttempt.rateLimited(1000));
+    when(pause.pause(1000)).thenReturn(true);
 
     assertEquals(
         0,
         underTest.backfill(AGENCY_ID, SESSION_ID, ROOM_ID, AGENCY_MATRIX_ID, List.of(consultant)));
-    verify(sessionRoomGateway).removeUserFromRoom(ROOM_ID, "@a:example.org", AGENCY_TOKEN);
+    var ordered = inOrder(consultantRepository, sessionRepository, membership, pause);
+    ordered.verify(consultantRepository).findActiveByIdForUpdate("a");
+    ordered.verify(sessionRepository).findByIdForUpdate(SESSION_ID);
+    ordered.verify(membership).tryJoinConsultantIntoRoom(consultant, ROOM_ID, AGENCY_TOKEN);
+    ordered.verify(pause).pause(1000);
+    ordered.verify(consultantRepository).findActiveByIdForUpdate("a");
+    verify(membership, times(1)).tryJoinConsultantIntoRoom(consultant, ROOM_ID, AGENCY_TOKEN);
   }
 
   @Test

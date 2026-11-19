@@ -302,5 +302,7 @@
   <include file="db/changelog/changeset/20261117_calendar_consultation_hours_2287/changeSet.xml"/>
   <include file="db/changelog/changeset/20261117_session_appointment_request_expiry_2287/changeSet.xml"/>
   <include file="db/changelog/changeset/20261117_deleted_asker_session_archive/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261118_agency_enquiry_revocation_1692/changeSet.xml"/>
+  <include file="db/changelog/changeset/20261118_agency_enquiry_room_retirement_1692/changeSet.xml"/>
   <include file="db/changelog/changeset/20261119_dpa_admin_notice_recovery_1704/changeSet.xml"/>
 </databaseChangeLog>
