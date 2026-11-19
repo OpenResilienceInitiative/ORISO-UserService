@@ -169,11 +169,20 @@ abstract class GroupCounsellingDpaHttpFixture {
                         MediaType.APPLICATION_JSON)
                     .createResponse(request);
               }
-              if (path.equals(
-                  "/_matrix/client/r0/rooms/!synthetic-created:synthetic.oriso.test"
-                      + "/state/m.room.power_levels")) {
-                // Part of creating the room (passage-blur rule, ORISO-Frontend#2229); not counted
-                // as a further Matrix write.
+              if (path.startsWith("/_synapse/admin/v1/rooms/") && path.endsWith("/state")) {
+                // The moderator level of named group moderators (ORISO-Frontend#2229) is read from
+                // the room state first: nobody holds it yet in these synthetic rooms.
+                return withSuccess(
+                        "{\"state\":[{\"type\":\"m.room.power_levels\",\"state_key\":\"\","
+                            + "\"content\":{\"users\":{},\"events\":{\"m.room.power_levels\":100},"
+                            + "\"events_default\":0,\"redact\":50}}]}",
+                        MediaType.APPLICATION_JSON)
+                    .createResponse(request);
+              }
+              if (path.startsWith("/_matrix/client/r0/rooms/")
+                  && path.endsWith("/state/m.room.power_levels")) {
+                // Part of creating the room (passage-blur rule) and of raising named moderators
+                // (ORISO-Frontend#2229); not counted as a further Matrix write.
                 return withSuccess(
                         request.getMethod() == org.springframework.http.HttpMethod.PUT
                             ? "{\"event_id\":\"$synthetic-power\"}"
