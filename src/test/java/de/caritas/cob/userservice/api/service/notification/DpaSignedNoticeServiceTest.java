@@ -10,6 +10,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -488,17 +489,44 @@ class DpaSignedNoticeServiceTest {
   }
 
   @Test
-  void onSignatureHint_releasesTheClaimAsNotSent_When_theFailureIsNotAnSmtpFailure() {
-    // a template load, the tenant-name lookup or the rendering can fail too; all of those happen
-    // before the handover, so they can never have sent anything
-    givenSignatures(forwardedSignature("kc-admin-1"));
+  void onSignatureHint_releasesAnUnmarkedAdminClaim_When_tenantLookupFailsBeforeHandoff() {
+    // The owner supplied a version but no exact signing timestamp, so recovery cannot prove
+    // which signature this ADMIN claim represents. An ordinary later hint can still retry it.
+    givenSignatures(forwardedSignature("kc-admin-1").signedAt(null));
     when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
     when(tenantService.getRestrictedTenantData(anyLong()))
         .thenThrow(new IllegalStateException("tenant lookup down"));
 
     service.onSignatureHint(TENANT_ID);
 
-    verify(noticeRepository).delete(any(DpaSignedNotice.class));
+    var released = ArgumentCaptor.forClass(DpaSignedNotice.class);
+    verify(noticeRepository).delete(released.capture());
+    assertThat(released.getValue().getAdminRecoverySignatureAt()).isNull();
+    assertThat(released.getValue().getAdminNextAttemptAt()).isNull();
+    verify(noticeRepository, never()).beginAdminHandoff(anyLong());
+    verify(inviteMailDispatchService, never())
+        .send(any(), any(), any(), any(), any(), any(), any());
+    assertEquals(1.0, releasedCount("confirmed_not_sent"));
+  }
+
+  @Test
+  void onSignatureHint_releasesTheMarkedAdminClaim_When_dispatchThrowsAnUnexpectedFailure() {
+    givenSignatures(forwardedSignature("kc-admin-1"));
+    when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
+    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any(), any()))
+        .thenThrow(new IllegalStateException("dispatch failed"));
+
+    service.onSignatureHint(TENANT_ID);
+
+    var released = ArgumentCaptor.forClass(DpaSignedNotice.class);
+    var sequence = inOrder(noticeRepository, inviteMailDispatchService);
+    sequence.verify(noticeRepository).beginAdminHandoff(anyLong());
+    sequence
+        .verify(inviteMailDispatchService)
+        .send(any(), any(), any(), any(), any(), any(), any());
+    sequence.verify(noticeRepository).delete(released.capture());
+    assertThat(released.getValue().getAdminRecoverySignatureAt()).isEqualTo("2026-08-14T09:15:00");
+    assertThat(released.getValue().getAdminNextAttemptAt()).isNull();
     assertEquals(1.0, releasedCount("confirmed_not_sent"));
   }
 

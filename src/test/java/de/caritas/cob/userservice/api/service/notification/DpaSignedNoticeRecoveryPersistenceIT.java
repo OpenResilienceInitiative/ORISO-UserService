@@ -142,7 +142,17 @@ class DpaSignedNoticeRecoveryPersistenceIT {
     when(signatures.readSignatures(TENANT_ID)).thenReturn(List.of(signature));
     var admins = mock(AdminRepository.class);
     when(admins.findById("forwarder"))
-        .thenReturn(Optional.of(Admin.builder().id("forwarder").email(RECIPIENT).build()));
+        .thenReturn(
+            Optional.of(
+                Admin.builder()
+                    .id("forwarder")
+                    .tenantId(TENANT_ID)
+                    .username("forwarder")
+                    .firstName("Synthetic")
+                    .lastName("Forwarder")
+                    .email(RECIPIENT)
+                    .type(Admin.AdminType.TENANT)
+                    .build()));
     var locales = mock(IdentityLocaleLookup.class);
     when(locales.findLocaleById("forwarder")).thenReturn(Optional.of("de"));
     var templates = mock(InviteEmailTemplateRepository.class);
