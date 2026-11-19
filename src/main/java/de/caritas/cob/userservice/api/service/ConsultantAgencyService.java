@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Language;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -35,6 +36,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class ConsultantAgencyService {
 
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
+  private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull ConsultantTopicRepository consultantTopicRepository;
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull AgencyService agencyService;
@@ -50,7 +52,9 @@ public class ConsultantAgencyService {
    * @param consultantAgency {@link ConsultantAgency}
    * @return the {@link ConsultantAgency}
    */
+  @Transactional
   public ConsultantAgency saveConsultantAgency(ConsultantAgency consultantAgency) {
+    consultantRepository.lockConsultant(consultantAgency.getConsultant().getId());
     return consultantAgencyRepository.save(consultantAgency);
   }
 

@@ -42,6 +42,7 @@ import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomRetirements;
 import de.caritas.cob.userservice.api.service.session.SessionOwnershipService.OwnershipChange;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
@@ -77,6 +78,7 @@ class AssignEnquiryFacadeTest {
   @Mock UserHelper userHelper;
   @Mock UsernameTranscoder usernameTranscoder;
   @Mock AgencyMatrixCredentialClient agencyMatrixCredentialClient;
+  @Mock AgencyEnquiryRoomRetirements roomRetirements;
   @Mock EventNotificationService eventNotificationService;
   @Mock de.caritas.cob.userservice.api.facade.SessionSupervisorFacade sessionSupervisorFacade;
   @Mock de.caritas.cob.userservice.api.facade.TeamDiscussionFacade teamDiscussionFacade;
@@ -122,6 +124,7 @@ class AssignEnquiryFacadeTest {
             usernameTranscoder,
             consultantDisplayNameResolver,
             agencyMatrixCredentialClient,
+            roomRetirements,
             eventNotificationService,
             anonymousEnquiryDepartmentResolver,
             sessionSupervisorFacade,
@@ -731,8 +734,13 @@ class AssignEnquiryFacadeTest {
   }
 
   @Test
-  void assignEnquiry_Should_FallBackToNewRoom_When_AgencyCredentialsAbsent() throws Exception {
+  void assignEnquiry_Should_RetireItsFormerHoldingRoom_When_AgencyCredentialsAbsent()
+      throws Exception {
     Session session = sessionWithUser(USER_MATRIX_ID, "!existing-room:matrix.example.com");
+    session.setAgencyId(21L);
+    session.setTenantId(41L);
+    session.setIsConsultantDirectlySet(false);
+    session.setConversationType(null);
     Consultant consultant = consultantWithMatrixId(CONSULTANT_MATRIX_ID);
 
     when(agencyMatrixCredentialClient.fetchMatrixCredentials(any())).thenReturn(Optional.empty());
@@ -740,6 +748,9 @@ class AssignEnquiryFacadeTest {
     assignEnquiryFacade.assignRegisteredEnquiry(session, consultant);
 
     verify(sessionRoomGateway).createRoomAsUser(any(), any(), any());
+    verify(roomRetirements)
+        .replaceRoom(eq(session), any(OwnershipChange.class), eq(MATRIX_ROOM_ID));
+    verify(sessionService, never()).saveSession(session);
   }
 
   @Test

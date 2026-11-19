@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminAgencyRelation
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PatchAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
+import de.caritas.cob.userservice.api.adapters.web.dto.TenantAdminLoginEmailsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAgencyAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantAdminDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminAgencyRelationService;
@@ -148,6 +149,10 @@ public class AdminUserFacade {
     var result = tenantAdminUserService.findTenantAdmins(Long.valueOf(tenantId));
     accountStatus.appendAdminStatuses(result);
     return result;
+  }
+
+  public List<TenantAdminLoginEmailsDTO> findTenantAdminLoginEmails(List<Long> tenantIds) {
+    return tenantAdminUserService.findTenantAdminLoginEmails(tenantIds);
   }
 
   public AdminResponseDTO patchAdminUserData(PatchAdminDTO patchAdminDTO) {

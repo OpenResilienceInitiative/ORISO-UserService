@@ -32,6 +32,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.RootDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionAdminResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
+import de.caritas.cob.userservice.api.adapters.web.dto.TenantAdminLoginEmailsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.TenantContactPersonDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.TenantDeletionBlockersDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
@@ -559,6 +560,12 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<List<AdminResponseDTO>> getTenantAdmins(final Integer tenantId) {
     return new ResponseEntity<>(this.adminUserFacade.findTenantAdmins(tenantId), HttpStatus.OK);
+  }
+
+  @Override
+  public ResponseEntity<List<TenantAdminLoginEmailsDTO>> getTenantAdminLoginEmails(
+      List<Long> tenantIds) {
+    return ResponseEntity.ok(adminUserFacade.findTenantAdminLoginEmails(tenantIds));
   }
 
   /** What still blocks deleting the Träger; asked by TenantService before it deletes (#1466). */
