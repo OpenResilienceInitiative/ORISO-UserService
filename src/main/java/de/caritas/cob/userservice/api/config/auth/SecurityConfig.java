@@ -216,6 +216,15 @@ public class SecurityConfig {
                 .permitAll()
                 .requestMatchers(HttpMethod.GET, "/users/invitelinks/*/context")
                 .permitAll()
+                // Journeys an advice seeker runs (ADR-036 part E, ORISO-Frontend#2333): read before
+                // registering, so without a login; the answer leaves out what only editors see.
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/users/journeys/registration",
+                    "/service/users/journeys/registration",
+                    "/users/journeys/links/*",
+                    "/service/users/journeys/links/*")
+                .permitAll()
                 // #1662: a Gesprächskreis entry page reads the circle's guest account mode; the
                 // invite secret is the credential and GroupInviteRegistration checks it.
                 .requestMatchers(HttpMethod.GET, "/users/chat/*/invite-context")

@@ -188,7 +188,7 @@ public final class JourneyRules {
     return base + "-" + number;
   }
 
-  private static boolean isSlug(String slug) {
+  static boolean isSlug(String slug) {
     return slug.length() <= MAX_SLUG && SLUG.matcher(slug).matches();
   }
 

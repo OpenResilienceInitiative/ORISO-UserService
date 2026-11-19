@@ -55,13 +55,24 @@ public class JourneyService {
       String journeyId, long expectedVersion, Map<String, Object> journey, String actor) {
     checkId(journeyId);
     JourneyRules.checkJourney(journeyId, journey);
-    var key = new JourneyRecord.Key(PLATFORM, PLATFORM_SCOPE_ID, journeyId);
-    var existing = repository.findById(key);
+    var stored = repository.findByScopeAndScopeIdOrderByJourneyId(PLATFORM, PLATFORM_SCOPE_ID);
+    // Draft ids ("new:…") become ids of the server, the journey's own included (a new journey).
+    var taken = new HashSet<String>();
+    stored.forEach(
+        row -> {
+          taken.add(row.getJourneyId());
+          taken.addAll(JourneyRules.stepIds(bodyOf(row)));
+        });
+    JourneyIds.issueAll(journey, taken);
+    var id = (String) journey.get("id");
+    var key = new JourneyRecord.Key(PLATFORM, PLATFORM_SCOPE_ID, id);
+    var existing =
+        JourneyIds.isDraft(journeyId) ? Optional.<JourneyRecord>empty() : repository.findById(key);
     checkVersion(existing, expectedVersion);
 
     var others =
-        repository.findByScopeAndScopeIdOrderByJourneyId(PLATFORM, PLATFORM_SCOPE_ID).stream()
-            .filter(row -> !row.getJourneyId().equals(journeyId))
+        stored.stream()
+            .filter(row -> !row.getJourneyId().equals(id))
             .map(JourneyService::bodyOf)
             .toList();
     var takenSlugs = new HashSet<String>();
@@ -81,7 +92,7 @@ public class JourneyService {
     var row = existing.orElseGet(JourneyRecord::new);
     row.setScope(PLATFORM);
     row.setScopeId(PLATFORM_SCOPE_ID);
-    row.setJourneyId(journeyId);
+    row.setJourneyId(id);
     row.setConversationType((String) journey.get("conversationType"));
     row.setBody(write(journey));
     row.setUpdatedBy(actor);
@@ -129,6 +140,9 @@ public class JourneyService {
     var key = new JourneyRecord.Key(level, ownerId, journeyId);
     var existing = repository.findById(key);
     checkVersion(existing, expectedVersion);
+    var taken = new HashSet<>(JourneyRules.stepIds(bodyOf(platform)));
+    existing.ifPresent(row -> taken.addAll(JourneyRules.stepIds(bodyOf(row))));
+    JourneyIds.issueAll(phases, taken);
     if (phases.isEmpty()) {
       existing.ifPresent(repository::delete);
       return Optional.empty();
@@ -174,7 +188,7 @@ public class JourneyService {
     return new Stored(row.getJourneyId(), clientVersion(row), bodyOf(row));
   }
 
-  private static Map<String, Object> bodyOf(JourneyRecord row) {
+  static Map<String, Object> bodyOf(JourneyRecord row) {
     try {
       return MAPPER.readValue(row.getBody(), AS_MAP);
     } catch (Exception unreadable) {

@@ -160,4 +160,13 @@ class JourneyServiceTest {
       throw new IllegalStateException(e);
     }
   }
+
+  @Test
+  void issuesTheIdsOfANewJourneyAndAnswersWithThem() {
+    var journey = mail("new:journey-7");
+    var saved = service.savePlatformJourney("new:journey-7", 0, journey, "admin");
+    assertThat(saved.journeyId()).startsWith("journey-");
+    assertThat(saved.body().get("id")).isEqualTo(saved.journeyId());
+    assertThat(JourneyRules.stepIds(saved.body())).noneMatch(JourneyIds::isDraft);
+  }
 }
