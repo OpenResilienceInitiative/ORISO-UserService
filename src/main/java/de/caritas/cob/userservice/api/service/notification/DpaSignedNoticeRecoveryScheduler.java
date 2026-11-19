@@ -54,8 +54,7 @@ public class DpaSignedNoticeRecoveryScheduler {
                       }));
     } catch (RuntimeException failure) {
       log.warn(
-          "DPA administrator notice recovery deferred ({})",
-          failure.getClass().getSimpleName());
+          "DPA administrator notice recovery deferred ({})", failure.getClass().getSimpleName());
     } finally {
       queued.set(false);
     }

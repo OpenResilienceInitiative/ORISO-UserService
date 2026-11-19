@@ -671,7 +671,8 @@ class DpaSignedNoticeServiceTest {
     service.retryPendingAdminNotices();
 
     verify(noticeRepository, never()).beginAdminHandoff(anyLong());
-    verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any(), any());
+    verify(inviteMailDispatchService, never())
+        .send(any(), any(), any(), any(), any(), any(), any());
     assertThat(pending.getSentAt()).isNull();
   }
 
@@ -688,7 +689,8 @@ class DpaSignedNoticeServiceTest {
     service.retryPendingAdminNotices();
 
     verify(noticeRepository, never()).beginAdminHandoff(anyLong());
-    verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any(), any());
+    verify(inviteMailDispatchService, never())
+        .send(any(), any(), any(), any(), any(), any(), any());
   }
 
   @Test
@@ -702,7 +704,8 @@ class DpaSignedNoticeServiceTest {
 
     service.retryPendingAdminNotices();
 
-    verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any(), any());
+    verify(inviteMailDispatchService, never())
+        .send(any(), any(), any(), any(), any(), any(), any());
     verify(noticeRepository, never()).delete(any(DpaSignedNotice.class));
   }
 

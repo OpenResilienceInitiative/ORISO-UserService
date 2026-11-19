@@ -62,8 +62,8 @@ import org.springframework.web.client.HttpClientErrorException;
  * <p>Per-role deduplication: a ledger row per (tenant, signed version, recipient role) is claimed
  * in its own transaction BEFORE sending — of two concurrent hints exactly one wins the unique
  * constraint. New verified administrator claims stay pending through mail preparation, so a
- * recovery sweep can pick them up after interruption. Explicit handoff failures release the
- * claim so a later hint can retry. Legacy and signer claims also release on preparation failure.
+ * recovery sweep can pick them up after interruption. Explicit handoff failures release the claim
+ * so a later hint can retry. Legacy and signer claims also release on preparation failure.
  *
  * <p><b>Deliberate duplicate on an uncertain delivery (#1341).</b> The release happens for EVERY
  * failure before the handover, including {@link
@@ -579,15 +579,18 @@ public class DpaSignedNoticeService {
       Long tenantId, DpaSignatureDTO signature, Recipient recipient, DpaSignedNotice claim) {
     var language = recipient.language();
     var signerReceipt = claim.getNoticeRole() == NoticeRole.SIGNER;
-    var template = signerReceipt ? Optional.<InviteEmailTemplate>empty() : findActiveTemplate(language);
+    var template =
+        signerReceipt ? Optional.<InviteEmailTemplate>empty() : findActiveTemplate(language);
     var placeholders = buildPlaceholders(tenantId, signature, language);
     return new PreparedNotice(
         render(
-            template.map(InviteEmailTemplate::getSubject)
+            template
+                .map(InviteEmailTemplate::getSubject)
                 .orElse(signerReceipt ? signerSubject(language) : defaultSubject(language)),
             placeholders),
         render(
-            template.map(InviteEmailTemplate::getBody)
+            template
+                .map(InviteEmailTemplate::getBody)
                 .orElse(signerReceipt ? signerBody(language) : defaultBody(language)),
             placeholders));
   }

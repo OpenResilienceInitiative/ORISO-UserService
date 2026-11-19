@@ -57,7 +57,9 @@ class DpaSignedNoticeRecoveryPersistenceIT {
   @AfterEach
   void removeCommittedFixtures() {
     notices.deleteAllInBatch(
-        notices.findAll().stream().filter(notice -> notice.getTenantId().equals(TENANT_ID)).toList());
+        notices.findAll().stream()
+            .filter(notice -> notice.getTenantId().equals(TENANT_ID))
+            .toList());
   }
 
   @Test
@@ -67,12 +69,14 @@ class DpaSignedNoticeRecoveryPersistenceIT {
     interrupted.onSignatureHint(TENANT_ID);
 
     verifyNoInteractions(currentSender);
-    var pending = notices.findAll().stream()
+    var pending =
+        notices.findAll().stream()
             .filter(
                 notice ->
                     notice.getTenantId().equals(TENANT_ID)
                         && VERSION.equals(notice.getDpaVersion()))
-        .findFirst().orElseThrow();
+            .findFirst()
+            .orElseThrow();
     assertThat(pending.getAdminRecoverySignatureAt()).isEqualTo(SIGNED_AT);
     assertThat(pending.getSentAt()).isNull();
     assertThat(pending.getAdminNextAttemptAt()).isNotNull();
@@ -105,8 +109,7 @@ class DpaSignedNoticeRecoveryPersistenceIT {
 
     assertThat((Integer) tx.execute(status -> notices.beginAdminHandoff(notice.getId())))
         .isEqualTo(1);
-    assertThat((Integer) tx.execute(status -> notices.beginAdminHandoff(notice.getId())))
-        .isZero();
+    assertThat((Integer) tx.execute(status -> notices.beginAdminHandoff(notice.getId()))).isZero();
     assertThat(notices.findDueAdminNoticeIds(now.plusHours(1), PageRequest.of(0, 8)))
         .doesNotContain(notice.getId());
   }
@@ -125,7 +128,8 @@ class DpaSignedNoticeRecoveryPersistenceIT {
             .build());
   }
 
-  private DpaSignedNoticeService service(InviteMailDispatchService mail, boolean failBeforeHandoff) {
+  private DpaSignedNoticeService service(
+      InviteMailDispatchService mail, boolean failBeforeHandoff) {
     var signatures = mock(TenantDpaSignatureReadClient.class);
     var signature =
         new DpaSignatureDTO()
@@ -143,8 +147,9 @@ class DpaSignedNoticeRecoveryPersistenceIT {
     when(locales.findLocaleById("forwarder")).thenReturn(Optional.of("de"));
     var templates = mock(InviteEmailTemplateRepository.class);
     var activeTemplates =
-        when(templates.findByKindAndActiveTrueAndTenantIdIsNullOrderByCreateDateDesc(
-            InviteEmailTemplateKind.DPA_SIGNED_NOTICE));
+        when(
+            templates.findByKindAndActiveTrueAndTenantIdIsNullOrderByCreateDateDesc(
+                InviteEmailTemplateKind.DPA_SIGNED_NOTICE));
     if (failBeforeHandoff) {
       activeTemplates.thenThrow(new IllegalStateException("simulated interruption before handoff"));
     } else {
