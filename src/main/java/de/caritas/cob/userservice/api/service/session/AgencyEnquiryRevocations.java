@@ -1,8 +1,11 @@
 package de.caritas.cob.userservice.api.service.session;
 
+import static de.caritas.cob.userservice.api.model.AgencyEnquiryRevocationTask.WAITING_FOR_ROOM_DECISION;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.model.AgencyEnquiryRevocationTask;
+import de.caritas.cob.userservice.api.model.AgencyEnquiryRoomDecision;
+import de.caritas.cob.userservice.api.model.AgencyEnquiryRoomDecision.Outcome;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.AgencyEnquiryRevocationTaskRepository;
@@ -15,6 +18,7 @@ import de.caritas.cob.userservice.api.service.session.AgencySilentMembershipServ
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -46,6 +50,7 @@ public class AgencyEnquiryRevocations {
   private final ConsultantRepository consultants;
   private final SessionRepository sessions;
   private final AgencyEnquiryRoomRetirements retiredRooms;
+  private final AgencyEnquiryRoomDecisions roomDecisions;
   private final AgencyMatrixCredentialClient agencyCredentials;
   private final SessionRoomGateway rooms;
   private final PlatformTransactionManager transactionManager;
@@ -59,22 +64,24 @@ public class AgencyEnquiryRevocations {
       return;
     }
 
+    // Record the departure before the session query can wait on an accepting transaction.
+    Long departureOrder = removed.getTenantId() == null ? null : roomDecisions.nextEvent();
     var recorded = new HashSet<>(tasks.pendingSessionIds(removed.getId()));
-    var pending =
-        sessions
-            .lockOpenEnquiryBindings(
-                removed.getAgencyId(), AgencyOpenEnquiryMembership.OPEN_STATUSES)
-            .stream()
-            .filter(binding -> recorded.add(binding.getSessionId()))
-            .map(
-                binding ->
-                    taskFor(
-                        removed,
-                        binding.getSessionId(),
-                        binding.getRoomId(),
-                        consultant.getId(),
-                        consultant.getMatrixUserId()))
-            .toList();
+    var pending = new ArrayList<AgencyEnquiryRevocationTask>();
+    for (var binding :
+        sessions.lockOpenEnquiryBindings(
+            removed.getAgencyId(), AgencyOpenEnquiryMembership.OPEN_STATUSES)) {
+      if (recorded.add(binding.getSessionId())) {
+        pending.add(taskFor(removed, binding.getSessionId(), binding.getRoomId(), null));
+      }
+    }
+    if (departureOrder != null) {
+      for (var decision : roomDecisions.affectedBy(removed, departureOrder)) {
+        if (recorded.add(decision.getSessionId())) {
+          pending.add(taskFor(removed, decision.getSessionId(), decision.getRoomId(), decision));
+        }
+      }
+    }
     if (!pending.isEmpty()) {
       tasks.saveAll(pending);
     }
@@ -95,21 +102,41 @@ public class AgencyEnquiryRevocations {
           .ifPresent(
               removed ->
                   tasks.save(
-                      taskFor(
+                      buildTask(
                           removed,
                           session.getId(),
                           session.getMatrixRoomId(),
                           contact.consultantId(),
-                          contact.matrixUserId())));
+                          contact.matrixUserId(),
+                          null,
+                          LocalDateTime.now(clock))));
     }
   }
 
   private AgencyEnquiryRevocationTask taskFor(
+      ConsultantAgency removed, Long sessionId, String roomId, AgencyEnquiryRoomDecision decision) {
+    var retryAt =
+        decision != null && decision.getOutcome() == Outcome.PENDING
+            ? WAITING_FOR_ROOM_DECISION
+            : LocalDateTime.now(clock);
+    return buildTask(
+        removed,
+        sessionId,
+        roomId,
+        removed.getConsultant().getId(),
+        removed.getConsultant().getMatrixUserId(),
+        decision == null ? null : decision.getId(),
+        retryAt);
+  }
+
+  private AgencyEnquiryRevocationTask buildTask(
       ConsultantAgency removed,
       Long sessionId,
       String roomId,
       String consultantId,
-      String memberId) {
+      String memberId,
+      Long roomDecisionId,
+      LocalDateTime retryAt) {
     return AgencyEnquiryRevocationTask.builder()
         .consultantAgencyId(removed.getId())
         .consultantId(consultantId)
@@ -117,7 +144,8 @@ public class AgencyEnquiryRevocations {
         .sessionId(sessionId)
         .roomId(roomId)
         .memberId(memberId)
-        .retryAt(LocalDateTime.now(clock))
+        .roomDecisionId(roomDecisionId)
+        .retryAt(retryAt)
         .build();
   }
 
@@ -183,6 +211,9 @@ public class AgencyEnquiryRevocations {
     }
 
     boolean sameRoom = Objects.equals(task.getRoomId(), session.getMatrixRoomId());
+    if (task.getRoomDecisionId() != null && !decisionAllowsRevocation(task, session, sameRoom)) {
+      return;
+    }
     if (!sameRoom && !retiredRooms.provesRetirement(task, session)) {
       retryUnlessConfirmedOut(task);
       return;
@@ -195,6 +226,36 @@ public class AgencyEnquiryRevocations {
     } else {
       defer(task);
     }
+  }
+
+  private boolean decisionAllowsRevocation(
+      AgencyEnquiryRevocationTask task, Session current, boolean sameRoom) {
+    var decision = roomDecisions.forTask(task, current).orElse(null);
+    if (decision == null) {
+      retryUnlessConfirmedOut(task);
+      return false;
+    }
+    return switch (decision.getOutcome()) {
+      case REOPENED -> true;
+      case REPLACED -> {
+        if (sameRoom) {
+          retryUnlessConfirmedOut(task);
+        }
+        yield !sameRoom;
+      }
+      case REUSED -> {
+        tasks.delete(task);
+        yield false;
+      }
+      case PENDING -> {
+        if (decision.matches(current)) {
+          defer(task);
+        } else {
+          retryUnlessConfirmedOut(task);
+        }
+        yield false;
+      }
+    };
   }
 
   private void retryUnlessConfirmedOut(AgencyEnquiryRevocationTask task) {

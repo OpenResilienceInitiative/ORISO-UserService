@@ -75,6 +75,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 })
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class SessionOwnershipMariaDbIT {
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomDecisions roomDecisions;
 
   private static final String USER_ID = "ownership-proof-user";
   private static final String OWNER_A_ID = "ownership-proof-owner-a";
