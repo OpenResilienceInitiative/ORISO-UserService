@@ -1474,6 +1474,41 @@ class MatrixSynapseServiceTest {
   }
 
   @Test
+  void isOutOfRoomRequiresAMatrixNotFoundResponseToConfirmAMissingRoom() {
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.argThat(uri -> uri.toString().contains("/state")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            eq(Map.class)))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.NOT_FOUND,
+                "Not Found",
+                null,
+                "{\"errcode\":\"M_NOT_FOUND\"}".getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8))
+        .thenThrow(
+            HttpClientErrorException.create(HttpStatus.NOT_FOUND, "Not Found", null, null, null));
+
+    assertThat(matrixSynapseService().isOutOfRoom(MATRIX_ROOM_ID, "@guest:example")).contains(true);
+    assertThat(matrixSynapseService().isOutOfRoom(MATRIX_ROOM_ID, "@guest:example")).isEmpty();
+  }
+
+  @Test
+  void isOutOfRoomCannotConfirmMalformedMembership() {
+    stubAdminLogin();
+    stubRoomState(
+        List.of(
+            Map.of(
+                "type", "m.room.member",
+                "state_key", "@guest:example",
+                "content", Map.of())));
+
+    assertThat(matrixSynapseService().isOutOfRoom(MATRIX_ROOM_ID, "@guest:example")).isEmpty();
+  }
+
+  @Test
   void getRoomMembers_noAdminToken_returnsEmptyOptional() {
     // Room membership cannot be read without admin credentials.
     matrixConfig.setAdminUsername("");
