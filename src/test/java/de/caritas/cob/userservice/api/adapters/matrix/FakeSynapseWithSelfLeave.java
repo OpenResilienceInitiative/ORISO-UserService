@@ -39,14 +39,11 @@ public final class FakeSynapseWithSelfLeave extends RestTemplate {
     config.setAdminUsername(FakeSynapseHomeserver.ADMIN_LOCALPART);
     config.setAdminPassword("admin-secret");
     config.setRegistrationSharedSecret("fake-registration-secret");
-    var roomClient = new MatrixRoomClient(config, this, mock(LiveChatDiagnosticMetrics.class));
+    var redactor = MatrixIdentifierRedactor.withKey("fake-synapse");
+    var roomClient =
+        new MatrixRoomClient(config, this, mock(LiveChatDiagnosticMetrics.class), redactor);
     return new MatrixSynapseService(
-        config,
-        this,
-        this,
-        roomClient,
-        mock(MatrixMediaClient.class),
-        MatrixIdentifierRedactor.withKey("fake-synapse"));
+        config, this, this, roomClient, mock(MatrixMediaClient.class), redactor);
   }
 
   @Override

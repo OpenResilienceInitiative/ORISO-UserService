@@ -196,14 +196,16 @@ class AgencyPasswordFreeSynapseIT {
                 }
                 return execution.execute(request, body);
               });
+      var redactor = MatrixIdentifierRedactor.withKey("public-disposable-agency-log-fixture");
       matrix =
           new MatrixSynapseService(
               config,
               transport,
               transport,
-              new MatrixRoomClient(config, transport, mock(LiveChatDiagnosticMetrics.class)),
+              new MatrixRoomClient(
+                  config, transport, mock(LiveChatDiagnosticMetrics.class), redactor),
               new MatrixMediaClient(config, transport),
-              MatrixIdentifierRedactor.withKey("public-disposable-agency-log-fixture"));
+              redactor);
       gateway = new MatrixSessionRoomGateway(matrix, config);
     }
     identities = mock(AgencyMatrixCredentialClient.class);

@@ -8,6 +8,7 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.GRANTED_AUTHORIZATION_USER;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_WITH_SESSIONS;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hibernate.validator.internal.util.CollectionHelper.asSet;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -16,6 +17,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDataResponseDTO;
@@ -30,6 +32,8 @@ import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.UserAgencyService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -166,23 +170,36 @@ class AskerDataProviderTest {
 
   @Test
   void retrieveData_Should_ReturnUserDataWithoutAgency_When_AgencyServiceReturnsNotFound() {
+    String privateDiagnostic = "synthetic-private-diagnostic";
     givenAnEmailDummySuffixConfig();
     when(authenticatedUser.getRoles()).thenReturn(asSet(UserRole.USER.getValue()));
     when(agencyService.getAgencies(Mockito.anyList()))
-        .thenThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND));
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.NOT_FOUND,
+                "not found",
+                null,
+                privateDiagnostic.getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8));
     when(consultingTypeManager.getAllConsultingTypeIds())
         .thenReturn(IntStream.range(0, 22).boxed().collect(Collectors.toList()));
 
-    @SuppressWarnings("unchecked")
-    LinkedHashMap<String, Object> consultingTypeData =
-        (LinkedHashMap<String, Object>)
-            askerDataProvider
-                .retrieveData(USER)
-                .getConsultingTypes()
-                .get(Integer.toString(AGENCY_DTO_SUCHT.getConsultingType()));
+    try (var logs = LogbackCaptor.forClass(AskerDataProvider.class)) {
+      @SuppressWarnings("unchecked")
+      LinkedHashMap<String, Object> consultingTypeData =
+          (LinkedHashMap<String, Object>)
+              askerDataProvider
+                  .retrieveData(USER)
+                  .getConsultingTypes()
+                  .get(Integer.toString(AGENCY_DTO_SUCHT.getConsultingType()));
 
-    assertNull(consultingTypeData.get("agency"));
-    assertFalse((boolean) consultingTypeData.get("isRegistered"));
+      assertNull(consultingTypeData.get("agency"));
+      assertFalse((boolean) consultingTypeData.get("isRegistered"));
+      assertThat(logs.messages(Level.WARN))
+          .singleElement()
+          .satisfies(
+              message -> assertThat(message).contains("404").doesNotContain(privateDiagnostic));
+    }
   }
 
   @Test

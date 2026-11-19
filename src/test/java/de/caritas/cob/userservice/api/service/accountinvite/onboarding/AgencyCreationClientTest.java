@@ -8,6 +8,8 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
 import de.caritas.cob.userservice.agencyadminserivce.generated.ApiClient;
 import de.caritas.cob.userservice.agencyadminserivce.generated.web.AdminAgencyControllerApi;
 import de.caritas.cob.userservice.agencyadminserivce.generated.web.model.AgencyDTO;
@@ -19,6 +21,8 @@ import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -52,6 +56,7 @@ class AgencyCreationClientTest {
 
   private static final Long RESERVED_AGENCY_ID = 16L;
   private static final Long TENANT_ID = 25L;
+  private static final String PRIVATE_DIAGNOSTIC = "synthetic-private-diagnostic";
 
   @Mock private SecurityHeaderSupplier securityHeaderSupplier;
   @Mock private IdentityAuthentication identityAuthentication;
@@ -102,11 +107,29 @@ class AgencyCreationClientTest {
    */
   @Test
   void createAgencyWithReservedId_upstreamBadRequest_isTranslatedInsteadOfEscapingRaw() {
-    answerWith(HttpStatus.BAD_REQUEST);
+    when(adminAgencyControllerApi.createAgency(any(AgencyDTO.class)))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.BAD_REQUEST,
+                "bad request",
+                null,
+                PRIVATE_DIAGNOSTIC.getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8));
 
-    assertThatThrownBy(this::createAgency)
-        .isInstanceOf(InternalServerErrorException.class)
-        .hasMessageContaining("400");
+    try (var logs = LogbackCaptor.forClass(AgencyCreationClient.class)) {
+      assertThatThrownBy(this::createAgency)
+          .isInstanceOf(InternalServerErrorException.class)
+          .hasMessageContaining("400")
+          .hasMessageNotContaining(PRIVATE_DIAGNOSTIC);
+      assertThat(logs.messages(Level.ERROR))
+          .singleElement()
+          .satisfies(
+              message -> assertThat(message).contains("400").doesNotContain(PRIVATE_DIAGNOSTIC));
+      assertThat(logs.events())
+          .singleElement()
+          .extracting(ILoggingEvent::getThrowableProxy)
+          .isNull();
+    }
   }
 
   @Test
@@ -161,12 +184,22 @@ class AgencyCreationClientTest {
   @Test
   void createAgencyWithReservedId_unreachableUpstream_isADownstreamFailure() {
     when(adminAgencyControllerApi.createAgency(any(AgencyDTO.class)))
-        .thenThrow(new ResourceAccessException("connection refused"));
+        .thenThrow(new ResourceAccessException(PRIVATE_DIAGNOSTIC));
 
-    assertThatThrownBy(this::createAgency)
-        .isInstanceOf(ResponseStatusException.class)
-        .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
-        .isEqualTo(HttpStatus.BAD_GATEWAY);
+    try (var logs = LogbackCaptor.forClass(AgencyCreationClient.class)) {
+      assertThatThrownBy(this::createAgency)
+          .isInstanceOf(ResponseStatusException.class)
+          .hasMessageNotContaining(PRIVATE_DIAGNOSTIC)
+          .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
+          .isEqualTo(HttpStatus.BAD_GATEWAY);
+      assertThat(logs.events())
+          .singleElement()
+          .extracting(ILoggingEvent::getThrowableProxy)
+          .isNull();
+      assertThat(logs.messages(Level.ERROR))
+          .singleElement()
+          .satisfies(message -> assertThat(message).doesNotContain(PRIVATE_DIAGNOSTIC));
+    }
   }
 
   /**
