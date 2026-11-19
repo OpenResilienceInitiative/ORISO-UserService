@@ -2,12 +2,42 @@
 <databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
-  <changeSet id="20261119-dpa-admin-notice-recovery-1704" author="oriso">
-    <!-- Nullable for rolling upgrades. Never infer pending delivery from historical sent_at=NULL. -->
+  <!-- MariaDB commits DDL individually. Guard each object so an interrupted run can resume. -->
+  <changeSet id="20261119-dpa-admin-notice-recovery-signature-1704" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not>
+        <columnExists tableName="dpa_signed_notice" columnName="admin_recovery_signature_at"/>
+      </not>
+    </preConditions>
+    <!-- Leave historical rows unmarked, even when sent_at is null. -->
     <addColumn tableName="dpa_signed_notice">
       <column name="admin_recovery_signature_at" type="VARCHAR(64)"/>
+    </addColumn>
+    <rollback>
+      <dropColumn tableName="dpa_signed_notice" columnName="admin_recovery_signature_at"/>
+    </rollback>
+  </changeSet>
+
+  <changeSet id="20261119-dpa-admin-notice-recovery-retry-1704" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not>
+        <columnExists tableName="dpa_signed_notice" columnName="admin_next_attempt_at"/>
+      </not>
+    </preConditions>
+    <addColumn tableName="dpa_signed_notice">
       <column name="admin_next_attempt_at" type="DATETIME(6)"/>
     </addColumn>
+    <rollback>
+      <dropColumn tableName="dpa_signed_notice" columnName="admin_next_attempt_at"/>
+    </rollback>
+  </changeSet>
+
+  <changeSet id="20261119-dpa-admin-notice-recovery-index-1704" author="oriso">
+    <preConditions onFail="MARK_RAN" onError="HALT">
+      <not>
+        <indexExists tableName="dpa_signed_notice" indexName="idx_dpa_admin_notice_due"/>
+      </not>
+    </preConditions>
     <createIndex tableName="dpa_signed_notice" indexName="idx_dpa_admin_notice_due">
       <column name="notice_role"/>
       <column name="admin_next_attempt_at"/>
@@ -15,8 +45,6 @@
     </createIndex>
     <rollback>
       <dropIndex tableName="dpa_signed_notice" indexName="idx_dpa_admin_notice_due"/>
-      <dropColumn tableName="dpa_signed_notice" columnName="admin_next_attempt_at"/>
-      <dropColumn tableName="dpa_signed_notice" columnName="admin_recovery_signature_at"/>
     </rollback>
   </changeSet>
 </databaseChangeLog>
