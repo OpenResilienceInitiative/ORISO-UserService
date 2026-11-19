@@ -1,6 +1,8 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
@@ -17,6 +19,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -38,6 +44,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
@@ -136,17 +143,39 @@ class DraftMessageControllerTest {
   }
 
   @Test
-  void upsertDraft_dataAccessExceptionStillReturnsNoContent() {
+  void upsertDraft_dataAccessExceptionReturnsNoContentWithoutLoggingDraftDetails() {
     // Business reason: concurrent autosave conflicts must not break typing flows for users.
+    var scope = "scope:synthetic-room|thread:synthetic-thread";
+    var draftText = "synthetic draft content";
+    var diagnostic = "synthetic database diagnostic";
     var request = new UpsertDraftRequest();
+    request.setText(draftText);
     when(authenticatedUser.getUserId()).thenReturn("u-1");
-    doThrow(new DataIntegrityViolationException("duplicate"))
+    doThrow(new DataIntegrityViolationException(diagnostic + ": " + draftText))
         .when(draftMessageService)
-        .upsertDraft(eq("u-1"), eq("room-1"), eq(request), any());
+        .upsertDraft(eq("u-1"), eq(scope), eq(request), any());
 
-    var response = controller.upsertDraft("room-1", request);
+    var logger = (Logger) LoggerFactory.getLogger(DraftMessageController.class);
+    var appender = new ListAppender<ILoggingEvent>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      var response = controller.upsertDraft(scope, request);
 
-    assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
+      assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
+      assertEquals(1, appender.list.size());
+      var warning = appender.list.getFirst();
+      assertEquals(Level.WARN, warning.getLevel());
+      assertNull(warning.getThrowableProxy());
+      var message = warning.getFormattedMessage();
+      assertFalse(message.contains(scope));
+      assertFalse(message.contains(draftText));
+      assertFalse(message.contains(diagnostic));
+      assertEquals("Legacy draft autosave failed (DataIntegrityViolationException)", message);
+    } finally {
+      logger.detachAppender(appender);
+      appender.stop();
+    }
   }
 
   @Test
