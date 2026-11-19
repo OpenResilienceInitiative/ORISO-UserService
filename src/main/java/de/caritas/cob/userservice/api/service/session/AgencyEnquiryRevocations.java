@@ -4,17 +4,20 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.model.AgencyEnquiryRevocationTask;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.AgencyEnquiryRevocationTaskRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
+import de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService.InitialRoomContact;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -57,33 +60,65 @@ public class AgencyEnquiryRevocations {
     }
 
     var recorded = new HashSet<>(tasks.pendingSessionIds(removed.getId()));
-    var now = LocalDateTime.now(clock);
     var pending =
-        AgencyOpenEnquiryMembership.OPEN_STATUSES.stream()
-            .flatMap(
-                status ->
-                    sessions
-                        .findByAgencyIdAndStatusAndConsultantIsNull(removed.getAgencyId(), status)
-                        .stream())
-            .filter(
-                session ->
-                    AgencyOpenEnquiryMembership.isOpenToDepartment(session, removed.getAgencyId()))
-            .filter(session -> recorded.add(session.getId()))
+        sessions
+            .lockOpenEnquiryBindings(
+                removed.getAgencyId(), AgencyOpenEnquiryMembership.OPEN_STATUSES)
+            .stream()
+            .filter(binding -> recorded.add(binding.getSessionId()))
             .map(
-                session ->
-                    AgencyEnquiryRevocationTask.builder()
-                        .consultantAgencyId(removed.getId())
-                        .consultantId(consultant.getId())
-                        .agencyId(removed.getAgencyId())
-                        .sessionId(session.getId())
-                        .roomId(session.getMatrixRoomId())
-                        .memberId(consultant.getMatrixUserId())
-                        .retryAt(now)
-                        .build())
+                binding ->
+                    taskFor(
+                        removed,
+                        binding.getSessionId(),
+                        binding.getRoomId(),
+                        consultant.getId(),
+                        consultant.getMatrixUserId()))
             .toList();
     if (!pending.isEmpty()) {
       tasks.saveAll(pending);
     }
+  }
+
+  /** The publication transaction holds the roster locks for all of these contacts. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void stageDuringPublication(Session session, List<InitialRoomContact> contacts) {
+    for (var contact : contacts) {
+      if (assignments.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
+          contact.consultantId(), session.getAgencyId())) {
+        continue;
+      }
+      assignments
+          .findFirstByConsultantIdAndAgencyIdAndDeleteDateIsNotNullOrderByDeleteDateDescIdDesc(
+              contact.consultantId(), session.getAgencyId())
+          .filter(removed -> !tasks.pendingSessionIds(removed.getId()).contains(session.getId()))
+          .ifPresent(
+              removed ->
+                  tasks.save(
+                      taskFor(
+                          removed,
+                          session.getId(),
+                          session.getMatrixRoomId(),
+                          contact.consultantId(),
+                          contact.matrixUserId())));
+    }
+  }
+
+  private AgencyEnquiryRevocationTask taskFor(
+      ConsultantAgency removed,
+      Long sessionId,
+      String roomId,
+      String consultantId,
+      String memberId) {
+    return AgencyEnquiryRevocationTask.builder()
+        .consultantAgencyId(removed.getId())
+        .consultantId(consultantId)
+        .agencyId(removed.getAgencyId())
+        .sessionId(sessionId)
+        .roomId(roomId)
+        .memberId(memberId)
+        .retryAt(LocalDateTime.now(clock))
+        .build();
   }
 
   public void retryDue() {

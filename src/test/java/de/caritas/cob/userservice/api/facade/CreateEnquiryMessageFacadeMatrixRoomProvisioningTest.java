@@ -147,11 +147,19 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
             usernameTranscoder,
             new de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver());
     var pause = new de.caritas.cob.userservice.api.service.session.MatrixRateLimitPause();
+    var publicationSessions =
+        org.mockito.Mockito.mock(de.caritas.cob.userservice.api.port.out.SessionRepository.class);
+    when(publicationSessions.lockFresh(SESSION_ID)).thenAnswer(ignored -> Optional.of(session));
     var realRoomService =
         new AgencyPreAssignmentRoomService(
             matrixCredentialClient,
             gateway,
-            sessionService,
+            new de.caritas.cob.userservice.api.service.session.AgencyEnquiryRoomPublication(
+                consultantRepository,
+                publicationSessions,
+                sessionService,
+                org.mockito.Mockito.mock(
+                    de.caritas.cob.userservice.api.service.session.AgencyEnquiryRevocations.class)),
             silentMembership,
             // Runs deferred counsellors inline, so the test sees the same membership end state.
             new de.caritas.cob.userservice.api.service.session.AgencyDepartmentMembershipBackfill(

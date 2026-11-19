@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.api.model.ConsultantAgency.ConsultantAgencyBas
 import de.caritas.cob.userservice.api.model.ConsultantAgencyStatus;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.CrudRepository;
@@ -25,6 +26,10 @@ public interface ConsultantAgencyRepository extends CrudRepository<ConsultantAge
 
   List<ConsultantAgency> findByConsultantIdAndAgencyIdAndDeleteDateIsNull(
       String consultantId, Long agencyId);
+
+  Optional<ConsultantAgency>
+      findFirstByConsultantIdAndAgencyIdAndDeleteDateIsNotNullOrderByDeleteDateDescIdDesc(
+          String consultantId, Long agencyId);
 
   boolean existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(String consultantId, Long agencyId);
 

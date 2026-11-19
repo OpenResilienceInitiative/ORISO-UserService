@@ -308,6 +308,27 @@ public interface SessionRepository extends CrudRepository<Session, Long>, Sessio
           + " de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW)")
   int closeUnassignedEnquiries(@Param("user") User user, @Param("now") LocalDateTime now);
 
+  /** Scoped current read even when a roster transaction has an earlier snapshot. */
+  @Lock(LockModeType.PESSIMISTIC_READ)
+  @Query(
+      """
+      select enquiry.id as sessionId, enquiry.matrixRoomId as roomId
+      from Session enquiry
+      where enquiry.agencyId = :agencyId
+        and enquiry.status in :statuses
+        and enquiry.consultant is null
+        and (enquiry.isConsultantDirectlySet is null or enquiry.isConsultantDirectlySet = false)
+        and enquiry.matrixRoomId is not null and trim(enquiry.matrixRoomId) <> ''
+      """)
+  List<OpenEnquiryRoomBinding> lockOpenEnquiryBindings(
+      @Param("agencyId") Long agencyId, @Param("statuses") List<SessionStatus> statuses);
+
+  interface OpenEnquiryRoomBinding {
+    Long getSessionId();
+
+    String getRoomId();
+  }
+
   List<Session> findByAgencyIdAndStatusAndConsultantIsNull(
       Long agencyId, SessionStatus sessionStatus);
 
