@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.model.AgencyEnquiryRevocationTask;
@@ -21,7 +22,9 @@ import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClien
 import de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService.InitialRoomContact;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
@@ -31,8 +34,6 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -48,11 +49,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @TestPropertySource(properties = {"spring.profiles.active=testing", "multitenancy.enabled=true"})
-@Import({
-  AgencyEnquiryRoomPublication.class,
-  AgencyEnquiryRevocations.class,
-  AgencyEnquiryRoomPublicationDatabaseIT.DatabaseClock.class
-})
+@Import({AgencyEnquiryRoomPublication.class, AgencyEnquiryRevocations.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class AgencyEnquiryRoomPublicationDatabaseIT {
 
@@ -60,14 +57,6 @@ class AgencyEnquiryRoomPublicationDatabaseIT {
   private static final long AGENCY_ID = 471179L;
   private static final String ROOM = "!new:example.invalid";
   private static final String MEMBER_ID = "@member:example.invalid";
-
-  @TestConfiguration
-  static class DatabaseClock {
-    @Bean
-    Clock publicationClock() {
-      return Clock.systemUTC();
-    }
-  }
 
   @Autowired private AgencyEnquiryRoomPublication publication;
   @Autowired private AgencyEnquiryRevocations revocations;
@@ -77,9 +66,9 @@ class AgencyEnquiryRoomPublicationDatabaseIT {
   @Autowired private SessionRepository sessions;
   @Autowired private UserRepository users;
   @Autowired private PlatformTransactionManager transactionManager;
-  @Autowired private Clock clock;
   @Autowired private JdbcTemplate jdbc;
 
+  @MockitoBean private Clock clock;
   @MockitoBean private SessionService sessionService;
   @MockitoBean private AgencyEnquiryRoomRetirements retiredRooms;
   @MockitoBean private AgencyMatrixCredentialClient agencyCredentials;
@@ -103,16 +92,23 @@ class AgencyEnquiryRoomPublicationDatabaseIT {
     registry.add(
         "spring.datasource.password",
         () -> System.getenv().getOrDefault("LIQUIBASE_IT_DB_PASSWORD", "root"));
+    registry.add("spring.datasource.driver-class-name", () -> "org.mariadb.jdbc.Driver");
     registry.add("spring.liquibase.enabled", () -> "true");
     registry.add(
         "spring.liquibase.change-log", () -> "classpath:db/changelog/userservice-master.xml");
     registry.add("spring.liquibase.contexts", () -> "dev,seed");
     registry.add("spring.jpa.hibernate.ddl-auto", () -> "validate");
+    registry.add(
+        "spring.jpa.properties.hibernate.dialect", () -> "org.hibernate.dialect.MariaDBDialect");
+    registry.add("spring.jpa.defer-datasource-initialization", () -> "false");
+    registry.add("spring.sql.init.mode", () -> "never");
   }
 
   @BeforeEach
   void seedUnboundEnquiryAndCurrentMember() {
     TenantContext.setCurrentTenant(TENANT_ID);
+    when(clock.instant()).thenReturn(Instant.parse("2026-11-19T12:00:00Z"));
+    when(clock.getZone()).thenReturn(ZoneOffset.UTC);
     new TransactionTemplate(transactionManager)
         .executeWithoutResult(
             status -> {
