@@ -29,6 +29,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -54,7 +55,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class AgencyEnquiryRoomRetirementIT {
 
-  private static final long AGENCY_ID = 1692L;
+  private static final AtomicLong AGENCY_IDS = new AtomicLong(1692L);
   private static final long TENANT_ID = 417L;
   private static final long RELATION_ID = 91692L;
   private static final String DEPARTED_ID = "departed-counsellor";
@@ -74,6 +75,7 @@ class AgencyEnquiryRoomRetirementIT {
   @MockitoBean private AgencyMatrixCredentialClient agencyCredentials;
   @MockitoBean private Clock clock;
 
+  private final long agencyId = AGENCY_IDS.incrementAndGet();
   private TransactionTemplate transactions;
 
   @BeforeEach
@@ -91,7 +93,7 @@ class AgencyEnquiryRoomRetirementIT {
     departed.setId(DEPARTED_ID);
     departed.setMatrixUserId(DEPARTED_MATRIX_ID);
     var removed =
-        ConsultantAgency.builder().id(RELATION_ID).consultant(departed).agencyId(AGENCY_ID).build();
+        ConsultantAgency.builder().id(RELATION_ID).consultant(departed).agencyId(agencyId).build();
 
     transactions.executeWithoutResult(status -> revocations.stage(removed));
     assertThat(tasks.pendingSessionIds(RELATION_ID)).contains(enquiry.getId());
@@ -147,7 +149,7 @@ class AgencyEnquiryRoomRetirementIT {
     var task =
         AgencyEnquiryRevocationTask.builder()
             .sessionId(accepted.getId())
-            .agencyId(AGENCY_ID)
+            .agencyId(agencyId)
             .roomId(oldRoom)
             .build();
 
@@ -157,7 +159,7 @@ class AgencyEnquiryRoomRetirementIT {
 
   private boolean hasReceipt(Session session, String formerRoom) {
     return receipts.existsByRoomIdAndSessionIdAndAgencyIdAndTenantIdAndReplacementRoomId(
-        formerRoom, session.getId(), AGENCY_ID, TENANT_ID, REPLACEMENT_ROOM);
+        formerRoom, session.getId(), agencyId, TENANT_ID, REPLACEMENT_ROOM);
   }
 
   private String currentRoom(Session session) {
@@ -197,7 +199,7 @@ class AgencyEnquiryRoomRetirementIT {
           var session = new Session();
           session.setUser(asker);
           session.setPostcode("12345");
-          session.setAgencyId(AGENCY_ID);
+          session.setAgencyId(agencyId);
           session.setStatus(Session.SessionStatus.NEW);
           session.setTenantId(TENANT_ID);
           session.setLanguageCode(LanguageCode.de);

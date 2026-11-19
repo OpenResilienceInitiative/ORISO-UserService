@@ -13,6 +13,8 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -39,9 +41,11 @@ class ConsultantAgencyRelationFinalizerPersistenceIT {
   @Autowired private ConsultantAgencyRelationFinalizer finalizer;
   @Autowired private PlatformTransactionManager transactionManager;
 
-  @Test
-  void finalizationUsesTheLatestTeamFlagWhenTheManagedConsultantWasLoadedEarlier() {
-    var relation = newAssignment();
+  @ParameterizedTest
+  @CsvSource({"true, false, true", "false, true, false"})
+  void finalizationUsesTheLatestTeamFlagWhenTheManagedConsultantWasLoadedEarlier(
+      boolean initialTeamFlag, boolean committedTeamFlag, boolean teamAgency) {
+    var relation = newAssignment(initialTeamFlag);
     var consultantId = relation.getConsultant().getId();
 
     TenantContext.runIn(
@@ -52,21 +56,22 @@ class ConsultantAgencyRelationFinalizerPersistenceIT {
                     status -> {
                       var earlier =
                           consultants.findByIdAndDeleteDateIsNull(consultantId).orElseThrow();
-                      assertThat(earlier.isTeamConsultant()).isTrue();
+                      assertThat(earlier.isTeamConsultant()).isEqualTo(initialTeamFlag);
                       independentTransaction()
                           .executeWithoutResult(
                               change ->
                                   consultants
                                       .findById(consultantId)
                                       .orElseThrow()
-                                      .setTeamConsultant(false));
+                                      .setTeamConsultant(committedTeamFlag));
 
                       assertThat(
                               finalizer.finalizeConsultantAgencyRelation(
                                   earlier,
-                                  new AgencyDTO().id(AGENCY_ID).teamAgency(true),
+                                  new AgencyDTO().id(AGENCY_ID).teamAgency(teamAgency),
                                   relation))
                           .isTrue();
+                      assertThat(earlier.isTeamConsultant()).isTrue();
                     }));
 
     TenantContext.runIn(
@@ -80,7 +85,7 @@ class ConsultantAgencyRelationFinalizerPersistenceIT {
 
   @Test
   void finalizationCannotUpdateAConsultantMovedOutsideTheCurrentTenant() {
-    var relation = newAssignment();
+    var relation = newAssignment(true);
     var consultantId = relation.getConsultant().getId();
 
     TenantContext.runIn(
@@ -113,7 +118,7 @@ class ConsultantAgencyRelationFinalizerPersistenceIT {
 
   @Test
   void reusingTheRowLockKeepsThisTransactionsPendingConsultantChanges() {
-    var relation = newAssignment();
+    var relation = newAssignment(true);
     var consultantId = relation.getConsultant().getId();
 
     TenantContext.runIn(
@@ -144,7 +149,7 @@ class ConsultantAgencyRelationFinalizerPersistenceIT {
                 .isEqualTo("Pending display name"));
   }
 
-  private ConsultantAgency newAssignment() {
+  private ConsultantAgency newAssignment(boolean teamConsultant) {
     return TenantContext.supplyAcrossTenants(
         () ->
             transaction()
@@ -166,7 +171,7 @@ class ConsultantAgencyRelationFinalizerPersistenceIT {
                                   .languageCode(LanguageCode.de)
                                   .tenantId(TENANT_ID)
                                   .status(ConsultantStatus.IN_PROGRESS)
-                                  .teamConsultant(true)
+                                  .teamConsultant(teamConsultant)
                                   .build());
                       return assignments.save(
                           ConsultantAgency.builder()
