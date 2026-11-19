@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+  <!-- ADR-036 part E, decisions 29 and 37 (ORISO-UserService#1689): journeys per conversation
+       type. A PLATFORM row (scope_id 0) holds a whole journey as JSON; a TENANT or AGENCY row holds
+       only the layer that Träger or Beratungsstelle put on a platform journey (the phases it may
+       change). `version` guards against two admins overwriting each other. No row means the
+       shipped journeys, so an install without rows behaves exactly as before. -->
+  <changeSet id="20261119-journey-storage" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <tableExists tableName="journey"/>
+      </not>
+    </preConditions>
+    <createTable tableName="journey">
+      <column name="scope" type="VARCHAR(16)"><constraints nullable="false"/></column>
+      <column name="scope_id" type="BIGINT"><constraints nullable="false"/></column>
+      <column name="journey_id" type="VARCHAR(64)"><constraints nullable="false"/></column>
+      <column name="conversation_type" type="VARCHAR(32)"><constraints nullable="false"/></column>
+      <column name="body" type="LONGTEXT"><constraints nullable="false"/></column>
+      <column name="version" type="BIGINT"><constraints nullable="false"/></column>
+      <column name="updated_by" type="VARCHAR(255)"/>
+      <column name="update_date" type="DATETIME"/>
+    </createTable>
+    <addPrimaryKey tableName="journey" columnNames="scope, scope_id, journey_id"
+      constraintName="pk_journey"/>
+    <rollback><dropTable tableName="journey"/></rollback>
+  </changeSet>
+</databaseChangeLog>

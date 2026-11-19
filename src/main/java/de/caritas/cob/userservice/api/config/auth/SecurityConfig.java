@@ -802,6 +802,32 @@ public class SecurityConfig {
                     "/service/useradmin/agencycontacts/coverage")
                 .hasAnyAuthority(
                     USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
+                // Journeys (ADR-036 part E, #1689): every admin reads the platform journeys and
+                // the layers within its reach (the controller narrows by AdminScope); only the
+                // platform admin writes platform journeys. Must precede the /useradmin/** rule.
+                .requestMatchers(
+                    HttpMethod.PUT,
+                    "/useradmin/journeys/platform/*",
+                    "/service/useradmin/journeys/platform/*")
+                .access(this::isPlatformAdmin)
+                .requestMatchers(
+                    HttpMethod.DELETE,
+                    "/useradmin/journeys/platform/*",
+                    "/service/useradmin/journeys/platform/*")
+                .access(this::isPlatformAdmin)
+                .requestMatchers(
+                    "/useradmin/journeys/platform",
+                    "/service/useradmin/journeys/platform",
+                    "/useradmin/journeys/tenants/{tenantId:[0-9]+}/layers",
+                    "/useradmin/journeys/tenants/{tenantId:[0-9]+}/layers/*",
+                    "/service/useradmin/journeys/tenants/{tenantId:[0-9]+}/layers",
+                    "/service/useradmin/journeys/tenants/{tenantId:[0-9]+}/layers/*",
+                    "/useradmin/journeys/agencies/{agencyId:[0-9]+}/layers",
+                    "/useradmin/journeys/agencies/{agencyId:[0-9]+}/layers/*",
+                    "/service/useradmin/journeys/agencies/{agencyId:[0-9]+}/layers",
+                    "/service/useradmin/journeys/agencies/{agencyId:[0-9]+}/layers/*")
+                .hasAnyAuthority(
+                    USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
                 .requestMatchers(
                     "/useradmin/tenants/{tenantId:[0-9]+}/contactperson",
                     "/useradmin/tenants/{tenantId:[0-9]+}/contactperson/candidates",
