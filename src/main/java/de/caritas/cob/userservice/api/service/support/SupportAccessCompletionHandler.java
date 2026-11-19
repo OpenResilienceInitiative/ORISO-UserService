@@ -9,8 +9,8 @@ import org.springframework.stereotype.Component;
 
 /**
  * First real handshake consumer (ADR-018 §2): a confirmed SUPPORT_ACCESS handshake creates the
- * fresh encrypted 1:1 support room. Runs inside the confirm transaction — if room creation fails,
- * the handshake does not count as confirmed.
+ * fresh encrypted 1:1 support room. A failed room does not confirm the handshake; the provisional
+ * cleanup record survives that rollback.
  */
 @Component
 @RequiredArgsConstructor

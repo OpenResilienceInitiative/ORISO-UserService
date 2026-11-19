@@ -5,9 +5,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
@@ -28,10 +31,10 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.ResponseEntity;
@@ -46,7 +49,7 @@ class SupportRoomServiceTest {
   private static final String CONSULTANT_MXID = "@tina.consultant:caritas.local";
   private static final String ROOM_ID = "!room:caritas.local";
 
-  @InjectMocks private SupportRoomService supportRoomService;
+  private SupportRoomService supportRoomService;
 
   @Mock private SupportRoomRepository supportRoomRepository;
   @Mock private HandshakeAuditEventRepository handshakeAuditEventRepository;
@@ -57,6 +60,14 @@ class SupportRoomServiceTest {
 
   @BeforeEach
   void setUp() {
+    supportRoomService =
+        new SupportRoomService(
+            supportRoomRepository,
+            new SupportRoomLifecycle(supportRoomRepository, handshakeAuditEventRepository),
+            adminRepository,
+            consultantRepository,
+            matrixSynapseService,
+            matrixConfig);
     ReflectionTestUtils.setField(supportRoomService, "roomTtlHours", 4L);
     ReflectionTestUtils.setField(supportRoomService, "sweepBatchSize", 200);
     lenient().when(matrixConfig.getServerName()).thenReturn("caritas.local");
@@ -102,6 +113,7 @@ class SupportRoomServiceTest {
     roomResponse.setRoomId(ROOM_ID);
     when(matrixSynapseService.createRoom(anyString(), any(), eq("gsa-token")))
         .thenReturn(ResponseEntity.ok(roomResponse));
+    when(matrixSynapseService.isRoomEncrypted(ROOM_ID)).thenReturn(Optional.of(true));
     when(matrixSynapseService.joinRoom(ROOM_ID, "consultant-token")).thenReturn(true);
   }
 
@@ -114,13 +126,28 @@ class SupportRoomServiceTest {
     when(consultantRepository.findByIdAndDeleteDateIsNull(CONSULTANT_ID))
         .thenReturn(Optional.of(consultantWithMatrix()));
     stubHappyMatrix();
+    when(matrixSynapseService.getRoomMembers(ROOM_ID))
+        .thenReturn(Optional.of(List.of(GSA_MXID, CONSULTANT_MXID)));
+    var provisional = new AtomicReference<SupportRoom>();
     when(supportRoomRepository.save(any(SupportRoom.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+        .thenAnswer(
+            invocation -> {
+              var room = invocation.<SupportRoom>getArgument(0);
+              assertThat(room.getStatus()).isEqualTo(SupportRoom.SupportRoomStatus.PROVISIONING);
+              provisional.set(room);
+              return room;
+            });
+    when(supportRoomRepository.lockById(anyString()))
+        .thenAnswer(invocation -> Optional.ofNullable(provisional.get()));
 
     var room = supportRoomService.createForConfirmedHandshake(confirmedSession());
 
-    verify(matrixSynapseService).inviteUserToRoom(ROOM_ID, CONSULTANT_MXID, "gsa-token");
-    verify(matrixSynapseService).joinRoom(ROOM_ID, "consultant-token");
+    var inOrder = inOrder(supportRoomRepository, matrixSynapseService);
+    inOrder.verify(supportRoomRepository).save(any(SupportRoom.class));
+    inOrder.verify(matrixSynapseService).inviteUserToRoom(ROOM_ID, CONSULTANT_MXID, "gsa-token");
+    inOrder.verify(matrixSynapseService).joinRoom(ROOM_ID, "consultant-token");
+    inOrder.verify(matrixSynapseService).getRoomMembers(ROOM_ID);
+    inOrder.verify(supportRoomRepository).lockById(room.getId());
     assertThat(room.getMatrixRoomId()).isEqualTo(ROOM_ID);
     assertThat(room.getStatus()).isEqualTo(SupportRoom.SupportRoomStatus.ACTIVE);
     assertThat(room.getSupportAdminId()).isEqualTo(GSA_ID);
@@ -129,6 +156,24 @@ class SupportRoomServiceTest {
         .isAfter(LocalDateTime.now(ZoneOffset.UTC).plusHours(3))
         .isBefore(LocalDateTime.now(ZoneOffset.UTC).plusHours(5));
     verify(handshakeAuditEventRepository).save(any());
+  }
+
+  @Test
+  void creationDoesNotReportActiveWhenMatrixDoesNotConfirmTheJoin() throws Exception {
+    when(adminRepository.findById(GSA_ID)).thenReturn(Optional.of(gsa()));
+    when(consultantRepository.findByIdAndDeleteDateIsNull(CONSULTANT_ID))
+        .thenReturn(Optional.of(consultantWithMatrix()));
+    stubHappyMatrix();
+    when(matrixSynapseService.joinRoom(ROOM_ID, "consultant-token")).thenReturn(false);
+    assertThatThrownBy(() -> supportRoomService.createForConfirmedHandshake(confirmedSession()))
+        .isInstanceOf(IllegalStateException.class);
+
+    verify(supportRoomRepository)
+        .save(
+            org.mockito.ArgumentMatchers.argThat(
+                room -> room.getStatus() == SupportRoom.SupportRoomStatus.PROVISIONING));
+    verify(supportRoomRepository, never()).lockById(anyString());
+    verify(handshakeAuditEventRepository, never()).save(any());
   }
 
   @Test
@@ -162,77 +207,100 @@ class SupportRoomServiceTest {
   }
 
   @Test
-  void terminate_Should_KickSupportAdminAndCloseRoom_When_CalledByTheRoomsConsultant() {
+  void terminationHidesTheLeaseAndAConfirmedSweepClosesIt() {
     var room = activeRoom();
-    when(supportRoomRepository.findById("sr-1")).thenReturn(Optional.of(room));
-    when(matrixSynapseService.loginAsUserAccessToken(GSA_MXID)).thenReturn("gsa-token");
-    when(matrixSynapseService.leaveRoom(ROOM_ID, "gsa-token")).thenReturn(true);
-    when(supportRoomRepository.save(any(SupportRoom.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
     var consultant = new AuthenticatedUser();
     consultant.setUserId(CONSULTANT_ID);
+    when(supportRoomRepository.lockById(room.getId())).thenReturn(Optional.of(room));
 
-    supportRoomService.terminate(consultant, "sr-1");
+    supportRoomService.terminate(consultant, room.getId());
+
+    assertThat(room.getStatus()).isEqualTo(SupportRoom.SupportRoomStatus.REVOCATION_PENDING);
+    assertThat(room.getCloseReason()).isEqualTo("TERMINATED");
+    assertThat(room.getClosedDate()).isNull();
+    verifyNoInteractions(matrixSynapseService, handshakeAuditEventRepository);
+
+    stubDue(room);
+    when(matrixSynapseService.loginAsUserAccessToken(GSA_MXID)).thenReturn("gsa-token");
+    when(matrixSynapseService.leaveRoom(ROOM_ID, "gsa-token")).thenReturn(true);
+    when(matrixSynapseService.isOutOfRoom(ROOM_ID, GSA_MXID)).thenReturn(Optional.of(true));
+
+    supportRoomService.sweepExpired();
 
     assertThat(room.getStatus()).isEqualTo(SupportRoom.SupportRoomStatus.CLOSED);
-    assertThat(room.getCloseReason()).isEqualTo("TERMINATED");
     verify(matrixSynapseService).leaveRoom(ROOM_ID, "gsa-token");
-    verify(handshakeAuditEventRepository).save(any());
+    verify(handshakeAuditEventRepository)
+        .save(
+            org.mockito.ArgumentMatchers.argThat(
+                event -> CONSULTANT_ID.equals(event.getActorId())));
   }
 
   @Test
   void terminate_Should_Forbid_When_CallerIsNotTheRoomsConsultant() {
-    when(supportRoomRepository.findById("sr-1")).thenReturn(Optional.of(activeRoom()));
+    when(supportRoomRepository.lockById("sr-1")).thenReturn(Optional.of(activeRoom()));
     var stranger = new AuthenticatedUser();
     stranger.setUserId("someone-else");
 
     assertThatThrownBy(() -> supportRoomService.terminate(stranger, "sr-1"))
         .isInstanceOf(ForbiddenException.class);
 
-    verify(matrixSynapseService, never()).leaveRoom(anyString(), anyString());
+    verifyNoInteractions(matrixSynapseService);
   }
 
-  // --- hard four-hour cutoff ---
-
   @Test
-  void sweepExpired_Should_KickAndCloseLapsedActiveRooms() {
+  void expiryPersistsAnUnconfirmedWithdrawalAndRetriesIt() {
     var room = activeRoom();
     room.setExpiryDate(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1));
-    when(supportRoomRepository.findAllByStatusAndExpiryDateBefore(
-            eq(SupportRoom.SupportRoomStatus.ACTIVE),
-            any(LocalDateTime.class),
-            any(org.springframework.data.domain.Pageable.class)))
-        .thenReturn(List.of(room));
+    stubDue(room);
     when(matrixSynapseService.loginAsUserAccessToken(GSA_MXID)).thenReturn("gsa-token");
-    when(matrixSynapseService.leaveRoom(ROOM_ID, "gsa-token")).thenReturn(true);
-    when(supportRoomRepository.save(any(SupportRoom.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(matrixSynapseService.leaveRoom(ROOM_ID, "gsa-token")).thenReturn(false, true);
+    when(matrixSynapseService.isOutOfRoom(ROOM_ID, GSA_MXID))
+        .thenReturn(Optional.empty(), Optional.of(true));
 
     supportRoomService.sweepExpired();
 
-    assertThat(room.getStatus()).isEqualTo(SupportRoom.SupportRoomStatus.CLOSED);
+    assertThat(room.getStatus()).isEqualTo(SupportRoom.SupportRoomStatus.REVOCATION_PENDING);
     assertThat(room.getCloseReason()).isEqualTo("EXPIRED");
+    assertThat(room.getClosedDate()).isNull();
+    assertThat(room.getRetryAt()).isAfter(LocalDateTime.now(ZoneOffset.UTC));
+    verifyNoInteractions(handshakeAuditEventRepository);
+
+    room.setRetryAt(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1));
+    supportRoomService.sweepExpired();
+    supportRoomService.sweepExpired();
+
+    assertThat(room.getStatus()).isEqualTo(SupportRoom.SupportRoomStatus.CLOSED);
+    assertThat(room.getClosedDate()).isNotNull();
+    verify(matrixSynapseService, times(2)).leaveRoom(ROOM_ID, "gsa-token");
     verify(handshakeAuditEventRepository).save(any());
   }
 
   @Test
-  void sweepExpired_Should_CloseRoomEvenIfMatrixKickFails() {
-    // Fail-safe: the lease must end at 4h even when the homeserver hiccups.
+  void sweepExpiredKeepsCleanupPendingWhenMatrixFails() {
     var room = activeRoom();
     room.setExpiryDate(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(1));
-    when(supportRoomRepository.findAllByStatusAndExpiryDateBefore(
-            eq(SupportRoom.SupportRoomStatus.ACTIVE),
-            any(LocalDateTime.class),
-            any(org.springframework.data.domain.Pageable.class)))
-        .thenReturn(List.of(room));
+    stubDue(room);
     when(matrixSynapseService.loginAsUserAccessToken(GSA_MXID))
-        .thenThrow(new RuntimeException("synapse down"));
-    when(supportRoomRepository.save(any(SupportRoom.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+        .thenThrow(new RuntimeException("unavailable"));
 
     supportRoomService.sweepExpired();
 
-    assertThat(room.getStatus()).isEqualTo(SupportRoom.SupportRoomStatus.CLOSED);
+    assertThat(room.getStatus()).isEqualTo(SupportRoom.SupportRoomStatus.REVOCATION_PENDING);
+    assertThat(room.getClosedDate()).isNull();
+    verifyNoInteractions(handshakeAuditEventRepository);
+  }
+
+  private void stubDue(SupportRoom room) {
+    when(supportRoomRepository.findClosureDue(
+            eq(
+                List.of(
+                    SupportRoom.SupportRoomStatus.ACTIVE,
+                    SupportRoom.SupportRoomStatus.PROVISIONING)),
+            eq(SupportRoom.SupportRoomStatus.REVOCATION_PENDING),
+            any(LocalDateTime.class),
+            any(org.springframework.data.domain.Pageable.class)))
+        .thenReturn(List.of(room.getId()));
+    when(supportRoomRepository.lockById(room.getId())).thenReturn(Optional.of(room));
   }
 
   // --- listing ---
@@ -252,5 +320,21 @@ class SupportRoomServiceTest {
 
     assertThat(items).hasSize(1);
     assertThat(items.get(0).getMatrixRoomId()).isEqualTo(ROOM_ID);
+  }
+
+  @Test
+  void activeForDoesNotReturnAnExpiredLeaseBeforeCleanupRuns() {
+    var user = new AuthenticatedUser();
+    user.setUserId(CONSULTANT_ID);
+    var expired = activeRoom();
+    expired.setExpiryDate(LocalDateTime.now(ZoneOffset.UTC).minusSeconds(1));
+    when(supportRoomRepository.findAllByStatusAndConsultantIdOrStatusAndSupportAdminId(
+            SupportRoom.SupportRoomStatus.ACTIVE,
+            CONSULTANT_ID,
+            SupportRoom.SupportRoomStatus.ACTIVE,
+            CONSULTANT_ID))
+        .thenReturn(List.of(expired));
+
+    assertThat(supportRoomService.activeFor(user)).isEmpty();
   }
 }

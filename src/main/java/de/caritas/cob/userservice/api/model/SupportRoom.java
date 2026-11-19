@@ -28,7 +28,9 @@ import lombok.Setter;
 public class SupportRoom {
 
   public enum SupportRoomStatus {
+    PROVISIONING,
     ACTIVE,
+    REVOCATION_PENDING,
     CLOSED
   }
 
@@ -52,7 +54,7 @@ public class SupportRoom {
   private String consultantId;
 
   @Enumerated(EnumType.STRING)
-  @Column(name = "status", length = 16, nullable = false)
+  @Column(name = "status", length = 20, nullable = false)
   private SupportRoomStatus status;
 
   @Column(name = "close_reason", length = 16)
@@ -63,6 +65,9 @@ public class SupportRoom {
 
   @Column(name = "expiry_date", nullable = false)
   private LocalDateTime expiryDate;
+
+  @Column(name = "retry_at")
+  private LocalDateTime retryAt;
 
   @Column(name = "closed_date")
   private LocalDateTime closedDate;
