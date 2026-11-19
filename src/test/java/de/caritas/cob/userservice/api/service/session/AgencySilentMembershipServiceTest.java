@@ -27,6 +27,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -242,11 +244,18 @@ class AgencySilentMembershipServiceTest {
     verifyNoInteractions(sessionRoomGateway);
   }
 
-  @Test
-  void anAmbiguousJoinStillCarriesTheContactForReconciliation() {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void ambiguousMembershipStillCarriesTheContactForReconciliation(boolean inviteFailed)
+      throws Exception {
     var consultant = consultantWithAccount("a", "@a:example.org");
     when(consultantRepository.findByConsultantAgenciesAgencyIdAndDeleteDateIsNull(AGENCY_ID))
         .thenReturn(List.of(consultant));
+    if (inviteFailed) {
+      doThrow(new MatrixInviteUserException("indeterminate invite"))
+          .when(sessionRoomGateway)
+          .inviteUserOnce(ROOM_ID, "@a:example.org", AGENCY_TOKEN);
+    }
     when(sessionRoomGateway.loginAsUser("@a:example.org")).thenReturn("consultant-token");
     when(sessionRoomGateway.joinRoom(ROOM_ID, "consultant-token")).thenReturn(false);
 

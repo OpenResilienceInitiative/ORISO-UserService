@@ -137,10 +137,20 @@ public class AgencyPreAssignmentRoomService {
 
       var binding = publication.publish(session, roomId, departmentFanOut.contacts());
       if (binding.isEmpty()) {
+        log.warn(
+            "Matrix holding room {} was not bound to session {} because publication was refused",
+            roomId,
+            session.getId());
         return;
       }
-      session.setMatrixRoomId(binding.get());
-      if (!roomId.equals(binding.get())) {
+      var confirmedRoomId = binding.get();
+      session.setMatrixRoomId(confirmedRoomId);
+      if (!roomId.equals(confirmedRoomId)) {
+        log.warn(
+            "Matrix holding room {} was not bound to session {} because publication returned confirmed room {}",
+            roomId,
+            session.getId(),
+            confirmedRoomId);
         return;
       }
 

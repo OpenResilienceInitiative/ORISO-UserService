@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.session;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
@@ -18,15 +19,21 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 
 /**
  * Matrix-only integration coverage for the agency pre-assignment (holding) room provisioning path —
@@ -385,14 +392,16 @@ class AgencyPreAssignmentRoomServiceTest {
                   return consultant;
                 })
             .toList();
+    var contacts =
+        List.of(
+            new AgencySilentMembershipService.InitialRoomContact("c-initial", "@c:example.org"));
     when(agencySilentMembershipService.joinAgencyConsultantsWithoutWaiting(
             AGENCY_ID,
             NEW_ROOM_ID,
             AGENCY_TOKEN,
             AgencyPreAssignmentRoomService.DEPARTMENT_IN_REQUEST_BUDGET))
         .thenReturn(
-            new AgencySilentMembershipService.DepartmentFanOut(
-                10, deferred, 3_300L, java.util.List.of()));
+            new AgencySilentMembershipService.DepartmentFanOut(10, deferred, 3_300L, contacts));
     when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
     when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
 
@@ -404,11 +413,34 @@ class AgencyPreAssignmentRoomServiceTest {
     var inOrder =
         org.mockito.Mockito.inOrder(sessionRoomGateway, publication, departmentMembershipBackfill);
     inOrder.verify(sessionRoomGateway).inviteUser(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN);
-    inOrder.verify(publication).publish(eq(session), eq(NEW_ROOM_ID), anyList());
+    inOrder.verify(publication).publish(session, NEW_ROOM_ID, contacts);
     inOrder
         .verify(departmentMembershipBackfill)
         .schedule(AGENCY_ID, SESSION_ID, NEW_ROOM_ID, AGENCY_MATRIX_ID, deferred);
     assertEquals(NEW_ROOM_ID, session.getMatrixRoomId());
+  }
+
+  @ParameterizedTest
+  @NullSource
+  @ValueSource(strings = "!winning-room:example.org")
+  @ExtendWith(OutputCaptureExtension.class)
+  void recordsUnboundRoomWithoutSchedulingMembershipBackfill(
+      String confirmedRoomId, CapturedOutput output) throws Exception {
+    stubHappyPathUntilRoomCreation();
+    when(publication.publish(session, NEW_ROOM_ID, List.of()))
+        .thenReturn(Optional.ofNullable(confirmedRoomId));
+
+    underTest.ensureHoldingRoom(session, user);
+
+    assertEquals(confirmedRoomId, session.getMatrixRoomId());
+    verify(publication).publish(session, NEW_ROOM_ID, List.of());
+    verifyNoInteractions(departmentMembershipBackfill);
+    assertThat(output)
+        .contains("Matrix holding room " + NEW_ROOM_ID + " was not bound to session " + SESSION_ID)
+        .contains(
+            confirmedRoomId == null
+                ? "publication was refused"
+                : "confirmed room " + confirmedRoomId);
   }
 
   @Test
