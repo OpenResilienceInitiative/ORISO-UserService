@@ -36,6 +36,14 @@ public class AgencyEnquiryRoomRetirements {
         && AgencyOpenEnquiryMembership.isOpenToDepartment(session, session.getAgencyId());
   }
 
+  /** Fences out recovery before any external work for a tracked initial acceptance. */
+  @Transactional
+  public void startExternalWork(Session accepted, OwnershipChange assignment) {
+    if (AgencyEnquiryRoomDecisions.tracksRegistration(accepted)) {
+      roomDecisions.startExternalWork(lockAcceptance(accepted, assignment));
+    }
+  }
+
   /** Records an initial holding-room retirement in the transaction that binds its replacement. */
   @Transactional
   public void replaceRoom(Session accepted, OwnershipChange assignment, String replacementRoomId) {

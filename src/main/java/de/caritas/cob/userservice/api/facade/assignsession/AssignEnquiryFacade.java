@@ -292,6 +292,10 @@ public class AssignEnquiryFacade {
     var assignment =
         sessionService.updateConsultantAndStatusForSession(session, consultant, IN_PROGRESS);
 
+    if (replacesHoldingRoom) {
+      roomRetirements.startExternalWork(session, assignment);
+    }
+
     // Create Matrix room and invite user
     Runnable createReplacement =
         () -> createNewMatrixRoomOrFail(session, consultant, assignment, replacesHoldingRoom);

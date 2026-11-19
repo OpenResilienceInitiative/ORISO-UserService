@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.model;
 
+import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -9,6 +10,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.SequenceGenerator;
 import jakarta.persistence.Table;
+import java.time.LocalDateTime;
 import java.util.Objects;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -57,18 +59,34 @@ public class AgencyEnquiryRoomDecision {
   @Column(name = "resolved_order")
   private Long resolvedOrder;
 
-  public AgencyEnquiryRoomDecision(Session accepted) {
+  @Enumerated(EnumType.STRING)
+  @Column(name = "opening_status", length = 32)
+  private SessionStatus openingStatus;
+
+  // Null means that external room work may already have started, or an older writer made the row.
+  @Column(name = "prepared_until")
+  private LocalDateTime preparedUntil;
+
+  public AgencyEnquiryRoomDecision(
+      Session accepted, SessionStatus openingStatus, LocalDateTime preparedUntil) {
     sessionId = accepted.getId();
     agencyId = accepted.getAgencyId();
     tenantId = accepted.getTenantId();
     roomId = accepted.getMatrixRoomId();
     ownershipRevision = accepted.getOwnershipRevision();
     outcome = Outcome.PENDING;
+    this.openingStatus = openingStatus;
+    this.preparedUntil = preparedUntil;
+  }
+
+  public void clearPreparation() {
+    preparedUntil = null;
   }
 
   public void resolve(Outcome outcome, long eventOrder) {
     this.outcome = outcome;
     this.resolvedOrder = eventOrder;
+    clearPreparation();
   }
 
   public boolean matches(Session session) {
