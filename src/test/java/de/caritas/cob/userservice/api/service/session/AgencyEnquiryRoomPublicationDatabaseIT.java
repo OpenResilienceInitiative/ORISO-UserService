@@ -1,6 +1,8 @@
 package de.caritas.cob.userservice.api.service.session;
 
+import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -21,15 +23,21 @@ import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService.InitialRoomContact;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import javax.sql.DataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
@@ -67,6 +75,7 @@ class AgencyEnquiryRoomPublicationDatabaseIT {
   @Autowired private UserRepository users;
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private JdbcTemplate jdbc;
+  @Autowired private DataSource dataSource;
 
   @MockitoBean private Clock clock;
   @MockitoBean private SessionService sessionService;
@@ -231,6 +240,105 @@ class AgencyEnquiryRoomPublicationDatabaseIT {
 
     assertOneCorrection();
     assertAgencyLeadingIndexIsAvailable();
+  }
+
+  @Test
+  @Timeout(20)
+  @EnabledIfEnvironmentVariable(
+      named = "LIQUIBASE_IT_DB_URL",
+      matches = "jdbc:mariadb://127\\.0\\.0\\.1:[0-9]+/userservice")
+  void databaseEventOrderSurvivesAnOverlappingDecisionAndRollback() throws Exception {
+    var suffix = UUID.randomUUID().toString().replace("-", "");
+    var orderSequence = "test_enquiry_order_" + suffix;
+    var decisionTable = "test_enquiry_decision_" + suffix;
+    jdbc.execute("CREATE SEQUENCE " + orderSequence + " NOCACHE NOCYCLE");
+    try {
+      jdbc.execute(
+          "CREATE TABLE "
+              + decisionTable
+              + " (id INT PRIMARY KEY, event_order BIGINT,"
+              + " event_time DATETIME(6) NOT NULL) ENGINE=InnoDB");
+      jdbc.update("INSERT INTO " + decisionTable + " VALUES (1, 0, ?)", LocalDateTime.now(clock));
+      var decisionRow = "SELECT event_order, event_time FROM " + decisionTable + " WHERE id = 1";
+      var nextEvent = "SELECT NEXT VALUE FOR " + orderSequence;
+      var departureAllocated = new CompletableFuture<DatabaseEvent>();
+
+      try (var threads = Executors.newSingleThreadExecutor();
+          var accepting = dataSource.getConnection()) {
+        accepting.setAutoCommit(false);
+        readEvent(accepting, decisionRow + " FOR UPDATE");
+
+        var departing =
+            threads.submit(
+                () -> {
+                  try (var departure = dataSource.getConnection()) {
+                    departure.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ);
+                    departure.setAutoCommit(false);
+                    assertThat(readEvent(departure, decisionRow).order()).isZero();
+                    var event =
+                        new DatabaseEvent(
+                            readOrder(departure, nextEvent), LocalDateTime.now(clock));
+                    assertThatThrownBy(
+                            () -> readEvent(departure, decisionRow + " LOCK IN SHARE MODE NOWAIT"))
+                        .isInstanceOfSatisfying(
+                            SQLException.class,
+                            failure -> assertThat(failure.getErrorCode()).isEqualTo(1205));
+                    departureAllocated.complete(event);
+                    var visibleDecision =
+                        readEvent(departure, decisionRow + " LOCK IN SHARE MODE WAIT 5");
+                    departure.rollback();
+                    return visibleDecision;
+                  } catch (Exception | AssertionError failure) {
+                    departureAllocated.completeExceptionally(failure);
+                    throw failure;
+                  }
+                });
+
+        var departureEvent = departureAllocated.get(6, SECONDS);
+        var replacement =
+            new DatabaseEvent(readOrder(accepting, nextEvent), LocalDateTime.now(clock));
+        try (var update =
+            accepting.prepareStatement(
+                "UPDATE " + decisionTable + " SET event_order = ?, event_time = ? WHERE id = 1")) {
+          update.setLong(1, replacement.order());
+          update.setObject(2, replacement.time());
+          assertThat(update.executeUpdate()).isEqualTo(1);
+        }
+        accepting.commit();
+
+        assertThat(departureEvent.time()).isEqualTo(replacement.time());
+        assertThat(departureEvent.order()).isLessThan(replacement.order());
+        assertThat(departing.get(6, SECONDS)).isEqualTo(replacement);
+        long rolledBackOrder = readOrder(accepting, nextEvent);
+        accepting.rollback();
+        assertThat(jdbc.queryForObject(nextEvent, Long.class)).isGreaterThan(rolledBackOrder);
+      }
+    } finally {
+      jdbc.execute("DROP TABLE IF EXISTS " + decisionTable);
+      jdbc.execute("DROP SEQUENCE IF EXISTS " + orderSequence);
+    }
+  }
+
+  private record DatabaseEvent(long order, LocalDateTime time) {}
+
+  private static DatabaseEvent readEvent(Connection connection, String query) throws SQLException {
+    try (var statement = connection.createStatement()) {
+      statement.setQueryTimeout(6);
+      try (var row = statement.executeQuery(query)) {
+        assertThat(row.next()).isTrue();
+        return new DatabaseEvent(row.getLong(1), row.getObject(2, LocalDateTime.class));
+      }
+    }
+  }
+
+  private static long readOrder(Connection connection, String query) throws SQLException {
+    try (var statement = connection.createStatement()) {
+      statement.setQueryTimeout(6);
+      try (var row = statement.executeQuery(query)) {
+        assertThat(row.next()).isTrue();
+        return row.getLong(1);
+      }
+    }
   }
 
   @Test
