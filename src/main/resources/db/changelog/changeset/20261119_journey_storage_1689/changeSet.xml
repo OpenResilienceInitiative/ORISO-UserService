@@ -29,6 +29,15 @@
     <createIndex tableName="journey" indexName="idx_journey_journey_id">
       <column name="journey_id"/>
     </createIndex>
+    <!-- The row every journey write locks first (JourneyRecord.LOCK). -->
+    <insert tableName="journey">
+      <column name="scope" value="LOCK"/>
+      <column name="scope_id" valueNumeric="0"/>
+      <column name="journey_id" value="~journeys"/>
+      <column name="conversation_type" value="-"/>
+      <column name="body" value="{}"/>
+      <column name="version" valueNumeric="0"/>
+    </insert>
     <rollback><dropTable tableName="journey"/></rollback>
   </changeSet>
 </databaseChangeLog>

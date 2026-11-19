@@ -181,4 +181,32 @@ class PublicJourneyServiceTest {
     assertThat(found).containsOnlyKeys("id", "conversationType", "phases", "survey");
     assertThat(found.toString()).doesNotContain("profile").contains("q1");
   }
+
+  @Test
+  void anOfflineCentreTakesNoRegistrations() throws Exception {
+    platform(mail("j1"));
+    var agency = new AgencyDTO();
+    agency.setTenantId(7L);
+    agency.setOffline(true);
+    when(agencyService.getAgency(42L)).thenReturn(agency);
+    assertThatThrownBy(() -> service.forRegistration(1, 42L))
+        .isInstanceOf(NoSuchElementException.class);
+  }
+
+  @Test
+  void readsTheBodiesAgainOnlyWhenAJourneyChanged() throws Exception {
+    platform(mail("j1"));
+    when(repository.versionsOf(JourneyRecord.PLATFORM, 0L))
+        .thenReturn(List.<Object[]>of(new Object[] {"j1", 0L, null}));
+    service.forRegistration(1, null);
+    service.forRegistration(1, null);
+    org.mockito.Mockito.verify(repository, org.mockito.Mockito.times(1))
+        .findByScopeAndScopeIdOrderByJourneyId(JourneyRecord.PLATFORM, 0L);
+
+    when(repository.versionsOf(JourneyRecord.PLATFORM, 0L))
+        .thenReturn(List.<Object[]>of(new Object[] {"j1", 1L, null}));
+    service.forRegistration(1, null);
+    org.mockito.Mockito.verify(repository, org.mockito.Mockito.times(2))
+        .findByScopeAndScopeIdOrderByJourneyId(JourneyRecord.PLATFORM, 0L);
+  }
 }

@@ -55,6 +55,17 @@ class JourneyRecordRepositoryIT {
         .isInstanceOf(ObjectOptimisticLockingFailureException.class);
   }
 
+  @Test
+  void locksARowAndReportsVersionsWithoutBodies() {
+    repository.saveAndFlush(row(JourneyRecord.LOCK, 0L, JourneyRecord.LOCK_ID));
+    repository.saveAndFlush(row("PLATFORM", 0L, "j3"));
+    assertThat(repository.lockRow(JourneyRecord.LOCK, 0L, JourneyRecord.LOCK_ID)).isPresent();
+    assertThat(repository.versionsOf("PLATFORM", 0L))
+        .extracting(values -> values[0])
+        .contains("j3")
+        .doesNotContain(JourneyRecord.LOCK_ID);
+  }
+
   private static JourneyRecord row(String scope, Long scopeId, String journeyId) {
     var row = new JourneyRecord();
     row.setScope(scope);

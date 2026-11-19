@@ -47,6 +47,7 @@ class JourneyServiceTest {
             });
     when(repository.findByScopeAndScopeIdOrderByJourneyId(anyString(), any()))
         .thenReturn(List.of());
+    when(repository.lockRow(any(), any(), any())).thenReturn(Optional.of(new JourneyRecord()));
   }
 
   @Test
@@ -191,5 +192,27 @@ class JourneyServiceTest {
     assertThatThrownBy(() -> service.savePlatformJourney("j2", 0, mail("j2"), "admin"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("topics registered by another journey");
+  }
+
+  @Test
+  void everyWriteTakesTheJourneysLockBeforeReadingWhatOthersStored() {
+    service.savePlatformJourney("j1", 0, mail("j1"), "admin");
+    var order = org.mockito.Mockito.inOrder(repository);
+    order.verify(repository).lockRow(JourneyRecord.LOCK, 0L, JourneyRecord.LOCK_ID);
+    order.verify(repository).findByScopeAndScopeIdOrderByJourneyId(JourneyRecord.PLATFORM, 0L);
+  }
+
+  @Test
+  void makesTheLockRowWhereTheDatabaseHasNone() {
+    when(repository.lockRow(any(), any(), any())).thenReturn(Optional.empty());
+    service.savePlatformJourney("j1", 0, mail("j1"), "admin");
+    verify(repository)
+        .saveAndFlush(
+            org.mockito.ArgumentMatchers.argThat(
+                row ->
+                    JourneyRecord.LOCK.equals(row.getScope())
+                        && JourneyRecord.LOCK_ID.equals(row.getJourneyId())));
+    verify(repository, org.mockito.Mockito.times(2))
+        .lockRow(JourneyRecord.LOCK, 0L, JourneyRecord.LOCK_ID);
   }
 }

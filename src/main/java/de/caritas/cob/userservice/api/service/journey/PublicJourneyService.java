@@ -10,13 +10,13 @@ import de.caritas.cob.userservice.api.model.JourneyRecord;
 import de.caritas.cob.userservice.api.port.out.JourneyRecordRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
-import java.time.Duration;
-import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -33,19 +33,17 @@ public class PublicJourneyService {
 
   static final String REGISTRATION_TYPE = "AGENCY_COUNSELLING";
 
-  /** How long anonymous reads share one parse of the platform journeys. */
-  static final Duration CACHE_FOR = Duration.ofSeconds(30);
-
   private final @NonNull JourneyRecordRepository repository;
   private final @NonNull AgencyService agencyService;
 
   /**
-   * The platform journeys, parsed once for all anonymous readers for {@link #CACHE_FOR}: a
-   * registration page must not make the server parse every journey on every request.
+   * The platform journeys, parsed once and shared by all anonymous readers until one of them
+   * changes: each read compares ids, versions and change times (no bodies), so a save is seen on
+   * the next registration, on every instance of the service.
    */
   private volatile Parsed parsed;
 
-  private record Parsed(Instant at, List<Platform> journeys) {}
+  private record Parsed(String fingerprint, List<Platform> journeys) {}
 
   private record Platform(JourneyRecord row, Map<String, Object> body) {}
 
@@ -79,12 +77,15 @@ public class PublicJourneyService {
   }
 
   private List<Platform> platformJourneys() {
+    var fingerprint =
+        repository.versionsOf(PLATFORM, PLATFORM_SCOPE_ID).stream()
+            .map(Arrays::toString)
+            .collect(Collectors.joining("|"));
     var current = parsed;
-    var now = Instant.now();
-    if (current == null || current.at().plus(CACHE_FOR).isBefore(now)) {
+    if (current == null || !current.fingerprint().equals(fingerprint)) {
       current =
           new Parsed(
-              now,
+              fingerprint,
               repository.findByScopeAndScopeIdOrderByJourneyId(PLATFORM, PLATFORM_SCOPE_ID).stream()
                   .map(row -> new Platform(row, JourneyService.bodyOf(row)))
                   .toList());
@@ -106,8 +107,9 @@ public class PublicJourneyService {
       // An unknown id or an AgencyService outage: either way no centre to build on.
       throw new NoSuchElementException("agency " + agencyId + " not readable");
     }
-    if (agency == null) {
-      throw new NoSuchElementException("no agency " + agencyId);
+    // Deleted centres do not come back from AgencyService; an offline one takes no registrations.
+    if (agency == null || Boolean.TRUE.equals(agency.getOffline())) {
+      throw new NoSuchElementException("no agency " + agencyId + " taking registrations");
     }
     // A centre of another Träger than the one whose domain asks is not this registration's.
     var tenantId = TenantContext.getCurrentTenant();

@@ -17,6 +17,7 @@ import java.util.NoSuchElementException;
 import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -55,6 +56,7 @@ public class JourneyService {
       String journeyId, long expectedVersion, Map<String, Object> journey, String actor) {
     checkId(journeyId);
     JourneyRules.checkJourney(journeyId, journey);
+    lockJourneys();
     var stored = repository.findByScopeAndScopeIdOrderByJourneyId(PLATFORM, PLATFORM_SCOPE_ID);
     // Draft ids ("new:…") become ids of the server, the journey's own included (a new journey).
     var taken = new HashSet<String>();
@@ -110,6 +112,7 @@ public class JourneyService {
   /** Deletes a platform journey and every layer put on it. */
   @Transactional
   public void deletePlatformJourney(String journeyId, long expectedVersion) {
+    lockJourneys();
     var existing =
         repository.findById(new JourneyRecord.Key(PLATFORM, PLATFORM_SCOPE_ID, journeyId));
     if (existing.isEmpty()) {
@@ -141,6 +144,8 @@ public class JourneyService {
     checkLevel(level);
     checkId(journeyId);
     JourneyRules.checkLayer(phases);
+    // A delete of the platform journey running at the same time cannot leave this layer behind.
+    lockJourneys();
     var platform =
         repository
             .findById(new JourneyRecord.Key(PLATFORM, PLATFORM_SCOPE_ID, journeyId))
@@ -163,6 +168,31 @@ public class JourneyService {
     row.setBody(write(Map.of("phases", phases)));
     row.setUpdatedBy(actor);
     return Optional.of(stored(repository.saveAndFlush(row)));
+  }
+
+  /**
+   * Waits for and takes the journeys' write lock until the transaction ends. The lock row is made
+   * by the changeset; where it is missing (a database built without Liquibase) it is made here, and
+   * a concurrent writer making it as well only means locking the row it made.
+   */
+  private void lockJourneys() {
+    if (repository
+        .lockRow(JourneyRecord.LOCK, PLATFORM_SCOPE_ID, JourneyRecord.LOCK_ID)
+        .isPresent()) {
+      return;
+    }
+    try {
+      var row = new JourneyRecord();
+      row.setScope(JourneyRecord.LOCK);
+      row.setScopeId(PLATFORM_SCOPE_ID);
+      row.setJourneyId(JourneyRecord.LOCK_ID);
+      row.setConversationType("-");
+      row.setBody("{}");
+      repository.saveAndFlush(row);
+    } catch (DataIntegrityViolationException alreadyMade) {
+      // Someone else made it first; locking it below waits for them.
+    }
+    repository.lockRow(JourneyRecord.LOCK, PLATFORM_SCOPE_ID, JourneyRecord.LOCK_ID);
   }
 
   /**

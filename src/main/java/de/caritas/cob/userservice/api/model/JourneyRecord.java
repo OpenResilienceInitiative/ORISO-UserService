@@ -39,6 +39,15 @@ public class JourneyRecord {
   public static final String AGENCY = "AGENCY";
   public static final long PLATFORM_SCOPE_ID = 0L;
 
+  /**
+   * The row every journey write locks first, so writes that check rules across journeys (unique
+   * link addresses, step ids, registration topics) or between a journey and its layers run one
+   * after the other. Its id can never be a journey's ({@code ~} is not allowed in journey ids).
+   */
+  public static final String LOCK = "LOCK";
+
+  public static final String LOCK_ID = "~journeys";
+
   @Id
   @Column(name = "scope", length = 16, nullable = false)
   private String scope;
