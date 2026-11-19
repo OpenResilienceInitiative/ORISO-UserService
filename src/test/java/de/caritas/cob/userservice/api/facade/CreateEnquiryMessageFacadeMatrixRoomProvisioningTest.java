@@ -155,15 +155,16 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
             silentMembership,
             // Runs deferred counsellors inline, so the test sees the same membership end state.
             new de.caritas.cob.userservice.api.service.session.AgencyDepartmentMembershipBackfill(
-                silentMembership,
+                new de.caritas.cob.userservice.api.service.session.AgencyOpenEnquiryMembership(
+                    consultantRepository,
+                    org.mockito.Mockito.mock(
+                        de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository.class),
+                    org.mockito.Mockito.mock(
+                        de.caritas.cob.userservice.api.port.out.SessionRepository.class),
+                    silentMembership),
                 gateway,
                 pause,
-                Runnable::run,
-                consultantRepository,
-                org.mockito.Mockito.mock(
-                    de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository.class),
-                org.mockito.Mockito.mock(
-                    de.caritas.cob.userservice.api.port.out.SessionRepository.class)),
+                Runnable::run),
             pause);
     setField(createEnquiryMessageFacade, "agencyPreAssignmentRoomService", realRoomService);
 

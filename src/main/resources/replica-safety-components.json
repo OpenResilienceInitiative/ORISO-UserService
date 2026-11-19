@@ -650,6 +650,22 @@
       "status": "bounded"
     },
     {
+      "id": "agency-enquiry-access-revocation",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/session/AgencyEnquiryRevocationScheduler.java",
+      "kind": "scheduler",
+      "owner": "sessions-matrix",
+      "risk": "correctness",
+      "components": [
+        "retryPending"
+      ],
+      "decision": "A dedicated one-worker executor runs short sweeps under a shared lease. Each pending task survives a restart and locks the counsellor and session before checking that an attempt still applies.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
       "id": "case-handover-matrix-repair",
       "source": "src/main/java/de/caritas/cob/userservice/api/service/CaseHandoverMatrixRepairScheduler.java",
       "kind": "scheduler",
