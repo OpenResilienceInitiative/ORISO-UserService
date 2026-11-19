@@ -61,6 +61,19 @@ public class CreateAnonymousEnquiryFacade {
   public CreateAnonymousEnquiryResponseDTO createAnonymousEnquiry(
       CreateAnonymousEnquiryDTO createAnonymousEnquiryDTO,
       boolean skipConsultingTypeAnonymousCheck) {
+    return createAnonymousEnquiry(
+        createAnonymousEnquiryDTO, skipConsultingTypeAnonymousCheck, null);
+  }
+
+  /**
+   * @param chosenUsername the animal handle the guest rolled on the entry page, or {@code null} to
+   *     let the server roll one. A handle the generator cannot produce is refused (400), a taken
+   *     one reported (409) — in both cases before anything is created.
+   */
+  public CreateAnonymousEnquiryResponseDTO createAnonymousEnquiry(
+      CreateAnonymousEnquiryDTO createAnonymousEnquiryDTO,
+      boolean skipConsultingTypeAnonymousCheck,
+      String chosenUsername) {
 
     tenantService.requireOperationalTenant(TenantContext.getCurrentTenant());
     if (!skipConsultingTypeAnonymousCheck) {
@@ -68,7 +81,7 @@ public class CreateAnonymousEnquiryFacade {
     }
 
     dpaPolicy.requireForTenant(TenantContext.getCurrentTenant());
-    var userDto = buildUserDto(createAnonymousEnquiryDTO);
+    var userDto = buildUserDto(createAnonymousEnquiryDTO, chosenUsername);
     AnonymousUserCredentials credentials = anonymousUserCreatorService.createAnonymousUser(userDto);
     var session =
         anonymousConversationCreatorService.createAnonymousConversation(userDto, credentials);
@@ -90,10 +103,15 @@ public class CreateAnonymousEnquiryFacade {
     }
   }
 
-  private UserDTO buildUserDto(CreateAnonymousEnquiryDTO createAnonymousEnquiryDTO) {
+  private UserDTO buildUserDto(
+      CreateAnonymousEnquiryDTO createAnonymousEnquiryDTO, String chosenUsername) {
+    var username =
+        chosenUsername == null
+            ? usernameRegistry.generateUniqueUsername()
+            : usernameRegistry.claimChosenUsername(chosenUsername);
     return UserDTO.builder()
         .consultingType(String.valueOf(createAnonymousEnquiryDTO.getConsultingType()))
-        .username(usernameRegistry.generateUniqueUsername())
+        .username(username)
         .password(userHelper.getRandomPassword())
         .postcode(DEFAULT_ANONYMOUS_POSTCODE)
         .termsAccepted("true")
