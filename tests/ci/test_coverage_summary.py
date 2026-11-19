@@ -194,7 +194,10 @@ class CoverageSummaryTest(unittest.TestCase):
         """
         action = MAVEN_BUILD_ACTION.read_text()
 
-        self.assertIn("./mvnw -B test || test_status=$?", action)
+        self.assertIn(
+            "bash scripts/ci/run-maven-with-central-retry.sh -B test || test_status=$?",
+            action,
+        )
         self.assertIn('MAVEN_TEST_STATUS=${test_status}', action)
         self.assertIn('exit "${MAVEN_TEST_STATUS}"', action)
 
