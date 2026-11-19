@@ -163,6 +163,7 @@ class DraftMessageControllerTest {
       var response = controller.upsertDraft(scope, request);
 
       assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
+      assertNull(response.getBody());
       assertEquals(1, appender.list.size());
       var warning = appender.list.getFirst();
       assertEquals(Level.WARN, warning.getLevel());
